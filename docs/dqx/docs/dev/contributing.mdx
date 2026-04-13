@@ -91,7 +91,7 @@ Please make sure the following items are set up correctly in your local git conf
 Please ensure the following DoDs are met before submitting your pull request:
 - [ ] **Code formatting** — Code is formatted consistently with the project style (`make fmt`).
 - [ ] **Linting & checks** — Code passes linting and static analysis (`make lint`).
-- [ ] **Testing** — Unit, integration, e2e and performance tests cover changes and all tests pass (`make test`, `make integration`, `make e2e`, `make perf`). Follow the [test pyramid](https://martinfowler.com/articles/practical-test-pyramid.html) principles. Most changes should be covered with unit tests, supplemented by integration tests when necessary, and only rarely with end-to-end or performance tests.
+- [ ] **Testing** — Unit, integration, and e2e tests cover changes and all tests pass (`make test`, `make integration`, `make e2e`). Performance tests (`make perf`) run nightly and do not need to pass before submitting a PR. Follow the [test pyramid](https://martinfowler.com/articles/practical-test-pyramid.html) principles. Most changes should be covered with unit tests, supplemented by integration tests when necessary, and only rarely with end-to-end or performance tests.
 - [ ] **Docstrings** — Public functions, classes, and modules include [Google Style Python Docstrings](https://sphinxcontrib-napoleon.readthedocs.io/en/latest/example_google.html). Docstrings are clean and consistent ([guidance](#writing-docstrings)).
 - [ ] **Documentation** — If user-facing behavior changes, ensure docs are updated. See [docs authoring](/docs/dev/docs_authoring).
 - [ ] **Demos** — If applicable, update or create demos to showcase new features or changes.
@@ -107,9 +107,8 @@ This is a good way to gather early feedback without needing to meet all Definiti
 <Admonition type="warning" title="Special cases">
 * Draft PRs — Integration and end-to-end (e2e) tests are not run automatically on Draft PRs. These tests will only execute once the PR is marked as "Ready for Review".
 * Forked PRs — The following applies for PRs opened from forks (external contributors scenario):
-    * Project maintainers must approve Github workflows (e.g. formatting, unit testing) before they run. Project maintainers must also trigger integration, end-to-end (e2e) and performance tests.
+    * Project maintainers must approve Github workflows (e.g. formatting, unit testing) before they run. Project maintainers must also trigger integration and end-to-end (e2e) tests.
     * You can also run the tests locally using [Databricks Free Edition](https://www.databricks.com/learn/free-edition) with the exception of Lakebase tests, which require a standard workspace. When using Databricks Free you can ignore the Lakebase tests.
-    * The performance workflow cannot commit the benchmark baseline back to a fork branch. The baseline is instead uploaded as a workflow artifact — see [Updating Baseline and Reports](#updating-baseline-and-reports).
 
 In all cases, the full test suite is executed on code merged into `main` branch as part of the nightly CI/CD pipeline.
 </Admonition>
@@ -118,22 +117,21 @@ In all cases, the full test suite is executed on code merged into `main` branch 
 
 This section provides a step-by-step guide for setting up your local environment and dependencies for efficient development.
 
-To start with, install the required python version on your computer (see `python=<version>` field in [pyproject.toml](https://github.com/databrickslabs/dqx/blob/v0.13.0/pyproject.toml)).
+To start with, install the required python version on your computer (see `requires-python` field in [pyproject.toml](https://github.com/databrickslabs/dqx/blob/v0.13.0/pyproject.toml)).
 On MacOSX, run:
 ```
 # double check the required version in pyproject.toml
 brew install python@3.12
 ```
 
-Install [Hatch](https://github.com/pypa/hatch), which is our build tool.
+Install [uv](https://docs.astral.sh/uv/), which is our package manager and build tool.
 On MacOSX, this is achieved using the following:
 ```shell
-brew install hatch
+brew install uv
 ```
 
-Clone the repo and run the following command in your project’s root directory to create the default environment and install development dependencies:
+Clone the repo and run the following command in your project’s root directory to install development dependencies:
 ```shell
-hatch env create
 make dev
 ```
 
@@ -147,6 +145,25 @@ Before every commit, run automated bug detector and unit tests to ensure that au
 make lint
 make test
 ```
+
+### Managing dependencies
+
+The project uses `uv.lock` to pin exact dependency versions. The Makefile enforces `UV_FROZEN=1` by default,
+which prevents `uv` from modifying the lock file during normal operations like `make dev`, `make fmt`, or `make test`.
+
+To add, remove, or upgrade dependencies, use the `lock-dependencies` target:
+```shell
+make lock-dependencies
+```
+
+This target:
+1. Runs `uv lock` to resolve dependencies.
+2. Regenerates `.build-constraints.txt` with pinned build tool hashes.
+3. Normalizes registry URLs in `uv.lock` to public PyPI.
+
+<Admonition type="warning" title="Important">
+Always use `make` targets instead of running `uv` commands directly. The Makefile sets `UV_FROZEN=1` to protect the lock file — running `uv sync`, `uv lock`, or `uv add` directly bypasses this and may modify `uv.lock` with internal registry URLs. To update dependencies, use `make lock-dependencies`.
+</Admonition>
 
 ### Running integration tests and code coverage
 
@@ -252,7 +269,7 @@ pip install git+https://github.com/your-username/dqx.git@feature_branch_name
 Alternatively, if you want to test before committing the changes, you can build the wheel package and upload it to the workspace manually:
 ```commandline
 # Create wheel inside dist/databricks_labs_dqx-<version>-py3-none-any.whl
-hatch build
+make build
 
 # Upload the wheel to the workspace and run
 pip install /<workspace-path>/databricks_labs_dqx-<version>-py3-none-any.whl
@@ -328,12 +345,15 @@ Pre-release versions (e.g. v0.1.12-alpha) do not trigger the release pipeline, a
 
 ## Performance testing
 
-Performance tests run automatically in two cases:
-* On every Pull Request in GitHub.
-* Nightly, on the main branch CI/CD pipeline.
+Performance tests run automatically as part of the **nightly** CI/CD pipeline on the `main` branch. They do not run on every Pull Request.
 
 All performance tests are located in the `tests/perf` folder. The tests use the [pytest-benchmark](https://pytest-benchmark.readthedocs.io/en/latest/) package.
 Performance tests should focus on the critical parts of the codebase where speed and efficiency matter most, such as the check functions.
+
+To run performance tests locally:
+```shell
+make perf
+```
 
 ### Baseline Metrics
 
@@ -341,8 +361,8 @@ Baseline performance results are stored in `tests/perf/.benchmarks/baseline.json
 These values are used to compare the performance of each new run against the baseline.
 The comparison allows 25% degradation before the test fails.
 
-The baseline file is managed automatically for every PR:
-* If `baseline.json` does not exist → it is created. To recreate it from scratch, delete the file in your PR.
+The baseline file is managed automatically by the nightly workflow:
+* If `baseline.json` does not exist → it is created.
 * If a test is removed → it is also removed from `baseline.json`.
 * If a new test is added → it is added to `baseline.json`.
 * If the same tests are present → the existing baseline values are kept (not overwritten).
@@ -353,9 +373,9 @@ Whenever the baseline is updated, the benchmark report in the documentation is r
 
 ### Updating Baseline and Reports
 
-Baseline and benchmark reports are committed automatically by the performance github workflow.
-However, these commits are not GPG-signed because your private key is not available to GitHub.
-Before merging a PR that updates the baseline or reports, you must manually sign and re-apply the commits using your local GPG key, as follows:
+When the nightly workflow detects baseline changes, it automatically opens a PR with the updated baseline and benchmark report.
+These commits are not GPG-signed because your private key is not available to GitHub.
+Before merging, you must manually sign and re-apply the commits using your local GPG key:
 ```shell
 git reset --soft $(git merge-base origin/main HEAD)  # point to the common ancestor of main and your branch
 #git reset --soft HEAD~<how-many-commit-go-back>  # alternatively, specify how many commits to go back
@@ -363,27 +383,9 @@ git commit -S --reuse-message=ORIG_HEAD
 git push --force-with-lease origin HEAD
 ```
 
-<Admonition type="note" title="Fork PRs">
-The baseline is also uploaded as a workflow artifact (`baseline-artifacts`) in the GitHub Actions run.
-To apply it manually (relevant for forks where we don't auto-commit the baseline):
-1. Download the `baseline-artifacts` artifact from the GitHub Actions run.
-2. Copy `baseline.json` to `tests/perf/.benchmarks/baseline.json` in your branch.
-3. Commit and GPG-sign it: `git commit -S -m "Add pytest-benchmark performance baseline"`.
-4. Push to your fork branch.
-</Admonition>
-
 ## Troubleshooting
 
-If you encounter any package dependency errors after `git pull`, run `make clean`
-
-### Resolving Hatch JSON TypeError
-
-If you encounter an error like:
-```text
-TypeError: the JSON object must be str, bytes or bytearray, not Sentinel
-```
-
-you can resolve it by downgrading the Click package to a compatible version that works with hatch: `pip install "click<8.3"`
+If you encounter any package dependency errors after `git pull`, run `make clean` followed by `make dev`.
 
 ### Common fixes for `mypy` errors
 
