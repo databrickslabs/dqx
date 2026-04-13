@@ -303,9 +303,13 @@ def test_run_dqx_demo_asset_bundle(ws, make_schema, make_random, library_ref):
             capture_output=True,
             cwd=path,
         )
-        subprocess.run([cli_path, "bundle", "run", "-t", target, "dqx_demo_job"], check=True, capture_output=True, cwd=path)
+        subprocess.run(
+            [cli_path, "bundle", "run", "-t", target, "dqx_demo_job"], check=True, capture_output=True, cwd=path
+        )
     finally:
-        subprocess.run([cli_path, "bundle", "destroy", "-t", target, "--auto-approve"], check=True, capture_output=True, cwd=path)
+        subprocess.run(
+            [cli_path, "bundle", "destroy", "-t", target, "--auto-approve"], check=True, capture_output=True, cwd=path
+        )
 
 
 def test_run_dqx_multi_table_demo(ws, make_notebook, make_schema, make_job, library_ref):
