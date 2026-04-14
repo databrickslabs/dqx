@@ -16,6 +16,7 @@ Resolves #..
 - [ ] added performance tests
 
 ### Documentation and Demos
-<!-- Any user facing changes require documentation update -->
+<!-- Any user facing changes require documentation and demos update -->
 
-- [ ] added/updated
+- [ ] added/updated demos
+- [ ] added/updated docs
