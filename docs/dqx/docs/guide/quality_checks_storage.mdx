@@ -214,7 +214,7 @@ If you create checks as a list of DQRule objects, you can convert them using the
 
     # validate loaded checks
     assert not dq_engine.validate_checks(checks).has_errors
-    
+    ```
   </TabItem>
   <TabItem value="Workflows" label="Workflows">
     When using the quality checker or e2e workflows to apply quality checks, they load checks from the `checks_location` field defined in the [configuration file](/docs/installation/#configuration-file).

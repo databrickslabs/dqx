@@ -748,48 +748,45 @@ When using `save_checks` with variables, placeholders are resolved **before** co
 Variable substitution is only available when defining checks declaratively (as dictionaries or in files/tables). It is not supported when using DQX classes (e.g., `DQRowRule`) directly.
 </Admonition>
 
-<Tabs>
-  <TabItem value="YAML" label="YAML" default>
-    ```yaml
+```python
+import yaml
+from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.config import FileChecksStorageConfig, TableChecksStorageConfig
+from databricks.sdk import WorkspaceClient
+
+dq_engine = DQEngine(WorkspaceClient())
+
+# Define checks with variable placeholders
+checks = yaml.safe_load("""
     - criticality: error
       check:
         function: is_in_range
         arguments:
           column: temperature
-          min_limit: {{ min_temp }}
-          max_limit: {{ max_temp }}
+          min_limit: "{{ min_temp }}"
+          max_limit: "{{ max_temp }}"
       filter: "region = '{{ region }}'"
-    ```
-  </TabItem>
-  <TabItem value="Python" label="Python">
-    ```python
-    from databricks.labs.dqx.engine import DQEngine, DQEngineCore
-    from databricks.labs.dqx.config import FileChecksStorageConfig, TableChecksStorageConfig
-    from databricks.sdk import WorkspaceClient
+""")
 
-    dq_engine = DQEngine(WorkspaceClient())
-    variables = {
-        "min_temp": 0,
-        "max_temp": 100,
-        "region": "EMEA"
-    }
+variables = {
+    "min_temp": 0,
+    "max_temp": 100,
+    "region": "EMEA",
+}
 
-    # Load checks with variable resolution
-    resolved_checks = dq_engine.load_checks(
-        config=FileChecksStorageConfig(location="checks.yml"),
-        variables=variables,
-    )
+# Load checks from file with variable resolution
+resolved_checks = dq_engine.load_checks(
+    config=FileChecksStorageConfig(location="checks.yml"),
+    variables=variables,
+)
 
-    # Or resolve variables when saving checks (ensures fingerprints are consistent)
-    checks = DQEngineCore.load_checks_from_local_file("checks.yml")
-    dq_engine.save_checks(
-        checks=checks,
-        config=TableChecksStorageConfig(location="catalog.schema.checks_table"),
-        variables=variables,
-    )
-    ```
-  </TabItem>
-</Tabs>
+# Or resolve variables when saving checks (ensures fingerprints are consistent)
+dq_engine.save_checks(
+    checks=checks,
+    config=TableChecksStorageConfig(location="catalog.schema.checks_table"),
+    variables=variables,
+)
+```
 
 ## Default Variables
 
