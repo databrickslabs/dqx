@@ -1234,7 +1234,12 @@ class DQEngine(DQEngineBase):
         return {**defaults, **per_call}
 
     @telemetry_logger("engine", "save_checks")
-    def save_checks(self, checks: list[dict], config: BaseChecksStorageConfig) -> None:
+    def save_checks(
+        self,
+        checks: list[dict],
+        config: BaseChecksStorageConfig,
+        variables: dict[str, VariableValue] | None = None,
+    ) -> None:
         """Persist DQ rules (checks) to the storage backend described by *config*.
 
         The appropriate storage handler is resolved from the configuration
@@ -1250,9 +1255,16 @@ class DQEngine(DQEngineBase):
         - *InstallationChecksStorageConfig* (installation directory);
         - *VolumeFileChecksStorageConfig* (Unity Catalog volume file);
 
+        Per-call *variables* are merged with engine-level defaults from
+        *ExtraParams.variables* (per-call values take precedence on conflict).
+        Variables are resolved before computing fingerprints and persisting,
+        ensuring that stored checks and their fingerprints are consistent.
+
         Args:
             checks: List of DQ rules (checks) to save (as dictionaries).
             config: Configuration object describing the storage backend and write options.
+            variables: Optional mapping of placeholder names to replacement values. Replaces placeholders
+                in all string values of the check definitions before saving.
 
         Returns:
             None
@@ -1260,8 +1272,10 @@ class DQEngine(DQEngineBase):
         Raises:
             InvalidConfigError: If the configuration type is unsupported.
         """
+        merged_variables = self._merge_variables(variables)
+        resolved_checks = resolve_variables(checks=checks, variables=merged_variables)
         handler = self._checks_handler_factory.create(config)
-        handler.save(checks, config)
+        handler.save(resolved_checks, config)
 
     @telemetry_logger("engine", "save_summary_metrics")
     def save_summary_metrics(

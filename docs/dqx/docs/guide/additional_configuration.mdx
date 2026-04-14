@@ -174,13 +174,13 @@ skipped = checked_df.select(F.explode("_errors").alias("e")).filter(F.col("e.ski
 
 ## Defining default variables for substitution
 
-DQX allows you to define engine-level defaults for variables used in declarative check definitions (YAML, JSON, or Delta tables). These defaults are automatically applied during `load_checks` unless overridden by the per-call `variables` parameter.
+DQX allows you to define engine-level defaults for variables used in declarative check definitions (YAML, JSON, or Delta tables). These defaults are automatically applied during `load_checks` and `save_checks` unless overridden by the per-call `variables` parameter.
 
 <Tabs>
   <TabItem value="Python" label="Python" default>
     ```python
     from databricks.labs.dqx.engine import DQEngine
-    from databricks.labs.dqx.config import ExtraParams
+    from databricks.labs.dqx.config import ExtraParams, FileChecksStorageConfig, TableChecksStorageConfig
     from databricks.sdk import WorkspaceClient
 
     # Initialize engine with default variables
@@ -198,7 +198,16 @@ DQX allows you to define engine-level defaults for variables used in declarative
     # Load checks - uses 'min_temp' and 'max_temp' from defaults,
     # but overrides 'region' specifically for this call.
     resolved_checks = dq_engine.load_checks(
-        config=FileChecksStorageConfig(location="checks.yml"),  variables={ "region": "EMEA" }
+        config=FileChecksStorageConfig(location="checks.yml"),
+        variables={"region": "EMEA"},
+    )
+
+    # Save checks - resolves variables before computing fingerprints and persisting.
+    # Uses 'min_temp' and 'max_temp' from defaults, overrides 'region' for this call.
+    dq_engine.save_checks(
+        checks=checks,
+        config=TableChecksStorageConfig(location="catalog.schema.checks_table"),
+        variables={"region": "EMEA"},
     )
     ```
   </TabItem>
