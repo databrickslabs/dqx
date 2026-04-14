@@ -121,8 +121,6 @@ jobs:
 
       - name: Install JavaScript dependencies
         run: bun install
-        env:
-          BUN_CONFIG_TLS_REJECT_UNAUTHORIZED: "0" # allow self-signed certificates for testing purposes
 
       - name: Build app
         run: uv run apx build
