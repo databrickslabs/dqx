@@ -149,7 +149,7 @@ yq = [
 [tool.uv]
 required-version = "~=0.11.0"
 exclude-newer = "7 days"
-exclude-newer-package = { "databricks-sdk" = false, "databricks-connect" = false, "setuptools" = false, "hatchling" = false, "hatch-fancy-pypi-readme" = false, "packaging" = false, "pathspec" = false, "trove-classifiers" = false, "pluggy" = false, "tomli" = false }
+exclude-newer-package = { "databricks-sdk" = false, "databricks-connect" = false, "setuptools" = false, "hatchling" = false, "hatch-fancy-pypi-readme" = false, "packaging" = false, "pathspec" = false, "trove-classifiers" = false, "pluggy" = false, "tomli" = false, "editables" = false }
 
 [tool.pydoc-markdown]
 loaders = [
