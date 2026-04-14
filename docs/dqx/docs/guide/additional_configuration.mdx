@@ -205,7 +205,9 @@ DQX allows you to define engine-level defaults for variables used in declarative
 </Tabs>
 
 <Admonition type="warning" title="Variable substitution in workflows">
-Variable substitution is not currently supported in DQX installable workflows. Variables cam be defined and stored as YAML in the configuration file but will not be applied during workflow execution.
+Variable substitution is not currently supported in DQX installable workflows. Variables can be defined and stored as YAML in the configuration file but will not be applied during workflow execution.
+
+Variable substitution is only available when defining checks declaratively (as dictionaries or in files/tables). It is not supported when using DQX classes (e.g., `DQRowRule`) directly.
 </Admonition> 
 
 ## Overwriting run metadata
