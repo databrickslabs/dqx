@@ -97,7 +97,7 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build]
 sources = ["src"]
-include = ["src"]
+include = ["src", "README.md", "LICENSE", "NOTICE"]
 
 [tool.hatch.version]
 path = "src/databricks/labs/dqx/__about__.py"
@@ -119,7 +119,7 @@ lint = [
     "types-requests~=2.31.0",
 ]
 test = [
-
+    "pip~=26.0",  # required by databricks-labs-blueprint WheelsV2 which calls `pip wheel`; remove after blueprint migrates to uv
     "coverage[toml]~=7.4.4",
     "databricks-labs-pytester~=0.7.4",
     "pytest~=8.3.3",
