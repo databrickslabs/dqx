@@ -18,7 +18,16 @@ permissions:
   contents: read
 
 jobs:
+  not-a-fork:
+    runs-on:
+      group: databrickslabs-protected-runner-group
+      labels: linux-ubuntu-latest
+    if: github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork
+    steps:
+      - run: echo "Not a fork PR, proceeding"
+
   ci:
+    needs: not-a-fork
     strategy:
       fail-fast: false
       matrix:
@@ -47,6 +56,7 @@ jobs:
         run: make test
 
   fmt:
+    needs: not-a-fork
     runs-on:
       group: databrickslabs-protected-runner-group
       labels: linux-ubuntu-latest
@@ -72,6 +82,7 @@ jobs:
         run: git diff --exit-code
 
   docs:
+    needs: not-a-fork
     name: Build Docusaurus
     runs-on:
       group: databrickslabs-protected-runner-group
@@ -100,6 +111,9 @@ jobs:
           cache: yarn
           cache-dependency-path: docs/dqx/yarn.lock # need to put the lockfile path explicitly
 
+      - name: Configure yarn registry
+        run: yarn config set registry "${{ secrets.NPM_REGISTRY_URL }}"
+
       - name: Install dependencies
         run: make docs-install
 
@@ -107,6 +121,7 @@ jobs:
         run: make docs-build
 
   app:
+    needs: not-a-fork
     name: Build and Check App
     runs-on:
       group: databrickslabs-protected-runner-group

@@ -1,5 +1,5 @@
 import pytest
-from pyspark.sql import Column
+from databricks.labs.dqx.utils import get_column_name_or_alias
 from databricks.labs.dqx.check_funcs import (
     is_equal_to,
     is_not_equal_to,
@@ -134,10 +134,10 @@ def test_is_not_equal_to_missing_value():
 def test_sql_expression_complex_exists_auto_name():
     expression = "EXISTS (SELECT 1 FROM cfg WHERE cfg.val = STATUS)"
     result = sql_expression(expression)
-    assert isinstance(result, Column)
+    assert get_column_name_or_alias(result) == "not_exists_select_1_from_cfg_where_cfg_val_status"
 
 
 def test_sql_expression_complex_exists_negate_auto_name():
     expression = "EXISTS (SELECT 1 FROM cfg WHERE cfg.val = STATUS)"
     result = sql_expression(expression, negate=True)
-    assert isinstance(result, Column)
+    assert get_column_name_or_alias(result) == "exists_select_1_from_cfg_where_cfg_val_status"
