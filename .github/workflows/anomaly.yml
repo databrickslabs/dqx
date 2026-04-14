@@ -17,18 +17,9 @@ jobs:
   # Only run jobs for PRs from branches on the main repository and not from forks.
   # Workflows triggered by PRs from forks don't have access to the tool environment.
   # PRs from forks to be tested by the reviewer(s) / maintainer(s) before merging.
-  not-a-fork:
-    runs-on:
-      group: databrickslabs-protected-runner-group
-      labels: linux-ubuntu-latest
-    if: >-
-      github.event_name == 'merge_group' ||
-      (github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork)
-    steps:
-      - run: echo "Not a fork PR or draft PR, proceeding"
 
   anomaly-tests:
-    needs: not-a-fork
+    if: github.event_name == 'merge_group' || (github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork)
     environment: tool
     runs-on:
       group: larger-runners
@@ -82,7 +73,7 @@ jobs:
           use_oidc: true
 
   anomaly-tests-serverless:
-    needs: not-a-fork
+    if: github.event_name == 'merge_group' || (github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork)
     environment: tool
     runs-on:
       group: larger-runners
