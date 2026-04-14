@@ -1,5 +1,4 @@
 import { createContext, useContext, useState, useCallback, type ReactNode } from "react";
-import axios from "axios";
 import { Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -10,7 +9,7 @@ import {
   SheetDescription,
 } from "@/components/ui/sheet";
 import { AICheckGenerator } from "@/components/AICheckGenerator";
-import type { GenerateChecksOut } from "@/lib/api";
+import { aiAssistedChecksGeneration } from "@/lib/api";
 
 export interface RunContext {
   runName: string;
@@ -59,11 +58,7 @@ export function AIAssistantProvider({ children }: { children: ReactNode }) {
         ? `Given this existing run configuration:\n\`\`\`yaml\n${contextYaml}\n\`\`\`\n\n${userInput}`
         : userInput;
 
-      const response = await axios.post<GenerateChecksOut>(
-        "/api/ai-generate-checks",
-        { user_input: prompt },
-        { withCredentials: true }
-      );
+      const response = await aiAssistedChecksGeneration({ user_input: prompt });
       return response.data;
     } finally {
       setIsGenerating(false);

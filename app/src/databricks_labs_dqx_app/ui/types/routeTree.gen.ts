@@ -11,9 +11,20 @@
 import { Route as rootRouteImport } from './../routes/__root'
 import { Route as SidebarRouteRouteImport } from './../routes/_sidebar/route'
 import { Route as IndexRouteImport } from './../routes/index'
+import { Route as SidebarHomeRouteImport } from './../routes/_sidebar/home'
 import { Route as SidebarRunsRouteImport } from './../routes/_sidebar/runs'
+import { Route as SidebarRulesRouteImport } from './../routes/_sidebar/rules'
+import { Route as SidebarProfilerRouteImport } from './../routes/_sidebar/profiler'
 import { Route as SidebarProfileRouteImport } from './../routes/_sidebar/profile'
 import { Route as SidebarConfigRouteImport } from './../routes/_sidebar/config'
+import { Route as SidebarRulesIndexRouteImport } from './../routes/_sidebar/rules.index'
+import { Route as SidebarRulesActiveRouteImport } from './../routes/_sidebar/rules.active'
+import { Route as SidebarRulesCreateRouteImport } from './../routes/_sidebar/rules.create'
+import { Route as SidebarRulesDraftsRouteImport } from './../routes/_sidebar/rules.drafts'
+import { Route as SidebarRulesCreateReusableRouteImport } from './../routes/_sidebar/rules.create-reusable'
+import { Route as SidebarRulesCreateSqlRouteImport } from './../routes/_sidebar/rules.create-sql'
+import { Route as SidebarRulesGenerateRouteImport } from './../routes/_sidebar/rules.generate'
+import { Route as SidebarRulesImportRouteImport } from './../routes/_sidebar/rules.import'
 import { Route as SidebarRunsIndexRouteImport } from './../routes/_sidebar/runs.index'
 import { Route as SidebarRunsRunNameRouteImport } from './../routes/_sidebar/runs.$runName'
 
@@ -26,9 +37,24 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SidebarHomeRoute = SidebarHomeRouteImport.update({
+  id: '/home',
+  path: '/home',
+  getParentRoute: () => SidebarRouteRoute,
+} as any)
 const SidebarRunsRoute = SidebarRunsRouteImport.update({
   id: '/runs',
   path: '/runs',
+  getParentRoute: () => SidebarRouteRoute,
+} as any)
+const SidebarRulesRoute = SidebarRulesRouteImport.update({
+  id: '/rules',
+  path: '/rules',
+  getParentRoute: () => SidebarRouteRoute,
+} as any)
+const SidebarProfilerRoute = SidebarProfilerRouteImport.update({
+  id: '/profiler',
+  path: '/profiler',
   getParentRoute: () => SidebarRouteRoute,
 } as any)
 const SidebarProfileRoute = SidebarProfileRouteImport.update({
@@ -40,6 +66,46 @@ const SidebarConfigRoute = SidebarConfigRouteImport.update({
   id: '/config',
   path: '/config',
   getParentRoute: () => SidebarRouteRoute,
+} as any)
+const SidebarRulesIndexRoute = SidebarRulesIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => SidebarRulesRoute,
+} as any)
+const SidebarRulesActiveRoute = SidebarRulesActiveRouteImport.update({
+  id: '/active',
+  path: '/active',
+  getParentRoute: () => SidebarRulesRoute,
+} as any)
+const SidebarRulesCreateRoute = SidebarRulesCreateRouteImport.update({
+  id: '/create',
+  path: '/create',
+  getParentRoute: () => SidebarRulesRoute,
+} as any)
+const SidebarRulesDraftsRoute = SidebarRulesDraftsRouteImport.update({
+  id: '/drafts',
+  path: '/drafts',
+  getParentRoute: () => SidebarRulesRoute,
+} as any)
+const SidebarRulesCreateReusableRoute = SidebarRulesCreateReusableRouteImport.update({
+  id: '/create-reusable',
+  path: '/create-reusable',
+  getParentRoute: () => SidebarRulesRoute,
+} as any)
+const SidebarRulesCreateSqlRoute = SidebarRulesCreateSqlRouteImport.update({
+  id: '/create-sql',
+  path: '/create-sql',
+  getParentRoute: () => SidebarRulesRoute,
+} as any)
+const SidebarRulesGenerateRoute = SidebarRulesGenerateRouteImport.update({
+  id: '/generate',
+  path: '/generate',
+  getParentRoute: () => SidebarRulesRoute,
+} as any)
+const SidebarRulesImportRoute = SidebarRulesImportRouteImport.update({
+  id: '/import',
+  path: '/import',
+  getParentRoute: () => SidebarRulesRoute,
 } as any)
 const SidebarRunsIndexRoute = SidebarRunsIndexRouteImport.update({
   id: '/',
@@ -54,16 +120,37 @@ const SidebarRunsRunNameRoute = SidebarRunsRunNameRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/home': typeof SidebarHomeRoute
   '/config': typeof SidebarConfigRoute
   '/profile': typeof SidebarProfileRoute
+  '/profiler': typeof SidebarProfilerRoute
+  '/rules': typeof SidebarRulesRouteWithChildren
+  '/rules/': typeof SidebarRulesIndexRoute
+  '/rules/active': typeof SidebarRulesActiveRoute
+  '/rules/create': typeof SidebarRulesCreateRoute
+  '/rules/create-reusable': typeof SidebarRulesCreateReusableRoute
+  '/rules/create-sql': typeof SidebarRulesCreateSqlRoute
+  '/rules/drafts': typeof SidebarRulesDraftsRoute
+  '/rules/generate': typeof SidebarRulesGenerateRoute
+  '/rules/import': typeof SidebarRulesImportRoute
   '/runs': typeof SidebarRunsRouteWithChildren
   '/runs/$runName': typeof SidebarRunsRunNameRoute
   '/runs/': typeof SidebarRunsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/home': typeof SidebarHomeRoute
   '/config': typeof SidebarConfigRoute
   '/profile': typeof SidebarProfileRoute
+  '/profiler': typeof SidebarProfilerRoute
+  '/rules': typeof SidebarRulesRouteWithChildren
+  '/rules/active': typeof SidebarRulesActiveRoute
+  '/rules/create': typeof SidebarRulesCreateRoute
+  '/rules/create-reusable': typeof SidebarRulesCreateReusableRoute
+  '/rules/create-sql': typeof SidebarRulesCreateSqlRoute
+  '/rules/drafts': typeof SidebarRulesDraftsRoute
+  '/rules/generate': typeof SidebarRulesGenerateRoute
+  '/rules/import': typeof SidebarRulesImportRoute
   '/runs/$runName': typeof SidebarRunsRunNameRoute
   '/runs': typeof SidebarRunsIndexRoute
 }
@@ -71,8 +158,19 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/_sidebar': typeof SidebarRouteRouteWithChildren
+  '/_sidebar/home': typeof SidebarHomeRoute
   '/_sidebar/config': typeof SidebarConfigRoute
   '/_sidebar/profile': typeof SidebarProfileRoute
+  '/_sidebar/profiler': typeof SidebarProfilerRoute
+  '/_sidebar/rules': typeof SidebarRulesRouteWithChildren
+  '/_sidebar/rules/': typeof SidebarRulesIndexRoute
+  '/_sidebar/rules/active': typeof SidebarRulesActiveRoute
+  '/_sidebar/rules/create': typeof SidebarRulesCreateRoute
+  '/_sidebar/rules/create-reusable': typeof SidebarRulesCreateReusableRoute
+  '/_sidebar/rules/create-sql': typeof SidebarRulesCreateSqlRoute
+  '/_sidebar/rules/drafts': typeof SidebarRulesDraftsRoute
+  '/_sidebar/rules/generate': typeof SidebarRulesGenerateRoute
+  '/_sidebar/rules/import': typeof SidebarRulesImportRoute
   '/_sidebar/runs': typeof SidebarRunsRouteWithChildren
   '/_sidebar/runs/$runName': typeof SidebarRunsRunNameRoute
   '/_sidebar/runs/': typeof SidebarRunsIndexRoute
@@ -81,19 +179,58 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/home'
     | '/config'
     | '/profile'
+    | '/profiler'
+    | '/rules'
+    | '/rules/'
+    | '/rules/active'
+    | '/rules/create'
+    | '/rules/create-reusable'
+    | '/rules/create-sql'
+    | '/rules/drafts'
+    | '/rules/generate'
+    | '/rules/import'
     | '/runs'
     | '/runs/$runName'
     | '/runs/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/config' | '/profile' | '/runs/$runName' | '/runs'
+  to:
+    | '/'
+    | '/home'
+    | '/config'
+    | '/profile'
+    | '/profiler'
+    | '/rules'
+    | '/rules/create-reusable'
+    | '/rules/create-sql'
+    | '/rules/active'
+    | '/rules/create'
+    | '/rules/create-reusable'
+    | '/rules/create-sql'
+    | '/rules/drafts'
+    | '/rules/generate'
+    | '/rules/import'
+    | '/runs/$runName'
+    | '/runs'
   id:
     | '__root__'
     | '/'
     | '/_sidebar'
+    | '/_sidebar/home'
     | '/_sidebar/config'
     | '/_sidebar/profile'
+    | '/_sidebar/profiler'
+    | '/_sidebar/rules'
+    | '/_sidebar/rules/'
+    | '/_sidebar/rules/active'
+    | '/_sidebar/rules/create'
+    | '/_sidebar/rules/create-reusable'
+    | '/_sidebar/rules/create-sql'
+    | '/_sidebar/rules/drafts'
+    | '/_sidebar/rules/generate'
+    | '/_sidebar/rules/import'
     | '/_sidebar/runs'
     | '/_sidebar/runs/$runName'
     | '/_sidebar/runs/'
@@ -127,11 +264,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SidebarRunsRouteImport
       parentRoute: typeof SidebarRouteRoute
     }
+    '/_sidebar/rules': {
+      id: '/_sidebar/rules'
+      path: '/rules'
+      fullPath: '/rules'
+      preLoaderRoute: typeof SidebarRulesRouteImport
+      parentRoute: typeof SidebarRouteRoute
+    }
     '/_sidebar/profile': {
       id: '/_sidebar/profile'
       path: '/profile'
       fullPath: '/profile'
       preLoaderRoute: typeof SidebarProfileRouteImport
+      parentRoute: typeof SidebarRouteRoute
+    }
+    '/_sidebar/profiler': {
+      id: '/_sidebar/profiler'
+      path: '/profiler'
+      fullPath: '/profiler'
+      preLoaderRoute: typeof SidebarProfilerRouteImport
+      parentRoute: typeof SidebarRouteRoute
+    }
+    '/_sidebar/home': {
+      id: '/_sidebar/home'
+      path: '/home'
+      fullPath: '/home'
+      preLoaderRoute: typeof SidebarHomeRouteImport
       parentRoute: typeof SidebarRouteRoute
     }
     '/_sidebar/config': {
@@ -140,6 +298,62 @@ declare module '@tanstack/react-router' {
       fullPath: '/config'
       preLoaderRoute: typeof SidebarConfigRouteImport
       parentRoute: typeof SidebarRouteRoute
+    }
+    '/_sidebar/rules/': {
+      id: '/_sidebar/rules/'
+      path: '/'
+      fullPath: '/rules/'
+      preLoaderRoute: typeof SidebarRulesIndexRouteImport
+      parentRoute: typeof SidebarRulesRoute
+    }
+    '/_sidebar/rules/active': {
+      id: '/_sidebar/rules/active'
+      path: '/active'
+      fullPath: '/rules/active'
+      preLoaderRoute: typeof SidebarRulesActiveRouteImport
+      parentRoute: typeof SidebarRulesRoute
+    }
+    '/_sidebar/rules/create': {
+      id: '/_sidebar/rules/create'
+      path: '/create'
+      fullPath: '/rules/create'
+      preLoaderRoute: typeof SidebarRulesCreateRouteImport
+      parentRoute: typeof SidebarRulesRoute
+    }
+    '/_sidebar/rules/create-reusable': {
+      id: '/_sidebar/rules/create-reusable'
+      path: '/create-reusable'
+      fullPath: '/rules/create-reusable'
+      preLoaderRoute: typeof SidebarRulesCreateReusableRouteImport
+      parentRoute: typeof SidebarRulesRoute
+    }
+    '/_sidebar/rules/create-sql': {
+      id: '/_sidebar/rules/create-sql'
+      path: '/create-sql'
+      fullPath: '/rules/create-sql'
+      preLoaderRoute: typeof SidebarRulesCreateSqlRouteImport
+      parentRoute: typeof SidebarRulesRoute
+    }
+    '/_sidebar/rules/drafts': {
+      id: '/_sidebar/rules/drafts'
+      path: '/drafts'
+      fullPath: '/rules/drafts'
+      preLoaderRoute: typeof SidebarRulesDraftsRouteImport
+      parentRoute: typeof SidebarRulesRoute
+    }
+    '/_sidebar/rules/generate': {
+      id: '/_sidebar/rules/generate'
+      path: '/generate'
+      fullPath: '/rules/generate'
+      preLoaderRoute: typeof SidebarRulesGenerateRouteImport
+      parentRoute: typeof SidebarRulesRoute
+    }
+    '/_sidebar/rules/import': {
+      id: '/_sidebar/rules/import'
+      path: '/import'
+      fullPath: '/rules/import'
+      preLoaderRoute: typeof SidebarRulesImportRouteImport
+      parentRoute: typeof SidebarRulesRoute
     }
     '/_sidebar/runs/': {
       id: '/_sidebar/runs/'
@@ -158,6 +372,32 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface SidebarRulesRouteChildren {
+  SidebarRulesIndexRoute: typeof SidebarRulesIndexRoute
+  SidebarRulesActiveRoute: typeof SidebarRulesActiveRoute
+  SidebarRulesCreateRoute: typeof SidebarRulesCreateRoute
+  SidebarRulesCreateReusableRoute: typeof SidebarRulesCreateReusableRoute
+  SidebarRulesCreateSqlRoute: typeof SidebarRulesCreateSqlRoute
+  SidebarRulesDraftsRoute: typeof SidebarRulesDraftsRoute
+  SidebarRulesGenerateRoute: typeof SidebarRulesGenerateRoute
+  SidebarRulesImportRoute: typeof SidebarRulesImportRoute
+}
+
+const SidebarRulesRouteChildren: SidebarRulesRouteChildren = {
+  SidebarRulesIndexRoute: SidebarRulesIndexRoute,
+  SidebarRulesActiveRoute: SidebarRulesActiveRoute,
+  SidebarRulesCreateRoute: SidebarRulesCreateRoute,
+  SidebarRulesCreateReusableRoute: SidebarRulesCreateReusableRoute,
+  SidebarRulesCreateSqlRoute: SidebarRulesCreateSqlRoute,
+  SidebarRulesDraftsRoute: SidebarRulesDraftsRoute,
+  SidebarRulesGenerateRoute: SidebarRulesGenerateRoute,
+  SidebarRulesImportRoute: SidebarRulesImportRoute,
+}
+
+const SidebarRulesRouteWithChildren = SidebarRulesRoute._addFileChildren(
+  SidebarRulesRouteChildren,
+)
+
 interface SidebarRunsRouteChildren {
   SidebarRunsRunNameRoute: typeof SidebarRunsRunNameRoute
   SidebarRunsIndexRoute: typeof SidebarRunsIndexRoute
@@ -173,14 +413,20 @@ const SidebarRunsRouteWithChildren = SidebarRunsRoute._addFileChildren(
 )
 
 interface SidebarRouteRouteChildren {
+  SidebarHomeRoute: typeof SidebarHomeRoute
   SidebarConfigRoute: typeof SidebarConfigRoute
   SidebarProfileRoute: typeof SidebarProfileRoute
+  SidebarProfilerRoute: typeof SidebarProfilerRoute
+  SidebarRulesRoute: typeof SidebarRulesRouteWithChildren
   SidebarRunsRoute: typeof SidebarRunsRouteWithChildren
 }
 
 const SidebarRouteRouteChildren: SidebarRouteRouteChildren = {
+  SidebarHomeRoute: SidebarHomeRoute,
   SidebarConfigRoute: SidebarConfigRoute,
   SidebarProfileRoute: SidebarProfileRoute,
+  SidebarProfilerRoute: SidebarProfilerRoute,
+  SidebarRulesRoute: SidebarRulesRouteWithChildren,
   SidebarRunsRoute: SidebarRunsRouteWithChildren,
 }
 

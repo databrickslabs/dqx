@@ -285,14 +285,14 @@ def _assert_e2e_workflow(caplog, installation_ctx, run_config, spark):
 def test_profiler_when_run_config_missing(ws, installation_ctx):
     installation_ctx.installation_service.run()
 
-    with pytest.raises(InvalidConfigError, match="No run configurations available"):
+    with pytest.raises(ManyError, match="No run configurations available"):
         installation_ctx.deployed_workflows.run_workflow("profiler", run_config_name="unavailable")
 
 
 def test_quality_checker_when_run_config_missing(ws, installation_ctx):
     installation_ctx.installation_service.run()
 
-    with pytest.raises(InvalidConfigError, match="No run configurations available"):
+    with pytest.raises(ManyError, match="No run configurations available"):
         installation_ctx.deployed_workflows.run_workflow("quality-checker", run_config_name="unavailable")
 
 
