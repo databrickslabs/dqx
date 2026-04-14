@@ -120,9 +120,7 @@ jobs:
           bun-version: "1.3.11"
 
       - name: Install JavaScript dependencies
-        run: bun install
-        env:
-          NODE_TLS_REJECT_UNAUTHORIZED: "0"
+        run: nmp install
 
       - name: Build app
         run: uv run apx build
