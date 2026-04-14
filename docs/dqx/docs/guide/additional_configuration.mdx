@@ -198,7 +198,7 @@ DQX allows you to define engine-level defaults for variables used in declarative
     # Load checks - uses 'min_temp' and 'max_temp' from defaults,
     # but overrides 'region' specifically for this call.
     resolved_checks = dq_engine.load_checks(
-        config=FileChecksStorageConfig(location="checks.yml"),
+        config=FileChecksStorageConfig(location="checks.yml"),  variables={ "region": "EMEA" }
     )
     ```
   </TabItem>

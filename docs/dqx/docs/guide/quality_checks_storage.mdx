@@ -181,7 +181,6 @@ If you create checks as a list of DQRule objects, you can convert them using the
     checks: list[dict] = dq_engine.load_checks(config=FileChecksStorageConfig(location="checks.yml"))
 
     # load checks from a local file with variable substitution
-    # see more on variable substitution [here](/docs/guide/quality_checks_definition/#variable-substitution)
     checks: list[dict] = dq_engine.load_checks(
         FileChecksStorageConfig(location="checks.yml"),
         variables={"threshold": 100, "column_name": "total_amount"}
@@ -215,7 +214,7 @@ If you create checks as a list of DQRule objects, you can convert them using the
 
     # validate loaded checks
     assert not dq_engine.validate_checks(checks).has_errors
-    ```
+    
   </TabItem>
   <TabItem value="Workflows" label="Workflows">
     When using the quality checker or e2e workflows to apply quality checks, they load checks from the `checks_location` field defined in the [configuration file](/docs/installation/#configuration-file).
