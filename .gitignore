@@ -184,3 +184,4 @@ docs/dqx/docs/reference/api
 
 # app specific - unignore the lib folder
 !app/src/databricks_labs_dqx_app/ui/lib/
+/uv.toml
