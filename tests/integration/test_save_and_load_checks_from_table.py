@@ -688,7 +688,7 @@ def test_save_and_load_checks_from_table_with_variables(ws, make_schema, make_ra
 
     checks_with_placeholders = [
         {
-            "criticality": "error",
+            "criticality": "{{ crit }}",
             "name": "{{ col1 }}_null_check",
             "check": {
                 "function": "is_not_null",
@@ -730,3 +730,7 @@ def test_save_and_load_checks_from_table_with_variables(ws, make_schema, make_ra
         },
     ]
     assert loaded == expected, "Variable substitution did not resolve correctly after table roundtrip."
+
+    # Verify the resolved checks are valid and can be applied end-to-end
+    assert not engine.validate_checks(loaded).has_errors
+
