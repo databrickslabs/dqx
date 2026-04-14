@@ -105,6 +105,16 @@ jobs:
       - name: Setup for JFrog
         uses: ./.github/actions/jfrog-auth
 
+      - name: Test npm registry connectivity
+        run: |
+          echo "=== Testing public npm registry ==="
+          curl -sS -o /dev/null -w "registry.npmjs.org: HTTP %{http_code}, time %{time_total}s\n" --max-time 10 https://registry.npmjs.org/ || echo "registry.npmjs.org: UNREACHABLE"
+          curl -sS -o /dev/null -w "registry.yarnpkg.com: HTTP %{http_code}, time %{time_total}s\n" --max-time 10 https://registry.yarnpkg.com/ || echo "registry.yarnpkg.com: UNREACHABLE"
+          echo "=== Testing internal npm proxy ==="
+          curl -sS -o /dev/null -w "npm-proxy.dev.databricks.com: HTTP %{http_code}, time %{time_total}s\n" --max-time 10 https://npm-proxy.dev.databricks.com/ || echo "npm-proxy.dev.databricks.com: UNREACHABLE"
+          echo "=== Testing JFrog npm ==="
+          curl -sS -o /dev/null -w "databricks.jfrog.io/npm: HTTP %{http_code}, time %{time_total}s\n" --max-time 10 https://databricks.jfrog.io/artifactory/api/npm/db-npm/ || echo "databricks.jfrog.io/npm: UNREACHABLE"
+
       - name: Configure npm registry
         run: echo "registry=${{ secrets.NPM_REGISTRY_URL }}" > ~/.npmrc
 
