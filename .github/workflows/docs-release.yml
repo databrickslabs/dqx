@@ -42,8 +42,8 @@ jobs:
           cache: yarn
           cache-dependency-path: docs/dqx/yarn.lock # need to put the lockfile path explicitly
 
-      - name: Configure yarn registry
-        run: yarn config set registry "${{ secrets.NPM_REGISTRY_URL }}"
+      - name: Configure npm registry
+        run: echo "registry=${{ secrets.NPM_REGISTRY_URL }}" > ~/.npmrc
 
       - name: Install dependencies
         run: make docs-install
