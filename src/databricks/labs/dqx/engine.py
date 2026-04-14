@@ -1216,7 +1216,7 @@ class DQEngine(DQEngineBase):
         """
         handler = self._checks_handler_factory.create(config)
         checks = handler.load(config)
-        merged = self._merge_variables(variables)
+        merged_variables = self._merge_variables(variables)
         return resolve_variables(checks=checks, variables=merged_variables)
 
     def _merge_variables(self, per_call: dict[str, VariableValue] | None) -> dict[str, VariableValue] | None:

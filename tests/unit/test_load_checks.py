@@ -325,6 +325,72 @@ def test_load_checks_by_metadata_and_split_with_variables(tmp_path):
     ]
 
 
+def test_load_checks_sql_query_no_variables(tmp_path, caplog):
+    checks_yaml = """
+        - criticality: error
+          check:
+            function: sql_query
+            arguments:
+              query: "SELECT id, COUNT(*) > 0 AS condition FROM {{ input_view }} GROUP BY id"
+              merge_columns:
+                - id
+        """
+    checks_file = tmp_path / "checks.yml"
+    checks_file.write_text(checks_yaml, encoding="utf-8")
+
+    with caplog.at_level(logging.WARNING):
+        checks = DQEngineCore.load_checks_from_local_file(str(checks_file))
+
+    assert not any("input_view" in msg for msg in caplog.messages)
+
+    assert checks == [
+        {
+            "criticality": "error",
+            "check": {
+                "function": "sql_query",
+                "arguments": {
+                    "query": "SELECT id, COUNT(*) > 0 AS condition FROM {{ input_view }} GROUP BY id",
+                    "merge_columns": ["id"],
+                },
+            },
+        },
+    ]
+
+
+def test_load_checks_sql_query_with_variables(tmp_path, caplog):
+    checks_yaml = """
+        - criticality: "{{ crit }}"
+          name: "count_check"
+          check:
+            function: sql_query
+            arguments:
+              query: "SELECT id, COUNT(*) > 0 AS condition FROM {{ input_view }} GROUP BY id"
+              merge_columns:
+                - id
+        """
+    checks_file = tmp_path / "checks.yml"
+    checks_file.write_text(checks_yaml, encoding="utf-8")
+
+    with caplog.at_level(logging.WARNING):
+        checks = DQEngineCore.load_checks_from_local_file(str(checks_file), variables={"crit": "error"})
+
+    assert checks == [
+        {
+            "criticality": "error",
+            "name": "count_check",
+            "check": {
+                "function": "sql_query",
+                "arguments": {
+                    "query": "SELECT id, COUNT(*) > 0 AS condition FROM {{ input_view }} GROUP BY id",
+                    "merge_columns": ["id"],
+                },
+            },
+        },
+    ]
+    # {{ input_view }} is left unresolved — it is resolved at runtime by sql_query itself
+    assert any("input_view" in msg for msg in caplog.messages)
+
+
 def test_load_checks_by_metadata_with_variables_name_and_filter(tmp_path):
 
     checks_yaml = """

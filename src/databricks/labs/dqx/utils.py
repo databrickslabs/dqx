@@ -579,7 +579,10 @@ def _replace_template(text: str, variables: dict[str, str]) -> str:
     unresolved: list[str] = []
     output = _UNRESOLVED_PLACEHOLDER_PATTERN.sub(_resolve, text)
     if unresolved:
-        logger.warning(f"Unresolved placeholders found: {unresolved}")
+        logger.warning(
+            f"Unresolved placeholders found: {unresolved}. "
+            f"They may be resolved at runtime for certain checks (e.g. sql_query)."
+        )
     return output
 
 
