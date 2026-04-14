@@ -401,6 +401,25 @@ def _delete_mlflow_experiment_by_name(experiment_path: str) -> None:
         logger.warning(msg)
 
 
+@pytest.fixture(autouse=True)
+def _ensure_databricks_config_file(ws, tmp_path_factory):
+    """Ensure DATABRICKS_CONFIG_FILE points to a valid profile.
+
+    MLflow requires a Databricks config profile to exist even when using SDK auth.
+    If DATABRICKS_CONFIG_FILE is already set and the file exists, this is a no-op.
+    Otherwise, create a dummy profile with the real host from the workspace client.
+    """
+    config_file = os.environ.get("DATABRICKS_CONFIG_FILE")
+    if config_file and os.path.isfile(config_file):
+        return
+
+    profile_dir = tmp_path_factory.mktemp("databricks_config")
+    profile_path = profile_dir / "databricks_profile"
+    host = ws.config.host
+    profile_path.write_text(f"[DEFAULT]\nhost = {host}\ntoken = dummy\n")
+    os.environ["DATABRICKS_CONFIG_FILE"] = str(profile_path)
+
+
 @pytest.fixture
 def mlflow_worker_experiment(ws):
     """Create one MLflow experiment per xdist worker (via module cache); reuse across tests.

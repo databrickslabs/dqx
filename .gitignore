@@ -168,7 +168,6 @@ dev/cleanup.py
 .databricks
 .vscode
 
-.python-version
 .databricks-login.json
 .local-dev
 

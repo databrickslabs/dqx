@@ -10,9 +10,7 @@ on:
       - main
 
 permissions:
-  id-token: write
   contents: read
-  pull-requests: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -23,78 +21,52 @@ jobs:
     if: github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork
     environment: tool
     runs-on: larger
+    permissions:
+      id-token: write
+      pull-requests: write
     steps:
       - name: Checkout Code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
 
-      - name: Install Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+      - name: Setup uv
+        uses: astral-sh/setup-uv@5a095e7a2014a4212f075830d4f7277575a9d098  # v7.3.1
         with:
-          cache: 'pip'
-          cache-dependency-path: '**/pyproject.toml'
-          python-version: '3.12'
+          version: "0.11.2"
+          checksum: "7ac2ca0449c8d68dae9b99e635cd3bc9b22a4cb1de64b7c43716398447d42981"
 
-      - name: Install hatch
-        run: pip install hatch==1.16.5
+      - name: Setup for JFrog
+        uses: ./.github/actions/jfrog-auth
 
-      # Anomaly tests are run from within tests/integration_anomaly folder.
       # Create .coveragerc with correct relative path to source code.
       - name: Prepare code coverage configuration for anomaly tests
         run: |
           cat > tests/integration_anomaly/.coveragerc << EOF
           [run]
-          source = ../../../src
-          parallel = true
+          source = ../../src
           relative_files = true
           EOF
 
-      - name: Azure login (OIDC)
-        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
+      - name: Run anomaly integration tests
+        uses: databrickslabs/sandbox/acceptance@3313d06ce86227537b3f37f5974f7eecb2a8e59a # acceptance/v0.4.4
         with:
-          client-id: ${{ secrets.ARM_CLIENT_ID }}
-          tenant-id: ${{ secrets.ARM_TENANT_ID }}
-          allow-no-subscriptions: true
-
-      - name: Set env vars for Azure CLI auth + MLflow
-        shell: bash
-        run: |
-          val=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-HOST" --query value -o tsv)
-          # Ensure host has https:// prefix (SDK and MLflow expect full URL)
-          if [[ ! "$val" =~ ^https?:// ]]; then
-            val="https://$val"
-          fi
-          # Workaround for MLflow OIDC auth: MLflow requires a profile to exist even when it uses SDK auth.
-          dummy_profile="${RUNNER_TEMP}/databricks_profile"
-          cat > "$dummy_profile" << EOF
-          [DEFAULT]
-          host = $val
-          token = dummy
-          EOF
-          echo "DATABRICKS_HOST=$val" >> $GITHUB_ENV
-          # Set cluster ID without printing to logs
-          echo "DATABRICKS_CLUSTER_ID=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-CLUSTER-ID" --query value -o tsv)" >> $GITHUB_ENV
-          echo "DATABRICKS_DQX_CLUSTER_ID=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-DQX-CLUSTER-ID" --query value -o tsv)" >> $GITHUB_ENV
-
-          # Set warehouse ID without printing to logs
-          echo "DATABRICKS_WAREHOUSE_ID=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-WAREHOUSE-ID" --query value -o tsv)" >> $GITHUB_ENV
-          echo "DATABRICKS_AUTH_TYPE=azure-cli" >> $GITHUB_ENV
-          echo "DATABRICKS_CONFIG_FILE=$dummy_profile" >> $GITHUB_ENV
-
-          # MLflow: Use databricks scheme so MLflow uses SDK auth (with dummy profile present).
-          echo "MLFLOW_ENABLE_DB_SDK=true" >> $GITHUB_ENV
-          echo "MLFLOW_TRACKING_URI=databricks" >> $GITHUB_ENV
-          echo "MLFLOW_REGISTRY_URI=databricks-uc" >> $GITHUB_ENV
-          echo "MLFLOW_HTTP_REQUEST_TIMEOUT=600" >> $GITHUB_ENV
-          echo "MLFLOW_HTTP_REQUEST_MAX_RETRIES=10" >> $GITHUB_ENV
-
-      - name: Run anomaly integration tests and generate test coverage report
-        timeout-minutes: 200
+          vault_uri: ${{ secrets.VAULT_URI }}
+          timeout: 3h
+          codegen_path: tests/integration_anomaly/.codegen.json
         env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           COVERAGE_FILE: ${{ github.workspace }}/.coverage
-        run: |
-          hatch run pytest tests/integration_anomaly/ -v -rs -n 10 --cov --cov-report=xml --timeout=2000 --reruns 1 --reruns-delay 5 --durations=10
+          MLFLOW_ENABLE_DB_SDK: "true"
+          MLFLOW_TRACKING_URI: databricks
+          MLFLOW_REGISTRY_URI: databricks-uc
+          MLFLOW_HTTP_REQUEST_TIMEOUT: "600"
+          MLFLOW_HTTP_REQUEST_MAX_RETRIES: "10"
+
+      - name: Merge coverage reports and convert them to XML
+        run: make combine-coverage
 
       # Recursively search the entire workspace directory for all coverage reports.
       # All uploaded test coverage reports will be used even if publish is done multiple time.
@@ -107,75 +79,53 @@ jobs:
     if: github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork
     environment: tool
     runs-on: larger
+    permissions:
+      id-token: write
+      pull-requests: write
     steps:
       - name: Checkout Code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
 
-      - name: Install Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+      - name: Setup uv
+        uses: astral-sh/setup-uv@5a095e7a2014a4212f075830d4f7277575a9d098  # v7.3.1
         with:
-          cache: 'pip'
-          cache-dependency-path: '**/pyproject.toml'
-          python-version: '3.12'
+          version: "0.11.2"
+          checksum: "7ac2ca0449c8d68dae9b99e635cd3bc9b22a4cb1de64b7c43716398447d42981"
 
-      - name: Install hatch
-        run: pip install hatch==1.16.5
+      - name: Setup for JFrog
+        uses: ./.github/actions/jfrog-auth
 
-      # Anomaly tests are run from within tests/integration_anomaly folder.
       # Create .coveragerc with correct relative path to source code.
       - name: Prepare code coverage configuration for anomaly tests
         run: |
           cat > tests/integration_anomaly/.coveragerc << EOF
           [run]
-          source = ../../../src
-          parallel = true
+          source = ../../src
           relative_files = true
           EOF
 
-      - name: Azure login (OIDC)
-        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
-        with:
-          client-id: ${{ secrets.ARM_CLIENT_ID }}
-          tenant-id: ${{ secrets.ARM_TENANT_ID }}
-          allow-no-subscriptions: true
-
-      - name: Set env vars for Azure CLI auth + MLflow
-        shell: bash
-        run: |
-          val=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-HOST" --query value -o tsv)
-          # Ensure host has https:// prefix (SDK and MLflow expect full URL)
-          if [[ ! "$val" =~ ^https?:// ]]; then
-            val="https://$val"
-          fi
-          # Workaround for MLflow OIDC auth: MLflow requires a profile to exist even when it uses SDK auth.
-          dummy_profile="${RUNNER_TEMP}/databricks_profile"
-          cat > "$dummy_profile" << EOF
-          [DEFAULT]
-          host = $val
-          token = dummy
-          EOF
-          echo "DATABRICKS_HOST=$val" >> $GITHUB_ENV
-          echo "DATABRICKS_AUTH_TYPE=azure-cli" >> $GITHUB_ENV
-          echo "DATABRICKS_CONFIG_FILE=$dummy_profile" >> $GITHUB_ENV
-          # Set warehouse ID without printing to logs
-          echo "DATABRICKS_WAREHOUSE_ID=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-WAREHOUSE-ID" --query value -o tsv)" >> $GITHUB_ENV
-
-          # MLflow: Use databricks scheme so MLflow uses SDK auth (with dummy profile present).
-          echo "MLFLOW_ENABLE_DB_SDK=true" >> $GITHUB_ENV
-          echo "MLFLOW_TRACKING_URI=databricks" >> $GITHUB_ENV
-          echo "MLFLOW_REGISTRY_URI=databricks-uc" >> $GITHUB_ENV
-          echo "MLFLOW_HTTP_REQUEST_TIMEOUT=600" >> $GITHUB_ENV
-          echo "MLFLOW_HTTP_REQUEST_MAX_RETRIES=10" >> $GITHUB_ENV
-
       - name: Run anomaly integration tests on serverless cluster
-        timeout-minutes: 200
+        uses: databrickslabs/sandbox/acceptance@3313d06ce86227537b3f37f5974f7eecb2a8e59a # acceptance/v0.4.4
+        with:
+          vault_uri: ${{ secrets.VAULT_URI }}
+          timeout: 3h
+          codegen_path: tests/integration_anomaly/.codegen.json
         env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           COVERAGE_FILE: ${{ github.workspace }}/.coverage
           DATABRICKS_SERVERLESS_COMPUTE_ID: auto
-        run: |
-          hatch run pytest tests/integration_anomaly/ -v -rs -n 10 --cov --cov-report=xml --timeout=2000 --reruns 1 --reruns-delay 5 --durations=10
+          MLFLOW_ENABLE_DB_SDK: "true"
+          MLFLOW_TRACKING_URI: databricks
+          MLFLOW_REGISTRY_URI: databricks-uc
+          MLFLOW_HTTP_REQUEST_TIMEOUT: "600"
+          MLFLOW_HTTP_REQUEST_MAX_RETRIES: "10"
+
+      - name: Merge coverage reports and convert them to XML
+        run: make combine-coverage
 
       # collects all coverage reports
       - name: Publish test coverage

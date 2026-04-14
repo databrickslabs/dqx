@@ -10,9 +10,14 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+
 jobs:
   no-pylint-disable:
-    runs-on: ubuntu-latest
+    runs-on:
+      group: databrickslabs-protected-runner-group
+      labels: linux-ubuntu-latest
     if: github.event_name == 'pull_request' && (github.event.action == 'opened' || github.event.action == 'synchronize')
     steps:
       - name: Checkout
