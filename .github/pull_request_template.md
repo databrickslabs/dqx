@@ -15,7 +15,7 @@ Resolves #..
 - [ ] added end-to-end tests
 - [ ] added performance tests
 
-### Documentation
+### Documentation and Demos
 <!-- Any user facing changes require documentation update -->
 
 - [ ] added/updated
