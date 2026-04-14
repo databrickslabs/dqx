@@ -60,11 +60,3 @@ runs:
         //databricks.jfrog.io/artifactory/api/npm/db-npm/:_authToken=${JFROG_ACCESS_TOKEN}
         always-auth=true
         EOF
-
-    - name: Configure bun for JFrog
-      shell: bash
-      env:
-        JFROG_ACCESS_TOKEN: "${{ steps.jfrog-auth.outputs.jfrog-access-token }}"
-      run: |
-        umask 077
-        printf '[install]\nregistry = { url = "https://databricks.jfrog.io/artifactory/api/npm/db-npm/", token = "%s" }\n' "${JFROG_ACCESS_TOKEN}" > ~/.bunfig.toml
