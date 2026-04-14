@@ -122,7 +122,7 @@ jobs:
       - name: Install JavaScript dependencies
         run: bun install
         env:
-          NODE_EXTRA_CA_CERTS: /etc/ssl/certs/ca-certificates.crt
+          NODE_TLS_REJECT_UNAUTHORIZED: "0"
 
       - name: Build app
         run: uv run apx build
