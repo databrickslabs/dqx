@@ -1,9 +1,10 @@
 name: Release
 
-on:
-  push:
-    tags:
-      - 'v[0-9]+.[0-9]+.[0-9]+' # Must match semantic version tags like 'v1.2.3'
+on: {}
+# Disabled for now, pending further work.
+#  push:
+#    tags:
+#      - 'v[0-9]+.[0-9]+.[0-9]+' # Must match semantic version tags like 'v1.2.3'
 
 jobs:
   publish:
@@ -19,17 +20,18 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+      - name: Setup uv
+        uses: astral-sh/setup-uv@5a095e7a2014a4212f075830d4f7277575a9d098  # v7.3.1
         with:
-          cache: 'pip'
-          cache-dependency-path: '**/pyproject.toml'
-          python-version: '3.12'
-      
+          version: "0.11.2"
+          checksum: "7ac2ca0449c8d68dae9b99e635cd3bc9b22a4cb1de64b7c43716398447d42981"
+
+      - name: Setup for JFrog
+        uses: ./.github/actions/jfrog-auth
+
       - name: Build wheels
-        run: |
-          pip install hatch==1.16.5
-          hatch build
-      
+        run: make build
+
       - name: Github release
         uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
         with:
@@ -39,7 +41,7 @@ jobs:
 
       - uses: pypa/gh-action-pypi-publish@ed0c53931b1dc9bd32cbe73a98c7f6766f8a527e # v1.13.0
         name: Publish package distributions to PyPI
-      
+
       - name: Sign artifacts with Sigstore
         uses: sigstore/gh-action-sigstore-python@f514d46b907ebcd5bedc05145c03b69c1edd8b46 # v3.0.0
         with:
