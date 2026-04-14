@@ -3,6 +3,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 
 def _run(cmd: list[str], env: dict[str, str] | None = None, cwd: str | None = None) -> tuple[int, str]:
     proc = subprocess.run(cmd, capture_output=True, text=True, env=env, cwd=cwd, check=False)
@@ -10,6 +12,7 @@ def _run(cmd: list[str], env: dict[str, str] | None = None, cwd: str | None = No
     return proc.returncode, out
 
 
+@pytest.mark.timeout(300)
 def test_cli_runs_from_fresh_cli_only_venv(tmp_path: Path):
     # Create a clean venv without test deps
     venv_dir = tmp_path / "cli_venv"
