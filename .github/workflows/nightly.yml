@@ -15,7 +15,9 @@ concurrency:
 jobs:
   integration:
     environment: tool
-    runs-on: larger
+    runs-on:
+      group: larger-runners
+      labels: larger
     permissions:
       id-token: write
       pull-requests: read
@@ -73,7 +75,9 @@ jobs:
 
   integration_serverless:
     environment: tool
-    runs-on: larger
+    runs-on:
+      group: larger-runners
+      labels: larger
     permissions:
       id-token: write
       pull-requests: read
@@ -129,7 +133,9 @@ jobs:
 
   anomaly-tests:
     environment: tool
-    runs-on: larger
+    runs-on:
+      group: larger-runners
+      labels: larger
     permissions:
       id-token: write
       pull-requests: read
@@ -185,7 +191,9 @@ jobs:
 
   anomaly-tests-serverless:
     environment: tool
-    runs-on: larger
+    runs-on:
+      group: larger-runners
+      labels: larger
     permissions:
       id-token: write
       pull-requests: read
@@ -242,7 +250,9 @@ jobs:
 
   e2e:
     environment: tool
-    runs-on: larger
+    runs-on:
+      group: larger-runners
+      labels: larger
     permissions:
       id-token: write
       pull-requests: read
@@ -279,7 +289,9 @@ jobs:
 
   e2e_serverless:
     environment: tool
-    runs-on: larger
+    runs-on:
+      group: larger-runners
+      labels: larger
     permissions:
       id-token: write
       pull-requests: read
@@ -329,7 +341,9 @@ jobs:
       contents: write # required for creating benchmark baseline branches
       pull-requests: write # required for creating benchmark baseline PRs
     environment: tool
-    runs-on: larger
+    runs-on:
+      group: larger-runners
+      labels: larger
     env:
       DATABRICKS_SERVERLESS_COMPUTE_ID: auto
       BENCHMARKS_DIR: tests/perf/.benchmarks

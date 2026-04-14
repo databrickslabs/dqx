@@ -32,7 +32,9 @@ jobs:
   integration:
     needs: not-a-fork
     environment: tool
-    runs-on: larger
+    runs-on:
+      group: larger-runners
+      labels: larger
     permissions:
       # Access to the integration testing infrastructure.
       id-token: write
@@ -94,7 +96,9 @@ jobs:
   integration_serverless:
     needs: not-a-fork
     environment: tool
-    runs-on: larger
+    runs-on:
+      group: larger-runners
+      labels: larger
     permissions:
       id-token: write
       pull-requests: write
@@ -150,7 +154,9 @@ jobs:
   e2e:
     needs: not-a-fork
     environment: tool
-    runs-on: larger
+    runs-on:
+      group: larger-runners
+      labels: larger
     permissions:
       id-token: write
       pull-requests: write
@@ -188,7 +194,9 @@ jobs:
   e2e_serverless:
     needs: not-a-fork
     environment: tool
-    runs-on: larger
+    runs-on:
+      group: larger-runners
+      labels: larger
     permissions:
       id-token: write
       pull-requests: write

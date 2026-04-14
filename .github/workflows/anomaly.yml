@@ -31,7 +31,9 @@ jobs:
   anomaly-tests:
     needs: not-a-fork
     environment: tool
-    runs-on: larger
+    runs-on:
+      group: larger-runners
+      labels: larger
     permissions:
       id-token: write
       pull-requests: write
@@ -89,7 +91,9 @@ jobs:
   anomaly-tests-serverless:
     needs: not-a-fork
     environment: tool
-    runs-on: larger
+    runs-on:
+      group: larger-runners
+      labels: larger
     permissions:
       id-token: write
       pull-requests: write
