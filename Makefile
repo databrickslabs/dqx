@@ -84,7 +84,7 @@ build:
 
 lock-dependencies: export UV_FROZEN := 0
 lock-dependencies:
-	uv lock
+	uv lock --exclude-newer "7 days"
 	$(UV_RUN) --group yq tomlq -r '.["build-system"].requires[]' pyproject.toml | \
 	  uv pip compile --generate-hashes --universal --no-header - > build-constraints-new.txt
 	mv build-constraints-new.txt .build-constraints.txt

@@ -13,8 +13,6 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-04-03T22:22:05.243253Z"
-exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
 databricks-connect = false
