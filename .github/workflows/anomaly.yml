@@ -5,9 +5,6 @@ on:
     types: [ opened, synchronize, ready_for_review ]
   merge_group:
     types: [ checks_requested ]
-  push:
-    branches:
-      - main
 
 permissions:
   contents: read
@@ -24,7 +21,9 @@ jobs:
     runs-on:
       group: databrickslabs-protected-runner-group
       labels: linux-ubuntu-latest
-    if: github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork
+    if: >-
+      github.event_name == 'merge_group' ||
+      (github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork)
     steps:
       - run: echo "Not a fork PR or draft PR, proceeding"
 
