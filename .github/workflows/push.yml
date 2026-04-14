@@ -105,14 +105,14 @@ jobs:
       - name: Setup for JFrog
         uses: ./.github/actions/jfrog-auth
 
+      - name: Configure npm registry
+        run: echo "registry=${{ secrets.NPM_REGISTRY_URL }}" > ~/.npmrc
+
       - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
         with:
           node-version: 20
           cache: yarn
           cache-dependency-path: docs/dqx/yarn.lock # need to put the lockfile path explicitly
-
-      - name: Configure npm registry
-        run: echo "registry=${{ secrets.NPM_REGISTRY_URL }}" > ~/.npmrc
 
       - name: Install dependencies
         run: make docs-install
@@ -151,7 +151,9 @@ jobs:
           bun-version: "1.3.11"
 
       - name: Configure npm registry
-        run: echo "registry=${{ secrets.NPM_REGISTRY_URL }}" > ~/.npmrc
+        run: |
+          echo "registry=${{ secrets.NPM_REGISTRY_URL }}" > ~/.npmrc
+          printf '[install]\nregistry = "%s"\n' "${{ secrets.NPM_REGISTRY_URL }}" > ~/.bunfig.toml
         working-directory: .
 
       - name: Install JavaScript dependencies
