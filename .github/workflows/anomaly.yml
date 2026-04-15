@@ -19,7 +19,7 @@ jobs:
   # PRs from forks to be tested by the reviewer(s) / maintainer(s) before merging.
 
   anomaly-tests:
-    if: github.event_name == 'merge_group' || (github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork)
+    if: github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork
     environment: tool
     runs-on:
       group: larger-runners
@@ -73,7 +73,7 @@ jobs:
           use_oidc: true
 
   anomaly-tests-serverless:
-    if: github.event_name == 'merge_group' || (github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork)
+    if: github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork
     environment: tool
     runs-on:
       group: larger-runners

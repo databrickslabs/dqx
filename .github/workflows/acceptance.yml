@@ -20,7 +20,7 @@ jobs:
   # PRs from forks to be tested by the reviewer(s) / maintainer(s) before merging.
 
   integration:
-    if: github.event_name == 'merge_group' || (github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork)
+    if: github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork
     environment: tool
     runs-on:
       group: larger-runners
@@ -78,7 +78,7 @@ jobs:
           use_oidc: true
 
   integration_serverless:
-    if: github.event_name == 'merge_group' || (github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork)
+    if: github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork
     environment: tool
     runs-on:
       group: larger-runners
@@ -130,7 +130,7 @@ jobs:
           use_oidc: true
 
   e2e:
-    if: github.event_name == 'merge_group' || (github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork)
+    if: github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork
     environment: tool
     runs-on:
       group: larger-runners
@@ -164,7 +164,7 @@ jobs:
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
 
   e2e_serverless:
-    if: github.event_name == 'merge_group' || (github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork)
+    if: github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork
     environment: tool
     runs-on:
       group: larger-runners
