@@ -38,6 +38,14 @@ from databricks.sdk.service.workspace import ImportFormat
 logger = logging.getLogger(__name__)
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _mlflow_env():
+    """Ensure MLflow points at Databricks Unity Catalog when running against a workspace.
+    Uses setdefault so explicit env vars (e.g. in CI) take precedence."""
+    os.environ.setdefault("MLFLOW_TRACKING_URI", "databricks")
+    os.environ.setdefault("MLFLOW_REGISTRY_URI", "databricks-uc")
+
+
 def get_schema_validation_rules(rules: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Return rules that are has_valid_schema schema_validation rules (for data contract tests)."""
     return [
@@ -69,7 +77,11 @@ def debug_env(monkeypatch, debug_env_name):
             conf = json.load(f)
             if debug_env_name in conf:
                 for env_key, value in conf[debug_env_name].items():
-                    monkeypatch.setenv(env_key, str(value))
+                    value = str(value)
+                    # Ensure DATABRICKS_HOST always has the https:// scheme
+                    if env_key == "DATABRICKS_HOST" and value and not value.startswith("https://"):
+                        value = f"https://{value}"
+                    monkeypatch.setenv(env_key, value)
     return os.environ
 
 
