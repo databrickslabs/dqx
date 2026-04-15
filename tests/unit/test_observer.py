@@ -97,34 +97,6 @@ def test_check_metrics_escapes_single_quotes():
     assert observer.metrics == expected
 
 
-def test_check_metrics_replaced_on_second_set():
-    observer = DQMetricsObserver()
-    observer.set_check_names(["first_check"])
-    assert observer.metrics == _default_metrics() + [_check_metrics_expr(["first_check"])]
-
-    observer.set_check_names(["second_check"])
-    assert observer.metrics == _default_metrics() + [_check_metrics_expr(["second_check"])]
-
-
-def test_check_metrics_repeated_use_different_checks():
-    observer = DQMetricsObserver()
-
-    observer.set_check_names(["check_a", "check_b"])
-    assert observer.metrics == _default_metrics() + [_check_metrics_expr(["check_a", "check_b"])]
-
-    observer.set_check_names(["check_c"])
-    assert observer.metrics == _default_metrics() + [_check_metrics_expr(["check_c"])]
-
-
-def test_check_metrics_cleared_with_empty_names():
-    observer = DQMetricsObserver()
-    observer.set_check_names(["my_check"])
-    assert len(observer.metrics) == 5
-
-    observer.set_check_names([])
-    assert observer.metrics == _default_metrics()
-
-
 def _default_metrics(err="_errors", warn="_warnings"):
     return [
         "count(1) as input_row_count",

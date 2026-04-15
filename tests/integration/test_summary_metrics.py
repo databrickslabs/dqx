@@ -123,11 +123,13 @@ def test_observer_metrics(ws, spark, apply_checks_method):
 
     checked_df.count()  # Trigger an action to get the metrics
     actual_metrics = observation.get
-    assert actual_metrics["input_row_count"] == 4
-    assert actual_metrics["error_row_count"] == 1
-    assert actual_metrics["warning_row_count"] == 1
-    assert actual_metrics["valid_row_count"] == 2
-    assert "check_metrics" in actual_metrics
+    assert actual_metrics == {
+        "input_row_count": 4,
+        "error_row_count": 1,
+        "warning_row_count": 1,
+        "valid_row_count": 2,
+        "check_metrics": TEST_CHECK_METRICS_VALUE,
+    }
 
 
 @pytest.mark.parametrize("apply_checks_method", [DQEngine.apply_checks, DQEngine.apply_checks_by_metadata])
@@ -194,13 +196,15 @@ def test_observer_custom_metrics(ws, spark, apply_checks_method):
 
     checked_df.count()  # Trigger an action to get the metrics
     actual_metrics = observation.get
-    assert actual_metrics["input_row_count"] == 4
-    assert actual_metrics["error_row_count"] == 1
-    assert actual_metrics["warning_row_count"] == 1
-    assert actual_metrics["valid_row_count"] == 2
-    assert actual_metrics["avg_error_age"] == 35.0
-    assert actual_metrics["total_warning_salary"] == 55000
-    assert "check_metrics" in actual_metrics
+    assert actual_metrics == {
+        "input_row_count": 4,
+        "error_row_count": 1,
+        "warning_row_count": 1,
+        "valid_row_count": 2,
+        "check_metrics": TEST_CHECK_METRICS_VALUE,
+        "avg_error_age": 35.0,
+        "total_warning_salary": 55000,
+    }
 
 
 @pytest.mark.parametrize(
