@@ -62,6 +62,22 @@ else:
 
 # COMMAND ----------
 
+import os
+
+workspace_root_path = os.getcwd()
+quality_rules_path = f"{workspace_root_path}/quality_checks"
+
+# Cleanup existing DQ Rules files, if already exists
+if os.path.exists(quality_rules_path):
+    for filename in os.listdir(quality_rules_path):
+        file_path = os.path.join(quality_rules_path, filename)
+        # Only delete files, not subdirectories
+        if os.path.isfile(file_path):
+            os.remove(file_path)
+            print(f"Deleted: {file_path}")
+
+# COMMAND ----------
+
 # MAGIC %md
 # MAGIC ### Production Best Practice: Pin DQX Version
 # MAGIC
@@ -95,16 +111,6 @@ print(f"Selected Schema: {schema}")
 # MAGIC ### Setup Sample Fashion Product Catalog Data
 # MAGIC
 # MAGIC We'll create a DataFrame simulating a typical product catalog upload from vendors or a merchandising system sync.
-# MAGIC
-# MAGIC The dataset includes fields common in fashion/retail:
-# MAGIC * **`sku`** — Stock Keeping Unit identifier following `CATEGORY-COLOR-SIZE` convention
-# MAGIC * **`product_name`** — Human-readable product description
-# MAGIC * **`category`** / **`brand`** — Product taxonomy and brand attribution
-# MAGIC * **`size_code`** — Apparel sizing (XS–XXL, OS, numeric)
-# MAGIC * **`color_hex`** — CSS hex color for storefront display
-# MAGIC * **`retail_price`** / **`unit_cost`** — Pricing and cost for margin analysis
-# MAGIC * **`weight_kg`** — Shipping weight for logistics
-# MAGIC * **`season_code`** — Merchandising season (e.g., SS25 = Spring/Summer 2025)
 
 # COMMAND ----------
 
@@ -161,23 +167,139 @@ products = [
     Row(sku="PARKA-OLV-XL",    product_name="Expedition Parka",         category="Outerwear",   brand="StreetPulse", size_code="XL",   color_hex="#556B2F", retail_price=275.00, unit_cost=95.00,  weight_kg=1.40, season_code="FW24"),
 ]
 
-products_df = spark.createDataFrame(products)
-display(products_df)
+products_table = f"{catalog}.{schema}.fashion_products"
+
+if spark.catalog.tableExists(products_table) and spark.table(products_table).count() > 0:
+    print(f"Table {products_table} already exists with demo data. Skipping data generation")
+else:
+    products_df = spark.createDataFrame(products)
+    products_df.write.mode("overwrite").saveAsTable(products_table)
 
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ### Understanding the Dataset
 # MAGIC
-# MAGIC ### Defining Fashion Product Quality Checks
+# MAGIC ### Fashion Product Catalog Dataset
 # MAGIC
-# MAGIC We define our industry-specific checks using a YAML configuration. This is the recommended approach for DQX as it separates rule definitions from logic.
+# MAGIC | Column Name    | Data Type | Description                                                    | Example Value     |
+# MAGIC |----------------|-----------|----------------------------------------------------------------|-------------------|
+# MAGIC | `sku`          | string    | Stock Keeping Unit — `CATEGORY-COLOR-SIZE` format              | TSHIRT-BLK-M      |
+# MAGIC | `product_name` | string    | Human-readable product description                             | Classic Crew Tee  |
+# MAGIC | `category`     | string    | Product taxonomy category                                      | Tops              |
+# MAGIC | `brand`        | string    | Brand attribution                                              | BasicsLab         |
+# MAGIC | `size_code`    | string    | Apparel sizing (XS–XXL, OS, or numeric like 32-L)              | M                 |
+# MAGIC | `color_hex`    | string    | CSS hex color for storefront display                           | #000000           |
+# MAGIC | `retail_price` | double    | Listed retail price (must be positive)                         | 29.99             |
+# MAGIC | `unit_cost`    | double    | Vendor unit cost (must not exceed retail price)                | 8.50              |
+# MAGIC | `weight_kg`    | double    | Shipping weight in kilograms (0.01–25 kg)                      | 0.18              |
+# MAGIC | `season_code`  | string    | Merchandising season code (e.g., SS25, FW24, AW25, RS25)       | SS25              |
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Some Sample Product Catalog Data
+
+# COMMAND ----------
+
+# DBTITLE 1,Products Bronze Table
+products_df = spark.read.table(products_table)
+print("=== Product Catalog Data Sample ===")
+display(products_df.limit(10))
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Auto-Infer Quality Rules with DQProfiler
 # MAGIC
-# MAGIC We also define a **custom check function** for detecting suspicious pricing patterns common in retail product catalogs:
-# MAGIC * **Perfectly round retail prices** (e.g., exactly $100.00, $200.00) which often indicate placeholder or draft pricing that was never finalized
+# MAGIC Before defining rules manually, DQX can **automatically infer data quality rules** from the data profile. This is useful for bootstrapping a quality rule set for a new dataset.
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC **Step 1**: Read raw data and instantiate DQX
+
+# COMMAND ----------
+
+import yaml
+from pprint import pprint
+
+from databricks.sdk import WorkspaceClient
+from databricks.labs.dqx.profiler.profiler import DQProfiler
+from databricks.labs.dqx.profiler.generator import DQGenerator
+from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.config import WorkspaceFileChecksStorageConfig, TableChecksStorageConfig
+
+ws = WorkspaceClient()
+dq_engine = DQEngine(ws)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC **Step 2**: Run DQProfiler to infer quality rules
+
+# COMMAND ----------
+
+# DBTITLE 1,Profile Data and Infer Quality Rules
+profiler = DQProfiler(ws)
+summary_stats, profiles = profiler.profile(products_df)
+
+generator = DQGenerator(ws)
+inferred_checks = generator.generate_dq_rules(profiles)
+
+print("=== Inferred DQ Checks ===\n")
+for idx, check in enumerate(inferred_checks):
+    print(f"========Check {idx} ==========\n")
+    pprint(check)
+
+# COMMAND ----------
+
+# DBTITLE 1,Save Inferred Rules to Workspace File
+fashion_inferred_rules_yaml = f"{quality_rules_path}/fashion_inferred_dq_rules.yml"
+dq_engine.save_checks(inferred_checks, config=WorkspaceFileChecksStorageConfig(location=fashion_inferred_rules_yaml))
+displayHTML(f'<a href="/#workspace{fashion_inferred_rules_yaml}" target="_blank">Fashion Inferred Quality Rules YAML</a>')
+
+# COMMAND ----------
+
+# DBTITLE 1,Save Inferred Rules to Delta Table
+fashion_inferred_rules_table = f"{catalog}.{schema}.fashion_inferred_quality_rules"
+dq_engine.save_checks(inferred_checks, config=TableChecksStorageConfig(location=fashion_inferred_rules_table, run_config_name="fashion_inferred"))
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC **Step 3**: Apply Inferred Quality Rules to Input Data
+
+# COMMAND ----------
+
+# Load checks from workspace file
+inferred_quality_checks = dq_engine.load_checks(config=WorkspaceFileChecksStorageConfig(location=fashion_inferred_rules_yaml))
+
+# Apply checks on input data
+valid_inferred_df, quarantined_inferred_df = dq_engine.apply_checks_by_metadata_and_split(products_df, inferred_quality_checks)
+
+print("=== Products Quarantined by Inferred Rules ===")
+display(quarantined_inferred_df)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Bring Your Own Rule: Suspicious Pricing Pattern Detection
+# MAGIC
+# MAGIC This section demonstrates how to extend DQX with a **custom quality rule**. The workflow follows 3 steps:
+# MAGIC 1. **Define** the custom rule function
+# MAGIC 2. **Add** the rule to the YAML definition
+# MAGIC 3. **Apply** the DQ rules on input data
+# MAGIC
+# MAGIC For this demo, we define a custom pricing intelligence rule that flags suspicious pricing patterns common in retail product catalogs:
+# MAGIC * **Perfectly round retail prices** (e.g., exactly \$100.00, \$200.00) which often indicate placeholder or draft pricing that was never finalized
 # MAGIC * **Extreme margin outliers** — margins above 95% typically indicate a data entry error (e.g., cost entered in the wrong currency)
 # MAGIC * **Negative margins** — unit cost exceeding retail price signals a pricing or cost error
-# MAGIC
-# MAGIC These patterns are red flags for merchandising and pricing compliance teams.
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC #### Step 1: Define the Custom Rule Function
 
 # COMMAND ----------
 
@@ -235,6 +357,13 @@ def is_suspicious_pricing_pattern(
         ),
         f"{price_norm}_suspicious_pricing_pattern",
     )
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC #### Step 2: Add the Custom Rule to YAML Definition
+# MAGIC
+# MAGIC We define all quality checks — both built-in and custom — in a single YAML configuration.
 
 # COMMAND ----------
 
@@ -389,17 +518,13 @@ checks = yaml.safe_load(fashion_checks_yaml)
 
 # COMMAND ----------
 
-# MAGIC %md
-# MAGIC ### Setup `DQEngine`
-
-# COMMAND ----------
-
-from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.config import TableChecksStorageConfig
-from databricks.sdk import WorkspaceClient
-
-ws = WorkspaceClient()  # auto-authenticated inside Databricks
-dq_engine = DQEngine(ws)
+# DBTITLE 1,Validate Checks
+status = DQEngine.validate_checks(
+    checks,
+    custom_check_functions={'is_suspicious_pricing_pattern': is_suspicious_pricing_pattern}
+)
+print(status)
+assert not status.has_errors
 
 # COMMAND ----------
 
@@ -441,9 +566,18 @@ quality_checks.append(custom_pricing_check)
 
 # COMMAND ----------
 
+# DBTITLE 1,Save Rules to Workspace File (Alternative Storage)
+# DQX also supports storing rules as workspace YAML files
+fashion_rules_yaml = f"{quality_rules_path}/fashion_quality_rules.yml"
+dq_engine.save_checks(built_in_checks, config=WorkspaceFileChecksStorageConfig(location=fashion_rules_yaml))
+
+# Display a link to the saved checks file
+displayHTML(f'<a href="/#workspace{fashion_rules_yaml}" target="_blank">Fashion Quality Rules YAML</a>')
+
+# COMMAND ----------
+
 # MAGIC %md
-# MAGIC    
-# MAGIC ### Apply Checks & Quarantine Invalid Products
+# MAGIC ### Step 3: Apply Checks & Quarantine Invalid Products
 # MAGIC
 # MAGIC We'll use `apply_checks_by_metadata_and_split` to process the **loaded** checks.
 # MAGIC
@@ -475,7 +609,7 @@ valid_df, invalid_df = dq_engine.apply_checks_by_metadata_and_split(
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC #### ✅ Valid Products — Ready for Storefront
+# MAGIC #### Valid Products — Ready for Storefront
 # MAGIC Products that pass all error-level checks. Warning-flagged products still appear here for downstream processing.
 
 # COMMAND ----------
@@ -485,9 +619,23 @@ display(valid_df)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC #### ❌ Invalid / Quarantined Products — Merchandising Review Queue
+# MAGIC #### Invalid / Quarantined Products — Merchandising Review Queue
 # MAGIC Data quality issues are captured in the invalid DataFrame via the `_errors` and `_warnings` array columns mapping directly to our named checks.
 
 # COMMAND ----------
 
 display(invalid_df)
+
+# COMMAND ----------
+
+# DBTITLE 1,Persist Quarantine Table
+quarantine_table = f"{catalog}.{schema}.fashion_products_quarantine"
+invalid_df.write.mode("overwrite").saveAsTable(quarantine_table)
+print(f"Quarantined products saved to {quarantine_table}")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Visualize Quality on Pre-Configured Dashboard
+# MAGIC
+# MAGIC When you deploy DQX as [`workspace tool`](https://databrickslabs.github.io/dqx/docs/installation/#dqx-installation-as-a-tool-in-a-databricks-workspace), it automatically generates a Quality Dashboard. <br> You can open the dashboard using Databricks CLI: `databricks labs dqx open-dashboards`

@@ -41,6 +41,9 @@ def _get_remote_url(branch: str) -> str | None:
         ).strip()
         if url.endswith(".git"):
             url = url[:-4]
+        # Convert SSH URLs to HTTPS so pip can use them (git+git@... is invalid)
+        if url.startswith("git@github.com:"):
+            url = url.replace("git@github.com:", "https://github.com/", 1)
         return url
     except Exception:
         return None

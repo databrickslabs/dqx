@@ -58,6 +58,22 @@ else:
 
 # COMMAND ----------
 
+import os
+
+workspace_root_path = os.getcwd()
+quality_rules_path = f"{workspace_root_path}/quality_checks"
+
+# Cleanup existing DQ Rules files, if already exists
+if os.path.exists(quality_rules_path):
+    for filename in os.listdir(quality_rules_path):
+        file_path = os.path.join(quality_rules_path, filename)
+        # Only delete files, not subdirectories
+        if os.path.isfile(file_path):
+            os.remove(file_path)
+            print(f"Deleted: {file_path}")
+
+# COMMAND ----------
+
 # MAGIC %md
 # MAGIC ### Production Best Practice: Pin DQX Version
 # MAGIC
@@ -140,27 +156,147 @@ transactions = [
     Row(transaction_id="TRX-804", account_id="ACC-PL-024", country="POL", transaction_type="DEPOSIT", currency="EUR", amount=1456.88, timestamp="2024-03-20 15:45:00"),
 ]
 
-transactions_df = spark.createDataFrame(transactions)
-display(transactions_df)
+transactions_table = f"{catalog}.{schema}.banking_transactions"
+
+if spark.catalog.tableExists(transactions_table) and spark.table(transactions_table).count() > 0:
+    print(f"Table {transactions_table} already exists with demo data. Skipping data generation")
+else:
+    transactions_df = spark.createDataFrame(transactions)
+    transactions_df.write.mode("overwrite").saveAsTable(transactions_table)
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC    
-# MAGIC ### Defining Financial Data Quality Checks
+# MAGIC ### Understanding the Dataset
 # MAGIC
-# MAGIC We define our industry-specific checks using a YAML configuration. This is the recommended approach for DQX as it separates rule definitions from logic.
+# MAGIC ### Banking Transactions Dataset
 # MAGIC
-# MAGIC We also define a **custom check function** for detecting suspicious amount patterns commonly associated with financial crime and structuring:
-# MAGIC * **Perfectly round amounts** above threshold (e.g., exactly $5,000, $10,000) which may indicate attempts to structure transactions
-# MAGIC * **Just below $10K reporting threshold** (e.g., $9,950-$9,999) to avoid regulatory reporting
-# MAGIC * **Repeated digit patterns** (e.g., $7,777.77, $3,333.33) which are statistically unlikely in legitimate transactions
-# MAGIC
-# MAGIC These patterns are red flags for anti-money laundering (AML) and fraud detection systems.
+# MAGIC | Column Name        | Data Type | Description                                          | Example Value          |
+# MAGIC |--------------------|-----------|------------------------------------------------------|------------------------|
+# MAGIC | `transaction_id`   | string    | Unique transaction identifier                        | TRX-101                |
+# MAGIC | `account_id`       | string    | Account identifier                                   | ACC-US-001             |
+# MAGIC | `country`          | string    | Country code (ISO 3166-1 alpha-3)                    | USA                    |
+# MAGIC | `transaction_type` | string    | Type of transaction (CREDIT, DEBIT, DEPOSIT, etc.)   | CREDIT                 |
+# MAGIC | `currency`         | string    | Currency code (ISO 4217)                             | USD                    |
+# MAGIC | `amount`           | double    | Transaction amount (positive for credits, negative for debits) | 1247.89     |
+# MAGIC | `timestamp`        | string    | Transaction timestamp                                | 2024-03-15 10:30:00    |
 
 # COMMAND ----------
 
-# DBTITLE 1,Custom Industry Check: IBAN MOD-97 Validation
+# MAGIC %md
+# MAGIC ### Some Sample Transaction Data
+
+# COMMAND ----------
+
+# DBTITLE 1,Transactions Bronze Table
+transactions_df = spark.read.table(transactions_table)
+print("=== Transactions Data Sample ===")
+display(transactions_df.limit(10))
+
+# COMMAND ----------
+
+# DBTITLE 1,Common Imports
+import yaml
+from pprint import pprint
+
+from databricks.sdk import WorkspaceClient
+from databricks.labs.dqx.profiler.profiler import DQProfiler
+from databricks.labs.dqx.profiler.generator import DQGenerator
+from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.config import WorkspaceFileChecksStorageConfig, TableChecksStorageConfig
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Auto-Infer Quality Rules with DQProfiler
+# MAGIC
+# MAGIC Before defining rules manually, DQX can **automatically infer data quality rules** from the data profile. This is useful for bootstrapping a quality rule set for a new dataset.
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC **Step 1**: Read raw data and instantiate DQX
+
+# COMMAND ----------
+
+# Read Input Data
+transactions_df = spark.read.table(transactions_table)
+
+# Instantiate DQX engine
+ws = WorkspaceClient()
+dq_engine = DQEngine(ws)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC **Step 2**: Run DQProfiler to infer quality rules
+
+# COMMAND ----------
+
+# DBTITLE 1,Profile Data and Infer Quality Rules
+profiler = DQProfiler(ws)
+summary_stats, profiles = profiler.profile(transactions_df)
+
+generator = DQGenerator(ws)
+inferred_checks = generator.generate_dq_rules(profiles)
+
+print("=== Inferred DQ Checks ===\n")
+for idx, check in enumerate(inferred_checks):
+    print(f"========Check {idx} ==========\n")
+    pprint(check)
+
+# COMMAND ----------
+
+# DBTITLE 1,Save Inferred Rules to Workspace File
+banking_inferred_rules_yaml = f"{quality_rules_path}/banking_inferred_dq_rules.yml"
+dq_engine.save_checks(inferred_checks, config=WorkspaceFileChecksStorageConfig(location=banking_inferred_rules_yaml))
+displayHTML(f'<a href="/#workspace{banking_inferred_rules_yaml}" target="_blank">Banking Inferred Quality Rules YAML</a>')
+
+# COMMAND ----------
+
+# DBTITLE 1,Save Inferred Rules to Delta Table
+banking_inferred_rules_table = f"{catalog}.{schema}.banking_inferred_quality_rules"
+dq_engine.save_checks(inferred_checks, config=TableChecksStorageConfig(location=banking_inferred_rules_table, run_config_name="banking_inferred"))
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC **Step 3**: Apply Inferred Quality Rules to Input Data
+
+# COMMAND ----------
+
+# Load checks from workspace file
+inferred_quality_checks = dq_engine.load_checks(config=WorkspaceFileChecksStorageConfig(location=banking_inferred_rules_yaml))
+
+# Apply checks on input data
+valid_inferred_df, quarantined_inferred_df = dq_engine.apply_checks_by_metadata_and_split(transactions_df, inferred_quality_checks)
+
+print("=== Transactions Quarantined by Inferred Rules ===")
+display(quarantined_inferred_df)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Bring Your Own Rule: Suspicious Amount Pattern Detection
+# MAGIC
+# MAGIC This section demonstrates how to extend DQX with a **custom quality rule**. The workflow follows 3 steps:
+# MAGIC 1. **Define** the custom rule function
+# MAGIC 2. **Add** the rule to the YAML definition
+# MAGIC 3. **Apply** the DQ rules on input data
+# MAGIC
+# MAGIC For this demo, we define a custom fraud detection rule that flags suspicious amount patterns commonly associated with financial crime and structuring:
+# MAGIC * **Perfectly round amounts** above threshold (e.g., exactly \$5,000, \$10,000) which may indicate attempts to structure transactions
+# MAGIC * **Just below reporting thresholds** (e.g., \$9,950-\$9,999) to avoid regulatory reporting
+# MAGIC * **Repeated digit patterns** (e.g., \$7,777.77, \$3,333.33) which are statistically unlikely in legitimate transactions
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC #### Step 1: Define the Custom Rule Function
+
+# COMMAND ----------
+
+# DBTITLE 1,Custom Industry Check: Suspicious Amount Pattern Detection
 import pyspark.sql.functions as F
 from pyspark.sql import Column
 from databricks.labs.dqx.check_funcs import make_condition, get_normalized_column_and_expr
@@ -227,7 +363,12 @@ def is_suspicious_amount_pattern(
 
 # COMMAND ----------
 
-import yaml
+# MAGIC %md
+# MAGIC #### Step 2: Add the Custom Rule to YAML Definition
+# MAGIC
+# MAGIC We define all quality checks — both built-in and custom — in a single YAML configuration.
+
+# COMMAND ----------
 
 # Define industry-specific checks in YAML format
 banking_checks_yaml = f"""
@@ -341,17 +482,13 @@ checks = yaml.safe_load(banking_checks_yaml)
 
 # COMMAND ----------
 
-# MAGIC %md
-# MAGIC ### Setup `DQEngine`
-
-# COMMAND ----------
-
-from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.config import TableChecksStorageConfig
-from databricks.sdk import WorkspaceClient
-
-ws = WorkspaceClient()  # auto-authenticated inside Databricks
-dq_engine = DQEngine(ws)
+# DBTITLE 1,Validate Checks
+status = DQEngine.validate_checks(
+    checks,
+    custom_check_functions={'is_suspicious_amount_pattern': is_suspicious_amount_pattern}
+)
+print(status)
+assert not status.has_errors
 
 # COMMAND ----------
 
@@ -393,9 +530,19 @@ quality_checks.append(custom_amount_check)
 
 # COMMAND ----------
 
+# DBTITLE 1,Save Rules to Workspace File (Alternative Storage)
+# DQX also supports storing rules as workspace YAML files
+banking_rules_yaml = f"{quality_rules_path}/banking_quality_rules.yml"
+dq_engine.save_checks(built_in_checks, config=WorkspaceFileChecksStorageConfig(location=banking_rules_yaml))
+
+# Display a link to the saved checks file
+displayHTML(f'<a href="/#workspace{banking_rules_yaml}" target="_blank">Banking Quality Rules YAML</a>')
+
+# COMMAND ----------
+
 # MAGIC %md
-# MAGIC    
-# MAGIC ### Apply Checks & Quarantine Invalid Records
+# MAGIC
+# MAGIC ### Step 3: Apply Checks & Quarantine Invalid Records
 # MAGIC
 # MAGIC We'll use `apply_checks_by_metadata_and_split` to process the **loaded** checks.
 # MAGIC
@@ -437,3 +584,17 @@ display(valid_df)
 # COMMAND ----------
 
 display(invalid_df)
+
+# COMMAND ----------
+
+# DBTITLE 1,Persist Quarantine Table
+quarantine_table = f"{catalog}.{schema}.banking_transactions_quarantine"
+invalid_df.write.mode("overwrite").saveAsTable(quarantine_table)
+print(f"Quarantined transactions saved to {quarantine_table}")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Visualize Quality on Pre-Configured Dashboard
+# MAGIC
+# MAGIC When you deploy DQX as [`workspace tool`](https://databrickslabs.github.io/dqx/docs/installation/#dqx-installation-as-a-tool-in-a-databricks-workspace), it automatically generates a Quality Dashboard. <br> You can open the dashboard using Databricks CLI: `databricks labs dqx open-dashboards`
