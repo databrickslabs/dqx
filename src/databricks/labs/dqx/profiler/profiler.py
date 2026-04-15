@@ -391,12 +391,15 @@ class DQProfiler(DQEngineBase):
             if is_text and trim_strings:
                 column_df = column_df.select(F.trim(F.col(column_label)).alias(column_label))
 
-            count_non_null = column_df.count()
+            aggr_stats = column_df.agg(
+                F.count(column_label).alias("cnt"),
+                F.countDistinct(column_label).alias("cnt_distinct"),
+            ).first()
+            count_non_null = aggr_stats[0] if aggr_stats else 0
             metrics["count"] = total_count
             metrics["count_null"] = total_count - count_non_null
             metrics["count_non_null"] = count_non_null
-            distinct_row = column_df.select(F.countDistinct(F.col(column_label))).first()
-            metrics["count_distinct"] = distinct_row[0] if distinct_row else 0
+            metrics["count_distinct"] = aggr_stats[1] if aggr_stats else 0
             if is_text:
                 metrics["empty_count"] = column_df.filter(F.col(column_label) == "").count()
             else:
