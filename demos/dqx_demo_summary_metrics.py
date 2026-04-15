@@ -111,6 +111,7 @@ print(f"Checks from YAML: {status}")
 # MAGIC - The number of input rows
 # MAGIC - The number of rows with warnings
 # MAGIC - The number of rows with errors
+# MAGIC - Per-check error and warning counts (as a JSON breakdown per check name)
 # MAGIC - User-defined custom metrics
 # MAGIC
 # MAGIC Summary metrics can be tracked for both streaming and batch datasets. To track summary metrics, pass a `DQMetricsObserver` when creating the `DQEngine`.

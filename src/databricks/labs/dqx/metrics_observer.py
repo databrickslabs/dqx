@@ -101,17 +101,17 @@ class DQMetricsObserver:
         Returns:
             A list of Spark SQL expressions defining the observer metrics (default, per-check, and custom).
         """
-        result = [
+        metrics = [
             "count(1) as input_row_count",
             f"count(case when {self._error_column_name} is not null then 1 end) as error_row_count",
             f"count(case when {self._warning_column_name} is not null then 1 end) as warning_row_count",
             f"count(case when {self._error_column_name} is null and {self._warning_column_name} is null then 1 end) as valid_row_count",
         ]
         if check_names:
-            result.append(self._build_check_metrics_expr(check_names))
+            metrics.append(self._build_check_metrics_expr(check_names))
         if self.custom_metrics:
-            result.extend(self.custom_metrics)
-        return result
+            metrics.extend(self.custom_metrics)
+        return metrics
 
     def _build_check_metrics_expr(self, check_names: list[str]) -> str:
         """Build a single SQL expression that produces a JSON-serialized check_metrics value.
