@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from functools import cached_property
 from typing import Any
@@ -70,7 +70,6 @@ class DQMetricsObserver:
 
     _error_column_name: str = "_errors"
     _warning_column_name: str = "_warnings"
-    _check_names: list[str] = field(default_factory=list)
 
     @cached_property
     def id(self) -> str:
@@ -88,30 +87,33 @@ class DQMetricsObserver:
         Gets the observer metrics as Spark SQL expressions.
 
         Returns:
-            A list of Spark SQL expressions defining the observer metrics (both default, per-check, and custom).
+            A list of Spark SQL expressions defining the observer metrics (both default and custom).
         """
-        default_metrics = [
+        return self.get_metrics_with_checks([])
+
+    def get_metrics_with_checks(self, check_names: list[str]) -> list[str]:
+        """
+        Gets the observer metrics including per-check metrics as Spark SQL expressions.
+
+        Args:
+            check_names: List of check names from the applied quality rules.
+
+        Returns:
+            A list of Spark SQL expressions defining the observer metrics (default, per-check, and custom).
+        """
+        result = [
             "count(1) as input_row_count",
             f"count(case when {self._error_column_name} is not null then 1 end) as error_row_count",
             f"count(case when {self._warning_column_name} is not null then 1 end) as warning_row_count",
             f"count(case when {self._error_column_name} is null and {self._warning_column_name} is null then 1 end) as valid_row_count",
         ]
-        if self._check_names:
-            default_metrics.append(self._build_check_metrics_expr())
+        if check_names:
+            result.append(self._build_check_metrics_expr(check_names))
         if self.custom_metrics:
-            default_metrics.extend(self.custom_metrics)
-        return default_metrics
+            result.extend(self.custom_metrics)
+        return result
 
-    def set_check_names(self, check_names: list[str]) -> None:
-        """
-        Sets the check names used to generate per-check summary metrics.
-
-        Args:
-            check_names: List of check names from the applied quality rules.
-        """
-        self._check_names = check_names
-
-    def _build_check_metrics_expr(self) -> str:
+    def _build_check_metrics_expr(self, check_names: list[str]) -> str:
         """Build a single SQL expression that produces a JSON-serialized check_metrics value.
 
         The metric is stored as one row with metric_name ``check_metrics`` and
@@ -119,19 +121,22 @@ class DQMetricsObserver:
 
             [{"check_name": "my_check", "error_count": 5, "warning_count": 2}, ...]
 
+        Args:
+            check_names: List of check names to include in the expression.
+
         Returns:
             A Spark SQL expression string aliased as ``check_metrics``.
         """
         elements: list[str] = []
-        for check_name in self._check_names:
-            escaped = check_name.replace("'", "''")
+        for check_name in check_names:
+            check_name_escaped = check_name.replace("'", "''")
             err = self._error_column_name
             warn = self._warning_column_name
             elements.append(
                 f"named_struct("
-                f"'check_name', '{escaped}', "
-                f"'error_count', count(case when exists({err}, x -> x.name = '{escaped}') then 1 end), "
-                f"'warning_count', count(case when exists({warn}, x -> x.name = '{escaped}') then 1 end)"
+                f"'check_name', '{check_name_escaped}', "
+                f"'error_count', count(case when exists({err}, x -> x.name = '{check_name_escaped}') then 1 end), "
+                f"'warning_count', count(case when exists({warn}, x -> x.name = '{check_name_escaped}') then 1 end)"
                 f")"
             )
         return f"to_json(array({', '.join(elements)})) as check_metrics"
