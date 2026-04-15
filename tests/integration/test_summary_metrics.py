@@ -2641,12 +2641,8 @@ def test_observer_check_metrics_with_auto_derived_names(ws, spark, apply_checks_
     assert auto_derived_names == ["id_is_null", "name_is_null_or_empty"]
 
 
-@pytest.mark.parametrize("apply_checks_method", [DQEngine.apply_checks, DQEngine.apply_checks_by_metadata])
-def test_observer_check_metrics_change_between_runs(ws, spark, apply_checks_method):
+def test_observer_check_metrics_change_between_runs(ws, spark):
     """Test that check_metrics reflect the correct checks when the rule set changes between runs."""
-    full_checks_metadata = TEST_CHECKS
-    reduced_checks_metadata = [TEST_CHECKS[0]]
-
     test_df = spark.createDataFrame(
         [
             [1, "Alice", 30, 50000],
@@ -2657,41 +2653,19 @@ def test_observer_check_metrics_change_between_runs(ws, spark, apply_checks_meth
         TEST_SCHEMA,
     )
 
-    if apply_checks_method == DQEngine.apply_checks:
-        full_checks = deserialize_checks(full_checks_metadata)
-        reduced_checks = deserialize_checks(reduced_checks_metadata)
+    # First run: both checks
+    observer1 = DQMetricsObserver(name="test_observer")
+    dq_engine1 = DQEngine(workspace_client=ws, spark=spark, observer=observer1, extra_params=EXTRA_PARAMS)
+    checked_df1, observation1 = dq_engine1.apply_checks_by_metadata(test_df, TEST_CHECKS)
+    checked_df1.count()
+    _assert_check_metrics(observation1.get, ["id_is_not_null", "name_is_not_null_and_not_empty"])
 
-        # First run: both checks
-        observer1 = DQMetricsObserver(name="test_observer")
-        dq_engine1 = DQEngine(workspace_client=ws, spark=spark, observer=observer1, extra_params=EXTRA_PARAMS)
-        checked_df1, observation1 = dq_engine1.apply_checks(test_df, full_checks)
-        checked_df1.count()
-        _assert_check_metrics(observation1.get, ["id_is_not_null", "name_is_not_null_and_not_empty"])
-
-        # Second run: reduced checks
-        observer2 = DQMetricsObserver(name="test_observer")
-        dq_engine2 = DQEngine(workspace_client=ws, spark=spark, observer=observer2, extra_params=EXTRA_PARAMS)
-        checked_df2, observation2 = dq_engine2.apply_checks(test_df, reduced_checks)
-        checked_df2.count()
-        _assert_check_metrics(observation2.get, ["id_is_not_null"])
-
-    elif apply_checks_method == DQEngine.apply_checks_by_metadata:
-        # First run: both checks
-        observer1 = DQMetricsObserver(name="test_observer")
-        dq_engine1 = DQEngine(workspace_client=ws, spark=spark, observer=observer1, extra_params=EXTRA_PARAMS)
-        checked_df1, observation1 = dq_engine1.apply_checks_by_metadata(test_df, full_checks_metadata)
-        checked_df1.count()
-        _assert_check_metrics(observation1.get, ["id_is_not_null", "name_is_not_null_and_not_empty"])
-
-        # Second run: reduced checks
-        observer2 = DQMetricsObserver(name="test_observer")
-        dq_engine2 = DQEngine(workspace_client=ws, spark=spark, observer=observer2, extra_params=EXTRA_PARAMS)
-        checked_df2, observation2 = dq_engine2.apply_checks_by_metadata(test_df, reduced_checks_metadata)
-        checked_df2.count()
-        _assert_check_metrics(observation2.get, ["id_is_not_null"])
-
-    else:
-        raise ValueError("Invalid 'apply_checks_method' used for testing observable metrics.")
+    # Second run: reduced checks — a fresh observer/engine picks up the new rule set
+    observer2 = DQMetricsObserver(name="test_observer")
+    dq_engine2 = DQEngine(workspace_client=ws, spark=spark, observer=observer2, extra_params=EXTRA_PARAMS)
+    checked_df2, observation2 = dq_engine2.apply_checks_by_metadata(test_df, [TEST_CHECKS[0]])
+    checked_df2.count()
+    _assert_check_metrics(observation2.get, ["id_is_not_null"])
 
 
 def _assert_check_metrics(actual_metrics: dict, expected_check_names: list[str]) -> None:

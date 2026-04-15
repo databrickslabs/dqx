@@ -81,22 +81,13 @@ class DQMetricsObserver:
         """
         return self.id_overwrite or str(uuid4())
 
-    @cached_property
-    def metrics(self) -> list[str]:
+    def get_metrics(self, check_names: list[str] | None = None) -> list[str]:
         """
         Gets the observer metrics as Spark SQL expressions.
 
-        Returns:
-            A list of Spark SQL expressions defining the observer metrics (both default and custom).
-        """
-        return self.get_metrics_with_checks([])
-
-    def get_metrics_with_checks(self, check_names: list[str]) -> list[str]:
-        """
-        Gets the observer metrics including per-check metrics as Spark SQL expressions.
-
         Args:
-            check_names: List of check names from the applied quality rules.
+            check_names: Optional list of check names from the applied quality rules.
+                When provided, a per-check breakdown (``check_metrics``) is included.
 
         Returns:
             A list of Spark SQL expressions defining the observer metrics (default, per-check, and custom).

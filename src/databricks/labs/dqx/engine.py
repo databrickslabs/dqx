@@ -166,6 +166,8 @@ class DQEngineCore(DQEngineCoreBase):
             rule_set_fingerprint=rule_set_fingerprint,
         )
 
+        # Duplicate check names are intentionally preserved — if two rules share a name,
+        # check_metrics will report each occurrence separately so the user can spot the overlap.
         check_names = [check.name for check in checks]
         observed_result = self._observe_metrics(result_df, check_names)
 
@@ -537,7 +539,7 @@ class DQEngineCore(DQEngineCoreBase):
         if not self.observer:
             return df
 
-        metric_exprs = [F.expr(m) for m in self.observer.get_metrics_with_checks(check_names or [])]
+        metric_exprs = [F.expr(m) for m in self.observer.get_metrics(check_names)]
         if not metric_exprs:
             return df
 
