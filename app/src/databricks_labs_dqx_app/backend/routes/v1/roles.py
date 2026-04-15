@@ -76,6 +76,10 @@ def delete_role_mapping(
     svc: Annotated[RoleService, Depends(get_role_service)],
 ) -> dict[str, str]:
     """Delete a role-to-group mapping (Admin only)."""
+    valid_roles = {r.value for r in UserRole}
+    if role not in valid_roles:
+        raise HTTPException(status_code=400, detail=f"Invalid role: {role}. Must be one of {sorted(valid_roles)}")
+
     try:
         svc.delete_mapping(role, group_name)
         return {"status": "deleted", "role": role, "group_name": group_name}

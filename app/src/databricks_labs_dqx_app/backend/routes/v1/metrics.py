@@ -22,7 +22,12 @@ def get_metrics_trend(
 ) -> list[MetricSnapshotOut]:
     """Return quality metric snapshots for a specific table, ordered by time (newest first)."""
     from databricks.sdk.service.sql import Disposition, Format, StatementState
-    from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
+    from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, validate_fqn
+
+    try:
+        validate_fqn(table_fqn)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     table = f"{app_conf.catalog}.{app_conf.schema_name}.dq_metrics"
     et = escape_sql_string(table_fqn)

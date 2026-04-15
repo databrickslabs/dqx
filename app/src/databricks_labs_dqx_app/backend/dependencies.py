@@ -275,7 +275,10 @@ async def get_user_role(
         return role
     except Exception as e:
         logger.error(f"Error resolving role for {email}: {e}", exc_info=True)
-        return UserRole.VIEWER
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Role resolution is temporarily unavailable. Please try again later.",
+        ) from e
 
 
 def require_role(*roles: UserRole):

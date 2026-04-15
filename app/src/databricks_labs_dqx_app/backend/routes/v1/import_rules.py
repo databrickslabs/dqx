@@ -82,8 +82,15 @@ def import_rules_from_table(
     validate_fn: Annotated[Callable[[list[Any]], ChecksValidationStatus], Depends(get_check_validator)],
 ) -> ImportFromTableOut:
     """Read rules from a Delta table (same schema as dq_quality_rules) and import them."""
+    from databricks_labs_dqx_app.backend.sql_utils import validate_fqn
+
     user = obo_ws.current_user.me()
     user_email = user.user_name or "unknown"
+
+    try:
+        validate_fqn(body.source_table_fqn)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     try:
         rows = svc.read_external_rules_table(body.source_table_fqn)

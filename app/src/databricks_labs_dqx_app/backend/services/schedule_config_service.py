@@ -16,6 +16,8 @@ from typing import Any
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.sql import Disposition, Format, StatementState
 
+from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
+
 logger = logging.getLogger(__name__)
 
 
@@ -177,7 +179,7 @@ class ScheduleConfigService:
 
     @staticmethod
     def _esc(value: str) -> str:
-        return value.replace("'", "''")
+        return escape_sql_string(value)
 
     def _row_to_entry(self, row: list[str]) -> ScheduleConfigEntry:
         try:
