@@ -61,11 +61,12 @@ def test_observer_custom_column_names(ws, spark):
     observer = DQMetricsObserver(name="test_observer")
     _ = DQEngine(workspace_client=ws, spark=spark, extra_params=engine_params, observer=observer)
 
-    assert f"count(case when {errors_column} is not null then 1 end) as error_row_count" in observer.metrics
-    assert f"count(case when {warnings_column} is not null then 1 end) as warning_row_count" in observer.metrics
+    metrics = observer.get_metrics()
+    assert f"count(case when {errors_column} is not null then 1 end) as error_row_count" in metrics
+    assert f"count(case when {warnings_column} is not null then 1 end) as warning_row_count" in metrics
     assert (
         f"count(case when {errors_column} is null and {warnings_column} is null then 1 end) as valid_row_count"
-        in observer.metrics
+        in metrics
     )
 
 
