@@ -16,6 +16,7 @@ import { Route as SidebarRunsRouteImport } from './../routes/_sidebar/runs'
 import { Route as SidebarRulesRouteImport } from './../routes/_sidebar/rules'
 import { Route as SidebarProfilerRouteImport } from './../routes/_sidebar/profiler'
 import { Route as SidebarProfileRouteImport } from './../routes/_sidebar/profile'
+import { Route as SidebarDiscoveryRouteImport } from './../routes/_sidebar/discovery'
 import { Route as SidebarConfigRouteImport } from './../routes/_sidebar/config'
 import { Route as SidebarRulesIndexRouteImport } from './../routes/_sidebar/rules.index'
 import { Route as SidebarRulesActiveRouteImport } from './../routes/_sidebar/rules.active'
@@ -60,6 +61,11 @@ const SidebarProfilerRoute = SidebarProfilerRouteImport.update({
 const SidebarProfileRoute = SidebarProfileRouteImport.update({
   id: '/profile',
   path: '/profile',
+  getParentRoute: () => SidebarRouteRoute,
+} as any)
+const SidebarDiscoveryRoute = SidebarDiscoveryRouteImport.update({
+  id: '/discovery',
+  path: '/discovery',
   getParentRoute: () => SidebarRouteRoute,
 } as any)
 const SidebarConfigRoute = SidebarConfigRouteImport.update({
@@ -122,6 +128,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/home': typeof SidebarHomeRoute
   '/config': typeof SidebarConfigRoute
+  '/discovery': typeof SidebarDiscoveryRoute
   '/profile': typeof SidebarProfileRoute
   '/profiler': typeof SidebarProfilerRoute
   '/rules': typeof SidebarRulesRouteWithChildren
@@ -141,6 +148,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/home': typeof SidebarHomeRoute
   '/config': typeof SidebarConfigRoute
+  '/discovery': typeof SidebarDiscoveryRoute
   '/profile': typeof SidebarProfileRoute
   '/profiler': typeof SidebarProfilerRoute
   '/rules': typeof SidebarRulesRouteWithChildren
@@ -160,6 +168,7 @@ export interface FileRoutesById {
   '/_sidebar': typeof SidebarRouteRouteWithChildren
   '/_sidebar/home': typeof SidebarHomeRoute
   '/_sidebar/config': typeof SidebarConfigRoute
+  '/_sidebar/discovery': typeof SidebarDiscoveryRoute
   '/_sidebar/profile': typeof SidebarProfileRoute
   '/_sidebar/profiler': typeof SidebarProfilerRoute
   '/_sidebar/rules': typeof SidebarRulesRouteWithChildren
@@ -181,6 +190,7 @@ export interface FileRouteTypes {
     | '/'
     | '/home'
     | '/config'
+    | '/discovery'
     | '/profile'
     | '/profiler'
     | '/rules'
@@ -220,6 +230,7 @@ export interface FileRouteTypes {
     | '/_sidebar'
     | '/_sidebar/home'
     | '/_sidebar/config'
+    | '/_sidebar/discovery'
     | '/_sidebar/profile'
     | '/_sidebar/profiler'
     | '/_sidebar/rules'
@@ -415,6 +426,7 @@ const SidebarRunsRouteWithChildren = SidebarRunsRoute._addFileChildren(
 interface SidebarRouteRouteChildren {
   SidebarHomeRoute: typeof SidebarHomeRoute
   SidebarConfigRoute: typeof SidebarConfigRoute
+  SidebarDiscoveryRoute: typeof SidebarDiscoveryRoute
   SidebarProfileRoute: typeof SidebarProfileRoute
   SidebarProfilerRoute: typeof SidebarProfilerRoute
   SidebarRulesRoute: typeof SidebarRulesRouteWithChildren
@@ -424,6 +436,7 @@ interface SidebarRouteRouteChildren {
 const SidebarRouteRouteChildren: SidebarRouteRouteChildren = {
   SidebarHomeRoute: SidebarHomeRoute,
   SidebarConfigRoute: SidebarConfigRoute,
+  SidebarDiscoveryRoute: SidebarDiscoveryRoute,
   SidebarProfileRoute: SidebarProfileRoute,
   SidebarProfilerRoute: SidebarProfilerRoute,
   SidebarRulesRoute: SidebarRulesRouteWithChildren,
