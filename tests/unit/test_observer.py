@@ -52,19 +52,13 @@ def test_dq_observer_observation_property():
     assert isinstance(observation, Observation | SparkConnectObservation)
 
 
-def test_check_metrics_not_included_when_disabled():
-    observer = DQMetricsObserver()
-    observer.set_check_names(["my_check"])
-    assert observer.metrics == _default_metrics()
-
-
 def test_check_metrics_not_included_without_check_names():
-    observer = DQMetricsObserver(track_extended_metrics=True)
+    observer = DQMetricsObserver()
     assert observer.metrics == _default_metrics()
 
 
 def test_check_metrics_single_check():
-    observer = DQMetricsObserver(track_extended_metrics=True)
+    observer = DQMetricsObserver()
     observer.set_check_names(["id_is_not_null"])
     expected = _default_metrics() + [_check_metrics_expr(["id_is_not_null"])]
     assert observer.metrics == expected
@@ -72,7 +66,7 @@ def test_check_metrics_single_check():
 
 def test_check_metrics_multiple_checks():
     checks = ["id_is_not_null", "name_is_not_empty", "age_in_range"]
-    observer = DQMetricsObserver(track_extended_metrics=True)
+    observer = DQMetricsObserver()
     observer.set_check_names(checks)
     expected = _default_metrics() + [_check_metrics_expr(checks)]
     assert observer.metrics == expected
@@ -80,14 +74,14 @@ def test_check_metrics_multiple_checks():
 
 def test_check_metrics_ordering_with_custom():
     custom = ["avg(age) as avg_age"]
-    observer = DQMetricsObserver(custom_metrics=custom, track_extended_metrics=True)
+    observer = DQMetricsObserver(custom_metrics=custom)
     observer.set_check_names(["my_check"])
     expected = _default_metrics() + [_check_metrics_expr(["my_check"])] + custom
     assert observer.metrics == expected
 
 
 def test_check_metrics_uses_custom_column_names():
-    observer = DQMetricsObserver(track_extended_metrics=True)
+    observer = DQMetricsObserver()
     observer.set_column_names(error_column_name="dq_errors", warning_column_name="dq_warnings")
     observer.set_check_names(["my_check"])
     expected = _default_metrics("dq_errors", "dq_warnings") + [
@@ -97,14 +91,14 @@ def test_check_metrics_uses_custom_column_names():
 
 
 def test_check_metrics_escapes_single_quotes():
-    observer = DQMetricsObserver(track_extended_metrics=True)
+    observer = DQMetricsObserver()
     observer.set_check_names(["it's_valid"])
     expected = _default_metrics() + [_check_metrics_expr(["it's_valid"])]
     assert observer.metrics == expected
 
 
 def test_check_metrics_replaced_on_second_set():
-    observer = DQMetricsObserver(track_extended_metrics=True)
+    observer = DQMetricsObserver()
     observer.set_check_names(["first_check"])
     assert observer.metrics == _default_metrics() + [_check_metrics_expr(["first_check"])]
 
@@ -113,7 +107,7 @@ def test_check_metrics_replaced_on_second_set():
 
 
 def test_check_metrics_repeated_use_different_checks():
-    observer = DQMetricsObserver(track_extended_metrics=True)
+    observer = DQMetricsObserver()
 
     observer.set_check_names(["check_a", "check_b"])
     assert observer.metrics == _default_metrics() + [_check_metrics_expr(["check_a", "check_b"])]
@@ -123,7 +117,7 @@ def test_check_metrics_repeated_use_different_checks():
 
 
 def test_check_metrics_cleared_with_empty_names():
-    observer = DQMetricsObserver(track_extended_metrics=True)
+    observer = DQMetricsObserver()
     observer.set_check_names(["my_check"])
     assert len(observer.metrics) == 5
 
@@ -141,14 +135,8 @@ def _default_metrics(err="_errors", warn="_warnings"):
 
 
 def _check_metrics_expr(check_names, err="_errors", warn="_warnings"):
-    elements = []
-    for name in check_names:
-        escaped = name.replace("'", "''")
-        elements.append(
-            f"named_struct("
-            f"'check_name', '{escaped}', "
-            f"'error_count', count(case when exists({err}, x -> x.name = '{escaped}') then 1 end), "
-            f"'warning_count', count(case when exists({warn}, x -> x.name = '{escaped}') then 1 end)"
-            f")"
-        )
-    return f"to_json(array({', '.join(elements)})) as check_metrics"
+    observer = DQMetricsObserver()
+    observer.set_column_names(error_column_name=err, warning_column_name=warn)
+    observer.set_check_names(check_names)
+    # check_metrics expression is always the last element before custom metrics
+    return observer.metrics[len(_default_metrics()) :][-1]

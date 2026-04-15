@@ -66,7 +66,6 @@ class DQMetricsObserver:
 
     name: str = "dqx"
     custom_metrics: list[str] | None = None
-    track_extended_metrics: bool = False
     id_overwrite: str | None = None
 
     _error_column_name: str = "_errors"
@@ -97,7 +96,7 @@ class DQMetricsObserver:
             f"count(case when {self._warning_column_name} is not null then 1 end) as warning_row_count",
             f"count(case when {self._error_column_name} is null and {self._warning_column_name} is null then 1 end) as valid_row_count",
         ]
-        if self.track_extended_metrics and self._check_names:
+        if self._check_names:
             all_metrics.append(self._build_check_metrics_expr())
         if self.custom_metrics:
             all_metrics.extend(self.custom_metrics)

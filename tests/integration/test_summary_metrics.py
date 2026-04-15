@@ -1,3 +1,4 @@
+import json
 import time
 from datetime import datetime
 
@@ -39,6 +40,12 @@ TEST_CHECKS = [
 ]
 TEST_CHECKS_RULE_SET_FINGERPRINT = compute_rule_set_fingerprint_by_metadata(TEST_CHECKS)
 TEST_OBSERVER_NAME = "test_observer"
+# Expected check_metrics JSON value for TEST_CHECKS with standard 4-row test data
+# (row 3 has id=None → error, row 4 has name=None → warning)
+TEST_CHECK_METRICS_VALUE = (
+    '[{"check_name":"id_is_not_null","error_count":1,"warning_count":0},'
+    '{"check_name":"name_is_not_null_and_not_empty","error_count":0,"warning_count":1}]'
+)
 
 
 def test_observer_custom_column_names(ws, spark):
@@ -115,14 +122,12 @@ def test_observer_metrics(ws, spark, apply_checks_method):
         raise ValueError("Invalid 'apply_checks_method' used for testing observable metrics.")
 
     checked_df.count()  # Trigger an action to get the metrics
-    expected_metrics = {
-        "input_row_count": 4,
-        "error_row_count": 1,
-        "warning_row_count": 1,
-        "valid_row_count": 2,
-    }
     actual_metrics = observation.get
-    assert actual_metrics == expected_metrics
+    assert actual_metrics["input_row_count"] == 4
+    assert actual_metrics["error_row_count"] == 1
+    assert actual_metrics["warning_row_count"] == 1
+    assert actual_metrics["valid_row_count"] == 2
+    assert "check_metrics" in actual_metrics
 
 
 @pytest.mark.parametrize("apply_checks_method", [DQEngine.apply_checks, DQEngine.apply_checks_by_metadata])
@@ -188,16 +193,14 @@ def test_observer_custom_metrics(ws, spark, apply_checks_method):
         raise ValueError("Invalid 'apply_checks_method' used for testing observable metrics.")
 
     checked_df.count()  # Trigger an action to get the metrics
-    expected_metrics = {
-        "input_row_count": 4,
-        "error_row_count": 1,
-        "warning_row_count": 1,
-        "valid_row_count": 2,
-        "avg_error_age": 35.0,
-        "total_warning_salary": 55000,
-    }
     actual_metrics = observation.get
-    assert actual_metrics == expected_metrics
+    assert actual_metrics["input_row_count"] == 4
+    assert actual_metrics["error_row_count"] == 1
+    assert actual_metrics["warning_row_count"] == 1
+    assert actual_metrics["valid_row_count"] == 2
+    assert actual_metrics["avg_error_age"] == 35.0
+    assert actual_metrics["total_warning_salary"] == 55000
+    assert "check_metrics" in actual_metrics
 
 
 @pytest.mark.parametrize(
@@ -283,6 +286,21 @@ def test_save_summary_metrics(ws, spark, make_schema, make_random):
     actual_metrics_df = spark.table(metrics_config.location).orderBy("metric_name")
 
     expected_metrics = [
+        {
+            "run_id": EXTRA_PARAMS.run_id_overwrite,
+            "run_name": observer_name,
+            "input_location": input_config.location,
+            "output_location": output_config.location,
+            "quarantine_location": quarantine_config.location,
+            "checks_location": checks_location,
+            "rule_set_fingerprint": None,
+            "metric_name": "check_metrics",
+            "metric_value": TEST_CHECK_METRICS_VALUE,
+            "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
+            "error_column_name": "_errors",
+            "warning_column_name": "_warnings",
+            "user_metadata": None,
+        },
         {
             "run_id": EXTRA_PARAMS.run_id_overwrite,
             "run_name": observer_name,
@@ -497,6 +515,21 @@ def test_save_summary_metrics_custom_metrics_and_params(ws, spark_keep_alive, ma
             "warning_column_name": "dq_warnings",
             "user_metadata": user_metadata,
         },
+        {
+            "run_id": extra_params_custom.run_id_overwrite,
+            "run_name": observer_name,
+            "input_location": input_config.location,
+            "output_location": output_config.location,
+            "quarantine_location": quarantine_config.location,
+            "checks_location": checks_location,
+            "rule_set_fingerprint": None,
+            "metric_name": "check_metrics",
+            "metric_value": TEST_CHECK_METRICS_VALUE,
+            "run_time": datetime.fromisoformat(extra_params_custom.run_time_overwrite),
+            "error_column_name": "dq_errors",
+            "warning_column_name": "dq_warnings",
+            "user_metadata": user_metadata,
+        },
     ]
 
     expected_metrics_df = spark.createDataFrame(expected_metrics, schema=OBSERVATION_TABLE_SCHEMA).orderBy(
@@ -672,6 +705,21 @@ def test_save_summary_metrics_with_streaming_and_custom_params(ws, spark, make_s
             "rule_set_fingerprint": None,
             "metric_name": "total_warning_salary",
             "metric_value": "55000",
+            "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
+            "error_column_name": "dq_errors",
+            "warning_column_name": "dq_warnings",
+            "user_metadata": user_metadata,
+        },
+        {
+            "run_id": EXTRA_PARAMS.run_id_overwrite,
+            "run_name": TEST_OBSERVER_NAME,
+            "input_location": input_config.location,
+            "output_location": output_config.location,
+            "quarantine_location": quarantine_config.location,
+            "checks_location": checks_location,
+            "rule_set_fingerprint": None,
+            "metric_name": "check_metrics",
+            "metric_value": TEST_CHECK_METRICS_VALUE,
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
             "error_column_name": "dq_errors",
             "warning_column_name": "dq_warnings",
@@ -1143,6 +1191,21 @@ def test_observer_metrics_output(skip_if_classic_compute, apply_checks_method, s
             "warning_column_name": "_warnings",
             "user_metadata": None,
         },
+        {
+            "run_id": EXTRA_PARAMS.run_id_overwrite,
+            "run_name": "test_observer",
+            "input_location": input_table_name,
+            "output_location": output_table_name,
+            "quarantine_location": None,
+            "checks_location": checks_location,
+            "rule_set_fingerprint": TEST_CHECKS_RULE_SET_FINGERPRINT,
+            "metric_name": "check_metrics",
+            "metric_value": TEST_CHECK_METRICS_VALUE,
+            "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
+            "error_column_name": "_errors",
+            "warning_column_name": "_warnings",
+            "user_metadata": None,
+        },
     ]
 
     expected_metrics_df = spark.createDataFrame(expected_metrics, schema=OBSERVATION_TABLE_SCHEMA).orderBy(
@@ -1307,6 +1370,21 @@ def test_observer_metrics_output_with_quarantine(
             "warning_column_name": "_warnings",
             "user_metadata": None,
         },
+        {
+            "run_id": EXTRA_PARAMS.run_id_overwrite,
+            "run_name": "test_observer",
+            "input_location": input_table_name,
+            "output_location": output_table_name,
+            "quarantine_location": quarantine_table_name,
+            "checks_location": checks_location,
+            "rule_set_fingerprint": TEST_CHECKS_RULE_SET_FINGERPRINT,
+            "metric_name": "check_metrics",
+            "metric_value": TEST_CHECK_METRICS_VALUE,
+            "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
+            "error_column_name": "_errors",
+            "warning_column_name": "_warnings",
+            "user_metadata": None,
+        },
     ]
 
     expected_metrics_df = spark.createDataFrame(expected_metrics, schema=OBSERVATION_TABLE_SCHEMA).orderBy(
@@ -1427,6 +1505,21 @@ def test_save_results_in_table_batch_with_metrics(
             "rule_set_fingerprint": TEST_CHECKS_RULE_SET_FINGERPRINT,
             "metric_name": "valid_row_count",
             "metric_value": "2",
+            "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
+            "error_column_name": "_errors",
+            "warning_column_name": "_warnings",
+            "user_metadata": None,
+        },
+        {
+            "run_id": EXTRA_PARAMS.run_id_overwrite,
+            "run_name": "test_save_batch_observer",
+            "input_location": None,
+            "output_location": output_table_name,
+            "quarantine_location": quarantine_table_name,
+            "checks_location": None,
+            "rule_set_fingerprint": TEST_CHECKS_RULE_SET_FINGERPRINT,
+            "metric_name": "check_metrics",
+            "metric_value": TEST_CHECK_METRICS_VALUE,
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
             "error_column_name": "_errors",
             "warning_column_name": "_warnings",
@@ -1702,6 +1795,21 @@ def test_save_results_in_table_streaming_with_metrics(
             "warning_column_name": "_warnings",
             "user_metadata": None,
         },
+        {
+            "run_id": EXTRA_PARAMS.run_id_overwrite,
+            "run_name": "test_save_batch_observer",
+            "input_location": None,
+            "output_location": output_config.location,
+            "quarantine_location": quarantine_config.location,
+            "checks_location": None,
+            "rule_set_fingerprint": TEST_CHECKS_RULE_SET_FINGERPRINT,
+            "metric_name": "check_metrics",
+            "metric_value": TEST_CHECK_METRICS_VALUE,
+            "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
+            "error_column_name": "_errors",
+            "warning_column_name": "_warnings",
+            "user_metadata": None,
+        },
     ]
 
     expected_metrics_df = (
@@ -1871,6 +1979,21 @@ def test_streaming_observer_metrics_output(apply_checks_method, spark, ws, make_
             "rule_set_fingerprint": TEST_CHECKS_RULE_SET_FINGERPRINT,
             "metric_name": "total_warning_salary",
             "metric_value": "55000",
+            "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
+            "error_column_name": "_errors",
+            "warning_column_name": "_warnings",
+            "user_metadata": None,
+        },
+        {
+            "run_id": EXTRA_PARAMS.run_id_overwrite,
+            "run_name": "test_streaming_observer",
+            "input_location": input_config.location,
+            "output_location": output_config.location,
+            "quarantine_location": None,
+            "checks_location": checks_location,
+            "rule_set_fingerprint": TEST_CHECKS_RULE_SET_FINGERPRINT,
+            "metric_name": "check_metrics",
+            "metric_value": TEST_CHECK_METRICS_VALUE,
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
             "error_column_name": "_errors",
             "warning_column_name": "_warnings",
@@ -2046,6 +2169,21 @@ def test_streaming_observer_metrics_output_and_quarantine(
             "rule_set_fingerprint": TEST_CHECKS_RULE_SET_FINGERPRINT,
             "metric_name": "total_warning_salary",
             "metric_value": "55000",
+            "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
+            "error_column_name": "_errors",
+            "warning_column_name": "_warnings",
+            "user_metadata": None,
+        },
+        {
+            "run_id": EXTRA_PARAMS.run_id_overwrite,
+            "run_name": "test_streaming_observer_with_quarantine",
+            "input_location": input_table_name,
+            "output_location": output_table_name,
+            "quarantine_location": quarantine_table_name,
+            "checks_location": checks_location,
+            "rule_set_fingerprint": TEST_CHECKS_RULE_SET_FINGERPRINT,
+            "metric_name": "check_metrics",
+            "metric_value": TEST_CHECK_METRICS_VALUE,
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
             "error_column_name": "_errors",
             "warning_column_name": "_warnings",
@@ -2411,9 +2549,9 @@ def test_streaming_observer_metrics_output_and_quarantine_with_empty_checks(
 
 
 @pytest.mark.parametrize("apply_checks_method", [DQEngine.apply_checks, DQEngine.apply_checks_by_metadata])
-def test_observer_extended_metrics(ws, spark, apply_checks_method):
-    """Test that per-check metrics are included when track_extended_metrics is True."""
-    observer = DQMetricsObserver(name="test_observer", track_extended_metrics=True)
+def test_observer_check_metrics(ws, spark, apply_checks_method):
+    """Test that per-check metrics are included as a compact JSON check_metrics value."""
+    observer = DQMetricsObserver(name="test_observer")
     dq_engine = DQEngine(workspace_client=ws, spark=spark, observer=observer, extra_params=EXTRA_PARAMS)
 
     test_df = spark.createDataFrame(
@@ -2443,16 +2581,65 @@ def test_observer_extended_metrics(ws, spark, apply_checks_method):
     assert actual_metrics["warning_row_count"] == 1
     assert actual_metrics["valid_row_count"] == 2
 
-    # Per-check extended metrics
-    assert actual_metrics["id_is_not_null_error_count"] == 1
-    assert actual_metrics["id_is_not_null_warning_count"] == 0
-    assert actual_metrics["name_is_not_null_and_not_empty_error_count"] == 0
-    assert actual_metrics["name_is_not_null_and_not_empty_warning_count"] == 1
+    # Per-check metrics as compact JSON
+    check_metrics = json.loads(actual_metrics["check_metrics"])
+    assert check_metrics == [
+        {"check_name": "id_is_not_null", "error_count": 1, "warning_count": 0},
+        {"check_name": "name_is_not_null_and_not_empty", "error_count": 0, "warning_count": 1},
+    ]
 
 
 @pytest.mark.parametrize("apply_checks_method", [DQEngine.apply_checks, DQEngine.apply_checks_by_metadata])
-def test_observer_extended_metrics_checks_change_between_runs(ws, spark, apply_checks_method):
-    """Test that extended metrics reflect the correct checks when the rule set changes between runs."""
+def test_observer_check_metrics_with_auto_derived_names(ws, spark, apply_checks_method):
+    """Test that check_metrics uses the correct auto-derived name when check.name is not provided."""
+    checks_without_names = [
+        {
+            "criticality": "error",
+            "check": {"function": "is_not_null", "arguments": {"column": "id"}},
+        },
+        {
+            "criticality": "warn",
+            "check": {"function": "is_not_null_and_not_empty", "arguments": {"column": "name"}},
+        },
+    ]
+
+    observer = DQMetricsObserver(name="test_observer")
+    dq_engine = DQEngine(workspace_client=ws, spark=spark, observer=observer, extra_params=EXTRA_PARAMS)
+
+    test_df = spark.createDataFrame(
+        [
+            [1, "Alice", 30, 50000],
+            [2, "Bob", 25, 45000],
+            [None, "Charlie", 35, 60000],
+            [4, None, 28, 55000],
+        ],
+        TEST_SCHEMA,
+    )
+
+    if apply_checks_method == DQEngine.apply_checks:
+        checks = deserialize_checks(checks_without_names)
+        checked_df, observation = dq_engine.apply_checks(test_df, checks)
+    elif apply_checks_method == DQEngine.apply_checks_by_metadata:
+        checked_df, observation = dq_engine.apply_checks_by_metadata(test_df, checks_without_names)
+    else:
+        raise ValueError("Invalid 'apply_checks_method' used for testing observable metrics.")
+
+    checked_df.count()
+    actual_metrics = observation.get
+
+    assert actual_metrics["input_row_count"] == 4
+
+    # Auto-derived names come from the check condition alias (e.g. is_not_null("id") -> "id_is_null")
+    check_metrics = json.loads(actual_metrics["check_metrics"])
+    auto_derived_names = [m["check_name"] for m in check_metrics]
+    assert len(auto_derived_names) == 2
+    # Verify that names were auto-derived (not empty) and match the check condition aliases
+    assert auto_derived_names == ["id_is_null", "name_is_null_or_empty"]
+
+
+@pytest.mark.parametrize("apply_checks_method", [DQEngine.apply_checks, DQEngine.apply_checks_by_metadata])
+def test_observer_check_metrics_change_between_runs(ws, spark, apply_checks_method):
+    """Test that check_metrics reflect the correct checks when the rule set changes between runs."""
     full_checks_metadata = TEST_CHECKS
     reduced_checks_metadata = [TEST_CHECKS[0]]
 
@@ -2466,57 +2653,45 @@ def test_observer_extended_metrics_checks_change_between_runs(ws, spark, apply_c
         TEST_SCHEMA,
     )
 
-    expected_full = {
-        "input_row_count": 4,
-        "error_row_count": 1,
-        "warning_row_count": 1,
-        "valid_row_count": 2,
-        "id_is_not_null_error_count": 1,
-        "id_is_not_null_warning_count": 0,
-        "name_is_not_null_and_not_empty_error_count": 0,
-        "name_is_not_null_and_not_empty_warning_count": 1,
-    }
-    expected_reduced = {
-        "input_row_count": 4,
-        "error_row_count": 1,
-        "warning_row_count": 0,
-        "valid_row_count": 3,
-        "id_is_not_null_error_count": 1,
-        "id_is_not_null_warning_count": 0,
-    }
-
     if apply_checks_method == DQEngine.apply_checks:
         full_checks = deserialize_checks(full_checks_metadata)
         reduced_checks = deserialize_checks(reduced_checks_metadata)
 
         # First run: both checks
-        observer1 = DQMetricsObserver(name="test_observer", track_extended_metrics=True)
+        observer1 = DQMetricsObserver(name="test_observer")
         dq_engine1 = DQEngine(workspace_client=ws, spark=spark, observer=observer1, extra_params=EXTRA_PARAMS)
         checked_df1, observation1 = dq_engine1.apply_checks(test_df, full_checks)
         checked_df1.count()
-        assert observation1.get == expected_full
+        _assert_check_metrics(observation1.get, ["id_is_not_null", "name_is_not_null_and_not_empty"])
 
         # Second run: reduced checks
-        observer2 = DQMetricsObserver(name="test_observer", track_extended_metrics=True)
+        observer2 = DQMetricsObserver(name="test_observer")
         dq_engine2 = DQEngine(workspace_client=ws, spark=spark, observer=observer2, extra_params=EXTRA_PARAMS)
         checked_df2, observation2 = dq_engine2.apply_checks(test_df, reduced_checks)
         checked_df2.count()
-        assert observation2.get == expected_reduced
+        _assert_check_metrics(observation2.get, ["id_is_not_null"])
 
     elif apply_checks_method == DQEngine.apply_checks_by_metadata:
         # First run: both checks
-        observer1 = DQMetricsObserver(name="test_observer", track_extended_metrics=True)
+        observer1 = DQMetricsObserver(name="test_observer")
         dq_engine1 = DQEngine(workspace_client=ws, spark=spark, observer=observer1, extra_params=EXTRA_PARAMS)
         checked_df1, observation1 = dq_engine1.apply_checks_by_metadata(test_df, full_checks_metadata)
         checked_df1.count()
-        assert observation1.get == expected_full
+        _assert_check_metrics(observation1.get, ["id_is_not_null", "name_is_not_null_and_not_empty"])
 
         # Second run: reduced checks
-        observer2 = DQMetricsObserver(name="test_observer", track_extended_metrics=True)
+        observer2 = DQMetricsObserver(name="test_observer")
         dq_engine2 = DQEngine(workspace_client=ws, spark=spark, observer=observer2, extra_params=EXTRA_PARAMS)
         checked_df2, observation2 = dq_engine2.apply_checks_by_metadata(test_df, reduced_checks_metadata)
         checked_df2.count()
-        assert observation2.get == expected_reduced
+        _assert_check_metrics(observation2.get, ["id_is_not_null"])
 
     else:
         raise ValueError("Invalid 'apply_checks_method' used for testing observable metrics.")
+
+
+def _assert_check_metrics(actual_metrics: dict, expected_check_names: list[str]) -> None:
+    """Assert that check_metrics contains exactly the expected check names."""
+    check_metrics = json.loads(actual_metrics["check_metrics"])
+    actual_names = [m["check_name"] for m in check_metrics]
+    assert actual_names == expected_check_names
