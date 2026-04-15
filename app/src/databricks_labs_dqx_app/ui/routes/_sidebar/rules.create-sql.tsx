@@ -207,7 +207,7 @@ function CreateSqlCheckPage() {
     <div className="space-y-6">
       <div className="space-y-2">
         <PageBreadcrumb
-          items={[{ label: "Create Rules" }]}
+          items={[{ label: "Create Rules", to: "/rules/create" }]}
           page={isEditMode ? "Edit SQL check" : "Cross-table rules"}
         />
         <div className="flex items-center gap-4">

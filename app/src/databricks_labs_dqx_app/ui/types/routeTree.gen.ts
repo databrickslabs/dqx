@@ -310,6 +310,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SidebarConfigRouteImport
       parentRoute: typeof SidebarRouteRoute
     }
+    '/_sidebar/discovery': {
+      id: '/_sidebar/discovery'
+      path: '/discovery'
+      fullPath: '/discovery'
+      preLoaderRoute: typeof SidebarDiscoveryRouteImport
+      parentRoute: typeof SidebarRouteRoute
+    }
     '/_sidebar/rules/': {
       id: '/_sidebar/rules/'
       path: '/'

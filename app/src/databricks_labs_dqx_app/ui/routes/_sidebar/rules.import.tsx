@@ -48,7 +48,7 @@ function ImportRulesPage() {
   return (
     <div className="space-y-6">
       <PageBreadcrumb
-        items={[{ label: "Create Rules" }]}
+        items={[{ label: "Create Rules", to: "/rules/create" }]}
         page="Import rules"
       />
       <div>

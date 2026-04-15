@@ -582,7 +582,7 @@ function ProfilerPage() {
   return (
     <div className="space-y-6">
       <div className="space-y-2">
-        <PageBreadcrumb items={[{ label: "Create Rules" }]} page="Profile & Generate" />
+        <PageBreadcrumb items={[{ label: "Create Rules", to: "/rules/create" }]} page="Profile & Generate" />
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Data Profiler</h1>
           <p className="text-muted-foreground">
