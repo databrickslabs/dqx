@@ -6,10 +6,7 @@ on:
     - cron: '0 4 * * *'  # Runs automatically at 4:00 AM UTC every day
 
 permissions:
-  id-token: write
-  issues: write
   contents: read
-  pull-requests: read
 
 concurrency:
   group: single-acceptance-job-per-repo
@@ -19,21 +16,23 @@ jobs:
   integration:
     environment: tool
     runs-on: larger
+    permissions:
+      id-token: write
+      pull-requests: read
     steps:
       - name: Checkout Code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
 
-      - name: Install Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+      - name: Setup uv
+        uses: astral-sh/setup-uv@5a095e7a2014a4212f075830d4f7277575a9d098  # v7.3.1
         with:
-          cache: 'pip'
-          cache-dependency-path: '**/pyproject.toml'
-          python-version: '3.12'
+          version: "0.11.2"
+          checksum: "7ac2ca0449c8d68dae9b99e635cd3bc9b22a4cb1de64b7c43716398447d42981"
 
-      - name: Install hatch
-        run: pip install hatch==1.16.5
+      - name: Setup for JFrog
+        uses: ./.github/actions/jfrog-auth
 
       - name: Run unit tests and generate test coverage report
         run: make test
@@ -64,8 +63,7 @@ jobs:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage  # make sure the coverage report is preserved
 
       - name: Merge coverage reports and convert them to XML
-        run: |
-          hatch run combine_coverage
+        run: make combine-coverage
 
       # collects all coverage reports
       - name: Publish test coverage
@@ -76,6 +74,9 @@ jobs:
   integration_serverless:
     environment: tool
     runs-on: larger
+    permissions:
+      id-token: write
+      pull-requests: read
     env:
       DATABRICKS_SERVERLESS_COMPUTE_ID: auto
     steps:
@@ -84,15 +85,14 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+      - name: Setup uv
+        uses: astral-sh/setup-uv@5a095e7a2014a4212f075830d4f7277575a9d098  # v7.3.1
         with:
-          cache: 'pip'
-          cache-dependency-path: '**/pyproject.toml'
-          python-version: '3.12'
+          version: "0.11.2"
+          checksum: "7ac2ca0449c8d68dae9b99e635cd3bc9b22a4cb1de64b7c43716398447d42981"
 
-      - name: Install hatch
-        run: pip install hatch==1.16.5
+      - name: Setup for JFrog
+        uses: ./.github/actions/jfrog-auth
 
       # Integration tests are run from within tests/integration folder.
       # Create .coveragerc with correct relative path to source code.
@@ -119,8 +119,7 @@ jobs:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage  # make sure the coverage report is preserved
 
       - name: Merge coverage reports and convert them to XML
-        run: |
-          hatch run combine_coverage
+        run: make combine-coverage
 
       # collects all coverage reports
       - name: Publish test coverage
@@ -131,80 +130,54 @@ jobs:
   anomaly-tests:
     environment: tool
     runs-on: larger
+    permissions:
+      id-token: write
+      pull-requests: read
     steps:
       - name: Checkout Code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
 
-      - name: Install Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+      - name: Setup uv
+        uses: astral-sh/setup-uv@5a095e7a2014a4212f075830d4f7277575a9d098  # v7.3.1
         with:
-          cache: 'pip'
-          cache-dependency-path: '**/pyproject.toml'
-          python-version: '3.12'
+          version: "0.11.2"
+          checksum: "7ac2ca0449c8d68dae9b99e635cd3bc9b22a4cb1de64b7c43716398447d42981"
 
-      - name: Install hatch
-        run: pip install hatch==1.16.5
+      - name: Setup for JFrog
+        uses: ./.github/actions/jfrog-auth
 
-      # Anomaly tests are run from within tests/integration_anomaly folder.
       # Create .coveragerc with correct relative path to source code.
       - name: Prepare code coverage configuration for anomaly tests
         run: |
           cat > tests/integration_anomaly/.coveragerc << EOF
           [run]
-          source = ../../../src
-          parallel = true
+          source = ../../src
           relative_files = true
           EOF
 
-      - name: Azure login (OIDC)
-        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
+      - name: Run anomaly integration tests
+        uses: databrickslabs/sandbox/acceptance@3313d06ce86227537b3f37f5974f7eecb2a8e59a # acceptance/v0.4.4
         with:
-          client-id: ${{ secrets.ARM_CLIENT_ID }}
-          tenant-id: ${{ secrets.ARM_TENANT_ID }}
-          allow-no-subscriptions: true
-
-      - name: Set env vars for Azure CLI auth + MLflow
-        shell: bash
-        run: |
-          val=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-HOST" --query value -o tsv)
-          # Ensure host has https:// prefix (SDK and MLflow expect full URL)
-          if [[ ! "$val" =~ ^https?:// ]]; then
-            val="https://$val"
-          fi
-          # Workaround for MLflow OIDC auth: MLflow requires a profile to exist even when it uses SDK auth.
-          dummy_profile="${RUNNER_TEMP}/databricks_profile"
-          cat > "$dummy_profile" << EOF
-          [DEFAULT]
-          host = $val
-          token = dummy
-          EOF
-          echo "DATABRICKS_HOST=$val" >> $GITHUB_ENV
-          # Set cluster ID without printing to logs
-          echo "DATABRICKS_CLUSTER_ID=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-CLUSTER-ID" --query value -o tsv)" >> $GITHUB_ENV
-          echo "DATABRICKS_DQX_CLUSTER_ID=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-DQX-CLUSTER-ID" --query value -o tsv)" >> $GITHUB_ENV
-          # Set warehouse ID without printing to logs
-          echo "DATABRICKS_WAREHOUSE_ID=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-WAREHOUSE-ID" --query value -o tsv)" >> $GITHUB_ENV
-          echo "DATABRICKS_AUTH_TYPE=azure-cli" >> $GITHUB_ENV
-          echo "DATABRICKS_CONFIG_FILE=$dummy_profile" >> $GITHUB_ENV
-
-          # MLflow: Use databricks scheme so MLflow uses SDK auth (with dummy profile present).
-          echo "MLFLOW_ENABLE_DB_SDK=true" >> $GITHUB_ENV
-          echo "MLFLOW_TRACKING_URI=databricks" >> $GITHUB_ENV
-          echo "MLFLOW_REGISTRY_URI=databricks-uc" >> $GITHUB_ENV
-          echo "MLFLOW_HTTP_REQUEST_TIMEOUT=600" >> $GITHUB_ENV
-          echo "MLFLOW_HTTP_REQUEST_MAX_RETRIES=10" >> $GITHUB_ENV
-
-      - name: Run anomaly integration tests and generate test coverage report
-        timeout-minutes: 200
+          vault_uri: ${{ secrets.VAULT_URI }}
+          timeout: 3h
+          create_issues: false
+          codegen_path: tests/integration_anomaly/.codegen.json
         env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           COVERAGE_FILE: ${{ github.workspace }}/.coverage
-        run: |
-          hatch run pytest tests/integration_anomaly/ -v -rs -n 10 --cov --cov-report=xml --timeout=2000 --reruns 1 --reruns-delay 5 --durations=10
+          MLFLOW_ENABLE_DB_SDK: "true"
+          MLFLOW_TRACKING_URI: databricks
+          MLFLOW_REGISTRY_URI: databricks-uc
+          MLFLOW_HTTP_REQUEST_TIMEOUT: "600"
+          MLFLOW_HTTP_REQUEST_MAX_RETRIES: "10"
 
-      # Recursively search the entire workspace directory for all coverage reports.
-      # All uploaded test coverage reports will be used even if publish is done multiple time.
+      - name: Merge coverage reports and convert them to XML
+        run: make combine-coverage
+
       - name: Publish test coverage
         uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
         with:
@@ -213,77 +186,55 @@ jobs:
   anomaly-tests-serverless:
     environment: tool
     runs-on: larger
+    permissions:
+      id-token: write
+      pull-requests: read
     steps:
       - name: Checkout Code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
 
-      - name: Install Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+      - name: Setup uv
+        uses: astral-sh/setup-uv@5a095e7a2014a4212f075830d4f7277575a9d098  # v7.3.1
         with:
-          cache: 'pip'
-          cache-dependency-path: '**/pyproject.toml'
-          python-version: '3.12'
+          version: "0.11.2"
+          checksum: "7ac2ca0449c8d68dae9b99e635cd3bc9b22a4cb1de64b7c43716398447d42981"
 
-      - name: Install hatch
-        run: pip install hatch==1.16.5
+      - name: Setup for JFrog
+        uses: ./.github/actions/jfrog-auth
 
-      # Anomaly tests are run from within tests/integration_anomaly folder.
       # Create .coveragerc with correct relative path to source code.
       - name: Prepare code coverage configuration for anomaly tests
         run: |
           cat > tests/integration_anomaly/.coveragerc << EOF
           [run]
-          source = ../../../src
-          parallel = true
+          source = ../../src
           relative_files = true
           EOF
 
-      - name: Azure login (OIDC)
-        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
-        with:
-          client-id: ${{ secrets.ARM_CLIENT_ID }}
-          tenant-id: ${{ secrets.ARM_TENANT_ID }}
-          allow-no-subscriptions: true
-
-      - name: Set env vars for Azure CLI auth + MLflow
-        shell: bash
-        run: |
-          val=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-HOST" --query value -o tsv)
-          # Ensure host has https:// prefix (SDK and MLflow expect full URL)
-          if [[ ! "$val" =~ ^https?:// ]]; then
-            val="https://$val"
-          fi
-          # Workaround for MLflow OIDC auth: MLflow requires a profile to exist even when it uses SDK auth.
-          dummy_profile="${RUNNER_TEMP}/databricks_profile"
-          cat > "$dummy_profile" << EOF
-          [DEFAULT]
-          host = $val
-          token = dummy
-          EOF
-          echo "DATABRICKS_HOST=$val" >> $GITHUB_ENV
-          echo "DATABRICKS_AUTH_TYPE=azure-cli" >> $GITHUB_ENV
-          echo "DATABRICKS_CONFIG_FILE=$dummy_profile" >> $GITHUB_ENV
-          # Set warehouse ID without printing to logs
-          echo "DATABRICKS_WAREHOUSE_ID=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-WAREHOUSE-ID" --query value -o tsv)" >> $GITHUB_ENV
-
-          # MLflow: Use databricks scheme so MLflow uses SDK auth (with dummy profile present).
-          echo "MLFLOW_ENABLE_DB_SDK=true" >> $GITHUB_ENV
-          echo "MLFLOW_TRACKING_URI=databricks" >> $GITHUB_ENV
-          echo "MLFLOW_REGISTRY_URI=databricks-uc" >> $GITHUB_ENV
-          echo "MLFLOW_HTTP_REQUEST_TIMEOUT=600" >> $GITHUB_ENV
-          echo "MLFLOW_HTTP_REQUEST_MAX_RETRIES=10" >> $GITHUB_ENV
-
       - name: Run anomaly integration tests on serverless cluster
-        timeout-minutes: 200
+        uses: databrickslabs/sandbox/acceptance@3313d06ce86227537b3f37f5974f7eecb2a8e59a # acceptance/v0.4.4
+        with:
+          vault_uri: ${{ secrets.VAULT_URI }}
+          timeout: 3h
+          create_issues: false
+          codegen_path: tests/integration_anomaly/.codegen.json
         env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           COVERAGE_FILE: ${{ github.workspace }}/.coverage
           DATABRICKS_SERVERLESS_COMPUTE_ID: auto
-        run: |
-          hatch run pytest tests/integration_anomaly/ -v -rs -n 10 --cov --cov-report=xml --timeout=2000 --reruns 1 --reruns-delay 5 --durations=10
+          MLFLOW_ENABLE_DB_SDK: "true"
+          MLFLOW_TRACKING_URI: databricks
+          MLFLOW_REGISTRY_URI: databricks-uc
+          MLFLOW_HTTP_REQUEST_TIMEOUT: "600"
+          MLFLOW_HTTP_REQUEST_MAX_RETRIES: "10"
 
-      # collects all coverage reports
+      - name: Merge coverage reports and convert them to XML
+        run: make combine-coverage
+
       - name: Publish test coverage
         uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
         with:
@@ -292,43 +243,27 @@ jobs:
   e2e:
     environment: tool
     runs-on: larger
+    permissions:
+      id-token: write
+      pull-requests: read
     steps:
       - name: Checkout Code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
 
-      - name: Install Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+      - name: Setup uv
+        uses: astral-sh/setup-uv@5a095e7a2014a4212f075830d4f7277575a9d098  # v7.3.1
         with:
-          cache: 'pip'
-          cache-dependency-path: '**/pyproject.toml'
-          python-version: '3.12'
+          version: "0.11.2"
+          checksum: "7ac2ca0449c8d68dae9b99e635cd3bc9b22a4cb1de64b7c43716398447d42981"
 
-      - name: Install hatch
-        run: pip install hatch==1.16.5
+      - name: Setup for JFrog
+        uses: ./.github/actions/jfrog-auth
 
-      - name: Install dbt
-        run: |
-          pip install dbt-core==1.10.9 dbt-databricks==1.10.9
-
+      # Required for DAB (Databricks Asset Bundle) e2e tests
       - name: Install Databricks CLI
-        run: |
-          curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
-          databricks --version
-
-      - name: Azure login (OIDC)
-        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
-        with:
-          client-id: ${{ secrets.ARM_CLIENT_ID }}
-          tenant-id: ${{ secrets.ARM_TENANT_ID }}
-          allow-no-subscriptions: true
-
-      - name: Set env vars for Azure CLI auth
-        run: |
-          val=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-HOST" --query value -o tsv)
-          echo "DATABRICKS_HOST=$val" >> $GITHUB_ENV
-          echo "DATABRICKS_AUTH_TYPE=azure-cli" >> $GITHUB_ENV
+        uses: databricks/setup-cli@acd0e77a1ed7f15f528faca1e1f7f5590bcfdff8 # v0.296.0
 
       - name: Run e2e tests
         uses: databrickslabs/sandbox/acceptance@3313d06ce86227537b3f37f5974f7eecb2a8e59a # acceptance/v0.4.4
@@ -345,6 +280,9 @@ jobs:
   e2e_serverless:
     environment: tool
     runs-on: larger
+    permissions:
+      id-token: write
+      pull-requests: read
     env:
       DATABRICKS_SERVERLESS_COMPUTE_ID: auto
     steps:
@@ -353,37 +291,18 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+      - name: Setup uv
+        uses: astral-sh/setup-uv@5a095e7a2014a4212f075830d4f7277575a9d098  # v7.3.1
         with:
-          cache: 'pip'
-          cache-dependency-path: '**/pyproject.toml'
-          python-version: '3.12'
+          version: "0.11.2"
+          checksum: "7ac2ca0449c8d68dae9b99e635cd3bc9b22a4cb1de64b7c43716398447d42981"
 
-      - name: Install hatch
-        run: pip install hatch==1.16.5
+      - name: Setup for JFrog
+        uses: ./.github/actions/jfrog-auth
 
-      - name: Install dbt
-        run: |
-          pip install dbt-core==1.10.9 dbt-databricks==1.10.9
-      
+      # Required for DAB (Databricks Asset Bundle) e2e tests
       - name: Install Databricks CLI
-        run: |
-          curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
-          databricks --version
-
-      - name: Azure login (OIDC)
-        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
-        with:
-          client-id: ${{ secrets.ARM_CLIENT_ID }}
-          tenant-id: ${{ secrets.ARM_TENANT_ID }}
-          allow-no-subscriptions: true
-
-      - name: Set env vars for Azure CLI auth
-        run: |
-          val=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-HOST" --query value -o tsv)
-          echo "DATABRICKS_HOST=$val" >> $GITHUB_ENV
-          echo "DATABRICKS_AUTH_TYPE=azure-cli" >> $GITHUB_ENV
+        uses: databricks/setup-cli@acd0e77a1ed7f15f528faca1e1f7f5590bcfdff8 # v0.296.0
 
       - name: Run e2e tests on serverless cluster
         uses: databrickslabs/sandbox/acceptance@3313d06ce86227537b3f37f5974f7eecb2a8e59a # acceptance/v0.4.4
@@ -398,27 +317,39 @@ jobs:
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
 
+  # Performance benchmarks:
+  # 1. run tests and generate a new perf baseline
+  # 2. merge it with the existing one
+  # 3. compare against it to detect regressions (>25% mean degradation)
+  # 4. if the baseline changed and new benchmarks are added or removed, open a PR in the repo
+  # 5. PR commit is unsigned — a maintainer must pull, sign, and push before merging
   benchmark:
+    permissions:
+      id-token: write
+      contents: write # required for creating benchmark baseline branches
+      pull-requests: write # required for creating benchmark baseline PRs
     environment: tool
     runs-on: larger
     env:
       DATABRICKS_SERVERLESS_COMPUTE_ID: auto
       BENCHMARKS_DIR: tests/perf/.benchmarks
+      FINAL_BASELINE: tests/perf/.benchmarks/baseline.json
+      UPDATED_BASELINE: tests/perf/.benchmarks/baseline_updated.json
+      NEW_BASELINE: tests/perf/.benchmarks/baseline_new.json
     steps:
       - name: Checkout Code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
 
-      - name: Install Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+      - name: Setup uv
+        uses: astral-sh/setup-uv@5a095e7a2014a4212f075830d4f7277575a9d098  # v7.3.1
         with:
-          cache: 'pip'
-          cache-dependency-path: '**/pyproject.toml'
-          python-version: '3.12'
+          version: "0.11.2"
+          checksum: "7ac2ca0449c8d68dae9b99e635cd3bc9b22a4cb1de64b7c43716398447d42981"
 
-      - name: Install hatch
-        run: pip install hatch==1.16.5
+      - name: Setup for JFrog
+        uses: ./.github/actions/jfrog-auth
 
       - name: Login to Azure for azure-cli authentication
         uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
@@ -426,6 +357,172 @@ jobs:
           client-id: ${{ secrets.ARM_CLIENT_ID }}
           tenant-id: ${{ secrets.ARM_TENANT_ID }}
           allow-no-subscriptions: true
+
+      - name: Generate new benchmark baseline
+        timeout-minutes: 120
+        env:
+          DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
+        run: |
+          export DATABRICKS_HOST=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-HOST" --query value -o tsv)
+          export DATABRICKS_AUTH_TYPE=azure-cli
+          # We don't use the acceptance action here as it may finish before all benchmark files are written.
+          # Tests are run sequentially to reduce variability.
+          # Create baseline benchmarks under: $BENCHMARKS_DIR/<machine-specific-folder>/*_baseline.json
+          # Do at least 5 rounds to get more stable results.
+          UV_FROZEN=1 uv run --all-extras pytest tests/perf -v -n 1 \
+            --benchmark-storage=$BENCHMARKS_DIR \
+            --benchmark-save=baseline \
+            --benchmark-min-rounds=5
+
+      - name: Update benchmark baseline
+        run: |
+          echo "----- Benchmark Files -----"
+          find $BENCHMARKS_DIR
+
+          # find the benchmark subfolder dynamically
+          BENCHMARK_SUBDIR=$(find $BENCHMARKS_DIR -mindepth 1 -maxdepth 1 -type d | head -n1)
+          echo "New benchmarks located in sub-folder '$BENCHMARK_SUBDIR'"
+
+          # combine individual benchmark files into a single file for easier comparison later
+          mkdir -p "$(dirname "$NEW_BASELINE")"
+          jq -s '
+            .[0] * {
+              benchmarks: (
+                map(.benchmarks) | add | sort_by(.fullname)
+              )
+            }
+          ' $BENCHMARK_SUBDIR/*_baseline.json > $NEW_BASELINE
+
+          # remove the subfolder to avoid confusion
+          rm -rf $BENCHMARK_SUBDIR
+
+          # If baseline.json does not exist -> just use the new baseline_new.json as baseline.
+          # If baseline.json exists -> merge the two with this logic:
+          # * If a test exists only in old baseline -> remove it (since it's missing in new run).
+          # * If a test exists only in new -> add it.
+          # * If a test exists in both -> keep the old one (no overwrite).
+          if [ ! -f "$FINAL_BASELINE" ]; then
+              echo "No baseline exists, using new baseline"
+              cp $NEW_BASELINE $FINAL_BASELINE
+          else
+              echo "Merging new baseline into existing baseline"
+
+              # Determine added/removed benchmarks
+              ADDED=$(jq -s '
+                (.[0].benchmarks // [] | map(.fullname)) as $old
+                | (.[1].benchmarks // [] | map(.fullname)) as $new
+                | ($new - $old)[]?
+              ' $FINAL_BASELINE $NEW_BASELINE)
+
+              REMOVED=$(jq -s '
+                (.[0].benchmarks // [] | map(.fullname)) as $old
+                | (.[1].benchmarks // [] | map(.fullname)) as $new
+                | ($old - $new)[]?
+              ' $FINAL_BASELINE $NEW_BASELINE)
+
+              # Print info about added/removed
+              if [ -n "$ADDED" ]; then
+                echo "Added benchmarks:"
+                echo "$ADDED"
+              fi
+
+              if [ -n "$REMOVED" ]; then
+                echo "Removed benchmarks:"
+                echo "$REMOVED"
+              fi
+
+              # Merge: prefer existing benchmarks if they exist, add new, remove missing
+              jq -s '
+                (.[0].benchmarks // [] | map({(.fullname): .}) | add) as $old
+                | (.[1].benchmarks // [] | map({(.fullname): .}) | add) as $new
+                | (.[0] + {
+                    benchmarks:
+                      (
+                        ($new | keys_unsorted) as $keys
+                        | [ $keys[] |
+                            if ($old[.] != null) then $old[.] else $new[.] end
+                          ]
+                      )
+                  })
+              ' $FINAL_BASELINE $NEW_BASELINE > $UPDATED_BASELINE
+
+              # Replace the old baseline with the updated one
+              rm -rf $FINAL_BASELINE
+              cp $UPDATED_BASELINE $FINAL_BASELINE
+          fi
+
+          echo "----- Benchmark Files -----"
+          find $BENCHMARKS_DIR
+
+          echo "Updating performance benchmark report"
+          OUT=$(UV_FROZEN=1 uv run --all-extras python tests/perf/generate_md_report.py | grep REPORT_PATH | cut -d '=' -f2)
+          echo "Benchmark report updated at $OUT"
+          echo "BENCHMARK_REPORT=$OUT" >> $GITHUB_ENV
+
+      # For troubleshooting only
+      - name: Upload baseline artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: baseline-artifacts
+          path: |
+            ${{ env.FINAL_BASELINE }}
+            ${{ env.NEW_BASELINE }}
+            ${{ env.UPDATED_BASELINE }}
+
+      - name: Create PR with updated baseline if changed
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Stage baseline and report
+          git add $FINAL_BASELINE || true
+          git add $BENCHMARK_REPORT || true
+
+          # Check if there are actual changes
+          if git diff --cached --quiet; then
+            echo "No changes to benchmark baseline or report, skipping PR creation"
+          else
+            BRANCH_NAME="update-benchmark-baseline-$(date +%Y%m%d)"
+
+            git checkout -b "$BRANCH_NAME"
+
+            # Note: this commit is NOT GPG-signed.
+            # The reviewer should pull, sign the commit, and push to trigger CI and satisfy branch protection.
+            git commit -m "Update pytest-benchmark performance baseline"
+
+            git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+            git push origin "$BRANCH_NAME" --force-with-lease
+
+            # Create a PR only if one doesn't already exist for this branch
+            EXISTING_PR=$(gh pr list --head "$BRANCH_NAME" --state open --json number --jq '.[0].number')
+            if [ -z "$EXISTING_PR" ]; then
+              gh pr create \
+                --title "Update performance benchmark baseline" \
+                --body "$(cat <<'EOF'
+          ## Summary
+          - Updated `tests/perf/.benchmarks/baseline.json` with latest nightly benchmark results
+          - Regenerated `docs/dqx/docs/reference/benchmarks.mdx` report
+
+          ## Action required
+          This commit is **not GPG-signed** (created by GitHub Actions).
+          To merge, pull this branch, sign the commit, and push:
+          ```bash
+          git fetch origin <branch-name>
+          git checkout <branch-name>
+          git commit --amend --no-edit  # re-signs with your GPG key
+          git push --force-with-lease
+          ```
+
+          This pull request was created automatically by the nightly performance workflow.
+          EOF
+              )" \
+                --base main
+            else
+              echo "PR #$EXISTING_PR already exists for $BRANCH_NAME, force-pushed updated baseline"
+            fi
+          fi
 
       - name: Run performance tests and compare with baseline
         timeout-minutes: 120
@@ -435,11 +532,15 @@ jobs:
           export DATABRICKS_HOST=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-HOST" --query value -o tsv)
           export DATABRICKS_AUTH_TYPE=azure-cli
 
+          # remove the new and updated baseline files to avoid confusion, only FINAL_BASELINE is needed for comparison
+          rm -rf $NEW_BASELINE
+          rm -rf $UPDATED_BASELINE
+
           # We are not using acceptance action as it does not show the comparison results.
           # The run fails if performance degrades by more than 25%.
           # Tests are run sequentially to reduce variability.
           # Do at least 5 rounds to get more stable results.
-          hatch run pytest tests/perf -v -n 1 \
+          UV_FROZEN=1 uv run --all-extras pytest tests/perf -v -n 1 \
             --benchmark-storage=$BENCHMARKS_DIR \
             --benchmark-compare=baseline \
             --benchmark-compare-fail=mean:25% \
