@@ -1,4 +1,3 @@
-import inspect
 import logging
 from datetime import datetime
 from dataclasses import dataclass
@@ -172,13 +171,13 @@ class DQRuleManager:
 
     def _build_message_col(self, condition: Column) -> Column:
         """
-        Builds the message column, using the default message or a custom message callable if specified in the rule
-        definition. Allows use of the following arguments passed at execution time by the DQRuleManager:
+        Builds the message column, using the default message or a custom Spark SQL expression if
+        specified in the rule definition. The SQL expression supports placeholders that are
+        substituted before evaluation:
 
-        * *rule_name* is the name of the DQX rule
-        * *check_func_name* is the name of the DQX check function
-        * *check_func_args* is a dictionary of DQX check function arguments as key-value pairs
-        * *column_value* is the column value that failed the DQX check
+        * '{rule_name}' is replaced with the quoted name of the DQX rule
+        * '{check_func_name}' is replaced with the quoted name of the DQX check function
+        * '{column_value}' is replaced with a SQL reference to the column value (cast to string)
 
         Args:
             condition: Default DQX condition message returned by evaluating the DQX check function
@@ -190,30 +189,16 @@ class DQRuleManager:
         if self.check.message is None:
             return condition
 
-        check_func_signature = inspect.signature(self.check.check_func)
-        args, kwargs = self.check.prepare_check_func_args_and_kwargs()
-        bound = check_func_signature.bind_partial(*args, **kwargs)
-        check_func_args = dict(bound.arguments)
-        column_value = F.col(self.check.column).cast("string") if self.check.column else F.lit(None)
+        column_value_sql = f"CAST(`{self.check.column}` AS STRING)" if self.check.column else "NULL"
+        escaped_check_name = self.check.name.replace("'", "\\'")
+        escaped_check_function = self.check.check_func.__name__.replace("'", "\\'")
 
-        default_message_func_args = {
-            "rule_name": self.check.name,
-            "check_func_name": self.check.check_func.__name__,
-            "check_func_args": check_func_args,
-            "column_value": column_value,
-        }
-        message_func_signature = inspect.signature(self.check.message)
-        message_func_accepts_keyword_args = any(
-            param.kind == inspect.Parameter.VAR_KEYWORD for param in message_func_signature.parameters.values()
-        )
-        message_func_args = {
-            arg: val
-            for arg, val in default_message_func_args.items()
-            if arg in list(message_func_signature.parameters.keys()) or message_func_accepts_keyword_args
-        }
-        custom_message = self.check.message(**message_func_args)
+        message_expr = self.check.message
+        message_expr = message_expr.replace("{rule_name}", escaped_check_name)
+        message_expr = message_expr.replace("{check_func_name}", escaped_check_function)
+        message_expr = message_expr.replace("{column_value}", column_value_sql)
 
-        # Keep the null/non-null semantics of the original condition but swap the message text
+        custom_message = F.expr(message_expr)
         return F.when(condition.isNotNull(), custom_message).otherwise(F.lit(None).cast("string"))
 
     def _get_invalid_cols_message(self) -> str:
