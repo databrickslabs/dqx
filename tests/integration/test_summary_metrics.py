@@ -2408,3 +2408,21 @@ def test_streaming_observer_metrics_output_and_quarantine_with_empty_checks(
     assert (
         spark.table(quarantine_config.location).count() == 0
     ), f"Quarantine table {quarantine_config.location} has {spark.table(quarantine_config.location).count()} rows"
+
+
+def test_save_results_in_table_with_observer_no_observation(ws, spark, make_schema, make_random):
+    catalog_name = TEST_CATALOG
+    schema = make_schema(catalog_name=catalog_name)
+    quarantine_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+    quarantine_config = OutputConfig(location=quarantine_table, mode="overwrite")
+
+    quarantine_df = spark.createDataFrame([[3, 4]], "a: int, b: int")
+
+    engine = DQEngine(ws, spark, observer=DQMetricsObserver())
+    engine.save_results_in_table(
+        quarantine_df=quarantine_df,
+        quarantine_config=quarantine_config,
+    )
+
+    loaded = spark.table(quarantine_table)
+    assert_df_equality(quarantine_df, loaded)
