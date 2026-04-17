@@ -1,4 +1,5 @@
 import logging
+import os
 import shutil
 import subprocess
 
@@ -457,13 +458,22 @@ def test_dbt_demo(make_schema, make_random, library_ref, debug_env):
     client_secret = debug_env.get("TOOLS_DATABRICKS_SECRET")
     # dbt expects just the hostname, not a full URL
     host = debug_env.get("DATABRICKS_HOST", "").replace("https://", "").rstrip("/")
-    workspace_id = debug_env.get("TEST_DEFAULT_WAREHOUSE_HTTP_PATH")
+    http_path = debug_env.get("TEST_DEFAULT_WAREHOUSE_HTTP_PATH")
+
+    assert host, "DATABRICKS_HOST is not set"
+    assert http_path, "TEST_DEFAULT_WAREHOUSE_HTTP_PATH is not set"
+    assert (
+        client_id and client_secret
+    ) or token, "Neither TOOLS_CLIENT_ID/TOOLS_DATABRICKS_SECRET nor DATABRICKS_TOKEN is set"
+
+    dbt_bin = shutil.which("dbt")
+    assert dbt_bin, "dbt executable not found on PATH"
 
     # Build dbt profile: token auth or M2M OAuth
     profile: dict[str, object] = {
         "type": "databricks",
         "host": host,
-        "http_path": workspace_id,
+        "http_path": http_path,
         "catalog": catalog,
         "schema": schema,
         "threads": 1,
@@ -488,8 +498,40 @@ def test_dbt_demo(make_schema, make_random, library_ref, debug_env):
         profiles_yml_path = dbt_profiles_dir / "profiles.yml"
         profiles_yml_path.write_text(profiles_yml_content.strip())
 
-        # Run dbt run
-        subprocess.run(
-            ["dbt", "run", "--debug", "--project-dir", str(project_dir), "--profiles-dir", str(dbt_profiles_dir)],
-            check=True,
+        # dbt-databricks picks up DATABRICKS_HOST / DATABRICKS_TOKEN / DATABRICKS_CLIENT_ID /
+        # DATABRICKS_CLIENT_SECRET from the environment and lets them override profiles.yml.
+        # Strip them so the values we just wrote to profiles.yml are authoritative.
+        env = {
+            k: v
+            for k, v in os.environ.items()
+            if k
+            not in {
+                "DATABRICKS_HOST",
+                "DATABRICKS_TOKEN",
+                "DATABRICKS_CLIENT_ID",
+                "DATABRICKS_CLIENT_SECRET",
+            }
+        }
+        env["DBT_PROFILES_DIR"] = str(dbt_profiles_dir)
+
+        result = subprocess.run(
+            [
+                dbt_bin,
+                "run",
+                "--debug",
+                "--project-dir",
+                str(project_dir),
+                "--profiles-dir",
+                str(dbt_profiles_dir),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            env=env,
         )
+        if result.returncode != 0:
+            raise AssertionError(
+                f"dbt run failed with exit code {result.returncode}\n"
+                f"--- stdout ---\n{result.stdout}\n"
+                f"--- stderr ---\n{result.stderr}"
+            )

@@ -50,6 +50,7 @@ jobs:
           [run]
           source = ../../src
           relative_files = true
+          parallel = true
           EOF
 
       # Run tests from `tests/integration` as defined in .codegen.json
@@ -105,6 +106,7 @@ jobs:
           [run]
           source = ../../src
           relative_files = true
+          parallel = true
           EOF
 
       - name: Run integration tests on serverless cluster
