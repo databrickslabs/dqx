@@ -277,7 +277,7 @@ def test_e2e_workflow_for_patterns_exclude_output(
 
 
 def test_e2e_workflow_for_patterns_table_checks_storage(
-    ws, spark_keep_alive, make_table, setup_workflows, expected_quality_checking_output, make_random
+    ws, spark_keep_alive, setup_workflows, expected_quality_checking_output, make_random
 ):
     installation_ctx, run_config = setup_workflows()
     spark = spark_keep_alive.spark

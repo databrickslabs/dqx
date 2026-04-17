@@ -68,7 +68,7 @@
       mean: "150"
       min: "0"
       max: "1000"
-  quality_rules: '[{"criticality":"error","check":{"function":"regex_match","arguments":{"column":"product_code","pattern":"^PROD-\\d{4}-[A-Z]$"}}}]'
+  quality_rules: '[{"criticality":"error","check":{"function":"regex_match","arguments":{"column":"product_code","regex":"^PROD-\\d{4}-[A-Z]$"}}}]'
   reasoning: "Product codes follow a specific pattern PROD-####-X where #### is 4 digits and X is a capital letter. This standard format ensures consistency across the inventory system and integration with other systems."
 
 - name: "conditional_discount_validation"

@@ -14,6 +14,29 @@ from tests.integration.conftest import setup_custom_check_func
 from tests.constants import TEST_CATALOG
 
 
+def _assert_ai_regex_match_excludes_c_prefix(checks):
+    """Assert that the AI-generated rules contain a regex_match check on the
+    'name' column that rejects names starting with 'c' (any case).
+
+    `column` is required for regex_match, so we assert it strictly. The regex
+    form is allowed to vary (e.g. `^[^cC].*`, `^[^c].*` with an inline (?i) flag,
+    etc.) since LLM output is non-deterministic.
+    """
+    actual = next((c for c in checks if c["check"]["function"] == "regex_match"), None)
+    assert actual is not None, "AI generated regex_match check not found in the loaded checks"
+    assert actual.get("criticality") == "error", f"Unexpected criticality: {actual}"
+
+    args = actual["check"].get("arguments", {})
+    assert args.get("column") == "name", (
+        f"AI generated regex_match check must target the 'name' column via the required " f"'column' argument: {actual}"
+    )
+
+    regex = args.get("regex", "")
+    assert (
+        "c" in regex.lower() and "[^" in regex
+    ), f"AI generated regex does not appear to exclude names starting with 'c': {regex!r}"
+
+
 def test_profiler_workflow_when_missing_input_location_in_config(ws, setup_serverless_workflows):
     installation_ctx, run_config = setup_serverless_workflows()
 
@@ -364,18 +387,7 @@ def test_profiler_workflow_with_ai_rules_generation(ws, spark_keep_alive, setup_
     checks = dq_engine.load_checks(config=config)
     assert checks, "Checks were not loaded correctly"
 
-    actual_ai_generated_check = None
-    for check in checks:
-        if check["check"]["function"] == "regex_match":
-            actual_ai_generated_check = check
-            break
-
-    expected_ai_generated_check = {
-        'check': {'arguments': {'column': 'name', 'negate': False, 'regex': '^[^cC].*'}, 'function': 'regex_match'},
-        'criticality': 'error',
-    }
-
-    assert expected_ai_generated_check == actual_ai_generated_check, "AI generated check not found in the loaded checks"
+    _assert_ai_regex_match_excludes_c_prefix(checks)
 
 
 def test_profiler_workflow_with_ai_rules_generation_and_model_api_keys_as_secrets(
@@ -410,18 +422,7 @@ def test_profiler_workflow_with_ai_rules_generation_and_model_api_keys_as_secret
     checks = dq_engine.load_checks(config=config)
     assert checks, "Checks were not loaded correctly"
 
-    actual_ai_generated_check = None
-    for check in checks:
-        if check["check"]["function"] == "regex_match":
-            actual_ai_generated_check = check
-            break
-
-    expected_ai_generated_check = {
-        'check': {'arguments': {'column': 'name', 'negate': False, 'regex': '^[^cC].*'}, 'function': 'regex_match'},
-        'criticality': 'error',
-    }
-
-    assert expected_ai_generated_check == actual_ai_generated_check, "AI generated check not found in the loaded checks"
+    _assert_ai_regex_match_excludes_c_prefix(checks)
 
 
 def test_profiler_workflow_with_ai_rules_generation_with_custom_funcs(ws, spark_keep_alive, setup_serverless_workflows):
@@ -449,18 +450,17 @@ def test_profiler_workflow_with_ai_rules_generation_with_custom_funcs(ws, spark_
     checks = dq_engine.load_checks(config=config)
     assert checks, "Checks were not loaded correctly"
 
-    actual_ai_generated_check = None
-    for check in checks:
-        if check["check"]["function"] == "not_ends_with_suffix":
-            actual_ai_generated_check = check
-            break
-
-    expected_ai_generated_check = {
-        'check': {'arguments': {'column': 'name', 'suffix': 'c'}, 'function': 'not_ends_with_suffix'},
-        'criticality': 'error',
-    }
-
-    assert expected_ai_generated_check == actual_ai_generated_check, "AI generated check not found in the loaded checks"
+    actual_ai_generated_check = next((c for c in checks if c["check"]["function"] == "not_ends_with_suffix"), None)
+    assert actual_ai_generated_check is not None, "AI generated not_ends_with_suffix check not found"
+    assert actual_ai_generated_check.get("criticality") == "error"
+    args = actual_ai_generated_check["check"].get("arguments", {})
+    assert args.get("column") == "name", (
+        f"AI generated check must target the 'name' column via the required 'column' argument: "
+        f"{actual_ai_generated_check}"
+    )
+    assert (
+        str(args.get("suffix", "")).lower() == "c"
+    ), f"AI generated check suffix is not 'c': {actual_ai_generated_check}"
 
 
 def test_profiler_workflow_with_llm_pk_detection(

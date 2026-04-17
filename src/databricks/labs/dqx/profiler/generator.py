@@ -140,17 +140,39 @@ class DQGenerator(DQEngineBase):
             user_input=user_input, schema_info=schema_info, summary_stats=summary_stats
         )
 
-        # Validate the generated rules
-        dq_rules = json.loads(prediction.quality_rules)
-        status = DQEngine.validate_checks(checks=dq_rules, custom_check_functions=self.custom_check_functions)
-        if status.has_errors:
-            logger.warning(f"Generated rules have validation errors: {status.errors}")
-        else:
+        # Validate the generated rules and drop any that fail — the LLM occasionally
+        # emits rules missing required arguments (e.g. `column` for `regex_match`),
+        # and returning them would raise `InvalidCheckError` at apply time.
+        raw_rules = json.loads(prediction.quality_rules)
+        dq_rules = self._filter_valid_rules(raw_rules)
+
+        if dq_rules:
             logger.info(f"Generated {len(dq_rules)} rules with LLM: {dq_rules}")
             logger.info(f"LLM reasoning: {prediction.reasoning}")
 
-        logger.info(f"✅ AI-Assisted quality rules generation completed. Generated {len(dq_rules)} rules.")
+        logger.info(
+            f"✅ AI-Assisted quality rules generation completed. Generated {len(dq_rules)} valid rule(s) "
+            f"out of {len(raw_rules)} LLM output(s)."
+        )
         return dq_rules
+
+    def _filter_valid_rules(self, rules: list[dict]) -> list[dict]:
+        """Return only rules that pass ``DQEngine.validate_checks``.
+
+        Rules rejected by the validator are logged at WARNING with the specific
+        validation errors so invalid LLM output is visible but does not propagate
+        to callers.
+        """
+        valid: list[dict] = []
+        for rule in rules:
+            status = DQEngine.validate_checks(checks=[rule], custom_check_functions=self.custom_check_functions)
+            if status.has_errors:
+                logger.warning(
+                    "Dropping LLM-generated rule that failed validation: %r — errors: %s", rule, status.errors
+                )
+                continue
+            valid.append(rule)
+        return valid
 
     @telemetry_logger("generator", "generate_rules_from_contract")
     def generate_rules_from_contract(
