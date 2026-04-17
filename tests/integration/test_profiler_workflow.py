@@ -432,7 +432,9 @@ def test_profiler_workflow_with_ai_rules_generation_with_custom_funcs(ws, spark_
     config = installation_ctx.config
     config.llm_config.model.model_name = "databricks/databricks-llama-4-maverick"  # test different model
     run_config = config.get_run_config()
-    run_config.checks_user_requirements = "name should not end with 'c'"
+    run_config.checks_user_requirements = (
+        "name should not end with 'c'. Use not_ends_with_suffix function and don't add any extra quotes for suffix."
+    )
     installation_ctx.installation.save(installation_ctx.config)
 
     custom_checks_funcs_location = "custom_check_funcs.py"  # path relative to the installation folder
