@@ -65,15 +65,33 @@ def get_permissions_for_role(role: UserRole) -> list[str]:
 
 def get_user_email(
     x_forwarded_email: Annotated[str | None, Header()] = None,
-    x_forwarded_user: Annotated[str | None, Header()] = None,
+    x_forwarded_access_token: Annotated[str | None, Header()] = None,
 ) -> str:
-    email = x_forwarded_email or x_forwarded_user
-    if not email:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User identity not found. Missing X-Forwarded-Email or X-Forwarded-User header.",
-        )
-    return email
+    """Resolve the authenticated user's email.
+
+    Primary source is the platform-verified X-Forwarded-Email header.
+    Fallback derives the email from the OBO access token via the SCIM API,
+    which is needed for local dev where the proxy only injects the token.
+    """
+    if x_forwarded_email:
+        return x_forwarded_email
+
+    if x_forwarded_access_token:
+        try:
+            from databricks.sdk import WorkspaceClient
+
+            ws = WorkspaceClient(token=x_forwarded_access_token, auth_type="pat")
+            me = ws.current_user.me()
+            if me.user_name:
+                logger.debug("Resolved user email from OBO token: %s", me.user_name)
+                return me.user_name
+        except Exception:
+            logger.warning("Failed to resolve user email from OBO token", exc_info=True)
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="User identity not found. Missing X-Forwarded-Email header.",
+    )
 
 
 CurrentUser = Annotated[str, Depends(get_user_email)]

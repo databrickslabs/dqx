@@ -24,7 +24,7 @@ from databricks_labs_dqx_app.backend.models import (
     ProfileRunSummaryOut,
     RunStatusOut,
 )
-from databricks_labs_dqx_app.backend.run_status_manager import get_run_owner, update_run_status
+from databricks_labs_dqx_app.backend.run_status_manager import get_run_metadata, update_run_status
 from databricks_labs_dqx_app.backend.services.job_service import JobService
 from databricks_labs_dqx_app.backend.services.view_service import ViewService
 
@@ -105,6 +105,7 @@ def submit_profile_run(
             source_table_fqn=body.table_fqn,
             view_fqn=view_fqn,
             sample_limit=body.sample_limit,
+            job_run_id=job_run_id,
         )
 
         return ProfileRunOut(run_id=run_id, job_run_id=job_run_id, view_fqn=view_fqn)
@@ -166,6 +167,7 @@ def submit_batch_profile_run(
                     source_table_fqn=table_fqn,
                     view_fqn=view_fqn,
                     sample_limit=body.sample_limit,
+                    job_run_id=job_run_id,
                 )
             except Exception as table_err:
                 logger.error("Failed to submit profile run for %s: %s", table_fqn, table_err, exc_info=True)
@@ -191,26 +193,28 @@ def submit_batch_profile_run(
 @router.get("/runs/{run_id}/status", response_model=RunStatusOut, operation_id="getProfileRunStatus")
 def get_profile_run_status(
     run_id: str,
-    job_run_id: int,
     job_svc: Annotated[JobService, Depends(get_job_service)],
     view_svc: Annotated[ViewService, Depends(get_view_service)],
     app_conf: Annotated[AppConfig, Depends(get_conf)],
-    view_fqn: str | None = None,
 ) -> RunStatusOut:
     """Poll the status of a profiler job run. Cleans up the view when job terminates."""
     try:
-        status = job_svc.get_run_status(job_run_id)
+        meta = get_run_metadata(job_svc, app_conf, _PROFILER_TABLE, run_id)
+        if meta.job_run_id is None:
+            raise HTTPException(status_code=404, detail=f"No job_run_id found for run_id={run_id}")
+
+        status = job_svc.get_run_status(meta.job_run_id)
         view_cleaned_up = False
 
         is_terminal = status.state in ("TERMINATED", "INTERNAL_ERROR", "SKIPPED")
 
-        if view_fqn and is_terminal:
+        if is_terminal and meta.view_fqn:
             try:
-                view_svc.drop_view(view_fqn)
+                view_svc.drop_view(meta.view_fqn)
                 view_cleaned_up = True
-                logger.info("Cleaned up temporary view: %s", view_fqn)
+                logger.info("Cleaned up temporary view: %s", meta.view_fqn)
             except Exception as cleanup_err:
-                logger.warning("Failed to clean up view %s: %s", view_fqn, cleanup_err)
+                logger.warning("Failed to clean up view %s: %s", meta.view_fqn, cleanup_err)
 
         if is_terminal and status.state != "TERMINATED":
             update_run_status(
@@ -246,22 +250,22 @@ def get_profile_run_status(
 @router.post("/runs/{run_id}/cancel", operation_id="cancelProfileRun")
 def cancel_profile_run(
     run_id: str,
-    job_run_id: int,
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
     job_svc: Annotated[JobService, Depends(get_job_service)],
     view_svc: Annotated[ViewService, Depends(get_view_service)],
     app_conf: Annotated[AppConfig, Depends(get_conf)],
-    view_fqn: str | None = None,
 ) -> dict[str, str]:
     """Cancel a running profiler job."""
     try:
         canceling_user = obo_ws.current_user.me().user_name or "unknown"
 
-        owner = get_run_owner(job_svc, app_conf, _PROFILER_TABLE, run_id)
-        if owner and owner != canceling_user:
+        meta = get_run_metadata(job_svc, app_conf, _PROFILER_TABLE, run_id)
+        if meta.requesting_user and meta.requesting_user != canceling_user:
             raise HTTPException(status_code=403, detail="You can only cancel your own runs")
+        if meta.job_run_id is None:
+            raise HTTPException(status_code=404, detail=f"No job_run_id found for run_id={run_id}")
 
-        job_svc.cancel_run(job_run_id)
+        job_svc.cancel_run(meta.job_run_id)
         update_run_status(
             job_svc,
             app_conf,
@@ -271,12 +275,12 @@ def cancel_profile_run(
             error_message=f"Canceled by {canceling_user}",
             canceled_by=canceling_user,
         )
-        if view_fqn:
+        if meta.view_fqn:
             try:
-                view_svc.drop_view(view_fqn)
-                logger.info("Cleaned up temporary view after cancel: %s", view_fqn)
+                view_svc.drop_view(meta.view_fqn)
+                logger.info("Cleaned up temporary view after cancel: %s", meta.view_fqn)
             except Exception as cleanup_err:
-                logger.warning("Failed to clean up view %s after cancel: %s", view_fqn, cleanup_err)
+                logger.warning("Failed to clean up view %s after cancel: %s", meta.view_fqn, cleanup_err)
         return {"status": "canceled", "run_id": run_id}
     except HTTPException:
         raise

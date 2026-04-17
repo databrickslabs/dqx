@@ -42,7 +42,9 @@ class ViewService:
         """
         if self._schema_ensured:
             return
-        sql = f"CREATE SCHEMA IF NOT EXISTS {self._catalog}.{self._schema}"
+        cat = self._catalog.replace("`", "")
+        schema = self._schema.replace("`", "")
+        sql = f"CREATE SCHEMA IF NOT EXISTS `{cat}`.`{schema}`"
         logger.info("Ensuring tmp schema exists: %s.%s", self._catalog, self._schema)
 
         resp = self._ws.statement_execution.execute_statement(
@@ -78,22 +80,24 @@ class ViewService:
         the caller's OBO token so that the user's table permissions are
         enforced.
         """
-        from databricks_labs_dqx_app.backend.sql_utils import validate_fqn
+        from databricks_labs_dqx_app.backend.sql_utils import quote_fqn, validate_fqn
 
         validate_fqn(source_table_fqn)
         self._ensure_schema()
 
         view_id = uuid4().hex[:12]
         view_name = f"{self._catalog}.{self._schema}.tmp_view_{view_id}"
+        quoted_source = quote_fqn(source_table_fqn)
+        quoted_view = quote_fqn(view_name)
         limit_clause = f" LIMIT {int(sample_limit)}" if sample_limit else ""
-        sql = f"CREATE OR REPLACE VIEW {view_name} AS SELECT * FROM {source_table_fqn}{limit_clause}"
+        sql = f"CREATE OR REPLACE VIEW {quoted_view} AS SELECT * FROM {quoted_source}{limit_clause}"
 
         logger.info("Creating view %s from %s", view_name, source_table_fqn)
         self._execute(sql)
 
         # Grant ALL PRIVILEGES on the view to all account users so the job can read it
         # The job runs as the bundle deployer, not the OBO user who owns the view
-        grant_sql = f"GRANT SELECT ON VIEW {view_name} TO `account users`"
+        grant_sql = f"GRANT SELECT ON VIEW {quoted_view} TO `account users`"
         try:
             self._execute(grant_sql)
             logger.info("Granted SELECT on %s to account users", view_name)
@@ -109,7 +113,9 @@ class ViewService:
 
     def _view_exists(self, view_fqn: str) -> bool:
         """Check if a view exists in Unity Catalog."""
-        sql = f"DESCRIBE TABLE {view_fqn}"
+        from databricks_labs_dqx_app.backend.sql_utils import quote_fqn
+
+        sql = f"DESCRIBE TABLE {quote_fqn(view_fqn)}"
         try:
             resp = self._ws.statement_execution.execute_statement(
                 warehouse_id=self._warehouse_id,
@@ -141,16 +147,27 @@ class ViewService:
         Used for cross-table SQL checks where the query itself returns
         the violation rows.  Returns the fully qualified view name.
         """
+        from databricks.labs.dqx.utils import is_sql_query_safe
+        from databricks.labs.dqx.errors import UnsafeSqlQueryError
+
+        if not is_sql_query_safe(sql_query):
+            raise UnsafeSqlQueryError(
+                "The SQL query contains prohibited statements and cannot be used to create a view."
+            )
+
+        from databricks_labs_dqx_app.backend.sql_utils import quote_fqn
+
         self._ensure_schema()
 
         view_id = uuid4().hex[:12]
         view_name = f"{self._catalog}.{self._schema}.tmp_view_{view_id}"
-        sql = f"CREATE OR REPLACE VIEW {view_name} AS {sql_query}"
+        quoted_view = quote_fqn(view_name)
+        sql = f"CREATE OR REPLACE VIEW {quoted_view} AS {sql_query}"
 
         logger.info("Creating SQL-check view %s", view_name)
         self._execute(sql)
 
-        grant_sql = f"GRANT SELECT ON VIEW {view_name} TO `account users`"
+        grant_sql = f"GRANT SELECT ON VIEW {quoted_view} TO `account users`"
         try:
             self._execute(grant_sql)
             logger.info("Granted SELECT on %s to account users", view_name)
@@ -165,7 +182,9 @@ class ViewService:
 
     def drop_view(self, view_fqn: str) -> None:
         """Drop a temporary view.  Best-effort — logs warnings on failure."""
-        sql = f"DROP VIEW IF EXISTS {view_fqn}"
+        from databricks_labs_dqx_app.backend.sql_utils import quote_fqn
+
+        sql = f"DROP VIEW IF EXISTS {quote_fqn(view_fqn)}"
         try:
             self._execute(sql)
             logger.info("Dropped view %s", view_fqn)

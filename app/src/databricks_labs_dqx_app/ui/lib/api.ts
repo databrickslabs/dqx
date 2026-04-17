@@ -1078,26 +1078,7 @@ export type BackfillRuleIds200 = { [key: string]: number };
 
 export type RejectRuleBody = SetStatusIn | null;
 
-export type GetDryRunStatusParams = {
-  job_run_id: number;
-  view_fqn?: string | null;
-};
-
-export type CancelDryRunParams = {
-  job_run_id: number;
-};
-
 export type CancelDryRun200 = { [key: string]: string };
-
-export type GetProfileRunStatusParams = {
-  job_run_id: number;
-  view_fqn?: string | null;
-};
-
-export type CancelProfileRunParams = {
-  job_run_id: number;
-  view_fqn?: string | null;
-};
 
 export type CancelProfileRun200 = { [key: string]: string };
 
@@ -8912,23 +8893,13 @@ export const useSubmitDryRun = <
  */
 export const getDryRunStatus = (
   runId: string,
-  params: GetDryRunStatusParams,
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<RunStatusOut>> => {
-  return axios.default.get(`/api/v1/dryrun/runs/${runId}/status`, {
-    ...options,
-    params: { ...params, ...options?.params },
-  });
+  return axios.default.get(`/api/v1/dryrun/runs/${runId}/status`, options);
 };
 
-export const getGetDryRunStatusQueryKey = (
-  runId?: string,
-  params?: GetDryRunStatusParams,
-) => {
-  return [
-    `/api/v1/dryrun/runs/${runId}/status`,
-    ...(params ? [params] : []),
-  ] as const;
+export const getGetDryRunStatusQueryKey = (runId?: string) => {
+  return [`/api/v1/dryrun/runs/${runId}/status`] as const;
 };
 
 export const getGetDryRunStatusQueryOptions = <
@@ -8936,7 +8907,6 @@ export const getGetDryRunStatusQueryOptions = <
   TError = AxiosError<HTTPValidationError>,
 >(
   runId: string,
-  params: GetDryRunStatusParams,
   options?: {
     query?: Partial<
       UseQueryOptions<
@@ -8950,12 +8920,11 @@ export const getGetDryRunStatusQueryOptions = <
 ) => {
   const { query: queryOptions, axios: axiosOptions } = options ?? {};
 
-  const queryKey =
-    queryOptions?.queryKey ?? getGetDryRunStatusQueryKey(runId, params);
+  const queryKey = queryOptions?.queryKey ?? getGetDryRunStatusQueryKey(runId);
 
   const queryFn: QueryFunction<Awaited<ReturnType<typeof getDryRunStatus>>> = ({
     signal,
-  }) => getDryRunStatus(runId, params, { signal, ...axiosOptions });
+  }) => getDryRunStatus(runId, { signal, ...axiosOptions });
 
   return {
     queryKey,
@@ -8979,7 +8948,6 @@ export function useGetDryRunStatus<
   TError = AxiosError<HTTPValidationError>,
 >(
   runId: string,
-  params: GetDryRunStatusParams,
   options: {
     query: Partial<
       UseQueryOptions<
@@ -9007,7 +8975,6 @@ export function useGetDryRunStatus<
   TError = AxiosError<HTTPValidationError>,
 >(
   runId: string,
-  params: GetDryRunStatusParams,
   options?: {
     query?: Partial<
       UseQueryOptions<
@@ -9035,7 +9002,6 @@ export function useGetDryRunStatus<
   TError = AxiosError<HTTPValidationError>,
 >(
   runId: string,
-  params: GetDryRunStatusParams,
   options?: {
     query?: Partial<
       UseQueryOptions<
@@ -9059,7 +9025,6 @@ export function useGetDryRunStatus<
   TError = AxiosError<HTTPValidationError>,
 >(
   runId: string,
-  params: GetDryRunStatusParams,
   options?: {
     query?: Partial<
       UseQueryOptions<
@@ -9074,7 +9039,7 @@ export function useGetDryRunStatus<
 ): UseQueryResult<TData, TError> & {
   queryKey: DataTag<QueryKey, TData, TError>;
 } {
-  const queryOptions = getGetDryRunStatusQueryOptions(runId, params, options);
+  const queryOptions = getGetDryRunStatusQueryOptions(runId, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
@@ -9091,7 +9056,6 @@ export const getGetDryRunStatusSuspenseQueryOptions = <
   TError = AxiosError<HTTPValidationError>,
 >(
   runId: string,
-  params: GetDryRunStatusParams,
   options?: {
     query?: Partial<
       UseSuspenseQueryOptions<
@@ -9105,12 +9069,11 @@ export const getGetDryRunStatusSuspenseQueryOptions = <
 ) => {
   const { query: queryOptions, axios: axiosOptions } = options ?? {};
 
-  const queryKey =
-    queryOptions?.queryKey ?? getGetDryRunStatusQueryKey(runId, params);
+  const queryKey = queryOptions?.queryKey ?? getGetDryRunStatusQueryKey(runId);
 
   const queryFn: QueryFunction<Awaited<ReturnType<typeof getDryRunStatus>>> = ({
     signal,
-  }) => getDryRunStatus(runId, params, { signal, ...axiosOptions });
+  }) => getDryRunStatus(runId, { signal, ...axiosOptions });
 
   return { queryKey, queryFn, ...queryOptions } as UseSuspenseQueryOptions<
     Awaited<ReturnType<typeof getDryRunStatus>>,
@@ -9129,7 +9092,6 @@ export function useGetDryRunStatusSuspense<
   TError = AxiosError<HTTPValidationError>,
 >(
   runId: string,
-  params: GetDryRunStatusParams,
   options: {
     query: Partial<
       UseSuspenseQueryOptions<
@@ -9149,7 +9111,6 @@ export function useGetDryRunStatusSuspense<
   TError = AxiosError<HTTPValidationError>,
 >(
   runId: string,
-  params: GetDryRunStatusParams,
   options?: {
     query?: Partial<
       UseSuspenseQueryOptions<
@@ -9169,7 +9130,6 @@ export function useGetDryRunStatusSuspense<
   TError = AxiosError<HTTPValidationError>,
 >(
   runId: string,
-  params: GetDryRunStatusParams,
   options?: {
     query?: Partial<
       UseSuspenseQueryOptions<
@@ -9193,7 +9153,6 @@ export function useGetDryRunStatusSuspense<
   TError = AxiosError<HTTPValidationError>,
 >(
   runId: string,
-  params: GetDryRunStatusParams,
   options?: {
     query?: Partial<
       UseSuspenseQueryOptions<
@@ -9208,11 +9167,7 @@ export function useGetDryRunStatusSuspense<
 ): UseSuspenseQueryResult<TData, TError> & {
   queryKey: DataTag<QueryKey, TData, TError>;
 } {
-  const queryOptions = getGetDryRunStatusSuspenseQueryOptions(
-    runId,
-    params,
-    options,
-  );
+  const queryOptions = getGetDryRunStatusSuspenseQueryOptions(runId, options);
 
   const query = useSuspenseQuery(
     queryOptions,
@@ -9232,13 +9187,13 @@ export function useGetDryRunStatusSuspense<
  */
 export const cancelDryRun = (
   runId: string,
-  params: CancelDryRunParams,
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<CancelDryRun200>> => {
-  return axios.default.post(`/api/v1/dryrun/runs/${runId}/cancel`, undefined, {
-    ...options,
-    params: { ...params, ...options?.params },
-  });
+  return axios.default.post(
+    `/api/v1/dryrun/runs/${runId}/cancel`,
+    undefined,
+    options,
+  );
 };
 
 export const getCancelDryRunMutationOptions = <
@@ -9248,14 +9203,14 @@ export const getCancelDryRunMutationOptions = <
   mutation?: UseMutationOptions<
     Awaited<ReturnType<typeof cancelDryRun>>,
     TError,
-    { runId: string; params: CancelDryRunParams },
+    { runId: string },
     TContext
   >;
   axios?: AxiosRequestConfig;
 }): UseMutationOptions<
   Awaited<ReturnType<typeof cancelDryRun>>,
   TError,
-  { runId: string; params: CancelDryRunParams },
+  { runId: string },
   TContext
 > => {
   const mutationKey = ["cancelDryRun"];
@@ -9269,11 +9224,11 @@ export const getCancelDryRunMutationOptions = <
 
   const mutationFn: MutationFunction<
     Awaited<ReturnType<typeof cancelDryRun>>,
-    { runId: string; params: CancelDryRunParams }
+    { runId: string }
   > = (props) => {
-    const { runId, params } = props ?? {};
+    const { runId } = props ?? {};
 
-    return cancelDryRun(runId, params, axiosOptions);
+    return cancelDryRun(runId, axiosOptions);
   };
 
   return { mutationFn, ...mutationOptions };
@@ -9296,7 +9251,7 @@ export const useCancelDryRun = <
     mutation?: UseMutationOptions<
       Awaited<ReturnType<typeof cancelDryRun>>,
       TError,
-      { runId: string; params: CancelDryRunParams },
+      { runId: string },
       TContext
     >;
     axios?: AxiosRequestConfig;
@@ -9305,7 +9260,7 @@ export const useCancelDryRun = <
 ): UseMutationResult<
   Awaited<ReturnType<typeof cancelDryRun>>,
   TError,
-  { runId: string; params: CancelDryRunParams },
+  { runId: string },
   TContext
 > => {
   const mutationOptions = getCancelDryRunMutationOptions(options);
@@ -10055,23 +10010,13 @@ export const useSubmitBatchProfileRun = <
  */
 export const getProfileRunStatus = (
   runId: string,
-  params: GetProfileRunStatusParams,
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<RunStatusOut>> => {
-  return axios.default.get(`/api/v1/profiler/runs/${runId}/status`, {
-    ...options,
-    params: { ...params, ...options?.params },
-  });
+  return axios.default.get(`/api/v1/profiler/runs/${runId}/status`, options);
 };
 
-export const getGetProfileRunStatusQueryKey = (
-  runId?: string,
-  params?: GetProfileRunStatusParams,
-) => {
-  return [
-    `/api/v1/profiler/runs/${runId}/status`,
-    ...(params ? [params] : []),
-  ] as const;
+export const getGetProfileRunStatusQueryKey = (runId?: string) => {
+  return [`/api/v1/profiler/runs/${runId}/status`] as const;
 };
 
 export const getGetProfileRunStatusQueryOptions = <
@@ -10079,7 +10024,6 @@ export const getGetProfileRunStatusQueryOptions = <
   TError = AxiosError<HTTPValidationError>,
 >(
   runId: string,
-  params: GetProfileRunStatusParams,
   options?: {
     query?: Partial<
       UseQueryOptions<
@@ -10094,12 +10038,11 @@ export const getGetProfileRunStatusQueryOptions = <
   const { query: queryOptions, axios: axiosOptions } = options ?? {};
 
   const queryKey =
-    queryOptions?.queryKey ?? getGetProfileRunStatusQueryKey(runId, params);
+    queryOptions?.queryKey ?? getGetProfileRunStatusQueryKey(runId);
 
   const queryFn: QueryFunction<
     Awaited<ReturnType<typeof getProfileRunStatus>>
-  > = ({ signal }) =>
-    getProfileRunStatus(runId, params, { signal, ...axiosOptions });
+  > = ({ signal }) => getProfileRunStatus(runId, { signal, ...axiosOptions });
 
   return {
     queryKey,
@@ -10123,7 +10066,6 @@ export function useGetProfileRunStatus<
   TError = AxiosError<HTTPValidationError>,
 >(
   runId: string,
-  params: GetProfileRunStatusParams,
   options: {
     query: Partial<
       UseQueryOptions<
@@ -10151,7 +10093,6 @@ export function useGetProfileRunStatus<
   TError = AxiosError<HTTPValidationError>,
 >(
   runId: string,
-  params: GetProfileRunStatusParams,
   options?: {
     query?: Partial<
       UseQueryOptions<
@@ -10179,7 +10120,6 @@ export function useGetProfileRunStatus<
   TError = AxiosError<HTTPValidationError>,
 >(
   runId: string,
-  params: GetProfileRunStatusParams,
   options?: {
     query?: Partial<
       UseQueryOptions<
@@ -10203,7 +10143,6 @@ export function useGetProfileRunStatus<
   TError = AxiosError<HTTPValidationError>,
 >(
   runId: string,
-  params: GetProfileRunStatusParams,
   options?: {
     query?: Partial<
       UseQueryOptions<
@@ -10218,11 +10157,7 @@ export function useGetProfileRunStatus<
 ): UseQueryResult<TData, TError> & {
   queryKey: DataTag<QueryKey, TData, TError>;
 } {
-  const queryOptions = getGetProfileRunStatusQueryOptions(
-    runId,
-    params,
-    options,
-  );
+  const queryOptions = getGetProfileRunStatusQueryOptions(runId, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
@@ -10239,7 +10174,6 @@ export const getGetProfileRunStatusSuspenseQueryOptions = <
   TError = AxiosError<HTTPValidationError>,
 >(
   runId: string,
-  params: GetProfileRunStatusParams,
   options?: {
     query?: Partial<
       UseSuspenseQueryOptions<
@@ -10254,12 +10188,11 @@ export const getGetProfileRunStatusSuspenseQueryOptions = <
   const { query: queryOptions, axios: axiosOptions } = options ?? {};
 
   const queryKey =
-    queryOptions?.queryKey ?? getGetProfileRunStatusQueryKey(runId, params);
+    queryOptions?.queryKey ?? getGetProfileRunStatusQueryKey(runId);
 
   const queryFn: QueryFunction<
     Awaited<ReturnType<typeof getProfileRunStatus>>
-  > = ({ signal }) =>
-    getProfileRunStatus(runId, params, { signal, ...axiosOptions });
+  > = ({ signal }) => getProfileRunStatus(runId, { signal, ...axiosOptions });
 
   return { queryKey, queryFn, ...queryOptions } as UseSuspenseQueryOptions<
     Awaited<ReturnType<typeof getProfileRunStatus>>,
@@ -10279,7 +10212,6 @@ export function useGetProfileRunStatusSuspense<
   TError = AxiosError<HTTPValidationError>,
 >(
   runId: string,
-  params: GetProfileRunStatusParams,
   options: {
     query: Partial<
       UseSuspenseQueryOptions<
@@ -10299,7 +10231,6 @@ export function useGetProfileRunStatusSuspense<
   TError = AxiosError<HTTPValidationError>,
 >(
   runId: string,
-  params: GetProfileRunStatusParams,
   options?: {
     query?: Partial<
       UseSuspenseQueryOptions<
@@ -10319,7 +10250,6 @@ export function useGetProfileRunStatusSuspense<
   TError = AxiosError<HTTPValidationError>,
 >(
   runId: string,
-  params: GetProfileRunStatusParams,
   options?: {
     query?: Partial<
       UseSuspenseQueryOptions<
@@ -10343,7 +10273,6 @@ export function useGetProfileRunStatusSuspense<
   TError = AxiosError<HTTPValidationError>,
 >(
   runId: string,
-  params: GetProfileRunStatusParams,
   options?: {
     query?: Partial<
       UseSuspenseQueryOptions<
@@ -10360,7 +10289,6 @@ export function useGetProfileRunStatusSuspense<
 } {
   const queryOptions = getGetProfileRunStatusSuspenseQueryOptions(
     runId,
-    params,
     options,
   );
 
@@ -10382,16 +10310,12 @@ export function useGetProfileRunStatusSuspense<
  */
 export const cancelProfileRun = (
   runId: string,
-  params: CancelProfileRunParams,
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<CancelProfileRun200>> => {
   return axios.default.post(
     `/api/v1/profiler/runs/${runId}/cancel`,
     undefined,
-    {
-      ...options,
-      params: { ...params, ...options?.params },
-    },
+    options,
   );
 };
 
@@ -10402,14 +10326,14 @@ export const getCancelProfileRunMutationOptions = <
   mutation?: UseMutationOptions<
     Awaited<ReturnType<typeof cancelProfileRun>>,
     TError,
-    { runId: string; params: CancelProfileRunParams },
+    { runId: string },
     TContext
   >;
   axios?: AxiosRequestConfig;
 }): UseMutationOptions<
   Awaited<ReturnType<typeof cancelProfileRun>>,
   TError,
-  { runId: string; params: CancelProfileRunParams },
+  { runId: string },
   TContext
 > => {
   const mutationKey = ["cancelProfileRun"];
@@ -10423,11 +10347,11 @@ export const getCancelProfileRunMutationOptions = <
 
   const mutationFn: MutationFunction<
     Awaited<ReturnType<typeof cancelProfileRun>>,
-    { runId: string; params: CancelProfileRunParams }
+    { runId: string }
   > = (props) => {
-    const { runId, params } = props ?? {};
+    const { runId } = props ?? {};
 
-    return cancelProfileRun(runId, params, axiosOptions);
+    return cancelProfileRun(runId, axiosOptions);
   };
 
   return { mutationFn, ...mutationOptions };
@@ -10450,7 +10374,7 @@ export const useCancelProfileRun = <
     mutation?: UseMutationOptions<
       Awaited<ReturnType<typeof cancelProfileRun>>,
       TError,
-      { runId: string; params: CancelProfileRunParams },
+      { runId: string },
       TContext
     >;
     axios?: AxiosRequestConfig;
@@ -10459,7 +10383,7 @@ export const useCancelProfileRun = <
 ): UseMutationResult<
   Awaited<ReturnType<typeof cancelProfileRun>>,
   TError,
-  { runId: string; params: CancelProfileRunParams },
+  { runId: string },
   TContext
 > => {
   const mutationOptions = getCancelProfileRunMutationOptions(options);

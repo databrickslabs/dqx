@@ -63,11 +63,12 @@ class AppSettingsService:
 
     def save_config(self, config: WorkspaceConfig) -> WorkspaceConfig:
         """Save the workspace config to the settings table."""
+        from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
+
         config_dict = config.as_dict()
         value = json.dumps(config_dict)
-        escaped = value.replace("'", "''")
+        escaped = escape_sql_string(value)
 
-        # Upsert via MERGE
         sql = (
             f"MERGE INTO {self._table} AS target "
             f"USING (SELECT '{_CONFIG_KEY}' AS setting_key) AS source "
@@ -84,15 +85,19 @@ class AppSettingsService:
 
     def get_setting(self, key: str) -> str | None:
         """Read a single setting value by key."""
-        escaped_key = key.replace("'", "''")
+        from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
+
+        escaped_key = escape_sql_string(key)
         sql = f"SELECT setting_value FROM {self._table} WHERE setting_key = '{escaped_key}'"
         rows = self._query(sql)
         return rows[0][0] if rows else None
 
     def save_setting(self, key: str, value: str) -> None:
         """Upsert a single setting value."""
-        escaped_key = key.replace("'", "''")
-        escaped_val = value.replace("'", "''")
+        from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
+
+        escaped_key = escape_sql_string(key)
+        escaped_val = escape_sql_string(value)
         sql = (
             f"MERGE INTO {self._table} AS target "
             f"USING (SELECT '{escaped_key}' AS setting_key) AS source "

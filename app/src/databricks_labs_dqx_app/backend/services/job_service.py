@@ -102,6 +102,7 @@ class JobService:
         size_column: str,
         size_value: int,
         run_type: str | None = None,
+        job_run_id: int | None = None,
     ) -> None:
         """Insert a RUNNING placeholder row. Non-fatal on failure."""
         from databricks.sdk.service.sql import Disposition, Format, StatementState
@@ -120,6 +121,9 @@ class JobService:
             ert = escape_sql_string(run_type)
             cols += ", run_type"
             vals += f", '{ert}'"
+        if job_run_id is not None:
+            cols += ", job_run_id"
+            vals += f", {int(job_run_id)}"
 
         sql = f"INSERT INTO {table} ({cols}) VALUES ({vals})"
         try:
@@ -145,6 +149,7 @@ class JobService:
         source_table_fqn: str,
         view_fqn: str,
         sample_limit: int,
+        job_run_id: int | None = None,
     ) -> None:
         """Insert a RUNNING placeholder for a profiler run."""
         self._record_running_placeholder(
@@ -155,6 +160,7 @@ class JobService:
             view_fqn,
             "sample_limit",
             sample_limit,
+            job_run_id=job_run_id,
         )
 
     def record_dryrun_started(
@@ -166,6 +172,7 @@ class JobService:
         view_fqn: str,
         sample_size: int,
         run_type: str = "dryrun",
+        job_run_id: int | None = None,
     ) -> None:
         """Insert a RUNNING placeholder for a dry-run or scheduled run."""
         self._record_running_placeholder(
@@ -177,6 +184,7 @@ class JobService:
             "sample_size",
             sample_size,
             run_type=run_type,
+            job_run_id=job_run_id,
         )
 
     def _list_deduplicated_rows(

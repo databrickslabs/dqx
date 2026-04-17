@@ -1282,6 +1282,99 @@ class TestViewService:
         # Should not raise
         svc.drop_view("cat.sch.tmp_view_gone")
 
+    # ---------- create_view: FQN validation ----------
+
+    def test_create_view_rejects_invalid_fqn(self, svc: ViewService, ws: WorkspaceClient) -> None:
+        """create_view should raise ValueError for a malformed FQN."""
+        with pytest.raises(ValueError, match="Invalid fully qualified name"):
+            svc.create_view("not_a_valid_fqn")
+
+    def test_create_view_quotes_identifiers(self, svc: ViewService, ws: WorkspaceClient) -> None:
+        """create_view should backtick-quote both the source table and the view name in SQL."""
+        ws.statement_execution.execute_statement.return_value = _ok_response()  # type: ignore[attr-defined]
+
+        svc.create_view("cat.sch.src_table")
+
+        calls = ws.statement_execution.execute_statement.call_args_list  # type: ignore[attr-defined]
+        sql_stmts = [c.kwargs["statement"] for c in calls]
+        create_stmts = [s for s in sql_stmts if "CREATE OR REPLACE VIEW" in s]
+        assert len(create_stmts) == 1
+        assert "`cat`.`sch`.`src_table`" in create_stmts[0]
+
+    # ---------- create_view_from_sql: happy path ----------
+
+    def test_create_view_from_sql_returns_fqn(self, svc: ViewService, ws: WorkspaceClient) -> None:
+        """create_view_from_sql with a safe query should return a fully qualified view name."""
+        ws.statement_execution.execute_statement.return_value = _ok_response()  # type: ignore[attr-defined]
+
+        result = svc.create_view_from_sql("SELECT id, name FROM cat.sch.src_table WHERE id > 0")
+
+        assert result.startswith("cat.sch.tmp_view_")
+
+    def test_create_view_from_sql_embeds_query_in_ddl(self, svc: ViewService, ws: WorkspaceClient) -> None:
+        """create_view_from_sql should embed the user query in CREATE OR REPLACE VIEW ... AS."""
+        ws.statement_execution.execute_statement.return_value = _ok_response()  # type: ignore[attr-defined]
+        query = "SELECT id FROM cat.sch.src_table"
+
+        svc.create_view_from_sql(query)
+
+        calls = ws.statement_execution.execute_statement.call_args_list  # type: ignore[attr-defined]
+        sql_stmts = [c.kwargs["statement"] for c in calls]
+        create_stmts = [s for s in sql_stmts if "CREATE OR REPLACE VIEW" in s]
+        assert len(create_stmts) == 1
+        assert query in create_stmts[0]
+
+    # ---------- create_view_from_sql: is_sql_query_safe gate ----------
+
+    def test_create_view_from_sql_rejects_multiple_statements(self, svc: ViewService, ws: WorkspaceClient) -> None:
+        """Queries containing DDL like DROP should be rejected."""
+        from databricks.labs.dqx.errors import UnsafeSqlQueryError
+
+        with pytest.raises(UnsafeSqlQueryError):
+            svc.create_view_from_sql("SELECT 1; DROP TABLE cat.sch.important")
+
+    def test_create_view_from_sql_rejects_ddl(self, svc: ViewService, ws: WorkspaceClient) -> None:
+        """Queries containing standalone DDL keywords should be rejected."""
+        from databricks.labs.dqx.errors import UnsafeSqlQueryError
+
+        for ddl in [
+            "DROP TABLE cat.sch.t",
+            "DELETE FROM cat.sch.t WHERE 1=1",
+            "INSERT INTO cat.sch.t VALUES (1)",
+            "UPDATE cat.sch.t SET x=1",
+            "TRUNCATE TABLE cat.sch.t",
+            "ALTER TABLE cat.sch.t ADD COLUMNS (x INT)",
+            "GRANT SELECT ON cat.sch.t TO `user`",
+        ]:
+            with pytest.raises(UnsafeSqlQueryError, match="prohibited"):
+                svc.create_view_from_sql(ddl)
+
+    def test_create_view_from_sql_rejects_comment_escaped_ddl(self, svc: ViewService, ws: WorkspaceClient) -> None:
+        """Queries with forbidden keywords inside comments should still be rejected."""
+        from databricks.labs.dqx.errors import UnsafeSqlQueryError
+
+        with pytest.raises(UnsafeSqlQueryError):
+            svc.create_view_from_sql("SELECT 1 /* delete trick */")
+
+    def test_create_view_from_sql_does_not_execute_on_unsafe(self, svc: ViewService, ws: WorkspaceClient) -> None:
+        """When is_sql_query_safe rejects the query, no SQL should be executed."""
+        from databricks.labs.dqx.errors import UnsafeSqlQueryError
+
+        with pytest.raises(UnsafeSqlQueryError):
+            svc.create_view_from_sql("SELECT 1; DROP TABLE cat.sch.important")
+
+        ws.statement_execution.execute_statement.assert_not_called()  # type: ignore[attr-defined]
+
+    def test_create_view_from_sql_accepts_safe_select_with_cte(self, svc: ViewService, ws: WorkspaceClient) -> None:
+        """A CTE-based SELECT without forbidden keywords should be accepted."""
+        ws.statement_execution.execute_statement.return_value = _ok_response()  # type: ignore[attr-defined]
+
+        result = svc.create_view_from_sql(
+            "WITH base AS (SELECT id, name FROM cat.sch.t) SELECT * FROM base WHERE id > 0"
+        )
+
+        assert result.startswith("cat.sch.tmp_view_")
+
 
 # ============================================================================
 # Tests for DiscoveryService (sync methods)

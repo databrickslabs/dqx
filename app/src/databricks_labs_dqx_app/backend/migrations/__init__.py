@@ -330,6 +330,16 @@ MIGRATIONS: list[Migration] = [
         description="Add run_type column to dq_validation_runs to distinguish dryrun vs scheduled",
         sql_template=(f"ALTER TABLE {_PLACEHOLDER}.dq_validation_runs " "ADD COLUMNS (run_type STRING)"),
     ),
+    Migration(
+        version=30,
+        description="Add job_run_id column to dq_validation_runs for server-side run verification",
+        sql_template=(f"ALTER TABLE {_PLACEHOLDER}.dq_validation_runs " "ADD COLUMNS (job_run_id BIGINT)"),
+    ),
+    Migration(
+        version=31,
+        description="Add job_run_id column to dq_profiling_results for server-side run verification",
+        sql_template=(f"ALTER TABLE {_PLACEHOLDER}.dq_profiling_results " "ADD COLUMNS (job_run_id BIGINT)"),
+    ),
 ]
 
 # ---------------------------------------------------------------------------

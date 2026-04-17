@@ -18,6 +18,28 @@ from .services.scheduler_service import SchedulerService
 from .utils import add_not_found_handler
 
 
+_SCHEDULER_LOCK_PATH = Path("/tmp/.dqx_scheduler.lock")  # noqa: S108
+
+
+def _try_acquire_scheduler_lease() -> bool:
+    """Use an exclusive file lock so only one uvicorn worker runs the scheduler.
+
+    The lock file is held for the lifetime of the process; when the worker
+    exits the OS releases it automatically.
+    """
+    import fcntl
+
+    try:
+        fd = os.open(str(_SCHEDULER_LOCK_PATH), os.O_CREAT | os.O_RDWR)
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        # Keep fd open (and thus the lock held) for the process lifetime.
+        # Store on module so it isn't garbage-collected.
+        globals()["_scheduler_lock_fd"] = fd
+        return True
+    except OSError:
+        return False
+
+
 def _find_wheels() -> list[Path]:
     """Return wheel files found in candidate directories.
 
@@ -47,16 +69,55 @@ def _find_wheels() -> list[Path]:
     return wheels
 
 
-async def _upload_wheels_to_volume(sp_ws: WorkspaceClient, volume_path: str) -> list[str]:
+def _compute_wheels_hash(wheels: list[Path]) -> str:
+    """Return a hex digest that changes when any wheel file changes."""
+    import hashlib
+
+    h = hashlib.sha256()
+    for wheel_path in sorted(wheels):
+        h.update(wheel_path.name.encode())
+        h.update(wheel_path.stat().st_size.to_bytes(8, "big"))
+        with open(wheel_path, "rb") as f:
+            while chunk := f.read(1 << 16):
+                h.update(chunk)
+    return h.hexdigest()
+
+
+def _read_remote_hash(sp_ws: WorkspaceClient, volume_path: str) -> str | None:
+    """Read the previously uploaded wheels hash from a marker file on the volume."""
+    marker = f"{volume_path}/.wheels_hash"
+    try:
+        resp = sp_ws.files.download(marker)
+        return resp.contents.read().decode().strip()
+    except Exception:
+        return None
+
+
+def _write_remote_hash(sp_ws: WorkspaceClient, volume_path: str, digest: str) -> None:
+    """Write the wheels hash marker file to the volume."""
+    import io
+
+    marker = f"{volume_path}/.wheels_hash"
+    sp_ws.files.upload(marker, io.BytesIO(digest.encode()), overwrite=True)
+
+
+async def _upload_wheels_to_volume(sp_ws: WorkspaceClient, volume_path: str) -> tuple[list[str], bool]:
     """Upload DQX wheel files to a UC Volume using their real versioned filenames.
 
-    Returns the list of uploaded volume paths so the caller can update the job
-    environment to reference the exact files.
+    Skips upload when the local wheel content hash matches the remote marker.
+    Returns (volume_paths, changed) — *changed* is False when the upload was skipped.
     """
     wheels = _find_wheels()
     if not wheels:
         logger.warning("No wheel files found — skipping volume upload (cwd: %s)", Path.cwd())
-        return []
+        return [], False
+
+    local_hash = _compute_wheels_hash(wheels)
+    remote_hash = await asyncio.to_thread(_read_remote_hash, sp_ws, volume_path)
+
+    if local_hash == remote_hash:
+        logger.info("Wheel content hash unchanged (%s…) — skipping upload and job update", local_hash[:12])
+        return [], False
 
     uploaded: list[str] = []
     for wheel_path in wheels:
@@ -67,7 +128,10 @@ async def _upload_wheels_to_volume(sp_ws: WorkspaceClient, volume_path: str) -> 
         logger.info("Uploaded %s", dest)
         uploaded.append(dest)
 
-    return uploaded
+    await asyncio.to_thread(_write_remote_hash, sp_ws, volume_path, local_hash)
+    logger.info("Wrote wheels hash marker: %s…", local_hash[:12])
+
+    return uploaded, True
 
 
 async def _update_job_wheels(sp_ws: WorkspaceClient, job_id: str, wheel_paths: list[str]) -> None:
@@ -116,38 +180,44 @@ async def lifespan(app: FastAPI):
 
         if sp_ws is not None:
             uploaded: list[str] = []
+            wheels_changed = False
             try:
-                uploaded = await _upload_wheels_to_volume(sp_ws, conf.wheels_volume)
+                uploaded, wheels_changed = await _upload_wheels_to_volume(sp_ws, conf.wheels_volume)
             except Exception as e:
                 logger.warning(
                     "Could not upload wheels to volume — job environment will not be updated: %s", e, exc_info=True
                 )
 
-            if uploaded:
+            if uploaded and wheels_changed:
                 try:
                     await _update_job_wheels(sp_ws, conf.job_id, uploaded)
                 except Exception as e:
                     logger.warning("Could not update job environment with uploaded wheels: %s", e, exc_info=True)
 
     if sp_ws is not None and conf.job_id:
-        try:
-            _scheduler = SchedulerService(
-                ws=sp_ws,
-                warehouse_id=os.environ.get("DATABRICKS_WAREHOUSE_ID")
-                or os.environ.get("DATABRICKS_SQL_WAREHOUSE_ID")
-                or "",
-                catalog=conf.catalog,
-                schema=conf.schema_name,
-                tmp_schema=conf.tmp_schema_name,
-                job_id=conf.job_id,
-            )
-            set_scheduler(_scheduler)
-            _scheduler.start()
-            logger.info("Scheduler background task started (job_id=%s, warehouse=%s)",
-                        conf.job_id,
-                        os.environ.get("DATABRICKS_WAREHOUSE_ID") or os.environ.get("DATABRICKS_SQL_WAREHOUSE_ID") or "(empty)")
-        except Exception as e:
-            logger.warning("Could not start scheduler: %s", e, exc_info=True)
+        if os.environ.get("DQX_SCHEDULER_DISABLED") == "1":
+            logger.info("Scheduler disabled via DQX_SCHEDULER_DISABLED=1")
+        elif not _try_acquire_scheduler_lease():
+            logger.info("Scheduler lease held by another worker — skipping")
+        else:
+            try:
+                _scheduler = SchedulerService(
+                    ws=sp_ws,
+                    warehouse_id=os.environ.get("DATABRICKS_WAREHOUSE_ID")
+                    or os.environ.get("DATABRICKS_SQL_WAREHOUSE_ID")
+                    or "",
+                    catalog=conf.catalog,
+                    schema=conf.schema_name,
+                    tmp_schema=conf.tmp_schema_name,
+                    job_id=conf.job_id,
+                )
+                set_scheduler(_scheduler)
+                _scheduler.start()
+                logger.info("Scheduler background task started (job_id=%s, warehouse=%s)",
+                            conf.job_id,
+                            os.environ.get("DATABRICKS_WAREHOUSE_ID") or os.environ.get("DATABRICKS_SQL_WAREHOUSE_ID") or "(empty)")
+            except Exception as e:
+                logger.warning("Could not start scheduler: %s", e, exc_info=True)
     else:
         logger.info("Scheduler not started (missing SP credentials or JOB_ID)")
 

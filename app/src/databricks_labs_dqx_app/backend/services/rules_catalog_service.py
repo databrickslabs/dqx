@@ -91,6 +91,7 @@ class RulesCatalogService:
         from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, validate_fqn
 
         validate_fqn(table_fqn)
+        self._validate_sql_checks(checks)
 
         duplicates = self.find_duplicates(table_fqn, checks)
         dup_sigs = {self._check_signature(d) for d in duplicates}
@@ -148,6 +149,7 @@ class RulesCatalogService:
         """Update the check definition for an existing rule, incrementing version and resetting to draft."""
         from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
+        self._validate_sql_checks(checks)
         entry = self.get_by_rule_id(rule_id)
         if entry is None:
             raise RuntimeError(f"Rule not found: {rule_id}")
@@ -416,16 +418,33 @@ class RulesCatalogService:
 
     def read_external_rules_table(self, source_table_fqn: str) -> list[dict[str, str]]:
         """Read rows from an external Delta table with the same schema as dq_quality_rules."""
-        from databricks_labs_dqx_app.backend.sql_utils import validate_fqn
+        from databricks_labs_dqx_app.backend.sql_utils import quote_fqn, validate_fqn
 
         validate_fqn(source_table_fqn)
-        sql = f"SELECT table_fqn, checks FROM {source_table_fqn}"
+        sql = f"SELECT table_fqn, checks FROM {quote_fqn(source_table_fqn)}"
         rows = self._query(sql)
         return [{"table_fqn": row[0] or "", "checks": row[1] or "[]"} for row in rows]
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _validate_sql_checks(checks: list[dict[str, Any]]) -> None:
+        """Reject any sql_query check whose query fails is_sql_query_safe()."""
+        from databricks.labs.dqx.utils import is_sql_query_safe
+        from databricks.labs.dqx.errors import UnsafeSqlQueryError
+
+        for check in checks:
+            inner = check.get("check") or {}
+            if inner.get("function") != "sql_query":
+                continue
+            query = (inner.get("arguments") or {}).get("query", "")
+            if query and not is_sql_query_safe(query):
+                raise UnsafeSqlQueryError(
+                    "The SQL query in this check contains prohibited statements "
+                    "(e.g. DROP, INSERT, UPDATE) and cannot be saved."
+                )
 
     def _check_no_duplicate_pending_or_approved(self, entry: RuleCatalogEntry) -> None:
         """Raise ValueError if another pending/approved rule with the same check exists."""

@@ -25,6 +25,10 @@ variables:
     type: complex
     description: "Configuration for dqx app"
     default:
+      # Multiple workers improve HTTP throughput. The in-process SchedulerService
+      # is guarded by a file lock so only one worker runs the scheduler loop.
+      # The in-memory CacheFactory (TTL-based, non-authoritative) warms
+      # independently per worker, which is acceptable for its use case.
       command:
         - "uvicorn"
         - "databricks_labs_dqx_app.backend.app:app"
@@ -210,10 +214,10 @@ resources:
 targets:
   dev:
     workspace:
-      profile: dqx-app-demo
+      profile: <YOUR_PROFILE>
     variables:
-      catalog_name: tsh_dqx_app_demo_catalog
-      dqx_service_principal_application_id: "4174f306-d722-4cea-8745-85416017ee92"
+      catalog_name: <YOUR_CATALOG_NAME>
+      dqx_service_principal_application_id: <YOUR_SERVICE_PRINCIPAL_APPLICATION_ID>
     presets:
       trigger_pause_status: PAUSED
 

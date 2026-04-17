@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import re
 
-_FQN_RE = re.compile(r"^[a-zA-Z0-9_`\-]+\.[a-zA-Z0-9_`\-]+\.[a-zA-Z0-9_`\-]+$")
+# Each part: starts with a letter or underscore, followed by alphanumerics,
+# underscores, or hyphens.  No backticks, spaces, or other special characters.
+_FQN_PART_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_\-]*$")
 
 _SQL_CHECK_RE = re.compile(r"^__sql_check__/[a-zA-Z0-9_\-]+$")
 
@@ -28,12 +30,40 @@ def validate_fqn(fqn: str) -> str:
     Raises ValueError if the FQN doesn't match the expected pattern.
     Returns the validated FQN unchanged.
     """
-    if not fqn or not (_FQN_RE.match(fqn) or _SQL_CHECK_RE.match(fqn)):
+    if not fqn:
+        raise ValueError("Fully qualified name must not be empty.")
+
+    if _SQL_CHECK_RE.match(fqn):
+        return fqn
+
+    parts = fqn.split(".")
+    if len(parts) != 3:
         raise ValueError(
             f"Invalid fully qualified name: '{fqn}'. "
-            "Expected format: catalog.schema.table (alphanumeric, underscores, hyphens, backticks only)"
+            "Expected exactly three parts: catalog.schema.table"
         )
+
+    for part in parts:
+        cleaned = part.strip("`")
+        if not cleaned or not _FQN_PART_RE.match(cleaned):
+            raise ValueError(
+                f"Invalid fully qualified name: '{fqn}'. "
+                f"Part '{part}' contains invalid characters. "
+                "Each part must start with a letter or underscore and contain only "
+                "alphanumeric characters, underscores, or hyphens."
+            )
+
     return fqn
+
+
+def quote_fqn(fqn: str) -> str:
+    """Quote a validated FQN for safe embedding in SQL.
+
+    Wraps each part in backticks (stripping any existing ones first)
+    to prevent identifier injection.  Call validate_fqn() first.
+    """
+    parts = fqn.split(".")
+    return ".".join(f"`{p.strip('`')}`" for p in parts)
 
 
 def validate_entity_type(entity_type: str, valid_types: set[str]) -> str:

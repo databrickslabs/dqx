@@ -231,7 +231,9 @@ class SchedulerService:
     # ------------------------------------------------------------------
 
     def _get_tracker(self, name: str) -> dict[str, str] | None:
-        escaped = name.replace("'", "''")
+        from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
+
+        escaped = escape_sql_string(name)
         sql = (
             f"SELECT schedule_name, CAST(last_run_at AS STRING), CAST(next_run_at AS STRING), "
             f"last_run_id, status "
@@ -257,10 +259,13 @@ class SchedulerService:
         last_run_id: str | None,
         status: str,
     ) -> None:
-        escaped_name = name.replace("'", "''")
+        from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
+
+        escaped_name = escape_sql_string(name)
+        escaped_status = escape_sql_string(status)
         last_str = f"'{last_run_at.isoformat()}'" if last_run_at else "NULL"
         next_str = f"'{next_run_at.isoformat()}'" if next_run_at else "NULL"
-        run_id_str = f"'{last_run_id}'" if last_run_id else "NULL"
+        run_id_str = f"'{escape_sql_string(last_run_id)}'" if last_run_id else "NULL"
 
         sql = (
             f"MERGE INTO {self._table} AS target "
@@ -268,9 +273,9 @@ class SchedulerService:
             "ON target.schedule_name = source.schedule_name "
             "WHEN MATCHED THEN UPDATE SET "
             f"  last_run_at = {last_str}, next_run_at = {next_str}, "
-            f"  last_run_id = {run_id_str}, status = '{status}' "
+            f"  last_run_id = {run_id_str}, status = '{escaped_status}' "
             "WHEN NOT MATCHED THEN INSERT (schedule_name, last_run_at, next_run_at, last_run_id, status) "
-            f"VALUES ('{escaped_name}', {last_str}, {next_str}, {run_id_str}, '{status}')"
+            f"VALUES ('{escaped_name}', {last_str}, {next_str}, {run_id_str}, '{escaped_status}')"
         )
         self._execute(sql)
 
@@ -384,7 +389,9 @@ class SchedulerService:
 
     def _get_approved_rule(self, table_fqn: str) -> dict[str, Any] | None:
         """Get merged checks from all approved rule rows for a table."""
-        escaped = table_fqn.replace("'", "''")
+        from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
+
+        escaped = escape_sql_string(table_fqn)
         sql = (
             f"SELECT table_fqn, checks FROM {self._rules_table} "
             f"WHERE table_fqn = '{escaped}' AND status = 'approved'"
@@ -417,10 +424,14 @@ class SchedulerService:
     # ------------------------------------------------------------------
 
     def _create_view(self, source_table_fqn: str) -> str:
+        from databricks_labs_dqx_app.backend.sql_utils import quote_fqn
+
         view_id = uuid4().hex[:12]
         view_name = f"{self._catalog}.{self._tmp_schema}.tmp_view_{view_id}"
+        quoted_view = quote_fqn(view_name)
+        quoted_source = quote_fqn(source_table_fqn)
         self._ensure_tmp_schema()
-        sql = f"CREATE OR REPLACE VIEW {view_name} AS SELECT * FROM {source_table_fqn}"
+        sql = f"CREATE OR REPLACE VIEW {quoted_view} AS SELECT * FROM {quoted_source}"
         self._execute(sql)
         self._grant_view(view_name)
         if not self._view_exists(view_name):
@@ -428,10 +439,20 @@ class SchedulerService:
         return view_name
 
     def _create_view_from_sql(self, sql_query: str) -> str:
+        from databricks.labs.dqx.utils import is_sql_query_safe
+        from databricks.labs.dqx.errors import UnsafeSqlQueryError
+        from databricks_labs_dqx_app.backend.sql_utils import quote_fqn
+
+        if not is_sql_query_safe(sql_query):
+            raise UnsafeSqlQueryError(
+                "The SQL query contains prohibited statements and cannot be used to create a view."
+            )
+
         view_id = uuid4().hex[:12]
         view_name = f"{self._catalog}.{self._tmp_schema}.tmp_view_{view_id}"
+        quoted_view = quote_fqn(view_name)
         self._ensure_tmp_schema()
-        sql = f"CREATE OR REPLACE VIEW {view_name} AS {sql_query}"
+        sql = f"CREATE OR REPLACE VIEW {quoted_view} AS {sql_query}"
         self._execute(sql)
         self._grant_view(view_name)
         if not self._view_exists(view_name):
@@ -439,8 +460,10 @@ class SchedulerService:
         return view_name
 
     def _grant_view(self, view_name: str) -> None:
+        from databricks_labs_dqx_app.backend.sql_utils import quote_fqn
+
         try:
-            self._execute(f"GRANT SELECT ON VIEW {view_name} TO `account users`")
+            self._execute(f"GRANT SELECT ON VIEW {quote_fqn(view_name)} TO `account users`")
         except Exception as e:
             logger.warning("Failed to grant SELECT on %s: %s", view_name, e)
 
@@ -449,7 +472,9 @@ class SchedulerService:
     def _ensure_tmp_schema(self) -> None:
         if self._tmp_schema_ensured:
             return
-        self._execute(f"CREATE SCHEMA IF NOT EXISTS {self._catalog}.{self._tmp_schema}")
+        cat = self._catalog.replace("`", "")
+        schema = self._tmp_schema.replace("`", "")
+        self._execute(f"CREATE SCHEMA IF NOT EXISTS `{cat}`.`{schema}`")
         self._tmp_schema_ensured = True
 
     # ------------------------------------------------------------------
@@ -476,8 +501,10 @@ class SchedulerService:
 
     def _view_exists(self, view_fqn: str) -> bool:
         """Check if a view exists in Unity Catalog."""
+        from databricks_labs_dqx_app.backend.sql_utils import quote_fqn
+
         try:
-            self._execute(f"DESCRIBE TABLE {view_fqn}")
+            self._execute(f"DESCRIBE TABLE {quote_fqn(view_fqn)}")
             return True
         except Exception as e:
             logger.warning("View existence check failed for %s: %s", view_fqn, e)
