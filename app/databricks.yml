@@ -33,7 +33,7 @@ variables:
         - "uvicorn"
         - "databricks_labs_dqx_app.backend.app:app"
         - "--workers"
-        - "2"
+        - "1"
       env:
         - name: "DATABRICKS_WAREHOUSE_ID"
           value_from: "dqx-sql-warehouse"
