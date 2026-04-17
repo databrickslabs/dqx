@@ -50,8 +50,12 @@ coverage:
 	open htmlcov/index.html
 
 combine-coverage:
-	$(UV_RUN) coverage combine
-	$(UV_RUN) coverage xml -o coverage-integration.xml
+	# pytest-cov combines xdist worker files at session end, so there may be
+	# no parallel .coverage.* files left for `coverage combine` to merge.
+	# Tolerate that — the single .coverage file is still usable for the XML
+	# conversion. Leading `-` makes `make` ignore combine's non-zero exit.
+	-$(UV_RUN) coverage combine
+	$(UV_RUN) coverage xml -o coverage-combined.xml
 	$(UV_RUN) coverage erase
 
 docs-build:

@@ -14,12 +14,19 @@ concurrency:
   cancel-in-progress: false  # don't cancel ongoing runs to ensure fixtures are completed and resources terminated
 
 jobs:
-  # Only run jobs for PRs from branches on the main repository and not from forks.
-  # Workflows triggered by PRs from forks don't have access to the tool environment.
-  # PRs from forks to be tested by the reviewer(s) / maintainer(s) before merging.
+  # Gate all downstream jobs behind a single check so PRs from forks (no access to the
+  # tool environment) and draft PRs do not trigger the expensive anomaly suite.
+  # PRs from forks are to be tested by the reviewer(s) / maintainer(s) before merging.
+  not-a-fork:
+    runs-on:
+      group: databrickslabs-protected-runner-group
+      labels: linux-ubuntu-latest
+    if: github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork
+    steps:
+      - run: echo "Not a fork PR, proceeding"
 
   anomaly-tests:
-    if: github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork
+    needs: not-a-fork
     environment: tool
     runs-on:
       group: larger-runners
@@ -74,7 +81,7 @@ jobs:
           use_oidc: true
 
   anomaly-tests-serverless:
-    if: github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork
+    needs: not-a-fork
     environment: tool
     runs-on:
       group: larger-runners

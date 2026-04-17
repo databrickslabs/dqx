@@ -447,46 +447,40 @@ def test_run_dqx_row_anomaly_detection_demo(ws, make_notebook, make_schema, make
     logging.info(f"Job run {run.run_id} completed successfully for dqx_row_anomaly_detection_demo")
 
 
-def test_dbt_demo(make_schema, make_random, library_ref, debug_env):
-    """Test the dbt demo project. dbt-databricks only supports token or M2M OAuth auth."""
+def test_dbt_demo(make_schema, library_ref, debug_env, ws):
+    """Test the dbt demo project. Uses a bearer token minted via the Databricks SDK."""
     catalog = TEST_CATALOG
     schema = make_schema(catalog_name=catalog).name
     project_dir = Path(__file__).parent.parent.parent / "demos" / "dqx_demo_dbt"
 
-    token = debug_env.get("DATABRICKS_TOKEN")
-    client_id = debug_env.get("TOOLS_CLIENT_ID")
-    client_secret = debug_env.get("TOOLS_DATABRICKS_SECRET")
     # dbt expects just the hostname, not a full URL
     host = debug_env.get("DATABRICKS_HOST", "").replace("https://", "").rstrip("/")
     http_path = debug_env.get("TEST_DEFAULT_WAREHOUSE_HTTP_PATH")
 
     assert host, "DATABRICKS_HOST is not set"
     assert http_path, "TEST_DEFAULT_WAREHOUSE_HTTP_PATH is not set"
-    assert (
-        client_id and client_secret
-    ) or token, "Neither TOOLS_CLIENT_ID/TOOLS_DATABRICKS_SECRET nor DATABRICKS_TOKEN is set"
 
     dbt_bin = shutil.which("dbt")
     assert dbt_bin, "dbt executable not found on PATH"
 
-    # Build dbt profile: token auth or M2M OAuth
+    # Mint a bearer token from whatever auth the SDK resolves (PAT, M2M OAuth,
+    # metadata-service in CI). Pass it to dbt as a PAT so dbt-databricks>=1.11
+    # doesn't route through its own OAuth flow (which picks the wrong scope on
+    # Azure workspaces in databricks-sql-connector 4.x).
+    auth_header = ws.config.authenticate()["Authorization"]
+    token = auth_header.removeprefix("Bearer ").strip()
+
     profile: dict[str, object] = {
         "type": "databricks",
         "host": host,
         "http_path": http_path,
         "catalog": catalog,
         "schema": schema,
+        "token": token,
         "threads": 1,
         "connect_timeout": 30,
     }
-    if client_id and client_secret:
-        profile["auth_type"] = "oauth"
-        profile["client_id"] = client_id
-        profile["client_secret"] = client_secret
-    else:
-        profile["token"] = token
 
-    # Create a temporary directory for dbt profiles
     with TemporaryDirectory() as temp_dir:
         dbt_profiles_dir = Path(temp_dir) / "dbt"
         dbt_profiles_dir.mkdir(parents=True, exist_ok=True)
@@ -498,21 +492,7 @@ def test_dbt_demo(make_schema, make_random, library_ref, debug_env):
         profiles_yml_path = dbt_profiles_dir / "profiles.yml"
         profiles_yml_path.write_text(profiles_yml_content.strip())
 
-        # dbt-databricks picks up DATABRICKS_HOST / DATABRICKS_TOKEN / DATABRICKS_CLIENT_ID /
-        # DATABRICKS_CLIENT_SECRET from the environment and lets them override profiles.yml.
-        # Strip them so the values we just wrote to profiles.yml are authoritative.
-        env = {
-            k: v
-            for k, v in os.environ.items()
-            if k
-            not in {
-                "DATABRICKS_HOST",
-                "DATABRICKS_TOKEN",
-                "DATABRICKS_CLIENT_ID",
-                "DATABRICKS_CLIENT_SECRET",
-            }
-        }
-        env["DBT_PROFILES_DIR"] = str(dbt_profiles_dir)
+        env = {**os.environ, "DBT_PROFILES_DIR": str(dbt_profiles_dir)}
 
         result = subprocess.run(
             [
