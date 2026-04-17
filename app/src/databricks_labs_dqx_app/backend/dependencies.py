@@ -15,6 +15,7 @@ from fastapi import Depends, Header, HTTPException, status
 
 from .cache import app_cache
 from .common.authentication.sql import SQLAuthentication
+from .common.authorization import UserRole, get_user_email
 from .config import AppConfig, conf, get_sql_warehouse_path
 from .logger import logger
 from .migrations import MigrationRunner
@@ -23,7 +24,10 @@ from .services.ai_rules_service import AiRulesService
 from .services.app_settings_service import AppSettingsService
 from .services.discovery import DiscoveryService
 from .services.job_service import JobService
+from .services.role_service import RoleService
 from .services.rules_catalog_service import RulesCatalogService
+from .services.comments_service import CommentsService
+from .services.schedule_config_service import ScheduleConfigService
 from .services.view_service import ViewService
 
 _SP_TTL = 45 * 60  # 45 minutes
@@ -111,6 +115,18 @@ async def get_app_settings_service(
     )
 
 
+async def get_role_service(
+    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
+) -> RoleService:
+    """Create a RoleService using app (SP) credentials."""
+    return RoleService(
+        ws=sp_ws,
+        warehouse_id=_get_warehouse_id(),
+        catalog=conf.catalog,
+        schema=conf.schema_name,
+    )
+
+
 async def get_ai_rules_service(
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
     sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
@@ -156,6 +172,30 @@ async def get_view_service(
         warehouse_id=_get_warehouse_id(),
         catalog=conf.catalog,
         schema=conf.tmp_schema_name,
+    )
+
+
+async def get_comments_service(
+    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
+) -> CommentsService:
+    """Create a CommentsService using app (SP) credentials."""
+    return CommentsService(
+        ws=sp_ws,
+        warehouse_id=_get_warehouse_id(),
+        catalog=conf.catalog,
+        schema=conf.schema_name,
+    )
+
+
+async def get_schedule_config_service(
+    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
+) -> ScheduleConfigService:
+    """Create a ScheduleConfigService using app (SP) credentials."""
+    return ScheduleConfigService(
+        ws=sp_ws,
+        warehouse_id=_get_warehouse_id(),
+        catalog=conf.catalog,
+        schema=conf.schema_name,
     )
 
 
@@ -208,6 +248,56 @@ async def get_sql_connector(
     )
 
 
+# ---------------------------------------------------------------------------
+# Role-based authorization
+# ---------------------------------------------------------------------------
+
+
+async def get_user_role(
+    email: Annotated[str, Depends(get_user_email)],
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    role_svc: Annotated[RoleService, Depends(get_role_service)],
+) -> UserRole:
+    """Resolve the user's role based on Databricks group membership.
+
+    Resolution priority:
+    1. Bootstrap admin group from DQX_ADMIN_GROUP env var
+    2. Groups mapped to roles in dq_role_mappings table
+    3. Default to VIEWER if no mappings match
+    """
+    try:
+        user = await asyncio.to_thread(obo_ws.current_user.me)
+        user_groups = [g.display for g in (user.groups or []) if g.display]
+        logger.debug(f"Resolving role for {email} with groups: {user_groups}")
+
+        role = role_svc.resolve_role(user_groups, conf.admin_group)
+        logger.debug(f"Resolved role for {email}: {role.value}")
+        return role
+    except Exception as e:
+        logger.error(f"Error resolving role for {email}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Role resolution is temporarily unavailable. Please try again later.",
+        ) from e
+
+
+def require_role(*roles: UserRole):
+    """Dependency factory that rejects requests from users without one of the listed roles."""
+
+    async def _check(role: Annotated[UserRole, Depends(get_user_role)]) -> UserRole:
+        if role not in roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Requires one of {[r.value for r in roles]}, but user has '{role.value}'.",
+            )
+        return role
+
+    return Depends(_check)
+
+
+CurrentUserRole = Annotated[UserRole, Depends(get_user_role)]
+
+
 # Re-export rt for any remaining usages during transition
 __all__ = [
     "get_sp_ws",
@@ -216,11 +306,17 @@ __all__ = [
     "get_check_validator",
     "get_migration_runner",
     "get_app_settings_service",
+    "get_role_service",
     "get_ai_rules_service",
     "get_rules_catalog_service",
     "get_discovery_service",
     "get_view_service",
     "get_job_service",
     "get_sql_connector",
+    "get_user_role",
+    "get_comments_service",
+    "get_schedule_config_service",
+    "require_role",
+    "CurrentUserRole",
     "rt",
 ]

@@ -89,10 +89,12 @@ export function useJobPolling({
     intervalRef.current = setInterval(poll, interval);
   }, [poll, interval]);
 
-  // Auto-start when enabled changes
+  // Auto-start/stop when enabled changes
   useEffect(() => {
     if (enabled && !isPolling) {
       startPolling();
+    } else if (!enabled && isPolling) {
+      stopPolling();
     }
     return () => {
       if (intervalRef.current) {

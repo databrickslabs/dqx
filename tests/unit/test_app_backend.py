@@ -611,6 +611,7 @@ class TestRulesCatalogService:
         """After MERGE, should re-read and return the persisted entry."""
         ws.statement_execution.execute_statement.side_effect = [
             _ok_response(),  # MERGE
+            _ok_response(),  # _record_history INSERT
             _ok_response([_SAMPLE_ROW]),  # GET after save
         ]
         entry = svc.save("catalog.schema.table", _SAMPLE_CHECKS, "alice@example.com")
@@ -620,6 +621,7 @@ class TestRulesCatalogService:
         """Should return a constructed entry if the re-read returns nothing."""
         ws.statement_execution.execute_statement.side_effect = [
             _ok_response(),  # MERGE
+            _ok_response(),  # _record_history INSERT
             _ok_response(),  # GET returns empty
         ]
         entry = svc.save("c.s.t", _SAMPLE_CHECKS, "alice@example.com")
@@ -633,9 +635,9 @@ class TestRulesCatalogService:
         """Should execute a DELETE statement for the given table."""
         ws.statement_execution.execute_statement.return_value = _ok_response()
         svc.delete("c.s.t", "bob@example.com")
-        sql_arg = ws.statement_execution.execute_statement.call_args.kwargs["statement"]
-        assert "DELETE FROM" in sql_arg
-        assert "c.s.t" in sql_arg
+        calls = ws.statement_execution.execute_statement.call_args_list
+        sql_stmts = [c.kwargs["statement"] for c in calls]
+        assert any("DELETE FROM" in s and "c.s.t" in s for s in sql_stmts)
 
     # ---------- set_status ----------
 
@@ -649,6 +651,7 @@ class TestRulesCatalogService:
         ws.statement_execution.execute_statement.side_effect = [
             _ok_response([draft_row]),  # get (before)
             _ok_response(),  # UPDATE
+            _ok_response(),  # _record_history INSERT
             _ok_response([pending_row]),  # get (after)
         ]
         entry = svc.set_status("catalog.schema.table", "pending_approval", "alice@example.com")
@@ -694,6 +697,7 @@ class TestRulesCatalogService:
         ws.statement_execution.execute_statement.side_effect = [
             _ok_response([draft_row]),  # get (before)
             _ok_response(),  # UPDATE
+            _ok_response(),  # _record_history INSERT
             _ok_response([still_draft]),  # get (after) — status unchanged
         ]
         with pytest.raises(RuntimeError, match="did not take effect"):
@@ -831,7 +835,7 @@ class TestRulesRoutesWrite:
         body = SaveRulesIn(table_fqn="catalog.schema.table", checks=_SAMPLE_CHECKS)
         result = save_rules(body=body, svc=mock_svc, obo_ws=mock_obo_ws)
         assert result.version == 1
-        mock_svc.save.assert_called_once_with("catalog.schema.table", _SAMPLE_CHECKS, "alice@example.com")
+        mock_svc.save.assert_called_once_with("catalog.schema.table", _SAMPLE_CHECKS, "alice@example.com", source="ui")
 
     def test_save_rules_500_on_error(self, mock_svc, mock_obo_ws):
         mock_svc.save.side_effect = RuntimeError("db error")
@@ -1240,9 +1244,9 @@ class TestViewService:
 
         svc.create_view("cat.sch.src_table")
 
-        sql = ws.statement_execution.execute_statement.call_args.kwargs["statement"]  # type: ignore[attr-defined]
-        assert "CREATE OR REPLACE VIEW" in sql
-        assert "cat.sch.src_table" in sql
+        calls = ws.statement_execution.execute_statement.call_args_list  # type: ignore[attr-defined]
+        sql_stmts = [c.kwargs["statement"] for c in calls]
+        assert any("CREATE OR REPLACE VIEW" in s and "cat.sch.src_table" in s for s in sql_stmts)
 
     def test_create_view_adds_limit_clause_when_sample_limit_given(self, svc: ViewService, ws: WorkspaceClient) -> None:
         """create_view with sample_limit should append LIMIT to the SQL."""
@@ -1250,14 +1254,15 @@ class TestViewService:
 
         svc.create_view("cat.sch.src_table", sample_limit=5000)
 
-        sql = ws.statement_execution.execute_statement.call_args.kwargs["statement"]  # type: ignore[attr-defined]
-        assert "LIMIT 5000" in sql
+        calls = ws.statement_execution.execute_statement.call_args_list  # type: ignore[attr-defined]
+        sql_stmts = [c.kwargs["statement"] for c in calls]
+        assert any("LIMIT 5000" in s for s in sql_stmts)
 
     def test_create_view_raises_on_sql_failure(self, svc: ViewService, ws: WorkspaceClient) -> None:
-        """_execute should raise RuntimeError when the statement fails."""
+        """_ensure_schema should raise RuntimeError when the statement fails."""
         ws.statement_execution.execute_statement.return_value = _failed_response("access denied")  # type: ignore[attr-defined]
 
-        with pytest.raises(RuntimeError, match="SQL statement failed: access denied"):
+        with pytest.raises(RuntimeError, match="access denied"):
             svc.create_view("cat.sch.src_table")
 
     def test_drop_view_executes_drop_sql(self, svc: ViewService, ws: WorkspaceClient) -> None:
@@ -1517,11 +1522,13 @@ class TestProfilerRoutes:
         mock_job_svc.submit_run.return_value = 77777  # type: ignore[attr-defined]
         body = ProfileRunIn(table_fqn="cat.sch.src_table", sample_limit=5000)
 
+        app_conf = AppConfig(catalog="cat", schema_name="sch", job_id="")
         result = submit_profile_run(
             body=body,
             obo_ws=mock_obo_ws,
             view_svc=mock_view_svc,
             job_svc=mock_job_svc,
+            app_conf=app_conf,
         )
 
         assert isinstance(result, ProfileRunOut)
@@ -1539,35 +1546,55 @@ class TestProfilerRoutes:
         mock_view_svc.create_view.side_effect = RuntimeError("warehouse down")  # type: ignore[attr-defined]
         body = ProfileRunIn(table_fqn="cat.sch.src_table")
 
+        app_conf = AppConfig(catalog="cat", schema_name="sch", job_id="")
         with pytest.raises(HTTPException) as exc:
             submit_profile_run(
                 body=body,
                 obo_ws=mock_obo_ws,
                 view_svc=mock_view_svc,
                 job_svc=mock_job_svc,
+                app_conf=app_conf,
             )
 
         assert exc.value.status_code == 500
 
-    def test_get_profile_run_status_returns_status_out(self, mock_job_svc: JobService) -> None:
+    def test_get_profile_run_status_returns_status_out(
+        self, mock_job_svc: JobService, mock_view_svc: ViewService
+    ) -> None:
         """get_profile_run_status should map JobService.get_run_status to RunStatusOut."""
         mock_job_svc.get_run_status.return_value = RunStatus(  # type: ignore[attr-defined]
             state="TERMINATED", result_state="SUCCESS", message=None
         )
 
-        result = get_profile_run_status(run_id="run-001", job_run_id=99999, job_svc=mock_job_svc)
+        app_conf = AppConfig(catalog="cat", schema_name="sch", job_id="")
+        result = get_profile_run_status(
+            run_id="run-001",
+            job_run_id=99999,
+            job_svc=mock_job_svc,
+            view_svc=mock_view_svc,
+            app_conf=app_conf,
+        )
 
         assert isinstance(result, RunStatusOut)
         assert result.run_id == "run-001"
         assert result.state == "TERMINATED"
         assert result.result_state == "SUCCESS"
 
-    def test_get_profile_run_status_raises_500_on_error(self, mock_job_svc: JobService) -> None:
+    def test_get_profile_run_status_raises_500_on_error(
+        self, mock_job_svc: JobService, mock_view_svc: ViewService
+    ) -> None:
         """get_profile_run_status should raise HTTP 500 when the job service errors."""
         mock_job_svc.get_run_status.side_effect = RuntimeError("jobs api error")  # type: ignore[attr-defined]
 
+        app_conf = AppConfig(catalog="cat", schema_name="sch", job_id="")
         with pytest.raises(HTTPException) as exc:
-            get_profile_run_status(run_id="run-001", job_run_id=99999, job_svc=mock_job_svc)
+            get_profile_run_status(
+                run_id="run-001",
+                job_run_id=99999,
+                job_svc=mock_job_svc,
+                view_svc=mock_view_svc,
+                app_conf=app_conf,
+            )
 
         assert exc.value.status_code == 500
 
@@ -1655,12 +1682,14 @@ class TestDryRunRoutes:
         mock_job_svc.submit_run.return_value = 88888  # type: ignore[attr-defined]
         body = DryRunIn(table_fqn="cat.sch.tbl", checks=_SAMPLE_CHECKS)
 
+        app_conf = AppConfig(catalog="cat", schema_name="sch", job_id="")
         result = submit_dry_run(
             body=body,
             obo_ws=mock_obo_ws,
             view_svc=mock_view_svc,
             job_svc=mock_job_svc,
             validate_checks_fn=lambda checks: validation,
+            app_conf=app_conf,
         )
 
         assert isinstance(result, DryRunSubmitOut)
@@ -1678,6 +1707,7 @@ class TestDryRunRoutes:
         validation = ChecksValidationStatus(_errors=["Unknown function: bad_func"])
         body = DryRunIn(table_fqn="cat.sch.tbl", checks=_SAMPLE_CHECKS)
 
+        app_conf = AppConfig(catalog="cat", schema_name="sch", job_id="")
         with pytest.raises(HTTPException) as exc:
             submit_dry_run(
                 body=body,
@@ -1685,6 +1715,7 @@ class TestDryRunRoutes:
                 view_svc=mock_view_svc,
                 job_svc=mock_job_svc,
                 validate_checks_fn=lambda checks: validation,
+                app_conf=app_conf,
             )
 
         assert exc.value.status_code == 400
@@ -1700,6 +1731,7 @@ class TestDryRunRoutes:
         mock_view_svc.create_view.side_effect = RuntimeError("warehouse unreachable")  # type: ignore[attr-defined]
         body = DryRunIn(table_fqn="cat.sch.tbl", checks=_SAMPLE_CHECKS)
 
+        app_conf = AppConfig(catalog="cat", schema_name="sch", job_id="")
         with pytest.raises(HTTPException) as exc:
             submit_dry_run(
                 body=body,
@@ -1707,28 +1739,43 @@ class TestDryRunRoutes:
                 view_svc=mock_view_svc,
                 job_svc=mock_job_svc,
                 validate_checks_fn=lambda checks: validation,
+                app_conf=app_conf,
             )
 
         assert exc.value.status_code == 500
 
-    def test_get_dry_run_status_returns_status_out(self, mock_job_svc: JobService) -> None:
+    def test_get_dry_run_status_returns_status_out(self, mock_job_svc: JobService, mock_view_svc: ViewService) -> None:
         """get_dry_run_status should map JobService status to RunStatusOut."""
         mock_job_svc.get_run_status.return_value = RunStatus(  # type: ignore[attr-defined]
             state="RUNNING", result_state=None, message="Executing"
         )
 
-        result = get_dry_run_status(run_id="run-001", job_run_id=88888, job_svc=mock_job_svc)
+        app_conf = AppConfig(catalog="cat", schema_name="sch", job_id="")
+        result = get_dry_run_status(
+            run_id="run-001",
+            job_run_id=88888,
+            job_svc=mock_job_svc,
+            view_svc=mock_view_svc,
+            app_conf=app_conf,
+        )
 
         assert isinstance(result, RunStatusOut)
         assert result.state == "RUNNING"
         assert result.message == "Executing"
 
-    def test_get_dry_run_status_raises_500_on_error(self, mock_job_svc: JobService) -> None:
+    def test_get_dry_run_status_raises_500_on_error(self, mock_job_svc: JobService, mock_view_svc: ViewService) -> None:
         """get_dry_run_status should raise HTTP 500 when the job service errors."""
         mock_job_svc.get_run_status.side_effect = RuntimeError("api error")  # type: ignore[attr-defined]
 
+        app_conf = AppConfig(catalog="cat", schema_name="sch", job_id="")
         with pytest.raises(HTTPException) as exc:
-            get_dry_run_status(run_id="run-001", job_run_id=88888, job_svc=mock_job_svc)
+            get_dry_run_status(
+                run_id="run-001",
+                job_run_id=88888,
+                job_svc=mock_job_svc,
+                view_svc=mock_view_svc,
+                app_conf=app_conf,
+            )
 
         assert exc.value.status_code == 500
 

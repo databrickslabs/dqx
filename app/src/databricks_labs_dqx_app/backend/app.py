@@ -1,4 +1,5 @@
 import asyncio
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -8,10 +9,12 @@ from databricks.sdk.service.jobs import JobEnvironment, JobSettings
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
+from ._scheduler_registry import get_scheduler, set_scheduler
 from .config import conf
 from .dependencies import get_migration_runner, get_sp_ws
 from .logger import logger
 from .routes import api_router
+from .services.scheduler_service import SchedulerService
 from .utils import add_not_found_handler
 
 
@@ -126,7 +129,34 @@ async def lifespan(app: FastAPI):
                 except Exception as e:
                     logger.warning("Could not update job environment with uploaded wheels: %s", e, exc_info=True)
 
+    if sp_ws is not None and conf.job_id:
+        try:
+            _scheduler = SchedulerService(
+                ws=sp_ws,
+                warehouse_id=os.environ.get("DATABRICKS_WAREHOUSE_ID")
+                or os.environ.get("DATABRICKS_SQL_WAREHOUSE_ID")
+                or "",
+                catalog=conf.catalog,
+                schema=conf.schema_name,
+                tmp_schema=conf.tmp_schema_name,
+                job_id=conf.job_id,
+            )
+            set_scheduler(_scheduler)
+            _scheduler.start()
+            logger.info("Scheduler background task started (job_id=%s, warehouse=%s)",
+                        conf.job_id,
+                        os.environ.get("DATABRICKS_WAREHOUSE_ID") or os.environ.get("DATABRICKS_SQL_WAREHOUSE_ID") or "(empty)")
+        except Exception as e:
+            logger.warning("Could not start scheduler: %s", e, exc_info=True)
+    else:
+        logger.info("Scheduler not started (missing SP credentials or JOB_ID)")
+
     yield
+
+    sched = get_scheduler()
+    if sched is not None:
+        await sched.stop()
+        set_scheduler(None)
 
 
 app = FastAPI(title=f"{conf.app_name}", lifespan=lifespan)
@@ -138,11 +168,11 @@ app.include_router(api_router)
 # Mount static files for the UI only if the dist directory exists (e.g., after build)
 # This allows the API to work in test environments without requiring a frontend build
 if conf.static_assets_path.exists():
-    # serve static files for the UI
-    ui = StaticFiles(directory=conf.static_assets_path, html=True)
-    # configure main route: anything that is not API is considered to be UI
+    from .spa_static import SPAStaticFiles
+
+    ui = SPAStaticFiles(directory=conf.static_assets_path, html=True)
     app.mount("/", ui)
-else:  # for testing in CI environments
+else:
     logger.warning(f"Static assets path {conf.static_assets_path} not found. UI will not be available.")
 
 add_not_found_handler(app)

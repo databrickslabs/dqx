@@ -48,6 +48,13 @@ export function RulesReview({ checks, onChange }: RulesReviewProps) {
     setYamlText(yaml.dump(updated, { sortKeys: false }));
   };
 
+  const handleWeightChange = (index: number, value: number) => {
+    const updated = [...checks];
+    updated[index] = { ...updated[index], weight: value };
+    onChange(updated);
+    setYamlText(yaml.dump(updated, { sortKeys: false }));
+  };
+
   const handleRemoveCheck = (index: number) => {
     const updated = checks.filter((_, i) => i !== index);
     onChange(updated);
@@ -94,6 +101,7 @@ export function RulesReview({ checks, onChange }: RulesReviewProps) {
                   <th className="text-left p-3 font-medium">Function</th>
                   <th className="text-left p-3 font-medium">Column(s)</th>
                   <th className="text-left p-3 font-medium">Criticality</th>
+                  <th className="text-left p-3 font-medium">Weight</th>
                   <th className="text-left p-3 font-medium">Parameters</th>
                   <th className="text-right p-3 font-medium"></th>
                 </tr>
@@ -113,6 +121,7 @@ export function RulesReview({ checks, onChange }: RulesReviewProps) {
                       : "-");
                   const criticality =
                     (check.criticality as string) ?? "error";
+                  const weight = (check.weight as number) ?? 3;
                   const otherArgs = Object.entries(args).filter(
                     ([k]) => k !== "column",
                   );
@@ -147,6 +156,23 @@ export function RulesReview({ checks, onChange }: RulesReviewProps) {
                           <SelectContent>
                             <SelectItem value="error">Error</SelectItem>
                             <SelectItem value="warn">Warn</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </td>
+                      <td className="p-3">
+                        <Select
+                          value={String(weight)}
+                          onValueChange={(val) => handleWeightChange(idx, Number(val))}
+                        >
+                          <SelectTrigger className="h-7 w-20 text-xs">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="1" className="text-xs">1 – Informational</SelectItem>
+                            <SelectItem value="2" className="text-xs">2 – Low</SelectItem>
+                            <SelectItem value="3" className="text-xs">3 – Medium</SelectItem>
+                            <SelectItem value="4" className="text-xs">4 – High</SelectItem>
+                            <SelectItem value="5" className="text-xs">5 – Critical</SelectItem>
                           </SelectContent>
                         </Select>
                       </td>

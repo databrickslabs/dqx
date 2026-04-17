@@ -77,6 +77,11 @@ class JobService:
         )
         return run.run_id  # type: ignore[return-value]
 
+    def cancel_run(self, job_run_id: int) -> None:
+        """Cancel a running job."""
+        self._ws.jobs.cancel_run(job_run_id)
+        logger.info("Cancelled job run %s", job_run_id)
+
     def get_run_status(self, job_run_id: int) -> RunStatus:
         """Get the current status of a job run."""
         run = self._ws.jobs.get_run(job_run_id)
@@ -87,14 +92,117 @@ class JobService:
             message=state.state_message if state else None,
         )
 
-    def list_run_rows(self, table: str, limit: int = 100) -> list[dict[str, str | None]]:
+    def _record_running_placeholder(
+        self,
+        table: str,
+        run_id: str,
+        requesting_user: str,
+        source_table_fqn: str,
+        view_fqn: str,
+        size_column: str,
+        size_value: int,
+        run_type: str | None = None,
+    ) -> None:
+        """Insert a RUNNING placeholder row. Non-fatal on failure."""
+        from databricks.sdk.service.sql import Disposition, Format, StatementState
+        from datetime import datetime, timezone
+        from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
+
+        now = datetime.now(timezone.utc).isoformat()
+        er = escape_sql_string(run_id)
+        eu = escape_sql_string(requesting_user)
+        ef = escape_sql_string(source_table_fqn)
+        ev = escape_sql_string(view_fqn)
+
+        cols = f"run_id, requesting_user, source_table_fqn, view_fqn, {size_column}, status, created_at"
+        vals = f"'{er}', '{eu}', '{ef}', '{ev}', {int(size_value)}, 'RUNNING', '{now}'"
+        if run_type:
+            ert = escape_sql_string(run_type)
+            cols += ", run_type"
+            vals += f", '{ert}'"
+
+        sql = f"INSERT INTO {table} ({cols}) VALUES ({vals})"
+        try:
+            resp = self._ws.statement_execution.execute_statement(
+                warehouse_id=self._warehouse_id,
+                statement=sql,
+                catalog=self._catalog,
+                schema=self._schema,
+                disposition=Disposition.INLINE,
+                format=Format.JSON_ARRAY,
+            )
+            if resp.status and resp.status.state == StatementState.FAILED:
+                msg = resp.status.error.message if resp.status.error else "Unknown error"
+                logger.warning("Failed to record run started for %s: %s", run_id, msg)
+        except Exception as exc:
+            logger.warning("Failed to record run started for %s: %s", run_id, exc)
+
+    def record_run_started(
+        self,
+        table: str,
+        run_id: str,
+        requesting_user: str,
+        source_table_fqn: str,
+        view_fqn: str,
+        sample_limit: int,
+    ) -> None:
+        """Insert a RUNNING placeholder for a profiler run."""
+        self._record_running_placeholder(
+            table,
+            run_id,
+            requesting_user,
+            source_table_fqn,
+            view_fqn,
+            "sample_limit",
+            sample_limit,
+        )
+
+    def record_dryrun_started(
+        self,
+        table: str,
+        run_id: str,
+        requesting_user: str,
+        source_table_fqn: str,
+        view_fqn: str,
+        sample_size: int,
+        run_type: str = "dryrun",
+    ) -> None:
+        """Insert a RUNNING placeholder for a dry-run or scheduled run."""
+        self._record_running_placeholder(
+            table,
+            run_id,
+            requesting_user,
+            source_table_fqn,
+            view_fqn,
+            "sample_size",
+            sample_size,
+            run_type=run_type,
+        )
+
+    def _list_deduplicated_rows(
+        self,
+        table: str,
+        select_cols: str,
+        limit: int = 100,
+    ) -> list[dict[str, str | None]]:
         """Read the most recent result rows from a Delta table, newest first.
 
-        Returns a list of dicts keyed by column name.
+        Deduplicates by run_id -- if both a RUNNING placeholder and a terminal
+        row exist for the same run_id, only the terminal row is returned.
         """
         from databricks.sdk.service.sql import Disposition, Format, StatementState
 
-        sql = f"SELECT * FROM {table} ORDER BY created_at DESC LIMIT {limit}"  # noqa: S608
+        sql = (
+            f"SELECT {select_cols} "  # noqa: S608
+            f"FROM ("
+            f"  SELECT *, ROW_NUMBER() OVER ("
+            f"    PARTITION BY run_id "
+            f"    ORDER BY CASE WHEN status = 'RUNNING' THEN 1 ELSE 0 END ASC, created_at DESC"
+            f"  ) AS rn "
+            f"  FROM {table}"
+            f") WHERE rn = 1 "
+            f"ORDER BY created_at DESC LIMIT {int(limit)}"
+        )
         resp = self._ws.statement_execution.execute_statement(
             warehouse_id=self._warehouse_id,
             statement=sql,
@@ -117,6 +225,27 @@ class JobService:
         ]
         return [dict(zip(columns, row)) for row in resp.result.data_array]
 
+    _PROFILE_COLS = (
+        "run_id, requesting_user, source_table_fqn, view_fqn, sample_limit, "
+        "rows_profiled, columns_profiled, duration_seconds, summary_json, "
+        "generated_rules_json, status, error_message, canceled_by, updated_at, created_at"
+    )
+
+    _DRYRUN_COLS = (
+        "run_id, requesting_user, source_table_fqn, sample_size, "
+        "total_rows, valid_rows, invalid_rows, "
+        "status, error_message, canceled_by, updated_at, created_at, "
+        "COALESCE(run_type, 'dryrun') AS run_type"
+    )
+
+    def list_run_rows(self, table: str, limit: int = 100) -> list[dict[str, str | None]]:
+        """Read the most recent profiler result rows."""
+        return self._list_deduplicated_rows(table, self._PROFILE_COLS, limit)
+
+    def list_dryrun_rows(self, table: str, limit: int = 100) -> list[dict[str, str | None]]:
+        """Read the most recent dry-run result rows."""
+        return self._list_deduplicated_rows(table, self._DRYRUN_COLS, limit)
+
     def get_run_result_row(self, table: str, run_id: str) -> dict[str, str | None] | None:
         """Read a result row from a Delta table by run_id.
 
@@ -125,7 +254,10 @@ class JobService:
         """
         from databricks.sdk.service.sql import Disposition, Format, StatementState
 
-        sql = f"SELECT * FROM {table} WHERE run_id = '{run_id}' LIMIT 1"  # noqa: S608
+        from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
+
+        er = escape_sql_string(run_id)
+        sql = f"SELECT * FROM {table} WHERE run_id = '{er}' AND status != 'RUNNING' LIMIT 1"  # noqa: S608
         resp = self._ws.statement_execution.execute_statement(
             warehouse_id=self._warehouse_id,
             statement=sql,

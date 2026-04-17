@@ -13,6 +13,7 @@ _CATALOG_TTL = 300  # 5 min  — catalog list changes rarely
 _SCHEMA_TTL = 300  # 5 min
 _TABLE_TTL = 180  # 3 min  — tables added more frequently
 _COLUMN_TTL = 600  # 10 min — schema changes rarely
+_TAGS_TTL = 300  # 5 min — tags change infrequently
 
 
 @dataclass
@@ -22,6 +23,13 @@ class TableColumn:
     comment: str | None
     nullable: bool
     position: int
+
+
+@dataclass
+class TableTags:
+    table_fqn: str
+    table_tags: list[str]
+    column_tags: dict[str, list[str]]
 
 
 class DiscoveryService:
@@ -58,6 +66,47 @@ class DiscoveryService:
             for col in table_info.columns
         ]
 
+    def get_table_tags(self, catalog: str, schema: str, table: str) -> TableTags:
+        """Get tags for a table and its columns from Unity Catalog."""
+        full_name = f"{catalog}.{schema}.{table}"
+        table_tags: list[str] = []
+        column_tags: dict[str, list[str]] = {}
+
+        try:
+            # Get table info which includes column metadata
+            table_info = self._ws.tables.get(full_name=full_name)
+
+            # Extract table-level tags if available (SDK versions may lack the attribute)
+            tbl_tags = getattr(table_info, "tags", None)
+            if tbl_tags:
+                for tag in tbl_tags:
+                    if tag.key:
+                        tag_str = f"{tag.key}={tag.value}" if tag.value else tag.key
+                        table_tags.append(tag_str)
+
+            # Extract column-level tags if available
+            if table_info.columns:
+                for col in table_info.columns:
+                    col_name = col.name or ""
+                    col_tags_attr = getattr(col, "tags", None)
+                    if col_tags_attr:
+                        col_tags = []
+                        for tag in col_tags_attr:
+                            if tag.key:
+                                tag_str = f"{tag.key}={tag.value}" if tag.value else tag.key
+                                col_tags.append(tag_str)
+                        if col_tags:
+                            column_tags[col_name] = col_tags
+
+        except Exception as e:
+            logger.warning(f"Failed to get tags for {full_name}: {e}")
+
+        return TableTags(
+            table_fqn=full_name,
+            table_tags=table_tags,
+            column_tags=column_tags,
+        )
+
     # ── async wrappers (cached per user) ───────────────────────
 
     @app_cache.cached("discovery:{_user}:catalogs", ttl=_CATALOG_TTL)
@@ -75,3 +124,7 @@ class DiscoveryService:
     @app_cache.cached("discovery:{_user}:columns:{catalog}:{schema}:{table}", ttl=_COLUMN_TTL)
     async def get_table_columns_async(self, catalog: str, schema: str, table: str) -> list[TableColumn]:
         return await asyncio.to_thread(self.get_table_columns, catalog, schema, table)
+
+    @app_cache.cached("discovery:{_user}:tags:{catalog}:{schema}:{table}", ttl=_TAGS_TTL)
+    async def get_table_tags_async(self, catalog: str, schema: str, table: str) -> TableTags:
+        return await asyncio.to_thread(self.get_table_tags, catalog, schema, table)

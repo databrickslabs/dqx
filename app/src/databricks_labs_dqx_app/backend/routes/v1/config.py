@@ -2,9 +2,11 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from databricks_labs_dqx_app.backend.common.authorization import UserRole, require_role
-from databricks_labs_dqx_app.backend.dependencies import get_app_settings_service
+from databricks_labs_dqx_app.backend.common.authorization import UserRole
+from databricks_labs_dqx_app.backend.dependencies import get_app_settings_service, require_role
 from databricks_labs_dqx_app.backend.logger import logger
+from pydantic import BaseModel
+
 from databricks_labs_dqx_app.backend.models import (
     ConfigIn,
     ConfigOut,
@@ -12,6 +14,28 @@ from databricks_labs_dqx_app.backend.models import (
     RunConfigOut,
 )
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
+
+_TZ_SETTING_KEY = "display_timezone"
+_TZ_DEFAULT = "UTC"
+
+
+class TimezoneOut(BaseModel):
+    timezone: str
+
+
+class TimezoneIn(BaseModel):
+    timezone: str
+
+
+def _notify_scheduler() -> None:
+    """Best-effort reload of the background scheduler after config changes."""
+    try:
+        from databricks_labs_dqx_app.backend._scheduler_registry import notify_scheduler
+
+        notify_scheduler()
+    except Exception:
+        pass
+
 
 router = APIRouter()
 
@@ -48,6 +72,7 @@ def save_config(
     """Save workspace config to application state (admin only)."""
     try:
         svc.save_config(body.config)
+        _notify_scheduler()
         config = svc.get_config()
         return ConfigOut(config=config)
     except Exception as e:
@@ -96,6 +121,7 @@ def save_run_config(
         config.run_configs.append(body.config)
 
     svc.save_config(config)
+    _notify_scheduler()
     return RunConfigOut(config=body.config)
 
 
@@ -118,4 +144,33 @@ def delete_run_config(
         raise HTTPException(status_code=404, detail=f"Run config '{name}' not found")
 
     svc.save_config(config)
+    _notify_scheduler()
     return ConfigOut(config=config)
+
+
+@router.get(
+    "/timezone",
+    response_model=TimezoneOut,
+    operation_id="getTimezone",
+)
+def get_timezone(
+    svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+) -> TimezoneOut:
+    """Get the display timezone (accessible by all authenticated users)."""
+    tz = svc.get_setting(_TZ_SETTING_KEY) or _TZ_DEFAULT
+    return TimezoneOut(timezone=tz)
+
+
+@router.put(
+    "/timezone",
+    response_model=TimezoneOut,
+    operation_id="saveTimezone",
+    dependencies=[require_role(UserRole.ADMIN)],
+)
+def save_timezone(
+    body: TimezoneIn,
+    svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+) -> TimezoneOut:
+    """Set the display timezone (admin only)."""
+    svc.save_setting(_TZ_SETTING_KEY, body.timezone)
+    return TimezoneOut(timezone=body.timezone)

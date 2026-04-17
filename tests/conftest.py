@@ -308,7 +308,7 @@ class MockInstallationContext(MockWorkflowContext):
 def installation_ctx(
     ws: WorkspaceClient, env_or_skip: Callable[[str], str], checks_location="checks.yml"
 ) -> Generator[MockInstallationContext, None, None]:
-    ctx = MockInstallationContext(env_or_skip, ws, checks_location, serverless_clusters=False)
+    ctx = MockInstallationContext(env_or_skip, ws, checks_location, serverless_clusters=True)
     yield ctx.replace(workspace_client=ws)
     ctx.installation_service.uninstall()
 
@@ -328,7 +328,7 @@ def installation_ctx_custom_install_folder(
 ) -> Generator[MockInstallationContext, None, None]:
     custom_folder = str(make_directory().absolute())
     ctx = MockInstallationContext(
-        env_or_skip, ws, checks_location, serverless_clusters=False, install_folder=custom_folder
+        env_or_skip, ws, checks_location, serverless_clusters=True, install_folder=custom_folder
     )
     yield ctx.replace(workspace_client=ws)
     ctx.installation_service.uninstall()

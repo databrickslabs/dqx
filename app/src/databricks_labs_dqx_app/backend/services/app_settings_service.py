@@ -52,7 +52,9 @@ class AppSettingsService:
             return WorkspaceConfig(run_configs=[])
 
         raw = rows[0][0]
-        data = json.loads(raw)
+        # Undo damage from earlier save_config that used \' instead of ''
+        cleaned = raw.replace("\\'", "'") if "\\'" in raw else raw
+        data = json.loads(cleaned, strict=False)
         result = Installation._unmarshal_type(data, "dq_app_settings", WorkspaceConfig)
         if not isinstance(result, WorkspaceConfig):
             logger.warning("Config unmarshal returned unexpected type, using default")
@@ -63,7 +65,7 @@ class AppSettingsService:
         """Save the workspace config to the settings table."""
         config_dict = config.as_dict()
         value = json.dumps(config_dict)
-        escaped = value.replace("'", "\\'")
+        escaped = value.replace("'", "''")
 
         # Upsert via MERGE
         sql = (
@@ -79,6 +81,30 @@ class AppSettingsService:
         self._execute(sql)
         logger.info("Saved workspace config to settings table")
         return config
+
+    def get_setting(self, key: str) -> str | None:
+        """Read a single setting value by key."""
+        escaped_key = key.replace("'", "''")
+        sql = f"SELECT setting_value FROM {self._table} WHERE setting_key = '{escaped_key}'"
+        rows = self._query(sql)
+        return rows[0][0] if rows else None
+
+    def save_setting(self, key: str, value: str) -> None:
+        """Upsert a single setting value."""
+        escaped_key = key.replace("'", "''")
+        escaped_val = value.replace("'", "''")
+        sql = (
+            f"MERGE INTO {self._table} AS target "
+            f"USING (SELECT '{escaped_key}' AS setting_key) AS source "
+            "ON target.setting_key = source.setting_key "
+            "WHEN MATCHED THEN UPDATE SET "
+            f"  setting_value = '{escaped_val}', "
+            "  updated_at = current_timestamp() "
+            "WHEN NOT MATCHED THEN INSERT (setting_key, setting_value, updated_at) "
+            f"VALUES ('{escaped_key}', '{escaped_val}', current_timestamp())"
+        )
+        self._execute(sql)
+        logger.info("Saved setting: %s", key)
 
     # ------------------------------------------------------------------
     # Internal helpers

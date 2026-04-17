@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from importlib.resources import files
 from pathlib import Path
 from typing import Any, ClassVar
@@ -97,16 +98,29 @@ class AiRulesService:
         return json.dumps({"columns": columns})
 
     def _parse_response(self, content: str) -> list[dict[str, Any]]:
-        try:
-            parsed = json.loads(content)
-            if isinstance(parsed, dict) and "quality_rules" in parsed:
-                return parsed["quality_rules"]
-            if isinstance(parsed, list):
-                return parsed
-        except json.JSONDecodeError:
-            pass
-        logger.warning("Could not parse LLM response as JSON: %.200s", content)
+        for text in self._extract_json_candidates(content):
+            try:
+                parsed = json.loads(text)
+                if isinstance(parsed, dict) and "quality_rules" in parsed:
+                    return parsed["quality_rules"]
+                if isinstance(parsed, list):
+                    return parsed
+            except json.JSONDecodeError:
+                continue
+        logger.warning("Could not parse LLM response as JSON: %.500s", content)
         return []
+
+    @staticmethod
+    def _extract_json_candidates(content: str) -> list[str]:
+        """Return candidate JSON strings from an LLM response, most specific first."""
+        candidates = [content]
+        code_block = re.search(r"```(?:json)?\s*\n?(.*?)```", content, re.DOTALL)
+        if code_block:
+            candidates.append(code_block.group(1).strip())
+        brace_match = re.search(r"\{.*\}", content, re.DOTALL)
+        if brace_match:
+            candidates.append(brace_match.group(0))
+        return candidates
 
     # ------------------------------------------------------------------
     # Public API

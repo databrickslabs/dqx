@@ -140,6 +140,196 @@ MIGRATIONS: list[Migration] = [
         description="Liquid cluster dq_app_settings by setting_key",
         sql_template=(f"ALTER TABLE {_PLACEHOLDER}.dq_app_settings " "CLUSTER BY (setting_key)"),
     ),
+    Migration(
+        version=9,
+        description="Create dq_role_mappings table for RBAC",
+        sql_template=(
+            f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_role_mappings ("
+            "  role STRING NOT NULL,"
+            "  group_name STRING NOT NULL,"
+            "  created_by STRING,"
+            "  created_at TIMESTAMP,"
+            "  updated_by STRING,"
+            "  updated_at TIMESTAMP"
+            ")"
+        ),
+    ),
+    Migration(
+        version=10,
+        description="Liquid cluster dq_role_mappings by role",
+        sql_template=(f"ALTER TABLE {_PLACEHOLDER}.dq_role_mappings " "CLUSTER BY (role)"),
+    ),
+    Migration(
+        version=11,
+        description="Create dq_comments table",
+        sql_template=(
+            f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_comments ("
+            "  comment_id STRING NOT NULL,"
+            "  entity_type STRING NOT NULL,"
+            "  entity_id STRING NOT NULL,"
+            "  user_email STRING NOT NULL,"
+            "  comment STRING NOT NULL,"
+            "  created_at TIMESTAMP"
+            ")"
+        ),
+    ),
+    Migration(
+        version=12,
+        description="Liquid cluster dq_comments by entity_type and entity_id",
+        sql_template=(f"ALTER TABLE {_PLACEHOLDER}.dq_comments " "CLUSTER BY (entity_type, entity_id)"),
+    ),
+    Migration(
+        version=13,
+        description="Add canceled_by and updated_at audit columns to dq_validation_runs",
+        sql_template=(
+            f"ALTER TABLE {_PLACEHOLDER}.dq_validation_runs " "ADD COLUMNS (canceled_by STRING, updated_at STRING)"
+        ),
+    ),
+    Migration(
+        version=14,
+        description="Add canceled_by and updated_at audit columns to dq_profiling_results",
+        sql_template=(
+            f"ALTER TABLE {_PLACEHOLDER}.dq_profiling_results " "ADD COLUMNS (canceled_by STRING, updated_at STRING)"
+        ),
+    ),
+    Migration(
+        version=15,
+        description="Create dq_quarantine_records table",
+        sql_template=(
+            f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_quarantine_records ("
+            "  quarantine_id STRING NOT NULL,"
+            "  run_id STRING NOT NULL,"
+            "  source_table_fqn STRING NOT NULL,"
+            "  requesting_user STRING,"
+            "  row_data STRING,"
+            "  errors STRING,"
+            "  created_at STRING"
+            ")"
+        ),
+    ),
+    Migration(
+        version=16,
+        description="Liquid cluster dq_quarantine_records by run_id and source_table_fqn",
+        sql_template=(f"ALTER TABLE {_PLACEHOLDER}.dq_quarantine_records " "CLUSTER BY (run_id, source_table_fqn)"),
+    ),
+    Migration(
+        version=17,
+        description="Create dq_metrics table for quality trend tracking",
+        sql_template=(
+            f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_metrics ("
+            "  metric_id STRING NOT NULL,"
+            "  run_id STRING NOT NULL,"
+            "  source_table_fqn STRING NOT NULL,"
+            "  run_type STRING,"
+            "  total_rows INT,"
+            "  valid_rows INT,"
+            "  invalid_rows INT,"
+            "  pass_rate DOUBLE,"
+            "  error_breakdown STRING,"
+            "  requesting_user STRING,"
+            "  created_at STRING"
+            ")"
+        ),
+    ),
+    Migration(
+        version=18,
+        description="Liquid cluster dq_metrics by source_table_fqn and created_at",
+        sql_template=(f"ALTER TABLE {_PLACEHOLDER}.dq_metrics " "CLUSTER BY (source_table_fqn, created_at)"),
+    ),
+    Migration(
+        version=19,
+        description="Add source column to dq_quality_rules",
+        sql_template=(f"ALTER TABLE {_PLACEHOLDER}.dq_quality_rules " "ADD COLUMNS (source STRING)"),
+    ),
+    Migration(
+        version=20,
+        description="Create dq_quality_rules_history table",
+        sql_template=(
+            f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_quality_rules_history ("
+            "  table_fqn STRING NOT NULL,"
+            "  checks STRING,"
+            "  version INT,"
+            "  source STRING,"
+            "  action STRING NOT NULL,"
+            "  changed_by STRING,"
+            "  changed_at TIMESTAMP"
+            ")"
+        ),
+    ),
+    Migration(
+        version=21,
+        description="Liquid cluster dq_quality_rules_history by table_fqn and changed_at",
+        sql_template=(f"ALTER TABLE {_PLACEHOLDER}.dq_quality_rules_history " "CLUSTER BY (table_fqn, changed_at)"),
+    ),
+    Migration(
+        version=22,
+        description="Create dq_schedule_runs table for tracking scheduled run triggers",
+        sql_template=(
+            f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_schedule_runs ("
+            "  schedule_name STRING NOT NULL,"
+            "  last_run_at TIMESTAMP,"
+            "  next_run_at TIMESTAMP,"
+            "  last_run_id STRING,"
+            "  status STRING"
+            ")"
+        ),
+    ),
+    Migration(
+        version=23,
+        description="Create dq_schedule_configs table for separate per-schedule storage",
+        sql_template=(
+            f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_schedule_configs ("
+            "  schedule_name STRING NOT NULL,"
+            "  config_json STRING NOT NULL,"
+            "  version INT,"
+            "  created_by STRING,"
+            "  created_at TIMESTAMP,"
+            "  updated_by STRING,"
+            "  updated_at TIMESTAMP"
+            ")"
+        ),
+    ),
+    Migration(
+        version=24,
+        description="Liquid cluster dq_schedule_configs by schedule_name",
+        sql_template=(f"ALTER TABLE {_PLACEHOLDER}.dq_schedule_configs " "CLUSTER BY (schedule_name)"),
+    ),
+    Migration(
+        version=25,
+        description="Create dq_schedule_configs_history table for change tracking",
+        sql_template=(
+            f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_schedule_configs_history ("
+            "  schedule_name STRING NOT NULL,"
+            "  config_json STRING,"
+            "  version INT,"
+            "  action STRING NOT NULL,"
+            "  changed_by STRING,"
+            "  changed_at TIMESTAMP"
+            ")"
+        ),
+    ),
+    Migration(
+        version=26,
+        description="Liquid cluster dq_schedule_configs_history by schedule_name and changed_at",
+        sql_template=(
+            f"ALTER TABLE {_PLACEHOLDER}.dq_schedule_configs_history " "CLUSTER BY (schedule_name, changed_at)"
+        ),
+    ),
+    Migration(
+        version=27,
+        description="Add rule_id column to dq_quality_rules for per-check granularity",
+        sql_template=(f"ALTER TABLE {_PLACEHOLDER}.dq_quality_rules " "ADD COLUMNS (rule_id STRING)"),
+    ),
+    Migration(
+        version=28,
+        description="Add rule_id column to dq_quality_rules_history",
+        sql_template=(f"ALTER TABLE {_PLACEHOLDER}.dq_quality_rules_history " "ADD COLUMNS (rule_id STRING)"),
+    ),
+    Migration(
+        version=29,
+        description="Add run_type column to dq_validation_runs to distinguish dryrun vs scheduled",
+        sql_template=(f"ALTER TABLE {_PLACEHOLDER}.dq_validation_runs " "ADD COLUMNS (run_type STRING)"),
+    ),
 ]
 
 # ---------------------------------------------------------------------------

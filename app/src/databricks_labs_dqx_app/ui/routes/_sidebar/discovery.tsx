@@ -140,8 +140,8 @@ function statusBadge(status: string) {
 function RulesPanel({ tableFqn }: { tableFqn: string }) {
   const navigate = useNavigate();
   const { data: rulesResp, isLoading, error } = useGetRules(tableFqn);
-  const entry = rulesResp?.data;
-  const hasRules = entry && !error;
+  const entry = rulesResp?.data?.[0];
+  const hasRules = !!entry && !error;
 
   return (
     <Card>

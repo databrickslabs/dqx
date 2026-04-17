@@ -9,8 +9,58 @@ logger = logging.getLogger(__name__)
 
 class UserRole(StrEnum):
     ADMIN = "admin"
-    DATA_STEWARD = "data_steward"
+    RULE_APPROVER = "rule_approver"
+    RULE_AUTHOR = "rule_author"
     VIEWER = "viewer"
+
+
+# Role hierarchy for resolution (higher index = higher priority)
+ROLE_PRIORITY: list[UserRole] = [
+    UserRole.VIEWER,
+    UserRole.RULE_AUTHOR,
+    UserRole.RULE_APPROVER,
+    UserRole.ADMIN,
+]
+
+# Permissions granted to each role
+PERMISSIONS: dict[UserRole, list[str]] = {
+    UserRole.ADMIN: [
+        "view_rules",
+        "create_rules",
+        "edit_rules",
+        "generate_rules",
+        "submit_rules",
+        "approve_rules",
+        "export_rules",
+        "configure_storage",
+        "manage_roles",
+    ],
+    UserRole.RULE_APPROVER: [
+        "view_rules",
+        "create_rules",
+        "edit_rules",
+        "generate_rules",
+        "submit_rules",
+        "approve_rules",
+        "export_rules",
+        "configure_storage",
+    ],
+    UserRole.RULE_AUTHOR: [
+        "view_rules",
+        "create_rules",
+        "edit_rules",
+        "generate_rules",
+        "submit_rules",
+    ],
+    UserRole.VIEWER: [
+        "view_rules",
+    ],
+}
+
+
+def get_permissions_for_role(role: UserRole) -> list[str]:
+    """Return the list of permissions granted to a role."""
+    return PERMISSIONS.get(role, [])
 
 
 def get_user_email(
@@ -26,28 +76,7 @@ def get_user_email(
     return email
 
 
-def get_user_role(
-    email: Annotated[str, Depends(get_user_email)],
-) -> UserRole:
-    # Stubbed — always returns ADMIN for now.
-    # Future: look up role from a permission table keyed by email.
-    logger.debug(f"Resolving role for {email} — stubbed as ADMIN")
-    return UserRole.ADMIN
-
-
-def require_role(*roles: UserRole):
-    """Dependency factory that rejects requests from users without one of the listed roles."""
-
-    def _check(role: Annotated[UserRole, Depends(get_user_role)]) -> UserRole:
-        if role not in roles:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Requires one of {[r.value for r in roles]}, but user has '{role.value}'.",
-            )
-        return role
-
-    return Depends(_check)
-
-
 CurrentUser = Annotated[str, Depends(get_user_email)]
-CurrentUserRole = Annotated[UserRole, Depends(get_user_role)]
+
+# Note: get_user_role, require_role, and CurrentUserRole are defined in
+# dependencies.py to avoid circular imports (they need RoleService).

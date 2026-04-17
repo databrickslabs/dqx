@@ -12,6 +12,9 @@ variables:
   tmp_schema_name:
     description: "Name of the schema for temporary views and intermediate processing"
     default: "dqx_app_tmp"
+  admin_group:
+    description: "Databricks workspace group name for bootstrap Admin access"
+    default: "admins"
   wheels_volume_name:
     description: "Name of the UC volume for storing DQX wheel files"
     default: "wheels"
@@ -38,6 +41,8 @@ variables:
           value_from: "dqx-task-runner-job"
         - name: "DQX_TMP_SCHEMA"
           value: "${var.tmp_schema_name}"
+        - name: "DQX_ADMIN_GROUP"
+          value: "${var.admin_group}"
         - name: "DQX_WHEELS_VOLUME"
           value: "/Volumes/${var.catalog_name}/${var.schema_name}/${var.wheels_volume_name}"
 
@@ -103,6 +108,9 @@ resources:
       max_num_clusters: 1
       min_num_clusters: 1
       auto_stop_mins: 10
+      permissions:
+        - group_name: "users"
+          level: "CAN_USE"
 
   volumes:
     dqx_wheels:
@@ -201,6 +209,11 @@ resources:
 
 targets:
   dev:
+    workspace:
+      profile: dqx-app-demo
+    variables:
+      catalog_name: tsh_dqx_app_demo_catalog
+      dqx_service_principal_application_id: "4174f306-d722-4cea-8745-85416017ee92"
     presets:
       trigger_pause_status: PAUSED
 
