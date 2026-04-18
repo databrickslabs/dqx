@@ -42,3 +42,25 @@ def test_generate_dq_rules_ai_assisted_logs_dropped_invalid_rule(generator, capl
     assert (
         "{}" not in rendered
     ), f"Log message still contains literal '{{}}' — logger placeholder style is wrong: {rendered!r}"
+
+
+def test_generate_dq_rules_ai_assisted_keeps_valid_drops_invalid(generator, caplog):
+    """Mixed LLM output: valid rules are returned and invalid ones dropped."""
+    valid_rule = {
+        "criticality": "error",
+        "check": {"function": "is_not_null", "arguments": {"column": "name"}},
+    }
+    invalid_rule = {
+        "criticality": "error",
+        "check": {"function": "nonexistent_function_xyz", "arguments": {"column": "name"}},
+    }
+    prediction = SimpleNamespace(quality_rules=json.dumps([valid_rule, invalid_rule]), reasoning="test")
+    generator.llm_engine = SimpleNamespace(detect_business_rules_with_llm=lambda **_: prediction)
+
+    with caplog.at_level(logging.WARNING, logger=generator_module.__name__):
+        result = generator.generate_dq_rules_ai_assisted(user_input="anything")
+
+    assert result == [valid_rule]
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1, f"Expected one WARNING for the invalid rule only, got {warnings}"
+    assert "nonexistent_function_xyz" in warnings[0].getMessage()

@@ -117,7 +117,9 @@ class DQGenerator(DQEngineBase):
                 to infer schema. If not provided, LLM will be used to guess the table schema.
 
         Returns:
-            A list of dictionaries representing the generated data quality rules.
+            A list of dictionaries representing the generated data quality rules. Rules that fail
+            *DQEngine.validate_checks* (e.g. missing required arguments, unknown function names)
+            are dropped and logged at *WARNING*; only valid rules are returned.
 
         Raises:
             MissingParameterError: If DSPy compiler is not available.
