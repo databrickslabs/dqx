@@ -167,9 +167,7 @@ class DQGenerator(DQEngineBase):
         for rule in rules:
             status = DQEngine.validate_checks(checks=[rule], custom_check_functions=self.custom_check_functions)
             if status.has_errors:
-                logger.warning(
-                    "Dropping LLM-generated rule that failed validation: {}. Errors: {}", rule, status.errors
-                )
+                logger.warning(f"Dropping LLM-generated rule that failed validation: {rule}. Errors: {status.errors}")
                 continue
             valid.append(rule)
         return valid
