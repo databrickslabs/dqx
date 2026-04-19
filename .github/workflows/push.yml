@@ -18,7 +18,16 @@ permissions:
   contents: read
 
 jobs:
+  not-a-fork:
+    runs-on:
+      group: databrickslabs-protected-runner-group
+      labels: linux-ubuntu-latest
+    if: github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork
+    steps:
+      - run: echo "Not a fork PR, proceeding"
+
   ci:
+    needs: not-a-fork
     strategy:
       fail-fast: false
       matrix:
@@ -34,19 +43,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Setup uv
-        uses: astral-sh/setup-uv@5a095e7a2014a4212f075830d4f7277575a9d098  # v7.3.1
-        with:
-          version: "0.11.2"
-          checksum: "7ac2ca0449c8d68dae9b99e635cd3bc9b22a4cb1de64b7c43716398447d42981"
-
-      - name: Setup for JFrog
-        uses: ./.github/actions/jfrog-auth
+      - name: Setup environment
+        uses: ./.github/actions/setup-env
 
       - name: Run unit tests
         run: make test
 
   fmt:
+    needs: not-a-fork
     runs-on:
       group: databrickslabs-protected-runner-group
       labels: linux-ubuntu-latest
@@ -56,14 +60,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Setup uv
-        uses: astral-sh/setup-uv@5a095e7a2014a4212f075830d4f7277575a9d098  # v7.3.1
-        with:
-          version: "0.11.2"
-          checksum: "7ac2ca0449c8d68dae9b99e635cd3bc9b22a4cb1de64b7c43716398447d42981"
-
-      - name: Setup for JFrog
-        uses: ./.github/actions/jfrog-auth
+      - name: Setup environment
+        uses: ./.github/actions/setup-env
 
       - name: Format all files
         run: make dev fmt
@@ -72,6 +70,7 @@ jobs:
         run: git diff --exit-code
 
   docs:
+    needs: not-a-fork
     name: Build Docusaurus
     runs-on:
       group: databrickslabs-protected-runner-group
@@ -83,18 +82,12 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup uv
-        uses: astral-sh/setup-uv@5a095e7a2014a4212f075830d4f7277575a9d098  # v7.3.1
-        with:
-          version: "0.11.2"
-          checksum: "7ac2ca0449c8d68dae9b99e635cd3bc9b22a4cb1de64b7c43716398447d42981"
-
-      - name: Setup for JFrog
-        uses: ./.github/actions/jfrog-auth
+      - name: Setup environment
+        uses: ./.github/actions/setup-env
 
       - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
         with:
-          node-version: 20
+          node-version: 22
           cache: yarn
           cache-dependency-path: docs/dqx/yarn.lock # need to put the lockfile path explicitly
 
@@ -105,6 +98,7 @@ jobs:
         run: make docs-build
 
   app:
+    needs: not-a-fork
     name: Build and Check App
     runs-on:
       group: databrickslabs-protected-runner-group
@@ -117,14 +111,8 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Setup uv
-        uses: astral-sh/setup-uv@5a095e7a2014a4212f075830d4f7277575a9d098  # v7.3.1
-        with:
-          version: "0.11.2"
-          checksum: "7ac2ca0449c8d68dae9b99e635cd3bc9b22a4cb1de64b7c43716398447d42981"
-
-      - name: Setup for JFrog
-        uses: ./.github/actions/jfrog-auth
+      - name: Setup environment
+        uses: ./.github/actions/setup-env
 
       - name: Install Bun
         uses: oven-sh/setup-bun@ecf28ddc73e819eb6fa29df6b34ef8921c743461 # v2.1.3
@@ -132,7 +120,7 @@ jobs:
           bun-version: "1.3.11"
 
       - name: Install JavaScript dependencies
-        run: bun install
+        run: npm install
 
       - name: Build app
         run: uv run apx build
