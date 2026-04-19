@@ -134,7 +134,7 @@ def test_e2e_workflow_for_patterns(
     spark = spark_keep_alive.spark
 
     first_table = run_config.input_config.location
-    catalog_name, schema_name, _ = first_table.split('.')
+    catalog_name, schema_name, _ = first_table.split(".")
     second_table = _make_second_input_table(spark, catalog_name, schema_name, first_table, make_random)
 
     installation_ctx.deployed_workflows.run_workflow(
@@ -178,7 +178,7 @@ def test_e2e_workflow_for_patterns_exclude_patterns(
     spark = spark_keep_alive.spark
 
     first_table = run_config.input_config.location
-    catalog_name, schema_name, _ = first_table.split('.')
+    catalog_name, schema_name, _ = first_table.split(".")
     exclude_table = _make_second_input_table(spark, catalog_name, schema_name, first_table, make_random)
 
     installation_ctx.deployed_workflows.run_workflow(
@@ -222,7 +222,7 @@ def test_e2e_workflow_for_patterns_exclude_output(
     spark = spark_keep_alive.spark
 
     first_table = run_config.input_config.location
-    catalog_name, schema_name, _ = first_table.split('.')
+    catalog_name, schema_name, _ = first_table.split(".")
 
     output_table_suffix = "_output"
     quarantine_table_suffix = "_quarantine"
@@ -283,7 +283,7 @@ def test_e2e_workflow_for_patterns_table_checks_storage(
     spark = spark_keep_alive.spark
 
     first_table = run_config.input_config.location
-    catalog_name, schema_name, _ = first_table.split('.')
+    catalog_name, schema_name, _ = first_table.split(".")
 
     # update run config to use table storage for checks
     config = installation_ctx.config
