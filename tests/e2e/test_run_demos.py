@@ -284,11 +284,20 @@ def test_run_dqx_demo_asset_bundle(ws, make_schema, make_random, library_ref):
     host = ws.config.host or ""
     target = "azure" if "azuredatabricks.net" in host else "aws"
 
+    def _run(args: list[str]) -> None:
+        """Run a bundle command; on failure raise with stdout/stderr included so CI logs are actionable."""
+        result = subprocess.run([cli_path, *args], capture_output=True, cwd=path, check=False, text=True)
+        if result.returncode != 0:
+            raise AssertionError(
+                f"`databricks {' '.join(args)}` failed with exit {result.returncode}\n"
+                f"--- stdout ---\n{result.stdout}\n"
+                f"--- stderr ---\n{result.stderr}"
+            )
+
     try:
-        subprocess.run([cli_path, "bundle", "validate", "-t", target], check=True, capture_output=True, cwd=path)
-        subprocess.run(
+        _run(["bundle", "validate", "-t", target])
+        _run(
             [
-                cli_path,
                 "bundle",
                 "deploy",
                 "-t",
@@ -299,18 +308,40 @@ def test_run_dqx_demo_asset_bundle(ws, make_schema, make_random, library_ref):
                 f'--var="run_id={run_id}"',
                 '--force-lock',
                 "--auto-approve",
+            ]
+        )
+        _run(["bundle", "run", "-t", target, "dqx_demo_job"])
+    finally:
+        # Teardown is best-effort: never mask the primary error, but surface destroy's
+        # output if it fails so partial-state issues are diagnosable from CI logs.
+        # Pass the same `run_id` (and related vars) used on deploy — the bundle name
+        # is `dqx_demo_bundle_${var.run_id}`, so a mismatched run_id makes destroy
+        # target a non-existent bundle, which newer CLI versions treat as an error.
+        destroy = subprocess.run(
+            [
+                cli_path,
+                "bundle",
+                "destroy",
+                "-t",
+                target,
+                f'--var="library_ref={library_ref}"',
+                f'--var="demo_catalog={catalog}"',
+                f'--var="demo_schema={schema}"',
+                f'--var="run_id={run_id}"',
+                "--auto-approve",
             ],
-            check=True,
             capture_output=True,
             cwd=path,
+            check=False,
+            text=True,
         )
-        subprocess.run(
-            [cli_path, "bundle", "run", "-t", target, "dqx_demo_job"], check=True, capture_output=True, cwd=path
-        )
-    finally:
-        subprocess.run(
-            [cli_path, "bundle", "destroy", "-t", target, "--auto-approve"], check=True, capture_output=True, cwd=path
-        )
+        if destroy.returncode != 0:
+            logging.warning(
+                "bundle destroy failed with exit %s\n--- stdout ---\n%s\n--- stderr ---\n%s",
+                destroy.returncode,
+                destroy.stdout,
+                destroy.stderr,
+            )
 
 
 def test_run_dqx_multi_table_demo(ws, make_notebook, make_schema, make_job, library_ref):
