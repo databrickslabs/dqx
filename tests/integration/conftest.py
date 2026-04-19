@@ -1,8 +1,9 @@
 import logging
 import os
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
+from subprocess import CalledProcessError
 from typing import Any
 from unittest.mock import patch
 from pyspark.sql import DataFrame, functions as F
@@ -10,6 +11,7 @@ from pyspark.sql.types import ArrayType, StructType
 from pyspark.testing.utils import assertDataFrameEqual
 
 import pytest
+from databricks.sdk.retries import retried
 from databricks.sdk.service.workspace import ImportFormat
 from databricks.labs.blueprint.installation import Installation
 from databricks.labs.pytester.fixtures.baseline import factory
@@ -39,6 +41,11 @@ EXTRA_PARAMS = ExtraParams(run_time_overwrite=RUN_TIME.isoformat(), run_id_overw
 
 
 FINGERPRINT_FIELDS = ["rule_fingerprint", "rule_set_fingerprint"]
+
+
+def _install_with_retry(installation_service) -> None:
+    # WheelsV2 shells out to `pip wheel`; retry transient CalledProcessError (network / PyPI hiccups).
+    retried(on=[CalledProcessError], timeout=timedelta(minutes=5))(installation_service.run)()
 
 
 def _strip_fingerprints_from_result_column(df: DataFrame, col_name: str) -> DataFrame:
@@ -208,7 +215,7 @@ def setup_workflows(ws, spark, installation_ctx, make_schema, make_table, make_r
         pytest.skip()
 
     def create(_spark, **kwargs):
-        installation_ctx.installation_service.run()
+        _install_with_retry(installation_ctx.installation_service)
 
         quarantine = False
         if "quarantine" in kwargs and kwargs["quarantine"]:
@@ -241,7 +248,7 @@ def setup_serverless_workflows(ws, spark, serverless_installation_ctx, make_sche
         pytest.skip()
 
     def create(_spark, **kwargs):
-        serverless_installation_ctx.installation_service.run()
+        _install_with_retry(serverless_installation_ctx.installation_service)
 
         quarantine = False
         if "quarantine" in kwargs and kwargs["quarantine"]:
@@ -288,7 +295,7 @@ def setup_workflows_with_metrics(ws, spark, installation_ctx, make_schema, make_
         installation_ctx.config.profiler_override_clusters["default"] = cluster_id
         installation_ctx.config.quality_checker_override_clusters["default"] = cluster_id
         installation_ctx.config.e2e_override_clusters["default"] = cluster_id
-        installation_ctx.installation_service.run()
+        _install_with_retry(installation_ctx.installation_service)
 
         quarantine = False
         if "quarantine" in kwargs and kwargs["quarantine"]:
@@ -346,7 +353,7 @@ def setup_workflows_with_custom_folder(
         pytest.skip()
 
     def create(_spark, **kwargs):
-        installation_ctx_custom_install_folder.installation_service.run()
+        _install_with_retry(installation_ctx_custom_install_folder.installation_service)
 
         quarantine = False
         if "quarantine" in kwargs and kwargs["quarantine"]:
