@@ -12,6 +12,7 @@ from chispa import assert_df_equality as _chispa_assert_df_equality  # type: ign
 import pytest
 from databricks.sdk.service.workspace import ImportFormat
 from databricks.labs.blueprint.installation import Installation
+from databricks.labs.blueprint.wheels import WheelsV2
 from databricks.labs.pytester.fixtures.baseline import factory
 from databricks.labs.dqx.checks_serializer import serialize_checks
 from databricks.labs.dqx.rule_fingerprint import compute_rule_fingerprint, compute_rule_set_fingerprint_by_metadata
@@ -167,6 +168,25 @@ class SparkKeepAlive:
             self._thread.join(timeout=self._join_timeout)
             if self._thread.is_alive():
                 logger.warning(f"SparkKeepAlive thread did not stop within {self._join_timeout}s")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _verbose_wheel_builds():
+    """Force WheelsV2 to verbose=True for the test suite.
+
+    WheelsV2 routes pip's stdout/stderr to /dev/null when verbose=False (the
+    blueprint default), making wheel-build failures opaque in CI logs. Patching
+    here scopes the change to tests only — production CLI users keep the
+    original quiet behavior.
+    """
+    original = WheelsV2.__init__
+
+    def patched(self, installation, product_info, *, verbose: bool = True) -> None:
+        original(self, installation, product_info, verbose=verbose)
+
+    with pytest.MonkeyPatch.context() as pytest_mp:
+        pytest_mp.setattr(WheelsV2, "__init__", patched)
+        yield
 
 
 @pytest.fixture
