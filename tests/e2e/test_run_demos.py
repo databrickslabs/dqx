@@ -5,11 +5,13 @@ import subprocess
 
 from datetime import timedelta
 from pathlib import Path
+from subprocess import CalledProcessError
 from uuid import uuid4
 from tempfile import TemporaryDirectory
 
 import yaml
 
+from databricks.sdk.retries import retried
 from databricks.sdk.service.workspace import ImportFormat
 from databricks.sdk.service.pipelines import NotebookLibrary, PipelinesEnvironment, PipelineLibrary
 from databricks.sdk.service.jobs import NotebookTask, PipelineTask, Task
@@ -190,7 +192,10 @@ def test_run_dqx_demo_tool(ws, installation_ctx, make_schema, make_notebook, mak
             r"Provide quarantined table .*": f"{catalog}.{schema}.quarantine_table",
         },
     )
-    installation_ctx.workspace_installer.run(installation_ctx.config)
+    # WheelsV2 shells out to `pip wheel`; retry transient CalledProcessError (network / PyPI hiccups).
+    retried(on=[CalledProcessError], timeout=timedelta(minutes=5))(installation_ctx.workspace_installer.run)(
+        installation_ctx.config
+    )
     product_name = installation_ctx.product_info.product_name()
     install_path = installation_ctx.installation.install_folder()
 

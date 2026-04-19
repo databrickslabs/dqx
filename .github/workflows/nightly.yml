@@ -58,7 +58,6 @@ jobs:
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           COVERAGE_FILE: ${{ github.workspace }}/.coverage  # make sure the coverage report is preserved
-          PIP_CONSTRAINT: ${{ github.workspace }}/.build-constraints.txt  # pin build deps for `pip wheel` (PEP 517 isolated builds)
 
       - name: Merge coverage reports and convert them to XML
         run: make combine-coverage
@@ -112,7 +111,6 @@ jobs:
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
           COVERAGE_FILE: ${{ github.workspace }}/.coverage  # make sure the coverage report is preserved
-          PIP_CONSTRAINT: ${{ github.workspace }}/.build-constraints.txt  # pin build deps for `pip wheel` (PEP 517 isolated builds)
 
       - name: Merge coverage reports and convert them to XML
         run: make combine-coverage
@@ -162,7 +160,6 @@ jobs:
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           COVERAGE_FILE: ${{ github.workspace }}/.coverage
-          PIP_CONSTRAINT: ${{ github.workspace }}/.build-constraints.txt  # pin build deps for `pip wheel` (PEP 517 isolated builds)
           MLFLOW_ENABLE_DB_SDK: "true"
           MLFLOW_TRACKING_URI: databricks
           MLFLOW_REGISTRY_URI: databricks-uc
@@ -217,7 +214,6 @@ jobs:
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           COVERAGE_FILE: ${{ github.workspace }}/.coverage
           DATABRICKS_SERVERLESS_COMPUTE_ID: auto
-          PIP_CONSTRAINT: ${{ github.workspace }}/.build-constraints.txt  # pin build deps for `pip wheel` (PEP 517 isolated builds)
           MLFLOW_ENABLE_DB_SDK: "true"
           MLFLOW_TRACKING_URI: databricks
           MLFLOW_REGISTRY_URI: databricks-uc
@@ -264,7 +260,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
-          PIP_CONSTRAINT: ${{ github.workspace }}/.build-constraints.txt  # pin build deps for `pip wheel` (PEP 517 isolated builds)
 
   e2e_serverless:
     environment: tool
@@ -301,7 +296,6 @@ jobs:
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
-          PIP_CONSTRAINT: ${{ github.workspace }}/.build-constraints.txt  # pin build deps for `pip wheel` (PEP 517 isolated builds)
 
   # Performance benchmarks:
   # 1. run tests and generate a new perf baseline

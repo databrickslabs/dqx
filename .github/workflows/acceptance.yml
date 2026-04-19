@@ -73,7 +73,6 @@ jobs:
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           COVERAGE_FILE: ${{ github.workspace }}/.coverage  # make sure the coverage report is preserved
-          PIP_CONSTRAINT: ${{ github.workspace }}/.build-constraints.txt  # pin build deps for `pip wheel` (PEP 517 isolated builds)
 
       - name: Merge coverage reports and convert them to XML
         run: make combine-coverage
@@ -128,7 +127,6 @@ jobs:
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
           COVERAGE_FILE: ${{ github.workspace }}/.coverage  # make sure the coverage report is preserved
-          PIP_CONSTRAINT: ${{ github.workspace }}/.build-constraints.txt  # pin build deps for `pip wheel` (PEP 517 isolated builds)
 
       - name: Merge coverage reports and convert them to XML
         run: make combine-coverage
@@ -172,7 +170,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
-          PIP_CONSTRAINT: ${{ github.workspace }}/.build-constraints.txt  # pin build deps for `pip wheel` (PEP 517 isolated builds)
 
   e2e_serverless:
     needs: not-a-fork
@@ -210,4 +207,3 @@ jobs:
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
-          PIP_CONSTRAINT: ${{ github.workspace }}/.build-constraints.txt  # pin build deps for `pip wheel` (PEP 517 isolated builds)

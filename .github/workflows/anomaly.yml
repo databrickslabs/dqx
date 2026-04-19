@@ -64,7 +64,6 @@ jobs:
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           COVERAGE_FILE: ${{ github.workspace }}/.coverage
-          PIP_CONSTRAINT: ${{ github.workspace }}/.build-constraints.txt  # pin build deps for `pip wheel` (PEP 517 isolated builds)
           MLFLOW_ENABLE_DB_SDK: "true"
           MLFLOW_TRACKING_URI: databricks
           MLFLOW_REGISTRY_URI: databricks-uc
@@ -121,7 +120,6 @@ jobs:
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           COVERAGE_FILE: ${{ github.workspace }}/.coverage
           DATABRICKS_SERVERLESS_COMPUTE_ID: auto
-          PIP_CONSTRAINT: ${{ github.workspace }}/.build-constraints.txt  # pin build deps for `pip wheel` (PEP 517 isolated builds)
           MLFLOW_ENABLE_DB_SDK: "true"
           MLFLOW_TRACKING_URI: databricks
           MLFLOW_REGISTRY_URI: databricks-uc
