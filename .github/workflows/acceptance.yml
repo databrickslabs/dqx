@@ -157,7 +157,7 @@ jobs:
 
       # Required for DAB (Databricks Asset Bundle) e2e tests
       - name: Install Databricks CLI
-        uses: databricks/setup-cli@acd0e77a1ed7f15f528faca1e1f7f5590bcfdff8 # v0.296.0
+        uses: databricks/setup-cli@596b0a354ba14aa59921aca1b02bd67c2b0a81a5 # v0.297.2
 
       - name: Run e2e tests
         uses: databrickslabs/sandbox/acceptance@3313d06ce86227537b3f37f5974f7eecb2a8e59a # acceptance/v0.4.4
@@ -193,7 +193,7 @@ jobs:
 
       # Required for DAB (Databricks Asset Bundle) e2e tests
       - name: Install Databricks CLI
-        uses: databricks/setup-cli@acd0e77a1ed7f15f528faca1e1f7f5590bcfdff8 # v0.296.0
+        uses: databricks/setup-cli@596b0a354ba14aa59921aca1b02bd67c2b0a81a5 # v0.297.2
 
       - name: Run e2e tests on serverless cluster
         uses: databrickslabs/sandbox/acceptance@3313d06ce86227537b3f37f5974f7eecb2a8e59a # acceptance/v0.4.4

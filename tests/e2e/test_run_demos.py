@@ -337,10 +337,9 @@ def test_run_dqx_demo_asset_bundle(ws, make_schema, make_random, library_ref):
         )
         if destroy.returncode != 0:
             logging.warning(
-                "bundle destroy failed with exit %s\n--- stdout ---\n%s\n--- stderr ---\n%s",
-                destroy.returncode,
-                destroy.stdout,
-                destroy.stderr,
+                f"bundle destroy failed with exit {destroy.returncode}\n"
+                f"stdout: {destroy.stdout}\n"
+                f"stderr: {destroy.stderr}"
             )
 
 
