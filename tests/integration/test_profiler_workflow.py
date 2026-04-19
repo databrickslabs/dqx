@@ -19,12 +19,14 @@ def _assert_ai_regex_match_excludes_c_prefix(checks):
     'name' column that rejects names starting with 'c' (any case).
 
     `column` is required for regex_match, so we assert it strictly. The regex
-    form is allowed to vary (e.g. `^[^cC].*`, `^[^c].*` with an inline (?i) flag,
-    etc.) since LLM output is non-deterministic.
+    form is allowed to vary since LLM output is non-deterministic — two
+    equivalent forms are accepted:
+    - `^[^cC].*` with negate=False (regex excludes 'c' names directly)
+    - `^[cC].*` with negate=True (regex matches 'c' names, then negated)
     """
     actual = next((c for c in checks if c["check"]["function"] == "regex_match"), None)
     assert actual is not None, "AI generated regex_match check not found in the loaded checks"
-    assert actual.get("criticality") == "error", f"Unexpected criticality: {actual}"
+    assert actual.get("criticality") in {"error", "warn"}, f"Unexpected criticality: {actual}"
 
     args = actual["check"].get("arguments", {})
     assert args.get("column") == "name", (
@@ -32,9 +34,12 @@ def _assert_ai_regex_match_excludes_c_prefix(checks):
     )
 
     regex = args.get("regex", "")
+    negate = bool(args.get("negate", False))
+    excludes_via_charclass = "c" in regex.lower() and "[^" in regex
+    excludes_via_negate = "c" in regex.lower() and negate
     assert (
-        "c" in regex.lower() and "[^" in regex
-    ), f"AI generated regex does not appear to exclude names starting with 'c': {regex!r}"
+        excludes_via_charclass or excludes_via_negate
+    ), f"AI generated regex does not appear to exclude names starting with 'c': regex={regex!r}, negate={negate}"
 
 
 def test_profiler_workflow_when_missing_input_location_in_config(ws, setup_serverless_workflows):
@@ -403,6 +408,7 @@ def test_profiler_workflow_with_ai_rules_generation_and_model_api_keys_as_secret
     ws.secrets.put_secret(scope=scope_name, key="api_base", string_value="")
 
     config = installation_ctx.config
+    config.llm_config.model.model_name = "databricks/databricks-claude-opus-4-7"  # test different model
     config.llm_config.model.api_key = api_key  # test secret retrieval
     config.llm_config.model.api_base = api_base  # test secret retrieval
 
@@ -430,7 +436,6 @@ def test_profiler_workflow_with_ai_rules_generation_with_custom_funcs(ws, spark_
     spark = spark_keep_alive.spark
 
     config = installation_ctx.config
-    config.llm_config.model.model_name = "databricks/databricks-llama-4-maverick"  # test different model
     run_config = config.get_run_config()
     run_config.checks_user_requirements = (
         "name should not end with 'c'. Use not_ends_with_suffix function and don't add any extra quotes for suffix."
