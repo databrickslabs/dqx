@@ -1,8 +1,9 @@
 import logging
 import os
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
+from subprocess import CalledProcessError
 from typing import Any
 from unittest.mock import patch
 from pyspark.sql import DataFrame, functions as F
@@ -10,9 +11,9 @@ from pyspark.sql.types import ArrayType, StructType
 from chispa import assert_df_equality as _chispa_assert_df_equality  # type: ignore
 
 import pytest
+from databricks.sdk.retries import retried
 from databricks.sdk.service.workspace import ImportFormat
 from databricks.labs.blueprint.installation import Installation
-from databricks.labs.blueprint.wheels import WheelsV2
 from databricks.labs.pytester.fixtures.baseline import factory
 from databricks.labs.dqx.checks_serializer import serialize_checks
 from databricks.labs.dqx.rule_fingerprint import compute_rule_fingerprint, compute_rule_set_fingerprint_by_metadata
@@ -40,6 +41,11 @@ EXTRA_PARAMS = ExtraParams(run_time_overwrite=RUN_TIME.isoformat(), run_id_overw
 
 
 FINGERPRINT_FIELDS = ["rule_fingerprint", "rule_set_fingerprint"]
+
+
+def _install_with_retry(installation_service) -> None:
+    # WheelsV2 shells out to `pip wheel`; retry transient CalledProcessError (network / PyPI hiccups).
+    retried(on=[CalledProcessError], timeout=timedelta(minutes=5))(installation_service.run)()
 
 
 def _strip_fingerprints_from_result_column(df: DataFrame, col_name: str) -> DataFrame:
@@ -170,25 +176,6 @@ class SparkKeepAlive:
                 logger.warning(f"SparkKeepAlive thread did not stop within {self._join_timeout}s")
 
 
-@pytest.fixture(scope="session", autouse=True)
-def _verbose_wheel_builds():
-    """Force WheelsV2 to verbose=True for the test suite.
-
-    WheelsV2 routes pip's stdout/stderr to /dev/null when verbose=False (the
-    blueprint default), making wheel-build failures opaque in CI logs. Patching
-    here scopes the change to tests only — production CLI users keep the
-    original quiet behavior.
-    """
-    original = WheelsV2.__init__
-
-    def patched(self, installation, product_info, *, verbose: bool = True) -> None:
-        original(self, installation, product_info, verbose=verbose)
-
-    with pytest.MonkeyPatch.context() as pytest_mp:
-        pytest_mp.setattr(WheelsV2, "__init__", patched)
-        yield
-
-
 @pytest.fixture
 def spark_keep_alive(spark):
     """
@@ -216,7 +203,7 @@ def setup_workflows(ws, spark, installation_ctx, make_schema, make_table, make_r
         pytest.skip()
 
     def create(_spark, **kwargs):
-        installation_ctx.installation_service.run()
+        _install_with_retry(installation_ctx.installation_service)
 
         quarantine = False
         if "quarantine" in kwargs and kwargs["quarantine"]:
@@ -249,7 +236,7 @@ def setup_serverless_workflows(ws, spark, serverless_installation_ctx, make_sche
         pytest.skip()
 
     def create(_spark, **kwargs):
-        serverless_installation_ctx.installation_service.run()
+        _install_with_retry(serverless_installation_ctx.installation_service)
 
         quarantine = False
         if "quarantine" in kwargs and kwargs["quarantine"]:
@@ -296,7 +283,7 @@ def setup_workflows_with_metrics(ws, spark, installation_ctx, make_schema, make_
         installation_ctx.config.profiler_override_clusters["default"] = cluster_id
         installation_ctx.config.quality_checker_override_clusters["default"] = cluster_id
         installation_ctx.config.e2e_override_clusters["default"] = cluster_id
-        installation_ctx.installation_service.run()
+        _install_with_retry(installation_ctx.installation_service)
 
         quarantine = False
         if "quarantine" in kwargs and kwargs["quarantine"]:
@@ -354,7 +341,7 @@ def setup_workflows_with_custom_folder(
         pytest.skip()
 
     def create(_spark, **kwargs):
-        installation_ctx_custom_install_folder.installation_service.run()
+        _install_with_retry(installation_ctx_custom_install_folder.installation_service)
 
         quarantine = False
         if "quarantine" in kwargs and kwargs["quarantine"]:
