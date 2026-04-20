@@ -71,7 +71,7 @@ jobs:
           MLFLOW_TRACKING_URI: databricks
           MLFLOW_REGISTRY_URI: databricks-uc
           MLFLOW_HTTP_REQUEST_TIMEOUT: "600"
-          MLFLOW_HTTP_REQUEST_MAX_RETRIES: "10"
+          MLFLOW_HTTP_REQUEST_MAX_RETRIES: "9"
 
       - name: Merge coverage reports and convert them to XML
         run: make combine-coverage
@@ -130,7 +130,7 @@ jobs:
           MLFLOW_TRACKING_URI: databricks
           MLFLOW_REGISTRY_URI: databricks-uc
           MLFLOW_HTTP_REQUEST_TIMEOUT: "600"
-          MLFLOW_HTTP_REQUEST_MAX_RETRIES: "10"
+          MLFLOW_HTTP_REQUEST_MAX_RETRIES: "9"
 
       - name: Merge coverage reports and convert them to XML
         run: make combine-coverage
