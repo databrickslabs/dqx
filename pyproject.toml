@@ -106,6 +106,10 @@ build-backend = "hatchling.build"
 sources = ["src"]
 packages = ["src/databricks"]
 
+# Restrict the sdist to source code and top-level metadata.
+[tool.hatch.build.targets.sdist]
+only-include = ["src", "README.md", "LICENSE", "NOTICE"]
+
 [tool.hatch.version]
 path = "src/databricks/labs/dqx/__about__.py"
 
