@@ -164,7 +164,7 @@ def test_save_checks_to_table_with_unresolved_for_each_column(ws, make_schema, m
 
     expected_checks_df = spark.createDataFrame(expected_raw_checks, TEST_CHECKS_TABLE_SCHEMA)
 
-    assert_df_equality(checks_df, expected_checks_df, ignore_nullable=True, ignore_row_order=True)
+    assert_df_equality(checks_df.sort("name"), expected_checks_df.sort("name"), ignore_nullable=True)
 
 
 def test_load_checks_from_table_saved_from_dict_with_unresolved_for_each_column(ws, make_schema, make_random, spark):

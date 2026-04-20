@@ -45,8 +45,8 @@ jobs:
       - name: Setup environment
         uses: ./.github/actions/setup-env
 
-      - name: Run unit tests and generate test coverage report
-        run: make test
+      - name: Pre-build DQX wheel
+        uses: ./.github/actions/prebuild-wheel
 
       # Integration tests are run from within tests/integration folder.
       # Create .coveragerc with correct relative path to source code.
@@ -77,12 +77,12 @@ jobs:
       - name: Merge coverage reports and convert them to XML
         run: make combine-coverage
 
-      # Recursively search the entire workspace directory for all coverage reports.
-      # All uploaded test coverage reports will be used even if publish is done multiple time.
       - name: Publish test coverage
         uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
         with:
           use_oidc: true
+          files: coverage-combined.xml
+          flags: integration
 
   integration_serverless:
     needs: not-a-fork
@@ -103,6 +103,9 @@ jobs:
 
       - name: Setup environment
         uses: ./.github/actions/setup-env
+
+      - name: Pre-build DQX wheel
+        uses: ./.github/actions/prebuild-wheel
 
       # Integration tests are run from within tests/integration folder.
       # Create .coveragerc with correct relative path to source code.
@@ -131,11 +134,12 @@ jobs:
       - name: Merge coverage reports and convert them to XML
         run: make combine-coverage
 
-      # collects all coverage reports
       - name: Publish test coverage
         uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
         with:
           use_oidc: true
+          files: coverage-combined.xml
+          flags: integration-serverless
 
   e2e:
     needs: not-a-fork
@@ -154,6 +158,9 @@ jobs:
 
       - name: Setup environment
         uses: ./.github/actions/setup-env
+
+      - name: Pre-build DQX wheel
+        uses: ./.github/actions/prebuild-wheel
 
       # Required for DAB (Databricks Asset Bundle) e2e tests
       - name: Install Databricks CLI
@@ -190,6 +197,9 @@ jobs:
 
       - name: Setup environment
         uses: ./.github/actions/setup-env
+
+      - name: Pre-build DQX wheel
+        uses: ./.github/actions/prebuild-wheel
 
       # Required for DAB (Databricks Asset Bundle) e2e tests
       - name: Install Databricks CLI

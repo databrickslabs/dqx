@@ -4,7 +4,6 @@ import os
 import re
 import subprocess
 import sys
-import time
 from collections.abc import Callable, Generator
 from pathlib import Path
 from dataclasses import dataclass, replace
@@ -42,32 +41,18 @@ logger = logging.getLogger(__name__)
 
 
 class VerboseWheels(WheelsV2):
-    """Test-only WheelsV2 that captures `pip wheel` output and retries on transient failures.
+    """Test-only WheelsV2 that captures `pip wheel` output and supports a pre-built wheel.
 
     Two behaviours differ from upstream:
 
     1. Upstream's `verbose=True` sets stdout/stderr to `subprocess.STDOUT` which is invalid
        as a stdout value (raises OSError: Bad file descriptor). This override uses pipes so
        the real pip error surfaces in CI logs.
-    2. PEP 517 isolated build envs fetch hatchling / hatch-fancy-pypi-readme from the
-       configured index. The Databricks JFrog mirror occasionally returns 401 / connection
-       errors on that hop. We retry on stderr markers that indicate transient network or
-       auth glitches — real build errors (e.g. broken pyproject.toml) still fail fast.
+    2. When `DQX_PREBUILT_WHEEL` is set (CI), copy that artifact instead of running
+       `pip wheel`. CI builds the wheel once via the prebuild-wheel action while the JFrog
+       token is fresh, avoiding per-test `pip wheel` calls that would fail after the 1h
+       OIDC token TTL expires mid-suite.
     """
-
-    # Markers we have seen (or expect to see) in `pip wheel` stderr on transient failures.
-    _TRANSIENT_MARKERS = (
-        "401",
-        "403",
-        "Max retries exceeded",
-        "Connection reset",
-        "Connection aborted",
-        "Read timed out",
-        "Temporary failure in name resolution",
-        "Name or service not known",
-    )
-    _MAX_ATTEMPTS = 10
-    _BACKOFF_CAP_SECONDS = 30
 
     def _build_wheel(
         self,
@@ -78,6 +63,12 @@ class VerboseWheels(WheelsV2):
         dirs_exist_ok: bool = False,
     ):
         del verbose  # always capture in tests; fresh pipes avoid fd inheritance issues
+        prebuilt = os.environ.get("DQX_PREBUILT_WHEEL")
+        if prebuilt:
+            src = Path(prebuilt)
+            dst = Path(tmp_dir) / src.name
+            dst.write_bytes(src.read_bytes())
+            return Path(tmp_dir).glob("*.whl")
         checkout_root = self._product_info.checkout_root()
         if self._product_info.is_git_checkout() and self._product_info.is_unreleased_version():
             checkout_root = self._copy_root_to(tmp_dir, dirs_exist_ok=dirs_exist_ok)
@@ -93,29 +84,13 @@ class VerboseWheels(WheelsV2):
         ]
         if no_deps:
             args.append("--no-deps")
-
-        for attempt in range(1, self._MAX_ATTEMPTS + 1):
-            result = subprocess.run(args, capture_output=True, text=True, check=False)
-            if result.returncode == 0:
-                return Path(tmp_dir).glob("*.whl")
-
-            is_transient = any(marker in result.stderr for marker in self._TRANSIENT_MARKERS)
-            if attempt < self._MAX_ATTEMPTS and is_transient:
-                backoff = min(2**attempt, self._BACKOFF_CAP_SECONDS)
-                logger.warning(
-                    f"pip wheel attempt {attempt}/{self._MAX_ATTEMPTS} failed with transient error; "
-                    f"retrying in {backoff}s. stderr={result.stderr!r}"
-                )
-                time.sleep(backoff)
-                continue
-
+        result = subprocess.run(args, capture_output=True, text=True, check=False)
+        if result.returncode != 0:
             logger.error(
                 f"pip wheel failed (rc={result.returncode}); stdout={result.stdout!r}; stderr={result.stderr!r}"
             )
             raise subprocess.CalledProcessError(result.returncode, args, output=result.stdout, stderr=result.stderr)
-
-        # unreachable: loop either returns on success or raises on exhaustion
-        raise RuntimeError("pip wheel retry loop exited without result")
+        return Path(tmp_dir).glob("*.whl")
 
 
 @pytest.fixture(autouse=True, scope="session")

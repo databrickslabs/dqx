@@ -43,6 +43,9 @@ jobs:
       - name: Setup environment
         uses: ./.github/actions/setup-env
 
+      - name: Pre-build DQX wheel
+        uses: ./.github/actions/prebuild-wheel
+
       # Create .coveragerc with correct relative path to source code.
       - name: Prepare code coverage configuration for anomaly tests
         run: |
@@ -73,12 +76,12 @@ jobs:
       - name: Merge coverage reports and convert them to XML
         run: make combine-coverage
 
-      # Recursively search the entire workspace directory for all coverage reports.
-      # All uploaded test coverage reports will be used even if publish is done multiple time.
       - name: Publish test coverage
         uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
         with:
           use_oidc: true
+          files: coverage-combined.xml
+          flags: anomaly
 
   anomaly-tests-serverless:
     needs: not-a-fork
@@ -97,6 +100,9 @@ jobs:
 
       - name: Setup environment
         uses: ./.github/actions/setup-env
+
+      - name: Pre-build DQX wheel
+        uses: ./.github/actions/prebuild-wheel
 
       # Create .coveragerc with correct relative path to source code.
       - name: Prepare code coverage configuration for anomaly tests
@@ -129,8 +135,9 @@ jobs:
       - name: Merge coverage reports and convert them to XML
         run: make combine-coverage
 
-      # collects all coverage reports
       - name: Publish test coverage
         uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
         with:
           use_oidc: true
+          files: coverage-combined.xml
+          flags: anomaly-serverless
