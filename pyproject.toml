@@ -95,9 +95,16 @@ requires = [
 ]
 build-backend = "hatchling.build"
 
-[tool.hatch.build]
+# Tell hatchling where the package lives and how to lay it out in the wheel.
+# Without this block, hatchling derives the package path from the project name:
+# `databricks-labs-dqx` -> it looks for `src/databricks_labs_dqx/`
+# That directory does not exist — the code is a PEP 420 namespace package at `src/databricks/labs/dqx/` so the built wheel ends up empty.
+# `packages` points hatchling at the namespace root (`src/databricks`), and `sources`
+# drops the `src/` prefix when copying files into the wheel, so the final layout inside
+# the wheel is `databricks/labs/dqx/...` — what Python needs to resolve the import.
+[tool.hatch.build.targets.wheel]
 sources = ["src"]
-include = ["src", "README.md", "LICENSE", "NOTICE"]
+packages = ["src/databricks"]
 
 [tool.hatch.version]
 path = "src/databricks/labs/dqx/__about__.py"
