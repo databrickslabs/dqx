@@ -1,20 +1,20 @@
 import time
 from datetime import datetime
 
-from pyspark.sql.types import StructType, StructField, IntegerType, StringType
 import pytest
-
+from pyspark.sql.types import StructType, StructField, IntegerType, StringType
 from pyspark.testing.utils import assertDataFrameEqual
-from databricks.labs.dqx.config import InputConfig, OutputConfig, ExtraParams
+
 from databricks.sdk.errors import NotFound
+from databricks.labs.dqx.config import InputConfig, OutputConfig, ExtraParams
 from databricks.labs.dqx.checks_serializer import deserialize_checks
 from databricks.labs.dqx.rule_fingerprint import compute_rule_set_fingerprint_by_metadata
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.metrics_observer import DQMetricsObserver, OBSERVATION_TABLE_SCHEMA
 from databricks.labs.dqx.reporting_columns import ColumnArguments
-from tests.integration.conftest import EXTRA_PARAMS
 
 from tests.constants import TEST_CATALOG
+from tests.integration.conftest import EXTRA_PARAMS
 
 # Test constants
 TEST_SCHEMA = StructType(
