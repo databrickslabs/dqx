@@ -27,7 +27,10 @@ jobs:
       - run: echo "Not a fork PR, proceeding"
 
   ci:
-    needs: not-a-fork
+    # Use a job-level `if:` instead of `needs: not-a-fork` so that for fork PRs the matrix
+    # still expands and each leaf (ci (3.10), ci (3.11), ci (3.12)) reports its own
+    # "skipped" status.
+    if: github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork
     strategy:
       fail-fast: false
       matrix:
