@@ -48,7 +48,10 @@ def dummy_custom_check_function_test(column: str, suffix: str):
 
 
 def test_llm_validate_valid_json_valid_custom_rules():
-    rules_json = '[{"check": {"function": "dummy_custom_check_function_test", "arguments": {"column": "customer_id"}}}]'
+    rules_json = (
+        '[{"check": {"function": "dummy_custom_check_function_test", '
+        '"arguments": {"column": "customer_id", "suffix": "_x"}}}]'
+    )
     custom_check_functions = {"dummy_custom_check_function_test": dummy_custom_check_function_test}
     score = RuleValidator(custom_check_functions=custom_check_functions).validate(rules_json)
     assert score == 1.0

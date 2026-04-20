@@ -1,5 +1,12 @@
 bundle:
-  name: dqx_demo_bundle_${var.run_id}
+  name: dqx_demo_bundle
+
+# Scope per-run isolation in the state path, not the bundle name. The CLI warns
+# against interpolating variables into `bundle.name` because the name is part of
+# the state path; using `workspace.root_path` achieves the same parallel-run
+# isolation without the warning.
+workspace:
+  root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${var.run_id}/${bundle.target}
 
 targets:
   aws:

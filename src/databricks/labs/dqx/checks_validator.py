@@ -49,7 +49,12 @@ class ChecksValidationStatus:
 
 class ChecksValidator:
     """
-    Class to validate quality rules (checks).
+    Validates declarative quality rules (checks).
+
+    Ensures each check references a defined function and that merged *arguments* satisfy the
+    function signature: required parameters must be present (*for_each_column* may supply
+    *column* or *columns*); a top-level rule *filter* is not a substitute for missing
+    arguments. Unknown argument names and type mismatches (where annotations exist) are reported.
     """
 
     @staticmethod
@@ -207,6 +212,7 @@ class ChecksValidator:
                 f"No arguments provided for function '{func.__name__}' in the 'arguments' block: {check}. "
                 f"Expected arguments are: {list(func_parameters.keys())}"
             )
+            return errors
         for arg, value in arguments.items():
             if arg not in func_parameters:
                 expected_args = list(func_parameters.keys())
@@ -225,6 +231,29 @@ class ChecksValidator:
                         f"Argument '{arg}' should be of type '{expected_type_name}' for function '{func.__name__}' "
                         f"in the 'arguments' block: {check}"
                     )
+        errors.extend(ChecksValidator._missing_required_arguments(arguments, func, check, func_parameters))
+        return errors
+
+    @staticmethod
+    def _missing_required_arguments(
+        arguments: dict[str, Any], func: Callable, check: dict, func_parameters: Any
+    ) -> list[str]:
+        """
+        Ensure every parameter without a default is present in *arguments*.
+
+        Metadata must supply all required check-function parameters (e.g. *column* for *regex_match*)
+        """
+        errors: list[str] = []
+        for name, param in func_parameters.items():
+            if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+                continue
+            if param.default is not inspect.Parameter.empty:
+                continue
+            if name not in arguments:
+                errors.append(
+                    f"Missing required argument '{name}' for function '{func.__name__}' in the 'arguments' block: "
+                    f"{check}. Expected arguments include: {list(func_parameters.keys())}"
+                )
         return errors
 
     @staticmethod

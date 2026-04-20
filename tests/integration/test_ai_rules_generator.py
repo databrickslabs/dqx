@@ -49,6 +49,31 @@ def test_generate_dq_rules_ai_assisted_with_input_table(ws, spark, make_table, m
     assert actual_checks == EXPECTED_CHECKS
 
 
+def test_generate_dq_rules_ai_assisted_with_input_table_and_user_input(ws, spark, make_table, make_schema):
+    schema = make_schema(catalog_name=TEST_CATALOG)
+    input_table = make_table(
+        catalog_name=TEST_CATALOG,
+        schema_name=schema.name,
+        columns=[("id", "int"), ("name", "string")],
+    )
+
+    generator = DQGenerator(ws, spark)
+
+    actual_checks = generator.generate_dq_rules_ai_assisted(
+        user_input="name should not start with 'c'",
+        input_config=InputConfig(location=input_table.full_name),
+    )
+
+    assert len(actual_checks) == 1
+    assert actual_checks[0] == {
+        "check": {
+            "arguments": {"column": "name", "negate": False, "regex": "^[^cC].*"},
+            "function": "regex_match",
+        },
+        "criticality": "error",
+    }, "AI generated check should match profiler workflow example"
+
+
 def test_generate_dq_rules_ai_assisted_with_input_path(ws, spark, make_directory):
     folder = make_directory()
     workspace_file_path = str(folder.absolute()) + "/input_data.parquet"
@@ -183,6 +208,76 @@ def test_generate_dq_rules_ai_assisted_with_summary_stats_only(ws, spark):
 
     # Verify checks were generated and are valid
     assert len(actual_checks) > 0
+    assert not DQEngineCore.validate_checks(actual_checks).has_errors
+
+
+def test_generate_dq_rules_ai_assisted_sql_query_with_custom_input_placeholder(ws, spark):
+    user_input = "Each order's total must not exceed 10 times the average order total for that day. Use sql_query for the check function."
+
+    summary_stats = {
+        "order_id": {"mean": None, "min": "ORD001", "max": "ORD999"},
+        "order_date": {"mean": None, "min": "2024-01-01", "max": "2024-12-31"},
+        "order_total": {"mean": "250.75", "min": "10.00", "max": "5000.00"},
+    }
+
+    generator = DQGenerator(ws, spark)
+    actual_checks = generator.generate_dq_rules_ai_assisted(user_input=user_input, summary_stats=summary_stats)
+
+    # Expect exactly one sql_query check with custom input_placeholder
+    sql_query_checks = [
+        c
+        for c in actual_checks
+        if c.get("check", {}).get("function") == "sql_query"
+        and c.get("check", {}).get("arguments", {}).get("input_placeholder") != "input_view"
+    ]
+    assert len(sql_query_checks) == 1, "Expected exactly one sql_query check with custom input_placeholder"
+
+    check = sql_query_checks[0]
+    args = check["check"]["arguments"]
+    placeholder = args.get("input_placeholder")
+    query = args.get("query", "")
+    expected_placeholder_text = f"{{{{ {placeholder} }}}}"
+
+    assert (
+        expected_placeholder_text in query
+    ), f"Query must contain {expected_placeholder_text} when input_placeholder is {placeholder}, got: {query}"
+    assert not DQEngineCore.validate_checks(actual_checks).has_errors
+
+
+def test_generate_dq_rules_ai_assisted_sql_query_with_custom_input_placeholder_no_summary_stats(
+    ws, spark, make_table, make_schema
+):
+    user_input = "Each order's total must not exceed 10 times the average order total for that day. Use sql_query for the check function."
+
+    schema = make_schema(catalog_name=TEST_CATALOG)
+    input_table = make_table(
+        catalog_name=TEST_CATALOG,
+        schema_name=schema.name,
+        columns=[("order_id", "string"), ("order_date", "string"), ("order_total", "double")],
+    )
+
+    generator = DQGenerator(ws, spark)
+    actual_checks = generator.generate_dq_rules_ai_assisted(
+        user_input=user_input, input_config=InputConfig(location=input_table.full_name)
+    )
+
+    # Expect exactly one sql_query check with custom input_placeholder
+    sql_query_checks = [
+        c
+        for c in actual_checks
+        if c.get("check", {}).get("function") == "sql_query"
+        and c.get("check", {}).get("arguments", {}).get("input_placeholder") != "input_view"
+    ]
+    assert len(sql_query_checks) == 1, "Expected exactly one sql_query check with custom input_placeholder"
+
+    check = sql_query_checks[0]
+    args = check["check"]["arguments"]
+    placeholder = args.get("input_placeholder")
+    query = args.get("query", "")
+    expected_placeholder_text = f"{{{{ {placeholder} }}}}"
+    assert (
+        expected_placeholder_text in query
+    ), f"Query must contain {expected_placeholder_text} when input_placeholder is {placeholder}, got: {query}"
     assert not DQEngineCore.validate_checks(actual_checks).has_errors
 
 
