@@ -65,8 +65,11 @@ def get_column_name_or_alias(
     if isinstance(column, str):
         col_str = column
     else:
-        # Extract the last alias or column name from the PySpark Column string representation
-        match = COLUMN_PATTERN.search(str(column))
+        # Extract the last alias or column name from the PySpark Column string representation.
+        # Strip the representation first to guard against trailing whitespace or CRLF line endings
+        # that may appear in some PySpark versions (e.g. Databricks Serverless v5), which would prevent the
+        # end-of-string anchor in COLUMN_PATTERN from matching.
+        match = COLUMN_PATTERN.search(str(column).strip())
         if not match:
             raise InvalidParameterError(f"Invalid column expression: {column}")
         col_expr, alias = match.groups()
