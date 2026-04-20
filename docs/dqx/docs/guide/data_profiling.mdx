@@ -312,6 +312,7 @@ The following fields from the [configuration file](/docs/installation/#configura
     - `sample_seed`: seed for reproducible sampling.
     - `limit`: maximum number of records to analyze.
     - `filter`: filter for the input data as a string SQL expression
+    - `criticality`: default criticality for generated rules, either `error` or `warn` (default: `error`).
 - `checks_user_requirements`: (optional) user input for AI-assisted rule generation. Only supported if `serverless_clusters` is enabled.
 - `llm_config`: (optional) configuration for the llm-assisted features
 - `serverless_clusters`: whether to use serverless clusters for running the workflow (default: 'true'). Using serverless clusters is recommended as it allows for automated cluster management and scaling.
@@ -340,6 +341,7 @@ Example of the configuration file (relevant fields only):
       sample_fraction: 0.3
       summary_stats_file: profile_summary_stats.yml
       filter: "maintenance_type = 'preventive'"
+      criticality: error  # default criticality for generated rules ('error' or 'warn')
       llm_primary_key_detection: false
     checks_user_requirements: "business rules description"  # optional user input for the llm-assisted features
 ```
@@ -413,6 +415,7 @@ The profiler supports extensive configuration options to customize the profiling
         - `sample_seed`: seed for reproducible sampling.
         - `limit`: maximum number of records to analyze.
         - `filter`: string SQL expression to filter the input data
+        - `criticality`: default criticality for generated rules, either `error` or `warn` (default: `error`).
 
     You can open the configuration file to check available run configs and adjust the settings if needed:
     ```commandline
@@ -427,6 +430,7 @@ The profiler supports extensive configuration options to customize the profiling
         sample_fraction: 0.3 # Fraction of data to sample (30%)
         limit: 1000          # Maximum number of records to analyze
         sample_seed: 42      # Seed for reproducible results
+        criticality: error   # default criticality for generated rules ('error' or 'warn')
         llm_primary_key_detection: false  # whether to use llm-assisted pk detection to generate uniqueness check
       ...
     ```
