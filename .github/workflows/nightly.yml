@@ -15,7 +15,9 @@ concurrency:
 jobs:
   integration:
     environment: tool
-    runs-on: larger
+    runs-on:
+      group: larger-runners
+      labels: larger
     permissions:
       id-token: write
       pull-requests: read
@@ -25,14 +27,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup uv
-        uses: astral-sh/setup-uv@5a095e7a2014a4212f075830d4f7277575a9d098  # v7.3.1
-        with:
-          version: "0.11.2"
-          checksum: "7ac2ca0449c8d68dae9b99e635cd3bc9b22a4cb1de64b7c43716398447d42981"
-
-      - name: Setup for JFrog
-        uses: ./.github/actions/jfrog-auth
+      - name: Setup environment
+        uses: ./.github/actions/setup-env
 
       - name: Run unit tests and generate test coverage report
         run: make test
@@ -45,6 +41,7 @@ jobs:
           [run]
           source = ../../src
           relative_files = true
+          parallel = true
           EOF
 
       # Run tests from `tests/integration` as defined in .codegen.json
@@ -73,7 +70,9 @@ jobs:
 
   integration_serverless:
     environment: tool
-    runs-on: larger
+    runs-on:
+      group: larger-runners
+      labels: larger
     permissions:
       id-token: write
       pull-requests: read
@@ -85,14 +84,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup uv
-        uses: astral-sh/setup-uv@5a095e7a2014a4212f075830d4f7277575a9d098  # v7.3.1
-        with:
-          version: "0.11.2"
-          checksum: "7ac2ca0449c8d68dae9b99e635cd3bc9b22a4cb1de64b7c43716398447d42981"
-
-      - name: Setup for JFrog
-        uses: ./.github/actions/jfrog-auth
+      - name: Setup environment
+        uses: ./.github/actions/setup-env
 
       # Integration tests are run from within tests/integration folder.
       # Create .coveragerc with correct relative path to source code.
@@ -102,6 +95,7 @@ jobs:
           [run]
           source = ../../src
           relative_files = true
+          parallel = true
           EOF
 
       - name: Run integration tests on serverless cluster
@@ -129,7 +123,9 @@ jobs:
 
   anomaly-tests:
     environment: tool
-    runs-on: larger
+    runs-on:
+      group: larger-runners
+      labels: larger
     permissions:
       id-token: write
       pull-requests: read
@@ -139,14 +135,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup uv
-        uses: astral-sh/setup-uv@5a095e7a2014a4212f075830d4f7277575a9d098  # v7.3.1
-        with:
-          version: "0.11.2"
-          checksum: "7ac2ca0449c8d68dae9b99e635cd3bc9b22a4cb1de64b7c43716398447d42981"
-
-      - name: Setup for JFrog
-        uses: ./.github/actions/jfrog-auth
+      - name: Setup environment
+        uses: ./.github/actions/setup-env
 
       # Create .coveragerc with correct relative path to source code.
       - name: Prepare code coverage configuration for anomaly tests
@@ -155,6 +145,7 @@ jobs:
           [run]
           source = ../../src
           relative_files = true
+          parallel = true
           EOF
 
       - name: Run anomaly integration tests
@@ -185,7 +176,9 @@ jobs:
 
   anomaly-tests-serverless:
     environment: tool
-    runs-on: larger
+    runs-on:
+      group: larger-runners
+      labels: larger
     permissions:
       id-token: write
       pull-requests: read
@@ -195,14 +188,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup uv
-        uses: astral-sh/setup-uv@5a095e7a2014a4212f075830d4f7277575a9d098  # v7.3.1
-        with:
-          version: "0.11.2"
-          checksum: "7ac2ca0449c8d68dae9b99e635cd3bc9b22a4cb1de64b7c43716398447d42981"
-
-      - name: Setup for JFrog
-        uses: ./.github/actions/jfrog-auth
+      - name: Setup environment
+        uses: ./.github/actions/setup-env
 
       # Create .coveragerc with correct relative path to source code.
       - name: Prepare code coverage configuration for anomaly tests
@@ -211,6 +198,7 @@ jobs:
           [run]
           source = ../../src
           relative_files = true
+          parallel = true
           EOF
 
       - name: Run anomaly integration tests on serverless cluster
@@ -242,7 +230,9 @@ jobs:
 
   e2e:
     environment: tool
-    runs-on: larger
+    runs-on:
+      group: larger-runners
+      labels: larger
     permissions:
       id-token: write
       pull-requests: read
@@ -252,18 +242,12 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup uv
-        uses: astral-sh/setup-uv@5a095e7a2014a4212f075830d4f7277575a9d098  # v7.3.1
-        with:
-          version: "0.11.2"
-          checksum: "7ac2ca0449c8d68dae9b99e635cd3bc9b22a4cb1de64b7c43716398447d42981"
-
-      - name: Setup for JFrog
-        uses: ./.github/actions/jfrog-auth
+      - name: Setup environment
+        uses: ./.github/actions/setup-env
 
       # Required for DAB (Databricks Asset Bundle) e2e tests
       - name: Install Databricks CLI
-        uses: databricks/setup-cli@acd0e77a1ed7f15f528faca1e1f7f5590bcfdff8 # v0.296.0
+        uses: databricks/setup-cli@596b0a354ba14aa59921aca1b02bd67c2b0a81a5 # v0.297.2
 
       - name: Run e2e tests
         uses: databrickslabs/sandbox/acceptance@3313d06ce86227537b3f37f5974f7eecb2a8e59a # acceptance/v0.4.4
@@ -279,7 +263,9 @@ jobs:
 
   e2e_serverless:
     environment: tool
-    runs-on: larger
+    runs-on:
+      group: larger-runners
+      labels: larger
     permissions:
       id-token: write
       pull-requests: read
@@ -291,18 +277,12 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup uv
-        uses: astral-sh/setup-uv@5a095e7a2014a4212f075830d4f7277575a9d098  # v7.3.1
-        with:
-          version: "0.11.2"
-          checksum: "7ac2ca0449c8d68dae9b99e635cd3bc9b22a4cb1de64b7c43716398447d42981"
-
-      - name: Setup for JFrog
-        uses: ./.github/actions/jfrog-auth
+      - name: Setup environment
+        uses: ./.github/actions/setup-env
 
       # Required for DAB (Databricks Asset Bundle) e2e tests
       - name: Install Databricks CLI
-        uses: databricks/setup-cli@acd0e77a1ed7f15f528faca1e1f7f5590bcfdff8 # v0.296.0
+        uses: databricks/setup-cli@596b0a354ba14aa59921aca1b02bd67c2b0a81a5 # v0.297.2
 
       - name: Run e2e tests on serverless cluster
         uses: databrickslabs/sandbox/acceptance@3313d06ce86227537b3f37f5974f7eecb2a8e59a # acceptance/v0.4.4
@@ -329,7 +309,9 @@ jobs:
       contents: write # required for creating benchmark baseline branches
       pull-requests: write # required for creating benchmark baseline PRs
     environment: tool
-    runs-on: larger
+    runs-on:
+      group: larger-runners
+      labels: larger
     env:
       DATABRICKS_SERVERLESS_COMPUTE_ID: auto
       BENCHMARKS_DIR: tests/perf/.benchmarks
@@ -342,14 +324,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup uv
-        uses: astral-sh/setup-uv@5a095e7a2014a4212f075830d4f7277575a9d098  # v7.3.1
-        with:
-          version: "0.11.2"
-          checksum: "7ac2ca0449c8d68dae9b99e635cd3bc9b22a4cb1de64b7c43716398447d42981"
-
-      - name: Setup for JFrog
-        uses: ./.github/actions/jfrog-auth
+      - name: Setup environment
+        uses: ./.github/actions/setup-env
 
       - name: Login to Azure for azure-cli authentication
         uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0

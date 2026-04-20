@@ -221,6 +221,12 @@ If you create checks as a list of DQRule objects, you can convert them using the
   </TabItem>
 </Tabs>
 
+<Admonition type="tip" title="Checks validation">
+Wrong types, unknown arguments, and missing required check function parameters are reported by `DQEngine.validate_checks`.
+`load_checks` and `save_checks` (except delta storage) methods do not validate the returned/provided metadata. Call `validate_checks` after load / before save when you want to catch problems before apply (for example hand edited YAML/JSON or checks written to a table without going through DQX).
+For field semantics and validation details, see [Quality checks definition](/docs/guide/quality_checks_definition).
+</Admonition>
+
 ## Supported storage backends
 
 Saving and loading methods accept a storage backend configuration as input.

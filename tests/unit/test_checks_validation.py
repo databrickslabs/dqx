@@ -6,7 +6,7 @@ def dummy_func(column):
     return col(column)
 
 
-def dummy_func_with_optional_args(column, arg1: bool | str):
+def dummy_func_with_optional_args(column, arg1: bool | str = True):
     assert arg1
     return col(column)
 
@@ -338,13 +338,43 @@ def test_argument_type_mismatch():
 
 
 def test_argument_type_mismatch_optional_args():
-    checks = [{"criticality": "warn", "check": {"function": "dummy_func", "arguments": {"arg1": 1}}}]
+    checks = [{"criticality": "warn", "check": {"function": "dummy_func", "arguments": {"column": "x", "arg1": 1}}}]
     custom_check_functions = {"dummy_func": dummy_func_with_optional_args}
     status = DQEngine.validate_checks(checks, custom_check_functions)
     assert (
         "Argument 'arg1' should be of type 'bool | str' for function "
         "'dummy_func_with_optional_args' in the 'arguments' block" in str(status)
     )
+
+
+def test_regex_match_missing_required_column():
+    checks = [
+        {
+            "criticality": "error",
+            "check": {
+                "function": "regex_match",
+                "arguments": {"negate": False, "regex": "^a"},
+            },
+        }
+    ]
+    status = DQEngine.validate_checks(checks)
+    assert status.has_errors
+    assert any("Missing required argument 'column'" in e for e in status.errors)
+
+
+def test_regex_match_missing_required_regex():
+    checks = [
+        {
+            "criticality": "error",
+            "check": {
+                "function": "regex_match",
+                "arguments": {"column": "name", "negate": False},
+            },
+        }
+    ]
+    status = DQEngine.validate_checks(checks)
+    assert status.has_errors
+    assert any("Missing required argument 'regex'" in e for e in status.errors)
 
 
 def test_for_each_column_argument_type_list():
