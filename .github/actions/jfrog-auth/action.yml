@@ -48,3 +48,15 @@ runs:
         uv auth login "${UV_INDEX_URL}" --username gha-service-account --password "${JFROG_ACCESS_TOKEN}"
         printf "%s=%s\n" 'UV_INDEX_URL' "${UV_INDEX_URL}" >> "${GITHUB_ENV}"
         printf "%s=%s\n" 'UV_FROZEN' '1' >> "${GITHUB_ENV}"
+
+    - name: Configure npm/yarn for JFrog
+      shell: bash
+      env:
+        JFROG_ACCESS_TOKEN: "${{ steps.jfrog-auth.outputs.jfrog-access-token }}"
+      run: |
+        umask 077
+        cat > ~/.npmrc << EOF
+        registry=https://databricks.jfrog.io/artifactory/api/npm/db-npm/
+        //databricks.jfrog.io/artifactory/api/npm/db-npm/:_authToken=${JFROG_ACCESS_TOKEN}
+        always-auth=true
+        EOF

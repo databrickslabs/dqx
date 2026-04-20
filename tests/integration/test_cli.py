@@ -300,7 +300,7 @@ def test_workflows(ws, installation_ctx):
     installation_ctx.installation_service.run()
     installed_workflows = workflows(installation_ctx.workspace_client, ctx=installation_ctx.workspace_installer)
 
-    expected_workflows_state = [{'workflow': 'profiler', 'state': 'UNKNOWN', 'started': '<never run>'}]
+    expected_workflows_state = [{"workflow": "profiler", "state": "UNKNOWN", "started": "<never run>"}]
     for state in expected_workflows_state:
         assert contains_expected_workflows(installed_workflows, state)
 
@@ -452,7 +452,7 @@ def test_workflows_with_custom_folder(ws, installation_ctx_custom_install_folder
         install_folder=custom_folder,
     )
 
-    expected_workflows_state = [{'workflow': 'profiler', 'state': 'UNKNOWN', 'started': '<never run>'}]
+    expected_workflows_state = [{"workflow": "profiler", "state": "UNKNOWN", "started": "<never run>"}]
     for state in expected_workflows_state:
         assert contains_expected_workflows(installed_workflows, state)
 
