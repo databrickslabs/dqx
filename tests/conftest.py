@@ -38,6 +38,32 @@ from databricks.sdk.service.workspace import ImportFormat
 logger = logging.getLogger(__name__)
 
 
+class PrebuiltWheels(WheelsV2):
+    """Test-only WheelsV2 that copies a pre-built wheel when `DQX_PREBUILT_WHEEL` is set.
+
+    CI builds the wheel once via the prebuild-wheel action while the JFrog token is fresh,
+    then points each pytest invocation at that artifact so per-test `pip wheel` calls do
+    not fail after the 1h OIDC token TTL expires mid-suite. Local development falls through
+    to upstream's standard `pip wheel` behaviour.
+    """
+
+    def _build_wheel(
+        self,
+        tmp_dir: str,
+        *,
+        verbose: bool = False,
+        no_deps: bool = True,
+        dirs_exist_ok: bool = False,
+    ):
+        prebuilt = os.environ.get("DQX_PREBUILT_WHEEL")
+        if not prebuilt:
+            return super()._build_wheel(tmp_dir, verbose=verbose, no_deps=no_deps, dirs_exist_ok=dirs_exist_ok)
+        src = Path(prebuilt)
+        dst = Path(tmp_dir) / src.name
+        dst.write_bytes(src.read_bytes())
+        return Path(tmp_dir).glob("*.whl")
+
+
 @pytest.fixture(autouse=True, scope="session")
 def _mlflow_env():
     """Ensure MLflow points at Databricks Unity Catalog when running against a workspace.
@@ -264,7 +290,7 @@ class MockInstallationContext(MockWorkflowContext):
             self.installation,
             self.install_state,
             self.workspace_client,
-            WheelsV2(self.installation, self.product_info),
+            PrebuiltWheels(self.installation, self.product_info),
             self.product_info,
             self.tasks,
         )
@@ -277,9 +303,9 @@ class MockInstallationContext(MockWorkflowContext):
     def prompts(self):
         return MockPrompts(
             {
-                r'Provide location for the input data .*': 'main.dqx_test.input_table',
-                r'Provide output table .*': 'main.dqx_test.output_table',
-                r'Do you want to uninstall DQX .*': 'yes',
+                r"Provide location for the input data .*": "main.dqx_test.input_table",
+                r"Provide output table .*": "main.dqx_test.output_table",
+                r"Do you want to uninstall DQX .*": "yes",
                 r".*PRO or SERVERLESS SQL warehouse.*": "1",
                 r".*": "",
             }

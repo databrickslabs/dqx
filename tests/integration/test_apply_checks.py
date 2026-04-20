@@ -5961,7 +5961,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
         expected_schema,
     )
 
-    assert_df_equality(checked_df, expected, ignore_nullable=True)
+    assert_df_equality(checked_df.sort("col2"), expected.sort("col2"), ignore_nullable=True)
 
 
 def test_apply_checks_all_row_geo_checks_as_yaml_with_streaming(
@@ -6081,7 +6081,7 @@ def test_apply_checks_all_row_geo_checks_as_yaml_with_streaming(
         expected_schema,
     )
 
-    assert_df_equality(checked_df, expected, ignore_nullable=True)
+    assert_df_equality(checked_df.sort("col3"), expected.sort("col3"), ignore_nullable=True)
 
 
 def test_apply_checks_all_checks_as_yaml(ws, spark):
