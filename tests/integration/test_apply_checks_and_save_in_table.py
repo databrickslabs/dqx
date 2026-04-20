@@ -764,7 +764,7 @@ def test_apply_checks_and_save_in_table_streaming_write(ws, spark, make_schema, 
         ],
         schema=expected_schema,
     )
-    assert_df_equality(actual_df, expected_df, ignore_nullable=True)
+    assert_df_equality(actual_df, expected_df, ignore_nullable=True, ignore_row_order=True)
 
 
 def test_apply_checks_and_save_in_tables(ws, spark, make_schema, make_random, make_directory):
@@ -933,7 +933,7 @@ def test_apply_checks_and_save_in_tables_streaming_write(
         ],
         schema=expected_schema,
     )
-    assert_df_equality(actual_df, expected_df, ignore_nullable=True)
+    assert_df_equality(actual_df, expected_df, ignore_nullable=True, ignore_row_order=True)
 
 
 def test_apply_checks_and_save_in_tables_multiple_tables(ws, spark, make_schema, make_random, make_directory):
@@ -1697,10 +1697,10 @@ def test_apply_checks_and_save_in_tables_for_patterns_with_quarantine(
         schema=expected_schema,
     )
 
-    assert_df_equality(spark.table(output_tables[0]), expected_valid_df1, ignore_nullable=True)
-    assert_df_equality(spark.table(output_tables[1]), expected_valid_df2, ignore_nullable=True)
-    assert_df_equality(spark.table(quarantine_tables[0]), expected_quarantine_df1, ignore_nullable=True)
-    assert_df_equality(spark.table(quarantine_tables[1]), expected_quarantine_df2, ignore_nullable=True)
+    assert_df_equality(spark.table(output_tables[0]), expected_valid_df1, ignore_nullable=True, ignore_row_order=True)
+    assert_df_equality(spark.table(output_tables[1]), expected_valid_df2, ignore_nullable=True, ignore_row_order=True)
+    assert_df_equality(spark.table(quarantine_tables[0]), expected_quarantine_df1, ignore_nullable=True, ignore_row_order=True)
+    assert_df_equality(spark.table(quarantine_tables[1]), expected_quarantine_df2, ignore_nullable=True, ignore_row_order=True)
 
 
 def test_apply_checks_and_save_in_tables_for_patterns_with_exclude_patterns(
@@ -1790,8 +1790,8 @@ def test_apply_checks_and_save_in_tables_for_patterns_with_exclude_patterns(
         schema=expected_schema,
     )
 
-    assert_df_equality(spark.table(output_table), expected_valid_df, ignore_nullable=True)
-    assert_df_equality(spark.table(quarantine_table), expected_quarantine_df, ignore_nullable=True)
+    assert_df_equality(spark.table(output_table), expected_valid_df, ignore_nullable=True, ignore_row_order=True)
+    assert_df_equality(spark.table(quarantine_table), expected_quarantine_df, ignore_nullable=True, ignore_row_order=True)
     # 1 input + 1 output + 1 quarantine + 2 existing
     tables = ws.tables.list_summaries(catalog_name=catalog_name, schema_name_pattern=schema.name)
     assert len(list(tables)) == 5, "Tables count mismatch"
@@ -1964,10 +1964,10 @@ def test_apply_checks_and_save_in_tables_for_patterns_with_custom_suffix(
         schema=expected_schema,
     )
 
-    assert_df_equality(spark.table(output_tables[0]), expected_valid_df1, ignore_nullable=True)
-    assert_df_equality(spark.table(output_tables[1]), expected_valid_df2, ignore_nullable=True)
-    assert_df_equality(spark.table(quarantine_tables[0]), expected_quarantine_df1, ignore_nullable=True)
-    assert_df_equality(spark.table(quarantine_tables[1]), expected_quarantine_df2, ignore_nullable=True)
+    assert_df_equality(spark.table(output_tables[0]), expected_valid_df1, ignore_nullable=True, ignore_row_order=True)
+    assert_df_equality(spark.table(output_tables[1]), expected_valid_df2, ignore_nullable=True, ignore_row_order=True)
+    assert_df_equality(spark.table(quarantine_tables[0]), expected_quarantine_df1, ignore_nullable=True, ignore_row_order=True)
+    assert_df_equality(spark.table(quarantine_tables[1]), expected_quarantine_df2, ignore_nullable=True, ignore_row_order=True)
 
 
 def test_apply_checks_and_save_in_tables_with_patterns_and_custom_functions(

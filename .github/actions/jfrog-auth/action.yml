@@ -32,11 +32,23 @@ runs:
         JFROG_ACCESS_TOKEN: "${{ steps.jfrog-auth.outputs.jfrog-access-token }}"
       run: |
         umask 077
+        # Write ~/.netrc so credentials are discovered by ANY pip process,
+        # including pip subprocesses spawned inside PEP 517 isolated build envs.
+        # Netrc propagates via $HOME and avoids URL-encoding pitfalls with
+        # tokens that contain '/', '+', or '=' (base64 padding).
+        cat > ~/.netrc <<EOF
+        machine databricks.jfrog.io
+        login gha-service-account
+        password ${JFROG_ACCESS_TOKEN}
+        EOF
         cat > "$RUNNER_TEMP/.pip.conf" <<EOF
         [global]
-        index-url = https://gha-service-account:${JFROG_ACCESS_TOKEN}@databricks.jfrog.io/artifactory/api/pypi/db-pypi/simple
+        index-url = https://databricks.jfrog.io/artifactory/api/pypi/db-pypi/simple
         EOF
         printf '%s=%s\n' 'PIP_CONFIG_FILE' "${RUNNER_TEMP}/.pip.conf" >> "${GITHUB_ENV}"
+        # Belt-and-suspenders: set PIP_INDEX_URL directly so pip in isolated
+        # build envs knows the index even if PIP_CONFIG_FILE resolution fails.
+        printf '%s=%s\n' 'PIP_INDEX_URL' 'https://databricks.jfrog.io/artifactory/api/pypi/db-pypi/simple' >> "${GITHUB_ENV}"
 
     - name: Configure uv for JFrog
       if: "${{ steps.detect-cmds.outputs.command_uv == 'true' }}"

@@ -67,7 +67,7 @@ class VerboseWheels(WheelsV2):
         "Name or service not known",
     )
     _MAX_ATTEMPTS = 10
-    _BACKOFF_CAP_SECONDS = 60
+    _BACKOFF_CAP_SECONDS = 30
 
     def _build_wheel(
         self,
