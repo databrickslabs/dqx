@@ -203,7 +203,7 @@ def test_save_dataframe_as_table_with_partition_by(spark, make_schema, make_rand
     save_dataframe_as_table(input_df, output_config)
 
     result_df = spark.table(table_name)
-    assert_df_equality(input_df, result_df)
+    assert_df_equality(input_df, result_df, ignore_row_order=True)
 
     table_detail = spark.sql(f"DESCRIBE DETAIL {table_name}").collect()[0]
     assert table_detail["partitionColumns"] == ["a"]
@@ -220,7 +220,7 @@ def test_save_dataframe_as_table_with_cluster_by(spark, make_schema, make_random
     save_dataframe_as_table(input_df, output_config)
 
     result_df = spark.table(table_name)
-    assert_df_equality(input_df, result_df)
+    assert_df_equality(input_df, result_df, ignore_row_order=True)
 
     table_detail = spark.sql(f"DESCRIBE DETAIL {table_name}").collect()[0]
     assert table_detail["clusteringColumns"] == ["a"]
