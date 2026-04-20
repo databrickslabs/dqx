@@ -94,7 +94,7 @@ When storing checks in Delta or Lakebase tables (see [Loading and Storing Qualit
 | ---------------------- | ------------------------------------------------------------ | --------------------------------------------------------------------------- |
 | `name`                 | STRING                                                       | Name of the check.                                                          |
 | `criticality`          | STRING                                                       | `error` or `warn`.                                                          |
-| `check`                | STRUCT&lt;function STRING, for_each_column ARRAY&lt;STRING&gt;, arguments MAP&lt;STRING, STRING&gt;&gt; | Check definition: function name, columns, arguments etc. |
+| `check`                | STRUCT&lt;function STRING, for_each_column ARRAY&lt;STRING&gt;, arguments MAP&lt;STRING, STRING&gt;&gt; | Check definition: function name, optional `for_each_column`, and keyword arguments for the function. The `arguments` map must include every required parameter of that check function (parameters without a default in its signature); `for_each_column` can supply `column` or `columns` when applicable. |
 | `filter`               | STRING                                                       | Optional filter expression.                                                 |
 | `run_config_name`      | STRING                                                       | Run configuration name for filtering (e.g. input table or job name).        |
 | `user_metadata`        | MAP&lt;STRING, STRING&gt;                                    | Optional user-defined metadata.                                             |

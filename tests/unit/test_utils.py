@@ -113,6 +113,15 @@ def test_get_col_name_expr_not_found():
         get_column_name_or_alias(Mock())
 
 
+def test_get_col_name_with_trailing_crlf():
+    """Serverless v5 may append CRLF to the column string representation,
+    which would prevent the end-of-string anchor in COLUMN_PATTERN from matching."""
+    col = Mock()
+    col.__str__ = Mock(return_value="Column<'!(EXISTS (SELECT 1 FROM t WHERE x = a))'>\r\n")
+    actual = get_column_name_or_alias(col, normalize=True)
+    assert actual == "_exists_select_1_from_t_where_x_a"
+
+
 def test_get_col_name_not_simple_expression() -> None:
     with pytest.raises(
         InvalidParameterError, match="Unable to interpret column expression. Only simple references are allowed"
