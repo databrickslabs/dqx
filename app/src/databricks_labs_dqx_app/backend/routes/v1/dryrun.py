@@ -57,23 +57,35 @@ def list_validation_runs(
     try:
         table = f"{app_conf.catalog}.{app_conf.schema_name}.dq_validation_runs"
         rows = job_svc.list_dryrun_rows(table)
-        return [
-            ValidationRunSummaryOut(
-                run_id=row.get("run_id") or "",
-                source_table_fqn=row.get("source_table_fqn") or "",
-                status=row.get("status"),
-                requesting_user=row.get("requesting_user"),
-                canceled_by=row.get("canceled_by"),
-                updated_at=row.get("updated_at"),
-                sample_size=int(v) if (v := row.get("sample_size")) else None,
-                total_rows=int(v) if (v := row.get("total_rows")) else None,
-                valid_rows=int(v) if (v := row.get("valid_rows")) else None,
-                invalid_rows=int(v) if (v := row.get("invalid_rows")) else None,
-                created_at=row.get("created_at"),
-                run_type=row.get("run_type"),
+        results: list[ValidationRunSummaryOut] = []
+        for row in rows:
+            checks: list[dict[str, Any]] = []
+            raw = row.get("checks_json")
+            if raw:
+                try:
+                    parsed = json.loads(raw)
+                    if isinstance(parsed, list):
+                        checks = parsed
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            results.append(
+                ValidationRunSummaryOut(
+                    run_id=row.get("run_id") or "",
+                    source_table_fqn=row.get("source_table_fqn") or "",
+                    status=row.get("status"),
+                    requesting_user=row.get("requesting_user"),
+                    canceled_by=row.get("canceled_by"),
+                    updated_at=row.get("updated_at"),
+                    sample_size=int(v) if (v := row.get("sample_size")) else None,
+                    total_rows=int(v) if (v := row.get("total_rows")) else None,
+                    valid_rows=int(v) if (v := row.get("valid_rows")) else None,
+                    invalid_rows=int(v) if (v := row.get("invalid_rows")) else None,
+                    created_at=row.get("created_at"),
+                    run_type=row.get("run_type"),
+                    checks=checks,
+                )
             )
-            for row in rows
-        ]
+        return results
     except Exception as e:
         logger.error("Failed to list validation runs: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to list validation runs: {e}")

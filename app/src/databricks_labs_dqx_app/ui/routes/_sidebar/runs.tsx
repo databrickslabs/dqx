@@ -1417,7 +1417,33 @@ function RunHistoryTab() {
   const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
 
   const { data: runsResp, isLoading, error, refetch } = useListValidationRuns();
-  const allRuns: ValidationRunSummaryOut[] = Array.isArray(runsResp?.data) ? runsResp.data : [];
+  const { data: rulesResp } = useListRules({ status: "approved" }, { query: {} });
+
+  const rulesByTable = useMemo(() => {
+    const map = new Map<string, Record<string, unknown>[]>();
+    const rules = Array.isArray(rulesResp?.data) ? rulesResp.data : [];
+    for (const rule of rules) {
+      const existing = map.get(rule.table_fqn);
+      if (existing) {
+        existing.push(...rule.checks);
+      } else {
+        map.set(rule.table_fqn, [...rule.checks]);
+      }
+    }
+    return map;
+  }, [rulesResp]);
+
+  const allRuns: ValidationRunSummaryOut[] = useMemo(() => {
+    const raw = Array.isArray(runsResp?.data) ? runsResp.data : [];
+    return raw.map((run) => {
+      if (run.checks && run.checks.length > 0) return run;
+      const fallback = rulesByTable.get(run.source_table_fqn);
+      if (fallback && fallback.length > 0) {
+        return { ...run, checks: fallback };
+      }
+      return run;
+    });
+  }, [runsResp, rulesByTable]);
 
   const { catalogs, schemasByCatalog } = useMemo(() => {
     const catalogSet = new Set<string>();
@@ -1613,6 +1639,7 @@ function RunHistoryTab() {
                       <th className="text-left p-3 font-medium">Table</th>
                       <th className="text-left p-3 font-medium">Type</th>
                       <th className="text-left p-3 font-medium">Status</th>
+                      <th className="text-left p-3 font-medium">Rules</th>
                       <th className="text-left p-3 font-medium">Requested by</th>
                       <th className="text-right p-3 font-medium">Total</th>
                       <th className="text-right p-3 font-medium">Valid</th>
@@ -1736,6 +1763,33 @@ function RunHistoryRow({
             )}
           </div>
         </td>
+        <td className="p-3">
+          {run.checks && run.checks.length > 0 ? (() => {
+            const labels = run.checks.map((c: Record<string, unknown>) => {
+              const check = c.check as Record<string, unknown> | undefined;
+              const fn = check?.function as string | undefined;
+              const args = check?.arguments as Record<string, unknown> | undefined;
+              if (!fn) return c.name as string ?? "check";
+              const col = args?.column as string | undefined;
+              return col ? `${fn}(${col})` : fn;
+            });
+            const MAX_SHOWN = 3;
+            const shown = labels.slice(0, MAX_SHOWN);
+            const remaining = labels.length - MAX_SHOWN;
+            return (
+              <div className="flex flex-col gap-0.5 max-w-[240px]" title={labels.join("\n")}>
+                {shown.map((label, i) => (
+                  <span key={i} className="font-mono text-[11px] text-muted-foreground truncate">{label}</span>
+                ))}
+                {remaining > 0 && (
+                  <span className="text-[10px] text-muted-foreground/70">+{remaining} more</span>
+                )}
+              </div>
+            );
+          })() : (
+            <span className="text-xs text-muted-foreground">—</span>
+          )}
+        </td>
         <td className="p-3 text-xs text-muted-foreground truncate max-w-[180px]" title={run.requesting_user ?? ""}>
           {run.requesting_user ?? "—"}
         </td>
@@ -1761,7 +1815,7 @@ function RunHistoryRow({
       </tr>
       {isExpanded && (
         <tr>
-          <td colSpan={9} className="p-0">
+          <td colSpan={10} className="p-0">
             <div className="border-t bg-muted/10 p-4 space-y-4">
               {run.status !== "SUCCESS" && (
                 <div className="text-sm text-muted-foreground">

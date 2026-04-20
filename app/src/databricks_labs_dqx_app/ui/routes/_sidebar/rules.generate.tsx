@@ -1,5 +1,6 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate, Navigate } from "@tanstack/react-router";
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import { usePermissions } from "@/hooks/use-permissions";
 import { PageBreadcrumb } from "@/components/apx/PageBreadcrumb";
 import {
   Card,
@@ -29,7 +30,6 @@ import {
   Trash2,
   Save,
   Loader2,
-  ArrowLeft,
   AlertCircle,
   X,
   ChevronDown,
@@ -107,7 +107,7 @@ function checkToDict(c: CheckDraft): Record<string, unknown> {
   for (const [k, v] of Object.entries(c.args)) {
     if (!v) continue;
     if (c.fn === "is_unique" && k === "col_name") {
-      args["columns"] = [v];
+      args["columns"] = v.split(",").map((s) => s.trim()).filter(Boolean);
       continue;
     }
     const key = UI_TO_ENGINE_ARG_MAP[k] ?? k;
@@ -123,10 +123,12 @@ function checkToDict(c: CheckDraft): Record<string, unknown> {
 }
 
 function getCheckColumns(c: CheckDraft): string[] {
-  const cols: string[] = [];
   const colName = c.args["col_name"];
-  if (colName) cols.push(colName);
-  return cols;
+  if (!colName) return [];
+  if (c.fn === "is_unique") {
+    return colName.split(",").map((s) => s.trim()).filter(Boolean);
+  }
+  return [colName];
 }
 
 const AI_ARG_KEY_MAP: Record<string, string> = { column: "col_name", columns: "col_name" };
@@ -186,6 +188,9 @@ export const Route = createFileRoute("/_sidebar/rules/generate")({
 // ──────────────────────────────────────────────────────────────────────────────
 
 function UnifiedRulesPage() {
+  const { canCreateRules } = usePermissions();
+  if (!canCreateRules) return <Navigate to="/rules/active" replace />;
+
   const navigate = useNavigate();
   const { table: initialTable, rule_id: editRuleId } = Route.useSearch();
   const isTableFqn = (initialTable ?? "").split(".").length === 3;
@@ -318,7 +323,13 @@ function UnifiedRulesPage() {
       const generated = resp.data.checks ?? [];
       const drafts = generated
         .map((c) => aiCheckToDraft(c as Record<string, unknown>))
-        .filter((d): d is CheckDraft => d !== null);
+        .filter((d): d is CheckDraft => d !== null)
+        .filter((d) => d.fn !== "sql_query");
+      if (hasRefTable) {
+        for (const d of drafts) {
+          d.targetTables = [aiReferenceTable];
+        }
+      }
       if (drafts.length === 0) {
         toast.error("AI did not generate any valid checks. Try a different description.");
         return;
@@ -572,7 +583,7 @@ function UnifiedRulesPage() {
         toast.error(failedMessages.join("\n"), { duration: 8000 });
       }
       if (totalSuccess > 0 && failedMessages.length === 0) {
-        navigate({ to: andSubmit ? "/rules/active" : "/rules/drafts" });
+        navigate({ to: "/rules/drafts" });
       }
     } catch {
       toast.error("Failed to save rules");
@@ -601,22 +612,15 @@ function UnifiedRulesPage() {
           items={[{ label: "Create Rules", to: "/rules/create" }]}
           page={isEditMode ? "Edit rules" : "Single table rules"}
         />
-        <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" asChild>
-            <Link to={isSingleRuleEdit ? "/rules/drafts" : "/rules/create"}>
-              <ArrowLeft className="h-4 w-4" />
-            </Link>
-          </Button>
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight">
-              {isEditMode ? "Edit rules" : "Single table rules"}
-            </h1>
-            <p className="text-muted-foreground">
-              {isEditMode
-                ? `Editing rules for ${initialTable}. Run a dry run or save changes.`
-                : "Define checks with AI or manually, assign target tables, then validate and save."}
-            </p>
-          </div>
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">
+            {isEditMode ? "Edit rules" : "Single table rules"}
+          </h1>
+          <p className="text-muted-foreground">
+            {isEditMode
+              ? `Editing rules for ${initialTable}. Run a dry run or save changes.`
+              : "Define rules with AI or manually, assign tables, then validate and save."}
+          </p>
         </div>
       </div>
 
@@ -624,9 +628,6 @@ function UnifiedRulesPage() {
       <Card>
         <CardHeader>
           <CardTitle className="text-base">1. Define Rules</CardTitle>
-          <CardDescription>
-            Generate rules with AI using a reference table for schema context, or add rules manually.
-          </CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
           {/* AI generation */}
@@ -815,7 +816,7 @@ function UnifiedRulesPage() {
                 ) : (
                   <SendHorizonal className="h-4 w-4" />
                 )}
-                {isSingleRuleEdit ? "Update & submit" : "Save & submit"}
+                {isSingleRuleEdit ? "Update & submit" : "Submit for Review"}
               </Button>
             </div>
           </div>
@@ -838,7 +839,10 @@ function buildChecksForTable(
     .map(checkToDict);
 }
 
-function argHint(arg: string): string {
+function argHint(arg: string, fn?: string): string {
+  if (arg === "col_name" && fn === "is_unique") {
+    return "comma-separated, e.g. id or col1, col2";
+  }
   switch (arg) {
     case "col_name": return "e.g. id";
     case "allowed": return "comma-separated, e.g. A,B,C";
@@ -954,7 +958,7 @@ function CheckCard({ check, index, onUpdate, onRemove, canRemove, disabled, isDu
 
       {/* Check definition */}
       <div className="p-4 space-y-3">
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1.5">
             <Label className="text-xs">Function</Label>
             <Select value={check.fn} onValueChange={(fn) => onUpdate(check.id, { fn, args: {} })} disabled={disabled}>
@@ -991,25 +995,6 @@ function CheckCard({ check, index, onUpdate, onRemove, canRemove, disabled, isDu
               </SelectContent>
             </Select>
           </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs">Weight (1–5)</Label>
-            <Select
-              value={String(check.weight)}
-              onValueChange={(v) => onUpdate(check.id, { weight: Number(v) })}
-              disabled={disabled}
-            >
-              <SelectTrigger className="h-8 text-xs">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="1" className="text-xs">1 – Informational</SelectItem>
-                <SelectItem value="2" className="text-xs">2 – Low</SelectItem>
-                <SelectItem value="3" className="text-xs">3 – Medium</SelectItem>
-                <SelectItem value="4" className="text-xs">4 – High</SelectItem>
-                <SelectItem value="5" className="text-xs">5 – Critical</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
         </div>
 
         {argFields.length > 0 && (
@@ -1019,7 +1004,7 @@ function CheckCard({ check, index, onUpdate, onRemove, canRemove, disabled, isDu
                 <Label className="text-[11px] text-muted-foreground">{arg}</Label>
                 <Input
                   className="h-7 text-xs"
-                  placeholder={argHint(arg)}
+                  placeholder={argHint(arg, check.fn)}
                   value={check.args[arg] ?? ""}
                   onChange={(e) =>
                     onUpdate(check.id, { args: { ...check.args, [arg]: e.target.value } })

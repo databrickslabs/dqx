@@ -29,8 +29,8 @@ import {
 
 const ROLE_LABELS: Record<string, string> = {
   admin: "Admin",
-  rule_approver: "Rule Approver",
-  rule_author: "Rule Author",
+  rule_approver: "Approver",
+  rule_author: "Author",
   viewer: "Viewer",
 };
 

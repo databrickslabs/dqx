@@ -49,6 +49,16 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { FadeIn } from "@/components/anim/FadeIn";
 import { toast } from "sonner";
 import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogCancel,
+  AlertDialogAction,
+} from "@/components/ui/alert-dialog";
+import {
   useListRules,
   getListRulesQueryKey,
   type RuleCatalogEntryOut,
@@ -215,6 +225,7 @@ function DraftsPage() {
     const sigMap = new Map<string, { ruleId: string; status: string }[]>();
     for (const r of allRulesRaw) {
       if (!r.rule_id) continue;
+      if (r.status === "rejected") continue;
       const check = (r.checks?.[0] as Record<string, unknown>) ?? {};
       const sig = `${r.table_fqn}::${checkSig(check)}`;
       if (!sigMap.has(sig)) sigMap.set(sig, []);
@@ -377,8 +388,12 @@ function DraftsPage() {
     bulkAction(approveRule, "Approved", "some rules could not be approved");
   const handleBulkReject = () =>
     bulkAction(rejectRule, "Rejected", "some rules could not be rejected");
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const handleBulkDelete = () => {
-    if (!confirm(`Delete ${selectedRules.length} selected rule${selectedRules.length !== 1 ? "s" : ""}? This cannot be undone.`)) return;
+    setBulkDeleteOpen(true);
+  };
+  const confirmBulkDelete = () => {
+    setBulkDeleteOpen(false);
     bulkAction(deleteRuleById, "Deleted", "some rules could not be deleted");
   };
   const handleBulkSubmit = useCallback(async () => {
@@ -420,12 +435,18 @@ function DraftsPage() {
       "Failed to revoke submission",
     );
 
+  const [singleDeleteTarget, setSingleDeleteTarget] = useState<RuleCatalogEntryOut | null>(null);
   const handleDelete = (rule: RuleCatalogEntryOut) => {
     const key = ruleKey(rule);
     if (_pendingSet.has(key)) return;
-    if (!confirm(`Delete this rule for ${rule.display_name || rule.table_fqn}?`)) return;
+    setSingleDeleteTarget(rule);
+  };
+  const confirmSingleDelete = () => {
+    if (!singleDeleteTarget) return;
+    const rule = singleDeleteTarget;
+    setSingleDeleteTarget(null);
     fireAction(
-      key,
+      ruleKey(rule),
       () => deleteRuleById(rule.rule_id!),
       "Rule deleted",
       "Failed to delete rule",
@@ -812,10 +833,6 @@ function DraftsPage() {
                                   </Badge>
                                 </div>
                                 <div>
-                                  <span className="text-muted-foreground font-medium block mb-0.5">Weight</span>
-                                  <span>{details.weight || "—"}</span>
-                                </div>
-                                <div>
                                   <span className="text-muted-foreground font-medium block mb-0.5">Source</span>
                                   <span>{rule.source ?? "—"}</span>
                                 </div>
@@ -884,6 +901,50 @@ function DraftsPage() {
           )}
         </CardContent>
       </Card>
+
+      <AlertDialog open={!!singleDeleteTarget} onOpenChange={(open) => !open && setSingleDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete rule</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete this rule for{" "}
+              <span className="font-medium text-foreground">
+                {singleDeleteTarget?.display_name || singleDeleteTarget?.table_fqn}
+              </span>
+              ? This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmSingleDelete}
+              className="bg-destructive text-white hover:bg-destructive/90"
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {selectedRules.length} rule{selectedRules.length !== 1 ? "s" : ""}</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete {selectedRules.length} selected rule{selectedRules.length !== 1 ? "s" : ""}? This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmBulkDelete}
+              className="bg-destructive text-white hover:bg-destructive/90"
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

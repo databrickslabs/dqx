@@ -8,10 +8,16 @@ from .. import __version__
 
 class VersionOut(BaseModel):
     version: str
+    core_version: str
 
     @classmethod
     def from_metadata(cls):
-        return cls(version=__version__)
+        try:
+            from importlib.metadata import version as pkg_version
+            core = pkg_version("databricks-labs-dqx")
+        except Exception:
+            core = "unknown"
+        return cls(version=__version__, core_version=core)
 
 
 class ConfigOut(BaseModel):
@@ -234,6 +240,7 @@ class ValidationRunSummaryOut(BaseModel):
     valid_rows: int | None = None
     invalid_rows: int | None = None
     created_at: str | None = None
+    checks: list[dict[str, Any]] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------

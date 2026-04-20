@@ -243,7 +243,8 @@ class JobService:
         "run_id, requesting_user, source_table_fqn, sample_size, "
         "total_rows, valid_rows, invalid_rows, "
         "status, error_message, canceled_by, updated_at, created_at, "
-        "COALESCE(run_type, 'dryrun') AS run_type"
+        "COALESCE(run_type, 'dryrun') AS run_type, "
+        "checks_json"
     )
 
     def list_run_rows(self, table: str, limit: int = 100) -> list[dict[str, str | None]]:

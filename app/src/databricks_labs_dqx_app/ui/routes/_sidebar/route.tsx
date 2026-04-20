@@ -2,6 +2,7 @@ import SidebarLayout from "@/components/apx/SidebarLayout";
 import { createFileRoute, Link, useLocation } from "@tanstack/react-router";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
+import { usePermissions } from "@/hooks/use-permissions";
 import {
   Sparkles,
   Database,
@@ -29,6 +30,7 @@ export const Route = createFileRoute("/_sidebar")({
 
 function Layout() {
   const location = useLocation();
+  const { canCreateRules } = usePermissions();
 
   const isCreateActive =
     location.pathname.startsWith("/rules/create") ||
@@ -71,7 +73,8 @@ function Layout() {
       <SidebarGroup className="pt-2">
         <SidebarGroupContent>
           <SidebarMenu>
-            {/* Create Rules — expandable */}
+            {/* Create Rules — expandable (hidden for viewers) */}
+            {canCreateRules && (
             <SidebarMenuItem>
               <button
                 type="button"
@@ -111,6 +114,7 @@ function Layout() {
                 </SidebarMenuSub>
               )}
             </SidebarMenuItem>
+            )}
 
             {/* Drafts & Review */}
             <SidebarMenuItem>

@@ -214,10 +214,10 @@ resources:
 targets:
   dev:
     workspace:
-      profile: <YOUR_PROFILE>
+      profile: <your-profile>
     variables:
-      catalog_name: <YOUR_CATALOG_NAME>
-      dqx_service_principal_application_id: <YOUR_SERVICE_PRINCIPAL_APPLICATION_ID>
+      catalog_name: <your-catalog-name>
+      dqx_service_principal_application_id: <your-service-principal-application-id>
     presets:
       trigger_pause_status: PAUSED
 

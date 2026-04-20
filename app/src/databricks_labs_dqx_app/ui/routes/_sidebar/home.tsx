@@ -15,7 +15,7 @@ export const Route = createFileRoute("/_sidebar/home")({
 const highlights = [
   { icon: <Layers className="h-4 w-4" />, text: "Unity Catalog integration" },
   { icon: <Zap className="h-4 w-4" />, text: "AI-powered rule generation" },
-  { icon: <Clock className="h-4 w-4" />, text: "Automated scheduling" },
+  { icon: <Clock className="h-4 w-4" />, text: "Scheduled rule execution" },
   { icon: <CheckCircle2 className="h-4 w-4" />, text: "Role-based approval workflow" },
 ];
 

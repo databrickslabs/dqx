@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { QueryErrorResetBoundary, useQueryClient } from "@tanstack/react-query";
 import { ErrorBoundary } from "react-error-boundary";
 import { Button } from "@/components/ui/button";
@@ -18,6 +18,7 @@ import { Input } from "@/components/ui/input";
 import { useTimezone, useSaveTimezone, getTimezoneQueryKey } from "@/lib/api-custom";
 import { toast } from "sonner";
 import { useCurrentUserRoleSuspense } from "@/hooks/use-suspense-queries";
+import { usePermissions } from "@/hooks/use-permissions";
 import { Suspense, useMemo, useState, useRef, useEffect } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
@@ -204,6 +205,19 @@ function TimezoneSettings() {
 }
 
 function ConfigPage() {
+  const { isAdmin } = usePermissions();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (!isAdmin) {
+      navigate({ to: "/rules/active", replace: true });
+    }
+  }, [isAdmin, navigate]);
+
+  if (!isAdmin) {
+    return null;
+  }
+
   return (
     <div className="space-y-6">
       <div className="space-y-2">

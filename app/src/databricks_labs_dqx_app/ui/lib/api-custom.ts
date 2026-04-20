@@ -175,6 +175,7 @@ export interface ValidationRunSummaryOut {
   valid_rows: number | null;
   invalid_rows: number | null;
   created_at: string | null;
+  checks: Record<string, unknown>[];
 }
 
 export const listValidationRuns = (

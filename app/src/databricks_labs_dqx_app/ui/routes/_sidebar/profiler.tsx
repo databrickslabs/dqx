@@ -1,6 +1,7 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link, Navigate } from "@tanstack/react-router";
 import { formatDateTime as formatDate } from "@/lib/format-utils";
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
+import { usePermissions } from "@/hooks/use-permissions";
 import { PageBreadcrumb } from "@/components/apx/PageBreadcrumb";
 import {
   Card,
@@ -190,6 +191,9 @@ function parseTableFqn(fqn: string): { catalog: string; schema: string; table: s
 // ──────────────────────────────────────────────────────────────────────────────
 
 function ProfilerPage() {
+  const { canCreateRules } = usePermissions();
+  if (!canCreateRules) return <Navigate to="/rules/active" replace />;
+
   // ── Single-table run state (used when one table + column subset via single-table API) ──
   const [jobRunId, setJobRunId] = useState<number | null>(null);
   const [runId, setRunId] = useState<string | null>(null);
@@ -1230,7 +1234,7 @@ function ProfileResults({
     try {
       await saveRules.mutateAsync({ data: { table_fqn: tableFqn, checks: normalizedRules } });
       setAdded(true);
-      toast.success(`${normalizedRules.length} rules added for ${tableFqn}`);
+      toast.success(`${normalizedRules.length} rules saved as drafts for ${tableFqn}`);
     } catch {
       toast.error("Failed to add rules");
     }
@@ -1273,22 +1277,29 @@ function ProfileResults({
               <CheckCircle2 className="h-4 w-4 text-green-500" />
               Generated Rules ({allRules.length})
             </h4>
-            <Button
-              size="sm"
-              variant={added ? "outline" : "default"}
-              className="gap-1.5"
-              onClick={handleAddToRules}
-              disabled={saveRules.isPending || added || selectedCount === 0}
-            >
-              {saveRules.isPending ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : added ? (
-                <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />
-              ) : (
-                <Plus className="h-3.5 w-3.5" />
+            <div className="flex items-center gap-2">
+              {added && (
+                <Button size="sm" variant="default" className="gap-1.5" asChild>
+                  <Link to="/rules/drafts">View in Drafts & Review</Link>
+                </Button>
               )}
-              {added ? "Added to Rules" : `Add ${selectedCount} Selected`}
-            </Button>
+              <Button
+                size="sm"
+                variant={added ? "outline" : "default"}
+                className="gap-1.5"
+                onClick={handleAddToRules}
+                disabled={saveRules.isPending || added || selectedCount === 0}
+              >
+                {saveRules.isPending ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : added ? (
+                  <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />
+                ) : (
+                  <Plus className="h-3.5 w-3.5" />
+                )}
+                {added ? "Saved to Drafts" : `Add ${selectedCount} Selected`}
+              </Button>
+            </div>
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">

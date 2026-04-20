@@ -35,6 +35,16 @@ import {
 import { deleteRuleById } from "@/lib/api-custom";
 import { usePermissions } from "@/hooks/use-permissions";
 import { parseFqn, formatUser } from "@/lib/format-utils";
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogCancel,
+  AlertDialogAction,
+} from "@/components/ui/alert-dialog";
 
 const SQL_CHECK_PREFIX = "__sql_check__/";
 
@@ -141,11 +151,17 @@ function ActiveRulesPage() {
 
   const totalCheckCount = allRules.length;
 
-  const handleDelete = async (rule: RuleCatalogEntryOut) => {
+  const [deleteTarget, setDeleteTarget] = useState<RuleCatalogEntryOut | null>(null);
+
+  const requestDelete = (rule: RuleCatalogEntryOut) => {
     if (pendingDelete) return;
-    const label = rule.display_name || rule.table_fqn;
-    if (!confirm(`Delete this rule for ${label}? This cannot be undone.`)) return;
-    const ruleId = rule.rule_id;
+    setDeleteTarget(rule);
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    const ruleId = deleteTarget.rule_id;
+    setDeleteTarget(null);
     if (!ruleId) return;
     setPendingDelete(ruleId);
     try {
@@ -296,7 +312,7 @@ function ActiveRulesPage() {
                       : navigate({ to: "/rules/generate", search: { table: fqn } })
                   }
                   canDelete={canApproveRules}
-                  onDelete={handleDelete}
+                  onDelete={requestDelete}
                   pendingDelete={pendingDelete}
                 />
               )}
@@ -314,6 +330,30 @@ function ActiveRulesPage() {
           )}
         </CardContent>
       </Card>
+
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete rule</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete this rule for{" "}
+              <span className="font-medium text-foreground">
+                {deleteTarget?.display_name || deleteTarget?.table_fqn}
+              </span>
+              ? This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmDelete}
+              className="bg-destructive text-white hover:bg-destructive/90"
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
@@ -479,7 +519,6 @@ function ByRuleView({ checks }: { checks: CheckWithMeta[] }) {
             <th className="text-left p-3 font-medium">Column(s)</th>
             <th className="text-left p-3 font-medium">Table</th>
             <th className="text-left p-3 font-medium">Criticality</th>
-            <th className="text-right p-3 font-medium">Weight</th>
           </tr>
         </thead>
         <tbody>
@@ -489,7 +528,6 @@ function ByRuleView({ checks }: { checks: CheckWithMeta[] }) {
             const fn = String(checkObj.function ?? "—");
             const col = String(args.column ?? checkObj.for_each_column ?? "—");
             const criticality = String(check.criticality ?? "warn");
-            const weight = check.weight != null ? Number(check.weight) : null;
             const name = check.name ? String(check.name) : null;
             return (
               <tr key={idx} className="border-b last:border-b-0 hover:bg-muted/30">
@@ -506,9 +544,6 @@ function ByRuleView({ checks }: { checks: CheckWithMeta[] }) {
                   >
                     {criticality}
                   </Badge>
-                </td>
-                <td className="p-3 text-right tabular-nums text-xs">
-                  {weight != null ? weight : "—"}
                 </td>
               </tr>
             );

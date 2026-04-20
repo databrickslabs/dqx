@@ -145,7 +145,7 @@ def _run_profile(
             "status STRING, error_message STRING, created_at STRING"
         ),
     )
-    result_row.write.mode("append").saveAsTable(result_table)
+    result_row.writeTo(result_table).append()
     logger.info("Profile results written to %s (run_id=%s)", result_table, run_id)
 
 
@@ -237,7 +237,7 @@ def _run_dryrun(
             "run_type STRING"
         ),
     )
-    result_row.write.mode("append").saveAsTable(result_table)
+    result_row.writeTo(result_table).append()
     logger.info("Dry-run results written to %s (run_id=%s)", result_table, run_id)
 
     _write_quarantine_records(
@@ -328,7 +328,7 @@ def _run_dryrun_sql_check(
             "run_type STRING"
         ),
     )
-    result_row.write.mode("append").saveAsTable(result_table)
+    result_row.writeTo(result_table).append()
     logger.info(
         "SQL-check %s results written to %s (run_id=%s, violations=%d)", run_type, result_table, run_id, invalid_rows
     )
@@ -381,7 +381,7 @@ def _write_quarantine_records(
         .withColumn("created_at", F.lit(now))
         .select("quarantine_id", "run_id", "source_table_fqn", "requesting_user", "row_data", "errors", "created_at")
     )
-    quarantine_df.write.mode("append").saveAsTable(quarantine_table)
+    quarantine_df.writeTo(quarantine_table).append()
     logger.info("Wrote %d quarantine rows to %s (run_id=%s)", invalid_count, quarantine_table, run_id)
 
 
@@ -427,7 +427,7 @@ def _write_metrics_row(
             "created_at STRING"
         ),
     )
-    row.write.mode("append").saveAsTable(metrics_table)
+    row.writeTo(metrics_table).append()
     logger.info("Metrics row written to %s (run_id=%s)", metrics_table, run_id)
 
 
@@ -454,6 +454,12 @@ def _run_scheduled(
     if config.get("is_sql_check"):
         sql_query = config.get("sql_query")
         if sql_query:
+            from databricks.labs.dqx.utils import is_sql_query_safe
+            from databricks.labs.dqx.errors import UnsafeSqlQueryError
+
+            if not is_sql_query_safe(sql_query):
+                raise UnsafeSqlQueryError("Refusing to execute unsafe sql_query in task runner")
+
             tmp_name = f"_dqx_scheduled_sql_{run_id}"
             spark.sql(f"CREATE OR REPLACE TEMP VIEW {tmp_name} AS {sql_query}")
             effective_view = tmp_name
@@ -483,12 +489,9 @@ def _run_scheduled(
     result = engine.apply_checks_by_metadata_and_split(df, checks)
     valid_df, invalid_df = result[0], result[1]
 
-    valid_df.cache()
-    invalid_df.cache()
-
-    total_rows = valid_df.count() + invalid_df.count()
     valid_rows = valid_df.count()
     invalid_rows = invalid_df.count()
+    total_rows = valid_rows + invalid_rows
     pass_rate = (valid_rows / total_rows * 100.0) if total_rows > 0 else 100.0
 
     error_summary: list[dict[str, Any]] = []
@@ -528,7 +531,7 @@ def _run_scheduled(
             "run_type STRING"
         ),
     )
-    result_row.write.mode("append").saveAsTable(result_table)
+    result_row.writeTo(result_table).append()
     logger.info("Scheduled run results written to %s (run_id=%s)", result_table, run_id)
 
     _write_quarantine_records(
@@ -555,9 +558,6 @@ def _run_scheduled(
         result_schema,
     )
 
-    valid_df.unpersist()
-    invalid_df.unpersist()
-
 
 def _write_error(
     spark: SparkSession,
@@ -569,9 +569,11 @@ def _write_error(
     source_table_fqn: str,
     view_fqn: str,
     error_message: str,
+    checks: list[dict[str, Any]] | None = None,
 ) -> None:
     """Write a FAILED status row so the app can report the error."""
     now = datetime.now(timezone.utc).isoformat()
+    checks_str = _json_dumps(checks) if checks else None
     if task_type == "profile":
         table = f"{result_catalog}.{result_schema}.dq_profiling_results"
         row = spark.createDataFrame(
@@ -609,7 +611,7 @@ def _write_error(
                     requesting_user,
                     source_table_fqn,
                     view_fqn,
-                    None,
+                    checks_str,
                     None,
                     None,
                     None,
@@ -631,7 +633,7 @@ def _write_error(
                 "run_type STRING"
             ),
         )
-    row.write.mode("append").saveAsTable(table)
+    row.writeTo(table).append()
     logger.info("Error result written to %s (run_id=%s)", table, run_id)
 
 
@@ -690,6 +692,7 @@ def main() -> None:
                 source_table_fqn,
                 args.view_fqn,
                 str(exc),
+                checks=config.get("checks"),
             )
         except Exception as write_exc:
             logger.error("Failed to write error result: %s", write_exc, exc_info=True)
@@ -697,8 +700,11 @@ def main() -> None:
     finally:
         if args.task_type != "scheduled":
             try:
+                from databricks_labs_dqx_app.backend.sql_utils import validate_fqn, quote_fqn
+
+                validate_fqn(args.view_fqn)
                 logger.info("Dropping temporary view: %s", args.view_fqn)
-                spark.sql(f"DROP VIEW IF EXISTS {args.view_fqn}")  # noqa: S608
+                spark.sql(f"DROP VIEW IF EXISTS {quote_fqn(args.view_fqn)}")
             except Exception as drop_exc:
                 logger.warning("Failed to drop view %s: %s", args.view_fqn, drop_exc)
 

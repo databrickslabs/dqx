@@ -1,5 +1,6 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate, Navigate } from "@tanstack/react-router";
 import { useState, useRef } from "react";
+import { usePermissions } from "@/hooks/use-permissions";
 import { PageBreadcrumb } from "@/components/apx/PageBreadcrumb";
 import {
   Card,
@@ -43,6 +44,9 @@ export const Route = createFileRoute("/_sidebar/rules/import")({
 });
 
 function ImportRulesPage() {
+  const { canCreateRules } = usePermissions();
+  if (!canCreateRules) return <Navigate to="/rules/active" replace />;
+
   const navigate = useNavigate();
 
   return (

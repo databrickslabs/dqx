@@ -267,16 +267,19 @@ class RulesCatalogService:
     def find_duplicates(
         self, table_fqn: str, checks: list[dict[str, Any]], exclude_rule_id: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Return checks from *checks* that already exist as approved/draft rules for *table_fqn*.
+        """Return checks from *checks* that already exist as non-rejected rules for *table_fqn*.
 
         A duplicate is defined as same ``check.function`` and ``check.arguments``
-        (case-insensitive) for the same table.  If *exclude_rule_id* is given, that
-        rule's checks are not considered existing (useful when updating an existing rule).
+        (case-insensitive) for the same table.  Rejected rules are excluded from
+        duplicate detection.  If *exclude_rule_id* is given, that rule's checks
+        are not considered existing (useful when updating an existing rule).
         """
         existing = self.list_rules_for_table(table_fqn)
         existing_sigs: set[str] = set()
         for e in existing:
             if exclude_rule_id and e.rule_id == exclude_rule_id:
+                continue
+            if e.status == "rejected":
                 continue
             for c in e.checks:
                 existing_sigs.add(self._check_signature(c))
