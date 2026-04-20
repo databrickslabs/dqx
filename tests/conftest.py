@@ -2,8 +2,6 @@ import json
 import logging
 import os
 import re
-import subprocess
-import sys
 from collections.abc import Callable, Generator
 from pathlib import Path
 from dataclasses import dataclass, replace
@@ -40,18 +38,13 @@ from databricks.sdk.service.workspace import ImportFormat
 logger = logging.getLogger(__name__)
 
 
-class VerboseWheels(WheelsV2):
-    """Test-only WheelsV2 that captures `pip wheel` output and supports a pre-built wheel.
+class PrebuiltWheels(WheelsV2):
+    """Test-only WheelsV2 that copies a pre-built wheel when `DQX_PREBUILT_WHEEL` is set.
 
-    Two behaviours differ from upstream:
-
-    1. Upstream's `verbose=True` sets stdout/stderr to `subprocess.STDOUT` which is invalid
-       as a stdout value (raises OSError: Bad file descriptor). This override uses pipes so
-       the real pip error surfaces in CI logs.
-    2. When `DQX_PREBUILT_WHEEL` is set (CI), copy that artifact instead of running
-       `pip wheel`. CI builds the wheel once via the prebuild-wheel action while the JFrog
-       token is fresh, avoiding per-test `pip wheel` calls that would fail after the 1h
-       OIDC token TTL expires mid-suite.
+    CI builds the wheel once via the prebuild-wheel action while the JFrog token is fresh,
+    then points each pytest invocation at that artifact so per-test `pip wheel` calls do
+    not fail after the 1h OIDC token TTL expires mid-suite. Local development falls through
+    to upstream's standard `pip wheel` behaviour.
     """
 
     def _build_wheel(
@@ -62,34 +55,12 @@ class VerboseWheels(WheelsV2):
         no_deps: bool = True,
         dirs_exist_ok: bool = False,
     ):
-        del verbose  # always capture in tests; fresh pipes avoid fd inheritance issues
         prebuilt = os.environ.get("DQX_PREBUILT_WHEEL")
-        if prebuilt:
-            src = Path(prebuilt)
-            dst = Path(tmp_dir) / src.name
-            dst.write_bytes(src.read_bytes())
-            return Path(tmp_dir).glob("*.whl")
-        checkout_root = self._product_info.checkout_root()
-        if self._product_info.is_git_checkout() and self._product_info.is_unreleased_version():
-            checkout_root = self._copy_root_to(tmp_dir, dirs_exist_ok=dirs_exist_ok)
-            self._override_version_to_unreleased(checkout_root)
-        args = [
-            sys.executable,
-            "-m",
-            "pip",
-            "wheel",
-            "--wheel-dir",
-            tmp_dir,
-            checkout_root.as_posix(),
-        ]
-        if no_deps:
-            args.append("--no-deps")
-        result = subprocess.run(args, capture_output=True, text=True, check=False)
-        if result.returncode != 0:
-            logger.error(
-                f"pip wheel failed (rc={result.returncode}); stdout={result.stdout!r}; stderr={result.stderr!r}"
-            )
-            raise subprocess.CalledProcessError(result.returncode, args, output=result.stdout, stderr=result.stderr)
+        if not prebuilt:
+            return super()._build_wheel(tmp_dir, verbose=verbose, no_deps=no_deps, dirs_exist_ok=dirs_exist_ok)
+        src = Path(prebuilt)
+        dst = Path(tmp_dir) / src.name
+        dst.write_bytes(src.read_bytes())
         return Path(tmp_dir).glob("*.whl")
 
 
@@ -319,7 +290,7 @@ class MockInstallationContext(MockWorkflowContext):
             self.installation,
             self.install_state,
             self.workspace_client,
-            VerboseWheels(self.installation, self.product_info),
+            PrebuiltWheels(self.installation, self.product_info),
             self.product_info,
             self.tasks,
         )

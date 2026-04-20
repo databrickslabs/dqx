@@ -1,33 +1,33 @@
 name: 'Pre-build DQX wheel'
 description: >
-  Builds the DQX wheel for workflows once using `make build` and exports the absolute path as DQX_PREBUILT_WHEEL. 
-  Tests that use VerboseWheels copy this artifact instead of running `pip wheel` per-test, which avoids JFrog
-  auth failures after the 1h OIDC token TTL expires mid-suite.
+  Builds the DQX wheel once per CI job and exports the absolute path as DQX_PREBUILT_WHEEL. 
+  Tests that use PrebuiltWheels copy this artifact instead of running `pip wheel` per-test, 
+  which avoids JFrog auth failures after the 1h OIDC token TTL expires mid-suite.
 runs:
   using: "composite"
   steps:
     - name: Build wheel
       shell: bash
       run: |
-        # Append a unique suffix to the version so every CI run produces a
-        # distinct wheel. This mirrors what blueprint's WheelsV2 does via
-        # `_override_version_to_unreleased` when building per-test: Databricks
-        # cluster library installs and pip caches key by version string, so
-        # reusing `0.13.0` across CI runs could skip a re-install and execute
-        # stale bytes from a previous run.
-        VERSION_FILE="src/databricks/labs/dqx/__about__.py"
-        TIMESTAMP="$(date -u +%Y%m%d.%H%M%S)"
-        sed -i "s/\(__version__ = \"[^\"]*\)\"/\1+ci.${TIMESTAMP}.${GITHUB_RUN_ID}\"/" "$VERSION_FILE"
+        # Bump version per CI run so cluster library installs and pip caches
+        # don't reuse stale bytes. Delegate the scheme to blueprint so it
+        # matches what blueprint would compute per-test
+        NEW_VERSION="$(UV_FROZEN=1 uv run --quiet python -c '
+        from databricks.labs.blueprint.wheels import ProductInfo
+        from databricks.labs.dqx.config import WorkspaceConfig
+        print(ProductInfo.from_class(WorkspaceConfig).version())
+        ')"
+        test -n "$NEW_VERSION" || { echo "failed to compute unreleased version"; exit 1; }
 
-        # `make build` runs `uv build` with locked build constraints, producing
-        # a single wheel under `dist/` with the bumped version baked in.
+        VERSION_FILE="src/databricks/labs/dqx/__about__.py"
+        sed -i "s/^__version__ = .*/__version__ = \"${NEW_VERSION}\"/" "$VERSION_FILE"
+
         make build
 
-        # Exact filename depends on the bumped version, so just search `dist/`.
+        # Restore so later steps see a clean tree
+        git checkout -- "$VERSION_FILE"
+
         WHEEL_PATH="$(find dist -maxdepth 1 -name '*.whl' -print -quit)"
         test -n "$WHEEL_PATH" || { echo "no wheel produced in dist/"; ls -la dist/; exit 1; }
 
-        # Export absolute path via GITHUB_ENV so subsequent steps (pytest) see
-        # it; tests/conftest.py's VerboseWheels copies this artifact instead of
-        # invoking `pip wheel`.
         printf '%s=%s\n' 'DQX_PREBUILT_WHEEL' "$PWD/$WHEEL_PATH" >> "$GITHUB_ENV"
