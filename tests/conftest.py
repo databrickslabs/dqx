@@ -2,6 +2,8 @@ import json
 import logging
 import os
 import re
+import subprocess
+import sys
 from collections.abc import Callable, Generator
 from pathlib import Path
 from dataclasses import dataclass, replace
@@ -38,6 +40,40 @@ from databricks.sdk.service.workspace import ImportFormat
 logger = logging.getLogger(__name__)
 
 
+class VerboseWheels(WheelsV2):
+    """Test-only WheelsV2 that captures `pip wheel` output and logs it on failure.
+
+    Upstream's `verbose=True` sets stdout/stderr to `subprocess.STDOUT` which is invalid
+    as a stdout value (raises OSError: Bad file descriptor). This override uses pipes so
+    the real pip error surfaces in CI logs — which is what we need to diagnose root
+    causes of transient wheel build failures (e.g. PyPI mirror issues).
+    """
+
+    def _build_wheel(
+        self,
+        tmp_dir: str,
+        *,
+        verbose: bool = False,
+        no_deps: bool = True,
+        dirs_exist_ok: bool = False,
+    ):
+        del verbose  # always capture in tests; fresh pipes avoid fd inheritance issues
+        checkout_root = self._product_info.checkout_root()
+        if self._product_info.is_git_checkout() and self._product_info.is_unreleased_version():
+            checkout_root = self._copy_root_to(tmp_dir, dirs_exist_ok=dirs_exist_ok)
+            self._override_version_to_unreleased(checkout_root)
+        args = [sys.executable, "-m", "pip", "wheel", "--wheel-dir", tmp_dir, checkout_root.as_posix()]
+        if no_deps:
+            args.append("--no-deps")
+        result = subprocess.run(args, capture_output=True, text=True, check=False)
+        if result.returncode != 0:
+            logger.error(
+                f"pip wheel failed (rc={result.returncode}); stdout={result.stdout!r}; stderr={result.stderr!r}"
+            )
+            raise subprocess.CalledProcessError(result.returncode, args, output=result.stdout, stderr=result.stderr)
+        return Path(tmp_dir).glob("*.whl")
+
+
 @pytest.fixture(autouse=True, scope="session")
 def _mlflow_env():
     """Ensure MLflow points at Databricks Unity Catalog when running against a workspace.
@@ -58,7 +94,7 @@ def get_schema_validation_rules(rules: list[dict[str, Any]]) -> list[dict[str, A
 
 @pytest.fixture(scope="session")
 def debug_env_name():
-    return "ws"  # Specify the name of the debug environment from ~/.databricks/debug-env.json
+    return "ws2"  # Specify the name of the debug environment from ~/.databricks/debug-env.json
 
 
 @pytest.fixture
@@ -264,7 +300,7 @@ class MockInstallationContext(MockWorkflowContext):
             self.installation,
             self.install_state,
             self.workspace_client,
-            WheelsV2(self.installation, self.product_info),
+            VerboseWheels(self.installation, self.product_info),
             self.product_info,
             self.tasks,
         )
@@ -277,9 +313,9 @@ class MockInstallationContext(MockWorkflowContext):
     def prompts(self):
         return MockPrompts(
             {
-                r'Provide location for the input data .*': 'main.dqx_test.input_table',
-                r'Provide output table .*': 'main.dqx_test.output_table',
-                r'Do you want to uninstall DQX .*': 'yes',
+                r"Provide location for the input data .*": "main.dqx_test.input_table",
+                r"Provide output table .*": "main.dqx_test.output_table",
+                r"Do you want to uninstall DQX .*": "yes",
                 r".*PRO or SERVERLESS SQL warehouse.*": "1",
                 r".*": "",
             }
