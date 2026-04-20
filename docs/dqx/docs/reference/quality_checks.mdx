@@ -16,6 +16,8 @@ DQX provides a collection of predefined built-in quality rules (checks). Additio
 All DQX rules are evaluated independently and in parallel. If one rule fails, the others are still processed.
 All rule types, including row-level and dataset-level rules, can be defined and applied simultaneously in a single execution.
 
+When you define checks **declaratively** (YAML, JSON, or list of dicts), check arguments must contain every required parameter of the check function, matching its Python signature (optional parameters may be omitted). If you use `for_each_column`, DQX merges `column` or `columns` into the arguments for each expansion. Use `DQEngine.validate_checks` to catch unknown keys, type mismatches, and missing required parameters before apply. See [Quality checks definition](/docs/guide/quality_checks_definition) for the declarative format and validation section.
+
 You can explore the implementation details of the check functions [here](https://github.com/databrickslabs/dqx/blob/v0.13.0/src/databricks/labs/dqx/check_funcs.py).
 
 ## Row-level checks reference
@@ -89,7 +91,7 @@ You can also define your own custom checks in Python (see [Creating custom check
 
 <Admonition type="warning" title="Applicability">
 Row-level checks are designed to operate on a single PySpark DataFrame.
-If your validation logic requires multiple DataFrames/Tables, you can join them beforehand to produce a single DataFrame on which the checks can be applied.
+If your validation logic requires data from other tables, you can either reference them directly via an EXISTS subquery inside `sql_expression`, or join them beforehand to produce a single DataFrame.
 See more [here](/docs/reference/quality_checks#applying-checks-on-multiple-data-sets).
 </Admonition>
 
@@ -565,7 +567,7 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
     arguments:
       expression: col3 >= col2 and col3 <= 10
       msg: col3 is less than col2 and col3 is greater than 10
-      columns: # optional for reporting
+      columns: # optional for validating against input dataframe and reporting
       - col2
       - col3
 
@@ -1493,7 +1495,7 @@ checks = [
       check_func_kwargs={
         "expression": "col3 >= col2 and col3 <= 10",
         "msg": "col3 is less than col2 and col3 is greater than 10",
-        "name": "custom_output_name",
+        "name": "custom_output_name",  # optional, overwritten by check name
         "negate": False
       }
     ),
@@ -1661,7 +1663,7 @@ Below are examples of how to apply checks for complex types declaratively in YAM
     arguments:
       expression: try_element_at(col7, 'key1') >= 10
       msg: col7 element 'key1' is less than 10
-      name: col7_element_key1_less_than_10
+      name: col7_element_key1_less_than_10  # optional, overwritten by check name
       negate: false
 
 # sql_expression check applied to an array of map column elements
@@ -1754,7 +1756,7 @@ checks = [
       check_func_kwargs={
         "expression": "try_element_at(col7, 'key1') >= 10",
         "msg": "col7 element 'key1' is less than 10",
-        "name": "col7_element_key1_less_than_10",
+        "name": "col7_element_key1_less_than_10", # can also be provided as check name
         "negate": False,
       },
     ),
@@ -3224,7 +3226,7 @@ You can define custom checks using SQL Expression rule (`sql_expression`).
       msg: col1 ends with 'foo'
 ```
 
-SQL Expressions are also useful if you need to make cross-column validation, for example:
+SQL expressions are also useful for cross-column validation:
 ```yaml
 - criticality: error
   check:
@@ -3233,6 +3235,29 @@ SQL Expressions are also useful if you need to make cross-column validation, for
       expression: col1 <= col2
       msg: col1 is greater than col2
 ```
+
+You can also use SQL subqueries to validate a column value against a reference table(s), for example:
+```yaml
+- criticality: error
+  name: order_status_valid
+  check:
+    function: sql_expression
+    arguments:
+      expression: >
+        EXISTS (
+          SELECT 1
+          FROM catalog.schema.order_status_ref AS ref
+          WHERE ref.status_code = order_status
+            AND ref.is_active = true
+        )
+      msg: order_status is not a valid active status
+```
+
+<Admonition type="tip" title="row-level vs dataset-level custom checks">
+Although `sql_expression` is a row-level check, subquery expressions are **not** executed per row. 
+Spark's Catalyst optimizer rewrites correlated `EXISTS` subqueries as **semi-joins** (typically a broadcast hash join for small reference tables), so performance is comparable to an explicit join.
+For large reference tables where a broadcast join is not possible, pre-join the reference data into the input DataFrame before applying DQX checks, then use a simple column expression instead of a subquery.
+</Admonition>
 
 #### Define the check using DQX classes
 
@@ -3488,7 +3513,7 @@ checks = [
 
 ## Creating Custom Dataset-level Checks
 
-Custom Dataset-level checks are useful if you need to make aggregation level checks within the DataFrame or across multiple DataFrames or Tables.
+Custom Dataset-level checks are useful if you need to make aggregation or set-based checks within the DataFrame or across multiple DataFrames/Tables that cannot be expressed via an EXISTS subquery inside `sql_expression`.
 Similar to row-level checks, the results of the dataset-level quality checks are reported for each individual row in the result columns.
 
 Custom dataset-level checks can be created using `sql_query` check function or by implementing a Python function that returns a condition and a closure function.
@@ -3826,11 +3851,14 @@ This can be less performant than writing a custom dataset-level where we can thi
 ### Using Row-level checks
 
 Row-level checks are intended to operate on a single DataFrame as input.
-If your validation logic requires multiple DataFrames or Tables as input, you can join them before applying the row-level checks.
-However, this may not be efficient for large datasets or complex validation logic.
+However, if your validation logic requires data from other tables, you have two options:
+
+**Option 1: Pre-join the reference data**
+
+Join the reference tables into the input DataFrame before applying checks:
 
 <details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
-<summary>**Examples**</summary>
+<summary>**Example: pre-join reference data**</summary>
 ```python
 from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
@@ -3868,9 +3896,53 @@ display(valid_and_quarantine_df)
 ```
 </details>
 
+**Option 2: Join reference tables directly inside an EXISTS subquery**
+
+You can join reference tables inside a `sql_expression` using an `EXISTS` subquery, keeping the check self-contained without an explicit pre-join:
+
+<details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
+<summary>**Example: EXISTS with a JOIN inside**</summary>
+```python
+import yaml
+from databricks.labs.dqx.engine import DQEngine
+from databricks.sdk import WorkspaceClient
+
+checks = yaml.safe_load("""
+  - criticality: error
+    name: order_refs_valid
+    check:
+      function: sql_expression
+      arguments:
+        expression: >
+          EXISTS (
+            SELECT 1
+            FROM catalog.schema.customers AS c
+            JOIN catalog.schema.products  AS p
+              ON p.product_id = product_id
+            WHERE c.customer_id  = customer_id
+              AND c.is_active    = true
+              AND p.is_available = true
+          )
+        msg: order references an inactive/missing customer or an unavailable/missing product
+""")
+
+dq_engine = DQEngine(WorkspaceClient())
+
+input_df = spark.table("catalog.schema.orders")
+valid_and_quarantine_df = dq_engine.apply_checks_by_metadata(input_df, checks)
+display(valid_and_quarantine_df)
+```
+</details>
+
+<Admonition type="tip" title="Custom python dataset-level function vs SQL query check">
+Although `sql_expression` is a row-level check, subquery expressions are **not** executed per row. 
+Spark's Catalyst optimizer rewrites correlated `EXISTS` subqueries as **semi-joins** (typically a broadcast hash join for small reference tables), so performance is comparable to an explicit join.
+For large reference tables where a broadcast join is not possible, pre-join the reference data into the input DataFrame before applying DQX checks, then use a simple column expression instead of a subquery.
+</Admonition>
+
 ### Using Dataset-level checks
 
-If you need to validate values across multiple DataFrames/Tables as part of the check without combining them beforehand, you can define custom dataset-level checks.
+If you need to run aggregate or dataset-based validation across multiple DataFrames/Tables that cannot be expressed via an EXISTS subquery inside `sql_expression`, you can define custom dataset-level checks.
 
 See [Creating Custom Dataset-level Checks](#creating-custom-dataset-level-checks) for details on how to create custom dataset-level checks.
 
