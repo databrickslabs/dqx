@@ -88,14 +88,25 @@ def test_observer_metrics_before_action(ws, spark, apply_checks_method):
 
     if apply_checks_method == DQEngine.apply_checks:
         checks = deserialize_checks(TEST_CHECKS)
-        _, observation = dq_engine.apply_checks(test_df, checks)
+        checked_df, observation = dq_engine.apply_checks(test_df, checks)
     elif apply_checks_method == DQEngine.apply_checks_by_metadata:
-        _, observation = dq_engine.apply_checks_by_metadata(test_df, TEST_CHECKS)
+        checked_df, observation = dq_engine.apply_checks_by_metadata(test_df, TEST_CHECKS)
     else:
         raise ValueError("Invalid 'apply_checks_method' used for testing observable metrics.")
 
-    actual_metrics = observation.get
-    assert actual_metrics == {}
+    # Read metrics BEFORE any action — must be empty.
+    assert observation.get == {}
+    # Trigger the action so Spark Connect can complete the observation's lifecycle and
+    # release server-side state. Leaving the attached DataFrame GC'd without executing
+    # it has been observed to destabilize the shared session for subsequent tests.
+    checked_df.count()
+    assert observation.get == {
+        "input_row_count": 4,
+        "error_row_count": 1,
+        "warning_row_count": 1,
+        "valid_row_count": 2,
+        "check_metrics": TEST_CHECK_METRICS_VALUE,
+    }
 
 
 @pytest.mark.parametrize("apply_checks_method", [DQEngine.apply_checks, DQEngine.apply_checks_by_metadata])
