@@ -165,7 +165,11 @@ class DQEngineCore(DQEngineCoreBase):
             ref_dfs,
             rule_set_fingerprint=rule_set_fingerprint,
         )
-        observed_result = self._observe_metrics(result_df)
+
+        # Duplicate check names are intentionally preserved — if two rules share a name,
+        # check_metrics will report each occurrence separately so the user can spot the overlap.
+        check_names = [check.name for check in checks]
+        observed_result = self._observe_metrics(result_df, check_names)
 
         if isinstance(observed_result, tuple):
             observed_df, observation = observed_result
@@ -519,12 +523,15 @@ class DQEngineCore(DQEngineCoreBase):
 
         return result_df
 
-    def _observe_metrics(self, df: DataFrame) -> DataFrame | tuple[DataFrame, Observation]:
+    def _observe_metrics(
+        self, df: DataFrame, check_names: list[str] | None = None
+    ) -> DataFrame | tuple[DataFrame, Observation]:
         """
         Adds Spark observable metrics to the input DataFrame.
 
         Args:
             df: Input DataFrame
+            check_names: Optional list of check names to include per-check metrics.
 
         Returns:
             The unmodified DataFrame with observed metrics and the corresponding Spark Observation
@@ -532,7 +539,7 @@ class DQEngineCore(DQEngineCoreBase):
         if not self.observer:
             return df
 
-        metric_exprs = [F.expr(metric_statement) for metric_statement in self.observer.metrics]
+        metric_exprs = [F.expr(m) for m in self.observer.get_metrics(check_names)]
         if not metric_exprs:
             return df
 
