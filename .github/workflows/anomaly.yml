@@ -57,7 +57,7 @@ jobs:
           EOF
 
       - name: Run anomaly integration tests
-        uses: databrickslabs/sandbox/acceptance@3313d06ce86227537b3f37f5974f7eecb2a8e59a # acceptance/v0.4.4
+        uses: databrickslabs/sandbox/acceptance@83461e5dd7021feabb1a9ca3ee10d6f46b72092a # acceptance/v0.4.6
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
           timeout: 3h
@@ -72,8 +72,6 @@ jobs:
           MLFLOW_REGISTRY_URI: databricks-uc
           MLFLOW_HTTP_REQUEST_TIMEOUT: "600"
           MLFLOW_HTTP_REQUEST_MAX_RETRIES: "9"
-          PYTEST_ADDOPTS: "-n 4"  # reduce contention, default is 10
-
       - name: Merge coverage reports and convert them to XML
         run: make combine-coverage
 
@@ -116,7 +114,7 @@ jobs:
           EOF
 
       - name: Run anomaly integration tests on serverless cluster
-        uses: databrickslabs/sandbox/acceptance@3313d06ce86227537b3f37f5974f7eecb2a8e59a # acceptance/v0.4.4
+        uses: databrickslabs/sandbox/acceptance@83461e5dd7021feabb1a9ca3ee10d6f46b72092a # acceptance/v0.4.6
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
           timeout: 3h
@@ -132,8 +130,6 @@ jobs:
           MLFLOW_REGISTRY_URI: databricks-uc
           MLFLOW_HTTP_REQUEST_TIMEOUT: "600"
           MLFLOW_HTTP_REQUEST_MAX_RETRIES: "9"
-          PYTEST_ADDOPTS: "-n 4"  # reduce contention, default is 10
-
       - name: Merge coverage reports and convert them to XML
         run: make combine-coverage
 
