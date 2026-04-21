@@ -27,7 +27,10 @@ jobs:
       - run: echo "Not a fork PR, proceeding"
 
   ci:
-    needs: not-a-fork
+    # Use a job-level `if:` instead of `needs: not-a-fork` so that for fork PRs the matrix
+    # still expands and each leaf (ci (3.10), ci (3.11), ci (3.12)) reports its own
+    # "skipped" status.
+    if: github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork
     strategy:
       fail-fast: false
       matrix:
@@ -48,6 +51,16 @@ jobs:
 
       - name: Run unit tests
         run: make test
+
+      # Publish unit test coverage only from the 3.12 leg to avoid duplicate
+      # uploads. Codecov merges unit + integration reports via the `flags`
+      # dimension; acceptance.yml publishes the integration coverage.
+      - name: Publish unit test coverage
+        if: matrix.pyVersion == '3.12'
+        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
+        with:
+          use_oidc: true
+          flags: unit
 
   fmt:
     needs: not-a-fork
