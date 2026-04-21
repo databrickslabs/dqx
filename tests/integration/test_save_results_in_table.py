@@ -247,7 +247,6 @@ def test_save_results_in_table_in_user_installation_quarantine_table_provided(
     assertDataFrameEqual(quarantine_df, quarantine_df_loaded, checkRowOrder=False)
 
 
-
 def test_save_results_in_table_in_user_installation_missing_output_and_quarantine_table(
     ws, spark, installation_ctx, make_schema, make_random
 ):
