@@ -1,0 +1,33 @@
+name: 'Pre-build DQX wheel'
+description: >
+  Builds the DQX wheel once per CI job and exports the absolute path as DQX_PREBUILT_WHEEL. 
+  Tests that use PrebuiltWheels copy this artifact instead of running `pip wheel` per-test, 
+  which avoids JFrog auth failures after the 1h OIDC token TTL expires mid-suite.
+runs:
+  using: "composite"
+  steps:
+    - name: Build wheel
+      shell: bash
+      run: |
+        # Bump version per CI run so cluster library installs and pip caches
+        # don't reuse stale bytes. Delegate the scheme to blueprint so it
+        # matches what blueprint would compute per-test
+        NEW_VERSION="$(UV_FROZEN=1 uv run --quiet python -c '
+        from databricks.labs.blueprint.wheels import ProductInfo
+        from databricks.labs.dqx.config import WorkspaceConfig
+        print(ProductInfo.from_class(WorkspaceConfig).version())
+        ')"
+        test -n "$NEW_VERSION" || { echo "failed to compute unreleased version"; exit 1; }
+
+        VERSION_FILE="src/databricks/labs/dqx/__about__.py"
+        sed -i "s/^__version__ = .*/__version__ = \"${NEW_VERSION}\"/" "$VERSION_FILE"
+
+        make build
+
+        # Restore so later steps see a clean tree
+        git checkout -- "$VERSION_FILE"
+
+        WHEEL_PATH="$(find dist -maxdepth 1 -name '*.whl' -print -quit)"
+        test -n "$WHEEL_PATH" || { echo "no wheel produced in dist/"; ls -la dist/; exit 1; }
+
+        printf '%s=%s\n' 'DQX_PREBUILT_WHEEL' "$PWD/$WHEEL_PATH" >> "$GITHUB_ENV"
