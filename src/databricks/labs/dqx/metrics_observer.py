@@ -81,23 +81,56 @@ class DQMetricsObserver:
         """
         return self.id_overwrite or str(uuid4())
 
-    @cached_property
-    def metrics(self) -> list[str]:
+    def get_metrics(self, check_names: list[str] | None = None) -> list[str]:
         """
         Gets the observer metrics as Spark SQL expressions.
 
+        Args:
+            check_names: Optional list of check names from the applied quality rules.
+                When provided, a per-check breakdown (``check_metrics``) is included.
+
         Returns:
-            A list of Spark SQL expressions defining the observer metrics (both default and custom).
+            A list of Spark SQL expressions defining the observer metrics (default, per-check, and custom).
         """
-        default_metrics = [
+        metrics = [
             "count(1) as input_row_count",
             f"count(case when {self._error_column_name} is not null then 1 end) as error_row_count",
             f"count(case when {self._warning_column_name} is not null then 1 end) as warning_row_count",
             f"count(case when {self._error_column_name} is null and {self._warning_column_name} is null then 1 end) as valid_row_count",
         ]
+        if check_names:
+            metrics.append(self._build_check_metrics_expr(check_names))
         if self.custom_metrics:
-            default_metrics.extend(self.custom_metrics)
-        return default_metrics
+            metrics.extend(self.custom_metrics)
+        return metrics
+
+    def _build_check_metrics_expr(self, check_names: list[str]) -> str:
+        """Build a single SQL expression that produces a JSON-serialized check_metrics value.
+
+        The metric is stored as one row with metric_name ``check_metrics`` and
+        metric_value containing a JSON array of structs::
+
+            [{"check_name": "my_check", "error_count": 5, "warning_count": 2}, ...]
+
+        Args:
+            check_names: List of check names to include in the expression.
+
+        Returns:
+            A Spark SQL expression string aliased as ``check_metrics``.
+        """
+        elements: list[str] = []
+        for check_name in check_names:
+            check_name_escaped = check_name.replace("'", "''")
+            err = self._error_column_name
+            warn = self._warning_column_name
+            elements.append(
+                f"named_struct("
+                f"'check_name', '{check_name_escaped}', "
+                f"'error_count', count(case when exists({err}, x -> x.name = '{check_name_escaped}') then 1 end), "
+                f"'warning_count', count(case when exists({warn}, x -> x.name = '{check_name_escaped}') then 1 end)"
+                f")"
+            )
+        return f"to_json(array({', '.join(elements)})) as check_metrics"
 
     @property
     def observation(self) -> Observation:
