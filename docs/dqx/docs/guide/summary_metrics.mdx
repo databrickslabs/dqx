@@ -12,7 +12,7 @@ DQX provides comprehensive functionality to capture and store aggregate statisti
 
 ## Overview
 
-Summary metrics in DQX capture both **built-in metrics** (automatically calculated) and **custom metrics** (user-defined SQL expressions) during data quality checking. These metrics are collected using Spark's built-in [Observation](https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/api/pyspark.sql.Observation.html) functionality and can be persisted to tables for historical analysis.
+Summary metrics in DQX capture **built-in metrics** (automatically calculated), **per-check metrics** (error and warning counts broken down by check name), and **custom metrics** (user-defined SQL expressions) during data quality checking. These metrics are collected using Spark's built-in [Observation](https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/api/pyspark.sql.Observation.html) functionality and can be persisted to tables for historical analysis.
 
 ### Built-in Metrics
 
@@ -24,6 +24,40 @@ DQX automatically captures the following built-in metrics for every data quality
 | `error_row_count`        | `int`                                           | Number of rows that failed error-level checks                       |
 | `warning_row_count`      | `int`                                           | Number of rows that triggered warning-level checks                  |
 | `valid_row_count`        | `int`                                           | Number of rows that passed all checks (have no errors and warnings) |
+| `check_metrics`          | `string` (JSON)                                 | Per-check breakdown of error and warning counts, stored as a JSON array of structs: `[{"check_name": "...", "error_count": N, "warning_count": N}, ...]`. Automatically included when checks are applied. |
+
+### Per-Check Metrics
+
+When checks are applied, DQX automatically includes a `check_metrics` metric that provides a per-check breakdown of error and warning counts. This makes it possible to identify which specific checks are failing without querying the row-level `_errors` and `_warnings` columns.
+
+The `check_metrics` value is a JSON-serialized array of structs, with one entry per check:
+
+```json
+[
+  {"check_name": "id_is_not_null", "error_count": 5, "warning_count": 0},
+  {"check_name": "name_is_not_null_and_not_empty", "error_count": 0, "warning_count": 3}
+]
+```
+
+Each entry contains:
+- `check_name` — the name of the check (either explicitly set via `name` in the rule definition, or auto-derived from the check function and arguments)
+- `error_count` — number of rows where this check triggered an error
+- `warning_count` — number of rows where this check triggered a warning
+
+When persisted to the metrics table, `check_metrics` is stored as a single row with `metric_name = 'check_metrics'` and `metric_value` containing the JSON string. You can parse it with Spark's `from_json` or `json_tuple` functions for analysis:
+
+```sql
+SELECT
+  run_id,
+  check.check_name,
+  check.error_count,
+  check.warning_count
+FROM main.analytics.dq_metrics
+LATERAL VIEW explode(
+  from_json(metric_value, 'array<struct<check_name:string,error_count:bigint,warning_count:bigint>>')
+) AS check
+WHERE metric_name = 'check_metrics'
+```
 
 ### Custom Metrics
 
@@ -82,6 +116,7 @@ Metrics are not directly accessible from the returned Spark Observation when dat
     print(f"Error row count: {metrics['error_row_count']}")
     print(f"Warning row count: {metrics['warning_row_count']}")
     print(f"Valid row count: {metrics['valid_row_count']}")
+    print(f"Check metrics: {metrics['check_metrics']}")  # per-check error/warning counts as JSON
     ```
   </TabItem>
 </Tabs>
@@ -368,6 +403,7 @@ Pass custom metrics as Spark SQL expressions when creating the `DQMetricsObserve
     print(f"Error row count: {metrics['error_row_count']}")
     print(f"Warning row count: {metrics['warning_row_count']}")
     print(f"Valid row count: {metrics['valid_row_count']}")
+    print(f"Check metrics: {metrics['check_metrics']}")  # per-check error/warning counts as JSON
     print(f"Total check errors: {metrics['total_check_errors']}")
     print(f"Total check warnings: {metrics['total_check_warnings']}")
     ```
@@ -438,7 +474,7 @@ Summary metrics can be written and centralized in a delta table. The metrics tab
 | `checks_location`     | `STRING`              | Location where checks are stored (table name or file path), if known.                                                                                                                                                                                                                                                                                                    |
 | `rule_set_fingerprint`| `STRING`              | SHA-256 fingerprint of the rule set used for this run. Enables correlation with checks storage and results. Populated automatically when applying checks or saving results.                                                                                                                                                                                              |
 | `metric_name`         | `STRING`              | Name of the metric (e.g., 'input_row_count').                                                                                                                                                                                                                                                                                                                            |
-| `metric_value`        | `STRING`              | Value of the metric (stored as string).                                                                                                                                                                                                                                                                                                                                  |
+| `metric_value`        | `STRING`              | Value of the metric. All values are stored as strings — numeric metrics (e.g. `input_row_count`) are string-encoded integers, and `check_metrics` is a JSON string: `[{"check_name": "...", "error_count": N, "warning_count": N}, ...]`. Cast to the appropriate type when querying (e.g. `CAST(metric_value AS INT)` for counts, or parse JSON for `check_metrics`).    |
 | `run_time`            | `TIMESTAMP`           | Run timestamp when the summary metrics were calculated.                                                                                                                                                                                                                                                                                                                  |
 | `error_column_name`   | `STRING`              | Name of the error column in the output or quarantine table containing per row quality checking results (default: '_errors').                                                                                                                                                                                                                                             |
 | `warning_column_name` | `STRING`              | Name of the warning column in the output or quarantine table containing per row quality checking results (default: '_warnings').                                                                                                                                                                                                                                         |
