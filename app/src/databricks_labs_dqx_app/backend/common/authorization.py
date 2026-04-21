@@ -1,5 +1,5 @@
 import logging
-from enum import StrEnum
+from enum import Enum
 from typing import Annotated
 
 from fastapi import Depends, Header, HTTPException, status
@@ -7,7 +7,7 @@ from fastapi import Depends, Header, HTTPException, status
 logger = logging.getLogger(__name__)
 
 
-class UserRole(StrEnum):
+class UserRole(str, Enum):
     ADMIN = "admin"
     RULE_APPROVER = "rule_approver"
     RULE_AUTHOR = "rule_author"

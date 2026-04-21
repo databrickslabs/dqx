@@ -7,6 +7,7 @@ import logging
 from unittest.mock import create_autospec
 
 import pytest
+
 from databricks_labs_dqx_app.backend.cache import CacheFactory
 from databricks_labs_dqx_app.backend.config import AppConfig
 from databricks_labs_dqx_app.backend.dependencies import get_obo_ws

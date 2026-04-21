@@ -77,6 +77,35 @@ docs-clean:
 	rm -rf docs/dqx/build docs/dqx/.docusaurus docs/dqx/.cache
 	find docs/dqx/docs/reference/api -mindepth 1 -not -name 'index.mdx' -exec rm -rf {} +
 
+app-install:
+	yarn --cwd app install --frozen-lockfile
+
+app-build: app-install
+	cd app && \
+	  UV_BUILD_CONSTRAINT=$(CURDIR)/app/.build-constraints.txt \
+	  UV_REQUIRE_HASHES=1 \
+	  $(UV_RUN) apx build
+
+app-start-dev: app-build
+	cd app && $(UV_RUN) apx dev start
+
+app-stop-dev:
+	cd app && $(UV_RUN) apx dev stop
+
+# Regenerate app lockfiles (uv.lock, .build-constraints.txt) and
+# scrub private-proxy URLs so the committed files resolve against whatever
+# registry the install environment is configured for (JFrog in CI, public in fork PRs).
+lock-app-dependencies: export UV_FROZEN := 0
+lock-app-dependencies:
+	rm -f app/bun.lock app/package-lock.json
+	yarn --cwd app install
+	perl -ni -e 'print unless /^  resolved /' app/yarn.lock
+	cd app && uv lock --exclude-newer "7 days"
+	perl -pi -e 's|registry = "https://[^"]*"|registry = "https://pypi.org/simple"|g' app/uv.lock
+	$(UV_RUN) --group yq tomlq -r '.["build-system"].requires[]' app/pyproject.toml | \
+	  uv pip compile --generate-hashes --universal --no-header - > app/build-constraints-new.txt
+	mv app/build-constraints-new.txt app/.build-constraints.txt
+
 # Sync fork PR to branch in main repo for CI testing (acceptance/anomaly/perf run on non-fork PRs).
 # Usage: make fork-sync PR=123
 fork-sync:
@@ -95,4 +124,4 @@ lock-dependencies:
 	perl -pi -e 's|registry = "https://[^"]*"|registry = "https://pypi.org/simple"|g' uv.lock
 
 .DEFAULT: all
-.PHONY: all clean dev lint fmt test integration e2e perf anomaly coverage combine-coverage docs-build docs-serve-dev docs-install docs-serve docs-clean fork-sync build lock-dependencies
+.PHONY: all clean dev lint fmt test integration e2e perf anomaly coverage combine-coverage docs-build docs-serve-dev docs-install docs-serve docs-clean app-install app-build app-start-dev app-stop-dev fork-sync build lock-dependencies lock-app-dependencies

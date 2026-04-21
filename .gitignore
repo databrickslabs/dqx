@@ -184,3 +184,10 @@ docs/dqx/docs/reference/api
 
 # app specific - unignore the lib folder
 !app/src/databricks_labs_dqx_app/ui/lib/
+
+# Only yarn.lock is committed for the app — bun.lock and package-lock.json pin
+# absolute registry URLs into every entry, which breaks builds on runners that
+# can only reach JFrog. yarn.lock (v1) is registry-agnostic (URLs stripped in
+# `make app-lock`). Use `make app-install` / `make app-build`.
+app/bun.lock
+app/package-lock.json
