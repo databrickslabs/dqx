@@ -1358,7 +1358,7 @@ def foreign_key(
         negate: If True, the condition is negated (i.e., the check fails when the foreign key values exist in the
             reference DataFrame/Table). If False, the check fails when the foreign key values do not exist in the reference.
         row_filter: Optional SQL expression for filtering rows before checking the foreign key. Auto-injected from the check filter.
-        null_safe: If True use check NULL foreign key values to match NULL references values.
+        null_safe: If True, checks NULL foreign key values to match NULL reference values.
             If False, skips NULL values in the foreign key columns. False is a default.
 
     Returns:
