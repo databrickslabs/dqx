@@ -90,7 +90,8 @@ app-start-dev: app-build
 	cd app && $(UV_RUN) apx dev start
 
 app-stop-dev:
-	cd app && $(UV_RUN) apx dev stop
+	-cd app && $(UV_RUN) apx dev stop
+	-pkill -f "$(CURDIR)/app/node_modules/.bin/vite"
 
 # Regenerate app lockfiles (uv.lock, .build-constraints.txt) and
 # scrub private-proxy URLs so the committed files resolve against whatever
