@@ -254,7 +254,6 @@ function UnifiedRulesPage() {
   const [dryRunResult, setDryRunResult] = useState<DryRunResultsOut | null>(null);
   const [dryRunJobRunId, setDryRunJobRunId] = useState<number | null>(null);
   const [dryRunRunId, setDryRunRunId] = useState<string | null>(null);
-  const [dryRunViewFqn, setDryRunViewFqn] = useState<string | null>(null);
 
   const submitDryRunMutation = useSubmitDryRun();
   // submitMutation replaced by direct submitRuleForApproval calls
@@ -265,12 +264,9 @@ function UnifiedRulesPage() {
 
   const fetchDryRunStatus = useCallback(async () => {
     if (!dryRunRunId || dryRunJobRunId === null) throw new Error("No active run");
-    const resp = await getDryRunStatus(dryRunRunId, {
-      job_run_id: dryRunJobRunId,
-      view_fqn: dryRunViewFqn ?? undefined,
-    });
+    const resp = await getDryRunStatus(dryRunRunId);
     return resp.data;
-  }, [dryRunRunId, dryRunJobRunId, dryRunViewFqn]);
+  }, [dryRunRunId, dryRunJobRunId]);
 
   const dryRunPolling = useJobPolling({
     fetchStatus: fetchDryRunStatus,
@@ -291,7 +287,6 @@ function UnifiedRulesPage() {
         toast.error(`Dry run failed: ${status.message || "Unknown error"}`);
       }
       setDryRunJobRunId(null);
-      setDryRunViewFqn(null);
     },
     onError: () => {
       toast.error("Failed to check dry run status");
@@ -459,7 +454,6 @@ function UnifiedRulesPage() {
       });
       setDryRunRunId(resp.data.run_id);
       setDryRunJobRunId(resp.data.job_run_id);
-      setDryRunViewFqn(resp.data.view_fqn);
       toast.info("Dry run submitted — waiting for results...");
     } catch (err) {
       const axErr = err as { response?: { data?: { detail?: string } } };

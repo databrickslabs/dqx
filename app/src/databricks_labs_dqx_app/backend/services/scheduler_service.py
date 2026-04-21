@@ -318,6 +318,7 @@ class SchedulerService:
                 run_id = f"{run_id_prefix}_{i}"
                 is_sql_check = table_fqn.startswith(_SQL_CHECK_PREFIX)
 
+                sql_query: str | None = None
                 if is_sql_check:
                     sql_query = self._extract_sql_query(entry["checks"])
                     if not sql_query:
@@ -331,7 +332,7 @@ class SchedulerService:
                     "is_sql_check": is_sql_check,
                 }
 
-                if is_sql_check:
+                if sql_query is not None:
                     config["sql_query"] = sql_query
 
                 self._ws.jobs.run_now(

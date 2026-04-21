@@ -1179,10 +1179,7 @@ function ActiveRunRow({
 
     const poll = async () => {
       try {
-        const resp = await getDryRunStatus(run.run_id, {
-          job_run_id: run.job_run_id,
-          view_fqn: run.view_fqn,
-        });
+        const resp = await getDryRunStatus(run.run_id);
         if (cancelled) return;
         setStatus(resp.data);
         setPollError(false);

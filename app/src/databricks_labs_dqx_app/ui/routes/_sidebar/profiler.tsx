@@ -288,13 +288,10 @@ function ProfilerPage() {
   // ── Single-table polling ────────────────────────────────────────────────────
   const fetchStatus = useCallback(async () => {
     if (!runId || jobRunId === null) throw new Error("No active run");
-    const resp = await getProfileRunStatus(runId, {
-      job_run_id: jobRunId,
-      view_fqn: viewFqn ?? undefined,
-    });
+    const resp = await getProfileRunStatus(runId);
     if (startedAt) setElapsedSeconds(Math.round((Date.now() - startedAt) / 1000));
     return resp.data;
-  }, [runId, jobRunId, startedAt, viewFqn]);
+  }, [runId, jobRunId, startedAt]);
 
   const polling = useJobPolling({
     fetchStatus,
@@ -339,10 +336,7 @@ function ProfilerPage() {
       const updates: Partial<ActiveBatchRun>[] = await Promise.all(
         activeRuns.map(async (run) => {
           try {
-            const resp = await getProfileRunStatus(run.runId, {
-              job_run_id: run.jobRunId,
-              view_fqn: run.viewFqn,
-            });
+            const resp = await getProfileRunStatus(run.runId);
             const status: RunStatusOut = resp.data;
             const isTerminal = status.state === "TERMINATED" || status.state === "INTERNAL_ERROR" || status.state === "SKIPPED";
             if (!isTerminal) return { runId: run.runId };
