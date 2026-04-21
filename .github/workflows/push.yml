@@ -148,4 +148,5 @@ jobs:
         working-directory: .
 
       - name: Run TypeScript and Python checks
-        run: uv run apx dev check
+        run: make app-check
+        working-directory: .

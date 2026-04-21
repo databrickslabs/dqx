@@ -522,6 +522,7 @@ export interface ProfilerConfig {
   sample_seed?: ProfilerConfigSampleSeed;
   limit?: number;
   filter?: ProfilerConfigFilter;
+  criticality?: string;
   llm_primary_key_detection?: boolean;
   max_null_ratio?: ProfilerConfigMaxNullRatio;
   max_empty_ratio?: ProfilerConfigMaxEmptyRatio;

@@ -93,6 +93,9 @@ app-stop-dev:
 	-cd app && $(UV_RUN) apx dev stop
 	-pkill -f "$(CURDIR)/app/node_modules/.bin/vite"
 
+app-check:
+	cd app && $(UV_RUN) apx dev check
+
 # Regenerate app lockfiles (uv.lock, .build-constraints.txt) and
 # scrub private-proxy URLs so the committed files resolve against whatever
 # registry the install environment is configured for (JFrog in CI, public in fork PRs).
@@ -125,4 +128,4 @@ lock-dependencies:
 	perl -pi -e 's|registry = "https://[^"]*"|registry = "https://pypi.org/simple"|g' uv.lock
 
 .DEFAULT: all
-.PHONY: all clean dev lint fmt test integration e2e perf anomaly coverage combine-coverage docs-build docs-serve-dev docs-install docs-serve docs-clean app-install app-build app-start-dev app-stop-dev fork-sync build lock-dependencies lock-app-dependencies
+.PHONY: all clean dev lint fmt test integration e2e perf anomaly coverage combine-coverage docs-build docs-serve-dev docs-install docs-serve docs-clean app-install app-build app-start-dev app-stop-dev app-check fork-sync build lock-dependencies lock-app-dependencies
