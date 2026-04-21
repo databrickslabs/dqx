@@ -588,7 +588,7 @@ function ProfilerPage() {
       <div className="space-y-2">
         <PageBreadcrumb items={[{ label: "Create Rules", to: "/rules/create" }]} page="Profile & Generate" />
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Data Profiler</h1>
+          <h1 className="text-2xl font-bold tracking-tight">Profile & Generate</h1>
           <p className="text-muted-foreground">
             Profile tables to generate data quality rule suggestions based on data distribution.
           </p>
@@ -680,7 +680,7 @@ function ProfilerPage() {
                 <Play className="h-4 w-4" />
                 {selectedTables.length > 1
                   ? `Run ${selectedTables.length} Tables`
-                  : "Run Profiler"}
+                  : "Run Profile"}
               </Button>
             )}
           </div>

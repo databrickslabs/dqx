@@ -50,6 +50,8 @@ export function useJobPolling({
   const onCompleteRef = useRef(onComplete);
   const onErrorRef = useRef(onError);
   const fetchStatusRef = useRef(fetchStatus);
+  const consecutiveErrorsRef = useRef(0);
+  const MAX_CONSECUTIVE_ERRORS = 5;
 
   // Keep refs up to date
   onCompleteRef.current = onComplete;
@@ -69,6 +71,7 @@ export function useJobPolling({
       const result = await fetchStatusRef.current();
       setStatus(result);
       setError(null);
+      consecutiveErrorsRef.current = 0;
 
       if (TERMINAL_STATES.has(result.state)) {
         stopPolling();
@@ -76,8 +79,25 @@ export function useJobPolling({
       }
     } catch (err) {
       const e = err instanceof Error ? err : new Error(String(err));
+      consecutiveErrorsRef.current += 1;
       setError(e);
       onErrorRef.current?.(e);
+
+      if (consecutiveErrorsRef.current >= MAX_CONSECUTIVE_ERRORS) {
+        stopPolling();
+        setStatus({
+          run_id: "",
+          state: "TERMINATED",
+          result_state: "FAILED",
+          message: `Polling stopped after ${MAX_CONSECUTIVE_ERRORS} consecutive errors: ${e.message}`,
+        });
+        onCompleteRef.current?.({
+          run_id: "",
+          state: "TERMINATED",
+          result_state: "FAILED",
+          message: e.message,
+        });
+      }
     }
   }, [stopPolling]);
 

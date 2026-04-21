@@ -201,7 +201,12 @@ def get_profile_run_status(
     try:
         meta = get_run_metadata(job_svc, app_conf, _PROFILER_TABLE, run_id)
         if meta.job_run_id is None:
-            raise HTTPException(status_code=404, detail=f"No job_run_id found for run_id={run_id}")
+            return RunStatusOut(
+                run_id=run_id,
+                state="TERMINATED",
+                result_state="FAILED",
+                message="Run metadata is missing job_run_id. The run may have been created before tracking was enabled.",
+            )
 
         status = job_svc.get_run_status(meta.job_run_id)
         view_cleaned_up = False
@@ -263,7 +268,15 @@ def cancel_profile_run(
         if meta.requesting_user and meta.requesting_user != canceling_user:
             raise HTTPException(status_code=403, detail="You can only cancel your own runs")
         if meta.job_run_id is None:
-            raise HTTPException(status_code=404, detail=f"No job_run_id found for run_id={run_id}")
+            update_run_status(
+                job_svc,
+                app_conf,
+                _PROFILER_TABLE,
+                run_id,
+                status="FAILED",
+                error_message="Run metadata missing job_run_id; marked as failed.",
+            )
+            return {"status": "canceled", "run_id": run_id}
 
         job_svc.cancel_run(meta.job_run_id)
         update_run_status(
