@@ -43,6 +43,9 @@ jobs:
       - name: Setup environment
         uses: ./.github/actions/setup-env
 
+      - name: Pre-build DQX wheel
+        uses: ./.github/actions/prebuild-wheel
+
       # Create .coveragerc with correct relative path to source code.
       - name: Prepare code coverage configuration for anomaly tests
         run: |
@@ -54,7 +57,7 @@ jobs:
           EOF
 
       - name: Run anomaly integration tests
-        uses: databrickslabs/sandbox/acceptance@3313d06ce86227537b3f37f5974f7eecb2a8e59a # acceptance/v0.4.4
+        uses: databrickslabs/sandbox/acceptance@83461e5dd7021feabb1a9ca3ee10d6f46b72092a # acceptance/v0.4.6
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
           timeout: 3h
@@ -68,17 +71,16 @@ jobs:
           MLFLOW_TRACKING_URI: databricks
           MLFLOW_REGISTRY_URI: databricks-uc
           MLFLOW_HTTP_REQUEST_TIMEOUT: "600"
-          MLFLOW_HTTP_REQUEST_MAX_RETRIES: "10"
-
+          MLFLOW_HTTP_REQUEST_MAX_RETRIES: "9"
       - name: Merge coverage reports and convert them to XML
         run: make combine-coverage
 
-      # Recursively search the entire workspace directory for all coverage reports.
-      # All uploaded test coverage reports will be used even if publish is done multiple time.
       - name: Publish test coverage
         uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
         with:
           use_oidc: true
+          files: coverage-combined.xml
+          flags: anomaly
 
   anomaly-tests-serverless:
     needs: not-a-fork
@@ -98,6 +100,9 @@ jobs:
       - name: Setup environment
         uses: ./.github/actions/setup-env
 
+      - name: Pre-build DQX wheel
+        uses: ./.github/actions/prebuild-wheel
+
       # Create .coveragerc with correct relative path to source code.
       - name: Prepare code coverage configuration for anomaly tests
         run: |
@@ -109,7 +114,7 @@ jobs:
           EOF
 
       - name: Run anomaly integration tests on serverless cluster
-        uses: databrickslabs/sandbox/acceptance@3313d06ce86227537b3f37f5974f7eecb2a8e59a # acceptance/v0.4.4
+        uses: databrickslabs/sandbox/acceptance@83461e5dd7021feabb1a9ca3ee10d6f46b72092a # acceptance/v0.4.6
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
           timeout: 3h
@@ -124,13 +129,13 @@ jobs:
           MLFLOW_TRACKING_URI: databricks
           MLFLOW_REGISTRY_URI: databricks-uc
           MLFLOW_HTTP_REQUEST_TIMEOUT: "600"
-          MLFLOW_HTTP_REQUEST_MAX_RETRIES: "10"
-
+          MLFLOW_HTTP_REQUEST_MAX_RETRIES: "9"
       - name: Merge coverage reports and convert them to XML
         run: make combine-coverage
 
-      # collects all coverage reports
       - name: Publish test coverage
         uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
         with:
           use_oidc: true
+          files: coverage-combined.xml
+          flags: anomaly-serverless
