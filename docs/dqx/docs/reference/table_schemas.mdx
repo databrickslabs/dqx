@@ -115,8 +115,8 @@ Summary metrics are optional. When enabled (see [Summary Metrics](/docs/guide/su
 | `quarantine_location`  | STRING               | Quarantine table location, if used.                                         |
 | `checks_location`      | STRING               | Where checks were loaded from (table or file).                              |
 | `rule_set_fingerprint` | STRING               | SHA-256 hash of the rule set; links to checks table.                        |
-| `metric_name`          | STRING               | Metric name (e.g. `input_row_count`, `error_row_count`).                    |
-| `metric_value`         | STRING               | Metric value (stored as string).                                            |
+| `metric_name`          | STRING               | Metric name (e.g. `input_row_count`, `error_row_count`, `check_metrics`).   |
+| `metric_value`         | STRING               | All values are stored as strings. Numeric metrics are string-encoded integers (cast with `CAST(metric_value AS INT)`). For `check_metrics`, this is a JSON string: `[{"check_name": "...", "error_count": N, "warning_count": N}, ...]`. |
 | `run_time`             | TIMESTAMP            | When the run completed / check applied.                                     |
 | `error_column_name`    | STRING               | Name of the error column (default: `_errors`).                              |
 | `warning_column_name`  | STRING               | Name of the warning column (default: `_warnings`).                          |

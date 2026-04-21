@@ -263,7 +263,7 @@ Use [Google Style Python Docstrings](https://sphinxcontrib-napoleon.readthedocs.
 
 | Need | Import | Usage |
 |---|---|---|
-| Module logger | `import logging` | `logger = logging.getLogger(__name__)` |
+| Module logger | `import logging` | `logger = logging.getLogger(__name__)`; use f-strings for log messages (e.g. `logger.warning(f"value={x}")`), not `%`-style args |
 | CLI entrypoint logger | `blueprint.entrypoint.get_logger` | `logger = get_logger(__file__)` |
 | Package logger setup | `blueprint.logger.install_logger` | call once in `__init__.py` |
 | Parallel tasks | `blueprint.parallel.Threads` | `Threads.strict("label", tasks)` |
