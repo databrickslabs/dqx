@@ -7,7 +7,6 @@ from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.compute import Environment
 from databricks.sdk.service.jobs import JobEnvironment, JobSettings
 from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
 
 from ._scheduler_registry import get_scheduler, set_scheduler
 from .config import conf
@@ -88,6 +87,8 @@ def _read_remote_hash(sp_ws: WorkspaceClient, volume_path: str) -> str | None:
     marker = f"{volume_path}/.wheels_hash"
     try:
         resp = sp_ws.files.download(marker)
+        if resp.contents is None:
+            return None
         return resp.contents.read().decode().strip()
     except Exception:
         return None
@@ -213,9 +214,13 @@ async def lifespan(app: FastAPI):
                 )
                 set_scheduler(_scheduler)
                 _scheduler.start()
-                logger.info("Scheduler background task started (job_id=%s, warehouse=%s)",
-                            conf.job_id,
-                            os.environ.get("DATABRICKS_WAREHOUSE_ID") or os.environ.get("DATABRICKS_SQL_WAREHOUSE_ID") or "(empty)")
+                logger.info(
+                    "Scheduler background task started (job_id=%s, warehouse=%s)",
+                    conf.job_id,
+                    os.environ.get("DATABRICKS_WAREHOUSE_ID")
+                    or os.environ.get("DATABRICKS_SQL_WAREHOUSE_ID")
+                    or "(empty)",
+                )
             except Exception as e:
                 logger.warning("Could not start scheduler: %s", e, exc_info=True)
     else:

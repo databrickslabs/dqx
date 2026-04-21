@@ -27,7 +27,7 @@ _SQL_CHECK_PREFIX = "__sql_check__/"
 
 
 def _display_name(fqn: str) -> str:
-    return fqn[len(_SQL_CHECK_PREFIX):] if fqn.startswith(_SQL_CHECK_PREFIX) else fqn
+    return fqn[len(_SQL_CHECK_PREFIX) :] if fqn.startswith(_SQL_CHECK_PREFIX) else fqn
 
 
 def _entry_to_out(entry) -> RuleCatalogEntryOut:

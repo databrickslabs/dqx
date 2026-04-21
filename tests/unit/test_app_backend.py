@@ -39,7 +39,7 @@ from databricks_labs_dqx_app.backend.routes.v1.profiler import (
 )
 from databricks_labs_dqx_app.backend.routes.v1.rules import (
     approve_rules,
-    delete_rules,
+    delete_rule,
     get_rules,
     list_rules,
     reject_rules,
@@ -58,11 +58,12 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 from databricks.labs.dqx.checks_validator import ChecksValidationStatus
+from databricks.labs.dqx.errors import UnsafeSqlQueryError
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import ResourceDoesNotExist
 from databricks.sdk.service.catalog import CatalogInfo, ColumnInfo as CatalogColumnInfo, SchemaInfo, TableInfo
 from databricks.sdk.service.iam import User
-from databricks.sdk.service.jobs import Run, RunLifeCycleState, RunResultState
+from databricks.sdk.service.jobs import Run, RunLifeCycleState, RunResultState, RunState
 from databricks.sdk.service.sql import (
     ColumnInfo as SQLColumnInfo,
     ResultData,
@@ -557,16 +558,6 @@ class TestRulesCatalogService:
     def svc(self, ws):
         return RulesCatalogService(ws=ws, warehouse_id="wh-123", catalog="cat", schema="sch")
 
-    # ---------- ensure_table ----------
-
-    def test_ensure_table_executes_create(self, svc, ws):
-        """Should execute a CREATE TABLE IF NOT EXISTS statement."""
-        ws.statement_execution.execute_statement.return_value = _ok_response()
-        svc.ensure_table()
-        sql_arg = ws.statement_execution.execute_statement.call_args.kwargs["statement"]
-        assert "CREATE TABLE IF NOT EXISTS" in sql_arg
-        assert "cat.sch.dq_quality_rules" in sql_arg
-
     # ---------- get ----------
 
     def test_get_returns_entry_when_found(self, svc, ws):
@@ -607,27 +598,27 @@ class TestRulesCatalogService:
 
     # ---------- save ----------
 
-    def test_save_returns_entry_from_get(self, svc, ws):
-        """After MERGE, should re-read and return the persisted entry."""
+    def test_save_returns_created_entries(self, svc, ws):
+        """save should insert a new row per check and return the created entries."""
         ws.statement_execution.execute_statement.side_effect = [
-            _ok_response(),  # MERGE
+            _ok_response(),  # find_duplicates → list_rules_for_table (empty)
+            _ok_response(),  # INSERT rule row
             _ok_response(),  # _record_history INSERT
-            _ok_response([_SAMPLE_ROW]),  # GET after save
         ]
-        entry = svc.save("catalog.schema.table", _SAMPLE_CHECKS, "alice@example.com")
-        assert entry.table_fqn == "catalog.schema.table"
+        entries = svc.save("catalog.schema.table", _SAMPLE_CHECKS, "alice@example.com")
+        assert len(entries) == 1
+        assert entries[0].table_fqn == "catalog.schema.table"
+        assert entries[0].version == 1
+        assert entries[0].status == "draft"
+        assert entries[0].rule_id is not None
 
-    def test_save_returns_fallback_when_get_is_none(self, svc, ws):
-        """Should return a constructed entry if the re-read returns nothing."""
-        ws.statement_execution.execute_statement.side_effect = [
-            _ok_response(),  # MERGE
-            _ok_response(),  # _record_history INSERT
-            _ok_response(),  # GET returns empty
-        ]
-        entry = svc.save("c.s.t", _SAMPLE_CHECKS, "alice@example.com")
-        assert entry.table_fqn == "c.s.t"
-        assert entry.version == 1
-        assert entry.status == "draft"
+    def test_save_raises_when_all_duplicates(self, svc, ws):
+        """save should raise ValueError when every submitted check is already present."""
+        existing_row = list(_SAMPLE_ROW)
+        ws.statement_execution.execute_statement.return_value = _ok_response([existing_row])
+
+        with pytest.raises(ValueError, match="Duplicate rules cannot be created"):
+            svc.save("catalog.schema.table", _SAMPLE_CHECKS, "alice@example.com")
 
     # ---------- delete ----------
 
@@ -649,18 +640,19 @@ class TestRulesCatalogService:
         pending_row[3] = "pending_approval"
 
         ws.statement_execution.execute_statement.side_effect = [
-            _ok_response([draft_row]),  # get (before)
+            _ok_response([draft_row]),  # get_by_rule_id (before)
+            _ok_response([draft_row]),  # _check_no_duplicate_pending_or_approved → list_rules_for_table
             _ok_response(),  # UPDATE
             _ok_response(),  # _record_history INSERT
-            _ok_response([pending_row]),  # get (after)
+            _ok_response([pending_row]),  # get_by_rule_id (after)
         ]
-        entry = svc.set_status("catalog.schema.table", "pending_approval", "alice@example.com")
+        entry = svc.set_status("rule-1", "pending_approval", "alice@example.com")
         assert entry.status == "pending_approval"
 
     def test_set_status_rejects_invalid_status(self, svc, ws):
         """Should raise ValueError for an unknown status value."""
         with pytest.raises(ValueError, match="Invalid status"):
-            svc.set_status("c.s.t", "unknown_status", "a@b.com")
+            svc.set_status("rule-1", "unknown_status", "a@b.com")
 
     def test_set_status_rejects_invalid_transition(self, svc, ws):
         """Should raise ValueError when the transition is not allowed."""
@@ -669,13 +661,13 @@ class TestRulesCatalogService:
         ws.statement_execution.execute_statement.return_value = _ok_response([draft_row])
 
         with pytest.raises(ValueError, match="Cannot transition"):
-            svc.set_status("catalog.schema.table", "approved", "a@b.com")
+            svc.set_status("rule-1", "approved", "a@b.com")
 
     def test_set_status_raises_when_not_found(self, svc, ws):
-        """Should raise RuntimeError when no rule set exists for the table."""
+        """Should raise RuntimeError when the rule_id does not exist."""
         ws.statement_execution.execute_statement.return_value = _ok_response()
-        with pytest.raises(RuntimeError, match="Rule set not found"):
-            svc.set_status("no.such.table", "pending_approval", "a@b.com")
+        with pytest.raises(RuntimeError, match="Rule not found"):
+            svc.set_status("missing-rule", "pending_approval", "a@b.com")
 
     def test_set_status_version_conflict(self, svc, ws):
         """Should raise RuntimeError when expected_version doesn't match."""
@@ -685,7 +677,7 @@ class TestRulesCatalogService:
         ws.statement_execution.execute_statement.return_value = _ok_response([draft_row])
 
         with pytest.raises(RuntimeError, match="Version conflict"):
-            svc.set_status("catalog.schema.table", "pending_approval", "a@b.com", expected_version=1)
+            svc.set_status("rule-1", "pending_approval", "a@b.com", expected_version=1)
 
     def test_set_status_detects_concurrent_modification(self, svc, ws):
         """Should raise RuntimeError when the re-read shows the update didn't take effect."""
@@ -695,13 +687,14 @@ class TestRulesCatalogService:
         still_draft[3] = "draft"
 
         ws.statement_execution.execute_statement.side_effect = [
-            _ok_response([draft_row]),  # get (before)
+            _ok_response([draft_row]),  # get_by_rule_id (before)
+            _ok_response([draft_row]),  # _check_no_duplicate_pending_or_approved → list_rules_for_table
             _ok_response(),  # UPDATE
             _ok_response(),  # _record_history INSERT
-            _ok_response([still_draft]),  # get (after) — status unchanged
+            _ok_response([still_draft]),  # get_by_rule_id (after) — status unchanged
         ]
         with pytest.raises(RuntimeError, match="did not take effect"):
-            svc.set_status("catalog.schema.table", "pending_approval", "a@b.com")
+            svc.set_status("rule-1", "pending_approval", "a@b.com")
 
     # ---------- _execute / _query error handling ----------
 
@@ -709,7 +702,7 @@ class TestRulesCatalogService:
         """Should raise RuntimeError when the SQL statement fails."""
         ws.statement_execution.execute_statement.return_value = _failed_response("syntax error")
         with pytest.raises(RuntimeError, match="SQL execution failed: syntax error"):
-            svc.ensure_table()
+            svc.backfill_rule_ids()
 
     def test_query_raises_on_sql_failure(self, svc, ws):
         """Should raise RuntimeError when a query fails."""
@@ -719,31 +712,47 @@ class TestRulesCatalogService:
 
 
 class TestRulesCatalogServiceRowConversion:
-    """Unit tests for RulesCatalogService._row_to_entry edge cases."""
+    """Unit tests for edge-case row parsing via the public list_rules_for_table API."""
 
     @pytest.fixture
-    def svc(self):
+    def ws(self):
         mock_ws = create_autospec(WorkspaceClient)
-        return RulesCatalogService(ws=mock_ws, warehouse_id="wh", catalog="cat", schema="sch")
+        return mock_ws
 
-    def test_row_to_entry_handles_missing_checks(self, svc):
-        """Should return empty checks list when checks column is empty."""
+    @pytest.fixture
+    def svc(self, ws):
+        return RulesCatalogService(ws=ws, warehouse_id="wh", catalog="cat", schema="sch")
+
+    def test_empty_checks_column_yields_empty_list(self, svc, ws):
+        """Rows with an empty checks column should produce entries with checks=[]."""
         row = ["c.s.t", "", "1", "draft", None, None, None, None]
-        entry = svc.row_to_entry(row)
-        assert entry.checks == []
-        assert entry.version == 1
+        ws.statement_execution.execute_statement.return_value = _ok_response([row])
 
-    def test_row_to_entry_handles_missing_version(self, svc):
-        """Should default to version 1 when version column is empty."""
+        entries = svc.list_rules_for_table("c.s.t")
+
+        assert len(entries) == 1
+        assert entries[0].checks == []
+        assert entries[0].version == 1
+
+    def test_empty_version_column_defaults_to_one(self, svc, ws):
+        """Rows with an empty version column should default to version 1."""
         row = ["c.s.t", "[]", "", "draft", None, None, None, None]
-        entry = svc.row_to_entry(row)
-        assert entry.version == 1
+        ws.statement_execution.execute_statement.return_value = _ok_response([row])
 
-    def test_row_to_entry_handles_missing_status(self, svc):
-        """Should default to 'draft' when status column is None."""
+        entries = svc.list_rules_for_table("c.s.t")
+
+        assert len(entries) == 1
+        assert entries[0].version == 1
+
+    def test_null_status_column_defaults_to_draft(self, svc, ws):
+        """Rows with a NULL status column should default to 'draft'."""
         row = ["c.s.t", "[]", "1", None, None, None, None, None]
-        entry = svc.row_to_entry(row)
-        assert entry.status == "draft"
+        ws.statement_execution.execute_statement.return_value = _ok_response([row])
+
+        entries = svc.list_rules_for_table("c.s.t")
+
+        assert len(entries) == 1
+        assert entries[0].status == "draft"
 
 
 # ============================================================================
@@ -790,12 +799,13 @@ class TestRulesRoutesRead:
         assert exc.value.status_code == 500
 
     def test_get_rules_found(self, mock_svc, sample_entry):
-        mock_svc.get.return_value = sample_entry
+        mock_svc.list_rules_for_table.return_value = [sample_entry]
         result = get_rules(table_fqn="catalog.schema.table", svc=mock_svc)
-        assert result.table_fqn == "catalog.schema.table"
+        assert len(result) == 1
+        assert result[0].table_fqn == "catalog.schema.table"
 
     def test_get_rules_not_found(self, mock_svc):
-        mock_svc.get.return_value = None
+        mock_svc.list_rules_for_table.return_value = []
         with pytest.raises(HTTPException) as exc:
             get_rules(table_fqn="no.such.table", svc=mock_svc)
         assert exc.value.status_code == 404
@@ -831,10 +841,11 @@ class TestRulesRoutesWrite:
         )
 
     def test_save_rules_success(self, mock_svc, mock_obo_ws, sample_entry):
-        mock_svc.save.return_value = sample_entry
+        mock_svc.save.return_value = [sample_entry]
         body = SaveRulesIn(table_fqn="catalog.schema.table", checks=_SAMPLE_CHECKS)
         result = save_rules(body=body, svc=mock_svc, obo_ws=mock_obo_ws)
-        assert result.version == 1
+        assert len(result) == 1
+        assert result[0].version == 1
         mock_svc.save.assert_called_once_with("catalog.schema.table", _SAMPLE_CHECKS, "alice@example.com", source="ui")
 
     def test_save_rules_500_on_error(self, mock_svc, mock_obo_ws):
@@ -845,49 +856,49 @@ class TestRulesRoutesWrite:
         assert exc.value.status_code == 500
 
     def test_delete_rules_success(self, mock_svc, mock_obo_ws):
-        result = delete_rules(table_fqn="c.s.t", svc=mock_svc, obo_ws=mock_obo_ws)
+        result = delete_rule(rule_id="rule-1", svc=mock_svc, obo_ws=mock_obo_ws)
         assert result["status"] == "deleted"
-        mock_svc.delete.assert_called_once_with("c.s.t", "alice@example.com")
+        mock_svc.delete.assert_called_once_with("rule-1", "alice@example.com")
 
     def test_submit_for_approval_success(self, mock_svc, mock_obo_ws, sample_entry):
         sample_entry.status = "pending_approval"
         mock_svc.set_status.return_value = sample_entry
-        result = submit_for_approval(table_fqn="c.s.t", svc=mock_svc, obo_ws=mock_obo_ws, body=None)
+        result = submit_for_approval(rule_id="rule-1", svc=mock_svc, obo_ws=mock_obo_ws, body=None)
         assert result.status == "pending_approval"
-        mock_svc.set_status.assert_called_once_with("c.s.t", "pending_approval", "alice@example.com", None)
+        mock_svc.set_status.assert_called_once_with("rule-1", "pending_approval", "alice@example.com", None)
 
     def test_submit_for_approval_with_expected_version(self, mock_svc, mock_obo_ws, sample_entry):
         sample_entry.status = "pending_approval"
         mock_svc.set_status.return_value = sample_entry
         body = SetStatusIn(status="pending_approval", expected_version=3)
-        submit_for_approval(table_fqn="c.s.t", svc=mock_svc, obo_ws=mock_obo_ws, body=body)
-        mock_svc.set_status.assert_called_once_with("c.s.t", "pending_approval", "alice@example.com", 3)
+        submit_for_approval(rule_id="rule-1", svc=mock_svc, obo_ws=mock_obo_ws, body=body)
+        mock_svc.set_status.assert_called_once_with("rule-1", "pending_approval", "alice@example.com", 3)
 
     def test_submit_returns_400_on_value_error(self, mock_svc, mock_obo_ws):
         mock_svc.set_status.side_effect = ValueError("bad transition")
         with pytest.raises(HTTPException) as exc:
-            submit_for_approval(table_fqn="c.s.t", svc=mock_svc, obo_ws=mock_obo_ws, body=None)
+            submit_for_approval(rule_id="rule-1", svc=mock_svc, obo_ws=mock_obo_ws, body=None)
         assert exc.value.status_code == 400
 
     def test_submit_returns_409_on_runtime_error(self, mock_svc, mock_obo_ws):
         mock_svc.set_status.side_effect = RuntimeError("version conflict")
         with pytest.raises(HTTPException) as exc:
-            submit_for_approval(table_fqn="c.s.t", svc=mock_svc, obo_ws=mock_obo_ws, body=None)
+            submit_for_approval(rule_id="rule-1", svc=mock_svc, obo_ws=mock_obo_ws, body=None)
         assert exc.value.status_code == 409
 
     def test_approve_rules_success(self, mock_svc, mock_obo_ws, sample_entry):
         sample_entry.status = "approved"
         mock_svc.set_status.return_value = sample_entry
-        result = approve_rules(table_fqn="c.s.t", svc=mock_svc, obo_ws=mock_obo_ws, body=None)
+        result = approve_rules(rule_id="rule-1", svc=mock_svc, obo_ws=mock_obo_ws, body=None)
         assert result.status == "approved"
-        mock_svc.set_status.assert_called_once_with("c.s.t", "approved", "alice@example.com", None)
+        mock_svc.set_status.assert_called_once_with("rule-1", "approved", "alice@example.com", None)
 
     def test_reject_rules_success(self, mock_svc, mock_obo_ws, sample_entry):
         sample_entry.status = "rejected"
         mock_svc.set_status.return_value = sample_entry
-        result = reject_rules(table_fqn="c.s.t", svc=mock_svc, obo_ws=mock_obo_ws, body=None)
+        result = reject_rules(rule_id="rule-1", svc=mock_svc, obo_ws=mock_obo_ws, body=None)
         assert result.status == "rejected"
-        mock_svc.set_status.assert_called_once_with("c.s.t", "rejected", "alice@example.com", None)
+        mock_svc.set_status.assert_called_once_with("rule-1", "rejected", "alice@example.com", None)
 
 
 # ============================================================================
@@ -1246,7 +1257,7 @@ class TestViewService:
 
         calls = ws.statement_execution.execute_statement.call_args_list  # type: ignore[attr-defined]
         sql_stmts = [c.kwargs["statement"] for c in calls]
-        assert any("CREATE OR REPLACE VIEW" in s and "cat.sch.src_table" in s for s in sql_stmts)
+        assert any("CREATE OR REPLACE VIEW" in s and "`cat`.`sch`.`src_table`" in s for s in sql_stmts)
 
     def test_create_view_adds_limit_clause_when_sample_limit_given(self, svc: ViewService, ws: WorkspaceClient) -> None:
         """create_view with sample_limit should append LIMIT to the SQL."""
@@ -1273,7 +1284,7 @@ class TestViewService:
 
         sql = ws.statement_execution.execute_statement.call_args.kwargs["statement"]  # type: ignore[attr-defined]
         assert "DROP VIEW IF EXISTS" in sql
-        assert "cat.sch.tmp_view_abc" in sql
+        assert "`cat`.`sch`.`tmp_view_abc`" in sql
 
     def test_drop_view_does_not_raise_on_failure(self, svc: ViewService, ws: WorkspaceClient) -> None:
         """drop_view is best-effort — failures should be swallowed."""
@@ -1328,16 +1339,14 @@ class TestViewService:
 
     def test_create_view_from_sql_rejects_multiple_statements(self, svc: ViewService, ws: WorkspaceClient) -> None:
         """Queries containing DDL like DROP should be rejected."""
-        from databricks.labs.dqx.errors import UnsafeSqlQueryError
 
         with pytest.raises(UnsafeSqlQueryError):
             svc.create_view_from_sql("SELECT 1; DROP TABLE cat.sch.important")
 
     def test_create_view_from_sql_rejects_ddl(self, svc: ViewService, ws: WorkspaceClient) -> None:
         """Queries containing standalone DDL keywords should be rejected."""
-        from databricks.labs.dqx.errors import UnsafeSqlQueryError
 
-        for ddl in [
+        for ddl in (
             "DROP TABLE cat.sch.t",
             "DELETE FROM cat.sch.t WHERE 1=1",
             "INSERT INTO cat.sch.t VALUES (1)",
@@ -1345,20 +1354,18 @@ class TestViewService:
             "TRUNCATE TABLE cat.sch.t",
             "ALTER TABLE cat.sch.t ADD COLUMNS (x INT)",
             "GRANT SELECT ON cat.sch.t TO `user`",
-        ]:
+        ):
             with pytest.raises(UnsafeSqlQueryError, match="prohibited"):
                 svc.create_view_from_sql(ddl)
 
     def test_create_view_from_sql_rejects_comment_escaped_ddl(self, svc: ViewService, ws: WorkspaceClient) -> None:
         """Queries with forbidden keywords inside comments should still be rejected."""
-        from databricks.labs.dqx.errors import UnsafeSqlQueryError
 
         with pytest.raises(UnsafeSqlQueryError):
             svc.create_view_from_sql("SELECT 1 /* delete trick */")
 
     def test_create_view_from_sql_does_not_execute_on_unsafe(self, svc: ViewService, ws: WorkspaceClient) -> None:
         """When is_sql_query_safe rejects the query, no SQL should be executed."""
-        from databricks.labs.dqx.errors import UnsafeSqlQueryError
 
         with pytest.raises(UnsafeSqlQueryError):
             svc.create_view_from_sql("SELECT 1; DROP TABLE cat.sch.important")
@@ -1651,19 +1658,23 @@ class TestProfilerRoutes:
 
         assert exc.value.status_code == 500
 
-    def test_get_profile_run_status_returns_status_out(
-        self, mock_job_svc: JobService, mock_view_svc: ViewService
-    ) -> None:
+    def test_get_profile_run_status_returns_status_out(self, mock_view_svc: ViewService) -> None:
         """get_profile_run_status should map JobService.get_run_status to RunStatusOut."""
-        mock_job_svc.get_run_status.return_value = RunStatus(  # type: ignore[attr-defined]
-            state="TERMINATED", result_state="SUCCESS", message=None
+        mock_ws = create_autospec(WorkspaceClient)
+        mock_ws.statement_execution.execute_statement.return_value = _ok_response([["", "", "99999"]])
+        mock_ws.jobs.get_run.return_value = Run(
+            state=RunState(
+                life_cycle_state=RunLifeCycleState.TERMINATED,
+                result_state=RunResultState.SUCCESS,
+                state_message=None,
+            )
         )
+        job_svc = JobService(ws=mock_ws, job_id="", catalog="cat", schema="sch", warehouse_id="wh")
 
         app_conf = AppConfig(catalog="cat", schema_name="sch", job_id="")
         result = get_profile_run_status(
             run_id="run-001",
-            job_run_id=99999,
-            job_svc=mock_job_svc,
+            job_svc=job_svc,
             view_svc=mock_view_svc,
             app_conf=app_conf,
         )
@@ -1672,19 +1683,20 @@ class TestProfilerRoutes:
         assert result.run_id == "run-001"
         assert result.state == "TERMINATED"
         assert result.result_state == "SUCCESS"
+        mock_ws.jobs.get_run.assert_called_once_with(99999)
 
-    def test_get_profile_run_status_raises_500_on_error(
-        self, mock_job_svc: JobService, mock_view_svc: ViewService
-    ) -> None:
+    def test_get_profile_run_status_raises_500_on_error(self, mock_view_svc: ViewService) -> None:
         """get_profile_run_status should raise HTTP 500 when the job service errors."""
-        mock_job_svc.get_run_status.side_effect = RuntimeError("jobs api error")  # type: ignore[attr-defined]
+        mock_ws = create_autospec(WorkspaceClient)
+        mock_ws.statement_execution.execute_statement.return_value = _ok_response([["", "", "99999"]])
+        mock_ws.jobs.get_run.side_effect = RuntimeError("jobs api error")
+        job_svc = JobService(ws=mock_ws, job_id="", catalog="cat", schema="sch", warehouse_id="wh")
 
         app_conf = AppConfig(catalog="cat", schema_name="sch", job_id="")
         with pytest.raises(HTTPException) as exc:
             get_profile_run_status(
                 run_id="run-001",
-                job_run_id=99999,
-                job_svc=mock_job_svc,
+                job_svc=job_svc,
                 view_svc=mock_view_svc,
                 app_conf=app_conf,
             )
@@ -1837,17 +1849,23 @@ class TestDryRunRoutes:
 
         assert exc.value.status_code == 500
 
-    def test_get_dry_run_status_returns_status_out(self, mock_job_svc: JobService, mock_view_svc: ViewService) -> None:
+    def test_get_dry_run_status_returns_status_out(self, mock_view_svc: ViewService) -> None:
         """get_dry_run_status should map JobService status to RunStatusOut."""
-        mock_job_svc.get_run_status.return_value = RunStatus(  # type: ignore[attr-defined]
-            state="RUNNING", result_state=None, message="Executing"
+        mock_ws = create_autospec(WorkspaceClient)
+        mock_ws.statement_execution.execute_statement.return_value = _ok_response([["", "", "88888"]])
+        mock_ws.jobs.get_run.return_value = Run(
+            state=RunState(
+                life_cycle_state=RunLifeCycleState.RUNNING,
+                result_state=None,
+                state_message="Executing",
+            )
         )
+        job_svc = JobService(ws=mock_ws, job_id="", catalog="cat", schema="sch", warehouse_id="wh")
 
         app_conf = AppConfig(catalog="cat", schema_name="sch", job_id="")
         result = get_dry_run_status(
             run_id="run-001",
-            job_run_id=88888,
-            job_svc=mock_job_svc,
+            job_svc=job_svc,
             view_svc=mock_view_svc,
             app_conf=app_conf,
         )
@@ -1855,17 +1873,20 @@ class TestDryRunRoutes:
         assert isinstance(result, RunStatusOut)
         assert result.state == "RUNNING"
         assert result.message == "Executing"
+        mock_ws.jobs.get_run.assert_called_once_with(88888)
 
-    def test_get_dry_run_status_raises_500_on_error(self, mock_job_svc: JobService, mock_view_svc: ViewService) -> None:
+    def test_get_dry_run_status_raises_500_on_error(self, mock_view_svc: ViewService) -> None:
         """get_dry_run_status should raise HTTP 500 when the job service errors."""
-        mock_job_svc.get_run_status.side_effect = RuntimeError("api error")  # type: ignore[attr-defined]
+        mock_ws = create_autospec(WorkspaceClient)
+        mock_ws.statement_execution.execute_statement.return_value = _ok_response([["", "", "88888"]])
+        mock_ws.jobs.get_run.side_effect = RuntimeError("api error")
+        job_svc = JobService(ws=mock_ws, job_id="", catalog="cat", schema="sch", warehouse_id="wh")
 
         app_conf = AppConfig(catalog="cat", schema_name="sch", job_id="")
         with pytest.raises(HTTPException) as exc:
             get_dry_run_status(
                 run_id="run-001",
-                job_run_id=88888,
-                job_svc=mock_job_svc,
+                job_svc=job_svc,
                 view_svc=mock_view_svc,
                 app_conf=app_conf,
             )

@@ -97,14 +97,9 @@ class RulesCatalogService:
         dup_sigs = {self._check_signature(d) for d in duplicates}
         non_dup_checks = [c for c in checks if self._check_signature(c) not in dup_sigs]
         if not non_dup_checks:
-            raise ValueError(
-                "All submitted checks already exist for this table. "
-                "Duplicate rules cannot be created."
-            )
+            raise ValueError("All submitted checks already exist for this table. " "Duplicate rules cannot be created.")
         if duplicates:
-            logger.info(
-                "Skipped %d duplicate check(s) for table %s", len(duplicates), table_fqn
-            )
+            logger.info("Skipped %d duplicate check(s) for table %s", len(duplicates), table_fqn)
 
         now = datetime.now(timezone.utc).isoformat()
         e_email = escape_sql_string(user_email)
@@ -169,7 +164,9 @@ class RulesCatalogService:
             f"WHERE rule_id = '{e_rule_id}'"
         )
         self._execute(sql)
-        self._record_history(entry.table_fqn, checks_json, entry.version + 1, entry.source, user_email, now, "update", rule_id)
+        self._record_history(
+            entry.table_fqn, checks_json, entry.version + 1, entry.source, user_email, now, "update", rule_id
+        )
         logger.info("Updated rule %s (table %s)", rule_id, entry.table_fqn)
         return self.get_by_rule_id(rule_id) or entry
 
@@ -238,13 +235,24 @@ class RulesCatalogService:
         rows = self._query(sql)
         return [self._row_to_entry(row) for row in rows]
 
-    _IDENTITY_ARGS = frozenset({
-        "column", "columns", "col_name",
-        "expression", "msg", "query",
-        "allowed", "not_allowed",
-        "limit", "min_limit", "max_limit",
-        "regex", "date_format", "timestamp_format",
-    })
+    _IDENTITY_ARGS = frozenset(
+        {
+            "column",
+            "columns",
+            "col_name",
+            "expression",
+            "msg",
+            "query",
+            "allowed",
+            "not_allowed",
+            "limit",
+            "min_limit",
+            "max_limit",
+            "regex",
+            "date_format",
+            "timestamp_format",
+        }
+    )
 
     @classmethod
     def _check_signature(cls, check: dict[str, Any]) -> str:
@@ -259,13 +267,14 @@ class RulesCatalogService:
         inner = check.get("check", check)
         fn = inner.get("function", "")
         raw_args = inner.get("arguments", {})
-        identity_args = {
-            k: v for k, v in raw_args.items() if k in cls._IDENTITY_ARGS
-        }
+        identity_args = {k: v for k, v in raw_args.items() if k in cls._IDENTITY_ARGS}
         return json.dumps({"function": fn, "arguments": identity_args}, sort_keys=True).lower()
 
     def find_duplicates(
-        self, table_fqn: str, checks: list[dict[str, Any]], exclude_rule_id: str | None = None,
+        self,
+        table_fqn: str,
+        checks: list[dict[str, Any]],
+        exclude_rule_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """Return checks from *checks* that already exist as non-rejected rules for *table_fqn*.
 
@@ -362,14 +371,18 @@ class RulesCatalogService:
             f"WHERE rule_id = '{e_id}'{version_guard}"
         )
         self._execute(sql)
-        self._record_history(entry.table_fqn, None, entry.version, entry.source, user_email, now, f"status:{status}", rule_id)
+        self._record_history(
+            entry.table_fqn, None, entry.version, entry.source, user_email, now, f"status:{status}", rule_id
+        )
         logger.info("Updated status for rule %s to %s (by %s)", rule_id, status, user_email)
 
         updated = self.get_by_rule_id(rule_id)
         if updated is None:
             raise RuntimeError(f"Rule not found after status update: {rule_id}")
         if updated.status != status:
-            raise RuntimeError(f"Status update for rule {rule_id} did not take effect — the row may have been modified concurrently.")
+            raise RuntimeError(
+                f"Status update for rule {rule_id} did not take effect — the row may have been modified concurrently."
+            )
         return updated
 
     def set_status_by_table(

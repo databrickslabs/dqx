@@ -107,7 +107,10 @@ def get_run_metadata(
     Returns a RunMetadata with None fields when the run is not found.
     """
     row = _get_run_fields(
-        job_svc, app_conf, table_name, run_id,
+        job_svc,
+        app_conf,
+        table_name,
+        run_id,
         "view_fqn, requesting_user, CAST(job_run_id AS STRING)",
     )
     if row and len(row) >= 3:

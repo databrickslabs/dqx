@@ -39,8 +39,7 @@ def validate_fqn(fqn: str) -> str:
     parts = fqn.split(".")
     if len(parts) != 3:
         raise ValueError(
-            f"Invalid fully qualified name: '{fqn}'. "
-            "Expected exactly three parts: catalog.schema.table"
+            f"Invalid fully qualified name: '{fqn}'. " "Expected exactly three parts: catalog.schema.table"
         )
 
     for part in parts:

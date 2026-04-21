@@ -14,6 +14,7 @@ class VersionOut(BaseModel):
     def from_metadata(cls):
         try:
             from importlib.metadata import version as pkg_version
+
             core = pkg_version("databricks-labs-dqx")
         except Exception:
             core = "unknown"
@@ -93,7 +94,9 @@ class BatchSaveRulesOut(BaseModel):
 class CheckDuplicatesIn(BaseModel):
     table_fqn: str = Field(description="Fully qualified table name")
     checks: list[dict[str, Any]] = Field(description="Checks to test for duplicates")
-    exclude_rule_id: str | None = Field(default=None, description="Exclude this rule_id from duplicate check (for edits)")
+    exclude_rule_id: str | None = Field(
+        default=None, description="Exclude this rule_id from duplicate check (for edits)"
+    )
 
 
 class CheckDuplicatesOut(BaseModel):

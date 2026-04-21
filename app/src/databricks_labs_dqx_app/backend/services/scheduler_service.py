@@ -65,8 +65,9 @@ class SchedulerService:
         if self._task is not None:
             return
         self._task = asyncio.create_task(self._loop())
-        logger.info("Scheduler started (warehouse=%s, catalog=%s, schema=%s)",
-                     self._warehouse_id, self._catalog, self._schema)
+        logger.info(
+            "Scheduler started (warehouse=%s, catalog=%s, schema=%s)", self._warehouse_id, self._catalog, self._schema
+        )
 
     async def stop(self) -> None:
         """Cancel the background scheduler loop."""
@@ -140,13 +141,20 @@ class SchedulerService:
                         if old_dt is not None and old_dt != computed:
                             logger.info(
                                 "Schedule '%s' next_run_at recalculated: %s → %s",
-                                name, next_run, computed.isoformat(),
+                                name,
+                                next_run,
+                                computed.isoformat(),
                             )
                     last_run = tracker.get("last_run_at") if tracker else None
                     last_id = tracker.get("last_run_id") if tracker else None
                     last_dt = self._parse_ts(last_run) if last_run else None
                     await asyncio.to_thread(
-                        self._upsert_tracker, name, last_dt, computed, last_id, "pending",
+                        self._upsert_tracker,
+                        name,
+                        last_dt,
+                        computed,
+                        last_id,
+                        "pending",
                     )
                     if computed <= now:
                         next_run = computed.isoformat()

@@ -6,7 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from databricks_labs_dqx_app.backend.common.authorization import UserRole
-from databricks_labs_dqx_app.backend.dependencies import get_obo_ws, get_sp_ws, get_user_role, get_app_settings_service
+from databricks_labs_dqx_app.backend.dependencies import get_obo_ws, get_user_role, get_app_settings_service
 from databricks_labs_dqx_app.backend.models import InstallationSettings
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.settings import SettingsManager
