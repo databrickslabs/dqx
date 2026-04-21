@@ -528,19 +528,3 @@ class TestRouterIntegration:
         remaining = response.json()["config"]["run_configs"]
         assert len(remaining) == 1
         assert remaining[0]["name"] == "run2"
-
-    # ============= Checks Endpoints =============
-    # Note: /config/run/{name}/checks endpoints were removed during the v1 route refactoring.
-    # Checks are now managed via the /rules endpoints.
-
-    @pytest.mark.skip(reason="checks endpoints removed in v1 route refactoring")
-    def test_save_and_get_checks_roundtrip(self, api_client):
-        """Should save and retrieve checks for a run configuration via API."""
-
-    @pytest.mark.skip(reason="checks endpoints removed in v1 route refactoring")
-    def test_save_checks_for_nonexistent_run_config(self, api_client):
-        """Should return 404 when saving checks for non-existent run config."""
-
-    @pytest.mark.skip(reason="checks endpoints removed in v1 route refactoring")
-    def test_update_existing_checks(self, api_client):
-        """Should update existing checks for a run configuration."""
