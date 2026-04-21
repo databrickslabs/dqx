@@ -15,6 +15,10 @@ from tests.integration.conftest import (
 )
 
 _WORKFLOW_RULE_SET_FINGERPRINT = compute_rule_set_fingerprint_by_metadata(WORKFLOW_CHECKS)
+_WORKFLOW_CHECK_METRICS_VALUE = (
+    '[{"check_name":"id_is_not_null","error_count":1,"warning_count":0},'
+    '{"check_name":"name_is_not_null_and_not_empty","error_count":2,"warning_count":0}]'
+)
 
 
 def test_quality_checker_workflow_with_metrics(spark, setup_workflows_with_metrics, expected_quality_checking_output):
@@ -79,6 +83,21 @@ def test_quality_checker_workflow_with_metrics(spark, setup_workflows_with_metri
             "rule_set_fingerprint": _WORKFLOW_RULE_SET_FINGERPRINT,
             "metric_name": "valid_row_count",
             "metric_value": "7",
+            "run_time": RUN_TIME,
+            "error_column_name": "_errors",
+            "warning_column_name": "_warnings",
+            "user_metadata": None,
+        },
+        {
+            "run_id": RUN_ID,
+            "run_name": "dqx",
+            "input_location": run_config.input_config.location,
+            "output_location": run_config.output_config.location,
+            "quarantine_location": None,
+            "checks_location": checks_location,
+            "rule_set_fingerprint": _WORKFLOW_RULE_SET_FINGERPRINT,
+            "metric_name": "check_metrics",
+            "metric_value": _WORKFLOW_CHECK_METRICS_VALUE,
             "run_time": RUN_TIME,
             "error_column_name": "_errors",
             "warning_column_name": "_warnings",
@@ -180,6 +199,21 @@ def test_quality_checker_workflow_with_quarantine_and_metrics(
             "warning_column_name": "_warnings",
             "user_metadata": None,
         },
+        {
+            "run_id": RUN_ID,
+            "run_name": "dqx",
+            "input_location": run_config.input_config.location,
+            "output_location": run_config.output_config.location,
+            "quarantine_location": run_config.quarantine_config.location,
+            "checks_location": checks_location,
+            "rule_set_fingerprint": _WORKFLOW_RULE_SET_FINGERPRINT,
+            "metric_name": "check_metrics",
+            "metric_value": _WORKFLOW_CHECK_METRICS_VALUE,
+            "run_time": RUN_TIME,
+            "error_column_name": "_errors",
+            "warning_column_name": "_warnings",
+            "user_metadata": None,
+        },
     ]
 
     expected_metrics_df = spark.createDataFrame(expected_metrics, schema=OBSERVATION_TABLE_SCHEMA).orderBy(
@@ -257,7 +291,7 @@ def test_e2e_workflow_with_metrics(ws, spark, setup_workflows_with_metrics, expe
     )
     actual_metrics_df = (
         spark.table(run_config.metrics_config.location)
-        .where("metric_name NOT IN ('error_row_count', 'warning_row_count', 'valid_row_count')")
+        .where("metric_name NOT IN ('error_row_count', 'warning_row_count', 'valid_row_count', 'check_metrics')")
         .orderBy("metric_name")
     )
     assertDataFrameEqual(expected_metrics_df, actual_metrics_df)
@@ -379,7 +413,7 @@ def test_custom_metrics_in_workflow_for_all_run_configs(
     )
     actual_metrics_df = (
         spark.table(run_config.metrics_config.location)
-        .where("metric_name NOT IN ('error_row_count', 'warning_row_count', 'valid_row_count')")
+        .where("metric_name NOT IN ('error_row_count', 'warning_row_count', 'valid_row_count', 'check_metrics')")
         .orderBy("metric_name")
     )
     assertDataFrameEqual(expected_metrics_df, actual_metrics_df)
@@ -471,6 +505,21 @@ def test_quality_checker_workflow_with_streaming_quarantine_and_metrics(
             "rule_set_fingerprint": _WORKFLOW_RULE_SET_FINGERPRINT,
             "metric_name": "total_ids",
             "metric_value": "10",
+            "run_time": RUN_TIME,
+            "error_column_name": "_errors",
+            "warning_column_name": "_warnings",
+            "user_metadata": None,
+        },
+        {
+            "run_id": RUN_ID,
+            "run_name": "dqx",
+            "input_location": run_config.input_config.location,
+            "output_location": run_config.output_config.location,
+            "quarantine_location": run_config.quarantine_config.location,
+            "checks_location": checks_location,
+            "rule_set_fingerprint": _WORKFLOW_RULE_SET_FINGERPRINT,
+            "metric_name": "check_metrics",
+            "metric_value": _WORKFLOW_CHECK_METRICS_VALUE,
             "run_time": RUN_TIME,
             "error_column_name": "_errors",
             "warning_column_name": "_warnings",
@@ -582,6 +631,21 @@ def test_quality_checker_workflow_with_continuous_streaming_quarantine_and_metri
             "warning_column_name": "_warnings",
             "user_metadata": None,
         },
+        {
+            "run_id": RUN_ID,
+            "run_name": "dqx",
+            "input_location": run_config.input_config.location,
+            "output_location": run_config.output_config.location,
+            "quarantine_location": run_config.quarantine_config.location,
+            "checks_location": checks_location,
+            "rule_set_fingerprint": _WORKFLOW_RULE_SET_FINGERPRINT,
+            "metric_name": "check_metrics",
+            "metric_value": _WORKFLOW_CHECK_METRICS_VALUE,
+            "run_time": RUN_TIME,
+            "error_column_name": "_errors",
+            "warning_column_name": "_warnings",
+            "user_metadata": None,
+        },
     ]
 
     expected_metrics_df = (
@@ -679,6 +743,21 @@ def test_quality_checker_workflow_with_quarantine_and_metrics_for_patterns(
             "rule_set_fingerprint": _WORKFLOW_RULE_SET_FINGERPRINT,
             "metric_name": "valid_row_count",
             "metric_value": "7",
+            "run_time": RUN_TIME,
+            "error_column_name": "_errors",
+            "warning_column_name": "_warnings",
+            "user_metadata": None,
+        },
+        {
+            "run_id": RUN_ID,
+            "run_name": "dqx",
+            "input_location": run_config.input_config.location,
+            "output_location": output_location,
+            "quarantine_location": quarantine_location,
+            "checks_location": checks_location,
+            "rule_set_fingerprint": _WORKFLOW_RULE_SET_FINGERPRINT,
+            "metric_name": "check_metrics",
+            "metric_value": _WORKFLOW_CHECK_METRICS_VALUE,
             "run_time": RUN_TIME,
             "error_column_name": "_errors",
             "warning_column_name": "_warnings",

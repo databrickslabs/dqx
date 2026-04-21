@@ -60,7 +60,7 @@ def test_save_streaming_dataframe_in_table_with_cluster_by_missing_spark_config(
         logger.removeHandler(handler)
 
     result_df = spark.table(output_table_name)
-    assertDataFrameEqual(input_df, result_df)
+    assertDataFrameEqual(input_df, result_df, checkRowOrder=False)
 
 test_save_streaming_dataframe_in_table_with_cluster_by_missing_spark_config()
 
@@ -82,7 +82,7 @@ def test_save_streaming_dataframe_in_table_with_cluster_by():
     save_dataframe_as_table(streaming_input_df, output_config).awaitTermination()
 
     result_df = spark.table(output_table_name)
-    assertDataFrameEqual(input_df, result_df)
+    assertDataFrameEqual(input_df, result_df, checkRowOrder=False)
 
     table_detail = spark.sql(f"DESCRIBE DETAIL {output_table_name}").collect()[0]
     assert table_detail["clusteringColumns"] == ["a"]
