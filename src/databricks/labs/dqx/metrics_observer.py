@@ -115,7 +115,7 @@ class DQMetricsObserver:
 
         Two Spark Connect constraints drive this concat-based approach:
           * Server-side to_json on struct aggregates inside observe() has been observed
-            to fail intermittently with JsonGenerationException: 
+            to fail intermittently with JsonGenerationException:
             Can not write a field name, expecting a value.
           * LiteralExpression in pyspark.sql.connect.expressions can decode
             primitives and arrays of primitives, but not arrays of structs or arrays
