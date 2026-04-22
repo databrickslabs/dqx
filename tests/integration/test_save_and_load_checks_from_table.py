@@ -12,6 +12,7 @@ from databricks.labs.dqx.config import (
     TableChecksStorageConfig,
     InstallationChecksStorageConfig,
     BaseChecksStorageConfig,
+    ExtraParams,
 )
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.errors import InvalidConfigError, UnsafeSqlQueryError
@@ -164,7 +165,7 @@ def test_save_checks_to_table_with_unresolved_for_each_column(ws, make_schema, m
 
     expected_checks_df = spark.createDataFrame(expected_raw_checks, TEST_CHECKS_TABLE_SCHEMA)
 
-    assert_df_equality(checks_df, expected_checks_df, ignore_nullable=True)
+    assert_df_equality(checks_df.sort("name"), expected_checks_df.sort("name"), ignore_nullable=True)
 
 
 def test_load_checks_from_table_saved_from_dict_with_unresolved_for_each_column(ws, make_schema, make_random, spark):
@@ -677,3 +678,58 @@ def test_save_idempotency_overwrite_mode(ws, make_schema, make_random, spark):
 
     checks = engine.load_checks(config=TableChecksStorageConfig(location=table_name))
     assert checks == EXPECTED_CHECKS_FROM_TABLE_LOAD[1:], "Idempotency guard must prevent duplicate overwrite"
+
+
+def test_save_and_load_checks_from_table_with_variables(ws, make_schema, make_random, spark):
+    """Save checks with {{ }} placeholders resolved via engine-level + per-call variables, then load and apply."""
+    catalog_name = TEST_CATALOG
+    schema_name = make_schema(catalog_name=catalog_name).name
+    table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
+
+    checks_with_placeholders = [
+        {
+            "criticality": "{{ crit }}",
+            "name": "{{ col1 }}_null_check",
+            "check": {
+                "function": "is_not_null",
+                "arguments": {"column": "{{ col1 }}"},
+            },
+        },
+        {
+            "criticality": "warn",
+            "name": "{{ col2 }}_not_empty_check",
+            "check": {
+                "function": "is_not_null_and_not_empty",
+                "arguments": {"column": "{{ col2 }}"},
+            },
+            "filter": "{{ filter_col }} IS NOT NULL",
+        },
+    ]
+
+    # Engine-level defaults; per-call override: crit "warn" -> "error"
+    extra_params = ExtraParams(variables={"crit": "warn", "col1": "a", "col2": "b", "filter_col": "a"})
+    engine = DQEngine(ws, spark, extra_params=extra_params)
+
+    config = TableChecksStorageConfig(location=table_name)
+    engine.save_checks(checks_with_placeholders, config=config, variables={"crit": "error"})
+
+    # Load — checks are already resolved, no variables needed
+    loaded = engine.load_checks(config=config)
+
+    expected = [
+        {
+            "name": "a_null_check",
+            "criticality": "error",
+            "check": {"function": "is_not_null", "arguments": {"column": "a"}},
+        },
+        {
+            "name": "b_not_empty_check",
+            "criticality": "warn",
+            "check": {"function": "is_not_null_and_not_empty", "arguments": {"column": "b"}},
+            "filter": "a IS NOT NULL",
+        },
+    ]
+    assert loaded == expected, "Variable substitution did not resolve correctly after table roundtrip."
+
+    # Verify the resolved checks are valid and can be applied end-to-end
+    assert not engine.validate_checks(loaded).has_errors

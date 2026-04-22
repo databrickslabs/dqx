@@ -51,7 +51,7 @@ from databricks.labs.dqx.io import read_input_data, save_dataframe_as_table, get
 from databricks.labs.dqx.telemetry import telemetry_logger, log_telemetry, log_dataframe_telemetry
 from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.errors import InvalidCheckError, InvalidConfigError, InvalidParameterError
-from databricks.labs.dqx.utils import list_tables, safe_strip_file_from_path
+from databricks.labs.dqx.utils import list_tables, safe_strip_file_from_path, resolve_variables, VariableValue
 from databricks.labs.dqx.io import is_one_time_trigger
 
 logger = logging.getLogger(__name__)
@@ -165,7 +165,11 @@ class DQEngineCore(DQEngineCoreBase):
             ref_dfs,
             rule_set_fingerprint=rule_set_fingerprint,
         )
-        observed_result = self._observe_metrics(result_df)
+
+        # Duplicate check names are intentionally preserved — if two rules share a name,
+        # check_metrics will report each occurrence separately so the user can spot the overlap.
+        check_names = [check.name for check in checks]
+        observed_result = self._observe_metrics(result_df, check_names)
 
         if isinstance(observed_result, tuple):
             observed_df, observation = observed_result
@@ -338,19 +342,25 @@ class DQEngineCore(DQEngineCoreBase):
         )
 
     @staticmethod
-    def load_checks_from_local_file(filepath: str) -> list[dict]:
+    def load_checks_from_local_file(filepath: str, variables: dict[str, VariableValue] | None = None) -> list[dict]:
         """
         Load DQ rules (checks) from a local JSON or YAML file.
 
         The returned checks can be used as input to *apply_checks_by_metadata*.
 
+        **Security note:** variable values substituted into **sql_expression** checks are
+        not sanitized. Callers must ensure that variable values come from trusted sources.
+
         Args:
             filepath: Path to a file containing checks definitions.
+            variables: Optional mapping of placeholder names to replacement values. Replaces placeholders
+                in all string values of the check definitions before returning.
 
         Returns:
             List of DQ rules.
         """
-        return FileChecksStorageHandler().load(FileChecksStorageConfig(location=filepath))
+        checks = FileChecksStorageHandler().load(FileChecksStorageConfig(location=filepath))
+        return resolve_variables(checks=checks, variables=variables)
 
     @staticmethod
     def save_checks_in_local_file(checks: list[dict], filepath: str):
@@ -519,12 +529,15 @@ class DQEngineCore(DQEngineCoreBase):
 
         return result_df
 
-    def _observe_metrics(self, df: DataFrame) -> DataFrame | tuple[DataFrame, Observation]:
+    def _observe_metrics(
+        self, df: DataFrame, check_names: list[str] | None = None
+    ) -> DataFrame | tuple[DataFrame, Observation]:
         """
         Adds Spark observable metrics to the input DataFrame.
 
         Args:
             df: Input DataFrame
+            check_names: Optional list of check names to include per-check metrics.
 
         Returns:
             The unmodified DataFrame with observed metrics and the corresponding Spark Observation
@@ -532,7 +545,7 @@ class DQEngineCore(DQEngineCoreBase):
         if not self.observer:
             return df
 
-        metric_exprs = [F.expr(metric_statement) for metric_statement in self.observer.metrics]
+        metric_exprs = [F.expr(m) for m in self.observer.get_metrics(check_names)]
         if not metric_exprs:
             return df
 
@@ -572,8 +585,9 @@ class DQEngine(DQEngineBase):
     ):
         super().__init__(workspace_client)
 
+        self._extra_params = extra_params or ExtraParams()
         self.spark = SparkSession.builder.getOrCreate() if spark is None else spark
-        self._engine = engine or DQEngineCore(workspace_client, spark, extra_params, observer)
+        self._engine = engine or DQEngineCore(workspace_client, spark, self._extra_params, observer)
         self._config_serializer = config_serializer or ConfigSerializer(workspace_client)
         self._checks_handler_factory: BaseChecksStorageHandlerFactory = (
             checks_handler_factory or ChecksStorageHandlerFactory(self.ws, self.spark)
@@ -645,7 +659,9 @@ class DQEngine(DQEngineBase):
             summary metrics. Summary metrics are returned by any `DQEngine` with an `observer` specified.
         """
         log_dataframe_telemetry(self.ws, self.spark, df)
-        return self._engine.apply_checks_by_metadata(df, checks, custom_check_functions, ref_dfs)
+        return self._engine.apply_checks_by_metadata(
+            df=df, checks=checks, custom_check_functions=custom_check_functions, ref_dfs=ref_dfs
+        )
 
     @telemetry_logger("engine", "apply_checks_by_metadata_and_split")
     def apply_checks_by_metadata_and_split(
@@ -674,7 +690,9 @@ class DQEngine(DQEngineBase):
             quality summary metrics. Summary metrics are returned by any `DQEngine` with an `observer` specified.
         """
         log_dataframe_telemetry(self.ws, self.spark, df)
-        return self._engine.apply_checks_by_metadata_and_split(df, checks, custom_check_functions, ref_dfs)
+        return self._engine.apply_checks_by_metadata_and_split(
+            df=df, checks=checks, custom_check_functions=custom_check_functions, ref_dfs=ref_dfs
+        )
 
     @telemetry_logger("engine", "apply_checks_and_save_in_table")
     def apply_checks_and_save_in_table(
@@ -840,7 +858,9 @@ class DQEngine(DQEngineBase):
         quarantine_streaming_query = None
 
         if quarantine_config:
-            check_result = self.apply_checks_by_metadata_and_split(df, checks, custom_check_functions, ref_dfs)
+            check_result = self.apply_checks_by_metadata_and_split(
+                df=df, checks=checks, custom_check_functions=custom_check_functions, ref_dfs=ref_dfs
+            )
             if self._engine.observer:
                 good_df, bad_df, batch_observation = check_result
             else:
@@ -849,7 +869,9 @@ class DQEngine(DQEngineBase):
             quarantine_streaming_query = save_dataframe_as_table(bad_df, quarantine_config)
             target_streaming_query = quarantine_streaming_query
         else:
-            check_result = self.apply_checks_by_metadata(df, checks, custom_check_functions, ref_dfs)
+            check_result = self.apply_checks_by_metadata(
+                df=df, checks=checks, custom_check_functions=custom_check_functions, ref_dfs=ref_dfs
+            )
             if self._engine.observer:
                 checked_df, batch_observation = check_result
             else:
@@ -1028,7 +1050,11 @@ class DQEngine(DQEngineBase):
         Returns:
             ChecksValidationStatus indicating the validation result.
         """
-        return DQEngineCore.validate_checks(checks, custom_check_functions, validate_custom_check_functions)
+        return DQEngineCore.validate_checks(
+            checks=checks,
+            custom_check_functions=custom_check_functions,
+            validate_custom_check_functions=validate_custom_check_functions,
+        )
 
     def get_invalid(self, df: DataFrame) -> DataFrame:
         """
@@ -1161,7 +1187,9 @@ class DQEngine(DQEngineBase):
             )
 
     @telemetry_logger("engine", "load_checks")
-    def load_checks(self, config: BaseChecksStorageConfig) -> list[dict]:
+    def load_checks(
+        self, config: BaseChecksStorageConfig, variables: dict[str, VariableValue] | None = None
+    ) -> list[dict]:
         """Load DQ rules (checks) from the storage backend described by *config*.
 
         This method delegates to a storage handler selected by the factory
@@ -1176,8 +1204,16 @@ class DQEngine(DQEngineBase):
         - *InstallationChecksStorageConfig* (installation directory);
         - *VolumeFileChecksStorageConfig* (Unity Catalog volume file);
 
+        Per-call *variables* are merged with engine-level defaults from
+        *ExtraParams.variables* (per-call values take precedence on conflict).
+
+        **Security note:** variable values substituted into **sql_expression** checks are
+        not sanitized. Callers must ensure that variable values come from trusted sources.
+
         Args:
             config: Configuration object describing the storage backend.
+            variables: Optional mapping of placeholder names to replacement values. Replaces placeholders
+                in all string values of the check definitions before returning.
 
         Returns:
             List of DQ rules (checks) represented as dictionaries.
@@ -1186,10 +1222,31 @@ class DQEngine(DQEngineBase):
             InvalidConfigError: If the configuration type is unsupported.
         """
         handler = self._checks_handler_factory.create(config)
-        return handler.load(config)
+        checks = handler.load(config)
+        merged_variables = self._merge_variables(variables)
+        return resolve_variables(checks=checks, variables=merged_variables)
+
+    def _merge_variables(self, per_call: dict[str, VariableValue] | None) -> dict[str, VariableValue] | None:
+        """Merge engine-level default variables with per-call overrides.
+
+        Per-call values take precedence over engine-level defaults.
+        """
+        defaults = self._extra_params.variables
+        if not defaults and not per_call:
+            return None
+        if not defaults:
+            return per_call
+        if not per_call:
+            return defaults
+        return {**defaults, **per_call}
 
     @telemetry_logger("engine", "save_checks")
-    def save_checks(self, checks: list[dict], config: BaseChecksStorageConfig) -> None:
+    def save_checks(
+        self,
+        checks: list[dict],
+        config: BaseChecksStorageConfig,
+        variables: dict[str, VariableValue] | None = None,
+    ) -> None:
         """Persist DQ rules (checks) to the storage backend described by *config*.
 
         The appropriate storage handler is resolved from the configuration
@@ -1205,9 +1262,16 @@ class DQEngine(DQEngineBase):
         - *InstallationChecksStorageConfig* (installation directory);
         - *VolumeFileChecksStorageConfig* (Unity Catalog volume file);
 
+        Per-call *variables* are merged with engine-level defaults from
+        *ExtraParams.variables* (per-call values take precedence on conflict).
+        Variables are resolved before computing fingerprints and persisting,
+        ensuring that stored checks and their fingerprints are consistent.
+
         Args:
             checks: List of DQ rules (checks) to save (as dictionaries).
             config: Configuration object describing the storage backend and write options.
+            variables: Optional mapping of placeholder names to replacement values. Replaces placeholders
+                in all string values of the check definitions before saving.
 
         Returns:
             None
@@ -1215,8 +1279,10 @@ class DQEngine(DQEngineBase):
         Raises:
             InvalidConfigError: If the configuration type is unsupported.
         """
+        merged_variables = self._merge_variables(variables)
+        resolved_checks = resolve_variables(checks=checks, variables=merged_variables)
         handler = self._checks_handler_factory.create(config)
-        handler.save(checks, config)
+        handler.save(resolved_checks, config)
 
     @telemetry_logger("engine", "save_summary_metrics")
     def save_summary_metrics(
