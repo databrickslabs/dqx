@@ -84,7 +84,7 @@ if [ -z "$EXISTING" ]; then
 
 Original PR: ${PR_URL}
 
-All tests, including acceptance, anomaly, and performance tests, run on this PR (they are skipped for fork PRs)."
+All tests, including unit and integration tests run on this PR (they are skipped for fork PRs)."
   echo "Test PR created."
 else
   echo "Test PR already exists: #${EXISTING}"
