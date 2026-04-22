@@ -15,6 +15,8 @@ from databricks.labs.dqx.config_serializer import ConfigSerializer
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import ResourceDoesNotExist
 
+from tests.constants import TEST_CATALOG
+
 
 @pytest.fixture
 def test_app_folder(ws, make_random):
@@ -73,7 +75,7 @@ def installation_folder(ws, make_random):
 
 
 @pytest.fixture
-def api_client(ws, test_app_folder, monkeypatch):
+def api_client(ws, test_app_folder, monkeypatch, make_schema):
     """Fixture that provides a FastAPI test client with dependency overrides."""
     # Import app lazy here to avoid module-level initialization during fixture collection
     from databricks_labs_dqx_app.backend.app import app
@@ -101,14 +103,13 @@ def api_client(ws, test_app_folder, monkeypatch):
         """Override role resolution to always return ADMIN for tests."""
         return UserRole.ADMIN
 
-    from databricks_labs_dqx_app.backend.config import conf
-
     warehouse_id = os.environ.get("DATABRICKS_WAREHOUSE_ID", "")
+    test_schema = make_schema(catalog_name=TEST_CATALOG)
     _settings_svc = AppSettingsService(
         ws=ws,
         warehouse_id=warehouse_id,
-        catalog=conf.catalog,
-        schema=conf.schema_name,
+        catalog=TEST_CATALOG,
+        schema=test_schema.name,
     )
     _settings_svc.ensure_table()
 
