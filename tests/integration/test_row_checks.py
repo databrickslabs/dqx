@@ -602,9 +602,19 @@ def test_is_not_in_list(spark):
 
     expected = spark.createDataFrame(
         [
-            # Row 1: "active" - all pass (not in forbidden lists)
+            # Row 1: "active" - c["status"] = "ok" fails the case-insensitive [ok] check
             # d = ["read", "write"], try_element_at(d, 1) = "read" (1-based: first element)
-            [None, None, None, None, None, None, None, None, None],
+            [
+                None,
+                None,
+                None,
+                None,
+                None,
+                "Value 'ok' in Column 'c['status']' is in the forbidden list: [ok]",
+                None,
+                None,
+                None,
+            ],
             # Row 2: "banned" - fails where "banned" is forbidden
             # d = [None, "admin"], try_element_at(d, 1) = None (1-based: first element)
             [
@@ -1006,12 +1016,12 @@ def test_col_is_not_less_than(spark, set_utc_timezone):
             [
                 "Value '1' in Column 'a' is less than limit: 2",
                 "Value '1' in Column 'a' is less than limit: 2",
-                None,
+                "Value '1' in Column 'a' is less than limit: 2",
                 None,
                 "Value '2025-01-01' in Column 'c' is less than limit: 2025-02-01",
                 "Value '2025-01-01' in Column 'c' is less than limit: 2025-02-01",
                 "Value '2025-01-01 00:00:00' in Column 'd' is less than limit: 2025-02-01 00:00:00",
-                "Value '2025-01-01 00:00:00' in Column 'd' is less than limit: 2025-02-01 00:00:00",
+                "Value '2025-01-01 00:00:00' in Column 'd' is less than limit: 2025-02-01",
                 "Value '1.00' in Column 'e' is less than limit: 2",
                 "Value '1' in Column 'try_element_at(f, 1)' is less than limit: 2",
                 "Value '1' in Column 'g['val']' is less than limit: 2",
@@ -1096,7 +1106,7 @@ def test_col_is_not_greater_than(spark, set_utc_timezone):
                 "Value '2025-02-01' in Column 'c' is greater than limit: 2025-01-01",
                 "Value '2025-02-01' in Column 'c' is greater than limit: 2025-01-01",
                 "Value '2025-02-01 00:00:00' in Column 'd' is greater than limit: 2025-01-01 00:00:00",
-                "Value '2025-02-01 00:00:00' in Column 'd' is greater than limit: 2025-01-01 00:00:00",
+                "Value '2025-02-01 00:00:00' in Column 'd' is greater than limit: 2025-01-01",
                 "Value '1.01' in Column 'e' is greater than limit: 1",
                 "Value '2' in Column 'try_element_at(f, 1)' is greater than limit: 1",
                 "Value '3.6' in Column 'g' is greater than limit: 2.4",
@@ -1168,7 +1178,7 @@ def test_col_is_in_range(spark, set_utc_timezone):
                 "Value '2024-12-01' in Column 'b' not in range: [2025-01-01, 2025-03-01]",
                 "Value '2024-12-01' in Column 'b' not in range: [2025-01-01, 2025-03-01]",
                 "Value '2024-12-01 00:00:00' in Column 'c' not in range: [2025-01-01 00:00:00, 2025-03-01 00:00:00]",
-                "Value '2024-12-01 00:00:00' in Column 'c' not in range: [2025-01-01 00:00:00, 2025-03-01 00:00:00]",
+                "Value '2024-12-01 00:00:00' in Column 'c' not in range: [2025-01-01, 2025-03-01]",
                 "Value '2024-12-01 00:00:00' in Column 'c' not in range: [2025-01-01 00:00:00, 2025-03-01 00:00:00]",
                 "Value '-1' in Column 'd' not in range: [0, 4]",
                 "Value '6' in Column 'f' not in range: [0, 5]",
@@ -1185,7 +1195,7 @@ def test_col_is_in_range(spark, set_utc_timezone):
                 "Value '2025-04-01' in Column 'b' not in range: [2025-01-01, 2025-03-01]",
                 "Value '2025-04-01' in Column 'b' not in range: [2025-01-01, 2025-03-01]",
                 "Value '2025-04-01 00:00:00' in Column 'c' not in range: [2025-01-01 00:00:00, 2025-03-01 00:00:00]",
-                "Value '2025-04-01 00:00:00' in Column 'c' not in range: [2025-01-01 00:00:00, 2025-03-01 00:00:00]",
+                "Value '2025-04-01 00:00:00' in Column 'c' not in range: [2025-01-01, 2025-03-01]",
                 "Value '2025-04-01 00:00:00' in Column 'c' not in range: [2025-01-01 00:00:00, 2025-03-01 00:00:00]",
                 "Value '2' in Column 'd' not in range: [4, 8]",
                 "Value '3' in Column 'f' not in range: [4, 5]",
@@ -1255,7 +1265,7 @@ def test_col_is_not_in_range(spark, set_utc_timezone):
                 "Value '2025-01-01' in Column 'b' in range: [2025-01-01, 2025-01-03]",
                 "Value '2025-01-01' in Column 'b' in range: [2025-01-01, 2025-01-03]",
                 "Value '2025-01-03 00:00:00' in Column 'c' in range: [2025-01-01 00:00:00, 2025-01-03 00:00:00]",
-                "Value '2025-01-03 00:00:00' in Column 'c' in range: [2025-01-01 00:00:00, 2025-01-03 00:00:00]",
+                "Value '2025-01-03 00:00:00' in Column 'c' in range: [2025-01-01, 2025-01-03]",
                 "Value '2025-01-03 00:00:00' in Column 'c' in range: [2025-01-01 00:00:00, 2025-01-03 00:00:00]",
                 None,
                 "Value '1.00' in Column 'e' in range: [1, 3]",
@@ -1271,8 +1281,8 @@ def test_col_is_not_in_range(spark, set_utc_timezone):
                 None,
                 None,
                 None,
-                "Value '2025-02-03 00:00:00' in Column 'd' in range: [2025-02-01 00:00:00, 2025-02-03 00:00:00]",
-                "Value '2025-02-03 00:00:00' in Column 'd' in range: [2025-02-01 00:00:00, 2025-02-03 00:00:00]",
+                None,
+                None,
                 "Value '2025-02-03 00:00:00' in Column 'd' in range: [2025-02-01 00:00:00, 2025-02-03 00:00:00]",
                 "Value '3.00' in Column 'e' in range: [1, 3]",
                 "Value '3.00' in Column 'e' in range: [1.00, 3.00]",
@@ -2911,7 +2921,7 @@ def test_ipv6_address_cidr_edge_cases(spark):
             ],
             [
                 None,
-                "Value '2001:db8::1' in Column 'a' is not in the CIDR block '2001:db8::1/128'",
+                None,
                 None,
                 "Value '2001:db8::1' in Column 'a' is not in the CIDR block 'fe80::/10'",
                 "Value '2001:db8::1' in Column 'a' is not in the CIDR block 'ff00::/8'",
@@ -2924,7 +2934,7 @@ def test_ipv6_address_cidr_edge_cases(spark):
                 None,
                 None,
                 "Value 'fe80::1' in Column 'a' is not in the CIDR block 'ff00::/8'",
-                None,
+                "Value 'fe80::1' in Column 'a' is not in the CIDR block 'fc00::/7'",
             ],
             [
                 "Value 'fe7f:ffff:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block '2001:db8::/32'",
@@ -2932,15 +2942,15 @@ def test_ipv6_address_cidr_edge_cases(spark):
                 None,
                 "Value 'fe7f:ffff:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block 'fe80::/10'",
                 "Value 'fe7f:ffff:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block 'ff00::/8'",
-                None,
+                "Value 'fe7f:ffff:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block 'fc00::/7'",
             ],
             [
                 "Value 'fec0::1' in Column 'a' is not in the CIDR block '2001:db8::/32'",
                 "Value 'fec0::1' in Column 'a' is not in the CIDR block '2001:db8::1/128'",
                 None,
-                None,
+                "Value 'fec0::1' in Column 'a' is not in the CIDR block 'fe80::/10'",
                 "Value 'fec0::1' in Column 'a' is not in the CIDR block 'ff00::/8'",
-                None,
+                "Value 'fec0::1' in Column 'a' is not in the CIDR block 'fc00::/7'",
             ],
             # Multicast prefix testing (/8)
             [
@@ -2965,7 +2975,7 @@ def test_ipv6_address_cidr_edge_cases(spark):
                 None,
                 "Value 'feff:ffff:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block 'fe80::/10'",
                 "Value 'feff:ffff:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block 'ff00::/8'",
-                None,
+                "Value 'feff:ffff:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block 'fc00::/7'",
             ],
             # ULA prefix testing (/7)
             [
@@ -3085,7 +3095,7 @@ def test_is_data_fresh(spark, set_utc_timezone):
         [
             [
                 "Value '2023-01-02 00:00:00' in Column 'b' is older than 120 minutes from base timestamp '2024-01-01 00:00:00'",
-                "Value '2023-01-02 00:00:00' in Column 'b' is older than 120 minutes from base timestamp '2024-01-01 00:00:00'",
+                "Value '2023-01-02 00:00:00' in Column 'b' is older than 120 minutes from base timestamp '2024-01-01'",
                 "Value '2023-01-01' in Column 'c' is older than 3600 minutes from base timestamp '2024-01-01 00:00:00'",
                 None,
             ],

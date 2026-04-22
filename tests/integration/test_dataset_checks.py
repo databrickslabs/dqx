@@ -384,6 +384,7 @@ def test_foreign_key(spark: SparkSession):
             ["key1", 1],
             ["key2", 2],
             ["key3", 3],
+            ["key4", 3],
             [None, 4],
         ],
         SCHEMA,
@@ -400,7 +401,7 @@ def test_foreign_key(spark: SparkSession):
     ref_dfs = {"ref_df": ref_df}
     checks = [
         foreign_key(["a"], ["ref_col"], "ref_df"),
-        foreign_key([F.lit("a")], [F.lit("ref_col")], "ref_df", row_filter="b = 3"),
+        foreign_key([F.col("a")], [F.col("ref_col")], "ref_df", row_filter="b = 3"),
     ]
 
     actual_df = _apply_checks(test_df, checks, ref_dfs, spark)
@@ -410,6 +411,12 @@ def test_foreign_key(spark: SparkSession):
             ["key1", 1, None, None],
             ["key2", 2, "Value 'key2' in column 'a' not found in reference column 'ref_col'", None],
             ["key3", 3, None, None],
+            [
+                "key4",
+                3,
+                "Value 'key4' in column 'a' not found in reference column 'ref_col'",
+                "Value 'key4' in column 'a' not found in reference column 'ref_col'",
+            ],
             [None, 4, None, None],
         ],
         SCHEMA + ", a_not_exists_in_ref_ref_col: string, a_not_exists_in_ref_ref_col: string",
@@ -423,6 +430,7 @@ def test_foreign_key_negate(spark: SparkSession):
             ["key1", 1],
             ["key2", 2],
             ["key3", 3],
+            ["key4", 3],
             [None, 4],
         ],
         SCHEMA,
@@ -439,7 +447,7 @@ def test_foreign_key_negate(spark: SparkSession):
     ref_dfs = {"ref_df": ref_df}
     checks = [
         foreign_key(["a"], ["ref_col"], "ref_df", negate=True),
-        foreign_key([F.lit("a")], [F.lit("ref_col")], "ref_df", row_filter="b = 3", negate=True),
+        foreign_key([F.col("a")], [F.col("ref_col")], "ref_df", row_filter="b = 3", negate=True),
     ]
 
     actual_df = _apply_checks(test_df, checks, ref_dfs, spark)
@@ -449,6 +457,12 @@ def test_foreign_key_negate(spark: SparkSession):
             ["key1", 1, "Value 'key1' in column 'a' found in reference column 'ref_col'", None],
             ["key2", 2, None, None],
             ["key3", 3, None, None],
+            [
+                "key4",
+                3,
+                "Value 'key4' in column 'a' found in reference column 'ref_col'",
+                "Value 'key4' in column 'a' found in reference column 'ref_col'",
+            ],
             [None, 4, None, None],
         ],
         SCHEMA + ", a_exists_in_ref_ref_col: string, a_exists_in_ref_ref_col: string",
