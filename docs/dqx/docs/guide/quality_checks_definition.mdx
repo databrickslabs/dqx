@@ -720,6 +720,80 @@ Example checks saved in a Delta or Lakebase table (compact format — `for_each_
 
 If `run_config_name` is not provided, "default" is used. Typically, the input table or job name is used for run config name to establish a one-to-one mapping between tables or jobs and checks.
 
+## Variable Substitution
+
+DQX supports variable substitution in declarative check definitions (YAML, JSON, or Delta tables). This allows you to parameterize your quality rules and inject values at **load time** or **save time** from engine-level defaults and/or via the `variables` parameter in `load_checks` or `save_checks`.
+
+### Syntax and Scope
+
+Placeholders are defined using the `{{ variable_name }}` syntax. Variable substitution is supported in **all string values** within the check definitions, including:
+- `name`
+- `filter`
+- `check` function arguments (`arguments`) and column names (`for_each_column`)
+- any other top-level or nested string field
+
+<Admonition type="warning" title="Do not use variable substitution for criticality">
+The `criticality` field only accepts fixed values (`error` or `warn`). Do not use variable placeholders for `criticality` — the resolved value must be a valid criticality and substituting it defeats the purpose of having an explicit severity level in the check definition.
+</Admonition>
+
+### Resolution
+
+Variables are resolved when checks are loaded or saved via the engine. To resolve variables, pass a dictionary to the `variables` parameter of `load_checks` or `save_checks`. User can decide whether to provide variables when loading or saving checks.
+
+<Admonition type="tip" title="Resolving variables at save time">
+When using `save_checks` with variables, placeholders are resolved **before** computing rule fingerprints and persisting. This ensures that stored checks and their fingerprints reflect the actual resolved check logic. Without resolving at save time, fingerprints would be computed on unresolved `{{ }}` placeholders, causing a mismatch between the fingerprints stored in the checks table and those recorded in the summary metrics and per-row detailed results tables.
+</Admonition>
+
+<Admonition type="info" title="Note">
+Variable substitution is only available when defining checks declaratively (as dictionaries or in files/tables). It is not supported when using DQX classes (e.g., `DQRowRule`) directly.
+</Admonition>
+
+```python
+import yaml
+from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.config import FileChecksStorageConfig, TableChecksStorageConfig
+from databricks.sdk import WorkspaceClient
+
+dq_engine = DQEngine(WorkspaceClient())
+
+# Define checks with variable placeholders
+checks = yaml.safe_load("""
+    - criticality: error
+      check:
+        function: is_in_range
+        arguments:
+          column: temperature
+          min_limit: "{{ min_temp }}"
+          max_limit: "{{ max_temp }}"
+      filter: "region = '{{ region }}'"
+""")
+
+variables = {
+    "min_temp": 0,
+    "max_temp": 100,
+    "region": "EMEA",
+}
+
+# Load checks from file with variable resolution
+resolved_checks = dq_engine.load_checks(
+    config=FileChecksStorageConfig(location="checks.yml"),
+    variables=variables,
+)
+
+# Or resolve variables when saving checks (ensures fingerprints are consistent)
+dq_engine.save_checks(
+    checks=checks,
+    config=TableChecksStorageConfig(location="catalog.schema.checks_table"),
+    variables=variables,
+)
+```
+
+## Default Variables
+
+In addition to specifying variables during the load or save process, you can define engine-level defaults using the `ExtraParams` class. These constants are automatically applied to all checks unless explicitly overridden.
+
+For technical details and configuration examples, see [Default Variables](/docs/guide/additional_configuration#defining-default-variables-for-substitution) in the Additional Configuration guide.
+
 ## Validating syntax of quality checks
 
 You can validate the syntax of checks loaded from a storage system or checks defined programmatically before applying them.

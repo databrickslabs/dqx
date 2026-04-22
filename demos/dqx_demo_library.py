@@ -1482,3 +1482,61 @@ display(errors_df)
 # explode warnings
 warnings_df = valid_and_quarantine_df.select(F.explode(F.col("dq_warnings")).alias("dq")).select(F.expr("dq.*"))
 display(warnings_df)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Advanced: Variable Substitution
+# MAGIC
+# MAGIC DQX supports variable substitution in declarative check definitions (YAML, JSON, or Delta tables).
+# MAGIC This allows you to parameterize your rules and inject values at **load time** via the `variables` parameter in `load_checks`.
+# MAGIC
+# MAGIC ### Example Usage
+# MAGIC
+# MAGIC 1. Define a rule with `{{ placeholder }}` syntax.
+# MAGIC 2. Pass a dictionary of variables when loading the rules.
+
+# COMMAND ----------
+
+from databricks.labs.dqx.config import WorkspaceFileChecksStorageConfig
+
+# Save to a temporary file
+
+# Define parameterized checks
+parameterized_checks_yaml = """
+- criticality: error
+  name: "threshold_check_{{ threshold_name }}"
+  check:
+    function: is_not_greater_than
+    arguments:
+      column: "{{ target_column }}"
+      limit: "{{ max_value }}"
+"""
+
+# Save to a temporary file
+# demo_file_directory is defined at the beginning of this notebook
+temp_checks_path = os.path.join(demo_file_directory, "parameterized_checks.yml")
+with open(temp_checks_path, "w") as f:
+    f.write(parameterized_checks_yaml)
+
+dq_engine = DQEngine(WorkspaceClient())
+
+# Load checks with variable resolution
+# Resolution happens during the load process
+resolved_checks = dq_engine.load_checks(
+    config=WorkspaceFileChecksStorageConfig(location=temp_checks_path),
+    variables={
+        "threshold_name": "critical",
+        "target_column": "col1",
+        "max_value": 100
+    }
+)
+
+# The resolved checks now have the values injected
+# Note: DQEngine internally converts string numbers to their appropriate types if needed during validation or apply
+print(yaml.dump(resolved_checks))
+
+# Apply the resolved checks to a DataFrame
+data = spark.createDataFrame([[50], [150]], "col1: int")
+result_df = dq_engine.apply_checks_by_metadata(data, resolved_checks)
+display(result_df)
