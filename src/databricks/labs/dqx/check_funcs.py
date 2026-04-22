@@ -1373,7 +1373,6 @@ def foreign_key(
             - if both *ref_df_name* and *ref_table* are provided.
             - if the number of *columns* and *ref_columns* do not match.
             - if *ref_df_name* is not found in the provided *ref_dfs* dictionary.
-            - if both *negate* and *null_safe* are enabled.
     """
     _validate_ref_params(columns, ref_columns, ref_df_name, ref_table)
 
