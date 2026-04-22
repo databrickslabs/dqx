@@ -733,4 +733,3 @@ def test_save_and_load_checks_from_table_with_variables(ws, make_schema, make_ra
 
     # Verify the resolved checks are valid and can be applied end-to-end
     assert not engine.validate_checks(loaded).has_errors
-
