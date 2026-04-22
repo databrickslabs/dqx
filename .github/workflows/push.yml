@@ -27,10 +27,10 @@ jobs:
       - run: echo "Not a fork PR, proceeding"
 
   ci:
-    # Use a job-level `if:` instead of `needs: not-a-fork` so that for fork PRs the matrix
-    # still expands and each leaf (ci (3.10), ci (3.11), ci (3.12)) reports its own
-    # "skipped" status.
-    if: github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork
+    # Fork-gate is applied per-step via `env.IS_FORK_PR` so the matrix expands and each
+    # leaf (ci (3.10), ci (3.11), ci (3.12)) reports its own check. A job-level `if:`
+    # skips the job before matrix expansion and emits only a single `ci` check, leaving
+    # the required `ci (X.Y)` contexts in "Expected — Waiting for status to be reported".
     strategy:
       fail-fast: false
       matrix:
@@ -42,21 +42,26 @@ jobs:
       id-token: write
     env:
       UV_PYTHON: ${{ matrix.pyVersion }}
+      IS_FORK_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork }}
     steps:
       - name: Checkout
+        if: env.IS_FORK_PR != 'true'
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Setup environment
+        if: env.IS_FORK_PR != 'true'
         uses: ./.github/actions/setup-env
 
       - name: Run unit tests
+        if: env.IS_FORK_PR != 'true'
         run: make test
 
-      # Publish unit test coverage only from the 3.12 leg to avoid duplicate
-      # uploads. Codecov merges unit + integration reports via the `flags`
-      # dimension; acceptance.yml publishes the integration coverage.
       - name: Publish unit test coverage
-        if: matrix.pyVersion == '3.12'
+        # 3.12 only to avoid duplicate uploads.
+        # Skip on `push: main` — main-branch coverage is published by nightly.yml which
+        # runs the full test set (unit + integration + anomaly + e2e). Publishing only
+        # unit coverage here would overwrite codecov's main baseline with a lower number.
+        if: env.IS_FORK_PR != 'true' && matrix.pyVersion == '3.12' && github.event_name != 'push'
         uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
         with:
           use_oidc: true

@@ -217,6 +217,7 @@ def test_profiler_config_defaults():
     assert config.sample_seed is None
     assert config.limit == 1000
     assert config.filter is None
+    assert config.criticality == "error"
 
 
 def test_profiler_config_custom_values():
@@ -226,12 +227,14 @@ def test_profiler_config_custom_values():
         sample_seed=42,
         limit=5000,
         filter="col1 > 0",
+        criticality="warn",
     )
     assert config.summary_stats_file == "custom_stats.yml"
     assert config.sample_fraction == 0.5
     assert config.sample_seed == 42
     assert config.limit == 5000
     assert config.filter == "col1 > 0"
+    assert config.criticality == "warn"
 
 
 # Test LLMModelConfig

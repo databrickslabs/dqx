@@ -6,9 +6,10 @@ import re
 from decimal import Decimal
 from enum import Enum
 from importlib.util import find_spec
-from typing import Any
+from typing import Any, TypeVar, overload
 from fnmatch import fnmatch
 from pathlib import Path
+
 
 from pyspark.sql import Column
 from pyspark.sql.types import StructType
@@ -29,9 +30,17 @@ from databricks.sdk.errors import NotFound
 logger = logging.getLogger(__name__)
 
 
+T = TypeVar("T")
+
+
 COLUMN_NORMALIZE_EXPRESSION = re.compile("[^a-zA-Z0-9]+")
 COLUMN_PATTERN = re.compile(r"Column<'(.*?)(?: AS (\w+))?'>$", re.DOTALL)
 INVALID_COLUMN_NAME_PATTERN = re.compile(r"[\s,;{}\(\)\n\t=]+")
+_UNRESOLVED_PLACEHOLDER_PATTERN = re.compile(r"\{\{[^}]*\}\}")
+_SCALAR_VARIABLE_TYPES = (str, int, float, bool, Decimal, datetime.date, datetime.datetime, datetime.time)
+
+VariableValue = str | int | float | bool | Decimal | datetime.date | datetime.datetime | datetime.time
+"""Supported scalar types for variable substitution values."""
 
 
 def get_column_name_or_alias(
@@ -542,6 +551,132 @@ def missing_required_packages(packages: list[str]) -> bool:
         True if any package is missing, False otherwise.
     """
     return not all(find_spec(spec) for spec in packages)
+
+
+def _replace_template(text: str, variables: dict[str, str]) -> str:
+    """Replace **{{ key }}** placeholders in *text* with values from *variables*.
+
+    Uses a single-pass regex substitution.
+    Tolerates whitespace inside braces (e.g. **{{ key }}**, **{{key}}**).
+    Logs a warning if any unresolved **{{ ... }}** placeholders remain after substitution.
+
+    Args:
+        text: Input string potentially containing **{{ key }}** placeholders.
+        variables: Pre-stringified mapping of placeholder names to values.
+
+    Returns:
+        String with all matching placeholders replaced.
+    """
+    if not variables:
+        if _UNRESOLVED_PLACEHOLDER_PATTERN.search(text):
+            logger.warning(f"Unresolved placeholder found: '{text}'")
+        return text
+
+    def _resolve(match_obj: re.Match[str]) -> str:
+        key = match_obj.group(0).strip("{} \t")
+        if key in variables:
+            return variables[key]
+        unresolved.append(key)
+        return match_obj.group(0)
+
+    unresolved: list[str] = []
+    output = _UNRESOLVED_PLACEHOLDER_PATTERN.sub(_resolve, text)
+    if unresolved:
+        logger.warning(
+            f"Unresolved placeholders found: {unresolved}. "
+            f"They may be resolved at runtime for certain checks (e.g. sql_query)."
+        )
+    return output
+
+
+@overload
+def _substitute_variables(obj: str, variables: dict[str, str]) -> str: ...
+
+
+@overload
+def _substitute_variables(obj: list[T], variables: dict[str, str]) -> list[T]: ...
+
+
+@overload
+def _substitute_variables(obj: dict[str, T], variables: dict[str, str]) -> dict[str, T]: ...
+
+
+@overload
+def _substitute_variables(obj: T, variables: dict[str, str]) -> T: ...
+
+
+def _substitute_variables(obj: Any, variables: dict[str, str]) -> Any:
+    """Recursively replace **{{ key }}** placeholders in all string values within *obj*.
+
+    Traverses dicts, lists, and strings. Non-string/non-collection values are
+    returned unchanged. Dict keys are not substituted.
+
+    Args:
+        obj: A string, dict, list, or other value to process.
+        variables: Pre-stringified mapping of placeholder names to values.
+
+    Returns:
+        A new object with all string values having placeholders replaced.
+    """
+    if isinstance(obj, str):
+        return _replace_template(obj, variables)
+    if isinstance(obj, dict):
+        return {k: _substitute_variables(v, variables) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_substitute_variables(item, variables) for item in obj]
+    return obj
+
+
+def _validate_variable_types(variables: dict[str, VariableValue]) -> None:
+    """Raise :class:`InvalidParameterError` if any variable value is not a supported scalar type."""
+    for key, val in variables.items():
+        if not isinstance(val, _SCALAR_VARIABLE_TYPES):
+            raise InvalidParameterError(
+                f"Variable '{key}' has unsupported type '{type(val).__name__}'. "
+                f"Only scalar types are supported: str, int, float, bool, Decimal, "
+                f"datetime.date, datetime.datetime, datetime.time."
+            )
+
+
+def resolve_variables(checks: list[dict], variables: dict[str, VariableValue] | None) -> list[dict]:
+    """Resolve variable substitution in check definitions.
+
+    Replaces placeholders in all string values of *checks* with the corresponding values
+    from *variables*.
+
+    Variable values must be scalar types (e.g. *str*, *int*, *float*, *bool*, *Decimal*,
+    *datetime.date*, *datetime.datetime*, *datetime.time*). Non-string scalars are
+    converted to strings via *str()* in the substituted string. Collection type
+    variables (e.g. *list*, *dict*, *set*, etc.) are rejected with
+    *databricks.labs.dqx.errors.InvalidParameterError* because their string representation
+    is rarely meaningful in SQL or column expressions.
+
+    Logs a warning for any placeholders that remain unresolved after substitution
+    (e.g. misspelled variable names).
+
+    Note:
+    Variable values substituted into *sql_expression* checks are not sanitized and are
+    passed directly to *F.expr()*. Callers must **ensure variable values come from trusted
+    sources** to prevent SQL injection.
+
+    Args:
+        checks: List of check definition dictionaries (metadata format).
+        variables: Mapping of placeholder names to scalar replacement values.
+            If *None* or empty the checks are returned unchanged.
+
+    Returns:
+        A new list of check dicts with placeholders resolved, or the original list
+        when no substitution is needed.
+
+    Raises:
+        InvalidParameterError: If any variable value is not a supported scalar type.
+    """
+    if not variables:
+        return checks
+
+    _validate_variable_types(variables)
+    str_variables = {k: str(v) for k, v in variables.items()}
+    return _substitute_variables(checks, str_variables)
 
 
 def get_file_extension(file_path: str | os.PathLike) -> str:
