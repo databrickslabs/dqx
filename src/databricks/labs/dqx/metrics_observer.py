@@ -1,3 +1,4 @@
+import json
 from dataclasses import dataclass
 from datetime import datetime
 from functools import cached_property
@@ -87,7 +88,7 @@ class DQMetricsObserver:
 
         Args:
             check_names: Optional list of check names from the applied quality rules.
-                When provided, a per-check breakdown (``check_metrics``) is included.
+                When provided, a per-check breakdown (*check_metrics*) is included.
 
         Returns:
             A list of Spark SQL expressions defining the observer metrics (default, per-check, and custom).
@@ -105,49 +106,61 @@ class DQMetricsObserver:
         return metrics
 
     def _build_check_metrics_expr(self, check_names: list[str]) -> str:
-        """Build a single SQL expression that produces a JSON-serialized check_metrics value.
+        """Build a single SQL expression that produces a per-check breakdown.
 
-        The metric is stored as one row with metric_name ``check_metrics`` and
-        metric_value containing a JSON array of structs::
+        Produces the canonical JSON array string directly from SQL using concat and
+        concat_ws over the per-check aggregates. The result is a plain string scalar,
+        so *observation.get* sees *check_metrics* as a JSON-encoded string identical
+        to the pre-fix shape.
 
-            [{"check_name": "my_check", "error_count": 5, "warning_count": 2}, ...]
+        Two Spark Connect constraints drive this concat-based approach:
+          * Server-side to_json on struct aggregates inside observe() has been observed
+            to fail intermittently with JsonGenerationException: 
+            Can not write a field name, expecting a value.
+          * LiteralExpression in pyspark.sql.connect.expressions can decode
+            primitives and arrays of primitives, but not arrays of structs or arrays
+            of strings carrying struct data, so we stay in plain string territory.
 
         Args:
             check_names: List of check names to include in the expression.
 
         Returns:
-            A Spark SQL expression string aliased as ``check_metrics``.
+            A Spark SQL expression string aliased as *check_metrics*.
         """
-        elements: list[str] = []
+        fragments: list[str] = []
         for check_name in check_names:
             check_name_escaped = check_name.replace("'", "''")
+            # JSON-encode the check name (handles embedded quotes, backslashes, control chars),
+            # then SQL-escape any single quotes for safe inclusion in a literal.
+            json_check_name_sql_esc = json.dumps(check_name).replace("'", "''")
             err = self._error_column_name
             warn = self._warning_column_name
-            elements.append(
-                f"named_struct("
-                f"'check_name', '{check_name_escaped}', "
-                f"'error_count', count(case when exists({err}, x -> x.name = '{check_name_escaped}') then 1 end), "
-                f"'warning_count', count(case when exists({warn}, x -> x.name = '{check_name_escaped}') then 1 end)"
-                f")"
+            fragments.append(
+                f"concat("
+                f"'{{\"check_name\":{json_check_name_sql_esc},\"error_count\":',"
+                f"cast(count(case when exists({err}, x -> x.name = '{check_name_escaped}') then 1 end) as string),"
+                f"',\"warning_count\":',"
+                f"cast(count(case when exists({warn}, x -> x.name = '{check_name_escaped}') then 1 end) as string),"
+                f"'}}')"
             )
-        return f"to_json(array({', '.join(elements)})) as check_metrics"
+        return f"concat('[', concat_ws(',', {', '.join(fragments)}), ']') as check_metrics"
 
     @property
     def observation(self) -> Observation:
         """
-        Spark `Observation` which can be attached to a `DataFrame` to track summary metrics. Metrics will be collected
-        when the 1st action is triggered on the attached `DataFrame`. Subsequent operations on the attached `DataFrame`
+        Spark Observation which can be attached to a DataFrame to track summary metrics. Metrics will be collected
+        when the 1st action is triggered on the attached DataFrame. Subsequent operations on the attached DataFrame
         will not update the observed metrics. See: [PySpark Observation](https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/api/pyspark.sql.Observation.html)
         for complete documentation.
 
         Returns:
-            A Spark `Observation` instance
+            A Spark Observation instance
         """
         return Observation()
 
     def set_column_names(self, error_column_name: str, warning_column_name: str) -> None:
         """
-        Sets the default column names (e.g. `_errors` and `_warnings`) for monitoring summary metrics.
+        Sets the default column names (e.g. *_errors* and *_warnings*) for monitoring summary metrics.
 
         Args:
             error_column_name: Error column name
@@ -159,14 +172,14 @@ class DQMetricsObserver:
     @staticmethod
     def build_metrics_df(spark: SparkSession, observation: DQMetricsObservation) -> DataFrame:
         """
-        Builds a Spark `DataFrame` from a `DQMetricsObservation`.
+        Builds a Spark DataFrame from a DQMetricsObservation.
 
         Args:
-            spark: `SparkSession` used to create the `DataFrame`
-            observation: `DQMetricsObservation` with summary metrics
+            spark: SparkSession used to create the DataFrame
+            observation: DQMetricsObservation with summary metrics
 
         Returns:
-            A Spark `DataFrame` with summary metrics
+            A Spark DataFrame with summary metrics
         """
 
         if not observation.observed_metrics:
