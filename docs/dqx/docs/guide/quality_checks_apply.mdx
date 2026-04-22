@@ -860,6 +860,7 @@ The following fields from the [configuration file](/docs/installation/#configura
    - `sample_seed`: seed for reproducible sampling.
    - `limit`: maximum number of records to analyze.
    - `filter`: filter for the input data as a string SQL expression (default: None).
+   - `criticality`: default criticality for generated rules, either `error` or `warn` (default: `error`).
 - `checks_user_requirements`: (optional) user input for AI-assisted rule generation
 - `llm_config`: (optional) configuration for the AI-assisted features
 - `extra_params`: (optional) extra parameters to pass to the jobs such as result column names and user_metadata
@@ -910,6 +911,7 @@ Example of the configuration file (relevant fields only):
       limit: 1000
       sample_fraction: 0.3
       summary_stats_file: profile_summary_stats.yml
+      criticality: error  # default criticality for generated rules ('error' or 'warn')
       llm_primary_key_detection: false
     checks_user_requirements: "business rules description" # optional user input for the llm-assisted features
     custom_check_functions:  # optional
