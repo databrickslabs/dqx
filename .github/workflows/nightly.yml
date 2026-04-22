@@ -13,6 +13,31 @@ concurrency:
   cancel-in-progress: false  # don't cancel ongoing runs to ensure fixtures are completed and resources terminated
 
 jobs:
+  unit:
+    runs-on:
+      group: databrickslabs-protected-runner-group
+      labels: linux-ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Setup environment
+        uses: ./.github/actions/setup-env
+
+      - name: Run unit tests and generate test coverage report
+        run: make test
+
+      - name: Publish unit test coverage
+        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
+        with:
+          use_oidc: true
+          files: coverage-unit.xml
+          flags: unit
+
   integration:
     environment: tool
     runs-on:
@@ -29,9 +54,6 @@ jobs:
 
       - name: Setup environment
         uses: ./.github/actions/setup-env
-
-      - name: Run unit tests and generate test coverage report
-        run: make test
 
       - name: Pre-build DQX wheel
         uses: ./.github/actions/prebuild-wheel
@@ -63,13 +85,6 @@ jobs:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage  # make sure the coverage report is preserved
       - name: Merge coverage reports and convert them to XML
         run: make combine-coverage
-
-      - name: Publish unit test coverage
-        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
-        with:
-          use_oidc: true
-          files: coverage-unit.xml
-          flags: unit
 
       - name: Publish integration test coverage
         uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
@@ -127,7 +142,7 @@ jobs:
       - name: Merge coverage reports and convert them to XML
         run: make combine-coverage
 
-      - name: Publish test coverage
+      - name: Publish serverless integration test coverage
         uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
         with:
           use_oidc: true
@@ -184,7 +199,7 @@ jobs:
       - name: Merge coverage reports and convert them to XML
         run: make combine-coverage
 
-      - name: Publish test coverage
+      - name: Publish anomaly test coverage
         uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
         with:
           use_oidc: true
@@ -242,7 +257,7 @@ jobs:
       - name: Merge coverage reports and convert them to XML
         run: make combine-coverage
 
-      - name: Publish test coverage
+      - name: Publish serverless anomaly test coverage
         uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
         with:
           use_oidc: true

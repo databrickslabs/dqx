@@ -171,7 +171,7 @@ def test_run_dqx_dlt_demo(
     pipeline_task = PipelineTask(pipeline_id=pipeline.pipeline_id)
     job = make_job(tasks=[Task(task_key="dqx_dlt_demo", pipeline_task=pipeline_task)])
 
-    waiter = ws.jobs.run_now_and_wait(job.job_id)
+    waiter = ws.jobs.run_now_and_wait(job.job_id, timeout=timedelta(minutes=30))
     run = ws.jobs.wait_get_run_job_terminated_or_skipped(
         run_id=waiter.run_id,
         timeout=timedelta(minutes=30),
