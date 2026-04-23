@@ -88,6 +88,8 @@ if [ -z "$EXISTING" ]; then
     --base "$BASE_BRANCH" \
     --head "$SYNC_BRANCH" \
     --title "$TEST_PR_TITLE" \
+    --label "do-not-merge" \
+    --label "fork-test" \
     --body "Automated sync from fork PR for CI testing.
 
 Original PR: ${PR_URL}
