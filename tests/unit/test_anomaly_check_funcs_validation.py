@@ -110,6 +110,83 @@ def test_has_no_row_anomalies_enable_contributions_requires_shap():
             )
 
 
+def test_has_no_row_anomalies_ai_explanation_requires_contributions():
+    """enable_ai_explanation=True without enable_contributions=True raises InvalidParameterError."""
+    with pytest.raises(InvalidParameterError, match="enable_ai_explanation=True requires enable_contributions=True"):
+        has_no_row_anomalies(
+            model_name="catalog.schema.model",
+            registry_table="catalog.schema.table",
+            enable_ai_explanation=True,
+            enable_contributions=False,
+        )
+
+
+def test_has_no_row_anomalies_ai_explanation_requires_dspy():
+    """enable_ai_explanation=True raises when dspy is not importable."""
+    from databricks.labs.dqx.anomaly import anomaly_llm_explainer
+
+    with pytest.raises(InvalidParameterError, match="enable_ai_explanation=True requires the 'dspy' dependency"):
+        with patch.object(check_funcs, "SHAP_AVAILABLE", True):
+            with patch.object(anomaly_llm_explainer, "DSPY_AVAILABLE", False):
+                import importlib
+
+                importlib.reload(check_funcs)
+                # Patch DSPY_AVAILABLE on the check_funcs module after reload
+                with patch.object(check_funcs, "DSPY_AVAILABLE", False):
+                    has_no_row_anomalies(
+                        model_name="catalog.schema.model",
+                        registry_table="catalog.schema.table",
+                        enable_ai_explanation=True,
+                        enable_contributions=True,
+                    )
+
+
+def test_has_no_row_anomalies_ai_explanation_requires_dspy_direct():
+    """enable_ai_explanation=True raises when DSPY_AVAILABLE is False on check_funcs module."""
+    from databricks.labs.dqx.anomaly import check_funcs as cf
+
+    with pytest.raises(InvalidParameterError, match="enable_ai_explanation=True requires the 'dspy' dependency"):
+        with patch.object(cf, "SHAP_AVAILABLE", True), patch.object(cf, "DSPY_AVAILABLE", False):
+            has_no_row_anomalies(
+                model_name="catalog.schema.model",
+                registry_table="catalog.schema.table",
+                enable_ai_explanation=True,
+                enable_contributions=True,
+            )
+
+
+def test_has_no_row_anomalies_redact_columns_must_be_list():
+    """redact_columns that is not a list raises InvalidParameterError."""
+    with pytest.raises(InvalidParameterError, match="redact_columns must be a list"):
+        has_no_row_anomalies(
+            model_name="catalog.schema.model",
+            registry_table="catalog.schema.table",
+            redact_columns="customer_id",  # type: ignore[arg-type]
+        )
+
+
+@pytest.mark.parametrize("bad_value", [0, -1, -100])
+def test_has_no_row_anomalies_max_groups_must_be_positive(bad_value):
+    """max_groups <= 0 raises InvalidParameterError."""
+    with pytest.raises(InvalidParameterError, match="max_groups must be a positive integer"):
+        has_no_row_anomalies(
+            model_name="catalog.schema.model",
+            registry_table="catalog.schema.table",
+            max_groups=bad_value,
+        )
+
+
+@pytest.mark.parametrize("bad_value", ["500", 500.0, None, [500]])
+def test_has_no_row_anomalies_max_groups_must_be_int(bad_value):
+    """max_groups non-int raises InvalidParameterError."""
+    with pytest.raises(InvalidParameterError, match="max_groups must be a positive integer"):
+        has_no_row_anomalies(
+            model_name="catalog.schema.model",
+            registry_table="catalog.schema.table",
+            max_groups=bad_value,  # type: ignore[arg-type]
+        )
+
+
 def test_resolve_scoring_strategy_raises_for_unknown_algorithm():
     """resolve_scoring_strategy raises InvalidParameterError for an unrecognised algorithm name."""
     with pytest.raises(InvalidParameterError, match="Unsupported model algorithm 'UnknownAlgorithm'"):

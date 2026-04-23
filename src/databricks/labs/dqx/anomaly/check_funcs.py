@@ -4,6 +4,7 @@ Check functions for row anomaly detection.
 Facade: public rule entry point. Orchestration and scoring live in sibling modules.
 """
 
+import importlib.util
 import uuid
 from typing import Any
 
@@ -17,8 +18,35 @@ from databricks.labs.dqx.anomaly.scoring_orchestrator import run_anomaly_scoring
 from databricks.labs.dqx.anomaly.explainability import SHAP_AVAILABLE
 from databricks.labs.dqx.anomaly.validation import validate_fully_qualified_name
 from databricks.labs.dqx.check_funcs import make_condition
+from databricks.labs.dqx.config import LLMModelConfig
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.rule import register_rule
+
+DSPY_AVAILABLE = importlib.util.find_spec("dspy") is not None
+
+_LLM_MODEL_CONFIG_KEYS = {"model_name", "api_key", "api_base"}
+
+
+def _coerce_llm_model_config(value: LLMModelConfig | dict | None) -> LLMModelConfig | None:
+    """Accept either an LLMModelConfig instance or a plain dict (YAML/metadata path).
+
+    Dicts are validated against the known field set so typos surface early; anything else
+    raises InvalidParameterError. None passes through so downstream code applies its default.
+    """
+    if value is None or isinstance(value, LLMModelConfig):
+        return value
+    if isinstance(value, dict):
+        unknown = set(value) - _LLM_MODEL_CONFIG_KEYS
+        if unknown:
+            raise InvalidParameterError(
+                f"llm_model_config has unknown keys: {sorted(unknown)}. "
+                f"Allowed keys: {sorted(_LLM_MODEL_CONFIG_KEYS)}."
+            )
+        return LLMModelConfig(**value)
+    raise InvalidParameterError(
+        "llm_model_config must be an LLMModelConfig instance or a dict with keys "
+        "{model_name, api_key, api_base}."
+    )
 
 
 @register_rule("dataset")
@@ -30,6 +58,10 @@ def has_no_row_anomalies(
     drift_threshold: float | None = None,
     enable_contributions: bool = False,
     enable_confidence_std: bool = False,
+    enable_ai_explanation: bool = False,
+    llm_model_config: LLMModelConfig | dict | None = None,
+    redact_columns: list[str] | None = None,
+    max_groups: int = 500,
     *,
     driver_only: bool = False,
 ) -> tuple[Column, Any, str]:
@@ -72,6 +104,39 @@ def has_no_row_anomalies(
             Requires SHAP library when True.
         enable_confidence_std: Include ensemble confidence scores in _dq_info and top-level (default False).
             Automatically available when training with ensemble_size > 1 (default is 3).
+        enable_ai_explanation: If True, add a human-readable LLM explanation for each anomalous row
+            (default False). Requires enable_contributions=True and the [llm] extra.
+            Output is in _dq_info[0].anomaly.ai_explanation.
+        llm_model_config: LLM model configuration. Defaults to LLMModelConfig()
+            (databricks/databricks-claude-sonnet-4-5).
+
+            When wrapping this check in DQDatasetRule / DQRowRule, applying it via
+            apply_checks / apply_checks_by_metadata, or declaring it in YAML: **pass a dict**
+            with keys ``{"model_name", "api_key", "api_base"}``. The rule pipeline
+            normalizes check arguments and does not accept custom dataclass instances, so an
+            LLMModelConfig object there raises ``TypeError: Unsupported type for normalization``.
+            The dict is coerced back to LLMModelConfig inside the check.
+
+            When calling this function directly (not via a rule), either a dict or an
+            LLMModelConfig instance is accepted.
+
+            Example (dict form, works for both paths)::
+
+                "llm_model_config": {
+                    "model_name": "databricks-qwen3-next-80b-a3b-instruct",
+                    "api_key": "<pat_token>",
+                    "api_base": "https://<gateway-id>.ai-gateway.cloud.databricks.com/mlflow/v1",
+                }
+
+            When ``api_base`` is set, the model is routed through litellm's OpenAI-compatible
+            adapter (``openai/<model>``) — use this for AI Gateway and other OpenAI-compatible
+            endpoints. ``api_key`` / ``api_base`` also fall back to ``OPENAI_API_KEY`` /
+            ``OPENAI_API_BASE`` env vars when unset on the config.
+        redact_columns: Feature names to exclude from the LLM prompt. Only feature names and SHAP
+            percentages are ever sent — raw data values are never included.
+        max_groups: Maximum number of distinct (segment, pattern) groups the LLM is called for
+            per scoring run (default 500). Groups beyond this cap — ranked by
+            group_size * group_avg_severity — get a null ai_explanation; a warning is logged.
         driver_only: If True, score on the driver (no UDF). Use for tests or Spark Connect when
             worker UDF dependencies are not available. Default False for production.
 
@@ -108,11 +173,32 @@ def has_no_row_anomalies(
             "Install anomaly extras: pip install databricks-labs-dqx[anomaly]"
         )
 
+    if enable_ai_explanation and not enable_contributions:
+        raise InvalidParameterError(
+            "enable_ai_explanation=True requires enable_contributions=True. "
+            "SHAP contributions are used as input to the LLM explanation."
+        )
+
+    if enable_ai_explanation and not DSPY_AVAILABLE:
+        raise InvalidParameterError(
+            "enable_ai_explanation=True requires the 'dspy' dependency. "
+            "Install: pip install databricks-labs-dqx[anomaly,llm]"
+        )
+
+    if redact_columns is not None and not isinstance(redact_columns, list):
+        raise InvalidParameterError("redact_columns must be a list of column name strings.")
+
+    if not isinstance(max_groups, int) or isinstance(max_groups, bool) or max_groups <= 0:
+        raise InvalidParameterError("max_groups must be a positive integer.")
+
+    llm_model_config = _coerce_llm_model_config(llm_model_config)
+
     row_id_col = f"__dqx_row_id_{uuid.uuid4().hex}"
     score_col = f"__dq_anomaly_score_{uuid.uuid4().hex}"
     score_std_col = f"__dq_anomaly_score_std_{uuid.uuid4().hex}"
     contributions_col = f"__dq_anomaly_contributions_{uuid.uuid4().hex}"
     severity_col = f"__dq_severity_percentile_{uuid.uuid4().hex}"
+    ai_explanation_col = f"__dq_ai_explanation_{uuid.uuid4().hex}"
     info_col = f"__dqx_info_{uuid.uuid4().hex}"
 
     def apply(df: DataFrame) -> DataFrame:
@@ -131,6 +217,11 @@ def has_no_row_anomalies(
             drift_threshold_value=drift_threshold if drift_threshold is not None else 3.0,
             enable_contributions=enable_contributions,
             enable_confidence_std=enable_confidence_std,
+            enable_ai_explanation=enable_ai_explanation,
+            ai_explanation_col=ai_explanation_col,
+            llm_model_config=llm_model_config,
+            redact_columns=redact_columns or [],
+            max_groups=max_groups,
             segment_by=segment_by,
             driver_only=driver_only,
             score_col=score_col,

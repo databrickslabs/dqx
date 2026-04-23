@@ -8,7 +8,7 @@ import pyspark.sql.functions as F
 from pyspark.sql import DataFrame
 
 from databricks.labs.dqx.anomaly.model_discovery import extract_quantile_points
-from databricks.labs.dqx.anomaly.drift import check_and_warn_drift, check_segment_drift
+from databricks.labs.dqx.anomaly.drift import check_and_warn_drift, check_segment_drift, format_drift_summary
 from databricks.labs.dqx.anomaly.ensemble_scorer import (
     score_ensemble_models,
     score_ensemble_models_local,
@@ -16,6 +16,7 @@ from databricks.labs.dqx.anomaly.ensemble_scorer import (
 from databricks.labs.dqx.anomaly.model_config import compute_config_hash
 from databricks.labs.dqx.anomaly.model_loader import check_model_staleness
 from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRecord, AnomalyModelRegistry
+from databricks.labs.dqx.anomaly.anomaly_llm_explainer import add_explanation_column
 from databricks.labs.dqx.anomaly.scoring_utils import (
     add_info_column,
     add_severity_percentile_column,
@@ -55,7 +56,7 @@ def score_global_model(
     check_model_staleness(record, config.model_name)
 
     df_filtered = apply_row_filter(df, config.row_filter)
-    check_and_warn_drift(
+    drift_result = check_and_warn_drift(
         df_filtered,
         config.columns,
         record,
@@ -126,6 +127,16 @@ def score_global_model(
         quantile_points=quantile_points,
     )
 
+    if config.enable_ai_explanation:
+        is_ensemble = len(record.identity.model_uri.split(",")) > 1
+        scored_df = add_explanation_column(
+            scored_df,
+            config,
+            segment_values=None,
+            is_ensemble=is_ensemble,
+            drift_summary=format_drift_summary(drift_result),
+        )
+
     scored_df = add_info_column(
         scored_df,
         config.model_name,
@@ -134,6 +145,7 @@ def score_global_model(
         segment_values=None,
         enable_contributions=config.enable_contributions,
         enable_confidence_std=config.enable_confidence_std,
+        ai_explanation_col=config.ai_explanation_col if config.enable_ai_explanation else None,
         score_col=config.score_col,
         score_std_col=config.score_std_col,
         contributions_col=config.contributions_col,
@@ -143,6 +155,8 @@ def score_global_model(
     internal_to_remove = [config.score_std_col, config.severity_col]
     if config.enable_contributions:
         internal_to_remove.append(config.contributions_col)
+    if config.enable_ai_explanation:
+        internal_to_remove.append(config.ai_explanation_col)
 
     if config.row_filter:
         columns_to_keep = [col for col in scored_df.columns if col not in internal_to_remove]
@@ -178,7 +192,7 @@ def score_single_segment(
     config: ScoringConfig,
 ) -> DataFrame:
     """Score a single segment with its specific model."""
-    check_segment_drift(
+    drift_result = check_segment_drift(
         segment_df,
         config.columns,
         segment_model,
@@ -227,6 +241,16 @@ def score_single_segment(
         quantile_points=quantile_points,
     )
 
+    if config.enable_ai_explanation:
+        is_ensemble = len(segment_model.identity.model_uri.split(",")) > 1
+        segment_scored = add_explanation_column(
+            segment_scored,
+            config,
+            segment_model.segmentation.segment_values,
+            is_ensemble,
+            drift_summary=format_drift_summary(drift_result),
+        )
+
     segment_scored = add_info_column(
         segment_scored,
         config.model_name,
@@ -235,6 +259,7 @@ def score_single_segment(
         segment_values=segment_model.segmentation.segment_values,
         enable_contributions=config.enable_contributions,
         enable_confidence_std=config.enable_confidence_std,
+        ai_explanation_col=config.ai_explanation_col if config.enable_ai_explanation else None,
         score_col=config.score_col,
         score_std_col=config.score_std_col,
         contributions_col=config.contributions_col,
@@ -293,6 +318,8 @@ def score_segmented(
     internal_to_remove = [config.score_std_col, config.severity_col]
     if config.enable_contributions:
         internal_to_remove.append(config.contributions_col)
+    if config.enable_ai_explanation:
+        internal_to_remove.append(config.ai_explanation_col)
     columns_to_keep = [c for c in result.columns if c not in internal_to_remove]
     result = result.select(*columns_to_keep)
 

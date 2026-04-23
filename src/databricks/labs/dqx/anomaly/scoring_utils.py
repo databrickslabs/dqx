@@ -10,7 +10,7 @@ from pyspark.sql.types import (
     StructType,
 )
 
-from databricks.labs.dqx.anomaly.anomaly_info_schema import anomaly_info_struct_schema
+from databricks.labs.dqx.anomaly.anomaly_info_schema import ai_explanation_struct_schema, anomaly_info_struct_schema
 from databricks.labs.dqx.anomaly.segment_utils import canonicalize_segment_values
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.schema.dq_info_schema import (
@@ -67,6 +67,7 @@ def add_info_column(
     segment_values: dict[str, str] | None = None,
     enable_contributions: bool = False,
     enable_confidence_std: bool = False,
+    ai_explanation_col: str | None = None,
     score_col: str = "anomaly_score",
     score_std_col: str = "anomaly_score_std",
     contributions_col: str = "anomaly_contributions",
@@ -82,6 +83,8 @@ def add_info_column(
         segment_values: Segment values if model is segmented (None for global models).
         enable_contributions: Whether anomaly_contributions are available (0–100 percent).
         enable_confidence_std: Whether anomaly_score_std is available.
+        ai_explanation_col: Optional column name carrying the pre-computed AI explanation struct.
+            When provided and present on df, it is packaged into _dq_info.
         score_col: Column name for anomaly scores (internal, collision-safe).
         score_std_col: Column name for ensemble std scores (internal, collision-safe).
         contributions_col: Column name for SHAP contributions (internal, collision-safe, 0–100 percent).
@@ -120,6 +123,12 @@ def add_info_column(
         anomaly_info_fields["confidence_std"] = F.col(score_std_col)
     else:
         anomaly_info_fields["confidence_std"] = F.lit(None).cast(DoubleType())
+
+    # Add ai_explanation (null when not requested or column not present)
+    if ai_explanation_col and ai_explanation_col in df.columns:
+        anomaly_info_fields["ai_explanation"] = F.col(ai_explanation_col)
+    else:
+        anomaly_info_fields["ai_explanation"] = F.lit(None).cast(ai_explanation_struct_schema)
 
     anomaly_info = F.struct(*[value.alias(key) for key, value in anomaly_info_fields.items()]).cast(
         anomaly_info_struct_schema

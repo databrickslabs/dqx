@@ -2255,4 +2255,3 @@ def test_apply_checks_by_metadata_and_save_in_table_loads_checks_from_table(ws, 
         schema=expected_schema,
     )
     assert_df_equality(actual_df, expected_df, ignore_nullable=True)
-    
