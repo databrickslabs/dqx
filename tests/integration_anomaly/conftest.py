@@ -2,12 +2,15 @@
 
 import logging
 import os
+import time
 from typing import Any
 from uuid import uuid4
 
 import mlflow
+import mlflow.sklearn
 import pytest
 import pyspark.sql.functions as F
+from mlflow.exceptions import RestException
 from pyspark.sql import DataFrame, SparkSession
 
 from databricks.labs.dqx.anomaly.anomaly_engine import AnomalyEngine
@@ -369,6 +372,40 @@ def create_anomaly_dataset_rule(
 # -----------------------------------------------------------------------------
 # Fixtures
 # -----------------------------------------------------------------------------
+
+
+_AUTH_FLAKE_MARKERS = ("Credential was not sent", "401")
+
+
+def _is_transient_auth_flake(exc: RestException) -> bool:
+    return any(marker in str(exc) for marker in _AUTH_FLAKE_MARKERS)
+
+
+@pytest.fixture(autouse=True)
+def _retry_mlflow_auth_flakes(monkeypatch):
+    """Retry mlflow.sklearn.load_model on transient GHA OIDC metadata-service flakes.
+
+    Test-only workaround: the Databricks SDK's metadata-service auth path occasionally
+    returns an empty token under CI load, surfacing as a 401 "Credential was not sent"
+    on the next MLflow REST call. Production code intentionally does not retry — real
+    users with genuine auth issues should see the error immediately.
+    """
+    original_load_model = mlflow.sklearn.load_model
+
+    def retrying_load_model(*args, **kwargs):
+        last_exc: RestException | None = None
+        for attempt in range(5):
+            try:
+                return original_load_model(*args, **kwargs)
+            except RestException as e:
+                if not _is_transient_auth_flake(e):
+                    raise
+                last_exc = e
+                time.sleep(2**attempt)  # 1s, 2s, 4s, 8s, 16s (max ~31s total)
+        assert last_exc is not None
+        raise last_exc
+
+    monkeypatch.setattr(mlflow.sklearn, "load_model", retrying_load_model)
 
 
 @pytest.fixture
