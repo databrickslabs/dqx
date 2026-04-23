@@ -1348,7 +1348,8 @@ def foreign_key(
     the corresponding reference columns of another DataFrame or table. Rows where
     foreign key values do not match the reference are reported as violations.
 
-    NULL values in the foreign key columns are ignored (SQL ANSI behavior).
+    By default, NULL values in the foreign key columns are ignored (SQL ANSI behavior).                         
+    When *null_safe=True*, NULL foreign-key values are matched against NULL reference values.
 
     Args:
         columns: List of column names (str) or Column expressions in the dataset (foreign key).
