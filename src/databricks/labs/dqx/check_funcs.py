@@ -1422,7 +1422,7 @@ def foreign_key(
             ref_df_distinct, on=(col_expr == F.col(ref_alias)) & col_expr.isNotNull() & filter_expr, how="left"
         )
 
-        base_condition = not_null_condition & col_expr.isNotNull()
+        base_condition = not_null_condition & col_expr.isNotNull() & filter_expr
         match_failed = F.col(ref_alias).isNull()
         match_succeeded = F.col(ref_alias).isNotNull()
         violation_condition = base_condition & (match_succeeded if negate else match_failed)
