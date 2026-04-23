@@ -82,13 +82,7 @@ def assert_df_equality_ignore_fingerprints(
     df2: DataFrame,
     **kwargs,
 ):
-    """Assert DataFrame equality after stripping fingerprint fields from result columns.
-
-    Translates legacy chispa-style kwargs to PySpark's assertDataFrameEqual:
-      - ignore_row_order    -> checkRowOrder (inverted)
-      - ignore_column_order -> ignoreColumnOrder
-      - ignore_nullable     -> dropped (PySpark skips nullability checks by default)
-    """
+    """Assert DataFrame equality after stripping fingerprint fields from result columns."""
     df1_clean = _strip_all_fingerprints(df1)
     df2_clean = _strip_all_fingerprints(df2)
 
