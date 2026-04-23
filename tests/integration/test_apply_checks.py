@@ -1065,6 +1065,63 @@ def test_foreign_key_check_null_safe_foreign_key_present(ws, spark):
 
     assert_check_and_split_results(checked, good_df, bad_df, expected, ["a", "b", "c"], ignore_column_order=True)
 
+def test_foreign_key_check_null_safe_foreign_key_present_negate(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    src_df = spark.createDataFrame(
+        [
+            [None, 2, 7],
+        ],
+        SCHEMA,
+    )
+
+    ref_df = spark.createDataFrame(
+        [
+            [1, None, 1],
+        ],
+        SCHEMA,
+    )
+
+    checks = [
+        DQDatasetRule(
+            criticality="warn",
+            check_func=check_funcs.foreign_key,
+            columns=["a"],
+            check_func_kwargs={
+                "ref_columns": ["b"],
+                "ref_df_name": "ref_df",
+                "null_safe": True,
+                "negate": True,
+            },
+        ),
+    ]
+
+    refs_df = {"ref_df": ref_df}
+
+    checked = dq_engine.apply_checks(src_df, checks, refs_df)
+    good_df, bad_df = dq_engine.apply_checks_and_split(src_df, checks, refs_df)
+
+    expected = spark.createDataFrame(
+        [
+            [
+                None,
+                2,
+                7,
+                None,
+                [
+                    build_quality_violation(
+                        "struct_a_as_a_exists_in_ref_struct_b_as_a",
+                        "Value '{null}' in column 'struct(a AS a)' found in reference column 'struct(b AS a)'",
+                        ["a"],
+                        function="foreign_key",
+                    )
+                ],
+            ]
+        ],
+        EXPECTED_SCHEMA,
+    )
+
+    assert_check_and_split_results(checked, good_df, bad_df, expected, ["a", "b", "c"], ignore_column_order=True)
+
 
 def test_foreign_key_check_null_safe_foreign_key_missing(ws, spark):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
@@ -1130,6 +1187,7 @@ def test_foreign_key_check_null_safe_on_composite_keys(ws, spark):
             [1, 2, 3],
             [4, 5, 6],
             [None, None, 7],
+            [1, None, 8],
         ],
         SCHEMA,
     )
@@ -1138,6 +1196,7 @@ def test_foreign_key_check_null_safe_on_composite_keys(ws, spark):
         [
             [1, 2, 3],
             [None, None, 7],
+            [1, None, 8],
         ],
         "ref_a: int, ref_b: int, e: int",
     )
@@ -1178,6 +1237,7 @@ def test_foreign_key_check_null_safe_on_composite_keys(ws, spark):
                 None,
             ],
             [None, None, 7, None, None],
+            [1, None, 8, None, None],
         ],
         EXPECTED_SCHEMA,
     )
@@ -1191,6 +1251,7 @@ def test_foreign_key_check_null_safe_on_composite_keys_not_found(ws, spark):
         [
             [1, 2, 3],
             [None, None, 7],
+            [1, None, 8],
         ],
         SCHEMA,
     )
@@ -1231,6 +1292,20 @@ def test_foreign_key_check_null_safe_on_composite_keys_not_found(ws, spark):
                     build_quality_violation(
                         "struct_a_as_a_b_as_b_not_exists_in_ref_struct_ref_a_as_a_ref_b_as_b",
                         "Value '{null, null}' in column 'struct(a AS a, b AS b)' not found in reference column 'struct(ref_a AS a, ref_b AS b)'",
+                        ["a", "b"],
+                        function="foreign_key",
+                    ),
+                ],
+                None,
+            ],
+            [
+                1,
+                None,
+                8,
+                [
+                    build_quality_violation(
+                        "struct_a_as_a_b_as_b_not_exists_in_ref_struct_ref_a_as_a_ref_b_as_b",
+                        "Value '{1, null}' in column 'struct(a AS a, b AS b)' not found in reference column 'struct(ref_a AS a, ref_b AS b)'",
                         ["a", "b"],
                         function="foreign_key",
                     ),
