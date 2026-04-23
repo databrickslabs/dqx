@@ -209,11 +209,14 @@ class TestSettingsManagerIntegration:
     def test_save_settings_with_nested_folder_structure(self, ws, settings_manager, installation_folder, make_random):
         """Should handle nested folder structures correctly."""
         user_home = f"/Users/{ws.current_user.me().user_name}"
-        nested_folder = f"{user_home}/test/nested/dqx_{make_random(8)}"
+        # Randomize the whole parent chain so parallel workers / concurrent CI jobs
+        # cannot collide on a shared prefix and wipe each other's folders on cleanup.
+        test_root = f"{user_home}/dqx_nested_{make_random(8)}"
+        nested_folder = f"{test_root}/test/nested/dqx_{make_random(8)}"
 
-        # Register both the nested folder and its parent for cleanup
+        # Register both the nested folder and its randomized parent for cleanup
         installation_folder(nested_folder)
-        installation_folder(f"{user_home}/test")
+        installation_folder(test_root)
 
         # Save settings with nested path
         settings_to_save = InstallationSettings(install_folder=nested_folder)
