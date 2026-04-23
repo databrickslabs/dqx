@@ -11,7 +11,12 @@ from databricks.labs.dqx.errors import InvalidParameterError
 
 
 class AnomalyScoringStrategy(ABC):
-    """Scoring strategy interface for row anomaly models."""
+    """Scoring strategy interface for row anomaly models.
+
+    Implementations that bypass `score_global_model` / `score_segmented` must call
+    `add_explanation_column` themselves when `config.enable_ai_explanation` is True;
+    otherwise the `_dq_info.anomaly.ai_explanation` struct will always be null.
+    """
 
     @abstractmethod
     def supports(self, algorithm: str) -> bool:

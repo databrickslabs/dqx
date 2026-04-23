@@ -1,7 +1,10 @@
 """Scoring configuration and constants for row anomaly detection."""
 
-from dataclasses import dataclass
+from __future__ import annotations
 
+from dataclasses import dataclass, field
+
+from databricks.labs.dqx.config import LLMModelConfig
 from databricks.labs.dqx.reporting_columns import DefaultColumnNames
 
 SEVERITY_QUANTILE_KEYS: list[tuple[float, str]] = [
@@ -35,6 +38,11 @@ class ScoringConfig:
     enable_confidence_std: bool = False
     segment_by: list[str] | None = None
     driver_only: bool = False
+    enable_ai_explanation: bool = False
+    ai_explanation_col: str = "ai_explanation"
+    llm_model_config: LLMModelConfig | None = None
+    redact_columns: list[str] = field(default_factory=list)
+    max_groups: int = 500
     score_col: str = "anomaly_score"
     score_std_col: str = "anomaly_score_std"
     contributions_col: str = "anomaly_contributions"
