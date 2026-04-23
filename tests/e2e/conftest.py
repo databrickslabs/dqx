@@ -26,6 +26,29 @@ def _get_local_git_branch() -> str | None:
         return None
 
 
+def _get_remote_url(branch: str) -> str | None:
+    """Get the git remote URL for the current branch, or None if not available."""
+    try:
+        remote = subprocess.check_output(
+            ["git", "config", f"branch.{branch}.remote"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
+        url = subprocess.check_output(
+            ["git", "config", f"remote.{remote}.url"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
+        if url.endswith(".git"):
+            url = url[:-4]
+        # Convert SSH URLs to HTTPS so pip can use them (git+git@... is invalid)
+        if url.startswith("git@github.com:"):
+            url = url.replace("git@github.com:", "https://github.com/", 1)
+        return url
+    except Exception:
+        return None
+
+
 @pytest.fixture
 def library_ref() -> str:
     """
@@ -55,6 +78,9 @@ def library_ref() -> str:
         # Local behavior: use current git branch
         ref_name = _get_local_git_branch()
         if ref_name and ref_name != "HEAD":
+            remote_url = _get_remote_url(ref_name)
+            if remote_url:
+                return f"git+{remote_url}.git@{ref_name}"
             return f"{base_ref}.git@{ref_name}"
 
     # Default to main branch
