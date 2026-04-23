@@ -81,7 +81,10 @@ def test_profiler_runner_applies_configured_criticality(
         ctas="SELECT * FROM VALUES (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e') AS data(id, name)",
     )
 
-    profiler_kwargs = {}
+    # sample_fraction=1.0 disables sampling. ProfilerConfig's default (0.3) is probabilistic
+    # and with only 5 test rows the sample can return 0 rows (~17% of runs: 0.7^5 ≈ 0.168),
+    # which makes the profiler generate no rules and this test flake.
+    profiler_kwargs: dict = {"sample_fraction": 1.0}
     if configured_criticality is not None:
         profiler_kwargs["criticality"] = configured_criticality
 
