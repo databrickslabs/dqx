@@ -1,6 +1,6 @@
 from collections.abc import Callable
 
-from chispa.dataframe_comparer import assert_df_equality  # type: ignore
+from pyspark.testing.utils import assertDataFrameEqual
 from pyspark.sql import DataFrame, Column
 from pyspark.sql.functions import lit
 from databricks.labs.dqx.executor import (
@@ -35,7 +35,7 @@ def test_row_rule_executor_apply(spark):
 
     result_df = result.check_df.select(result.condition.alias("check"))
     df_condition = spark.createDataFrame(["row check args: ('arg1',), kwargs: {'kwarg1': 'value1'}"], "check: string")
-    assert_df_equality(result_df, df_condition, ignore_nullable=True)
+    assertDataFrameEqual(result_df, df_condition)
 
 
 def test_dataset_rule_executor_apply(spark):
@@ -50,10 +50,10 @@ def test_dataset_rule_executor_apply(spark):
     executor = DQDatasetRuleExecutor(rule)
     result = executor.apply(df, spark)
 
-    assert_df_equality(df.limit(1), result.check_df, ignore_nullable=True)
+    assertDataFrameEqual(df.limit(1), result.check_df)
 
     result_df = result.check_df.select(result.condition.alias("check"))
     df_condition = spark.createDataFrame(
         ["dataset check column: col1, filter: id > 0, fake: value1, fake2: value2"], "check: string"
     )
-    assert_df_equality(result_df, df_condition, ignore_nullable=True)
+    assertDataFrameEqual(result_df, df_condition)
