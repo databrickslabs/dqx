@@ -1415,6 +1415,9 @@ def foreign_key(
 
         filter_expr = F.expr(row_filter) if row_filter else F.lit(True)
 
+        # col_expr.isNotNull() only filters rows in the single-column non-null-safe path;                               
+        # when col_expr is a struct (composite keys or null_safe=True), the struct is never NULL                        
+        # so the guard is a no-op but kept for clarity
         joined = df.join(
             ref_df_distinct, on=(col_expr == F.col(ref_alias)) & col_expr.isNotNull() & filter_expr, how="left"
         )
