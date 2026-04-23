@@ -1,5 +1,5 @@
 from pyspark.sql.functions import col
-from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.engine import DQEngine, DQEngineCore
 
 
 def dummy_func(column):
@@ -486,3 +486,60 @@ def test_is_in_range_float_arguments():
     ]
     status = DQEngine.validate_checks(checks)
     assert not status.has_errors
+
+
+def test_validate_checks_with_variables(tmp_path):
+    checks_yaml = """
+        - criticality: "{{ crit }}"
+          check:
+            function: is_not_null
+            arguments:
+              column: "{{ col }}"
+        """
+    checks_file = tmp_path / "checks.yml"
+    checks_file.write_text(checks_yaml, encoding="utf-8")
+    checks = DQEngineCore.load_checks_from_local_file(str(checks_file), variables={"crit": "error", "col": "b"})
+
+    status = DQEngine.validate_checks(checks)
+    assert not status.has_errors
+
+
+def test_validate_checks_with_variables_invalid_after_substitution(tmp_path):
+    checks_yaml = """
+        - criticality: "{{ crit }}"
+          check:
+            function: is_not_null
+            arguments:
+              column: b
+        """
+    checks_file = tmp_path / "checks.yml"
+    checks_file.write_text(checks_yaml, encoding="utf-8")
+    checks = DQEngineCore.load_checks_from_local_file(str(checks_file), variables={"crit": "not_a_valid_criticality"})
+
+    status = DQEngine.validate_checks(checks)
+    expected_error = (
+        "Invalid 'criticality' value: 'not_a_valid_criticality'. Expected 'warn' or 'error'. "
+        "Check details: {'criticality': 'not_a_valid_criticality', "
+        "'check': {'function': 'is_not_null', 'arguments': {'column': 'b'}}}"
+    )
+    assert status.errors[0] == expected_error
+
+
+def test_validate_checks_without_variables_fails_on_placeholders():
+    checks = [
+        {
+            "criticality": "{{ crit }}",
+            "check": {
+                "function": "is_not_null",
+                "arguments": {"column": "b"},
+            },
+        },
+    ]
+
+    status = DQEngine.validate_checks(checks)
+    expected_error = (
+        "Invalid 'criticality' value: '{{ crit }}'. Expected 'warn' or 'error'. "
+        "Check details: {'criticality': '{{ crit }}', "
+        "'check': {'function': 'is_not_null', 'arguments': {'column': 'b'}}}"
+    )
+    assert status.errors[0] == expected_error

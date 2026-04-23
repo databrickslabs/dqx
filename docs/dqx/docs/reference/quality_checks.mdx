@@ -20,6 +20,10 @@ When you define checks **declaratively** (YAML, JSON, or list of dicts), check a
 
 You can explore the implementation details of the check functions [here](https://github.com/databrickslabs/dqx/blob/v0.13.0/src/databricks/labs/dqx/check_funcs.py).
 
+<Admonition type="tip" title="Variable Substitution">
+All declarative check definitions (YAML, JSON, or Delta tables) support **variable substitution** for string-based fields using the `{{ variable_name }}` syntax. This allows for dynamic parameterization of column names, thresholds, and filters at load time. See the [User Guide](/docs/guide/quality_checks_definition/#variable-substitution) for more details.
+</Admonition>
+
 ## Row-level checks reference
 
 Row-level checks are applied to each row in a PySpark DataFrame. The quality check results are reported for individual rows in the result columns.

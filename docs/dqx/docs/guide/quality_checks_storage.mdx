@@ -180,6 +180,12 @@ If you create checks as a list of DQRule objects, you can convert them using the
     # also works for absolute and relative workspace paths if invoked from Databricks notebook or job
     checks: list[dict] = dq_engine.load_checks(config=FileChecksStorageConfig(location="checks.yml"))
 
+    # load checks from a local file with variable substitution
+    checks: list[dict] = dq_engine.load_checks(
+        FileChecksStorageConfig(location="checks.yml"),
+        variables={"threshold": 100, "column_name": "total_amount"}
+    )
+
     # load checks from arbitrary workspace location using absolute path
     checks: list[dict] = dq_engine.load_checks(config=WorkspaceFileChecksStorageConfig(location="/Shared/App1/checks.yml"))
 
