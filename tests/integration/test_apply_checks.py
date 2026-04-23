@@ -1065,6 +1065,7 @@ def test_foreign_key_check_null_safe_foreign_key_present(ws, spark):
 
     assert_check_and_split_results(checked, good_df, bad_df, expected, ["a", "b", "c"], ignore_column_order=True)
 
+
 def test_foreign_key_check_null_safe_foreign_key_present_negate(ws, spark):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     src_df = spark.createDataFrame(
@@ -1109,8 +1110,8 @@ def test_foreign_key_check_null_safe_foreign_key_present_negate(ws, spark):
                 None,
                 [
                     build_quality_violation(
-                        "struct_a_as_a_exists_in_ref_struct_b_as_a",
-                        "Value '{null}' in column 'struct(a AS a)' found in reference column 'struct(b AS a)'",
+                        "a_exists_in_ref_b",
+                        "Value 'null' in column 'a' found in reference column 'b'",
                         ["a"],
                         function="foreign_key",
                     )
@@ -1166,8 +1167,8 @@ def test_foreign_key_check_null_safe_foreign_key_missing(ws, spark):
                 None,
                 [
                     build_quality_violation(
-                        "struct_a_as_a_not_exists_in_ref_struct_b_as_a",
-                        "Value '{null}' in column 'struct(a AS a)' not found in reference column 'struct(b AS a)'",
+                        "a_not_exists_in_ref_b",
+                        "Value 'null' in column 'a' not found in reference column 'b'",
                         ["a"],
                         function="foreign_key",
                     )
@@ -1369,8 +1370,8 @@ def test_foreign_key_check_null_safe_yaml(ws, spark):
                 None,
                 [
                     build_quality_violation(
-                        "struct_a_as_a_not_exists_in_ref_struct_b_as_a",
-                        "Value '{4}' in column 'struct(a AS a)' not found in reference column 'struct(b AS a)'",
+                        "a_not_exists_in_ref_b",
+                        "Value '4' in column 'a' not found in reference column 'b'",
                         ["a"],
                         function="foreign_key",
                     )

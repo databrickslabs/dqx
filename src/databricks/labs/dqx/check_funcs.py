@@ -1348,7 +1348,7 @@ def foreign_key(
     the corresponding reference columns of another DataFrame or table. Rows where
     foreign key values do not match the reference are reported as violations.
 
-    By default, NULL values in the foreign key columns are ignored (SQL ANSI behavior).                         
+    By default, NULL values in the foreign key columns are ignored (SQL ANSI behavior).
     When *null_safe=True*, NULL foreign-key values are matched against NULL reference values.
 
     Args:
@@ -1378,18 +1378,25 @@ def foreign_key(
     _validate_ref_params(columns, ref_columns, ref_df_name, ref_table)
 
     not_null_condition = F.lit(True)
-    # Explicitly wrap single columns in a struct in case of null safety to distinguish matched `null` key
-    # and un-matched FK
+    # Wrap single columns in a struct when null_safe=True to distinguish a matched NULL key
+    # from an un-matched FK (struct(NULL) is itself non-NULL, unlike a scalar NULL).
     if len(columns) == 1 and not null_safe:
-        column = columns[0]
-        ref_column = ref_columns[0]
+        join_col = columns[0]
+        join_ref_col = ref_columns[0]
     else:
-        column, ref_column, not_null_condition = _handle_fk_composite_keys(
+        join_col, join_ref_col, not_null_condition = _handle_fk_composite_keys(
             columns, ref_columns, not_null_condition, null_safe
         )
 
-    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
-    ref_col_str_norm, ref_col_expr_str, ref_col_expr = get_normalized_column_and_expr(ref_column)
+    # For single-column FK, render alias/message from the raw column so that enabling
+    # null_safe does not change the rule name or violation message.
+    display_col = columns[0] if len(columns) == 1 else join_col
+    display_ref_col = ref_columns[0] if len(columns) == 1 else join_ref_col
+
+    col_str_norm, col_expr_str, display_col_expr = get_normalized_column_and_expr(display_col)
+    ref_col_str_norm, ref_col_expr_str, _ = get_normalized_column_and_expr(display_ref_col)
+    _, _, col_expr = get_normalized_column_and_expr(join_col)
+    _, _, ref_col_expr = get_normalized_column_and_expr(join_ref_col)
     unique_str = uuid.uuid4().hex  # make sure any column added to the dataframe is unique
     condition_col = f"__{col_str_norm}_{unique_str}"
 
@@ -1415,8 +1422,8 @@ def foreign_key(
 
         filter_expr = F.expr(row_filter) if row_filter else F.lit(True)
 
-        # col_expr.isNotNull() only filters rows in the single-column non-null-safe path;                               
-        # when col_expr is a struct (composite keys or null_safe=True), the struct is never NULL                        
+        # col_expr.isNotNull() only filters rows in the single-column non-null-safe path;
+        # when col_expr is a struct (composite keys or null_safe=True), the struct is never NULL
         # so the guard is a no-op but kept for clarity
         joined = df.join(
             ref_df_distinct, on=(col_expr == F.col(ref_alias)) & col_expr.isNotNull() & filter_expr, how="left"
@@ -1440,7 +1447,7 @@ def foreign_key(
         message=F.concat_ws(
             "",
             F.lit("Value '"),
-            col_expr.cast("string"),
+            F.when(display_col_expr.isNull(), F.lit("null")).otherwise(display_col_expr.cast("string")),
             F.lit("' in column '"),
             F.lit(col_expr_str),
             F.lit(f"' {'' if negate else 'not '}found in reference column '"),
