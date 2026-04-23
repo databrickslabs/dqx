@@ -1,5 +1,5 @@
 from datetime import timedelta
-from chispa.dataframe_comparer import assert_df_equality  # type: ignore
+from pyspark.testing.utils import assertDataFrameEqual
 
 from databricks.labs.dqx.config import WorkspaceFileChecksStorageConfig
 from databricks.labs.dqx.engine import DQEngine
@@ -109,7 +109,7 @@ def test_quality_checker_workflow_with_metrics(spark, setup_workflows_with_metri
         "metric_name"
     )
     actual_metrics_df = spark.table(run_config.metrics_config.location).orderBy("metric_name")
-    assert_df_equality(expected_metrics_df, actual_metrics_df)
+    assertDataFrameEqual(expected_metrics_df, actual_metrics_df)
 
     assert_output_df(spark, expected_quality_checking_output, run_config.output_config)
 
@@ -220,7 +220,7 @@ def test_quality_checker_workflow_with_quarantine_and_metrics(
         "metric_name"
     )
     actual_metrics_df = spark.table(run_config.metrics_config.location).orderBy("metric_name")
-    assert_df_equality(expected_metrics_df, actual_metrics_df)
+    assertDataFrameEqual(expected_metrics_df, actual_metrics_df)
 
     assert_quarantine_and_output_dfs(
         ws, spark, expected_quality_checking_output, run_config.output_config, run_config.quarantine_config
@@ -294,7 +294,7 @@ def test_e2e_workflow_with_metrics(ws, spark, setup_workflows_with_metrics, expe
         .where("metric_name NOT IN ('error_row_count', 'warning_row_count', 'valid_row_count', 'check_metrics')")
         .orderBy("metric_name")
     )
-    assert_df_equality(expected_metrics_df, actual_metrics_df)
+    assertDataFrameEqual(expected_metrics_df, actual_metrics_df)
     assert expected_quality_checking_output.count() == spark.table(run_config.output_config.location).count()
 
 
@@ -416,7 +416,7 @@ def test_custom_metrics_in_workflow_for_all_run_configs(
         .where("metric_name NOT IN ('error_row_count', 'warning_row_count', 'valid_row_count', 'check_metrics')")
         .orderBy("metric_name")
     )
-    assert_df_equality(expected_metrics_df, actual_metrics_df)
+    assertDataFrameEqual(expected_metrics_df, actual_metrics_df)
 
     assert_output_df(spark, expected_quality_checking_output, run_config.output_config)
 
@@ -531,7 +531,7 @@ def test_quality_checker_workflow_with_streaming_quarantine_and_metrics(
         spark.createDataFrame(expected_metrics, schema=OBSERVATION_TABLE_SCHEMA).drop("run_time").orderBy("metric_name")
     )
     actual_metrics_df = spark.table(run_config.metrics_config.location).drop("run_time").orderBy("metric_name")
-    assert_df_equality(expected_metrics_df, actual_metrics_df)
+    assertDataFrameEqual(expected_metrics_df, actual_metrics_df)
 
     assert_quarantine_and_output_dfs(
         ws, spark, expected_quality_checking_output, run_config.output_config, run_config.quarantine_config
@@ -652,7 +652,7 @@ def test_quality_checker_workflow_with_continuous_streaming_quarantine_and_metri
         spark.createDataFrame(expected_metrics, schema=OBSERVATION_TABLE_SCHEMA).drop("run_time").orderBy("metric_name")
     )
     actual_metrics_df = spark.table(run_config.metrics_config.location).drop("run_time").orderBy("metric_name")
-    assert_df_equality(expected_metrics_df, actual_metrics_df)
+    assertDataFrameEqual(expected_metrics_df, actual_metrics_df)
 
     assert_quarantine_and_output_dfs(
         ws, spark, expected_quality_checking_output, run_config.output_config, run_config.quarantine_config
@@ -769,7 +769,7 @@ def test_quality_checker_workflow_with_quarantine_and_metrics_for_patterns(
         "metric_name"
     )
     actual_metrics_df = spark.table(run_config.metrics_config.location).orderBy("metric_name")
-    assert_df_equality(expected_metrics_df, actual_metrics_df)
+    assertDataFrameEqual(expected_metrics_df, actual_metrics_df)
 
     dq_engine = DQEngine(ws, spark)
     expected_output_df = dq_engine.get_valid(expected_quality_checking_output)

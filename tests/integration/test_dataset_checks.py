@@ -6,7 +6,7 @@ import itertools
 from decimal import Decimal
 import pytest
 import pyspark.sql.functions as F
-from chispa.dataframe_comparer import assert_df_equality  # type: ignore
+from pyspark.testing.utils import assertDataFrameEqual
 from pyspark.sql import Column, DataFrame, SparkSession
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, DoubleType
 
@@ -67,7 +67,7 @@ def test_has_no_outliers_int_numeric_types(spark: SparkSession):
         ],
         "a: int, b: int, b_has_outliers: string",
     )
-    assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True, ignore_row_order=True)
+    assertDataFrameEqual(actual_condition_df, expected_condition_df, checkRowOrder=False)
 
 
 def test_has_no_outliers_float_numeric_types(spark: SparkSession):
@@ -106,7 +106,7 @@ def test_has_no_outliers_float_numeric_types(spark: SparkSession):
         ],
         "a: int, b: float, b_has_outliers: string",
     )
-    assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True, ignore_row_order=True)
+    assertDataFrameEqual(actual_condition_df, expected_condition_df, checkRowOrder=False)
 
 
 def test_has_no_outliers_long_numeric_types(spark: SparkSession):
@@ -145,7 +145,7 @@ def test_has_no_outliers_long_numeric_types(spark: SparkSession):
         ],
         "a: int, b: long, b_has_outliers: string",
     )
-    assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True, ignore_row_order=True)
+    assertDataFrameEqual(actual_condition_df, expected_condition_df, checkRowOrder=False)
 
 
 def test_has_no_outliers_decimal_numeric_types(spark: SparkSession):
@@ -184,7 +184,7 @@ def test_has_no_outliers_decimal_numeric_types(spark: SparkSession):
         ],
         "a: int, b: decimal(10,2), b_has_outliers: string",
     )
-    assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True, ignore_row_order=True)
+    assertDataFrameEqual(actual_condition_df, expected_condition_df, checkRowOrder=False)
 
 
 def test_has_no_outliers_empty_dataframe(spark: SparkSession):
@@ -201,7 +201,7 @@ def test_has_no_outliers_empty_dataframe(spark: SparkSession):
         [],
         "a: int, b: decimal(10,2), b_has_outliers: string",
     )
-    assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True, ignore_row_order=True)
+    assertDataFrameEqual(actual_condition_df, expected_condition_df, checkRowOrder=False)
 
 
 def test_has_no_outliers_with_row_filter(spark: SparkSession):
@@ -240,7 +240,7 @@ def test_has_no_outliers_with_row_filter(spark: SparkSession):
         ],
         "a: int, b: int, b_has_outliers: string",
     )
-    assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True, ignore_row_order=True)
+    assertDataFrameEqual(actual_condition_df, expected_condition_df, checkRowOrder=False)
 
 
 def test_has_no_outliers_with_none_median(spark: SparkSession):
@@ -279,7 +279,7 @@ def test_has_no_outliers_with_none_median(spark: SparkSession):
         ],
         "a: int, b: int, b_has_outliers: string",
     )
-    assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True, ignore_row_order=True)
+    assertDataFrameEqual(actual_condition_df, expected_condition_df, checkRowOrder=False)
 
 
 def test_has_no_outliers_in_string_columns(spark: SparkSession):
@@ -328,7 +328,7 @@ def test_is_unique(spark: SparkSession):
         ],
         SCHEMA + ", a_is_not_unique: string",
     )
-    assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True, ignore_row_order=True)
+    assertDataFrameEqual(actual_condition_df, expected_condition_df, checkRowOrder=False)
 
 
 def test_is_unique_null_distinct(spark: SparkSession):
@@ -355,7 +355,7 @@ def test_is_unique_null_distinct(spark: SparkSession):
         ],
         SCHEMA + ", struct_a_b_is_not_unique: string",
     )
-    assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True)
+    assertDataFrameEqual(actual_condition_df, expected_condition_df)
 
 
 def test_is_unique_nulls_not_distinct(spark: SparkSession):
@@ -375,7 +375,7 @@ def test_is_unique_nulls_not_distinct(spark: SparkSession):
         ],
         SCHEMA + ", struct_a_b_is_not_unique: string",
     )
-    assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True)
+    assertDataFrameEqual(actual_condition_df, expected_condition_df)
 
 
 def test_foreign_key(spark: SparkSession):
@@ -384,6 +384,7 @@ def test_foreign_key(spark: SparkSession):
             ["key1", 1],
             ["key2", 2],
             ["key3", 3],
+            ["key4", 3],
             [None, 4],
         ],
         SCHEMA,
@@ -400,7 +401,7 @@ def test_foreign_key(spark: SparkSession):
     ref_dfs = {"ref_df": ref_df}
     checks = [
         foreign_key(["a"], ["ref_col"], "ref_df"),
-        foreign_key([F.lit("a")], [F.lit("ref_col")], "ref_df", row_filter="b = 3"),
+        foreign_key([F.col("a")], [F.col("ref_col")], "ref_df", row_filter="b = 3"),
     ]
 
     actual_df = _apply_checks(test_df, checks, ref_dfs, spark)
@@ -410,11 +411,17 @@ def test_foreign_key(spark: SparkSession):
             ["key1", 1, None, None],
             ["key2", 2, "Value 'key2' in column 'a' not found in reference column 'ref_col'", None],
             ["key3", 3, None, None],
+            [
+                "key4",
+                3,
+                "Value 'key4' in column 'a' not found in reference column 'ref_col'",
+                "Value 'key4' in column 'a' not found in reference column 'ref_col'",
+            ],
             [None, 4, None, None],
         ],
         SCHEMA + ", a_not_exists_in_ref_ref_col: string, a_not_exists_in_ref_ref_col: string",
     )
-    assert_df_equality(actual_df, expected_condition_df, ignore_nullable=True)
+    assertDataFrameEqual(actual_df, expected_condition_df)
 
 
 def test_foreign_key_negate(spark: SparkSession):
@@ -423,6 +430,7 @@ def test_foreign_key_negate(spark: SparkSession):
             ["key1", 1],
             ["key2", 2],
             ["key3", 3],
+            ["key4", 3],
             [None, 4],
         ],
         SCHEMA,
@@ -439,7 +447,7 @@ def test_foreign_key_negate(spark: SparkSession):
     ref_dfs = {"ref_df": ref_df}
     checks = [
         foreign_key(["a"], ["ref_col"], "ref_df", negate=True),
-        foreign_key([F.lit("a")], [F.lit("ref_col")], "ref_df", row_filter="b = 3", negate=True),
+        foreign_key([F.col("a")], [F.col("ref_col")], "ref_df", row_filter="b = 3", negate=True),
     ]
 
     actual_df = _apply_checks(test_df, checks, ref_dfs, spark)
@@ -449,11 +457,17 @@ def test_foreign_key_negate(spark: SparkSession):
             ["key1", 1, "Value 'key1' in column 'a' found in reference column 'ref_col'", None],
             ["key2", 2, None, None],
             ["key3", 3, None, None],
+            [
+                "key4",
+                3,
+                "Value 'key4' in column 'a' found in reference column 'ref_col'",
+                "Value 'key4' in column 'a' found in reference column 'ref_col'",
+            ],
             [None, 4, None, None],
         ],
         SCHEMA + ", a_exists_in_ref_ref_col: string, a_exists_in_ref_ref_col: string",
     )
-    assert_df_equality(actual_df, expected_condition_df, ignore_nullable=True)
+    assertDataFrameEqual(actual_df, expected_condition_df)
 
 
 def test_is_aggr_not_greater_than(spark: SparkSession):
@@ -538,7 +552,7 @@ def test_is_aggr_not_greater_than(spark: SparkSession):
         expected_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_is_aggr_not_less_than(spark: SparkSession):
@@ -623,7 +637,7 @@ def test_is_aggr_not_less_than(spark: SparkSession):
         expected_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def _apply_checks(
@@ -730,7 +744,7 @@ def test_is_aggr_equal(spark: SparkSession):
         expected_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_is_aggr_equal_with_tolerance(spark: SparkSession):
@@ -857,7 +871,7 @@ def test_is_aggr_equal_with_tolerance(spark: SparkSession):
         expected_schema_nulls,
     )
 
-    assert_df_equality(actual_nulls, expected_nulls, ignore_nullable=True)
+    assertDataFrameEqual(actual_nulls, expected_nulls)
 
     # Test with floats
     actual_floats = _apply_checks(test_df_with_floats, checks_with_floats)
@@ -900,7 +914,7 @@ def test_is_aggr_equal_with_tolerance(spark: SparkSession):
         expected_schema_floats,
     )
 
-    assert_df_equality(actual_floats, expected_floats, ignore_nullable=True)
+    assertDataFrameEqual(actual_floats, expected_floats)
 
 
 def test_is_aggr_not_equal(spark: SparkSession):
@@ -984,7 +998,7 @@ def test_is_aggr_not_equal(spark: SparkSession):
         expected_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_is_aggr_not_equal_with_tolerance(spark: SparkSession):
@@ -1111,7 +1125,7 @@ def test_is_aggr_not_equal_with_tolerance(spark: SparkSession):
         expected_schema_nulls,
     )
 
-    assert_df_equality(actual_nulls, expected_nulls, ignore_nullable=True)
+    assertDataFrameEqual(actual_nulls, expected_nulls)
 
     # Test with floats
     actual_floats = _apply_checks(test_df_with_floats, checks_with_floats)
@@ -1154,7 +1168,7 @@ def test_is_aggr_not_equal_with_tolerance(spark: SparkSession):
         expected_schema_floats,
     )
 
-    assert_df_equality(actual_floats, expected_floats, ignore_nullable=True)
+    assertDataFrameEqual(actual_floats, expected_floats)
 
 
 def test_is_aggr_with_count_distinct(spark: SparkSession):
@@ -1186,7 +1200,7 @@ def test_is_aggr_with_count_distinct(spark: SparkSession):
         "a: string, b: string, a_count_distinct_greater_than_limit: string",
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
 def test_is_aggr_with_count_distinct_and_group_by(spark: SparkSession):
@@ -1232,7 +1246,7 @@ def test_is_aggr_with_count_distinct_and_group_by(spark: SparkSession):
         "a: string, b: string, b_count_distinct_group_by_a_greater_than_limit: string",
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
 def test_is_aggr_with_count_distinct_and_column_expression_in_group_by(spark: SparkSession):
@@ -1283,7 +1297,7 @@ def test_is_aggr_with_count_distinct_and_column_expression_in_group_by(spark: Sp
         "a: string, b: string, b_count_distinct_group_by_a_greater_than_limit: string",
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
 def test_is_aggr_with_approx_count_distinct(spark: SparkSession):
@@ -1329,7 +1343,7 @@ def test_is_aggr_with_approx_count_distinct(spark: SparkSession):
         "a: string, b: string, b_approx_count_distinct_group_by_a_greater_than_limit: string",
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
 def test_is_aggr_with_aggr_params_generic(spark: SparkSession):
@@ -1373,7 +1387,7 @@ def test_is_aggr_with_aggr_params_generic(spark: SparkSession):
         "a: string, b: string, b_approx_count_distinct_group_by_a_greater_than_limit: string",
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
 def test_is_aggr_with_statistical_functions(spark: SparkSession):
@@ -1415,7 +1429,7 @@ def test_is_aggr_with_statistical_functions(spark: SparkSession):
         "b_variance_group_by_a_greater_than_limit: string, b_median_greater_than_limit: string",
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
 def test_is_aggr_with_mode_function(spark: SparkSession):
@@ -1456,7 +1470,7 @@ def test_is_aggr_with_mode_function(spark: SparkSession):
         "a: string, b: int, b_mode_group_by_a_greater_than_limit: string",
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
 def test_is_aggr_with_percentile_functions(spark: SparkSession):
@@ -1486,7 +1500,7 @@ def test_is_aggr_with_percentile_functions(spark: SparkSession):
         "b_approx_percentile_greater_than_limit: string, b_approx_percentile_less_than_limit: string",
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
 def test_is_aggr_message_includes_params(spark: SparkSession):
@@ -1611,7 +1625,7 @@ def test_is_aggr_non_curated_aggregate_with_warning(spark: SparkSession):
         "a: string, b: int, b_any_value_greater_than_limit: string",
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
 def test_dataset_compare(spark: SparkSession, set_utc_timezone):
@@ -1717,7 +1731,7 @@ def test_dataset_compare(spark: SparkSession, set_utc_timezone):
         expected_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
 def test_compare_datasets_with_diff_col_names_and_check_missing(spark: SparkSession, set_utc_timezone):
@@ -1849,7 +1863,7 @@ def test_compare_datasets_with_diff_col_names_and_check_missing(spark: SparkSess
         expected_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
 def test_dataset_compare_ref_as_table_and_skip_map_col(spark: SparkSession, set_utc_timezone, make_schema, make_random):
@@ -2036,7 +2050,7 @@ def test_dataset_compare_ref_as_table_and_skip_map_col(spark: SparkSession, set_
         expected_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_dataset_compare_with_no_columns_to_compare_and_check_missing(spark: SparkSession):
@@ -2069,7 +2083,7 @@ def test_dataset_compare_with_no_columns_to_compare_and_check_missing(spark: Spa
         expected_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_dataset_compare_with_empty_ref_and_check_missing(spark: SparkSession):
@@ -2123,7 +2137,7 @@ def test_dataset_compare_with_empty_ref_and_check_missing(spark: SparkSession):
         expected_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
 def test_dataset_compare_with_empty_df_and_check_missing(spark: SparkSession):
@@ -2178,7 +2192,7 @@ def test_dataset_compare_with_empty_df_and_check_missing(spark: SparkSession):
         expected_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
 def test_dataset_compare_with_empty_df_and_ref(spark: SparkSession):
@@ -2220,7 +2234,7 @@ def test_dataset_compare_with_empty_df_and_ref(spark: SparkSession):
         expected_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_dataset_compare_unsorted_df_columns(spark: SparkSession):
@@ -2267,7 +2281,7 @@ def test_dataset_compare_unsorted_df_columns(spark: SparkSession):
         expected_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
 def test_compare_dataset_disabled_null_safe_row_matching(spark: SparkSession):
@@ -2369,7 +2383,7 @@ def test_compare_dataset_disabled_null_safe_row_matching(spark: SparkSession):
         expected_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
 def test_compare_dataset_disabled_null_safe_column_value_matching(spark: SparkSession):
@@ -2430,7 +2444,7 @@ def test_compare_dataset_disabled_null_safe_column_value_matching(spark: SparkSe
         expected_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
 def test_is_data_fresh_per_time_window(spark: SparkSession, set_utc_timezone):
@@ -2516,7 +2530,7 @@ def test_is_data_fresh_per_time_window(spark: SparkSession, set_utc_timezone):
         ],
         expected_schema,
     )
-    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
 def test_is_data_fresh_per_time_window_with_cutt_off(spark: SparkSession, set_utc_timezone):
@@ -2593,7 +2607,7 @@ def test_is_data_fresh_per_time_window_with_cutt_off(spark: SparkSession, set_ut
         ],
         expected_schema,
     )
-    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
 def test_is_data_fresh_per_time_window_check_entire_dataset(spark: SparkSession, set_utc_timezone):
@@ -2670,7 +2684,7 @@ def test_is_data_fresh_per_time_window_check_entire_dataset(spark: SparkSession,
         ],
         expected_schema,
     )
-    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
 def test_has_valid_schema_invalid_schema_exceptions():
@@ -2702,7 +2716,7 @@ def test_has_valid_schema_permissive_mode_extra_column(spark):
         ],
         "a string, b int, c double, has_invalid_schema string",
     )
-    assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True)
+    assertDataFrameEqual(actual_condition_df, expected_condition_df)
 
 
 def test_has_valid_schema_permissive_mode_type_widening(spark):
@@ -2820,11 +2834,11 @@ def test_has_valid_schema_permissive_mode_type_widening(spark):
     )
     expected_condition_df = expected_condition_df.withColumn("l", F.parse_json("l"))
 
-    # NOTE: As of Databricks Connect version 15.4, we cannot compare `VariantType` columns using `assert_df_equality`;
+    # NOTE: As of Databricks Connect version 15.4, we cannot compare `VariantType` columns using `assertDataFrameEqual`;
     # We cast variants to `MapType` to safely compare the columns
     expected_condition_df = expected_condition_df.withColumn("l", F.col("l").cast("map<string, string>"))
     actual_condition_df = actual_condition_df.withColumn("l", F.col("l").cast("map<string, string>"))
-    assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True)
+    assertDataFrameEqual(actual_condition_df, expected_condition_df)
 
 
 def test_has_valid_schema_permissive_mode_missing_column(spark):
@@ -2862,7 +2876,7 @@ def test_has_valid_schema_permissive_mode_missing_column(spark):
         ],
         "a string, b int, has_invalid_schema string",
     )
-    assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True)
+    assertDataFrameEqual(actual_condition_df, expected_condition_df)
 
 
 def test_has_valid_schema_permissive_mode_incompatible_column_type(spark):
@@ -2894,7 +2908,7 @@ def test_has_valid_schema_permissive_mode_incompatible_column_type(spark):
         ],
         "a string, b string, has_invalid_schema string",
     )
-    assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True)
+    assertDataFrameEqual(actual_condition_df, expected_condition_df)
 
 
 def test_has_valid_schema_strict_mode_missing_column(spark):
@@ -2926,7 +2940,7 @@ def test_has_valid_schema_strict_mode_missing_column(spark):
         ],
         "a string, b int, has_invalid_schema string",
     )
-    assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True)
+    assertDataFrameEqual(actual_condition_df, expected_condition_df)
 
 
 def test_has_valid_schema_strict_mode_extra_column(spark):
@@ -2960,7 +2974,7 @@ def test_has_valid_schema_strict_mode_extra_column(spark):
         ],
         "a string, b int, c double, has_invalid_schema string",
     )
-    assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True)
+    assertDataFrameEqual(actual_condition_df, expected_condition_df)
 
 
 def test_has_valid_schema_strict_mode_wrong_column_order(spark):
@@ -2992,7 +3006,7 @@ def test_has_valid_schema_strict_mode_wrong_column_order(spark):
         ],
         "b int, a string, has_invalid_schema string",
     )
-    assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True)
+    assertDataFrameEqual(actual_condition_df, expected_condition_df)
 
 
 def test_has_valid_schema_with_specified_columns(spark):
@@ -3028,7 +3042,7 @@ def test_has_valid_schema_with_specified_columns(spark):
         ],
         "a string, b int, c double, d string, has_invalid_schema string",
     )
-    assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True)
+    assertDataFrameEqual(actual_condition_df, expected_condition_df)
 
 
 def test_has_valid_schema_with_specific_columns_mismatch(spark: SparkSession):
@@ -3062,7 +3076,7 @@ def test_has_valid_schema_with_specific_columns_mismatch(spark: SparkSession):
         ],
         "a string, b string, c double, has_invalid_schema string",
     )
-    assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True)
+    assertDataFrameEqual(actual_condition_df, expected_condition_df)
 
 
 def test_has_valid_schema_with_ref_table(spark, make_schema, make_random):
@@ -3106,7 +3120,7 @@ def test_has_valid_schema_with_ref_table(spark, make_schema, make_random):
         ],
         "a string, b string, has_invalid_schema string",
     )
-    assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True)
+    assertDataFrameEqual(actual_condition_df, expected_condition_df)
 
 
 def test_has_valid_schema_with_ref_df_name(spark: SparkSession):
@@ -3145,7 +3159,7 @@ def test_has_valid_schema_with_ref_df_name(spark: SparkSession):
         ],
         "a string, b string, has_invalid_schema string",
     )
-    assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True)
+    assertDataFrameEqual(actual_condition_df, expected_condition_df)
 
 
 def test_has_valid_schema_with_exclude_columns(spark: SparkSession):
@@ -3169,7 +3183,7 @@ def test_has_valid_schema_with_exclude_columns(spark: SparkSession):
         ],
         "a string, b int, c double, d string, has_invalid_schema string",
     )
-    assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True)
+    assertDataFrameEqual(actual_condition_df, expected_condition_df)
 
 
 def test_has_valid_schema_with_exclude_columns_as_expression(spark: SparkSession):
@@ -3193,4 +3207,4 @@ def test_has_valid_schema_with_exclude_columns_as_expression(spark: SparkSession
         ],
         "a string, b int, c double, d string, has_invalid_schema string",
     )
-    assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True)
+    assertDataFrameEqual(actual_condition_df, expected_condition_df)
