@@ -1,0 +1,16 @@
+name: 'Configure Terraform registry proxy'
+description: 'Authenticate with Terraform registry.'
+runs:
+  using: "composite"
+  steps:
+    - name: Write ~/.terraformrc
+      shell: bash
+      run: |
+        cat > ~/.terraformrc <<'EOF'
+        host "registry.terraform.io" {
+          services = {
+            "modules.v1"   = "https://terraform-proxy.dev.databricks.com/v1/modules/"
+            "providers.v1" = "https://terraform-proxy.dev.databricks.com/v1/providers/"
+          }
+        }
+        EOF

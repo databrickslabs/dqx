@@ -288,6 +288,10 @@ jobs:
       - name: Install Databricks CLI
         uses: databricks/setup-cli@596b0a354ba14aa59921aca1b02bd67c2b0a81a5 # v0.297.2
 
+      # Required for DAB e2e tests
+      - name: Configure Terraform registry proxy
+        uses: ./.github/actions/terraform-proxy
+
       - name: Run e2e tests
         uses: databrickslabs/sandbox/acceptance@83461e5dd7021feabb1a9ca3ee10d6f46b72092a # acceptance/v0.4.6
         with:
@@ -325,6 +329,10 @@ jobs:
       # Required for DAB (Databricks Asset Bundle) e2e tests
       - name: Install Databricks CLI
         uses: databricks/setup-cli@596b0a354ba14aa59921aca1b02bd67c2b0a81a5 # v0.297.2
+
+      # Required for DAB e2e tests
+      - name: Configure Terraform registry proxy
+        uses: ./.github/actions/terraform-proxy
 
       - name: Run e2e tests on serverless cluster
         uses: databrickslabs/sandbox/acceptance@83461e5dd7021feabb1a9ca3ee10d6f46b72092a # acceptance/v0.4.6
