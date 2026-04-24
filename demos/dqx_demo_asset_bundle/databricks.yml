@@ -1,5 +1,6 @@
 bundle:
   name: dqx_demo_bundle
+  engine: direct
 
 # Scope per-run isolation in the state path, not the bundle name. The CLI warns
 # against interpolating variables into `bundle.name` because the name is part of
