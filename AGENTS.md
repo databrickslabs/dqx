@@ -10,6 +10,8 @@ make test           # Unit tests
 make integration    # Integration tests (needs Databricks workspace)
 make e2e            # End-to-end tests
 make coverage       # Coverage report
+make docs-install   # Install docs dependencies (yarn)
+make docs-build     # Build docs (pydoc-markdown + Docusaurus)
 make help           # All available targets
 
 .venv/bin/pytest tests/unit/test_build_rules.py -v          # single file
@@ -32,6 +34,7 @@ src/databricks/labs/dqx/
   ├── engine.py            # DQEngine / DQEngineCore — primary public API
   ├── base.py              # DQEngineBase, DQEngineCoreBase (abstract)
   ├── rule.py              # DQRule (abstract), DQRowRule, DQDatasetRule, DQForEachColRule, Criticality
+  ├── rule_fingerprint.py  # Rule fingerprinting (compute_rule_fingerprint, compute_rule_set_fingerprint_by_metadata)
   ├── check_funcs.py       # Built-in checks: null, range, regex, referential, aggregate…
   ├── manager.py           # DQRuleManager — build/manage rule collections
   ├── config.py            # WorkspaceConfig, RunConfig, AnomalyParams, LLMModelConfig, ExtraParams
@@ -39,11 +42,12 @@ src/databricks/labs/dqx/
   ├── checks_serializer.py / checks_resolver.py / checks_validator.py / checks_formats.py
   ├── config_serializer.py # ConfigSerializer — use instead of dataclasses.asdict()
   ├── cli.py               # Databricks Labs CLI commands (@dqx.command)
-  ├── errors.py            # For example: MissingParameterError, InvalidParameterError, UnsafeSqlQueryError - use instead of built-in Python exceptions
+  ├── errors.py            # For example: MissingParameterError, InvalidParameterError, UnsafeSqlQueryError — use instead of built-in exceptions
   ├── telemetry.py         # telemetry_logger, log_telemetry, log_dataframe_telemetry
   ├── utils.py             # shared helpers (column name resolution, SQL safety checks, etc.)
   ├── executor.py / io.py / table_manager.py / workflows_runner.py
   ├── metrics_listener.py / metrics_observer.py / reporting_columns.py
+  ├── profiling_utils.py   # Profiling utilities (stats, column metadata helpers)
   ├── profiler/            # Data profiling, rule generation, DLT pipeline generation
   ├── anomaly/             # ML row-level anomaly detection (MLflow, ensemble, drift, explainability)
   ├── llm/                 # LLM-based rule generation via DSPy (DQLLMEngine)
@@ -51,7 +55,7 @@ src/databricks/labs/dqx/
   ├── geo/                 # Geospatial check functions
   ├── datacontract/        # Data contract rule generation
   ├── schema/              # DQ result and info schemas
-  ├── installer/           # Workspace install/uninstall, workflow & dashboard installer
+  ├── installer/           # Workspace install/uninstall, workflow, dashboard, warehouse installer
   ├── quality_checker/     # E2E workflow runner
   ├── contexts/            # workspace_context, workflow_context, cli_context
   └── dashboards/          # Lakeview dashboard support
@@ -126,6 +130,32 @@ Never import these unconditionally in `engine.py`, `check_funcs.py`, or any non-
 ### 5. Never serialize configs with `dataclasses.asdict()`
 
 Use `ConfigSerializer` — it preserves nested types. `dataclasses.asdict()` loses them.
+
+### 6. Never disable linting to silence issues
+
+Fix the code instead of adding `# pylint: disable`, `# type: ignore`, `# noqa`, or per-file ignores. Use project-wide exceptions in `pyproject.toml` only when there is no viable fix (e.g., third-party API compatibility).
+
+---
+
+## Security Requirements
+
+**Mandatory:** Agents must comply with the following security requirements. These are non-negotiable; any added or modified code must not introduce security gaps. Violations must be rejected or remediated before merge.
+- **SQL injection**: User-provided or templated SQL must be validated with `is_sql_query_safe()` from `utils.py` before execution. Raise `UnsafeSqlQueryError` when the query is unsafe. Do not embed user input directly into SQL strings; use parameterized queries or validated template substitution (e.g., `re.escape` for keys).
+- **Sensitive content**: Do not include in the repository, history, issues, PRs, workflows, or CI logs: PII, customer identifiers, internal URLs, internal system names, architecture details, secrets, keys, or tokens. Use structured logging with redaction. Before release, commit history must be reviewed and remediated or rewritten if needed.
+- **Untrusted input**: When parsing JSON, YAML, or other formats from external sources, handle parse failures gracefully and avoid exposing raw error details that could leak internal structure.
+- **Path traversal**: Validate file and workspace paths; avoid constructing paths from unsanitized user input.
+- **Regex (ReDoS)**: Be aware of Regular Expression Denial of Service—complex patterns with nested quantifiers, alternation, or backtracking (e.g. `(a+)+`, `(a|a)*`) can cause catastrophic backtracking on adversarial input and hang the process. Validate or limit regex inputs from users; prefer simple patterns or use libraries with ReDoS-safe engines when handling untrusted strings.
+- **Dependencies**: Do not add dependencies with known vulnerabilities. Prefer well-maintained, widely used packages. Ensure dependencies and their licenses are compliant for intended distribution (e.g., external or OSS).
+- **Documentation and metadata**: Ensure metadata and documentation are safe for public distribution. Documentation must clearly describe intended use, supported environments, and any restrictions.
+- **Open source hygiene**: Do not remove LICENSE, NOTICE, or attribution files. Maintainer contact should be identifiable.
+- **Security controls**: Do not disable or bypass secret scanning, software composition analysis, or vulnerability scanning. Releases process should use CI-built tagged artifacts.
+- **GitHub workflows**: Avoid `pull_request_target` unless strictly necessary. The danger arises when this trigger (which bypasses GitHub's approval gate and runs in the base-branch context with secrets) is *combined with* checkout of untrusted fork code (e.g. `refs/pull/.../merge`) — that PR code can then exfiltrate secrets. Prefer `pull_request` for CI. If `pull_request_target` is required (e.g., for label-based workflows), never checkout or run PR-provided code when secrets are available; use `workflow_run` or `workflow_dispatch` for sensitive operations instead.
+- **Pickle / model deserialization**: `cloudpickle` and `mlflow.sklearn.load_model()` execute arbitrary code on deserialization. Only load models from trusted, authenticated MLflow registries within the controlled Databricks workspace. Never pass user-supplied model URIs to load functions without validating they resolve to a known, controlled registry path.
+- **LLM prompt injection**: User-supplied inputs to the `llm/` module (business descriptions, column names, sample data) are embedded in LLM prompts and can be crafted to manipulate model behaviour. Treat all such inputs as untrusted. LLM-generated output — function names, SQL fragments, rule arguments — must be validated before execution: function names must resolve through `CHECK_FUNC_REGISTRY`; any generated SQL must pass `is_sql_query_safe()`.
+- **Log injection**: Never embed user-supplied values (column names, rule names, file paths, contract identifiers) directly in log messages via f-strings without sanitization. Newlines and control characters in these values can forge log entries or corrupt log pipelines. Strip or escape newlines before logging untrusted strings; prefer structured logging fields over interpolated messages (CWE-117).
+- **SSRF (Server-Side Request Forgery)**: User-controlled URL fields such as *api_base* in *LLMModelConfig* are passed to outbound HTTP clients. Validate that any user-supplied URL targets an expected, allowlisted host before use. Do not allow arbitrary internal network endpoints to be reached via user config (CWE-918).
+- **Secrets management**: Design credential-accepting fields (API keys, tokens, passwords) to support secret scope references (e.g., `secret_scope/secret_key`) rather than raw strings. Document in docstrings that plaintext values are for local development only. Never log credential fields, even partially — redact them at the point of construction, not at the call site.
+- **LLM denial of service and information disclosure**: Malicious or pathological prompts can trigger unbounded or very expensive inference calls (OWASP LLM04) — enforce token/budget limits on all LLM calls. LLM responses may inadvertently echo back sensitive inputs such as schema metadata or data samples (OWASP LLM06) — treat LLM output as untrusted data; do not relay raw LLM responses to end users or logs without review.
 
 ---
 
@@ -220,13 +250,20 @@ model: Any  # type: ignore[assignment] — mlflow has no stubs
 ```
 `Any` in `anomaly/` is a known legacy exception. New code outside that module must not introduce it.
 
+### Docstrings
+
+Use [Google Style Python Docstrings](https://sphinxcontrib-napoleon.readthedocs.io/en/latest/example_google.html) for public functions, classes, and modules. See [Writing Docstrings](https://databrickslabs.github.io/dqx/docs/dev/contributing/#writing-docstrings) for full guidance.
+
+- **No backticks** around object names — use italics instead (e.g., *arg1*, *column*). Backticks cause rendering issues in API docs.
+- **Double curly braces** — mask with backslashes, e.g. `{{`. For code examples, use triple backticks.
+
 ### Blueprint Patterns
 
 `databricks-labs-blueprint` provides CLI, installation, parallelism, and rate-limiting. Use it — don't reinvent.
 
 | Need | Import | Usage |
 |---|---|---|
-| Module logger | `import logging` | `logger = logging.getLogger(__name__)` |
+| Module logger | `import logging` | `logger = logging.getLogger(__name__)`; use f-strings for log messages (e.g. `logger.warning(f"value={x}")`), not `%`-style args |
 | CLI entrypoint logger | `blueprint.entrypoint.get_logger` | `logger = get_logger(__file__)` |
 | Package logger setup | `blueprint.logger.install_logger` | call once in `__init__.py` |
 | Parallel tasks | `blueprint.parallel.Threads` | `Threads.strict("label", tasks)` |

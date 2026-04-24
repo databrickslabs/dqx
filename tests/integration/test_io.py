@@ -2,7 +2,7 @@ import logging
 import os
 from contextlib import contextmanager
 import pytest
-from chispa.dataframe_comparer import assert_df_equality  # type: ignore
+from pyspark.testing.utils import assertDataFrameEqual
 
 from databricks.labs.dqx.config import InputConfig, OutputConfig
 from databricks.labs.dqx.errors import InvalidConfigError
@@ -47,8 +47,7 @@ def test_read_input_data_no_input_format(spark, make_schema, make_volume):
 
     input_config = InputConfig(location=input_location)
     actual_df = read_input_data(spark, input_config)
-
-    assert_df_equality(actual_df, input_df)
+    assertDataFrameEqual(actual_df, input_df, checkRowOrder=False)
 
 
 def test_read_invalid_input_location(spark):
@@ -84,7 +83,7 @@ def test_read_input_data_from_table(spark, make_schema, make_random):
     input_df.write.format("delta").saveAsTable(input_location)
 
     result_df = read_input_data(spark, input_config)
-    assert_df_equality(input_df, result_df)
+    assertDataFrameEqual(input_df, result_df, checkRowOrder=False)
 
 
 def test_read_input_data_from_table_with_schema_and_spark_options(spark, make_schema, make_random):
@@ -105,7 +104,7 @@ def test_read_input_data_from_table_with_schema_and_spark_options(spark, make_sc
     input_df_ver1.write.format("delta").insertInto(input_location)
 
     result_df = read_input_data(spark, input_config)
-    assert_df_equality(input_df_ver0, result_df)
+    assertDataFrameEqual(input_df_ver0, result_df, checkRowOrder=False)
 
 
 def test_read_input_data_from_workspace_file(spark, make_schema, make_volume):
@@ -121,7 +120,7 @@ def test_read_input_data_from_workspace_file(spark, make_schema, make_volume):
     input_df.write.format("delta").saveAsTable(input_location)
 
     result_df = read_input_data(spark, input_config)
-    assert_df_equality(input_df, result_df)
+    assertDataFrameEqual(input_df, result_df, checkRowOrder=False)
 
 
 def test_read_input_data_from_workspace_file_with_spark_options(spark, make_schema, make_volume):
@@ -140,7 +139,7 @@ def test_read_input_data_from_workspace_file_with_spark_options(spark, make_sche
     input_df_ver1.write.format("delta").insertInto(input_location)
 
     result_df = read_input_data(spark, input_config)
-    assert_df_equality(input_df_ver0, result_df)
+    assertDataFrameEqual(input_df_ver0, result_df, checkRowOrder=False)
 
 
 def test_read_input_data_from_workspace_file_in_csv_format(spark, make_schema, make_volume):
@@ -161,8 +160,7 @@ def test_read_input_data_from_workspace_file_in_csv_format(spark, make_schema, m
     input_df_ver0.write.options(**input_read_options).format("csv").mode("overwrite").save(input_location)
 
     result_df = read_input_data(spark, input_config)
-
-    assert_df_equality(input_df_ver0, result_df)
+    assertDataFrameEqual(input_df_ver0, result_df, checkRowOrder=False)
 
 
 def test_save_dataframe_as_table(spark, make_schema, make_random):
@@ -177,7 +175,7 @@ def test_save_dataframe_as_table(spark, make_schema, make_random):
     save_dataframe_as_table(input_df, output_config)
 
     result_df = spark.table(table_name)
-    assert_df_equality(input_df, result_df)
+    assertDataFrameEqual(input_df, result_df, checkRowOrder=False)
 
     output_config.mode = "append"
     output_config.options = {"mergeSchema": "true"}
@@ -189,7 +187,7 @@ def test_save_dataframe_as_table(spark, make_schema, make_random):
 
     # Sorting is necessary because row order is not guaranteed after union/append operations in Spark.
     # This ensures a deterministic comparison for the test.
-    assert_df_equality(expected_df.sort("c"), result_df.sort("c"))
+    assertDataFrameEqual(expected_df.sort("c"), result_df.sort("c"))
 
 
 def test_save_dataframe_as_table_with_partition_by(spark, make_schema, make_random):
@@ -203,7 +201,7 @@ def test_save_dataframe_as_table_with_partition_by(spark, make_schema, make_rand
     save_dataframe_as_table(input_df, output_config)
 
     result_df = spark.table(table_name)
-    assert_df_equality(input_df, result_df)
+    assertDataFrameEqual(input_df, result_df, checkRowOrder=False)
 
     table_detail = spark.sql(f"DESCRIBE DETAIL {table_name}").collect()[0]
     assert table_detail["partitionColumns"] == ["a"]
@@ -220,7 +218,7 @@ def test_save_dataframe_as_table_with_cluster_by(spark, make_schema, make_random
     save_dataframe_as_table(input_df, output_config)
 
     result_df = spark.table(table_name)
-    assert_df_equality(input_df, result_df)
+    assertDataFrameEqual(input_df, result_df, checkRowOrder=False)
 
     table_detail = spark.sql(f"DESCRIBE DETAIL {table_name}").collect()[0]
     assert table_detail["clusteringColumns"] == ["a"]
@@ -245,12 +243,12 @@ def test_save_streaming_dataframe_in_table(spark, make_schema, make_random, make
     save_dataframe_as_table(streaming_input_df, output_config).awaitTermination()
 
     result_df = spark.table(result_table_name)
-    assert_df_equality(input_df, result_df)
+    assertDataFrameEqual(input_df, result_df, checkRowOrder=False)
 
     save_dataframe_as_table(streaming_input_df, output_config).awaitTermination()
 
     result_df = spark.table(result_table_name)
-    assert_df_equality(input_df, result_df)  # no new records
+    assertDataFrameEqual(input_df, result_df, checkRowOrder=False)  # no new records
 
 
 def test_save_streaming_dataframe_in_table_with_partition_by(spark, make_schema, make_random, make_volume):
@@ -272,7 +270,7 @@ def test_save_streaming_dataframe_in_table_with_partition_by(spark, make_schema,
     save_dataframe_as_table(streaming_input_df, output_config).awaitTermination()
 
     result_df = spark.table(result_table_name)
-    assert_df_equality(input_df, result_df)
+    assertDataFrameEqual(input_df, result_df, checkRowOrder=False)
 
     table_detail = spark.sql(f"DESCRIBE DETAIL {result_table_name}").collect()[0]
     assert table_detail["partitionColumns"] == ["a"]
@@ -312,7 +310,7 @@ def test_save_streaming_dataframe_in_table_with_cluster_by_missing_env_var(
         )
 
     result_df = spark.table(result_table_name)
-    assert_df_equality(input_df, result_df)
+    assertDataFrameEqual(input_df, result_df, checkRowOrder=False)
 
 
 def test_save_streaming_dataframe_in_table_with_cluster_by_invalid_env_var(
@@ -351,7 +349,7 @@ def test_save_streaming_dataframe_in_table_with_cluster_by_invalid_env_var(
             )
 
         result_df = spark.table(result_table_name)
-        assert_df_equality(input_df, result_df)
+        assertDataFrameEqual(input_df, result_df, checkRowOrder=False)
 
 
 def test_save_streaming_dataframe_in_table_with_cluster_by_serverless_env(
@@ -392,7 +390,7 @@ def test_save_streaming_dataframe_in_table_with_cluster_by_serverless_env(
                 )
 
             result_df = spark.table(result_table_name)
-            assert_df_equality(input_df, result_df)
+            assertDataFrameEqual(input_df, result_df, checkRowOrder=False)
 
 
 def test_save_streaming_dataframe_in_table_with_cluster_by_unsupported_env(
@@ -433,7 +431,7 @@ def test_save_streaming_dataframe_in_table_with_cluster_by_unsupported_env(
                 )
 
             result_df = spark.table(result_table_name)
-            assert_df_equality(input_df, result_df)
+            assertDataFrameEqual(input_df, result_df, checkRowOrder=False)
 
 
 def test_save_batch_dataframe_to_path(spark, make_schema, make_volume, make_random):
@@ -451,7 +449,7 @@ def test_save_batch_dataframe_to_path(spark, make_schema, make_volume, make_rand
     save_dataframe_as_table(input_df, output_config)
 
     result_df = spark.read.format("delta").load(volume_path)
-    assert_df_equality(input_df, result_df, ignore_row_order=True)
+    assertDataFrameEqual(input_df, result_df, checkRowOrder=False)
 
 
 def test_save_streaming_dataframe_to_path(spark, make_schema, make_volume, make_random):
@@ -481,7 +479,7 @@ def test_save_streaming_dataframe_to_path(spark, make_schema, make_volume, make_
     query.awaitTermination()
 
     result_df = spark.read.format("delta").load(volume_path)
-    assert_df_equality(input_df, result_df)
+    assertDataFrameEqual(input_df, result_df, checkRowOrder=False)
 
 
 def test_save_dataframe_invalid_location(spark):
@@ -517,5 +515,5 @@ def test_get_reference_dataframes(spark, make_schema, make_random):
     }
 
     result = get_reference_dataframes(spark, reference_tables)
-    assert_df_equality(input_df_1, result["ref_1"])
-    assert_df_equality(input_df_2, result["ref_2"])
+    assertDataFrameEqual(input_df_1, result["ref_1"])
+    assertDataFrameEqual(input_df_2, result["ref_2"])

@@ -2,7 +2,6 @@ from unittest.mock import create_autospec, PropertyMock
 
 from pyspark.errors import AnalysisException
 from pyspark.sql import DataFrame, SparkSession
-from pyspark.sql.column import Column
 
 from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.executor import DQCheckResult
@@ -35,7 +34,8 @@ def test_rule_manager_suppress_skipped_returns_null_condition_for_invalid_column
     result = manager.process()
 
     assert isinstance(result, DQCheckResult)
-    assert isinstance(result.condition, Column)
+    assert result.condition is not None
+    assert "CAST(NULL AS STRUCT" in str(result.condition)
     assert result.check_df is df_mock
 
 
@@ -52,5 +52,6 @@ def test_rule_manager_suppress_skipped_false_returns_struct_for_invalid_column()
     result = manager.process()
 
     assert isinstance(result, DQCheckResult)
-    assert isinstance(result.condition, Column)
+    assert result.condition is not None
+    assert "skipped" in str(result.condition).lower()
     assert result.check_df is df_mock

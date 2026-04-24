@@ -391,16 +391,26 @@ The DQX integration with Lakeflow Pipelines does not use Expectations but DQX's 
 
 You can define checks using DQX classes or as metadata (list of dictionaries) or loaded from YAML/JSON file or a table as described [here](/docs/guide/quality_checks_storage).
 
+<Admonition type="warning" title="Incremental materialized views">
+When writing DQX results to Lakeflow Materialized Views, you can set *run_time_overwrite* and *run_id_overwrite* as **static values** in `ExtraParams` when creating the `DQEngine`. This enables Lakeflow engine to continue incrementally updating the Materialized Views across pipeline runs. Without static values, each run may be treated as a new run, preventing proper incremental updates.
+</Admonition>
+
 #### Option 1: Apply quality check and quarantine bad records
 
 <Tabs>
   <TabItem value="Python" label="Python" default>
     ```python
     import dlt
+    from databricks.labs.dqx.config import ExtraParams
     from databricks.labs.dqx.engine import DQEngine
     from databricks.sdk import WorkspaceClient
 
-    dq_engine = DQEngine(WorkspaceClient())
+    # (Optional) If you use Materialized Views (MVs) in your pipelines, you can set static run_time_overwrite and run_id_overwrite extra params to make sure incrementalizations works
+    extra_params = ExtraParams(
+        run_time_overwrite="2025-01-01T00:00:00",  # static value for MV incrementalization
+        run_id_overwrite="lakeflow_pipeline_run",   # static value for MV incrementalization
+    )
+    dq_engine = DQEngine(WorkspaceClient(), extra_params=extra_params)
 
     checks = ... # quality rules / checks defined as metadata or DQX classes
 
@@ -430,11 +440,17 @@ You can define checks using DQX classes or as metadata (list of dictionaries) or
   <TabItem value="Python" label="Python" default>
     ```python
     import dlt
+    from databricks.labs.dqx.config import ExtraParams
     from databricks.labs.dqx.engine import DQEngine
     from databricks.sdk import WorkspaceClient
 
+    # (Optional) If you use Materialized Views (MVs) in your pipelines, you can set static run_time_overwrite and run_id_overwrite extra params to make sure incrementalizations works
+    extra_params = ExtraParams(
+        run_time_overwrite="2025-01-01T00:00:00",  # static value for incrementalization
+        run_id_overwrite="lakeflow_pipeline_run",   # static value for incrementalization
+    )
     checks = ... # quality rules / checks defined as metadata or DQX classes
-    dq_engine = DQEngine(WorkspaceClient())
+    dq_engine = DQEngine(WorkspaceClient(), extra_params=extra_params)
 
     @dlt.view
     def bronze_dq_check():
@@ -844,6 +860,7 @@ The following fields from the [configuration file](/docs/installation/#configura
    - `sample_seed`: seed for reproducible sampling.
    - `limit`: maximum number of records to analyze.
    - `filter`: filter for the input data as a string SQL expression (default: None).
+   - `criticality`: default criticality for generated rules, either `error` or `warn` (default: `error`).
 - `checks_user_requirements`: (optional) user input for AI-assisted rule generation
 - `llm_config`: (optional) configuration for the AI-assisted features
 - `extra_params`: (optional) extra parameters to pass to the jobs such as result column names and user_metadata
@@ -894,6 +911,7 @@ Example of the configuration file (relevant fields only):
       limit: 1000
       sample_fraction: 0.3
       summary_stats_file: profile_summary_stats.yml
+      criticality: error  # default criticality for generated rules ('error' or 'warn')
       llm_primary_key_detection: false
     checks_user_requirements: "business rules description" # optional user input for the llm-assisted features
     custom_check_functions:  # optional

@@ -1,4 +1,5 @@
 import logging
+import os
 import shutil
 import subprocess
 
@@ -76,10 +77,10 @@ def test_run_intermediate_dqx_demo_library(ws, make_notebook, make_schema, make_
 
 
 def test_run_dqx_manufacturing_demo(ws, make_notebook, make_directory, make_schema, make_job, library_ref):
-    path = Path(__file__).parent.parent.parent / "demos" / "dqx_manufacturing_demo.py"
+    path = Path(__file__).parent.parent.parent / "demos" / "dqx_demo_industry" / "dqx_manufacturing_demo.py"
     with open(path, "rb") as f:
         notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
-        folder = notebook.as_fuse().parent / "quality_rules"
+        folder = (notebook.as_fuse().parent / "quality_checks").as_posix()
         make_directory(path=folder)
 
     catalog = TEST_CATALOG
@@ -98,6 +99,52 @@ def test_run_dqx_manufacturing_demo(ws, make_notebook, make_directory, make_sche
         callback=lambda r: validate_run_status(r, ws),
     )
     logging.info(f"Job run {run.run_id} completed successfully for dqx_manufacturing_demo")
+
+
+def test_run_dqx_banking_demo(ws, make_notebook, make_schema, make_job, library_ref):
+    path = Path(__file__).parent.parent.parent / "demos" / "dqx_demo_industry" / "dqx_banking_demo.py"
+    with open(path, "rb") as f:
+        notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
+
+    catalog = TEST_CATALOG
+    schema = make_schema(catalog_name=catalog).name
+    notebook_path = notebook.as_fuse().as_posix()
+    notebook_task = NotebookTask(
+        notebook_path=notebook_path,
+        base_parameters={"demo_catalog": catalog, "demo_schema": schema, "test_library_ref": library_ref},
+    )
+    job = make_job(tasks=[Task(task_key="dqx_banking_demo", notebook_task=notebook_task)])
+
+    waiter = ws.jobs.run_now_and_wait(job.job_id)
+    run = ws.jobs.wait_get_run_job_terminated_or_skipped(
+        run_id=waiter.run_id,
+        timeout=timedelta(minutes=30),
+        callback=lambda r: validate_run_status(r, ws),
+    )
+    logging.info(f"Job run {run.run_id} completed successfully for dqx_banking_demo")
+
+
+def test_run_dqx_fashion_demo(ws, make_notebook, make_schema, make_job, library_ref):
+    path = Path(__file__).parent.parent.parent / "demos" / "dqx_demo_industry" / "dqx_fashion_demo.py"
+    with open(path, "rb") as f:
+        notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
+
+    catalog = TEST_CATALOG
+    schema = make_schema(catalog_name=catalog).name
+    notebook_path = notebook.as_fuse().as_posix()
+    notebook_task = NotebookTask(
+        notebook_path=notebook_path,
+        base_parameters={"demo_catalog": catalog, "demo_schema": schema, "test_library_ref": library_ref},
+    )
+    job = make_job(tasks=[Task(task_key="dqx_fashion_demo", notebook_task=notebook_task)])
+
+    waiter = ws.jobs.run_now_and_wait(job.job_id)
+    run = ws.jobs.wait_get_run_job_terminated_or_skipped(
+        run_id=waiter.run_id,
+        timeout=timedelta(minutes=30),
+        callback=lambda r: validate_run_status(r, ws),
+    )
+    logging.info(f"Job run {run.run_id} completed successfully for dqx_fashion_demo")
 
 
 def test_run_dqx_quick_start_demo_library(ws, make_notebook, make_job, library_ref):
@@ -170,7 +217,7 @@ def test_run_dqx_dlt_demo(
     pipeline_task = PipelineTask(pipeline_id=pipeline.pipeline_id)
     job = make_job(tasks=[Task(task_key="dqx_dlt_demo", pipeline_task=pipeline_task)])
 
-    waiter = ws.jobs.run_now_and_wait(job.job_id)
+    waiter = ws.jobs.run_now_and_wait(job.job_id, timeout=timedelta(minutes=30))
     run = ws.jobs.wait_get_run_job_terminated_or_skipped(
         run_id=waiter.run_id,
         timeout=timedelta(minutes=30),
@@ -283,11 +330,20 @@ def test_run_dqx_demo_asset_bundle(ws, make_schema, make_random, library_ref):
     host = ws.config.host or ""
     target = "azure" if "azuredatabricks.net" in host else "aws"
 
+    def _run(args: list[str]) -> None:
+        """Run a bundle command; on failure raise with stdout/stderr included so CI logs are actionable."""
+        result = subprocess.run([cli_path, *args], capture_output=True, cwd=path, check=False, text=True)
+        if result.returncode != 0:
+            raise AssertionError(
+                f"`databricks {' '.join(args)}` failed with exit {result.returncode}\n"
+                f"--- stdout ---\n{result.stdout}\n"
+                f"--- stderr ---\n{result.stderr}"
+            )
+
     try:
-        subprocess.run([cli_path, "bundle", "validate", "-t", target], check=True, capture_output=True, cwd=path)
-        subprocess.run(
+        _run(["bundle", "validate", "-t", target])
+        _run(
             [
-                cli_path,
                 "bundle",
                 "deploy",
                 "-t",
@@ -296,20 +352,41 @@ def test_run_dqx_demo_asset_bundle(ws, make_schema, make_random, library_ref):
                 f'--var="demo_catalog={catalog}"',
                 f'--var="demo_schema={schema}"',
                 f'--var="run_id={run_id}"',
-                '--force-lock',
+                "--force-lock",
+                "--auto-approve",
+            ]
+        )
+        _run(["bundle", "run", "-t", target, "dqx_demo_job"])
+    finally:
+        # Teardown is best-effort: never mask the primary error, but surface destroy's
+        # output if it fails so partial-state issues are diagnosable from CI logs.
+        # Pass the same `run_id` (and related vars) used on deploy — the bundle name
+        # is `dqx_demo_bundle_${var.run_id}`, so a mismatched run_id makes destroy
+        # target a non-existent bundle, which newer CLI versions treat as an error.
+        destroy = subprocess.run(
+            [
+                cli_path,
+                "bundle",
+                "destroy",
+                "-t",
+                target,
+                f'--var="library_ref={library_ref}"',
+                f'--var="demo_catalog={catalog}"',
+                f'--var="demo_schema={schema}"',
+                f'--var="run_id={run_id}"',
                 "--auto-approve",
             ],
-            check=True,
             capture_output=True,
             cwd=path,
+            check=False,
+            text=True,
         )
-        subprocess.run(
-            [cli_path, "bundle", "run", "-t", target, "dqx_demo_job"], check=True, capture_output=True, cwd=path
-        )
-    finally:
-        subprocess.run(
-            [cli_path, "bundle", "destroy", "-t", target, "--auto-approve"], check=True, capture_output=True, cwd=path
-        )
+        if destroy.returncode != 0:
+            logging.warning(
+                f"bundle destroy failed with exit {destroy.returncode}\n"
+                f"stdout: {destroy.stdout}\n"
+                f"stderr: {destroy.stderr}"
+            )
 
 
 def test_run_dqx_multi_table_demo(ws, make_notebook, make_schema, make_job, library_ref):
@@ -446,37 +523,40 @@ def test_run_dqx_row_anomaly_detection_demo(ws, make_notebook, make_schema, make
     logging.info(f"Job run {run.run_id} completed successfully for dqx_row_anomaly_detection_demo")
 
 
-def test_dbt_demo(make_schema, make_random, library_ref, debug_env):
-    """Test the dbt demo project. dbt-databricks only supports token or M2M OAuth auth."""
+def test_dbt_demo(make_schema, library_ref, debug_env, ws):
+    """Test the dbt demo project. Uses a bearer token minted via the Databricks SDK."""
     catalog = TEST_CATALOG
     schema = make_schema(catalog_name=catalog).name
     project_dir = Path(__file__).parent.parent.parent / "demos" / "dqx_demo_dbt"
 
-    token = debug_env.get("DATABRICKS_TOKEN")
-    client_id = debug_env.get("TOOLS_CLIENT_ID")
-    client_secret = debug_env.get("TOOLS_DATABRICKS_SECRET")
     # dbt expects just the hostname, not a full URL
     host = debug_env.get("DATABRICKS_HOST", "").replace("https://", "").rstrip("/")
-    workspace_id = debug_env.get("TEST_DEFAULT_WAREHOUSE_HTTP_PATH")
+    http_path = debug_env.get("TEST_DEFAULT_WAREHOUSE_HTTP_PATH")
 
-    # Build dbt profile: token auth or M2M OAuth
+    assert host, "DATABRICKS_HOST is not set"
+    assert http_path, "TEST_DEFAULT_WAREHOUSE_HTTP_PATH is not set"
+
+    dbt_bin = shutil.which("dbt")
+    assert dbt_bin, "dbt executable not found on PATH"
+
+    # Mint a bearer token from whatever auth the SDK resolves (PAT, M2M OAuth,
+    # metadata-service in CI). Pass it to dbt as a PAT so dbt-databricks>=1.11
+    # doesn't route through its own OAuth flow (which picks the wrong scope on
+    # Azure workspaces in databricks-sql-connector 4.x).
+    auth_header = ws.config.authenticate()["Authorization"]
+    token = auth_header.removeprefix("Bearer ").strip()
+
     profile: dict[str, object] = {
         "type": "databricks",
         "host": host,
-        "http_path": workspace_id,
+        "http_path": http_path,
         "catalog": catalog,
         "schema": schema,
+        "token": token,
         "threads": 1,
         "connect_timeout": 30,
     }
-    if client_id and client_secret:
-        profile["auth_type"] = "oauth"
-        profile["client_id"] = client_id
-        profile["client_secret"] = client_secret
-    else:
-        profile["token"] = token
 
-    # Create a temporary directory for dbt profiles
     with TemporaryDirectory() as temp_dir:
         dbt_profiles_dir = Path(temp_dir) / "dbt"
         dbt_profiles_dir.mkdir(parents=True, exist_ok=True)
@@ -488,8 +568,26 @@ def test_dbt_demo(make_schema, make_random, library_ref, debug_env):
         profiles_yml_path = dbt_profiles_dir / "profiles.yml"
         profiles_yml_path.write_text(profiles_yml_content.strip())
 
-        # Run dbt run
-        subprocess.run(
-            ["dbt", "run", "--debug", "--project-dir", str(project_dir), "--profiles-dir", str(dbt_profiles_dir)],
-            check=True,
+        env = {**os.environ, "DBT_PROFILES_DIR": str(dbt_profiles_dir)}
+
+        result = subprocess.run(
+            [
+                dbt_bin,
+                "run",
+                "--debug",
+                "--project-dir",
+                str(project_dir),
+                "--profiles-dir",
+                str(dbt_profiles_dir),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            env=env,
         )
+        if result.returncode != 0:
+            raise AssertionError(
+                f"dbt run failed with exit code {result.returncode}\n"
+                f"--- stdout ---\n{result.stdout}\n"
+                f"--- stderr ---\n{result.stderr}"
+            )

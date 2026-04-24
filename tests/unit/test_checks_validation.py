@@ -1,12 +1,12 @@
 from pyspark.sql.functions import col
-from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.engine import DQEngine, DQEngineCore
 
 
 def dummy_func(column):
     return col(column)
 
 
-def dummy_func_with_optional_args(column, arg1: bool | str):
+def dummy_func_with_optional_args(column, arg1: bool | str = True):
     assert arg1
     return col(column)
 
@@ -338,13 +338,43 @@ def test_argument_type_mismatch():
 
 
 def test_argument_type_mismatch_optional_args():
-    checks = [{"criticality": "warn", "check": {"function": "dummy_func", "arguments": {"arg1": 1}}}]
+    checks = [{"criticality": "warn", "check": {"function": "dummy_func", "arguments": {"column": "x", "arg1": 1}}}]
     custom_check_functions = {"dummy_func": dummy_func_with_optional_args}
     status = DQEngine.validate_checks(checks, custom_check_functions)
     assert (
         "Argument 'arg1' should be of type 'bool | str' for function "
         "'dummy_func_with_optional_args' in the 'arguments' block" in str(status)
     )
+
+
+def test_regex_match_missing_required_column():
+    checks = [
+        {
+            "criticality": "error",
+            "check": {
+                "function": "regex_match",
+                "arguments": {"negate": False, "regex": "^a"},
+            },
+        }
+    ]
+    status = DQEngine.validate_checks(checks)
+    assert status.has_errors
+    assert any("Missing required argument 'column'" in e for e in status.errors)
+
+
+def test_regex_match_missing_required_regex():
+    checks = [
+        {
+            "criticality": "error",
+            "check": {
+                "function": "regex_match",
+                "arguments": {"column": "name", "negate": False},
+            },
+        }
+    ]
+    status = DQEngine.validate_checks(checks)
+    assert status.has_errors
+    assert any("Missing required argument 'regex'" in e for e in status.errors)
 
 
 def test_for_each_column_argument_type_list():
@@ -456,3 +486,60 @@ def test_is_in_range_float_arguments():
     ]
     status = DQEngine.validate_checks(checks)
     assert not status.has_errors
+
+
+def test_validate_checks_with_variables(tmp_path):
+    checks_yaml = """
+        - criticality: "{{ crit }}"
+          check:
+            function: is_not_null
+            arguments:
+              column: "{{ col }}"
+        """
+    checks_file = tmp_path / "checks.yml"
+    checks_file.write_text(checks_yaml, encoding="utf-8")
+    checks = DQEngineCore.load_checks_from_local_file(str(checks_file), variables={"crit": "error", "col": "b"})
+
+    status = DQEngine.validate_checks(checks)
+    assert not status.has_errors
+
+
+def test_validate_checks_with_variables_invalid_after_substitution(tmp_path):
+    checks_yaml = """
+        - criticality: "{{ crit }}"
+          check:
+            function: is_not_null
+            arguments:
+              column: b
+        """
+    checks_file = tmp_path / "checks.yml"
+    checks_file.write_text(checks_yaml, encoding="utf-8")
+    checks = DQEngineCore.load_checks_from_local_file(str(checks_file), variables={"crit": "not_a_valid_criticality"})
+
+    status = DQEngine.validate_checks(checks)
+    expected_error = (
+        "Invalid 'criticality' value: 'not_a_valid_criticality'. Expected 'warn' or 'error'. "
+        "Check details: {'criticality': 'not_a_valid_criticality', "
+        "'check': {'function': 'is_not_null', 'arguments': {'column': 'b'}}}"
+    )
+    assert status.errors[0] == expected_error
+
+
+def test_validate_checks_without_variables_fails_on_placeholders():
+    checks = [
+        {
+            "criticality": "{{ crit }}",
+            "check": {
+                "function": "is_not_null",
+                "arguments": {"column": "b"},
+            },
+        },
+    ]
+
+    status = DQEngine.validate_checks(checks)
+    expected_error = (
+        "Invalid 'criticality' value: '{{ crit }}'. Expected 'warn' or 'error'. "
+        "Check details: {'criticality': '{{ crit }}', "
+        "'check': {'function': 'is_not_null', 'arguments': {'column': 'b'}}}"
+    )
+    assert status.errors[0] == expected_error
