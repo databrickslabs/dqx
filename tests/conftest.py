@@ -2,8 +2,7 @@ import json
 import logging
 import os
 import re
-import subprocess
-import sys
+import time
 from collections.abc import Callable, Generator
 from pathlib import Path
 from dataclasses import dataclass, replace
@@ -32,6 +31,7 @@ from databricks.labs.dqx.installer.workflow_installer import WorkflowDeployment
 from databricks.labs.dqx.installer.workflow_task import Task
 from databricks.labs.dqx.workflows_runner import WorkflowsRunner
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.config import Config
 from databricks.sdk.errors import BadRequest, NotFound, RequestLimitExceeded, TooManyRequests
 from databricks.sdk.retries import retried
 from databricks.sdk.service.database import DatabaseCatalog, DatabaseInstance
@@ -40,13 +40,13 @@ from databricks.sdk.service.workspace import ImportFormat
 logger = logging.getLogger(__name__)
 
 
-class VerboseWheels(WheelsV2):
-    """Test-only WheelsV2 that captures `pip wheel` output and logs it on failure.
+class PrebuiltWheels(WheelsV2):
+    """Test-only WheelsV2 that copies a pre-built wheel when `DQX_PREBUILT_WHEEL` is set.
 
-    Upstream's `verbose=True` sets stdout/stderr to `subprocess.STDOUT` which is invalid
-    as a stdout value (raises OSError: Bad file descriptor). This override uses pipes so
-    the real pip error surfaces in CI logs — which is what we need to diagnose root
-    causes of transient wheel build failures (e.g. PyPI mirror issues).
+    CI builds the wheel once via the prebuild-wheel action while the JFrog token is fresh,
+    then points each pytest invocation at that artifact so per-test `pip wheel` calls do
+    not fail after the 1h OIDC token TTL expires mid-suite. Local development falls through
+    to upstream's standard `pip wheel` behaviour.
     """
 
     def _build_wheel(
@@ -57,20 +57,12 @@ class VerboseWheels(WheelsV2):
         no_deps: bool = True,
         dirs_exist_ok: bool = False,
     ):
-        del verbose  # always capture in tests; fresh pipes avoid fd inheritance issues
-        checkout_root = self._product_info.checkout_root()
-        if self._product_info.is_git_checkout() and self._product_info.is_unreleased_version():
-            checkout_root = self._copy_root_to(tmp_dir, dirs_exist_ok=dirs_exist_ok)
-            self._override_version_to_unreleased(checkout_root)
-        args = [sys.executable, "-m", "pip", "wheel", "--wheel-dir", tmp_dir, checkout_root.as_posix()]
-        if no_deps:
-            args.append("--no-deps")
-        result = subprocess.run(args, capture_output=True, text=True, check=False)
-        if result.returncode != 0:
-            logger.error(
-                f"pip wheel failed (rc={result.returncode}); stdout={result.stdout!r}; stderr={result.stderr!r}"
-            )
-            raise subprocess.CalledProcessError(result.returncode, args, output=result.stdout, stderr=result.stderr)
+        prebuilt = os.environ.get("DQX_PREBUILT_WHEEL")
+        if not prebuilt:
+            return super()._build_wheel(tmp_dir, verbose=verbose, no_deps=no_deps, dirs_exist_ok=dirs_exist_ok)
+        src = Path(prebuilt)
+        dst = Path(tmp_dir) / src.name
+        dst.write_bytes(src.read_bytes())
         return Path(tmp_dir).glob("*.whl")
 
 
@@ -80,6 +72,50 @@ def _mlflow_env():
     Uses setdefault so explicit env vars (e.g. in CI) take precedence."""
     os.environ.setdefault("MLFLOW_TRACKING_URI", "databricks")
     os.environ.setdefault("MLFLOW_REGISTRY_URI", "databricks-uc")
+
+
+# Transient-auth retry is observed in three flavors, all originating from the Databricks SDK's
+# metadata-service credentials path under CI load. We retry at the auth resolution step so the
+# wrapper covers every caller (WorkspaceClient, MLflow, streaming listeners, etc.) uniformly.
+_AUTH_FLAKE_MARKERS = (
+    "Metadata Service returned empty token",
+    "metadata-service",
+    "Read timed out",
+    "Credential was not sent",
+)
+
+
+def _is_transient_auth_flake(exc: BaseException) -> bool:
+    msg = str(exc)
+    return any(marker in msg for marker in _AUTH_FLAKE_MARKERS)
+
+
+@pytest.fixture(autouse=True)
+def _retry_sdk_auth_flakes(monkeypatch):
+    """Retry Databricks SDK token resolution on transient metadata-service failures.
+
+    Test-only workaround. Three observed flake flavors from the GHA OIDC metadata service —
+    empty token, read timeout, and downstream 401 ("Credential was not sent") — all originate
+    here in *Config.authenticate*. Patching at the auth step covers every caller uniformly:
+    WorkspaceClient, MLflow REST, streaming observation listeners, etc. Production code
+    intentionally does not retry so real users see authentication errors immediately.
+    """
+    original_authenticate = Config.authenticate
+
+    def retrying_authenticate(self):
+        last_exc: BaseException | None = None
+        for attempt in range(5):
+            try:
+                return original_authenticate(self)
+            except Exception as e:
+                if not _is_transient_auth_flake(e):
+                    raise
+                last_exc = e
+                time.sleep(2**attempt)  # 1s, 2s, 4s, 8s, 16s (~31s max)
+        assert last_exc is not None
+        raise last_exc
+
+    monkeypatch.setattr(Config, "authenticate", retrying_authenticate)
 
 
 def get_schema_validation_rules(rules: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -94,7 +130,7 @@ def get_schema_validation_rules(rules: list[dict[str, Any]]) -> list[dict[str, A
 
 @pytest.fixture(scope="session")
 def debug_env_name():
-    return "ws2"  # Specify the name of the debug environment from ~/.databricks/debug-env.json
+    return "ws"  # Specify the name of the debug environment from ~/.databricks/debug-env.json
 
 
 @pytest.fixture
@@ -300,7 +336,7 @@ class MockInstallationContext(MockWorkflowContext):
             self.installation,
             self.install_state,
             self.workspace_client,
-            VerboseWheels(self.installation, self.product_info),
+            PrebuiltWheels(self.installation, self.product_info),
             self.product_info,
             self.tasks,
         )

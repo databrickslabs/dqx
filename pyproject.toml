@@ -95,9 +95,18 @@ requires = [
 ]
 build-backend = "hatchling.build"
 
-[tool.hatch.build]
+# Tell hatchling where the package lives and how to lay it out in the wheel.
+# Hatchling's auto-detect looks for `src/databricks_labs_dqx/` (project name) and finds nothing — 
+# this is a PEP 420 namespace package at `src/databricks/labs/dqx/`. 
+# `packages` points it at the namespace root; `sources` strips `src/` so imports resolve as
+# `databricks.labs.dqx.*` in the installed wheel
+[tool.hatch.build.targets.wheel]
 sources = ["src"]
-include = ["src", "README.md", "LICENSE", "NOTICE"]
+packages = ["src/databricks"]
+
+# Restrict the sdist to source code and top-level metadata
+[tool.hatch.build.targets.sdist]
+only-include = ["src", "README.md", "LICENSE", "NOTICE"]
 
 [tool.hatch.version]
 path = "src/databricks/labs/dqx/__about__.py"
@@ -120,7 +129,6 @@ lint = [
 ]
 test = [
     "pip~=26.0",  # required by databricks-labs-blueprint WheelsV2 which calls `pip wheel`; remove after blueprint migrates to uv
-    "chispa~=0.10.1",
     "coverage[toml]~=7.4.4",
     "databricks-labs-pytester~=0.7.4",
     "pytest~=8.3.3",

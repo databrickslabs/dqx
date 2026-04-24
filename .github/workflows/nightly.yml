@@ -13,6 +13,31 @@ concurrency:
   cancel-in-progress: false  # don't cancel ongoing runs to ensure fixtures are completed and resources terminated
 
 jobs:
+  unit:
+    runs-on:
+      group: databrickslabs-protected-runner-group
+      labels: linux-ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Setup environment
+        uses: ./.github/actions/setup-env
+
+      - name: Run unit tests and generate test coverage report
+        run: make test
+
+      - name: Publish unit test coverage
+        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
+        with:
+          use_oidc: true
+          files: coverage-unit.xml
+          flags: unit
+
   integration:
     environment: tool
     runs-on:
@@ -30,8 +55,8 @@ jobs:
       - name: Setup environment
         uses: ./.github/actions/setup-env
 
-      - name: Run unit tests and generate test coverage report
-        run: make test
+      - name: Pre-build DQX wheel
+        uses: ./.github/actions/prebuild-wheel
 
       # Integration tests are run from within tests/integration folder.
       # Create .coveragerc with correct relative path to source code.
@@ -47,7 +72,7 @@ jobs:
       # Run tests from `tests/integration` as defined in .codegen.json
       # and generate code coverage for modules defined in .coveragerc
       - name: Run integration tests and generate test coverage report
-        uses: databrickslabs/sandbox/acceptance@3313d06ce86227537b3f37f5974f7eecb2a8e59a # acceptance/v0.4.4
+        uses: databrickslabs/sandbox/acceptance@83461e5dd7021feabb1a9ca3ee10d6f46b72092a # acceptance/v0.4.6
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
           timeout: 2h
@@ -58,15 +83,15 @@ jobs:
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           COVERAGE_FILE: ${{ github.workspace }}/.coverage  # make sure the coverage report is preserved
-
       - name: Merge coverage reports and convert them to XML
         run: make combine-coverage
 
-      # collects all coverage reports
-      - name: Publish test coverage
+      - name: Publish integration test coverage
         uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
         with:
           use_oidc: true
+          files: coverage-combined.xml
+          flags: integration
 
   integration_serverless:
     environment: tool
@@ -87,6 +112,9 @@ jobs:
       - name: Setup environment
         uses: ./.github/actions/setup-env
 
+      - name: Pre-build DQX wheel
+        uses: ./.github/actions/prebuild-wheel
+
       # Integration tests are run from within tests/integration folder.
       # Create .coveragerc with correct relative path to source code.
       - name: Prepare code coverage configuration for integration tests
@@ -99,7 +127,7 @@ jobs:
           EOF
 
       - name: Run integration tests on serverless cluster
-        uses: databrickslabs/sandbox/acceptance@3313d06ce86227537b3f37f5974f7eecb2a8e59a # acceptance/v0.4.4
+        uses: databrickslabs/sandbox/acceptance@83461e5dd7021feabb1a9ca3ee10d6f46b72092a # acceptance/v0.4.6
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
           timeout: 2h
@@ -111,15 +139,15 @@ jobs:
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
           COVERAGE_FILE: ${{ github.workspace }}/.coverage  # make sure the coverage report is preserved
-
       - name: Merge coverage reports and convert them to XML
         run: make combine-coverage
 
-      # collects all coverage reports
-      - name: Publish test coverage
+      - name: Publish serverless integration test coverage
         uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
         with:
           use_oidc: true
+          files: coverage-combined.xml
+          flags: integration-serverless
 
   anomaly-tests:
     environment: tool
@@ -138,6 +166,9 @@ jobs:
       - name: Setup environment
         uses: ./.github/actions/setup-env
 
+      - name: Pre-build DQX wheel
+        uses: ./.github/actions/prebuild-wheel
+
       # Create .coveragerc with correct relative path to source code.
       - name: Prepare code coverage configuration for anomaly tests
         run: |
@@ -149,7 +180,7 @@ jobs:
           EOF
 
       - name: Run anomaly integration tests
-        uses: databrickslabs/sandbox/acceptance@3313d06ce86227537b3f37f5974f7eecb2a8e59a # acceptance/v0.4.4
+        uses: databrickslabs/sandbox/acceptance@83461e5dd7021feabb1a9ca3ee10d6f46b72092a # acceptance/v0.4.6
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
           timeout: 3h
@@ -164,15 +195,16 @@ jobs:
           MLFLOW_TRACKING_URI: databricks
           MLFLOW_REGISTRY_URI: databricks-uc
           MLFLOW_HTTP_REQUEST_TIMEOUT: "600"
-          MLFLOW_HTTP_REQUEST_MAX_RETRIES: "10"
-
+          MLFLOW_HTTP_REQUEST_MAX_RETRIES: "9"
       - name: Merge coverage reports and convert them to XML
         run: make combine-coverage
 
-      - name: Publish test coverage
+      - name: Publish anomaly test coverage
         uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
         with:
           use_oidc: true
+          files: coverage-combined.xml
+          flags: anomaly
 
   anomaly-tests-serverless:
     environment: tool
@@ -191,6 +223,9 @@ jobs:
       - name: Setup environment
         uses: ./.github/actions/setup-env
 
+      - name: Pre-build DQX wheel
+        uses: ./.github/actions/prebuild-wheel
+
       # Create .coveragerc with correct relative path to source code.
       - name: Prepare code coverage configuration for anomaly tests
         run: |
@@ -202,7 +237,7 @@ jobs:
           EOF
 
       - name: Run anomaly integration tests on serverless cluster
-        uses: databrickslabs/sandbox/acceptance@3313d06ce86227537b3f37f5974f7eecb2a8e59a # acceptance/v0.4.4
+        uses: databrickslabs/sandbox/acceptance@83461e5dd7021feabb1a9ca3ee10d6f46b72092a # acceptance/v0.4.6
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
           timeout: 3h
@@ -218,15 +253,16 @@ jobs:
           MLFLOW_TRACKING_URI: databricks
           MLFLOW_REGISTRY_URI: databricks-uc
           MLFLOW_HTTP_REQUEST_TIMEOUT: "600"
-          MLFLOW_HTTP_REQUEST_MAX_RETRIES: "10"
-
+          MLFLOW_HTTP_REQUEST_MAX_RETRIES: "9"
       - name: Merge coverage reports and convert them to XML
         run: make combine-coverage
 
-      - name: Publish test coverage
+      - name: Publish serverless anomaly test coverage
         uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
         with:
           use_oidc: true
+          files: coverage-combined.xml
+          flags: anomaly-serverless
 
   e2e:
     environment: tool
@@ -245,12 +281,15 @@ jobs:
       - name: Setup environment
         uses: ./.github/actions/setup-env
 
+      - name: Pre-build DQX wheel
+        uses: ./.github/actions/prebuild-wheel
+
       # Required for DAB (Databricks Asset Bundle) e2e tests
       - name: Install Databricks CLI
         uses: databricks/setup-cli@596b0a354ba14aa59921aca1b02bd67c2b0a81a5 # v0.297.2
 
       - name: Run e2e tests
-        uses: databrickslabs/sandbox/acceptance@3313d06ce86227537b3f37f5974f7eecb2a8e59a # acceptance/v0.4.4
+        uses: databrickslabs/sandbox/acceptance@83461e5dd7021feabb1a9ca3ee10d6f46b72092a # acceptance/v0.4.6
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
           timeout: 2h
@@ -280,12 +319,15 @@ jobs:
       - name: Setup environment
         uses: ./.github/actions/setup-env
 
+      - name: Pre-build DQX wheel
+        uses: ./.github/actions/prebuild-wheel
+
       # Required for DAB (Databricks Asset Bundle) e2e tests
       - name: Install Databricks CLI
         uses: databricks/setup-cli@596b0a354ba14aa59921aca1b02bd67c2b0a81a5 # v0.297.2
 
       - name: Run e2e tests on serverless cluster
-        uses: databrickslabs/sandbox/acceptance@3313d06ce86227537b3f37f5974f7eecb2a8e59a # acceptance/v0.4.4
+        uses: databrickslabs/sandbox/acceptance@83461e5dd7021feabb1a9ca3ee10d6f46b72092a # acceptance/v0.4.6
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
           timeout: 2h

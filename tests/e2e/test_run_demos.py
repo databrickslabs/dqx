@@ -77,10 +77,10 @@ def test_run_intermediate_dqx_demo_library(ws, make_notebook, make_schema, make_
 
 
 def test_run_dqx_manufacturing_demo(ws, make_notebook, make_directory, make_schema, make_job, library_ref):
-    path = Path(__file__).parent.parent.parent / "demos" / "dqx_manufacturing_demo.py"
+    path = Path(__file__).parent.parent.parent / "demos" / "dqx_demo_industry" / "dqx_manufacturing_demo.py"
     with open(path, "rb") as f:
         notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
-        folder = notebook.as_fuse().parent / "quality_rules"
+        folder = (notebook.as_fuse().parent / "quality_checks").as_posix()
         make_directory(path=folder)
 
     catalog = TEST_CATALOG
@@ -99,6 +99,52 @@ def test_run_dqx_manufacturing_demo(ws, make_notebook, make_directory, make_sche
         callback=lambda r: validate_run_status(r, ws),
     )
     logging.info(f"Job run {run.run_id} completed successfully for dqx_manufacturing_demo")
+
+
+def test_run_dqx_banking_demo(ws, make_notebook, make_schema, make_job, library_ref):
+    path = Path(__file__).parent.parent.parent / "demos" / "dqx_demo_industry" / "dqx_banking_demo.py"
+    with open(path, "rb") as f:
+        notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
+
+    catalog = TEST_CATALOG
+    schema = make_schema(catalog_name=catalog).name
+    notebook_path = notebook.as_fuse().as_posix()
+    notebook_task = NotebookTask(
+        notebook_path=notebook_path,
+        base_parameters={"demo_catalog": catalog, "demo_schema": schema, "test_library_ref": library_ref},
+    )
+    job = make_job(tasks=[Task(task_key="dqx_banking_demo", notebook_task=notebook_task)])
+
+    waiter = ws.jobs.run_now_and_wait(job.job_id)
+    run = ws.jobs.wait_get_run_job_terminated_or_skipped(
+        run_id=waiter.run_id,
+        timeout=timedelta(minutes=30),
+        callback=lambda r: validate_run_status(r, ws),
+    )
+    logging.info(f"Job run {run.run_id} completed successfully for dqx_banking_demo")
+
+
+def test_run_dqx_fashion_demo(ws, make_notebook, make_schema, make_job, library_ref):
+    path = Path(__file__).parent.parent.parent / "demos" / "dqx_demo_industry" / "dqx_fashion_demo.py"
+    with open(path, "rb") as f:
+        notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
+
+    catalog = TEST_CATALOG
+    schema = make_schema(catalog_name=catalog).name
+    notebook_path = notebook.as_fuse().as_posix()
+    notebook_task = NotebookTask(
+        notebook_path=notebook_path,
+        base_parameters={"demo_catalog": catalog, "demo_schema": schema, "test_library_ref": library_ref},
+    )
+    job = make_job(tasks=[Task(task_key="dqx_fashion_demo", notebook_task=notebook_task)])
+
+    waiter = ws.jobs.run_now_and_wait(job.job_id)
+    run = ws.jobs.wait_get_run_job_terminated_or_skipped(
+        run_id=waiter.run_id,
+        timeout=timedelta(minutes=30),
+        callback=lambda r: validate_run_status(r, ws),
+    )
+    logging.info(f"Job run {run.run_id} completed successfully for dqx_fashion_demo")
 
 
 def test_run_dqx_quick_start_demo_library(ws, make_notebook, make_job, library_ref):
@@ -171,7 +217,7 @@ def test_run_dqx_dlt_demo(
     pipeline_task = PipelineTask(pipeline_id=pipeline.pipeline_id)
     job = make_job(tasks=[Task(task_key="dqx_dlt_demo", pipeline_task=pipeline_task)])
 
-    waiter = ws.jobs.run_now_and_wait(job.job_id)
+    waiter = ws.jobs.run_now_and_wait(job.job_id, timeout=timedelta(minutes=30))
     run = ws.jobs.wait_get_run_job_terminated_or_skipped(
         run_id=waiter.run_id,
         timeout=timedelta(minutes=30),

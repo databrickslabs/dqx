@@ -80,6 +80,13 @@ if os.path.exists(quality_rules_path):
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ### Production Best Practice: Pin DQX Version
+# MAGIC
+# MAGIC To ensure consistent behavior and avoid unexpected issues from automatic upgrades, it is highly recommended to always pin DQX to a specific version in your production pipelines.
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ### Sample Data Generation
 # MAGIC
 # MAGIC

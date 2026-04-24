@@ -1,17 +1,15 @@
 import logging
 import os
 import threading
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from io import BytesIO
-from subprocess import CalledProcessError
 from typing import Any
 from unittest.mock import patch
 from pyspark.sql import DataFrame, functions as F
 from pyspark.sql.types import ArrayType, StructType
-from chispa import assert_df_equality as _chispa_assert_df_equality  # type: ignore
+from pyspark.testing.utils import assertDataFrameEqual
 
 import pytest
-from databricks.sdk.retries import retried
 from databricks.sdk.service.workspace import ImportFormat
 from databricks.labs.blueprint.installation import Installation
 from databricks.labs.pytester.fixtures.baseline import factory
@@ -43,11 +41,6 @@ EXTRA_PARAMS = ExtraParams(run_time_overwrite=RUN_TIME.isoformat(), run_id_overw
 FINGERPRINT_FIELDS = ["rule_fingerprint", "rule_set_fingerprint"]
 
 
-def _install_with_retry(installation_service) -> None:
-    # WheelsV2 shells out to `pip wheel`; retry transient CalledProcessError (network / PyPI hiccups).
-    retried(on=[CalledProcessError], timeout=timedelta(minutes=5))(installation_service.run)()
-
-
 def _strip_fingerprints_from_result_column(df: DataFrame, col_name: str) -> DataFrame:
     """Remove fingerprint fields from a result array column (_errors or _warnings)."""
 
@@ -74,25 +67,31 @@ def _strip_fingerprints_from_result_column(df: DataFrame, col_name: str) -> Data
     )
 
 
+_FINGERPRINT_COLUMNS = ("_errors", "dq_errors", "_warnings", "dq_warnings")
+
+
+def _strip_all_fingerprints(df: DataFrame) -> DataFrame:
+    """Remove fingerprint fields from all known result columns."""
+    for col in _FINGERPRINT_COLUMNS:
+        df = _strip_fingerprints_from_result_column(df, col)
+    return df
+
+
 def assert_df_equality_ignore_fingerprints(
     df1: DataFrame,
     df2: DataFrame,
     **kwargs,
 ):
     """Assert DataFrame equality after stripping fingerprint fields from result columns."""
-    df1_clean = df1
-    for col in ("_errors", "dq_errors"):
-        df1_clean = _strip_fingerprints_from_result_column(df1_clean, col)
-    for col in ("_warnings", "dq_warnings"):
-        df1_clean = _strip_fingerprints_from_result_column(df1_clean, col)
+    df1_clean = _strip_all_fingerprints(df1)
+    df2_clean = _strip_all_fingerprints(df2)
 
-    df2_clean = df2
-    for col in ("_errors", "dq_errors"):
-        df2_clean = _strip_fingerprints_from_result_column(df2_clean, col)
-    for col in ("_warnings", "dq_warnings"):
-        df2_clean = _strip_fingerprints_from_result_column(df2_clean, col)
-
-    _chispa_assert_df_equality(df1_clean, df2_clean, **kwargs)
+    check_row_order = not kwargs.pop("ignore_row_order", False)
+    ignore_column_order = kwargs.pop("ignore_column_order", False)
+    kwargs.pop("ignore_nullable", None)
+    assertDataFrameEqual(
+        df1_clean, df2_clean, checkRowOrder=check_row_order, ignoreColumnOrder=ignore_column_order, **kwargs
+    )
 
 
 def build_quality_violation(
@@ -101,6 +100,8 @@ def build_quality_violation(
     columns: list[str] | None,
     *,
     function: str = "is_not_null_and_not_empty",
+    filter_expr: str | None = None,
+    user_metadata: dict | None = None,
     rule_fingerprint: str | None = None,
     rule_set_fingerprint: str | None = None,
 ) -> dict[str, Any]:
@@ -110,14 +111,35 @@ def build_quality_violation(
         "name": name,
         "message": message,
         "columns": columns,
-        "filter": None,
+        "filter": filter_expr,
         "function": function,
         "run_time": RUN_TIME,
         "run_id": RUN_ID,
-        "user_metadata": {},
+        "user_metadata": user_metadata or {},
         "rule_fingerprint": rule_fingerprint,
         "rule_set_fingerprint": rule_set_fingerprint,
     }
+
+
+def assert_check_and_split_results(
+    checked: DataFrame,
+    good_df: DataFrame,
+    bad_df: DataFrame,
+    expected: DataFrame,
+    columns: list[str],
+    *,
+    ignore_column_order: bool = False,
+) -> None:
+    """Assert equality of checked, bad, and good DataFrames against expected results."""
+    assert_df_equality_ignore_fingerprints(
+        checked, expected, ignore_nullable=True, ignore_column_order=ignore_column_order
+    )
+    assert_df_equality_ignore_fingerprints(
+        bad_df, expected.where(F.col("_errors").isNotNull() | F.col("_warnings").isNotNull()), ignore_nullable=True
+    )
+    assert_df_equality_ignore_fingerprints(
+        good_df, expected.where(F.col("_errors").isNull()).select(*columns), ignore_nullable=True
+    )
 
 
 class SparkKeepAlive:
@@ -203,7 +225,7 @@ def setup_workflows(ws, spark, installation_ctx, make_schema, make_table, make_r
         pytest.skip()
 
     def create(_spark, **kwargs):
-        _install_with_retry(installation_ctx.installation_service)
+        installation_ctx.installation_service.run()
 
         quarantine = False
         if "quarantine" in kwargs and kwargs["quarantine"]:
@@ -236,7 +258,7 @@ def setup_serverless_workflows(ws, spark, serverless_installation_ctx, make_sche
         pytest.skip()
 
     def create(_spark, **kwargs):
-        _install_with_retry(serverless_installation_ctx.installation_service)
+        serverless_installation_ctx.installation_service.run()
 
         quarantine = False
         if "quarantine" in kwargs and kwargs["quarantine"]:
@@ -283,7 +305,7 @@ def setup_workflows_with_metrics(ws, spark, installation_ctx, make_schema, make_
         installation_ctx.config.profiler_override_clusters["default"] = cluster_id
         installation_ctx.config.quality_checker_override_clusters["default"] = cluster_id
         installation_ctx.config.e2e_override_clusters["default"] = cluster_id
-        _install_with_retry(installation_ctx.installation_service)
+        installation_ctx.installation_service.run()
 
         quarantine = False
         if "quarantine" in kwargs and kwargs["quarantine"]:
@@ -341,7 +363,7 @@ def setup_workflows_with_custom_folder(
         pytest.skip()
 
     def create(_spark, **kwargs):
-        _install_with_retry(installation_ctx_custom_install_folder.installation_service)
+        installation_ctx_custom_install_folder.installation_service.run()
 
         quarantine = False
         if "quarantine" in kwargs and kwargs["quarantine"]:

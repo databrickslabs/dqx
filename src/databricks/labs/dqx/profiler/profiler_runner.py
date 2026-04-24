@@ -76,7 +76,7 @@ class ProfilerRunner:
         if run_config.profiler_config.max_empty_ratio is not None:
             options["max_empty_ratio"] = run_config.profiler_config.max_empty_ratio
         summary_stats, profiles = self.profiler.profile(df, options=options)
-        checks = generator.generate_dq_rules(profiles)  # use default criticality "error"
+        checks = generator.generate_dq_rules(profiles, criticality=run_config.profiler_config.criticality)
         logger.info(f"Using options: \n{run_config.profiler_config}")
         logger.info(f"Generated checks: \n{checks}")
         logger.info(f"Generated summary statistics: \n{summary_stats}")
@@ -134,7 +134,7 @@ class ProfilerRunner:
         )
 
         for table, (summary_stats, profiles) in results.items():
-            checks = generator.generate_dq_rules(profiles)  # use default criticality "error"
+            checks = generator.generate_dq_rules(profiles, criticality=run_config.profiler_config.criticality)
             logger.info(f"Generated checks: \n{checks}")
             logger.info(f"Generated summary statistics: \n{summary_stats}")
 

@@ -171,3 +171,80 @@ from pyspark.sql import functions as F
 
 skipped = checked_df.select(F.explode("_errors").alias("e")).filter(F.col("e.skipped") == True)
 ```
+
+## Defining default variables for substitution
+
+DQX allows you to define engine-level defaults for variables used in declarative check definitions (YAML, JSON, or Delta tables). These defaults are automatically applied during `load_checks` and `save_checks` unless overridden by the per-call `variables` parameter.
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from databricks.labs.dqx.engine import DQEngine
+    from databricks.labs.dqx.config import ExtraParams, FileChecksStorageConfig, TableChecksStorageConfig
+    from databricks.sdk import WorkspaceClient
+
+    # Initialize engine with default variables
+    dq_engine = DQEngine(
+        WorkspaceClient(),
+        extra_params=ExtraParams(
+            variables={
+                "min_temp": 0,
+                "max_temp": 50,
+                "region": "GLOBAL"
+            }
+        )
+    )
+
+    # Load checks - uses 'min_temp' and 'max_temp' from defaults,
+    # but overrides 'region' specifically for this call.
+    resolved_checks = dq_engine.load_checks(
+        config=FileChecksStorageConfig(location="checks.yml"),
+        variables={"region": "EMEA"},
+    )
+
+    # Save checks - resolves variables before computing fingerprints and persisting.
+    # Uses 'min_temp' and 'max_temp' from defaults, overrides 'region' for this call.
+    dq_engine.save_checks(
+        checks=checks,
+        config=TableChecksStorageConfig(location="catalog.schema.checks_table"),
+        variables={"region": "EMEA"},
+    )
+    ```
+  </TabItem>
+</Tabs>
+
+<Admonition type="warning" title="Variable substitution in workflows">
+Variable substitution is not currently supported in DQX installable workflows. Variables can be defined and stored as YAML in the configuration file but will not be applied during workflow execution.
+
+Variable substitution is only available when defining checks declaratively (as dictionaries or in files/tables). It is not supported when using DQX classes (e.g., `DQRowRule`) directly.
+</Admonition> 
+
+## Overwriting run metadata
+
+By default, DQX automatically generates a unique `run_id` for each engine instance and uses the current timestamp as the `run_time`. You can manually overwrite these values using `ExtraParams` if you need to align DQX results with external systems or re-run checks for a specific historical point in time.
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from databricks.labs.dqx.engine import DQEngine
+    from databricks.labs.dqx.config import ExtraParams
+    from databricks.sdk import WorkspaceClient
+
+    extra_params = ExtraParams(
+        run_id_overwrite="custom-execution-id-123",
+        run_time_overwrite="2024-01-01T12:00:00Z"
+    )
+
+    dq_engine = DQEngine(WorkspaceClient(), extra_params=extra_params)
+    ```
+  </TabItem>
+  <TabItem value="Workflows" label="Workflows">
+    You can set the following fields in the [configuration file](/docs/installation/#configuration-file) to overwrite the run metadata when using DQX workflows:
+    ```yaml
+    extra_params:
+      run_id_overwrite: custom-execution-id-123
+      run_time_overwrite: 2024-01-01T12:00:00Z
+    ```
+  </TabItem>
+</Tabs>
+
