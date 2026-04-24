@@ -80,11 +80,13 @@ docs-clean:
 app-install:
 	yarn --cwd app install --frozen-lockfile
 
-app-build: app-install
+app-build:
 	cd app && \
 	  UV_BUILD_CONSTRAINT=$(CURDIR)/app/.build-constraints.txt \
 	  UV_REQUIRE_HASHES=1 \
-	  $(UV_RUN) apx build
+	  $(UV_RUN) apx build && \
+	  uv build ../ --wheel --out-dir .build/ && \
+	  uv build tasks/ --wheel --out-dir .build/tasks/
 
 app-start-dev: app-build
 	cd app && $(UV_RUN) apx dev start

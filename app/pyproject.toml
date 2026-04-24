@@ -27,6 +27,7 @@ metadata-path = "src/databricks_labs_dqx_app/_metadata.py"
 
 
 [tool.uv]
+required-version = "~=0.11.0"
 exclude-newer-package = { "databricks-sdk" = false }
 
 [tool.uv.sources]

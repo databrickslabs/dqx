@@ -45,11 +45,18 @@ def _find_wheels() -> list[Path]:
     Databricks Apps sets the working directory to the source code directory, but
     we also walk up from this file's location as a fallback (handles the case
     where the package is installed in a venv inside the source tree).
+    For local dev (apx dev start), the DAB build places DQX wheels in .build/
+    relative to the app source root rather than in the cwd itself.
     """
-    search_roots: list[Path] = [Path.cwd()]
+    cwd = Path.cwd()
+    search_roots: list[Path] = [cwd]
+    if (cwd / ".build").is_dir():
+        search_roots.append(cwd / ".build")
     for parent in Path(__file__).resolve().parents:
         if parent not in search_roots and (parent / "requirements.txt").exists():
             search_roots.append(parent)
+            if (parent / ".build").is_dir():
+                search_roots.append(parent / ".build")
             break
 
     logger.info("Searching for wheel files in: %s", [str(p) for p in search_roots])
@@ -117,8 +124,8 @@ async def _upload_wheels_to_volume(sp_ws: WorkspaceClient, volume_path: str) -> 
     remote_hash = await asyncio.to_thread(_read_remote_hash, sp_ws, volume_path)
 
     if local_hash == remote_hash:
-        logger.info("Wheel content hash unchanged (%s…) — skipping upload and job update", local_hash[:12])
-        return [], False
+        logger.info("Wheel content hash unchanged (%s…) — skipping upload", local_hash[:12])
+        return [f"{volume_path}/{w.name}" for w in wheels], False
 
     uploaded: list[str] = []
     for wheel_path in wheels:
@@ -180,20 +187,19 @@ async def lifespan(app: FastAPI):
                 logger.warning("Could not authenticate service principal — skipping wheel sync: %s", e, exc_info=True)
 
         if sp_ws is not None:
-            uploaded: list[str] = []
-            wheels_changed = False
+            wheel_volume_paths: list[str] = []
             try:
-                uploaded, wheels_changed = await _upload_wheels_to_volume(sp_ws, conf.wheels_volume)
+                wheel_volume_paths, _ = await _upload_wheels_to_volume(sp_ws, conf.wheels_volume)
             except Exception as e:
                 logger.warning(
                     "Could not upload wheels to volume — job environment will not be updated: %s", e, exc_info=True
                 )
 
-            if uploaded and wheels_changed:
+            if wheel_volume_paths:
                 try:
-                    await _update_job_wheels(sp_ws, conf.job_id, uploaded)
+                    await _update_job_wheels(sp_ws, conf.job_id, wheel_volume_paths)
                 except Exception as e:
-                    logger.warning("Could not update job environment with uploaded wheels: %s", e, exc_info=True)
+                    logger.warning("Could not update job environment: %s", e, exc_info=True)
 
     if sp_ws is not None and conf.job_id:
         if os.environ.get("DQX_SCHEDULER_DISABLED") == "1":

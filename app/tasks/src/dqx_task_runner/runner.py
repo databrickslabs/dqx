@@ -17,6 +17,7 @@ import json
 import logging
 import sys
 import time
+import re
 from datetime import datetime, timezone, date
 from typing import Any
 
@@ -24,6 +25,28 @@ from databricks.sdk import WorkspaceClient
 from pyspark.sql import SparkSession
 
 logger = logging.getLogger("dqx_task_runner")
+
+_FQN_PART_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_\-]*$")
+_SQL_CHECK_RE = re.compile(r"^__sql_check__/[a-zA-Z0-9_\-]+$")
+
+
+def _validate_fqn(fqn: str) -> str:
+    if not fqn:
+        raise ValueError("Fully qualified name must not be empty.")
+    if _SQL_CHECK_RE.match(fqn):
+        return fqn
+    parts = fqn.split(".")
+    if len(parts) != 3:
+        raise ValueError(f"Invalid fully qualified name: '{fqn}'. Expected exactly three parts: catalog.schema.table")
+    for part in parts:
+        cleaned = part.strip("`")
+        if not cleaned or not _FQN_PART_RE.match(cleaned):
+            raise ValueError(f"Invalid fully qualified name part '{part}' in '{fqn}'.")
+    return fqn
+
+
+def _quote_fqn(fqn: str) -> str:
+    return ".".join(f"`{p.strip('`')}`" for p in fqn.split("."))
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 
@@ -700,11 +723,9 @@ def main() -> None:
     finally:
         if args.task_type != "scheduled":
             try:
-                from databricks_labs_dqx_app.backend.sql_utils import validate_fqn, quote_fqn
-
-                validate_fqn(args.view_fqn)
+                _validate_fqn(args.view_fqn)
                 logger.info("Dropping temporary view: %s", args.view_fqn)
-                spark.sql(f"DROP VIEW IF EXISTS {quote_fqn(args.view_fqn)}")
+                spark.sql(f"DROP VIEW IF EXISTS {_quote_fqn(args.view_fqn)}")
             except Exception as drop_exc:
                 logger.warning("Failed to drop view %s: %s", args.view_fqn, drop_exc)
 
