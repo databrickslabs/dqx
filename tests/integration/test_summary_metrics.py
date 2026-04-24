@@ -2680,6 +2680,24 @@ def test_observer_check_metrics_change_between_runs(ws, spark):
     _assert_check_metrics(observation2.get, ["id_is_not_null"])
 
 
+def test_save_results_in_table_with_observer_no_observation(ws, spark, make_schema, make_random):
+    catalog_name = TEST_CATALOG
+    schema = make_schema(catalog_name=catalog_name)
+    quarantine_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+    quarantine_config = OutputConfig(location=quarantine_table, mode="overwrite")
+
+    quarantine_df = spark.createDataFrame([[3, 4]], "a: int, b: int")
+
+    engine = DQEngine(ws, spark, observer=DQMetricsObserver())
+    engine.save_results_in_table(
+        quarantine_df=quarantine_df,
+        quarantine_config=quarantine_config,
+    )
+
+    loaded = spark.table(quarantine_table)
+    assertDataFrameEqual(quarantine_df, loaded)
+
+
 def _assert_check_metrics(actual_metrics: dict, expected_check_names: list[str]) -> None:
     """Assert that check_metrics contains exactly the expected check names."""
     check_metrics = json.loads(actual_metrics["check_metrics"])

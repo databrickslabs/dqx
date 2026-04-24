@@ -1141,7 +1141,7 @@ class DQEngine(DQEngineBase):
             )
             quarantine_config = run_config.quarantine_config
 
-        if self._engine.observer and metrics_config is None:
+        if observation is not None and metrics_config is None:
             run_config = self._config_serializer.load_run_config(
                 run_config_name=run_config_name,
                 assume_user=assume_user,
