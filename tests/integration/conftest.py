@@ -82,13 +82,7 @@ def assert_df_equality_ignore_fingerprints(
     df2: DataFrame,
     **kwargs,
 ):
-    """Assert DataFrame equality after stripping fingerprint fields from result columns.
-
-    Translates legacy chispa-style kwargs to PySpark's assertDataFrameEqual:
-      - ignore_row_order    -> checkRowOrder (inverted)
-      - ignore_column_order -> ignoreColumnOrder
-      - ignore_nullable     -> dropped (PySpark skips nullability checks by default)
-    """
+    """Assert DataFrame equality after stripping fingerprint fields from result columns."""
     df1_clean = _strip_all_fingerprints(df1)
     df2_clean = _strip_all_fingerprints(df2)
 
@@ -106,6 +100,8 @@ def build_quality_violation(
     columns: list[str] | None,
     *,
     function: str = "is_not_null_and_not_empty",
+    filter_expr: str | None = None,
+    user_metadata: dict | None = None,
     rule_fingerprint: str | None = None,
     rule_set_fingerprint: str | None = None,
 ) -> dict[str, Any]:
@@ -115,14 +111,35 @@ def build_quality_violation(
         "name": name,
         "message": message,
         "columns": columns,
-        "filter": None,
+        "filter": filter_expr,
         "function": function,
         "run_time": RUN_TIME,
         "run_id": RUN_ID,
-        "user_metadata": {},
+        "user_metadata": user_metadata or {},
         "rule_fingerprint": rule_fingerprint,
         "rule_set_fingerprint": rule_set_fingerprint,
     }
+
+
+def assert_check_and_split_results(
+    checked: DataFrame,
+    good_df: DataFrame,
+    bad_df: DataFrame,
+    expected: DataFrame,
+    columns: list[str],
+    *,
+    ignore_column_order: bool = False,
+) -> None:
+    """Assert equality of checked, bad, and good DataFrames against expected results."""
+    assert_df_equality_ignore_fingerprints(
+        checked, expected, ignore_nullable=True, ignore_column_order=ignore_column_order
+    )
+    assert_df_equality_ignore_fingerprints(
+        bad_df, expected.where(F.col("_errors").isNotNull() | F.col("_warnings").isNotNull()), ignore_nullable=True
+    )
+    assert_df_equality_ignore_fingerprints(
+        good_df, expected.where(F.col("_errors").isNull()).select(*columns), ignore_nullable=True
+    )
 
 
 class SparkKeepAlive:
