@@ -39,6 +39,14 @@ if ! git rev-parse --git-dir >/dev/null 2>&1; then
   exit 1
 fi
 
+# Capture the initial branch so we can restore it on exit (success or failure).
+# `--show-current` is empty in detached-HEAD state; fall back to the commit SHA in that case.
+ORIGINAL_REF=$(git branch --show-current)
+if [ -z "$ORIGINAL_REF" ]; then
+  ORIGINAL_REF=$(git rev-parse HEAD)
+fi
+trap 'git checkout --quiet "$ORIGINAL_REF" 2>/dev/null || true' EXIT
+
 # Verify gh is installed
 if ! command -v gh >/dev/null 2>&1; then
   echo "Error: gh CLI is required. Install from https://cli.github.com/"
@@ -80,11 +88,13 @@ if [ -z "$EXISTING" ]; then
     --base "$BASE_BRANCH" \
     --head "$SYNC_BRANCH" \
     --title "$TEST_PR_TITLE" \
+    --label "do-not-merge" \
+    --label "fork-test" \
     --body "Automated sync from fork PR for CI testing.
 
 Original PR: ${PR_URL}
 
-All tests, including acceptance, anomaly, and performance tests, run on this PR (they are skipped for fork PRs)."
+All tests, including unit and integration tests run on this PR (they are skipped for fork PRs)."
   echo "Test PR created."
 else
   echo "Test PR already exists: #${EXISTING}"

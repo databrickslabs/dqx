@@ -1339,6 +1339,7 @@ def foreign_key(
     ref_table: str | None = None,  # or reference table name
     negate: bool = False,
     row_filter: str | None = None,
+    null_safe: bool = False,
 ) -> tuple[Column, Callable]:
     """
     Build a foreign key check condition and closure for dataset-level validation.
@@ -1347,16 +1348,19 @@ def foreign_key(
     the corresponding reference columns of another DataFrame or table. Rows where
     foreign key values do not match the reference are reported as violations.
 
-    NULL values in the foreign key columns are ignored (SQL ANSI behavior).
+    By default, NULL values in the foreign key columns are ignored (SQL ANSI behavior).
+    When *null_safe=True*, NULL foreign-key values are matched against NULL reference values.
 
     Args:
         columns: List of column names (str) or Column expressions in the dataset (foreign key).
         ref_columns: List of column names (str) or Column expressions in the reference dataset.
         ref_df_name: Name of the reference DataFrame (used when passing DataFrames directly).
         ref_table: Name of the reference table (used when reading from catalog).
-        row_filter: Optional SQL expression for filtering rows before checking the foreign key. Auto-injected from the check filter.
         negate: If True, the condition is negated (i.e., the check fails when the foreign key values exist in the
             reference DataFrame/Table). If False, the check fails when the foreign key values do not exist in the reference.
+        row_filter: Optional SQL expression for filtering rows before checking the foreign key. Auto-injected from the check filter.
+        null_safe: If True, checks NULL foreign key values to match NULL reference values.
+            If False, skips NULL values in the foreign key columns. False is a default.
 
     Returns:
         A tuple of:
@@ -1374,14 +1378,25 @@ def foreign_key(
     _validate_ref_params(columns, ref_columns, ref_df_name, ref_table)
 
     not_null_condition = F.lit(True)
-    if len(columns) == 1:
-        column = columns[0]
-        ref_column = ref_columns[0]
+    # Wrap single columns in a struct when null_safe=True to distinguish a matched NULL key
+    # from an un-matched FK (struct(NULL) is itself non-NULL, unlike a scalar NULL).
+    if len(columns) == 1 and not null_safe:
+        join_col = columns[0]
+        join_ref_col = ref_columns[0]
     else:
-        column, ref_column, not_null_condition = _handle_fk_composite_keys(columns, ref_columns, not_null_condition)
+        join_col, join_ref_col, not_null_condition = _handle_fk_composite_keys(
+            columns, ref_columns, not_null_condition, null_safe
+        )
 
-    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
-    ref_col_str_norm, ref_col_expr_str, ref_col_expr = get_normalized_column_and_expr(ref_column)
+    # For single-column FK, render alias/message from the raw column so that enabling
+    # null_safe does not change the rule name or violation message.
+    display_col = columns[0] if len(columns) == 1 else join_col
+    display_ref_col = ref_columns[0] if len(columns) == 1 else join_ref_col
+
+    col_str_norm, col_expr_str, display_col_expr = get_normalized_column_and_expr(display_col)
+    ref_col_str_norm, ref_col_expr_str, _ = get_normalized_column_and_expr(display_ref_col)
+    _, _, col_expr = get_normalized_column_and_expr(join_col)
+    _, _, ref_col_expr = get_normalized_column_and_expr(join_ref_col)
     unique_str = uuid.uuid4().hex  # make sure any column added to the dataframe is unique
     condition_col = f"__{col_str_norm}_{unique_str}"
 
@@ -1407,11 +1422,14 @@ def foreign_key(
 
         filter_expr = F.expr(row_filter) if row_filter else F.lit(True)
 
+        # col_expr.isNotNull() only filters rows in the single-column non-null-safe path;
+        # when col_expr is a struct (composite keys or null_safe=True), the struct is never NULL
+        # so the guard is a no-op but kept for clarity
         joined = df.join(
             ref_df_distinct, on=(col_expr == F.col(ref_alias)) & col_expr.isNotNull() & filter_expr, how="left"
         )
 
-        base_condition = not_null_condition & col_expr.isNotNull()
+        base_condition = not_null_condition & col_expr.isNotNull() & filter_expr
         match_failed = F.col(ref_alias).isNull()
         match_succeeded = F.col(ref_alias).isNotNull()
         violation_condition = base_condition & (match_succeeded if negate else match_failed)
@@ -1429,7 +1447,7 @@ def foreign_key(
         message=F.concat_ws(
             "",
             F.lit("Value '"),
-            col_expr.cast("string"),
+            F.when(display_col_expr.isNull(), F.lit("null")).otherwise(display_col_expr.cast("string")),
             F.lit("' in column '"),
             F.lit(col_expr_str),
             F.lit(f"' {'' if negate else 'not '}found in reference column '"),
@@ -3325,7 +3343,9 @@ def _get_column_expr(column: Column | str) -> Column:
     return F.expr(column) if isinstance(column, str) else column
 
 
-def _handle_fk_composite_keys(columns: list[str | Column], ref_columns: list[str | Column], not_null_condition: Column):
+def _handle_fk_composite_keys(
+    columns: list[str | Column], ref_columns: list[str | Column], not_null_condition: Column, null_safe: bool
+):
     """
     Construct composite key expressions and not-null condition for foreign key validation.
 
@@ -3337,6 +3357,7 @@ def _handle_fk_composite_keys(columns: list[str | Column], ref_columns: list[str
         columns: List of columns (names or expressions) from the input DataFrame forming the composite key.
         ref_columns: List of columns (names or expressions) from the reference DataFrame forming the composite key.
         not_null_condition: Existing condition Column to be combined with not-null checks for the composite key.
+        null_safe: Whether to handle nullable foreign keys or skip them.
 
     Returns:
         A tuple containing:
@@ -3347,10 +3368,11 @@ def _handle_fk_composite_keys(columns: list[str | Column], ref_columns: list[str
     # Extract column names from columns for consistent aliasing
     columns_names = [get_column_name_or_alias(col) if not isinstance(col, str) else col for col in columns]
 
-    # skip nulls from comparison for ANSI standard compliance
+    # skip nulls from comparison for ANSI standard compliance if `null_safe` is disabled.
     # if any column is Null, skip the row from the check
-    for col_name in columns_names:
-        not_null_condition = not_null_condition & F.col(col_name).isNotNull()
+    if not null_safe:
+        for col_name in columns_names:
+            not_null_condition = not_null_condition & F.col(col_name).isNotNull()
 
     column = _build_fk_composite_key_struct(columns, columns_names)
     ref_column = _build_fk_composite_key_struct(ref_columns, columns_names)

@@ -191,3 +191,4 @@ docs/dqx/docs/reference/api
 # `make app-lock`). Use `make app-install` / `make app-build`.
 app/bun.lock
 app/package-lock.json
+/uv.toml
