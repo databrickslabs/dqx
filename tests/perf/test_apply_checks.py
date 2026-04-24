@@ -2062,3 +2062,32 @@ def test_benchmark_is_aggr_count_distinct_no_group_by(benchmark, ws, generated_d
     checked = dq_engine.apply_checks(generated_df, checks)
     actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
+
+
+def test_benchmark_has_no_aggr_outliers(benchmark, ws, generated_df):
+    """Benchmark rolling-window sigma outlier check on a time-series aggregate.
+
+    Uses col6 (timestamp spanning 1900–2025 at 1-second intervals) bucketed by day,
+    averaging col2 per day. With 100M rows and ~45k day-buckets the rolling-window
+    aggregation exercises both the groupBy/Window path and the broadcast join back to
+    every row in df.
+    """
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQDatasetRule(
+            criticality="warn",
+            check_func=check_funcs.has_no_aggr_outliers,
+            column="col2",
+            check_func_kwargs={
+                "time_column": "col6",
+                "aggr_type": "avg",
+                "time_interval": "day",
+                "lookback_num_intervals": 14,
+                "warmup_num_intervals": 7,
+                "sigma": 3.0,
+            },
+        )
+    ]
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS

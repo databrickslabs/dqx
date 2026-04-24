@@ -1770,6 +1770,229 @@ def is_aggr_not_equal(
     )
 
 
+_VALID_TIME_TRUNCATIONS: frozenset[str] = frozenset({"minute", "hour", "day", "week", "month"})
+
+
+@register_rule("dataset")
+def has_no_aggr_outliers(
+    column: str | Column,
+    time_column: str,
+    *,
+    aggr_type: str = "avg",
+    sigma: float = 3.0,
+    lookback_num_intervals: int = 14,
+    warmup_num_intervals: int = 7,
+    time_interval: str = "day",
+    group_by: list[str | Column] | None = None,
+    row_filter: str | None = None,
+    aggr_params: dict[str, Any] | None = None,
+) -> tuple[Column, Callable]:
+    """
+    Rolling-window sigma outlier check for a time-series aggregate.
+
+    For each combination of ``group_by`` values this check:
+
+    1. Computes ``metric = aggr_type(column)`` per ``time_interval`` bucket.
+    2. Derives a rolling baseline (mean and stddev_pop) over the preceding
+       ``lookback_num_intervals`` buckets.
+    3. Passes silently when fewer than ``warmup_num_intervals`` historical
+       buckets are available, the series is constant (stddev == 0), or the
+       most-recent bucket is missing.
+    4. Fails when ``|current_metric - baseline| > sigma * stddev``.
+
+    Args:
+        column: Column name (str) or Column expression to aggregate (e.g. ``"revenue"``
+            or ``F.col("a") - F.col("b")``). Pass ``"*"`` for ``count(*)``.
+        time_column: Name of the timestamp/date column used to bucket rows into
+            time grains.
+        aggr_type: Aggregation type applied per bucket (default: ``"avg"``). All
+            curated DQX aggregate types are supported (count, sum, avg, min, max,
+            count_distinct, stddev, percentile, etc.).
+        sigma: Number of standard deviations that defines the outlier band
+            (default: ``3.0``). Must be positive.
+        lookback_num_intervals: Number of preceding time-grain buckets used to
+            build the rolling baseline (default: ``14``). Must be >= 2.
+        warmup_num_intervals: Minimum number of historical buckets required before
+            the check fires (default: ``7``). Must satisfy
+            ``1 <= warmup_num_intervals <= lookback_num_intervals``.
+        time_interval: Granularity at which to bucket the ``time_column``
+            (default: ``"day"``). One of ``"minute"``, ``"hour"``, ``"day"``,
+            ``"week"``, ``"month"``.
+        group_by: Optional list of column names or Column expressions to segment
+            the outlier band (e.g. ``["csp", "region"]``). The check fires if
+            *any* group exceeds its own band.
+        row_filter: Optional SQL expression to filter rows before aggregation
+            (e.g. ``"status = 'Active'"``). Auto-injected from the check filter.
+        aggr_params: Optional dict of extra parameters for aggregate functions
+            that require them (e.g. ``{"percentile": 0.95}`` for percentile).
+
+    Returns:
+        A tuple of:
+            - A Spark Column representing the outlier condition (string message on
+              violation, NULL on pass).
+            - A closure ``apply(df)`` that enriches the DataFrame with the
+              condition column.
+
+    Raises:
+        InvalidParameterError: If ``sigma <= 0``, ``lookback_num_intervals < 2``,
+            ``warmup_num_intervals`` is out of range, or ``time_interval`` is unknown.
+        MissingParameterError: If ``aggr_type`` requires ``aggr_params`` that
+            are not supplied (e.g. percentile functions).
+    """
+    # --- Parameter validation ---
+    if sigma <= 0:
+        raise InvalidParameterError(f"'sigma' must be a positive number, got {sigma}")
+    if lookback_num_intervals < 2:
+        raise InvalidParameterError(f"'lookback_num_intervals' must be >= 2, got {lookback_num_intervals}")
+    if warmup_num_intervals < 1 or warmup_num_intervals > lookback_num_intervals:
+        raise InvalidParameterError(
+            f"'warmup_num_intervals' must satisfy 1 <= warmup_num_intervals <= lookback_num_intervals "
+            f"({lookback_num_intervals}), got {warmup_num_intervals}"
+        )
+    if time_interval not in _VALID_TIME_TRUNCATIONS:
+        raise InvalidParameterError(
+            f"'time_interval' must be one of {sorted(_VALID_TIME_TRUNCATIONS)}, got '{time_interval}'"
+        )
+
+    # Warn for non-curated aggregate functions (mirrors _is_aggr_compare behaviour)
+    if aggr_type not in CURATED_AGGR_FUNCTIONS:
+        warnings.warn(
+            f"Using non-curated aggregate function '{aggr_type}'. "
+            f"Curated functions: {', '.join(sorted(CURATED_AGGR_FUNCTIONS))}. "
+            f"Non-curated aggregates must return a single numeric value per group.",
+            UserWarning,
+            stacklevel=2,
+        )
+
+    aggr_col_str_norm, aggr_col_str, aggr_col_expr = get_normalized_column_and_expr(column)
+
+    # Unique suffix so multiple applications of this check don't collide
+    unique_str = uuid.uuid4().hex
+    condition_col = f"__dq_outlier_cond_{aggr_col_str_norm}_{aggr_type}_{unique_str}"
+    msg_col = f"__dq_outlier_msg_{aggr_col_str_norm}_{aggr_type}_{unique_str}"
+
+    def apply(df: DataFrame) -> DataFrame:
+        """
+        Apply the rolling-window outlier check to the input DataFrame.
+
+        Computes the aggregate per time-grain (and optionally per group), derives
+        the rolling mean/stddev baseline, evaluates the sigma band condition, and
+        adds the condition and message columns to every row of *df*.
+
+        Args:
+            df: The input DataFrame to validate.
+
+        Returns:
+            The DataFrame with additional condition and message columns appended.
+        """
+        time_col_type = df.schema[time_column].dataType
+        if not isinstance(time_col_type, (types.DateType, types.TimestampType, types.TimestampNTZType)):
+            raise InvalidParameterError(
+                f"Column '{time_column}' must be of date or timestamp type for time-series bucketing, "
+                f"but got type '{time_col_type.simpleString()}' instead."
+            )
+
+        filter_col = F.expr(row_filter) if row_filter else F.lit(True)
+        filtered_expr = F.when(filter_col, aggr_col_expr) if row_filter else aggr_col_expr
+        aggr_expr = _build_aggregate_expression(aggr_type, filtered_expr, aggr_params)
+
+        group_cols = [F.col(c) if isinstance(c, str) else c for c in (group_by or [])]
+        grain_col = F.date_trunc(time_interval, F.col(time_column)).alias("__dq_grain")
+
+        # Step 1: aggregate per time-grain (and group)
+        aggregate_df = df.groupBy(*group_cols, grain_col).agg(aggr_expr.alias("__dq_metric"))
+
+        # Step 2: rank grains per group, most-recent first
+        window_spec = (
+            Window.partitionBy(*group_cols).orderBy(F.col("__dq_grain").desc())
+            if group_by
+            else Window.orderBy(F.col("__dq_grain").desc())
+        )
+        ranked = aggregate_df.withColumn("__dq_rn", F.row_number().over(window_spec))
+
+        # Step 3: most-recent bucket (rank 1) and history (ranks 2..lookback_num_intervals+1)
+        current = ranked.filter(F.col("__dq_rn") == 1).select(
+            *group_cols,
+            F.col("__dq_metric").alias("__dq_current"),
+        )
+        hist = ranked.filter((F.col("__dq_rn") >= 2) & (F.col("__dq_rn") <= lookback_num_intervals + 1))
+
+        # Step 4: rolling baseline stats
+        stats = hist.groupBy(*group_cols).agg(
+            F.avg("__dq_metric").alias("__dq_mu"),
+            F.stddev_pop("__dq_metric").alias("__dq_sigma"),
+            F.count("*").alias("__dq_n"),
+        )
+
+        # Step 5: join current bucket + stats (left-join so current bucket always survives)
+        if group_by:
+            join_keys = [c if isinstance(c, str) else get_column_name_or_alias(c) for c in group_by]
+            joined = current.join(stats, on=join_keys, how="left")
+        else:
+            # Use a dummy-key left-join so the current bucket row survives even when stats
+            # is empty (e.g. only 1 bucket of data → hist is empty → stats has 0 rows).
+            # A plain crossJoin with empty stats would produce 0 rows and discard all df rows.
+            joined = current.withColumn("__dq_jkey", F.lit(1)).join(
+                stats.withColumn("__dq_jkey", F.lit(1)),
+                on="__dq_jkey",
+                how="left",
+            ).drop("__dq_jkey")
+
+        # Step 6: compute violation and message string (2 output columns: condition + msg)
+        # Guard on NULL __dq_n: occurs when hist is empty (fewer than 2 buckets)
+        insufficient_history = F.col("__dq_n").isNull() | (F.col("__dq_n") < warmup_num_intervals)
+        delta_expr = F.abs(F.col("__dq_current") - F.col("__dq_mu"))
+        violation = (
+            F.when(insufficient_history, F.lit(False))
+            .when(F.col("__dq_sigma").isNull() | (F.col("__dq_sigma") == 0), F.lit(False))
+            .when(F.col("__dq_current").isNull(), F.lit(False))
+            .otherwise(delta_expr > F.lit(sigma) * F.col("__dq_sigma"))
+        )
+        message = F.concat_ws(
+            "",
+            F.lit(f"{aggr_type}({aggr_col_str}) current="),
+            F.col("__dq_current").cast("string"),
+            F.lit(" baseline="),
+            F.col("__dq_mu").cast("string"),
+            F.lit(" stddev="),
+            F.col("__dq_sigma").cast("string"),
+            F.lit(" delta="),
+            delta_expr.cast("string"),
+            F.lit(f" exceeds {sigma} x stddev (lookback={lookback_num_intervals} intervals)"),
+        )
+
+        result = joined.withColumn(condition_col, violation).withColumn(
+            msg_col, F.when(violation, message).otherwise(F.lit(None).cast("string"))
+        )
+
+        # Step 7: broadcast result back to every row in df
+        select_cols = [condition_col, msg_col]
+        if group_by:
+            join_keys = [c if isinstance(c, str) else get_column_name_or_alias(c) for c in group_by]
+            return df.join(result.select(*join_keys, *select_cols), on=join_keys, how="left")
+        return df.crossJoin(result.select(*select_cols))
+
+    # Build alias
+    group_by_str = (
+        "_".join(c if isinstance(c, str) else get_column_name_or_alias(c, normalize=True) for c in group_by)
+        if group_by
+        else None
+    )
+    alias = (
+        f"{aggr_col_str_norm}_{aggr_type}_outlier_group_by_{group_by_str}".lstrip("_")
+        if group_by_str
+        else f"{aggr_col_str_norm}_{aggr_type}_outlier".lstrip("_")
+    )
+
+    condition = make_condition(
+        condition=F.col(condition_col),
+        message=F.col(msg_col),
+        alias=alias,
+    )
+
+    return condition, apply
+
+
 @register_rule("dataset")
 def compare_datasets(
     columns: list[str | Column],
