@@ -8,10 +8,10 @@ from uuid import uuid4
 
 import mlflow
 import mlflow.sklearn
+import mlflow.utils.rest_utils as mlflow_rest_utils
 import pytest
 import pyspark.sql.functions as F
 from mlflow.exceptions import RestException
-from mlflow.tracking import MlflowClient
 from pyspark.sql import DataFrame, SparkSession
 
 from databricks.labs.dqx.anomaly.anomaly_engine import AnomalyEngine
@@ -387,46 +387,33 @@ def _retry_mlflow_auth_flakes(monkeypatch):
     """Retry transient 401s from Databricks metadata-service auth on MLflow REST calls.
 
     Test-only workaround: the Databricks SDK's metadata-service auth path occasionally
-    returns an empty token under CI load, surfacing as a 401 "Credential was not sent"
-    on the next MLflow REST call. Production code intentionally does not retry — real
-    users with genuine auth issues should see the error immediately.
+    returns stale/empty headers without raising. MLflow then sends the request and
+    Databricks rejects it with 401 "Credential was not sent". Production code
+    intentionally does not retry — real users with genuine auth issues should see the
+    error immediately.
 
-    Wraps every MLflow entrypoint reached during training and scoring paths that hits
-    the Databricks REST API. Non-REST helpers (set_tracking_uri, set_registry_uri,
-    infer_signature) are intentionally omitted.
+    Patches *mlflow.utils.rest_utils.http_request* — the single HTTP call every MLflow
+    REST operation routes through (load_model, MlflowClient methods, mlflow.* helpers,
+    log_model, etc.). This is MLflow-internal API; if the symbol relocates in a future
+    MLflow release, tests will fail with AttributeError at startup rather than silently
+    skipping the retry.
     """
+    original_http_request = mlflow_rest_utils.http_request
 
-    def _wrap(mod, name):
-        original = getattr(mod, name)
+    def retrying_http_request(*args, **kwargs):
+        last_exc: RestException | None = None
+        for attempt in range(5):
+            try:
+                return original_http_request(*args, **kwargs)
+            except RestException as e:
+                if not _is_transient_auth_flake(e):
+                    raise
+                last_exc = e
+                time.sleep(2**attempt)  # 1s, 2s, 4s, 8s, 16s (max ~31s total)
+        assert last_exc is not None
+        raise last_exc
 
-        def retrying(*args, **kwargs):
-            last_exc: RestException | None = None
-            for attempt in range(5):
-                try:
-                    return original(*args, **kwargs)
-                except RestException as e:
-                    if not _is_transient_auth_flake(e):
-                        raise
-                    last_exc = e
-                    time.sleep(2**attempt)  # 1s, 2s, 4s, 8s, 16s (max ~31s total)
-            assert last_exc is not None
-            raise last_exc
-
-        monkeypatch.setattr(mod, name, retrying)
-
-    # Scoring path: ensure_registry_configured -> load_model
-    _wrap(mlflow, "get_experiment_by_name")
-    _wrap(mlflow, "create_experiment")
-    _wrap(mlflow, "set_experiment")
-    _wrap(mlflow.sklearn, "load_model")
-
-    # Training path: run creation, param/metric logging, model logging, UC lookup
-    _wrap(mlflow, "start_run")
-    _wrap(mlflow, "log_params")
-    _wrap(mlflow, "log_metrics")
-    _wrap(mlflow, "log_param")
-    _wrap(mlflow.sklearn, "log_model")
-    _wrap(MlflowClient, "get_registered_model")
+    monkeypatch.setattr(mlflow_rest_utils, "http_request", retrying_http_request)
 
 
 @pytest.fixture
