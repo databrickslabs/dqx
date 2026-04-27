@@ -92,30 +92,41 @@ def _is_transient_auth_flake(exc: BaseException) -> bool:
 
 @pytest.fixture(autouse=True)
 def _retry_sdk_auth_flakes(monkeypatch):
-    """Retry Databricks SDK token resolution on transient metadata-service failures.
+    """Retry Databricks SDK auth on transient metadata-service failures.
 
-    Test-only workaround. Three observed flake flavors from the GHA OIDC metadata service —
-    empty token, read timeout, and downstream 401 ("Credential was not sent") — all originate
-    here in *Config.authenticate*. Patching at the auth step covers every caller uniformly:
-    WorkspaceClient, MLflow REST, streaming observation listeners, etc. Production code
-    intentionally does not retry so real users see authentication errors immediately.
+    Test-only workaround for several observed flake flavors from the GHA OIDC metadata
+    service: empty token, read timeout, and downstream 401 ("Credential was not sent").
+    They surface at two distinct points in the SDK's auth path, so we wrap both:
+
+    - *Config.init_auth* — runs during *WorkspaceClient* construction and probes the
+      configured credentials provider once via *token_source.token()*. A timeout here
+      raises before *authenticate* is ever called.
+    - *Config.authenticate* — called per-request to refresh headers.
+
+    Production code intentionally does not retry so real users see authentication errors
+    immediately.
     """
-    original_authenticate = Config.authenticate
 
-    def retrying_authenticate(self):
-        last_exc: BaseException | None = None
-        for attempt in range(5):
-            try:
-                return original_authenticate(self)
-            except Exception as e:
-                if not _is_transient_auth_flake(e):
-                    raise
-                last_exc = e
-                time.sleep(2**attempt)  # 1s, 2s, 4s, 8s, 16s (~31s max)
-        assert last_exc is not None
-        raise last_exc
+    def _wrap(method_name: str):
+        original = getattr(Config, method_name)
 
-    monkeypatch.setattr(Config, "authenticate", retrying_authenticate)
+        def retrying(self, *args, **kwargs):
+            last_exc: BaseException | None = None
+            for attempt in range(5):
+                try:
+                    return original(self, *args, **kwargs)
+                except Exception as e:
+                    if not _is_transient_auth_flake(e):
+                        raise
+                    last_exc = e
+                    time.sleep(2**attempt)  # 1s, 2s, 4s, 8s, 16s (~31s max)
+            assert last_exc is not None
+            raise last_exc
+
+        monkeypatch.setattr(Config, method_name, retrying)
+
+    _wrap("init_auth")
+    _wrap("authenticate")
 
 
 def get_schema_validation_rules(rules: list[dict[str, Any]]) -> list[dict[str, Any]]:
