@@ -18,12 +18,12 @@ from databricks.labs.dqx.anomaly.anomaly_llm_explainer import (
     _derive_confidence,
     _format_segment,
     _format_severity_range,
-    _rank_and_split_groups,
 )
 
 
 # ---------------------------------------------------------------------------
-# Minimal ScoringConfig stub (avoids import-time Spark side effects)
+# Minimal ExplanationContext stub (avoids import-time Spark side effects).
+# Only the fields _call_llm_for_groups reads need to exist on the stub.
 # ---------------------------------------------------------------------------
 
 
@@ -106,7 +106,10 @@ def test_format_severity_range_one_decimal():
 
 
 # ---------------------------------------------------------------------------
-# _rank_and_split_groups — budget enforcement by size * avg_severity
+# _call_llm_for_groups — one call per group, field forwarding, aggregation
+#
+# Group-cap enforcement and ranking now live in _aggregate_groups, which runs
+# inside Spark (orderBy + limit). That path is covered by integration tests.
 # ---------------------------------------------------------------------------
 
 
@@ -122,36 +125,6 @@ def _group(pattern: str, size: int, avg_sev: float, **extra) -> dict:
     }
     base.update(extra)
     return base
-
-
-def test_rank_and_split_kept_ordered_by_size_times_avg_severity_desc():
-    groups = [
-        _group("small_high", size=10, avg_sev=99.0),  # rank 990
-        _group("big_low", size=500, avg_sev=96.0),  # rank 48000  ← winner
-        _group("medium", size=100, avg_sev=97.0),  # rank 9700
-    ]
-    kept, dropped = _rank_and_split_groups(groups, max_groups=1)
-    assert len(kept) == 1
-    assert kept[0]["__dqx_pattern"] == "big_low"
-    assert len(dropped) == 2
-
-
-def test_rank_and_split_all_kept_when_under_budget():
-    groups = [_group("a", 1, 99.0), _group("b", 2, 98.0)]
-    kept, dropped = _rank_and_split_groups(groups, max_groups=500)
-    assert len(kept) == 2
-    assert dropped == []
-
-
-def test_rank_and_split_empty_groups_is_noop():
-    kept, dropped = _rank_and_split_groups([], max_groups=500)
-    assert kept == []
-    assert dropped == []
-
-
-# ---------------------------------------------------------------------------
-# _call_llm_for_groups — one call per group, field forwarding, aggregation
-# ---------------------------------------------------------------------------
 
 
 def test_call_llm_for_groups_one_call_per_group():

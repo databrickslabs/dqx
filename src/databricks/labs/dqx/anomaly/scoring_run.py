@@ -16,7 +16,7 @@ from databricks.labs.dqx.anomaly.ensemble_scorer import (
 from databricks.labs.dqx.anomaly.model_config import compute_config_hash
 from databricks.labs.dqx.anomaly.model_loader import check_model_staleness
 from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRecord, AnomalyModelRegistry
-from databricks.labs.dqx.anomaly.anomaly_llm_explainer import add_explanation_column
+from databricks.labs.dqx.anomaly.anomaly_llm_explainer import ExplanationContext, add_explanation_column
 from databricks.labs.dqx.anomaly.scoring_utils import (
     add_info_column,
     add_severity_percentile_column,
@@ -65,7 +65,7 @@ def score_global_model(
         config.drift_threshold_value,
     )
 
-    model_uris = record.identity.model_uri.split(",")
+    model_uris = record.identity.model_uris
     if record.features.feature_metadata is None:
         raise InvalidParameterError(f"Model {record.identity.model_name} missing feature_metadata")
 
@@ -80,7 +80,7 @@ def score_global_model(
                 config.enable_contributions,
                 model_record=record,
             )
-            if len(model_uris) > 1
+            if record.identity.is_ensemble
             else score_with_sklearn_model_local(
                 record.identity.model_uri,
                 df_filtered,
@@ -102,7 +102,7 @@ def score_global_model(
                 config.enable_contributions,
                 model_record=record,
             )
-            if len(model_uris) > 1
+            if record.identity.is_ensemble
             else score_with_sklearn_model(
                 record.identity.model_uri,
                 df_filtered,
@@ -128,12 +128,11 @@ def score_global_model(
     )
 
     if config.enable_ai_explanation:
-        is_ensemble = len(record.identity.model_uri.split(",")) > 1
         scored_df = add_explanation_column(
             scored_df,
-            config,
+            ExplanationContext.from_scoring_config(config),
             segment_values=None,
-            is_ensemble=is_ensemble,
+            is_ensemble=record.identity.is_ensemble,
             drift_summary=format_drift_summary(drift_result),
         )
 
@@ -242,12 +241,11 @@ def score_single_segment(
     )
 
     if config.enable_ai_explanation:
-        is_ensemble = len(segment_model.identity.model_uri.split(",")) > 1
         segment_scored = add_explanation_column(
             segment_scored,
-            config,
+            ExplanationContext.from_scoring_config(config),
             segment_model.segmentation.segment_values,
-            is_ensemble,
+            segment_model.identity.is_ensemble,
             drift_summary=format_drift_summary(drift_result),
         )
 

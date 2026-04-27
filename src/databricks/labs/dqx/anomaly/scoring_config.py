@@ -22,6 +22,21 @@ SEVERITY_QUANTILE_KEYS: list[tuple[float, str]] = [
 ]
 
 
+_DEFAULT_DRIFT_THRESHOLD_VALUE = 3.0
+
+
+@dataclass
+class ScoringOutputColumns:
+    """Internal output column names produced by anomaly scoring."""
+
+    score: str = "anomaly_score"
+    score_std: str = "anomaly_score_std"
+    contributions: str = "anomaly_contributions"
+    severity: str = "severity_percentile"
+    info: str = DefaultColumnNames.INFO.value
+    ai_explanation: str = "ai_explanation"
+
+
 @dataclass
 class ScoringConfig:
     """Configuration for anomaly scoring."""
@@ -33,18 +48,41 @@ class ScoringConfig:
     merge_columns: list[str]
     row_filter: str | None = None
     drift_threshold: float | None = None
-    drift_threshold_value: float = 3.0
     enable_contributions: bool = False
     enable_confidence_std: bool = False
     segment_by: list[str] | None = None
     driver_only: bool = False
     enable_ai_explanation: bool = False
-    ai_explanation_col: str = "ai_explanation"
     llm_model_config: LLMModelConfig | None = None
     redact_columns: list[str] = field(default_factory=list)
     max_groups: int = 500
-    score_col: str = "anomaly_score"
-    score_std_col: str = "anomaly_score_std"
-    contributions_col: str = "anomaly_contributions"
-    severity_col: str = "severity_percentile"
-    info_col: str = DefaultColumnNames.INFO.value
+    output_columns: ScoringOutputColumns = field(default_factory=ScoringOutputColumns)
+
+    @property
+    def drift_threshold_value(self) -> float:
+        """Effective drift threshold used by drift computation; falls back to 3.0 when disabled."""
+        return self.drift_threshold if self.drift_threshold is not None else _DEFAULT_DRIFT_THRESHOLD_VALUE
+
+    @property
+    def score_col(self) -> str:
+        return self.output_columns.score
+
+    @property
+    def score_std_col(self) -> str:
+        return self.output_columns.score_std
+
+    @property
+    def contributions_col(self) -> str:
+        return self.output_columns.contributions
+
+    @property
+    def severity_col(self) -> str:
+        return self.output_columns.severity
+
+    @property
+    def info_col(self) -> str:
+        return self.output_columns.info
+
+    @property
+    def ai_explanation_col(self) -> str:
+        return self.output_columns.ai_explanation
