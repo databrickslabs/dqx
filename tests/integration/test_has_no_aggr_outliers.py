@@ -554,7 +554,7 @@ def test_aggr_params_percentile(spark: SparkSession):
     the 95th-percentile per bucket. 14 days of tight values (median~10), then a
     spike day where even the 95th percentile is 50 → violation detected.
     """
-    low_day = (8.0, 9.0, 9.0, 10.0, 10.0, 10.0, 11.0, 11.0, 12.0, 12.0)   # p95 ≈ 12
+    low_day = (8.0, 9.0, 9.0, 10.0, 10.0, 10.0, 11.0, 11.0, 12.0, 12.0)  # p95 ≈ 12
     high_day = (9.0, 10.0, 10.0, 11.0, 11.0, 11.0, 12.0, 12.0, 13.0, 13.0)  # p95 ≈ 13
     rows = []
     for i in range(14):

@@ -1808,53 +1808,53 @@ def has_no_aggr_outliers(
     """
     Rolling-window sigma outlier check for a time-series aggregate.
 
-    For each combination of ``group_by`` values this check:
+    For each combination of *group_by* values this check:
 
-    1. Computes ``metric = aggr_type(column)`` per ``time_interval`` bucket.
+    1. Computes *metric = aggr_type(column)* per *time_interval* bucket.
     2. Derives a rolling baseline (mean and stddev_pop) over the preceding
-       ``lookback_num_intervals`` buckets.
-    3. Passes silently when fewer than ``warmup_num_intervals`` historical
+       *lookback_num_intervals* buckets.
+    3. Passes silently when fewer than *warmup_num_intervals* historical
        buckets are available, the series is constant (stddev == 0), or the
        most-recent bucket is missing.
-    4. Fails when ``|current_metric - baseline| > sigma * stddev``.
+    4. Fails when *|current_metric - baseline| > sigma * stddev*.
 
     Args:
-        column: Column name (str) or Column expression to aggregate (e.g. ``"revenue"``
-            or ``F.col("a") - F.col("b")``). Pass ``"*"`` for ``count(*)``.
+        column: Column name (str) or Column expression to aggregate (e.g. *"revenue"*
+            or *F.col("a") - F.col("b")*). Pass *"*"* for *count(*)*.
         time_column: Name of the timestamp/date column used to bucket rows into
             time grains.
-        aggr_type: Aggregation type applied per bucket (default: ``"avg"``). All
+        aggr_type: Aggregation type applied per bucket (default: *"avg"*). All
             curated DQX aggregate types are supported (count, sum, avg, min, max,
             count_distinct, stddev, percentile, etc.).
         sigma: Number of standard deviations that defines the outlier band
-            (default: ``3.0``). Must be positive.
+            (default: *3.0*). Must be positive.
         lookback_num_intervals: Number of preceding time-grain buckets used to
-            build the rolling baseline (default: ``14``). Must be >= 2.
+            build the rolling baseline (default: *14*). Must be >= 2.
         warmup_num_intervals: Minimum number of historical buckets required before
-            the check fires (default: ``7``). Must satisfy
-            ``1 <= warmup_num_intervals <= lookback_num_intervals``.
-        time_interval: Granularity at which to bucket the ``time_column``
-            (default: ``"day"``). One of ``"minute"``, ``"hour"``, ``"day"``,
-            ``"week"``, ``"month"``.
+            the check fires (default: *7*). Must satisfy
+            *1 <= warmup_num_intervals <= lookback_num_intervals*.
+        time_interval: Granularity at which to bucket the *time_column*
+            (default: *"day"*). One of *"minute"*, *"hour"*, *"day"*,
+            *"week"*, *"month"*.
         group_by: Optional list of column names or Column expressions to segment
-            the outlier band (e.g. ``["csp", "region"]``). The check fires if
+            the outlier band (e.g. *["csp", "region"]*). The check fires if
             *any* group exceeds its own band.
         row_filter: Optional SQL expression to filter rows before aggregation
-            (e.g. ``"status = 'Active'"``). Auto-injected from the check filter.
+            (e.g. *"status = 'Active'"*). Auto-injected from the check filter.
         aggr_params: Optional dict of extra parameters for aggregate functions
-            that require them (e.g. ``{"percentile": 0.95}`` for percentile).
+            that require them (e.g. *percentile=0.95* for percentile aggregates).
 
     Returns:
         A tuple of:
             - A Spark Column representing the outlier condition (string message on
               violation, NULL on pass).
-            - A closure ``apply(df)`` that enriches the DataFrame with the
+            - A closure *apply(df)* that enriches the DataFrame with the
               condition column.
 
     Raises:
-        InvalidParameterError: If ``sigma <= 0``, ``lookback_num_intervals < 2``,
-            ``warmup_num_intervals`` is out of range, or ``time_interval`` is unknown.
-        MissingParameterError: If ``aggr_type`` requires ``aggr_params`` that
+        InvalidParameterError: If *sigma <= 0*, *lookback_num_intervals < 2*,
+            *warmup_num_intervals* is out of range, or *time_interval* is unknown.
+        MissingParameterError: If *aggr_type* requires *aggr_params* that
             are not supplied (e.g. percentile functions).
     """
     # --- Parameter validation ---
