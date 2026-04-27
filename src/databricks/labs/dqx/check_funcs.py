@@ -1950,11 +1950,15 @@ def has_no_aggr_outliers(
             # Use a dummy-key left-join so the current bucket row survives even when stats
             # is empty (e.g. only 1 bucket of data → hist is empty → stats has 0 rows).
             # A plain crossJoin with empty stats would produce 0 rows and discard all df rows.
-            joined = current.withColumn("__dq_jkey", F.lit(1)).join(
-                stats.withColumn("__dq_jkey", F.lit(1)),
-                on="__dq_jkey",
-                how="left",
-            ).drop("__dq_jkey")
+            joined = (
+                current.withColumn("__dq_jkey", F.lit(1))
+                .join(
+                    stats.withColumn("__dq_jkey", F.lit(1)),
+                    on="__dq_jkey",
+                    how="left",
+                )
+                .drop("__dq_jkey")
+            )
 
         # Step 6: compute violation and message string (2 output columns: condition + msg)
         # Guard on NULL __dq_n: occurs when hist is empty (fewer than 2 buckets)

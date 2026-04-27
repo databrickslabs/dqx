@@ -1,5 +1,7 @@
 """Unit tests for has_no_aggr_outliers — validation and registration only (no Spark required)."""
 
+import inspect
+
 import pytest
 
 from databricks.labs.dqx.check_funcs import has_no_aggr_outliers
@@ -20,13 +22,11 @@ class TestIsAggrNotAnomalousRegistration:
         result = has_no_aggr_outliers("value", "event_date")
         assert isinstance(result, tuple)
         assert len(result) == 2
-        condition, apply_fn = result
+        _, apply_fn = result
         assert callable(apply_fn)
 
     def test_rule_exposes_expected_parameter_names(self):
         """The public API must include all spec-mandated keyword arguments."""
-        import inspect
-
         sig = inspect.signature(has_no_aggr_outliers)
         params = set(sig.parameters.keys())
         required = {
