@@ -26,41 +26,16 @@ export function AuthGuard({ children }: AuthGuardProps) {
 
     const checkAuth = async () => {
       try {
-        console.log(`[DQX Auth] Checking authentication (attempt ${retryCount + 1}/15)...`);
-
-        const response = await currentUser({ timeout: 10000 });
+        await currentUser({ timeout: 10000 });
 
         if (!cancelled) {
-          console.log("[DQX Auth] ✓ Authentication ready - logged in as:", response.data.user_name);
           setIsAuthReady(true);
         }
       } catch (err) {
         if (cancelled) return;
 
-        // Log detailed error info
-        console.error("[DQX Auth] Error checking authentication:", {
-          error: err,
-          isAxiosError: axios.isAxiosError(err),
-          status: axios.isAxiosError(err) ? err.response?.status : null,
-          statusText: axios.isAxiosError(err) ? err.response?.statusText : null,
-          message: err instanceof Error ? err.message : String(err),
-        });
-
-        // Retry on ANY error with exponential backoff
         if (retryCount < 15) {
           const delay = Math.min(1000 * Math.pow(1.3, retryCount), 3000);
-          
-          const errorType = axios.isAxiosError(err)
-            ? err.response?.status === 401
-              ? "401 Unauthorized"
-              : err.response
-              ? `HTTP ${err.response.status}`
-              : "Network error"
-            : "Unknown error";
-          
-          console.log(
-            `[DQX Auth] ${errorType} - retrying in ${delay}ms (attempt ${retryCount + 1}/15)...`
-          );
           
           timeoutId = setTimeout(() => {
             if (!cancelled) {
@@ -68,9 +43,6 @@ export function AuthGuard({ children }: AuthGuardProps) {
             }
           }, delay);
         } else {
-          // Give up after 15 attempts
-          console.error("[DQX Auth] Failed after 15 attempts");
-          
           const errorMessage = axios.isAxiosError(err)
             ? err.response?.status === 401
               ? "Authentication timeout. The authentication flow did not complete."
@@ -136,7 +108,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
       <div className="flex items-center justify-center min-h-screen bg-background">
         <div className="text-center space-y-4">
           <Loader2 className="h-12 w-12 animate-spin text-primary mx-auto" />
-          <div className="text-lg font-medium">Initializing DQX...</div>
+          <div className="text-lg font-medium">Initializing DQX Studio...</div>
           <p className="text-sm text-muted-foreground">
             Setting up your workspace connection
           </p>

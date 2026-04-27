@@ -47,6 +47,7 @@ import {
 } from "@/components/ui/alert-dialog";
 
 const SQL_CHECK_PREFIX = "__sql_check__/";
+const CROSS_TABLE_CATALOG = "Cross-table rules";
 
 export const Route = createFileRoute("/_sidebar/rules/active")({
   component: () => (
@@ -90,11 +91,15 @@ function ActiveRulesPage() {
     const schemaMap = new Map<string, Set<string>>();
     const sourceSet = new Set<string>();
     for (const rule of allRules) {
-      const { catalog, schema } = parseFqn(rule.table_fqn);
-      if (catalog) {
-        catalogSet.add(catalog);
-        if (!schemaMap.has(catalog)) schemaMap.set(catalog, new Set());
-        if (schema) schemaMap.get(catalog)!.add(schema);
+      if (rule.table_fqn.startsWith(SQL_CHECK_PREFIX)) {
+        catalogSet.add(CROSS_TABLE_CATALOG);
+      } else {
+        const { catalog, schema } = parseFqn(rule.table_fqn);
+        if (catalog) {
+          catalogSet.add(catalog);
+          if (!schemaMap.has(catalog)) schemaMap.set(catalog, new Set());
+          if (schema) schemaMap.get(catalog)!.add(schema);
+        }
       }
       if (rule.source) sourceSet.add(rule.source);
     }
@@ -109,9 +114,20 @@ function ActiveRulesPage() {
 
   const filteredRules = useMemo(() => {
     return allRules.filter((rule) => {
-      const { catalog, schema } = parseFqn(rule.table_fqn);
-      if (catalogFilter !== "all" && catalog !== catalogFilter) return false;
-      if (schemaFilter !== "all" && schema !== schemaFilter) return false;
+      const isSqlCheck = rule.table_fqn.startsWith(SQL_CHECK_PREFIX);
+      if (catalogFilter !== "all") {
+        if (catalogFilter === CROSS_TABLE_CATALOG) {
+          if (!isSqlCheck) return false;
+        } else {
+          if (isSqlCheck) return false;
+          const { catalog } = parseFqn(rule.table_fqn);
+          if (catalog !== catalogFilter) return false;
+        }
+      }
+      if (schemaFilter !== "all" && !isSqlCheck) {
+        const { schema } = parseFqn(rule.table_fqn);
+        if (schema !== schemaFilter) return false;
+      }
       if (sourceFilter !== "all" && (rule.source ?? "ui") !== sourceFilter) return false;
       return true;
     });
@@ -267,7 +283,7 @@ function ActiveRulesPage() {
                   [
                     { key: "by-table", label: "By table" },
                     { key: "by-rule", label: "By rule" },
-                    { key: "sql-checks", label: "SQL checks" },
+                    { key: "sql-checks", label: "Cross-table" },
                   ] as const
                 ).map((mode) => (
                   <button
@@ -308,8 +324,8 @@ function ActiveRulesPage() {
                   onToggle={toggleTable}
                   onNavigate={(fqn) =>
                     fqn.startsWith(SQL_CHECK_PREFIX)
-                      ? navigate({ to: "/rules/create-sql", search: { edit: fqn } })
-                      : navigate({ to: "/rules/generate", search: { table: fqn } })
+                      ? navigate({ to: "/rules/create-sql", search: { edit: fqn, from: "active" } })
+                      : navigate({ to: "/rules/single-table", search: { table: fqn, from: "active" } })
                   }
                   canDelete={canApproveRules}
                   onDelete={requestDelete}
@@ -485,7 +501,7 @@ function ByTableView({ groups, expandedTables, onToggle, onNavigate, canDelete, 
   );
 }
 
-// ── By rule view: flat list of all checks across tables ─────────────────────
+// ── By rule view: checks grouped by function name ───────────────────────────
 
 interface CheckWithMeta {
   _tableFqn: string;
@@ -495,61 +511,125 @@ interface CheckWithMeta {
   [key: string]: unknown;
 }
 
-function ByRuleView({ checks }: { checks: CheckWithMeta[] }) {
-  const nonSqlChecks = checks.filter((c) => {
-    const checkObj = (c.check as Record<string, unknown>) ?? {};
-    return String(checkObj.function ?? "") !== "sql_query";
-  });
+interface ParsedCheck {
+  fn: string;
+  col: string;
+  criticality: string;
+  name: string | null;
+  tableFqn: string;
+  displayName: string;
+}
 
-  if (nonSqlChecks.length === 0) {
+function ByRuleView({ checks }: { checks: CheckWithMeta[] }) {
+  const [expandedFns, setExpandedFns] = useState<Set<string>>(new Set());
+
+  const grouped = useMemo(() => {
+    const parsed: ParsedCheck[] = checks
+      .map((check) => {
+        const checkObj = (check.check as Record<string, unknown>) ?? {};
+        const fn = String(checkObj.function ?? "");
+        if (fn === "sql_query" || !fn) return null;
+        const args = (checkObj.arguments as Record<string, unknown>) ?? {};
+        const col = String(args.column ?? checkObj.for_each_column ?? "—");
+        return {
+          fn,
+          col,
+          criticality: String(check.criticality ?? "warn"),
+          name: check.name ? String(check.name) : null,
+          tableFqn: check._tableFqn,
+          displayName: check._displayName,
+        };
+      })
+      .filter((c): c is ParsedCheck => c !== null);
+
+    const groups = new Map<string, ParsedCheck[]>();
+    for (const c of parsed) {
+      const list = groups.get(c.fn) ?? [];
+      list.push(c);
+      groups.set(c.fn, list);
+    }
+    return [...groups.entries()].sort((a, b) => b[1].length - a[1].length);
+  }, [checks]);
+
+  const toggleFn = (fn: string) =>
+    setExpandedFns((prev) => {
+      const next = new Set(prev);
+      if (next.has(fn)) next.delete(fn); else next.add(fn);
+      return next;
+    });
+
+  if (grouped.length === 0) {
     return (
       <div className="text-center py-12 text-muted-foreground text-sm">
-        No column / dataset rules found. Switch to "SQL checks" to view query-based rules.
+        No column / dataset rules found. Switch to &quot;Cross-table&quot; to view query-based rules.
       </div>
     );
   }
 
   return (
-    <div className="border rounded-lg overflow-hidden">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b bg-muted/50">
-            <th className="text-left p-3 font-medium">Name</th>
-            <th className="text-left p-3 font-medium">Function</th>
-            <th className="text-left p-3 font-medium">Column(s)</th>
-            <th className="text-left p-3 font-medium">Table</th>
-            <th className="text-left p-3 font-medium">Criticality</th>
-          </tr>
-        </thead>
-        <tbody>
-          {nonSqlChecks.map((check, idx) => {
-            const checkObj = (check.check as Record<string, unknown>) ?? {};
-            const args = (checkObj.arguments as Record<string, unknown>) ?? {};
-            const fn = String(checkObj.function ?? "—");
-            const col = String(args.column ?? checkObj.for_each_column ?? "—");
-            const criticality = String(check.criticality ?? "warn");
-            const name = check.name ? String(check.name) : null;
-            return (
-              <tr key={idx} className="border-b last:border-b-0 hover:bg-muted/30">
-                <td className="p-3 text-xs text-muted-foreground">
-                  {name ?? <span className="italic text-muted-foreground/60">—</span>}
-                </td>
-                <td className="p-3 font-mono text-xs">{fn}</td>
-                <td className="p-3 text-xs text-muted-foreground">{col}</td>
-                <td className="p-3 font-mono text-xs">{check._displayName}</td>
-                <td className="p-3">
-                  <Badge
-                    variant="outline"
-                    className={`text-[10px] ${criticality === "error" ? "border-red-500 text-red-600" : "border-amber-500 text-amber-600"}`}
-                  >
-                    {criticality}
+    <div className="space-y-2">
+      {grouped.map(([fn, items]) => {
+        const isOpen = expandedFns.has(fn);
+        const tables = new Set(items.map((i) => i.displayName));
+        const errorCount = items.filter((i) => i.criticality === "error").length;
+        const warnCount = items.filter((i) => i.criticality === "warn").length;
+        return (
+          <div key={fn} className="border rounded-lg overflow-hidden">
+            <button
+              type="button"
+              className="w-full flex items-center gap-3 p-3 text-left hover:bg-muted/30 transition-colors"
+              onClick={() => toggleFn(fn)}
+            >
+              <ChevronRight className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${isOpen ? "rotate-90" : ""}`} />
+              <span className="font-mono text-sm font-medium">{fn}</span>
+              <span className="text-xs text-muted-foreground ml-auto flex items-center gap-3">
+                {errorCount > 0 && (
+                  <Badge variant="outline" className="text-[10px] border-red-500 text-red-600">
+                    {errorCount} error{errorCount > 1 ? "s" : ""}
                   </Badge>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+                )}
+                {warnCount > 0 && (
+                  <Badge variant="outline" className="text-[10px] border-amber-500 text-amber-600">
+                    {warnCount} warn{warnCount > 1 ? "s" : ""}
+                  </Badge>
+                )}
+                <span>{items.length} check{items.length > 1 ? "s" : ""} across {tables.size} table{tables.size > 1 ? "s" : ""}</span>
+              </span>
+            </button>
+            {isOpen && (
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-t bg-muted/50">
+                    <th className="text-left p-3 font-medium text-xs">Table</th>
+                    <th className="text-left p-3 font-medium text-xs">Column(s)</th>
+                    <th className="text-left p-3 font-medium text-xs">Criticality</th>
+                    <th className="text-left p-3 font-medium text-xs">Name</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {items.map((item, idx) => (
+                    <tr key={idx} className="border-t last:border-b-0 hover:bg-muted/20">
+                      <td className="p-3 font-mono text-xs">{item.displayName}</td>
+                      <td className="p-3 text-xs text-muted-foreground">{item.col}</td>
+                      <td className="p-3">
+                        <Badge
+                          variant="outline"
+                          className={`text-[10px] ${item.criticality === "error" ? "border-red-500 text-red-600" : "border-amber-500 text-amber-600"}`}
+                        >
+                          {item.criticality}
+                        </Badge>
+                      </td>
+                      <td className="p-3 text-xs text-muted-foreground">
+                        {item.name ?? <span className="italic text-muted-foreground/60">—</span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -566,8 +646,8 @@ function SqlChecksView({ checks }: { checks: CheckWithMeta[] }) {
     return (
       <div className="text-center py-12 text-muted-foreground">
         <Database className="h-10 w-10 mx-auto mb-3 opacity-40" />
-        <p className="text-sm font-medium">No SQL checks</p>
-        <p className="text-xs mt-1">SQL query-based dataset checks will appear here once created and approved.</p>
+        <p className="text-sm font-medium">No cross-table rules</p>
+        <p className="text-xs mt-1">Cross-table SQL rules will appear here once created and approved.</p>
       </div>
     );
   }

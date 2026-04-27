@@ -19,15 +19,15 @@ from typing import Any
 from uuid import uuid4
 
 from databricks.sdk import WorkspaceClient
-from databricks.sdk.service.sql import Disposition, Format, StatementState
 
 from databricks_labs_dqx_app.backend.logger import get_logger
-
-_TERMINAL_STATES = {StatementState.SUCCEEDED, StatementState.FAILED, StatementState.CANCELED, StatementState.CLOSED}
+from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 
 logger = get_logger("scheduler")
 
 _SQL_CHECK_PREFIX = "__sql_check__/"
+
+_VALID_TRACKER_STATUSES = {"pending", "success", "partial_failure", "failed"}
 
 
 class SchedulerService:
@@ -43,11 +43,12 @@ class SchedulerService:
         job_id: str,
     ) -> None:
         self._ws = ws
-        self._warehouse_id = warehouse_id
+        self._job_id = job_id
         self._catalog = catalog
         self._schema = schema
         self._tmp_schema = tmp_schema
-        self._job_id = job_id
+        self._sql = SqlExecutor(ws=ws, warehouse_id=warehouse_id, catalog=catalog, schema=schema)
+        self._tmp_sql = SqlExecutor(ws=ws, warehouse_id=warehouse_id, catalog=catalog, schema=tmp_schema)
         self._task: asyncio.Task[None] | None = None
         self._reload_event = asyncio.Event()
         self._force_recalc = False
@@ -65,9 +66,7 @@ class SchedulerService:
         if self._task is not None:
             return
         self._task = asyncio.create_task(self._loop())
-        logger.info(
-            "Scheduler started (warehouse=%s, catalog=%s, schema=%s)", self._warehouse_id, self._catalog, self._schema
-        )
+        logger.info("Scheduler started (catalog=%s, schema=%s)", self._catalog, self._schema)
 
     async def stop(self) -> None:
         """Cancel the background scheduler loop."""
@@ -193,7 +192,7 @@ class SchedulerService:
 
         try:
             sql = f"SELECT schedule_name, config_json FROM {self._configs_table}"
-            rows = self._query(sql)
+            rows = self._sql.query(sql)
             for row in rows:
                 name = row[0] or ""
                 if not name:
@@ -213,7 +212,7 @@ class SchedulerService:
         # Legacy fallback: read from dq_app_settings blob
         try:
             sql = f"SELECT setting_value FROM {self._settings_table} WHERE setting_key = 'workspace_config'"
-            rows = self._query(sql)
+            rows = self._sql.query(sql)
             if not rows:
                 return {}
             data = json.loads(rows[0][0])
@@ -239,15 +238,16 @@ class SchedulerService:
     # ------------------------------------------------------------------
 
     def _get_tracker(self, name: str) -> dict[str, str] | None:
-        from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
+        from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, validate_schedule_name
 
+        validate_schedule_name(name)
         escaped = escape_sql_string(name)
         sql = (
             f"SELECT schedule_name, CAST(last_run_at AS STRING), CAST(next_run_at AS STRING), "
             f"last_run_id, status "
             f"FROM {self._table} WHERE schedule_name = '{escaped}'"
         )
-        rows = self._query(sql)
+        rows = self._sql.query(sql)
         if not rows:
             return None
         row = rows[0]
@@ -267,8 +267,11 @@ class SchedulerService:
         last_run_id: str | None,
         status: str,
     ) -> None:
-        from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
+        from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, validate_schedule_name
 
+        validate_schedule_name(name)
+        if status not in _VALID_TRACKER_STATUSES:
+            raise ValueError(f"Invalid tracker status: '{status}'. Must be one of {_VALID_TRACKER_STATUSES}")
         escaped_name = escape_sql_string(name)
         escaped_status = escape_sql_string(status)
         last_str = f"'{last_run_at.isoformat()}'" if last_run_at else "NULL"
@@ -285,7 +288,7 @@ class SchedulerService:
             "WHEN NOT MATCHED THEN INSERT (schedule_name, last_run_at, next_run_at, last_run_id, status) "
             f"VALUES ('{escaped_name}', {last_str}, {next_str}, {run_id_str}, '{escaped_status}')"
         )
-        self._execute(sql)
+        self._sql.execute(sql)
 
     # ------------------------------------------------------------------
     # Trigger run
@@ -362,7 +365,7 @@ class SchedulerService:
         """Return list of unique table_fqn matching the schedule's scope from approved rules."""
         mode = cfg.get("scope_mode", "all")
         sql = f"SELECT DISTINCT table_fqn FROM {self._rules_table} WHERE status = 'approved'"
-        rows = self._query(sql)
+        rows = self._sql.query(sql)
         fqns = [r[0] for r in rows if r[0]]
 
         if mode == "all":
@@ -405,7 +408,7 @@ class SchedulerService:
             f"SELECT table_fqn, checks FROM {self._rules_table} "
             f"WHERE table_fqn = '{escaped}' AND status = 'approved'"
         )
-        rows = self._query(sql)
+        rows = self._sql.query(sql)
         if not rows:
             return None
         merged_checks: list[dict[str, Any]] = []
@@ -441,7 +444,7 @@ class SchedulerService:
         quoted_source = quote_fqn(source_table_fqn)
         self._ensure_tmp_schema()
         sql = f"CREATE OR REPLACE VIEW {quoted_view} AS SELECT * FROM {quoted_source}"
-        self._execute(sql)
+        self._tmp_sql.execute(sql)
         self._grant_view(view_name)
         if not self._view_exists(view_name):
             raise RuntimeError(f"Scheduler: view creation succeeded but view not found: {view_name}")
@@ -462,7 +465,7 @@ class SchedulerService:
         quoted_view = quote_fqn(view_name)
         self._ensure_tmp_schema()
         sql = f"CREATE OR REPLACE VIEW {quoted_view} AS {sql_query}"
-        self._execute(sql)
+        self._tmp_sql.execute(sql)
         self._grant_view(view_name)
         if not self._view_exists(view_name):
             raise RuntimeError(f"Scheduler: view creation succeeded but view not found: {view_name}")
@@ -472,7 +475,7 @@ class SchedulerService:
         from databricks_labs_dqx_app.backend.sql_utils import quote_fqn
 
         try:
-            self._execute(f"GRANT SELECT ON VIEW {quote_fqn(view_name)} TO `account users`")
+            self._tmp_sql.execute(f"GRANT SELECT ON VIEW {quote_fqn(view_name)} TO `account users`")
         except Exception as e:
             logger.warning("Failed to grant SELECT on %s: %s", view_name, e)
 
@@ -483,37 +486,15 @@ class SchedulerService:
             return
         cat = self._catalog.replace("`", "")
         schema = self._tmp_schema.replace("`", "")
-        self._execute(f"CREATE SCHEMA IF NOT EXISTS `{cat}`.`{schema}`")
+        self._tmp_sql.execute_no_schema(f"CREATE SCHEMA IF NOT EXISTS `{cat}`.`{schema}`")
         self._tmp_schema_ensured = True
-
-    # ------------------------------------------------------------------
-    # Polling / verification helpers
-    # ------------------------------------------------------------------
-
-    def _wait_for_completion(self, statement_id: str, timeout_seconds: int) -> StatementState:
-        """Poll statement status until it reaches a terminal state."""
-        import time
-
-        start_time = time.time()
-        poll_interval = 2.0
-
-        while time.time() - start_time < timeout_seconds:
-            status = self._ws.statement_execution.get_statement(statement_id)
-            state = status.status.state if status.status else None
-            if state in _TERMINAL_STATES:
-                logger.info("Statement %s completed with state: %s", statement_id, state)
-                return state
-            logger.debug("Statement %s still in state %s, waiting...", statement_id, state)
-            time.sleep(poll_interval)
-
-        raise RuntimeError(f"Scheduler SQL statement {statement_id} timed out after {timeout_seconds}s")
 
     def _view_exists(self, view_fqn: str) -> bool:
         """Check if a view exists in Unity Catalog."""
         from databricks_labs_dqx_app.backend.sql_utils import quote_fqn
 
         try:
-            self._execute(f"DESCRIBE TABLE {quote_fqn(view_fqn)}")
+            self._tmp_sql.execute(f"DESCRIBE TABLE {quote_fqn(view_fqn)}")
             return True
         except Exception as e:
             logger.warning("View existence check failed for %s: %s", view_fqn, e)
@@ -574,64 +555,3 @@ class SchedulerService:
             return dt
         except (ValueError, TypeError):
             return None
-
-    # ------------------------------------------------------------------
-    # SQL helpers
-    # ------------------------------------------------------------------
-
-    def _execute(self, sql: str, timeout_seconds: int = 120) -> None:
-        resp = self._ws.statement_execution.execute_statement(
-            warehouse_id=self._warehouse_id,
-            statement=sql,
-            catalog=self._catalog,
-            disposition=Disposition.INLINE,
-            format=Format.JSON_ARRAY,
-            wait_timeout="30s",
-        )
-        if not resp.status:
-            raise RuntimeError(f"Scheduler SQL returned no status\nSQL: {sql}")
-
-        state = resp.status.state
-        statement_id = resp.statement_id
-
-        if state not in _TERMINAL_STATES and statement_id:
-            logger.info("Scheduler statement %s in state %s, polling...", statement_id, state)
-            state = self._wait_for_completion(statement_id, timeout_seconds)
-
-        if state == StatementState.SUCCEEDED:
-            return
-        if state == StatementState.FAILED:
-            msg = resp.status.error.message if resp.status.error else "Unknown error"
-            raise RuntimeError(f"Scheduler SQL failed: {msg}\nSQL: {sql}")
-        raise RuntimeError(f"Scheduler SQL ended in unexpected state {state}\nSQL: {sql}")
-
-    def _query(self, sql: str, timeout_seconds: int = 120) -> list[list[str]]:
-        resp = self._ws.statement_execution.execute_statement(
-            warehouse_id=self._warehouse_id,
-            statement=sql,
-            catalog=self._catalog,
-            disposition=Disposition.INLINE,
-            format=Format.JSON_ARRAY,
-            wait_timeout="30s",
-        )
-        if not resp.status:
-            raise RuntimeError(f"Scheduler SQL query returned no status\nSQL: {sql}")
-
-        state = resp.status.state
-        statement_id = resp.statement_id
-
-        if state not in _TERMINAL_STATES and statement_id:
-            logger.info("Scheduler query %s in state %s, polling...", statement_id, state)
-            state = self._wait_for_completion(statement_id, timeout_seconds)
-            if state == StatementState.SUCCEEDED and statement_id:
-                resp = self._ws.statement_execution.get_statement(statement_id)
-
-        if state == StatementState.FAILED:
-            msg = resp.status.error.message if resp.status and resp.status.error else "Unknown error"
-            raise RuntimeError(f"Scheduler SQL query failed: {msg}\nSQL: {sql}")
-        if state != StatementState.SUCCEEDED:
-            raise RuntimeError(f"Scheduler SQL query ended in unexpected state {state}\nSQL: {sql}")
-
-        if resp.result and resp.result.data_array:
-            return resp.result.data_array
-        return []

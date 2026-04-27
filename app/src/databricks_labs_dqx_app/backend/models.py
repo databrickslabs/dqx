@@ -97,6 +97,9 @@ class CheckDuplicatesIn(BaseModel):
     exclude_rule_id: str | None = Field(
         default=None, description="Exclude this rule_id from duplicate check (for edits)"
     )
+    exclude_rule_ids: list[str] = Field(
+        default_factory=list, description="Exclude multiple rule_ids from duplicate check (for edits)"
+    )
 
 
 class CheckDuplicatesOut(BaseModel):
@@ -126,6 +129,7 @@ class DryRunIn(BaseModel):
     table_fqn: str = Field(description="Fully qualified table name to run checks against")
     checks: list[dict[str, Any]] = Field(description="List of check metadata dictionaries")
     sample_size: int = Field(default=1000, le=10_000, description="Number of rows to sample")
+    skip_history: bool = Field(default=False, description="If true, do not record this run in the history table")
 
 
 class DryRunSubmitOut(BaseModel):
@@ -243,6 +247,7 @@ class ValidationRunSummaryOut(BaseModel):
     valid_rows: int | None = None
     invalid_rows: int | None = None
     created_at: str | None = None
+    error_message: str | None = None
     checks: list[dict[str, Any]] = Field(default_factory=list)
 
 
@@ -427,7 +432,10 @@ class ScheduleConfigOut(BaseModel):
 
 
 class ScheduleConfigIn(BaseModel):
-    schedule_name: str = Field(description="Unique name for this schedule")
+    schedule_name: str = Field(
+        description="Unique name for this schedule",
+        pattern=r"^[a-zA-Z0-9_\-]{1,64}$",
+    )
     config: dict[str, Any] = Field(description="Schedule configuration (frequency, scope, sample_size, etc.)")
 
 

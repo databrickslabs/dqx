@@ -6,7 +6,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import type { UseMutationOptions, UseMutationResult, UseQueryOptions, UseQueryResult } from "@tanstack/react-query";
 import * as axios from "axios";
 import type { AxiosError, AxiosRequestConfig, AxiosResponse } from "axios";
-import type { RuleCatalogEntryOut } from "./api";
+import type { RuleCatalogEntryOut, RunStatusOut } from "./api";
 
 export interface BatchSaveRulesIn {
   table_fqns: string[];
@@ -175,6 +175,7 @@ export interface ValidationRunSummaryOut {
   valid_rows: number | null;
   invalid_rows: number | null;
   created_at: string | null;
+  error_message: string | null;
   checks: Record<string, unknown>[];
 }
 
@@ -220,6 +221,21 @@ export const cancelDryRun = (
 };
 
 // ---------------------------------------------------------------------------
+// Get dry run status (with optional query params for skip-history runs)
+// ---------------------------------------------------------------------------
+
+export const getDryRunStatusCustom = (
+  runId: string,
+  params?: { job_run_id?: number; view_fqn?: string },
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<RunStatusOut>> => {
+  return axios.default.get(`/api/v1/dryrun/runs/${runId}/status`, {
+    ...options,
+    params,
+  });
+};
+
+// ---------------------------------------------------------------------------
 // Cancel profiler run
 // ---------------------------------------------------------------------------
 
@@ -242,6 +258,7 @@ export interface CheckDuplicatesIn {
   table_fqn: string;
   checks: Array<{ [key: string]: unknown }>;
   exclude_rule_id?: string;
+  exclude_rule_ids?: string[];
 }
 
 export interface CheckDuplicatesOut {
@@ -681,7 +698,7 @@ export const useQuarantineCount = <
 
 export const exportQuarantineRecords = (
   runId: string,
-  format: "csv" | "json" = "csv",
+  format: "csv" | "json" | "xlsx" = "csv",
 ): void => {
   const url = `/api/v1/quarantine/runs/${runId}/export?format=${format}`;
   window.open(url, "_blank");

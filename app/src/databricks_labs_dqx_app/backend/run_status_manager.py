@@ -1,23 +1,23 @@
 """Shared run-status helpers used by both dryrun and profiler routes.
 
 Eliminates near-identical _update_*_status / _get_*_run_owner functions.
+All SQL is executed via :class:`SqlExecutor` — no private-attribute access
+to any other service.
 """
 
 from __future__ import annotations
 
 import logging
 
-from databricks.sdk.service.sql import Disposition, Format, StatementState
-
 from databricks_labs_dqx_app.backend.config import AppConfig
-from databricks_labs_dqx_app.backend.services.job_service import JobService
+from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
 logger = logging.getLogger(__name__)
 
 
 def update_run_status(
-    job_svc: JobService,
+    sql: SqlExecutor,
     app_conf: AppConfig,
     table_name: str,
     run_id: str,
@@ -39,38 +39,27 @@ def update_run_status(
         ec = escape_sql_string(canceled_by)
         set_clause += f", canceled_by = '{ec}'"
 
-    sql = f"UPDATE {table} SET {set_clause} WHERE run_id = '{er}' AND status = 'RUNNING'"
+    stmt = f"UPDATE {table} SET {set_clause} WHERE run_id = '{er}' AND status = 'RUNNING'"
     try:
-        resp = job_svc._ws.statement_execution.execute_statement(
-            warehouse_id=job_svc._warehouse_id,
-            statement=sql,
-            catalog=job_svc._catalog,
-            schema=job_svc._schema,
-            disposition=Disposition.INLINE,
-            format=Format.JSON_ARRAY,
-        )
-        if resp.status and resp.status.state == StatementState.FAILED:
-            msg = resp.status.error.message if resp.status.error else "Unknown error"
-            logger.warning("Failed to update %s status for %s: %s", table_name, run_id, msg)
-        else:
-            logger.info("Updated %s run %s status to %s", table_name, run_id, status)
+        sql.execute(stmt)
+        logger.info("Updated %s run %s status to %s", table_name, run_id, status)
     except Exception as exc:
         logger.warning("Failed to update %s status for %s: %s", table_name, run_id, exc)
 
 
 def get_run_owner(
-    job_svc: JobService,
+    sql: SqlExecutor,
     app_conf: AppConfig,
     table_name: str,
     run_id: str,
 ) -> str | None:
     """Look up the requesting_user for a given run_id in any run table."""
-    row = _get_run_fields(job_svc, app_conf, table_name, run_id, "requesting_user")
+    row = _get_run_fields(sql, app_conf, table_name, run_id, "requesting_user")
     return row[0] if row else None
 
 
 def get_run_view_fqn(
-    job_svc: JobService,
+    sql: SqlExecutor,
     app_conf: AppConfig,
     table_name: str,
     run_id: str,
@@ -79,7 +68,7 @@ def get_run_view_fqn(
 
     Returns (None, None) when the run is not found.
     """
-    row = _get_run_fields(job_svc, app_conf, table_name, run_id, "view_fqn, requesting_user")
+    row = _get_run_fields(sql, app_conf, table_name, run_id, "view_fqn, requesting_user")
     if row and len(row) >= 2:
         return row[0], row[1]
     return None, None
@@ -96,8 +85,32 @@ class RunMetadata:
         self.job_run_id = job_run_id
 
 
+def has_terminal_result(
+    sql: SqlExecutor,
+    app_conf: AppConfig,
+    table_name: str,
+    run_id: str,
+) -> str | None:
+    """Check if the task runner already wrote a terminal result for this run_id.
+
+    Returns the status string (e.g. ``"SUCCESS"`` or ``"FAILED"``) when a
+    non-RUNNING row exists, or ``None`` when only a RUNNING placeholder (or
+    no row at all) is present.
+    """
+    table = f"{app_conf.catalog}.{app_conf.schema_name}.{table_name}"
+    er = escape_sql_string(run_id)
+    stmt = f"SELECT status FROM {table} " f"WHERE run_id = '{er}' AND status != 'RUNNING' " f"LIMIT 1"  # noqa: S608
+    try:
+        rows = sql.query(stmt)
+        if rows and rows[0]:
+            return rows[0][0]
+    except Exception:
+        pass
+    return None
+
+
 def get_run_metadata(
-    job_svc: JobService,
+    sql: SqlExecutor,
     app_conf: AppConfig,
     table_name: str,
     run_id: str,
@@ -107,7 +120,7 @@ def get_run_metadata(
     Returns a RunMetadata with None fields when the run is not found.
     """
     row = _get_run_fields(
-        job_svc,
+        sql,
         app_conf,
         table_name,
         run_id,
@@ -120,29 +133,31 @@ def get_run_metadata(
 
 
 def _get_run_fields(
-    job_svc: JobService,
+    sql: SqlExecutor,
     app_conf: AppConfig,
     table_name: str,
     run_id: str,
     columns: str,
 ) -> list[str] | None:
-    """Fetch specific columns for a run_id from any run table."""
+    """Fetch specific columns for a run_id from any run table.
+
+    When multiple rows exist for the same run_id (e.g. a RUNNING placeholder
+    and a terminal result written by the task runner), prefer the row that
+    has a non-null job_run_id so that the status endpoint can always look up
+    the Databricks job run.
+    """
     table = f"{app_conf.catalog}.{app_conf.schema_name}.{table_name}"
     er = escape_sql_string(run_id)
-    sql = f"SELECT {columns} FROM {table} WHERE run_id = '{er}' LIMIT 1"  # noqa: S608
+    stmt = (  # noqa: S608
+        f"SELECT {columns} FROM {table} "
+        f"WHERE run_id = '{er}' "
+        f"ORDER BY job_run_id IS NOT NULL DESC, created_at DESC "
+        f"LIMIT 1"
+    )
     try:
-        resp = job_svc._ws.statement_execution.execute_statement(
-            warehouse_id=job_svc._warehouse_id,
-            statement=sql,
-            catalog=job_svc._catalog,
-            schema=job_svc._schema,
-            disposition=Disposition.INLINE,
-            format=Format.JSON_ARRAY,
-        )
-        if resp.status and resp.status.state == StatementState.FAILED:
-            return None
-        if resp.result and resp.result.data_array and resp.result.data_array[0]:
-            return resp.result.data_array[0]
+        rows = sql.query(stmt)
+        if rows and rows[0]:
+            return rows[0]
     except Exception:
         pass
     return None

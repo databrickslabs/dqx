@@ -9,7 +9,7 @@ interface LogoProps {
 function Logo({ to = "/home", className = "", showText = true }: LogoProps) {
   const content = (
     <div className={`flex items-center gap-2 ${className}`}>
-      <img src="/dqx-logo.svg" alt="DQX logo" className="h-6 w-6" />
+      <img src="/dqx-logo.svg" alt="DQX Studio logo" className="h-6 w-6" />
       {showText && (
         <span className="font-semibold text-lg">{__APP_NAME__}</span>
       )}

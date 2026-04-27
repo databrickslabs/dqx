@@ -11,6 +11,7 @@ dependencies = [
     "databricks-labs-dqx[llm]",
     "databricks-sdk~=0.73",
     "databricks-sql-connector[pyarrow]==4.2.5",
+    "openpyxl>=3.1",
 ]
 
 [dependency-groups]
@@ -20,7 +21,7 @@ dev = [
 ]
 
 [tool.apx.metadata]
-app-name = "DQX"
+app-name = "DQX Studio"
 app-slug = "databricks_labs_dqx_app"
 app-module = "databricks_labs_dqx_app.backend.app:app"
 metadata-path = "src/databricks_labs_dqx_app/_metadata.py"
@@ -35,7 +36,7 @@ databricks-labs-dqx = { path = "../", editable = true }
 apx = { git = "https://github.com/databricks-solutions/apx.git" }  # PyPi package not available yet
 
 [build-system]
-requires = ["hatchling", "uv-dynamic-versioning>=0.7.0"]
+requires = ["hatchling==1.29.0", "uv-dynamic-versioning>=0.7.0"]
 build-backend = "hatchling.build"
 
 [tool.hatch.version]

@@ -580,9 +580,9 @@ function ProfilerPage() {
   return (
     <div className="space-y-6">
       <div className="space-y-2">
-        <PageBreadcrumb items={[{ label: "Create Rules", to: "/rules/create" }]} page="Profile & Generate" />
+        <PageBreadcrumb items={[{ label: "Create Rules", to: "/rules/create" }]} page="Profile & generate" />
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Profile & Generate</h1>
+          <h1 className="text-2xl font-bold tracking-tight">Profile & generate</h1>
           <p className="text-muted-foreground">
             Profile tables to generate data quality rule suggestions based on data distribution.
           </p>

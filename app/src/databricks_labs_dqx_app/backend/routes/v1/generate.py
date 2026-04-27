@@ -4,15 +4,23 @@ import yaml
 from databricks.labs.dqx.engine import DQEngine
 from fastapi import APIRouter, Depends, HTTPException
 
-from databricks_labs_dqx_app.backend.dependencies import get_ai_rules_service
+from databricks_labs_dqx_app.backend.common.authorization import UserRole
+from databricks_labs_dqx_app.backend.dependencies import get_ai_rules_service, require_role
 from databricks_labs_dqx_app.backend.logger import logger
 from databricks_labs_dqx_app.backend.models import GenerateChecksIn, GenerateChecksOut
 from databricks_labs_dqx_app.backend.services.ai_rules_service import AiRulesService
 
 router = APIRouter()
 
+_AUTHORS_AND_ABOVE = [UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTHOR]
 
-@router.post("/generate-checks", response_model=GenerateChecksOut, operation_id="ai_assisted_checks_generation")
+
+@router.post(
+    "/generate-checks",
+    response_model=GenerateChecksOut,
+    operation_id="ai_assisted_checks_generation",
+    dependencies=[require_role(*_AUTHORS_AND_ABOVE)],
+)
 def ai_generate_checks(
     body: GenerateChecksIn,
     service: Annotated[AiRulesService, Depends(get_ai_rules_service)],

@@ -1,4 +1,5 @@
 import { createFileRoute, useNavigate, Navigate } from "@tanstack/react-router";
+import { useUnsavedGuard } from "@/hooks/use-unsaved-guard";
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { usePermissions } from "@/hooks/use-permissions";
 import { PageBreadcrumb } from "@/components/apx/PageBreadcrumb";
@@ -45,11 +46,12 @@ import {
   saveRules,
   useSubmitDryRun,
   useGetDryRunResults,
-  getDryRunStatus,
   useGetRules,
+  getGetRulesQueryKey,
   type DryRunResultsOut,
 } from "@/lib/api";
-import { filterTablesByColumns, checkDuplicates, type CheckDuplicatesIn, submitRuleForApproval } from "@/lib/api-custom";
+import { useQueryClient } from "@tanstack/react-query";
+import { filterTablesByColumns, checkDuplicates, type CheckDuplicatesIn, submitRuleForApproval, cancelDryRun, getDryRunStatusCustom } from "@/lib/api-custom";
 import { useJobPolling } from "@/hooks/use-job-polling";
 import {
   Tooltip,
@@ -57,19 +59,29 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Types & Constants
 // ──────────────────────────────────────────────────────────────────────────────
 
-type SearchParams = { table?: string; rule_id?: string };
+type SearchParams = { table?: string; rule_id?: string; from?: string };
 
 const CHECK_FUNCTIONS = [
   { value: "is_not_null", label: "is_not_null", args: ["col_name"] },
   { value: "is_not_empty", label: "is_not_empty", args: ["col_name"] },
   { value: "is_not_null_and_not_empty", label: "is_not_null_and_not_empty", args: ["col_name"] },
   { value: "is_in_list", label: "is_in_list", args: ["col_name", "allowed"] },
-  { value: "is_not_in_list", label: "is_not_in_list", args: ["col_name", "not_allowed"] },
+  { value: "is_not_in_list", label: "is_not_in_list", args: ["col_name", "forbidden"] },
   { value: "is_min", label: "is_min", args: ["col_name", "limit"] },
   { value: "is_max", label: "is_max", args: ["col_name", "limit"] },
   { value: "is_in_range", label: "is_in_range", args: ["col_name", "min_limit", "max_limit"] },
@@ -104,15 +116,19 @@ function newCheck(): CheckDraft {
 
 function checkToDict(c: CheckDraft): Record<string, unknown> {
   const args: Record<string, unknown> = {};
+  const fnDef = CHECK_FUNCTIONS.find((f) => f.value === c.fn);
+  const isKnownFn = !!fnDef;
+  const declaredArgs = new Set(fnDef?.args ?? []);
   for (const [k, v] of Object.entries(c.args)) {
     if (!v) continue;
+    if (k === "col_name" && isKnownFn && !declaredArgs.has("col_name")) continue;
     if (c.fn === "is_unique" && k === "col_name") {
       args["columns"] = v.split(",").map((s) => s.trim()).filter(Boolean);
       continue;
     }
     const key = UI_TO_ENGINE_ARG_MAP[k] ?? k;
-    if (key === "allowed" || key === "not_allowed") {
-      args[key] = v.split(",").map((s) => s.trim());
+    if (key === "allowed" || key === "forbidden") {
+      args[key] = v.split(",").map((s) => s.trim()).filter(Boolean);
     } else if (key === "limit" || key === "min_limit" || key === "max_limit") {
       args[key] = Number(v) || v;
     } else {
@@ -175,11 +191,12 @@ function savedCheckToDraft(
 // Route
 // ──────────────────────────────────────────────────────────────────────────────
 
-export const Route = createFileRoute("/_sidebar/rules/generate")({
+export const Route = createFileRoute("/_sidebar/rules/single-table")({
   component: UnifiedRulesPage,
   validateSearch: (search: Record<string, unknown>): SearchParams => ({
     table: (search.table as string) || undefined,
     rule_id: (search.rule_id as string) || undefined,
+    from: (search.from as string) || undefined,
   }),
 });
 
@@ -192,15 +209,26 @@ function UnifiedRulesPage() {
   if (!canCreateRules) return <Navigate to="/rules/active" replace />;
 
   const navigate = useNavigate();
-  const { table: initialTable, rule_id: editRuleId } = Route.useSearch();
+  const { table: initialTable, rule_id: editRuleId, from: fromPage } = Route.useSearch();
   const isTableFqn = (initialTable ?? "").split(".").length === 3;
   const isSingleRuleEdit = Boolean(editRuleId);
+
+  const cancelTarget = fromPage === "active" ? "/rules/active"
+    : fromPage === "drafts" ? "/rules/drafts"
+    : "/rules/create";
 
   const [checks, setChecks] = useState<CheckDraft[]>(() =>
     initialTable ? [] : [newCheck()],
   );
   const [isSaving, setIsSaving] = useState(false);
   const [loadedFromTable, setLoadedFromTable] = useState(false);
+
+  const queryClient = useQueryClient();
+  useEffect(() => {
+    if (isTableFqn && initialTable) {
+      queryClient.invalidateQueries({ queryKey: getGetRulesQueryKey(initialTable) });
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load existing rules when navigated with ?table=
   const { data: existingRulesResp, isLoading: isLoadingRules } = useGetRules(
@@ -254,6 +282,7 @@ function UnifiedRulesPage() {
   const [dryRunResult, setDryRunResult] = useState<DryRunResultsOut | null>(null);
   const [dryRunJobRunId, setDryRunJobRunId] = useState<number | null>(null);
   const [dryRunRunId, setDryRunRunId] = useState<string | null>(null);
+  const [dryRunViewFqn, setDryRunViewFqn] = useState<string | null>(null);
 
   const submitDryRunMutation = useSubmitDryRun();
   // submitMutation replaced by direct submitRuleForApproval calls
@@ -264,9 +293,12 @@ function UnifiedRulesPage() {
 
   const fetchDryRunStatus = useCallback(async () => {
     if (!dryRunRunId || dryRunJobRunId === null) throw new Error("No active run");
-    const resp = await getDryRunStatus(dryRunRunId);
+    const resp = await getDryRunStatusCustom(dryRunRunId, {
+      job_run_id: dryRunJobRunId,
+      view_fqn: dryRunViewFqn ?? undefined,
+    });
     return resp.data;
-  }, [dryRunRunId, dryRunJobRunId]);
+  }, [dryRunRunId, dryRunJobRunId, dryRunViewFqn]);
 
   const dryRunPolling = useJobPolling({
     fetchStatus: fetchDryRunStatus,
@@ -306,6 +338,7 @@ function UnifiedRulesPage() {
   }, []);
 
   const hasRefTable = aiReferenceTable.split(".").length === 3;
+  const effectiveTable = hasRefTable ? aiReferenceTable : (isTableFqn ? initialTable : undefined);
 
   const handleAiGenerate = async () => {
     if (!aiPrompt.trim()) return;
@@ -313,16 +346,16 @@ function UnifiedRulesPage() {
     try {
       const resp = await aiAssistedChecksGeneration({
         user_input: aiPrompt.trim(),
-        table_fqn: hasRefTable ? aiReferenceTable : undefined,
+        table_fqn: effectiveTable,
       });
       const generated = resp.data.checks ?? [];
       const drafts = generated
         .map((c) => aiCheckToDraft(c as Record<string, unknown>))
         .filter((d): d is CheckDraft => d !== null)
         .filter((d) => d.fn !== "sql_query");
-      if (hasRefTable) {
+      if (effectiveTable) {
         for (const d of drafts) {
-          d.targetTables = [aiReferenceTable];
+          d.targetTables = [effectiveTable];
         }
       }
       if (drafts.length === 0) {
@@ -359,8 +392,11 @@ function UnifiedRulesPage() {
       checks.every((c) => {
         if (!c.fn) return false;
         const def = CHECK_FUNCTIONS.find((f) => f.value === c.fn);
-        if (!def) return false;
-        return def.args.every((arg) => (c.args[arg] ?? "").trim() !== "");
+        if (def) {
+          return def.args.every((arg) => (c.args[arg] ?? "").trim() !== "");
+        }
+        // Custom/unknown function: valid as long as all populated args are non-empty
+        return Object.values(c.args).every((v) => (v ?? "").trim() !== "");
       }) &&
       totalTargetPairs > 0
     );
@@ -404,10 +440,12 @@ function UnifiedRulesPage() {
       }
       for (const [fqn, items] of tableCheckMap) {
         try {
+          const ruleIds = [...new Set(items.map((i) => i.ruleId).filter(Boolean))] as string[];
           const body: CheckDuplicatesIn = {
             table_fqn: fqn,
             checks: items.map((i) => i.dict),
-            exclude_rule_id: items.length === 1 ? items[0].ruleId : undefined,
+            exclude_rule_id: ruleIds.length === 1 ? ruleIds[0] : undefined,
+            exclude_rule_ids: ruleIds.length > 1 ? ruleIds : undefined,
           };
           const resp = await checkDuplicates(body);
           if (resp.data.duplicates.length > 0) {
@@ -437,6 +475,26 @@ function UnifiedRulesPage() {
   // Dry run handler
   const isDryRunning = submitDryRunMutation.isPending || dryRunPolling.isPolling;
 
+  const justSavedRef = useRef(false);
+
+  const hasUnsavedChanges = useMemo(
+    () => checks.some((c) => c.fn !== "" || c.targetTables.length > 0),
+    [checks],
+  );
+
+  const { blocker } = useUnsavedGuard({ hasUnsavedChanges, isRunning: isDryRunning, bypassRef: justSavedRef });
+
+  const handleConfirmLeave = async () => {
+    if (isDryRunning && dryRunRunId && dryRunJobRunId) {
+      try {
+        await cancelDryRun(dryRunRunId, { job_run_id: dryRunJobRunId });
+      } catch {
+        // best-effort cancel
+      }
+    }
+    blocker.proceed?.();
+  };
+
   const handleDryRun = async () => {
     if (!dryRunTable) {
       toast.error("Select a table to run a dry run against");
@@ -450,10 +508,11 @@ function UnifiedRulesPage() {
     try {
       setDryRunResult(null);
       const resp = await submitDryRunMutation.mutateAsync({
-        data: { table_fqn: dryRunTable, checks: checksForTable, sample_size: dryRunSampleSize },
+        data: { table_fqn: dryRunTable, checks: checksForTable, sample_size: dryRunSampleSize, skip_history: true },
       });
       setDryRunRunId(resp.data.run_id);
       setDryRunJobRunId(resp.data.job_run_id);
+      setDryRunViewFqn(resp.data.view_fqn ?? null);
       toast.info("Dry run submitted — waiting for results...");
     } catch (err) {
       const axErr = err as { response?: { data?: { detail?: string } } };
@@ -463,8 +522,20 @@ function UnifiedRulesPage() {
     }
   };
 
+  const hasArgErrors = useMemo(() => {
+    return checks.some((c) => {
+      const fnDef = CHECK_FUNCTIONS.find((f) => f.value === c.fn);
+      const argKeys = fnDef?.args ?? Object.keys(c.args);
+      return argKeys.some((arg) => validateArg(arg, c.args[arg] ?? "", c.fn) !== null);
+    });
+  }, [checks]);
+
   // Save handlers
   const handleSave = async (andSubmit: boolean) => {
+    if (hasArgErrors) {
+      toast.error("Fix validation errors before saving.");
+      return;
+    }
     setIsSaving(true);
     try {
       // Separate existing rules (update) from new rules (create)
@@ -577,6 +648,7 @@ function UnifiedRulesPage() {
         toast.error(failedMessages.join("\n"), { duration: 8000 });
       }
       if (totalSuccess > 0 && failedMessages.length === 0) {
+        justSavedRef.current = true;
         navigate({ to: "/rules/drafts" });
       }
     } catch {
@@ -586,7 +658,7 @@ function UnifiedRulesPage() {
     }
   };
 
-  const isBusy = aiGenerating || isDryRunning || isSaving;
+  const isBusy = aiGenerating || isSaving;
   const isEditMode = (isTableFqn && loadedFromTable && checks.length > 0) || isSingleRuleEdit;
 
   if (isLoadingRules && isTableFqn) {
@@ -621,14 +693,17 @@ function UnifiedRulesPage() {
       {/* Step 1: Define Rules */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">1. Define Rules</CardTitle>
+          <CardTitle className="text-base flex items-center gap-2">
+            <span className="inline-flex items-center justify-center h-6 w-6 rounded-full bg-primary text-primary-foreground text-xs font-bold">1</span>
+            Define Rules
+          </CardTitle>
         </CardHeader>
         <CardContent className="space-y-5">
           {/* AI generation */}
-          <div className="border border-primary/20 rounded-lg p-4 bg-primary/[0.02] space-y-3">
+          <div className="border border-violet-200 dark:border-violet-800 rounded-lg p-4 bg-violet-50/50 dark:bg-violet-950/30 space-y-3">
             <div className="flex items-center gap-2 mb-1">
-              <Sparkles className="h-4 w-4 text-primary" />
-              <span className="text-sm font-medium">Generate with AI</span>
+              <Sparkles className="h-4 w-4 text-violet-600 dark:text-violet-400" />
+              <span className="text-sm font-medium text-violet-900 dark:text-violet-200">Generate with AI</span>
             </div>
             <div className="space-y-2">
               <Label className="text-xs text-muted-foreground">
@@ -693,7 +768,10 @@ function UnifiedRulesPage() {
       {/* Step 2: Validate & Save */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">2. Validate & Save</CardTitle>
+          <CardTitle className="text-base flex items-center gap-2">
+            <span className="inline-flex items-center justify-center h-6 w-6 rounded-full bg-primary text-primary-foreground text-xs font-bold">2</span>
+            Validate & Save
+          </CardTitle>
           <CardDescription>
             Run a dry run against a specific table to validate, then save rules.
           </CardDescription>
@@ -701,7 +779,7 @@ function UnifiedRulesPage() {
         <CardContent className="space-y-5">
           {/* Dry run section */}
           {allTargetTables.length > 0 && (
-            <div className="space-y-3">
+            <div className="space-y-3 border rounded-lg p-4 bg-muted/20">
               <div className="flex items-center gap-3 flex-wrap">
                 <Select value={dryRunTable} onValueChange={setDryRunTable}>
                   <SelectTrigger className="h-9 text-xs max-w-xs">
@@ -730,7 +808,7 @@ function UnifiedRulesPage() {
                 <Button
                   variant="outline"
                   onClick={handleDryRun}
-                  disabled={!dryRunTable || isBusy}
+                  disabled={!dryRunTable || isBusy || isDryRunning}
                   className="gap-2"
                   size="sm"
                 >
@@ -788,9 +866,16 @@ function UnifiedRulesPage() {
             </div>
             <div className="flex items-center gap-2">
               <Button
+                variant="ghost"
+                onClick={() => navigate({ to: cancelTarget })}
+                disabled={isBusy}
+              >
+                Cancel
+              </Button>
+              <Button
                 variant="outline"
                 onClick={() => handleSave(false)}
-                disabled={!isValid || isBusy || hasDuplicates}
+                disabled={!isValid || isBusy || hasDuplicates || hasArgErrors}
                 className="gap-2"
               >
                 {isSaving ? (
@@ -802,7 +887,7 @@ function UnifiedRulesPage() {
               </Button>
               <Button
                 onClick={() => handleSave(true)}
-                disabled={!isValid || isBusy || hasDuplicates}
+                disabled={!isValid || isBusy || hasDuplicates || hasArgErrors}
                 className="gap-2"
               >
                 {isSaving ? (
@@ -816,6 +901,27 @@ function UnifiedRulesPage() {
           </div>
         </CardContent>
       </Card>
+
+      <AlertDialog open={blocker.status === "blocked"}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {isDryRunning ? "Dry run in progress" : "Unsaved changes"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {isDryRunning
+                ? "A dry run is currently running. Leaving will cancel it and discard any results."
+                : "You have unsaved rule changes. Leaving will discard your edits."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => blocker.reset?.()}>Stay on page</AlertDialogCancel>
+            <AlertDialogAction onClick={handleConfirmLeave} className="bg-destructive text-white hover:bg-destructive/90">
+              {isDryRunning ? "Leave & cancel dry run" : "Discard & leave"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
@@ -833,6 +939,75 @@ function buildChecksForTable(
     .map(checkToDict);
 }
 
+const COLUMN_NAME_REGEX = /^[a-zA-Z_][a-zA-Z0-9_.]*$/;
+const SQL_KEYWORD_PATTERN = /\b(DROP|DELETE|INSERT|UPDATE|ALTER|TRUNCATE|CREATE|GRANT|REVOKE|MERGE)\b/i;
+
+function validateArg(arg: string, value: string, fn?: string): string | null {
+  if (!value.trim()) return null;
+  switch (arg) {
+    case "col_name": {
+      const names = fn === "is_unique"
+        ? value.split(",").map((s) => s.trim()).filter(Boolean)
+        : [value.trim()];
+      for (const name of names) {
+        if (!COLUMN_NAME_REGEX.test(name)) {
+          return `"${name}" is not a valid column name. Use letters, numbers, underscores, and dots only.`;
+        }
+      }
+      return null;
+    }
+    case "allowed":
+    case "forbidden": {
+      if (value.includes(";")) {
+        return "Semicolons are not allowed in list values.";
+      }
+      const items = value.split(",").map((s) => s.trim());
+      for (const item of items) {
+        if (SQL_KEYWORD_PATTERN.test(item)) {
+          return `"${item}" contains a prohibited SQL keyword.`;
+        }
+      }
+      return null;
+    }
+    case "limit":
+    case "min_limit":
+    case "max_limit": {
+      if (value.trim() !== "" && isNaN(Number(value.trim()))) {
+        return "Must be a numeric value.";
+      }
+      return null;
+    }
+    case "expression": {
+      if (value.includes(";")) {
+        return "Semicolons are not allowed in expressions.";
+      }
+      if (SQL_KEYWORD_PATTERN.test(value)) {
+        return "Expression contains a prohibited SQL keyword (DROP, DELETE, INSERT, etc.).";
+      }
+      return null;
+    }
+    default:
+      return null;
+  }
+}
+
+function argLabel(arg: string): string {
+  switch (arg) {
+    case "col_name": return "Column Name";
+    case "allowed": return "Allowed Values";
+    case "forbidden": return "Not Allowed Values";
+    case "limit": return "Limit";
+    case "min_limit": return "Min Limit";
+    case "max_limit": return "Max Limit";
+    case "regex": return "Regex Pattern";
+    case "date_format": return "Date Format";
+    case "timestamp_format": return "Timestamp Format";
+    case "expression": return "Expression";
+    case "msg": return "Error Message";
+    default: return arg;
+  }
+}
+
 function argHint(arg: string, fn?: string): string {
   if (arg === "col_name" && fn === "is_unique") {
     return "comma-separated, e.g. id or col1, col2";
@@ -840,7 +1015,7 @@ function argHint(arg: string, fn?: string): string {
   switch (arg) {
     case "col_name": return "e.g. id";
     case "allowed": return "comma-separated, e.g. A,B,C";
-    case "not_allowed": return "comma-separated";
+    case "forbidden": return "comma-separated";
     case "limit": return "numeric value";
     case "min_limit": return "min value";
     case "max_limit": return "max value";
@@ -873,7 +1048,7 @@ function CheckCard({ check, index, onUpdate, onRemove, canRemove, disabled, isDu
   const isUnknownFn = check.fn !== "" && !fnDef;
   const columns = getCheckColumns(check);
 
-  const [tablesOpen, setTablesOpen] = useState(false);
+  const [tablesOpen, setTablesOpen] = useState(check.fn !== "" && check.targetTables.length === 0);
   const [browsedTables, setBrowsedTables] = useState<string[]>([]);
   const [eligibleTables, setEligibleTables] = useState<Set<string>>(new Set());
   const [isFiltering, setIsFiltering] = useState(false);
@@ -911,7 +1086,7 @@ function CheckCard({ check, index, onUpdate, onRemove, canRemove, disabled, isDu
   };
 
   return (
-    <div className={`border rounded-lg overflow-hidden ${isDuplicate ? "border-red-300 bg-red-50/30" : ""}`}>
+    <div className={`border rounded-lg overflow-hidden border-l-[3px] ${isDuplicate ? "border-red-300 bg-red-50/30 border-l-red-400" : "border-l-primary/40"}`}>
       {/* Header */}
       <div className={`flex items-center justify-between px-4 py-2.5 border-b ${isDuplicate ? "bg-red-50/60" : "bg-muted/30"}`}>
         <div className="flex items-center gap-2">
@@ -955,7 +1130,7 @@ function CheckCard({ check, index, onUpdate, onRemove, canRemove, disabled, isDu
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1.5">
             <Label className="text-xs">Function</Label>
-            <Select value={check.fn} onValueChange={(fn) => onUpdate(check.id, { fn, args: {} })} disabled={disabled}>
+            <Select value={check.fn} onValueChange={(fn) => onUpdate(check.id, { fn, args: { col_name: check.args["col_name"] ?? "" } })} disabled={disabled}>
               <SelectTrigger className="h-8 text-xs">
                 <SelectValue placeholder="Select function" />
               </SelectTrigger>
@@ -993,37 +1168,64 @@ function CheckCard({ check, index, onUpdate, onRemove, canRemove, disabled, isDu
 
         {argFields.length > 0 && (
           <div className="grid gap-2 sm:grid-cols-2">
-            {argFields.map((arg) => (
-              <div key={arg} className="space-y-1">
-                <Label className="text-[11px] text-muted-foreground">{arg}</Label>
-                <Input
-                  className="h-7 text-xs"
-                  placeholder={argHint(arg, check.fn)}
-                  value={check.args[arg] ?? ""}
-                  onChange={(e) =>
-                    onUpdate(check.id, { args: { ...check.args, [arg]: e.target.value } })
-                  }
-                  disabled={disabled}
-                />
-              </div>
-            ))}
+            {argFields.map((arg) => {
+              const val = check.args[arg] ?? "";
+              const isEmpty = val.trim() === "";
+              const validationErr = validateArg(arg, val, check.fn);
+              const hasError = !!validationErr;
+              return (
+                <div key={arg} className="space-y-1">
+                  <Label className={`text-[11px] ${hasError ? "text-red-500" : isEmpty ? "text-amber-500" : "text-muted-foreground"}`}>
+                    {argLabel(arg)}{isEmpty && " (required)"}
+                  </Label>
+                  <Input
+                    className={`h-7 text-xs ${hasError ? "border-red-400 focus-visible:ring-red-400" : isEmpty ? "border-amber-400 focus-visible:ring-amber-400" : ""}`}
+                    placeholder={argHint(arg, check.fn)}
+                    value={val}
+                    onChange={(e) =>
+                      onUpdate(check.id, { args: { ...check.args, [arg]: e.target.value } })
+                    }
+                    disabled={disabled}
+                  />
+                  {hasError && (
+                    <p className="text-[10px] text-red-500 flex items-center gap-1">
+                      <AlertCircle className="h-2.5 w-2.5 shrink-0" />
+                      {validationErr}
+                    </p>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
         {isUnknownFn && Object.keys(check.args).length > 0 && (
           <div className="grid gap-2 sm:grid-cols-2">
-            {Object.entries(check.args).map(([key, val]) => (
-              <div key={key} className="space-y-1">
-                <Label className="text-[11px] text-muted-foreground">{key}</Label>
-                <Input
-                  className="h-7 text-xs"
-                  value={val}
-                  onChange={(e) =>
-                    onUpdate(check.id, { args: { ...check.args, [key]: e.target.value } })
-                  }
-                  disabled={disabled}
-                />
-              </div>
-            ))}
+            {Object.entries(check.args).map(([key, val]) => {
+              const isEmpty = val.trim() === "";
+              const validationErr = validateArg(key, val, check.fn);
+              const hasError = !!validationErr;
+              return (
+                <div key={key} className="space-y-1">
+                  <Label className={`text-[11px] ${hasError ? "text-red-500" : isEmpty ? "text-amber-500" : "text-muted-foreground"}`}>
+                    {argLabel(key)}{isEmpty && " (required)"}
+                  </Label>
+                  <Input
+                    className={`h-7 text-xs ${hasError ? "border-red-400 focus-visible:ring-red-400" : isEmpty ? "border-amber-400 focus-visible:ring-amber-400" : ""}`}
+                    value={val}
+                    onChange={(e) =>
+                      onUpdate(check.id, { args: { ...check.args, [key]: e.target.value } })
+                    }
+                    disabled={disabled}
+                  />
+                  {hasError && (
+                    <p className="text-[10px] text-red-500 flex items-center gap-1">
+                      <AlertCircle className="h-2.5 w-2.5 shrink-0" />
+                      {validationErr}
+                    </p>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
@@ -1044,6 +1246,9 @@ function CheckCard({ check, index, onUpdate, onRemove, canRemove, disabled, isDu
                 <span className="text-muted-foreground ml-1">
                   ({check.targetTables.length} selected)
                 </span>
+              )}
+              {check.fn !== "" && check.targetTables.length === 0 && (
+                <span className="text-amber-500 ml-1">(none selected)</span>
               )}
             </span>
             {check.fn !== "" && columns.length > 0 && (

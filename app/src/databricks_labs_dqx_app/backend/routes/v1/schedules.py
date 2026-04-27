@@ -21,6 +21,7 @@ from databricks_labs_dqx_app.backend.services.schedule_config_service import Sch
 
 router = APIRouter()
 
+_ALL_ROLES = [UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTHOR, UserRole.VIEWER]
 _ADMINS = [UserRole.ADMIN]
 
 
@@ -37,7 +38,7 @@ def _notify_scheduler() -> None:
     "",
     response_model=list[ScheduleConfigOut],
     operation_id="listSchedules",
-    dependencies=[require_role(*_ADMINS)],
+    dependencies=[require_role(*_ALL_ROLES)],
 )
 def list_schedules(
     svc: Annotated[ScheduleConfigService, Depends(get_schedule_config_service)],
@@ -66,7 +67,7 @@ def list_schedules(
     "/{name}",
     response_model=ScheduleConfigOut,
     operation_id="getSchedule",
-    dependencies=[require_role(*_ADMINS)],
+    dependencies=[require_role(*_ALL_ROLES)],
 )
 def get_schedule(
     name: str,
@@ -130,9 +131,6 @@ def delete_schedule(
     svc: Annotated[ScheduleConfigService, Depends(get_schedule_config_service)],
 ) -> dict[str, str]:
     """Delete a schedule configuration by name."""
-    existing = svc.get(name)
-    if existing is None:
-        raise HTTPException(status_code=404, detail=f"Schedule '{name}' not found")
     try:
         user = obo_ws.current_user.me()
         user_email = user.user_name or "unknown"
@@ -148,7 +146,7 @@ def delete_schedule(
     "/{name}/history",
     response_model=list[ScheduleConfigHistoryOut],
     operation_id="getScheduleHistory",
-    dependencies=[require_role(*_ADMINS)],
+    dependencies=[require_role(*_ALL_ROLES)],
 )
 def get_schedule_history(
     name: str,

@@ -54,6 +54,7 @@ from databricks_labs_dqx_app.backend.services.rules_catalog_service import (
     RulesCatalogService,
 )
 from databricks_labs_dqx_app.backend.services.view_service import ViewService
+from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 from databricks_labs_dqx_app.backend.settings import SettingsManager
 from fastapi import HTTPException
 from pydantic import ValidationError
@@ -557,7 +558,8 @@ class TestRulesCatalogService:
 
     @pytest.fixture
     def svc(self, ws):
-        return RulesCatalogService(ws=ws, warehouse_id="wh-123", catalog="cat", schema="sch")
+        sql = SqlExecutor(ws=ws, warehouse_id="wh-123", catalog="cat", schema="sch")
+        return RulesCatalogService(sql=sql)
 
     # ---------- get ----------
 
@@ -702,13 +704,13 @@ class TestRulesCatalogService:
     def test_execute_raises_on_sql_failure(self, svc, ws):
         """Should raise RuntimeError when the SQL statement fails."""
         ws.statement_execution.execute_statement.return_value = _failed_response("syntax error")
-        with pytest.raises(RuntimeError, match="SQL execution failed: syntax error"):
+        with pytest.raises(RuntimeError, match="SQL query failed: syntax error"):
             svc.backfill_rule_ids()
 
     def test_query_raises_on_sql_failure(self, svc, ws):
         """Should raise RuntimeError when a query fails."""
         ws.statement_execution.execute_statement.return_value = _failed_response("timeout")
-        with pytest.raises(RuntimeError, match="SQL execution failed: timeout"):
+        with pytest.raises(RuntimeError, match="SQL query failed: timeout"):
             svc.get("c.s.t")
 
 
@@ -722,7 +724,8 @@ class TestRulesCatalogServiceRowConversion:
 
     @pytest.fixture
     def svc(self, ws):
-        return RulesCatalogService(ws=ws, warehouse_id="wh", catalog="cat", schema="sch")
+        sql = SqlExecutor(ws=ws, warehouse_id="wh", catalog="cat", schema="sch")
+        return RulesCatalogService(sql=sql)
 
     def test_empty_checks_column_yields_empty_list(self, svc, ws):
         """Rows with an empty checks column should produce entries with checks=[]."""
@@ -784,31 +787,31 @@ class TestRulesRoutesRead:
 
     def test_list_rules_returns_entries(self, mock_svc, sample_entry):
         mock_svc.list_rules.return_value = [sample_entry]
-        result = list_rules(svc=mock_svc, status=None)
+        result = asyncio.run(list_rules(svc=mock_svc, status=None, user_catalogs=frozenset({"catalog"})))
         assert len(result) == 1
         assert result[0].table_fqn == "catalog.schema.table"
 
     def test_list_rules_passes_status_filter(self, mock_svc):
         mock_svc.list_rules.return_value = []
-        list_rules(svc=mock_svc, status="approved")
+        asyncio.run(list_rules(svc=mock_svc, status="approved", user_catalogs=frozenset({"catalog"})))
         mock_svc.list_rules.assert_called_once_with(status="approved")
 
     def test_list_rules_raises_500_on_error(self, mock_svc):
         mock_svc.list_rules.side_effect = RuntimeError("db error")
         with pytest.raises(HTTPException) as exc:
-            list_rules(svc=mock_svc, status=None)
+            asyncio.run(list_rules(svc=mock_svc, status=None, user_catalogs=frozenset({"catalog"})))
         assert exc.value.status_code == 500
 
     def test_get_rules_found(self, mock_svc, sample_entry):
         mock_svc.list_rules_for_table.return_value = [sample_entry]
-        result = get_rules(table_fqn="catalog.schema.table", svc=mock_svc)
+        result = get_rules(table_fqn="catalog.schema.table", svc=mock_svc, user_catalogs=frozenset({"catalog"}))
         assert len(result) == 1
         assert result[0].table_fqn == "catalog.schema.table"
 
     def test_get_rules_not_found(self, mock_svc):
         mock_svc.list_rules_for_table.return_value = []
         with pytest.raises(HTTPException) as exc:
-            get_rules(table_fqn="no.such.table", svc=mock_svc)
+            get_rules(table_fqn="no.such.table", svc=mock_svc, user_catalogs=frozenset({"no"}))
         assert exc.value.status_code == 404
 
 
@@ -1095,11 +1098,13 @@ class TestJobService:
 
     @pytest.fixture
     def svc(self, ws: WorkspaceClient) -> JobService:
-        return JobService(ws=ws, job_id="42", catalog="cat", schema="sch", warehouse_id="wh-1")
+        sql = SqlExecutor(ws=ws, warehouse_id="wh-1", catalog="cat", schema="sch")
+        return JobService(ws=ws, job_id="42", sql=sql)
 
     def test_submit_run_raises_when_no_job_id(self, ws: WorkspaceClient) -> None:
         """Should raise RuntimeError when job_id is not configured."""
-        svc = JobService(ws=ws, job_id="", catalog="cat", schema="sch", warehouse_id="wh-1")
+        sql = SqlExecutor(ws=ws, warehouse_id="wh-1", catalog="cat", schema="sch")
+        svc = JobService(ws=ws, job_id="", sql=sql)
         with pytest.raises(RuntimeError, match="DQX_JOB_ID is not configured"):
             svc.submit_run(
                 task_type="dryrun",
@@ -1188,7 +1193,7 @@ class TestJobService:
         """list_run_rows should raise RuntimeError on SQL execution failure."""
         ws.statement_execution.execute_statement.return_value = _failed_response("timeout")  # type: ignore[attr-defined]
 
-        with pytest.raises(RuntimeError, match="List query failed: timeout"):
+        with pytest.raises(RuntimeError, match="SQL query failed: timeout"):
             svc.list_run_rows("cat.sch.dq_profiling_results")
 
     def test_get_run_result_row_returns_dict(self, svc: JobService, ws: WorkspaceClient) -> None:
@@ -1221,7 +1226,7 @@ class TestJobService:
         """get_run_result_row should raise RuntimeError on SQL failure."""
         ws.statement_execution.execute_statement.return_value = _failed_response("permission denied")  # type: ignore[attr-defined]
 
-        with pytest.raises(RuntimeError, match="Results query failed: permission denied"):
+        with pytest.raises(RuntimeError, match="SQL query failed: permission denied"):
             svc.get_run_result_row("cat.sch.dq_validation_runs", "run-001")
 
 
@@ -1240,7 +1245,8 @@ class TestViewService:
 
     @pytest.fixture
     def svc(self, ws: WorkspaceClient) -> ViewService:
-        return ViewService(ws=ws, warehouse_id="wh-1", catalog="cat", schema="sch")
+        sql = SqlExecutor(ws=ws, warehouse_id="wh-1", catalog="cat", schema="sch")
+        return ViewService(sql=sql)
 
     def test_create_view_returns_fqn(self, svc: ViewService, ws: WorkspaceClient) -> None:
         """create_view should return a fully qualified view name."""
@@ -1483,7 +1489,7 @@ class TestMigrationRunner:
             _ok_response(all_applied_rows),  # _applied_at_map query
         ]
 
-        runner = MigrationRunner(ws=ws, warehouse_id="wh", catalog="cat", schema="sch")
+        runner = MigrationRunner(sql=SqlExecutor(ws=ws, warehouse_id="wh", catalog="cat", schema="sch"))
         count = runner.run_all()
 
         assert count == 0
@@ -1494,7 +1500,7 @@ class TestMigrationRunner:
         total_responses = 3 + 2 * len(MIGRATIONS)
         ws.statement_execution.execute_statement.side_effect = [_ok_response()] * total_responses  # type: ignore[attr-defined]
 
-        runner = MigrationRunner(ws=ws, warehouse_id="wh", catalog="cat", schema="sch")
+        runner = MigrationRunner(sql=SqlExecutor(ws=ws, warehouse_id="wh", catalog="cat", schema="sch"))
         count = runner.run_all()
 
         assert count == len(MIGRATIONS)
@@ -1509,7 +1515,7 @@ class TestMigrationRunner:
             [_ok_response(), _ok_response(), _ok_response(applied_rows)] + [_ok_response()] * (2 * pending)
         )
 
-        runner = MigrationRunner(ws=ws, warehouse_id="wh", catalog="cat", schema="sch")
+        runner = MigrationRunner(sql=SqlExecutor(ws=ws, warehouse_id="wh", catalog="cat", schema="sch"))
         count = runner.run_all()
 
         assert count == pending
@@ -1518,8 +1524,8 @@ class TestMigrationRunner:
         """run_all should propagate RuntimeError on the first SQL failure."""
         ws.statement_execution.execute_statement.return_value = _failed_response("permission denied")  # type: ignore[attr-defined]
 
-        runner = MigrationRunner(ws=ws, warehouse_id="wh", catalog="cat", schema="sch")
-        with pytest.raises(RuntimeError, match="Migration SQL failed"):
+        runner = MigrationRunner(sql=SqlExecutor(ws=ws, warehouse_id="wh", catalog="cat", schema="sch"))
+        with pytest.raises(RuntimeError, match="SQL execution failed"):
             runner.run_all()
 
     def test_status_returns_all_migrations_with_applied_flag(self, ws: WorkspaceClient) -> None:
@@ -1532,7 +1538,7 @@ class TestMigrationRunner:
             _ok_response(applied_rows),  # _applied_at_map
         ]
 
-        runner = MigrationRunner(ws=ws, warehouse_id="wh", catalog="cat", schema="sch")
+        runner = MigrationRunner(sql=SqlExecutor(ws=ws, warehouse_id="wh", catalog="cat", schema="sch"))
         statuses = runner.status()
 
         assert len(statuses) == len(MIGRATIONS)
@@ -1670,7 +1676,8 @@ class TestProfilerRoutes:
                 state_message=None,
             )
         )
-        job_svc = JobService(ws=mock_ws, job_id="", catalog="cat", schema="sch", warehouse_id="wh")
+        sql = SqlExecutor(ws=mock_ws, warehouse_id="wh", catalog="cat", schema="sch")
+        job_svc = JobService(ws=mock_ws, job_id="", sql=sql)
 
         app_conf = AppConfig(catalog="cat", schema_name="sch", job_id="")
         result = get_profile_run_status(
@@ -1678,6 +1685,7 @@ class TestProfilerRoutes:
             job_svc=job_svc,
             view_svc=mock_view_svc,
             app_conf=app_conf,
+            sql=sql,
         )
 
         assert isinstance(result, RunStatusOut)
@@ -1691,7 +1699,8 @@ class TestProfilerRoutes:
         mock_ws = create_autospec(WorkspaceClient)
         mock_ws.statement_execution.execute_statement.return_value = _ok_response([["", "", "99999"]])
         mock_ws.jobs.get_run.side_effect = RuntimeError("jobs api error")
-        job_svc = JobService(ws=mock_ws, job_id="", catalog="cat", schema="sch", warehouse_id="wh")
+        sql = SqlExecutor(ws=mock_ws, warehouse_id="wh", catalog="cat", schema="sch")
+        job_svc = JobService(ws=mock_ws, job_id="", sql=sql)
 
         app_conf = AppConfig(catalog="cat", schema_name="sch", job_id="")
         with pytest.raises(HTTPException) as exc:
@@ -1700,6 +1709,7 @@ class TestProfilerRoutes:
                 job_svc=job_svc,
                 view_svc=mock_view_svc,
                 app_conf=app_conf,
+                sql=sql,
             )
 
         assert exc.value.status_code == 500
@@ -1861,7 +1871,8 @@ class TestDryRunRoutes:
                 state_message="Executing",
             )
         )
-        job_svc = JobService(ws=mock_ws, job_id="", catalog="cat", schema="sch", warehouse_id="wh")
+        sql = SqlExecutor(ws=mock_ws, warehouse_id="wh", catalog="cat", schema="sch")
+        job_svc = JobService(ws=mock_ws, job_id="", sql=sql)
 
         app_conf = AppConfig(catalog="cat", schema_name="sch", job_id="")
         result = get_dry_run_status(
@@ -1869,6 +1880,7 @@ class TestDryRunRoutes:
             job_svc=job_svc,
             view_svc=mock_view_svc,
             app_conf=app_conf,
+            sql=sql,
         )
 
         assert isinstance(result, RunStatusOut)
@@ -1881,7 +1893,8 @@ class TestDryRunRoutes:
         mock_ws = create_autospec(WorkspaceClient)
         mock_ws.statement_execution.execute_statement.return_value = _ok_response([["", "", "88888"]])
         mock_ws.jobs.get_run.side_effect = RuntimeError("api error")
-        job_svc = JobService(ws=mock_ws, job_id="", catalog="cat", schema="sch", warehouse_id="wh")
+        sql = SqlExecutor(ws=mock_ws, warehouse_id="wh", catalog="cat", schema="sch")
+        job_svc = JobService(ws=mock_ws, job_id="", sql=sql)
 
         app_conf = AppConfig(catalog="cat", schema_name="sch", job_id="")
         with pytest.raises(HTTPException) as exc:
@@ -1890,6 +1903,7 @@ class TestDryRunRoutes:
                 job_svc=job_svc,
                 view_svc=mock_view_svc,
                 app_conf=app_conf,
+                sql=sql,
             )
 
         assert exc.value.status_code == 500
@@ -1908,7 +1922,14 @@ class TestDryRunRoutes:
         }
 
         app_conf = AppConfig(catalog="cat", schema_name="sch", job_id="")
-        result = get_dry_run_results(run_id="run-001", job_svc=mock_job_svc, app_conf=app_conf)
+        mock_obo = create_autospec(WorkspaceClient)
+        result = get_dry_run_results(
+            run_id="run-001",
+            job_svc=mock_job_svc,
+            app_conf=app_conf,
+            user_catalogs=frozenset({"cat"}),
+            obo_ws=mock_obo,
+        )
 
         assert isinstance(result, DryRunResultsOut)
         assert result.total_rows == 500
@@ -1921,8 +1942,15 @@ class TestDryRunRoutes:
         mock_job_svc.get_run_result_row.return_value = None  # type: ignore[attr-defined]
 
         app_conf = AppConfig(catalog="cat", schema_name="sch", job_id="")
+        mock_obo = create_autospec(WorkspaceClient)
         with pytest.raises(HTTPException) as exc:
-            get_dry_run_results(run_id="run-missing", job_svc=mock_job_svc, app_conf=app_conf)
+            get_dry_run_results(
+                run_id="run-missing",
+                job_svc=mock_job_svc,
+                app_conf=app_conf,
+                user_catalogs=frozenset({"cat"}),
+                obo_ws=mock_obo,
+            )
 
         assert exc.value.status_code == 404
 
@@ -1936,7 +1964,14 @@ class TestDryRunRoutes:
         }
 
         app_conf = AppConfig(catalog="cat", schema_name="sch", job_id="")
+        mock_obo = create_autospec(WorkspaceClient)
         with pytest.raises(HTTPException) as exc:
-            get_dry_run_results(run_id="run-001", job_svc=mock_job_svc, app_conf=app_conf)
+            get_dry_run_results(
+                run_id="run-001",
+                job_svc=mock_job_svc,
+                app_conf=app_conf,
+                user_catalogs=frozenset({"cat"}),
+                obo_ws=mock_obo,
+            )
 
         assert exc.value.status_code == 500

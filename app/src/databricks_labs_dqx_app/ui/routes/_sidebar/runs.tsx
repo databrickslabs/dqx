@@ -11,7 +11,7 @@ import {
   type RuleCatalogEntryOut,
   type User as UserType,
 } from "@/lib/api";
-import axios from "axios";
+import axios, { isAxiosError } from "axios";
 import {
   useBatchRunFromCatalog,
   useListValidationRuns,
@@ -36,11 +36,9 @@ import {
   Plus,
   Trash2,
   Save,
-  FileCode,
   AlertCircle,
   RotateCcw,
   Loader2,
-  FormInput,
   Play,
   History,
   CheckCircle2,
@@ -99,7 +97,7 @@ import { FadeIn } from "@/components/anim/FadeIn";
 import { useActiveRuns, type ActiveRun } from "@/hooks/use-active-runs";
 import { getDryRunStatus, type RunStatusOut } from "@/lib/api";
 import { cancelDryRun } from "@/lib/api-custom";
-import { CircleStop } from "lucide-react";
+import { CircleStop, ShieldAlert } from "lucide-react";
 import { parseFqn, formatDateTime as formatDate } from "@/lib/format-utils";
 
 export const Route = createFileRoute("/_sidebar/runs")({
@@ -558,7 +556,13 @@ function RunsPage() {
   useEffect(() => {
     fetchSchedules().then((entries) => {
       setScheduleNames(entries.map((e) => e.schedule_name));
-    }).catch(() => {});
+    }).catch((err) => {
+      if (isAxiosError(err) && err.response?.status === 403) {
+        toast.error("Insufficient permissions to view schedules");
+      } else {
+        toast.error("Failed to load schedules");
+      }
+    });
   }, []);
 
   const handleCreateRun = async (name: string) => {
@@ -569,8 +573,17 @@ function RunsPage() {
       toast.success(`Schedule "${name}" created`);
       navigate({ to: "/runs/$runName", params: { runName: name } });
       setIsCreateOpen(false);
-    } catch (error) {
-      toast.error("Failed to create new schedule");
+    } catch (error: unknown) {
+      if (isAxiosError(error) && error.response?.status === 403) {
+        toast.error("Insufficient permissions: only admins can create schedules.");
+      } else {
+        const detail =
+          error instanceof Error ? error.message :
+          typeof error === "object" && error !== null && "response" in error
+            ? String((error as { response?: { data?: { detail?: string } } }).response?.data?.detail ?? "")
+            : "";
+        toast.error(detail || "Failed to create new schedule");
+      }
       console.error(error);
       throw error;
     }
@@ -622,53 +635,62 @@ function RunsPage() {
         </TabsContent>
 
         <TabsContent value="schedules" className="flex-1 overflow-hidden mt-0">
-          <div className="flex flex-1 gap-6 overflow-hidden h-full">
-            <aside className="w-72 shrink-0 flex flex-col border-r border-border/50 pr-4 overflow-hidden">
-              <div className="flex items-center justify-between mb-4 shrink-0">
-                <h2 className="font-semibold text-lg text-foreground">
-                  Scheduled Runs
-                </h2>
+          {currentRunName ? (
+            <div className="flex flex-col flex-1 overflow-hidden h-full">
+              <div className="shrink-0 mb-4">
                 <Button
-                  variant="outline"
-                  size="icon"
-                  onClick={() => setIsCreateOpen(true)}
-                  title="Add New Schedule"
-                  className="h-9 w-9"
+                  variant="ghost"
+                  size="sm"
+                  className="gap-1.5 text-muted-foreground hover:text-foreground -ml-2"
+                  onClick={() => navigate({ to: "/runs" })}
                 >
-                  <Plus className="h-4 w-4" />
+                  <ChevronRight className="h-4 w-4 rotate-180" />
+                  Back to schedules
                 </Button>
               </div>
-              <div className="flex-1 overflow-y-auto space-y-1">
+              <div className="flex-1 overflow-hidden flex flex-col">
                 <QueryErrorResetBoundary>
                   {({ reset }) => (
-                    <ErrorBoundary onReset={reset} fallbackRender={RunsListError}>
-                      <Suspense fallback={<RunsListSkeleton />}>
-                        <RunsSidebarList
+                    <ErrorBoundary onReset={reset} fallbackRender={RunEditorError}>
+                      <Suspense fallback={<RunEditorSkeleton />}>
+                        <RunEditorContainer
                           currentRunName={currentRunName}
-                          isDeleting={isDeletingRun}
+                          onAddRun={() => setIsCreateOpen(true)}
+                          onDeletingChange={setIsDeletingRun}
                         />
                       </Suspense>
                     </ErrorBoundary>
                   )}
                 </QueryErrorResetBoundary>
               </div>
-            </aside>
-            <main className="flex-1 overflow-hidden flex flex-col">
-              <QueryErrorResetBoundary>
-                {({ reset }) => (
-                  <ErrorBoundary onReset={reset} fallbackRender={RunEditorError}>
-                    <Suspense fallback={<RunEditorSkeleton />}>
-                      <RunEditorContainer
-                        currentRunName={currentRunName}
-                        onAddRun={() => setIsCreateOpen(true)}
-                        onDeletingChange={setIsDeletingRun}
-                      />
-                    </Suspense>
-                  </ErrorBoundary>
-                )}
-              </QueryErrorResetBoundary>
-            </main>
-          </div>
+            </div>
+          ) : (
+            <div className="flex flex-col flex-1 overflow-hidden h-full">
+              <div className="flex items-center justify-between mb-4 shrink-0">
+                <h2 className="font-semibold text-lg text-foreground">Scheduled Runs</h2>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setIsCreateOpen(true)}
+                  className="gap-2"
+                >
+                  <Plus className="h-4 w-4" />
+                  New Schedule
+                </Button>
+              </div>
+              <div className="flex-1 overflow-y-auto">
+                <QueryErrorResetBoundary>
+                  {({ reset }) => (
+                    <ErrorBoundary onReset={reset} fallbackRender={RunsListError}>
+                      <Suspense fallback={<RunsListSkeleton />}>
+                        <SchedulesListView isDeleting={isDeletingRun} />
+                      </Suspense>
+                    </ErrorBoundary>
+                  )}
+                </QueryErrorResetBoundary>
+              </div>
+            </div>
+          )}
         </TabsContent>
 
         <TabsContent value="history" className="flex-1 overflow-hidden mt-0">
@@ -728,6 +750,8 @@ function ExecuteTab({ onGoToHistory }: { onGoToHistory: () => void }) {
   const [selectedTables, setSelectedTables] = useState<Set<string>>(new Set());
   const [sampleSize, setSampleSize] = useState(1000);
   const [searchQuery, setSearchQuery] = useState("");
+  const [filterCatalog, setFilterCatalog] = useState<string>("__all__");
+  const [filterSchema, setFilterSchema] = useState<string>("__all__");
   const [isRunning, setIsRunning] = useState(false);
   const [runNotification, setRunNotification] = useState<RunNotification | null>(null);
 
@@ -739,11 +763,58 @@ function ExecuteTab({ onGoToHistory }: { onGoToHistory: () => void }) {
   const batchRun = useBatchRunFromCatalog();
   const queryClient = useQueryClient();
 
+  const allCatalogs = useMemo(() => {
+    const cats = new Set<string>();
+    for (const r of approvedRules) {
+      if (r.table_fqn.startsWith(_SQL_CHECK_PREFIX)) {
+        cats.add("Cross-table rules");
+      } else {
+        cats.add(parseFqn(r.table_fqn).catalog);
+      }
+    }
+    return Array.from(cats).sort();
+  }, [approvedRules]);
+
+  const availableSchemas = useMemo(() => {
+    const schemas = new Set<string>();
+    for (const r of approvedRules) {
+      if (r.table_fqn.startsWith(_SQL_CHECK_PREFIX)) continue;
+      const { catalog, schema } = parseFqn(r.table_fqn);
+      if (filterCatalog !== "__all__" && catalog !== filterCatalog) continue;
+      schemas.add(`${catalog}.${schema}`);
+    }
+    return Array.from(schemas).sort();
+  }, [approvedRules, filterCatalog]);
+
+  useEffect(() => {
+    if (filterSchema !== "__all__" && !availableSchemas.includes(filterSchema)) {
+      setFilterSchema("__all__");
+    }
+  }, [availableSchemas, filterSchema]);
+
   const filteredRules = useMemo(() => {
-    if (!searchQuery) return approvedRules;
-    const q = searchQuery.toLowerCase();
-    return approvedRules.filter((r) => (r.display_name || r.table_fqn).toLowerCase().includes(q));
-  }, [approvedRules, searchQuery]);
+    return approvedRules.filter((r) => {
+      const isSqlCheck = r.table_fqn.startsWith(_SQL_CHECK_PREFIX);
+      if (filterCatalog !== "__all__") {
+        if (filterCatalog === "Cross-table rules") {
+          if (!isSqlCheck) return false;
+        } else {
+          if (isSqlCheck) return false;
+          const { catalog, schema } = parseFqn(r.table_fqn);
+          if (catalog !== filterCatalog) return false;
+          if (filterSchema !== "__all__" && `${catalog}.${schema}` !== filterSchema) return false;
+        }
+      } else if (!isSqlCheck && filterSchema !== "__all__") {
+        const { catalog, schema } = parseFqn(r.table_fqn);
+        if (`${catalog}.${schema}` !== filterSchema) return false;
+      }
+      if (searchQuery) {
+        const q = searchQuery.toLowerCase();
+        if (!(r.display_name || r.table_fqn).toLowerCase().includes(q)) return false;
+      }
+      return true;
+    });
+  }, [approvedRules, filterCatalog, filterSchema, searchQuery]);
 
   const grouped = useMemo(() => {
     const groups = new Map<string, RuleCatalogEntryOut[]>();
@@ -1004,6 +1075,36 @@ function ExecuteTab({ onGoToHistory }: { onGoToHistory: () => void }) {
                   </Select>
                 </div>
 
+                <div className="flex items-center gap-1.5">
+                  <Database className="h-3.5 w-3.5 text-muted-foreground" />
+                  <Select value={filterCatalog} onValueChange={(v) => { setFilterCatalog(v); setFilterSchema("__all__"); }}>
+                    <SelectTrigger className="w-[140px] h-8 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__all__" className="text-xs">All catalogs</SelectItem>
+                      {allCatalogs.map((c) => (
+                        <SelectItem key={c} value={c} className="text-xs">{c}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="flex items-center gap-1.5">
+                  <Layers className="h-3.5 w-3.5 text-muted-foreground" />
+                  <Select value={filterSchema} onValueChange={(v) => setFilterSchema(v)}>
+                    <SelectTrigger className="w-[200px] h-8 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__all__" className="text-xs">All schemas</SelectItem>
+                      {availableSchemas.map((s) => (
+                        <SelectItem key={s} value={s} className="text-xs">{s}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
                 <div className="relative flex-1 max-w-xs">
                   <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
                   <Input
@@ -1179,7 +1280,10 @@ function ActiveRunRow({
 
     const poll = async () => {
       try {
-        const resp = await getDryRunStatus(run.run_id);
+        const resp = await getDryRunStatus(run.run_id, {
+          job_run_id: run.job_run_id,
+          view_fqn: run.view_fqn,
+        });
         if (cancelled) return;
         setStatus(resp.data);
         setPollError(false);
@@ -1442,15 +1546,27 @@ function RunHistoryTab() {
     });
   }, [runsResp, rulesByTable]);
 
-  const { catalogs, schemasByCatalog } = useMemo(() => {
+  const [tableFilter, setTableFilter] = useState("all");
+
+  const { catalogs, schemasByCatalog, tablesByCatalogSchema } = useMemo(() => {
     const catalogSet = new Set<string>();
     const schemaMap = new Map<string, Set<string>>();
+    const tableMap = new Map<string, Set<string>>();
     for (const run of allRuns) {
-      const { catalog, schema } = parseFqn(run.source_table_fqn);
+      if (run.source_table_fqn.startsWith(_SQL_CHECK_PREFIX)) {
+        catalogSet.add("Cross-table rules");
+        continue;
+      }
+      const { catalog, schema, table } = parseFqn(run.source_table_fqn);
       if (catalog) {
         catalogSet.add(catalog);
         if (!schemaMap.has(catalog)) schemaMap.set(catalog, new Set());
         if (schema) schemaMap.get(catalog)!.add(schema);
+      }
+      if (catalog && schema && table) {
+        const key = `${catalog}.${schema}`;
+        if (!tableMap.has(key)) tableMap.set(key, new Set());
+        tableMap.get(key)!.add(table);
       }
     }
     return {
@@ -1458,31 +1574,58 @@ function RunHistoryTab() {
       schemasByCatalog: Object.fromEntries(
         Array.from(schemaMap.entries()).map(([cat, schemas]) => [cat, Array.from(schemas).sort()]),
       ),
+      tablesByCatalogSchema: Object.fromEntries(
+        Array.from(tableMap.entries()).map(([key, tables]) => [key, Array.from(tables).sort()]),
+      ),
     };
   }, [allRuns]);
 
   const runs = useMemo(() => {
     return allRuns.filter((run) => {
-      const { catalog, schema, table } = parseFqn(run.source_table_fqn);
-      if (catalogFilter !== "all" && catalog !== catalogFilter) return false;
-      if (schemaFilter !== "all" && schema !== schemaFilter) return false;
-      if (tableSearch && !table.toLowerCase().includes(tableSearch.toLowerCase()) && !run.source_table_fqn.toLowerCase().includes(tableSearch.toLowerCase())) return false;
+      const isSqlCheck = run.source_table_fqn.startsWith(_SQL_CHECK_PREFIX);
+      if (catalogFilter !== "all") {
+        if (catalogFilter === "Cross-table rules") {
+          if (!isSqlCheck) return false;
+        } else {
+          if (isSqlCheck) return false;
+          const { catalog } = parseFqn(run.source_table_fqn);
+          if (catalog !== catalogFilter) return false;
+        }
+      }
+      if (!isSqlCheck) {
+        const { schema, table } = parseFqn(run.source_table_fqn);
+        if (schemaFilter !== "all" && schema !== schemaFilter) return false;
+        if (tableFilter !== "all" && table !== tableFilter) return false;
+        if (tableSearch && !table.toLowerCase().includes(tableSearch.toLowerCase()) && !run.source_table_fqn.toLowerCase().includes(tableSearch.toLowerCase())) return false;
+      } else if (tableSearch) {
+        const name = run.source_table_fqn.slice(_SQL_CHECK_PREFIX.length);
+        if (!name.toLowerCase().includes(tableSearch.toLowerCase())) return false;
+      }
       if (statusFilter !== "all" && run.status !== statusFilter) return false;
       if (runTypeFilter !== "all" && (run.run_type ?? "dryrun") !== runTypeFilter) return false;
       if (invalidOnly && !(run.invalid_rows != null && run.invalid_rows > 0)) return false;
       if (myRunsOnly && currentUserEmail && run.requesting_user !== currentUserEmail) return false;
       return true;
     });
-  }, [allRuns, catalogFilter, schemaFilter, tableSearch, statusFilter, runTypeFilter, invalidOnly, myRunsOnly, currentUserEmail]);
+  }, [allRuns, catalogFilter, schemaFilter, tableFilter, tableSearch, statusFilter, runTypeFilter, invalidOnly, myRunsOnly, currentUserEmail]);
 
   const availableSchemas = catalogFilter !== "all" ? schemasByCatalog[catalogFilter] || [] : [];
+  const availableTables = (catalogFilter !== "all" && schemaFilter !== "all")
+    ? tablesByCatalogSchema[`${catalogFilter}.${schemaFilter}`] || []
+    : [];
 
   const handleCatalogChange = (value: string) => {
     setCatalogFilter(value);
     setSchemaFilter("all");
+    setTableFilter("all");
   };
 
-  const hasActiveFilters = catalogFilter !== "all" || schemaFilter !== "all" || tableSearch !== "" || statusFilter !== "all" || runTypeFilter !== "all" || invalidOnly || myRunsOnly;
+  const handleSchemaChange = (value: string) => {
+    setSchemaFilter(value);
+    setTableFilter("all");
+  };
+
+  const hasActiveFilters = catalogFilter !== "all" || schemaFilter !== "all" || tableFilter !== "all" || tableSearch !== "" || statusFilter !== "all" || runTypeFilter !== "all" || invalidOnly || myRunsOnly;
 
   return (
     <div className="space-y-4 h-full overflow-y-auto">
@@ -1530,7 +1673,7 @@ function RunHistoryTab() {
               </SelectContent>
             </Select>
 
-            <Select value={schemaFilter} onValueChange={setSchemaFilter} disabled={catalogFilter === "all"}>
+            <Select value={schemaFilter} onValueChange={handleSchemaChange} disabled={catalogFilter === "all"}>
               <SelectTrigger className="w-[160px]">
                 <SelectValue placeholder="All Schemas" />
               </SelectTrigger>
@@ -1542,15 +1685,17 @@ function RunHistoryTab() {
               </SelectContent>
             </Select>
 
-            <div className="relative">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-              <Input
-                value={tableSearch}
-                onChange={(e) => setTableSearch(e.target.value)}
-                placeholder="Search table..."
-                className="w-[180px] h-9 pl-8 text-sm"
-              />
-            </div>
+            <Select value={tableFilter} onValueChange={setTableFilter} disabled={schemaFilter === "all"}>
+              <SelectTrigger className="w-[180px]">
+                <SelectValue placeholder="All Tables" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Tables</SelectItem>
+                {availableTables.map((tbl) => (
+                  <SelectItem key={tbl} value={tbl}>{tbl}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
 
             <Select value={statusFilter} onValueChange={setStatusFilter}>
               <SelectTrigger className="w-[140px]">
@@ -1570,7 +1715,7 @@ function RunHistoryTab() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Types</SelectItem>
-                <SelectItem value="dryrun">Dry Run</SelectItem>
+                <SelectItem value="dryrun">Manual</SelectItem>
                 <SelectItem value="scheduled">Scheduled</SelectItem>
               </SelectContent>
             </Select>
@@ -1603,6 +1748,7 @@ function RunHistoryTab() {
                 onClick={() => {
                   setCatalogFilter("all");
                   setSchemaFilter("all");
+                  setTableFilter("all");
                   setTableSearch("");
                   setStatusFilter("all");
                   setRunTypeFilter("all");
@@ -1623,7 +1769,17 @@ function RunHistoryTab() {
           )}
 
           {error && (
-            <p className="text-destructive text-sm">Failed to load run history: {(error as Error).message}</p>
+            isAxiosError(error) && error.response?.status === 403 ? (
+              <div className="flex flex-col items-center justify-center py-16 text-center">
+                <ShieldAlert className="h-12 w-12 text-destructive/30 mb-3" />
+                <p className="text-destructive text-sm mb-1">Insufficient permissions</p>
+                <p className="text-muted-foreground/70 text-xs">
+                  You need Author, Approver, or Admin permissions to view run history.
+                </p>
+              </div>
+            ) : (
+              <p className="text-destructive text-sm">Failed to load run history: {(error as Error).message}</p>
+            )
           )}
 
           {!isLoading && !error && runs.length > 0 && (
@@ -1747,7 +1903,7 @@ function RunHistoryRow({
         <td className="p-3 font-mono text-xs">{cleanFqn(run.source_table_fqn)}</td>
         <td className="p-3">
           <Badge variant={(run.run_type ?? "dryrun") === "scheduled" ? "default" : "outline"} className="text-[10px]">
-            {(run.run_type ?? "dryrun") === "scheduled" ? "Scheduled" : "Dry Run"}
+            {(run.run_type ?? "dryrun") === "scheduled" ? "Scheduled" : "Manual"}
           </Badge>
         </td>
         <td className="p-3">
@@ -1814,9 +1970,23 @@ function RunHistoryRow({
         <tr>
           <td colSpan={10} className="p-0">
             <div className="border-t bg-muted/10 p-4 space-y-4">
-              {run.status !== "SUCCESS" && (
+              {run.status === "FAILED" && run.error_message && (
+                <div className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950/30 p-3">
+                  <AlertCircle className="h-4 w-4 text-red-600 shrink-0 mt-0.5" />
+                  <div className="text-sm">
+                    <p className="font-medium text-red-700 dark:text-red-400">Run failed</p>
+                    <p className="text-red-600 dark:text-red-300 mt-0.5 whitespace-pre-wrap break-words font-mono text-xs">{run.error_message}</p>
+                  </div>
+                </div>
+              )}
+              {run.status !== "SUCCESS" && !run.error_message && run.status !== "CANCELED" && (
                 <div className="text-sm text-muted-foreground">
                   Detailed results are available for completed (SUCCESS) runs.
+                </div>
+              )}
+              {run.status === "CANCELED" && !run.error_message && (
+                <div className="text-sm text-muted-foreground">
+                  This run was canceled.
                 </div>
               )}
               {run.status === "SUCCESS" && isLoadingResults && (
@@ -1877,7 +2047,8 @@ function CreateRunDialog({
   }, [open]);
 
   const isConflict = existingNames.includes(name);
-  const isValid = name.trim().length > 0 && !isConflict;
+  const isFormatValid = /^[a-zA-Z0-9_-]{1,64}$/.test(name);
+  const isValid = name.trim().length > 0 && !isConflict && isFormatValid;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1907,13 +2078,18 @@ function CreateRunDialog({
                 id="name"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                className={cn(isConflict && "border-destructive focus-visible:ring-destructive")}
+                className={cn((isConflict || (name.length > 0 && !isFormatValid)) && "border-destructive focus-visible:ring-destructive")}
                 placeholder="e.g. daily_sales_check"
                 autoFocus
                 autoComplete="off"
               />
               {isConflict && (
                 <p className="text-xs text-destructive">This schedule name already exists.</p>
+              )}
+              {!isConflict && name.length > 0 && !isFormatValid && (
+                <p className="text-xs text-destructive">
+                  Name must be 1–64 characters using only letters, digits, underscores, or hyphens.
+                </p>
               )}
             </div>
           </div>
@@ -1991,71 +2167,145 @@ function RunEditorError({ resetErrorBoundary }: { resetErrorBoundary: () => void
   );
 }
 
-function RunsSidebarList({
-  currentRunName,
-  isDeleting,
-}: {
-  currentRunName?: string;
-  isDeleting?: boolean;
-}) {
+// ===========================================================================
+// Schedules List View — full-width table with metadata columns
+// ===========================================================================
+
+function scopeLabel(cfg: ScheduleConfig): string {
+  switch (cfg.scope_mode) {
+    case "all": return "All approved rules";
+    case "catalog": return (cfg.scope_catalogs ?? []).join(", ") || "No catalogs";
+    case "schema": return (cfg.scope_schemas ?? []).join(", ") || "No schemas";
+    case "tables": {
+      const tables = cfg.scope_tables ?? [];
+      if (tables.length <= 2) return tables.join(", ") || "No tables";
+      return `${tables[0]}, ${tables[1]} +${tables.length - 2} more`;
+    }
+    default: return "All";
+  }
+}
+
+function SchedulesListView({ isDeleting }: { isDeleting?: boolean }) {
   const [schedules, setSchedules] = useState<ScheduleConfigEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<"permission" | "other" | null>(null);
+  const prevDeleting = useRef(isDeleting);
+
+  const handleFetchError = (err: unknown) => {
+    setFetchError(isAxiosError(err) && err.response?.status === 403 ? "permission" : "other");
+  };
 
   useEffect(() => {
-    fetchSchedules()
-      .then(setSchedules)
-      .catch(() => {})
-      .finally(() => setLoading(false));
+    const wasDeleting = prevDeleting.current;
+    prevDeleting.current = isDeleting;
+    if (wasDeleting && !isDeleting) {
+      fetchSchedules().then(setSchedules).catch(handleFetchError);
+      return;
+    }
+    if (!wasDeleting || loading) {
+      setFetchError(null);
+      fetchSchedules()
+        .then(setSchedules)
+        .catch(handleFetchError)
+        .finally(() => setLoading(false));
+    }
   }, [isDeleting]);
 
-  if (isDeleting || loading) {
+  if (loading) {
     return (
-      <div className="flex items-center justify-center py-8">
+      <div className="flex items-center justify-center py-16">
         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (fetchError === "permission") {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 text-center">
+        <ShieldAlert className="h-12 w-12 text-destructive/30 mb-3" />
+        <p className="text-destructive text-sm mb-1">Insufficient permissions</p>
+        <p className="text-muted-foreground/70 text-xs">
+          You need Admin permissions to view and manage schedules.
+          Contact your workspace admin to request access.
+        </p>
+      </div>
+    );
+  }
+
+  if (fetchError) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 text-center">
+        <AlertCircle className="h-12 w-12 text-destructive/30 mb-3" />
+        <p className="text-destructive text-sm mb-1">Failed to load schedules</p>
+        <p className="text-muted-foreground/70 text-xs">
+          Please try refreshing the page.
+        </p>
       </div>
     );
   }
 
   if (schedules.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center py-8 text-center">
+      <div className="flex flex-col items-center justify-center py-16 text-center">
         <CalendarClock className="h-12 w-12 text-muted-foreground/30 mb-3" />
         <p className="text-muted-foreground text-sm mb-1">No schedules configured</p>
         <p className="text-muted-foreground/70 text-xs">
-          Click the + button to create your first schedule
+          Click &ldquo;New Schedule&rdquo; to create your first schedule
         </p>
       </div>
     );
   }
 
   return (
-    <>
-      {schedules.map((sched) => (
-        <div
-          key={sched.schedule_name}
-          className={cn(
-            "group flex items-center gap-2 rounded-lg transition-all duration-200",
-            currentRunName === sched.schedule_name
-              ? "bg-primary/10 ring-1 ring-primary/20"
-              : "hover:bg-muted/50",
-          )}
-        >
-          <Link
-            to="/runs/$runName"
-            params={{ runName: sched.schedule_name }}
-            className={cn(
-              "flex-1 flex items-center gap-3 px-3 py-2.5 text-sm font-medium",
-              currentRunName === sched.schedule_name
-                ? "text-primary"
-                : "text-muted-foreground hover:text-foreground",
-            )}
-          >
-            <CalendarClock className="h-4 w-4 shrink-0" />
-            <span className="truncate">{sched.schedule_name}</span>
-          </Link>
-        </div>
-      ))}
-    </>
+    <div className="border rounded-lg overflow-hidden">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b bg-muted/50">
+            <th className="text-left font-medium text-muted-foreground px-4 py-3">Name</th>
+            <th className="text-left font-medium text-muted-foreground px-4 py-3">Frequency</th>
+            <th className="text-left font-medium text-muted-foreground px-4 py-3">Scope</th>
+            <th className="text-left font-medium text-muted-foreground px-4 py-3">Sample Size</th>
+            <th className="text-left font-medium text-muted-foreground px-4 py-3">Last Updated</th>
+            <th className="text-left font-medium text-muted-foreground px-4 py-3">Updated By</th>
+          </tr>
+        </thead>
+        <tbody>
+          {schedules.map((sched) => (
+            <tr key={sched.schedule_name} className="border-b last:border-b-0 hover:bg-muted/30 transition-colors">
+              <td className="px-4 py-3">
+                <Link
+                  to="/runs/$runName"
+                  params={{ runName: sched.schedule_name }}
+                  className="font-medium text-primary hover:underline flex items-center gap-2"
+                >
+                  <CalendarClock className="h-4 w-4 shrink-0" />
+                  {sched.schedule_name}
+                </Link>
+              </td>
+              <td className="px-4 py-3 text-muted-foreground">
+                <Badge variant="outline" className="font-normal capitalize">
+                  {sched.config.frequency === "manual" ? "Manual" : cronPreview(sched.config)}
+                </Badge>
+              </td>
+              <td className="px-4 py-3 text-muted-foreground">
+                <span className="truncate block max-w-[240px]" title={scopeLabel(sched.config)}>
+                  {scopeLabel(sched.config)}
+                </span>
+              </td>
+              <td className="px-4 py-3 text-muted-foreground">
+                {sched.config.sample_size != null ? sched.config.sample_size.toLocaleString() : "All rows"}
+              </td>
+              <td className="px-4 py-3 text-muted-foreground text-xs">
+                {sched.updated_at ? formatDate(sched.updated_at) : sched.created_at ? formatDate(sched.created_at) : "—"}
+              </td>
+              <td className="px-4 py-3 text-muted-foreground text-xs">
+                {sched.updated_by || sched.created_by || "—"}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -2153,8 +2403,12 @@ function RunEditorContainer({
       await queryClient.refetchQueries({ queryKey: [...SCHEDULES_KEY] });
     } catch (error) {
       console.error("Save error", error);
-      const message = error instanceof Error ? error.message : "Check YAML syntax or validation errors.";
-      toast.error(`Failed to save: ${message}`);
+      if (isAxiosError(error) && error.response?.status === 403) {
+        toast.error("Insufficient permissions: only admins can save schedules.");
+      } else {
+        const message = error instanceof Error ? error.message : "Check YAML syntax or validation errors.";
+        toast.error(`Failed to save: ${message}`);
+      }
     } finally {
       setIsSaving(false);
     }
@@ -2165,15 +2419,17 @@ function RunEditorContainer({
     setIsDeleteOpen(false);
     setIsDeleting(true);
 
-    navigate({ to: "/runs" });
-
     try {
       await deleteScheduleApi(currentRunName);
-      await queryClient.refetchQueries({ queryKey: [...SCHEDULES_KEY] });
       toast.success(`Schedule "${currentRunName}" deleted`);
+      navigate({ to: "/runs" });
+      queryClient.refetchQueries({ queryKey: [...SCHEDULES_KEY] });
     } catch (error) {
-      console.error("Delete error", error);
-      toast.error("Failed to delete schedule");
+      if (isAxiosError(error) && error.response?.status === 403) {
+        toast.error("Insufficient permissions: only admins can delete schedules.");
+      } else {
+        toast.error("Failed to delete schedule");
+      }
     } finally {
       setIsDeleting(false);
     }
@@ -2228,7 +2484,7 @@ function RunEditorContainer({
     }
   };
 
-  if (isDeleting || loadingEntry) {
+  if (loadingEntry) {
     return (
       <div className="flex-1 flex items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
@@ -2268,7 +2524,7 @@ function EmptyState({ onAddRun }: { onAddRun: () => void }) {
       </div>
       <h3 className="text-xl font-semibold mb-2">No Scheduled Runs</h3>
       <p className="text-muted-foreground mb-6 max-w-md">
-        Scheduled runs define how DQX automatically processes your data quality checks
+        Scheduled runs define how DQX Studio automatically processes your data quality checks
         on a recurring or time-based cadence. Create your first schedule to get started.
       </p>
       <Button onClick={onAddRun} className="gap-2">
@@ -2356,7 +2612,6 @@ function RunEditor({
   setIsDeleteOpen,
 }: RunEditorProps) {
   const isLocked = isSaving || isDeleting || !!isRunning;
-  const [editorMode, setEditorMode] = useState<"form" | "yaml">("form");
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
@@ -2364,25 +2619,11 @@ function RunEditor({
         <div className="flex-1">
           <h2 className="text-2xl font-bold tracking-tight">{runName}</h2>
           <p className="text-muted-foreground text-sm mt-0.5">
-            Edit schedule using {editorMode === "form" ? "form" : "YAML editor"}
+            Edit schedule configuration
             {isDirty && <span className="text-amber-500 ml-2">• Unsaved changes</span>}
           </p>
         </div>
-        <div className="flex items-center gap-4">
-          <Tabs value={editorMode} onValueChange={(v) => setEditorMode(v as "form" | "yaml")}>
-            <TabsList>
-              <TabsTrigger value="form" className="gap-2">
-                <FormInput className="h-4 w-4" />
-                Form
-              </TabsTrigger>
-              <TabsTrigger value="yaml" className="gap-2">
-                <FileCode className="h-4 w-4" />
-                YAML
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
-          <div className="h-8 w-px bg-border" />
-          <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2">
             {onRunNow && (
               <Button variant="outline" size="sm" onClick={onRunNow} disabled={isDirty || isLocked} title={isDirty ? "Save changes before running" : "Run this schedule now"} className="gap-1.5">
                 {isRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
@@ -2423,39 +2664,9 @@ function RunEditor({
               </AlertDialogContent>
             </AlertDialog>
           </div>
-        </div>
       </div>
       <div className="flex-1 min-h-0 mt-4">
-        {editorMode === "form" ? (
-          <FormEditor yamlContent={yamlContent} setYamlContent={setYamlContent} setIsDirty={setIsDirty} isLocked={isLocked} />
-        ) : (
-          <YamlEditor yamlContent={yamlContent} setYamlContent={setYamlContent} setIsDirty={setIsDirty} isLocked={isLocked} />
-        )}
-      </div>
-    </div>
-  );
-}
-
-function YamlEditor({
-  yamlContent, setYamlContent, setIsDirty, isLocked,
-}: { yamlContent: string; setYamlContent: (c: string) => void; setIsDirty: (d: boolean) => void; isLocked: boolean }) {
-  return (
-    <div className="h-full relative">
-      <div className="absolute inset-0 rounded-lg border border-border/50 bg-muted/30 overflow-hidden">
-        <textarea
-          value={yamlContent}
-          onChange={(e) => { setYamlContent(e.target.value); setIsDirty(true); }}
-          disabled={isLocked}
-          className={cn(
-            "w-full h-full resize-none p-4",
-            "font-mono text-sm leading-relaxed",
-            "bg-transparent focus:outline-none",
-            "placeholder:text-muted-foreground/50",
-            isLocked && "opacity-50 cursor-not-allowed",
-          )}
-          spellCheck={false}
-          placeholder="# Schedule configuration YAML..."
-        />
+        <FormEditor yamlContent={yamlContent} setYamlContent={setYamlContent} setIsDirty={setIsDirty} isLocked={isLocked} />
       </div>
     </div>
   );
@@ -2560,9 +2771,9 @@ function FormEditor({
       <div className="h-full flex items-center justify-center">
         <div className="text-center">
           <AlertCircle className="h-12 w-12 text-destructive mx-auto mb-3" />
-          <p className="text-destructive font-medium mb-1">Invalid YAML</p>
+          <p className="text-destructive font-medium mb-1">Invalid schedule configuration</p>
           <p className="text-muted-foreground text-sm">{parseError}</p>
-          <p className="text-muted-foreground text-xs mt-2">Switch to YAML mode to fix the syntax</p>
+          <p className="text-muted-foreground text-xs mt-2">Please delete and recreate this schedule to fix the issue.</p>
         </div>
       </div>
     );

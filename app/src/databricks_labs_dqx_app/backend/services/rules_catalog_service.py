@@ -6,8 +6,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-from databricks.sdk import WorkspaceClient
-from databricks.sdk.service.sql import Disposition, Format, StatementState
+from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -63,13 +62,10 @@ class RulesCatalogService:
         "COALESCE(source, 'ui'), COALESCE(rule_id, '')"
     )
 
-    def __init__(self, ws: WorkspaceClient, warehouse_id: str, catalog: str, schema: str) -> None:
-        self._ws = ws
-        self._warehouse_id = warehouse_id
-        self._catalog = catalog
-        self._schema = schema
-        self._table = f"{catalog}.{schema}.dq_quality_rules"
-        self._history_table = f"{catalog}.{schema}.dq_quality_rules_history"
+    def __init__(self, sql: SqlExecutor) -> None:
+        self._sql = sql
+        self._table = f"{sql.catalog}.{sql.schema}.dq_quality_rules"
+        self._history_table = f"{sql.catalog}.{sql.schema}.dq_quality_rules_history"
 
     # ------------------------------------------------------------------
     # Public API
@@ -116,7 +112,7 @@ class RulesCatalogService:
                 f"VALUES ('{e_fqn}', '{single_check_json}', 1, 'draft', '{e_source}', "
                 f"'{e_email}', '{now}', '{e_email}', '{now}', '{rule_id}')"
             )
-            self._execute(sql)
+            self._sql.execute(sql)
             self._record_history(table_fqn, single_check_json, 1, source, user_email, now, "save", rule_id)
             created.append(
                 RuleCatalogEntry(
@@ -163,7 +159,7 @@ class RulesCatalogService:
             f"  updated_at = '{now}' "
             f"WHERE rule_id = '{e_rule_id}'"
         )
-        self._execute(sql)
+        self._sql.execute(sql)
         self._record_history(
             entry.table_fqn, checks_json, entry.version + 1, entry.source, user_email, now, "update", rule_id
         )
@@ -205,7 +201,7 @@ class RulesCatalogService:
 
         e_id = escape_sql_string(rule_id)
         sql = f"SELECT {self._SELECT_COLS} FROM {self._table} WHERE rule_id = '{e_id}'"
-        rows = self._query(sql)
+        rows = self._sql.query(sql)
         if not rows:
             return None
         return self._row_to_entry(rows[0])
@@ -220,7 +216,7 @@ class RulesCatalogService:
             e_status = escape_sql_string(status)
             sql += f" AND status = '{e_status}'"
         sql += " ORDER BY updated_at DESC"
-        rows = self._query(sql)
+        rows = self._sql.query(sql)
         return [self._row_to_entry(row) for row in rows]
 
     def list_rules(self, status: str | None = None) -> list[RuleCatalogEntry]:
@@ -232,7 +228,7 @@ class RulesCatalogService:
             e_status = escape_sql_string(status)
             sql += f" WHERE status = '{e_status}'"
         sql += " ORDER BY updated_at DESC LIMIT 2000"
-        rows = self._query(sql)
+        rows = self._sql.query(sql)
         return [self._row_to_entry(row) for row in rows]
 
     _IDENTITY_ARGS = frozenset(
@@ -244,7 +240,7 @@ class RulesCatalogService:
             "msg",
             "query",
             "allowed",
-            "not_allowed",
+            "forbidden",
             "limit",
             "min_limit",
             "max_limit",
@@ -275,18 +271,25 @@ class RulesCatalogService:
         table_fqn: str,
         checks: list[dict[str, Any]],
         exclude_rule_id: str | None = None,
+        exclude_rule_ids: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Return checks from *checks* that already exist as non-rejected rules for *table_fqn*.
 
         A duplicate is defined as same ``check.function`` and ``check.arguments``
         (case-insensitive) for the same table.  Rejected rules are excluded from
-        duplicate detection.  If *exclude_rule_id* is given, that rule's checks
-        are not considered existing (useful when updating an existing rule).
+        duplicate detection.  If *exclude_rule_id* or *exclude_rule_ids* is given,
+        those rules' checks are not considered existing (useful when updating).
         """
+        excluded: set[str] = set()
+        if exclude_rule_id:
+            excluded.add(exclude_rule_id)
+        if exclude_rule_ids:
+            excluded.update(exclude_rule_ids)
+
         existing = self.list_rules_for_table(table_fqn)
         existing_sigs: set[str] = set()
         for e in existing:
-            if exclude_rule_id and e.rule_id == exclude_rule_id:
+            if e.rule_id in excluded:
                 continue
             if e.status == "rejected":
                 continue
@@ -306,7 +309,7 @@ class RulesCatalogService:
         entry = self.get_by_rule_id(rule_id)
         e_id = escape_sql_string(rule_id)
         sql = f"DELETE FROM {self._table} WHERE rule_id = '{e_id}'"
-        self._execute(sql)
+        self._sql.execute(sql)
         now = datetime.now(timezone.utc).isoformat()
         table_fqn = entry.table_fqn if entry else "unknown"
         version = entry.version if entry else 0
@@ -320,7 +323,7 @@ class RulesCatalogService:
 
         e_fqn = escape_sql_string(table_fqn)
         sql = f"DELETE FROM {self._table} WHERE table_fqn = '{e_fqn}'"
-        self._execute(sql)
+        self._sql.execute(sql)
         now = datetime.now(timezone.utc).isoformat()
         self._record_history(table_fqn, None, 0, "ui", user_email, now, "delete_all")
         logger.info("Deleted all rules for table %s (by %s)", table_fqn, user_email)
@@ -370,7 +373,7 @@ class RulesCatalogService:
             f"  updated_at = '{now}' "
             f"WHERE rule_id = '{e_id}'{version_guard}"
         )
-        self._execute(sql)
+        self._sql.execute(sql)
         self._record_history(
             entry.table_fqn, None, entry.version, entry.source, user_email, now, f"status:{status}", rule_id
         )
@@ -418,7 +421,7 @@ class RulesCatalogService:
         Returns the number of rows updated.
         """
         count_sql = f"SELECT COUNT(*) FROM {self._table} WHERE rule_id IS NULL OR rule_id = ''"
-        rows = self._query(count_sql)
+        rows = self._sql.query(count_sql)
         total = int(rows[0][0]) if rows and rows[0] else 0
         if total == 0:
             return 0
@@ -428,7 +431,7 @@ class RulesCatalogService:
             "SET rule_id = SUBSTRING(MD5(CONCAT(table_fqn, checks, CAST(RAND() AS STRING))), 1, 16) "
             "WHERE rule_id IS NULL OR rule_id = ''"
         )
-        self._execute(sql)
+        self._sql.execute(sql)
         logger.info("Backfilled rule_id for %d rule(s)", total)
         return total
 
@@ -438,7 +441,7 @@ class RulesCatalogService:
 
         validate_fqn(source_table_fqn)
         sql = f"SELECT table_fqn, checks FROM {quote_fqn(source_table_fqn)}"
-        rows = self._query(sql)
+        rows = self._sql.query(sql)
         return [{"table_fqn": row[0] or "", "checks": row[1] or "[]"} for row in rows]
 
     # ------------------------------------------------------------------
@@ -522,36 +525,6 @@ class RulesCatalogService:
                 f"('{e_fqn}', '{e_checks}', {int(version)}, '{e_source}', '{e_action}', "
                 f"'{e_email}', '{timestamp}', '{e_rule_id}')"
             )
-            self._execute(sql)
+            self._sql.execute(sql)
         except Exception:
             logger.warning("Failed to record history for %s (non-fatal)", table_fqn, exc_info=True)
-
-    def _execute(self, sql: str) -> None:
-        resp = self._ws.statement_execution.execute_statement(
-            warehouse_id=self._warehouse_id,
-            statement=sql,
-            catalog=self._catalog,
-            schema=self._schema,
-            disposition=Disposition.INLINE,
-            format=Format.JSON_ARRAY,
-        )
-        if resp.status and resp.status.state == StatementState.FAILED:
-            msg = resp.status.error.message if resp.status.error else "Unknown error"
-            raise RuntimeError(f"SQL execution failed: {msg}")
-
-    def _query(self, sql: str) -> list[list[str]]:
-        resp = self._ws.statement_execution.execute_statement(
-            warehouse_id=self._warehouse_id,
-            statement=sql,
-            catalog=self._catalog,
-            schema=self._schema,
-            disposition=Disposition.INLINE,
-            format=Format.JSON_ARRAY,
-        )
-        if resp.status and resp.status.state == StatementState.FAILED:
-            msg = resp.status.error.message if resp.status.error else "Unknown error"
-            raise RuntimeError(f"SQL execution failed: {msg}")
-
-        if resp.result and resp.result.data_array:
-            return resp.result.data_array
-        return []

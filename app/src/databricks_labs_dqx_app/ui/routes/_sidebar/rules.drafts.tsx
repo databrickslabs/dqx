@@ -2,6 +2,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { parseFqn, formatDateShort as formatDate } from "@/lib/format-utils";
 
 const SQL_CHECK_PREFIX = "__sql_check__/";
+const CROSS_TABLE_CATALOG = "Cross-table rules";
 import React, { useState, Suspense, useMemo, useCallback, useSyncExternalStore } from "react";
 import {
   Tooltip,
@@ -207,7 +208,7 @@ function DraftsPage() {
     const IDENTITY_ARGS = new Set([
       "column", "columns", "col_name",
       "expression", "msg", "query",
-      "allowed", "not_allowed",
+      "allowed", "forbidden",
       "limit", "min_limit", "max_limit",
       "regex", "date_format", "timestamp_format",
     ]);
@@ -248,6 +249,10 @@ function DraftsPage() {
     const catalogSet = new Set<string>();
     const schemaMap = new Map<string, Set<string>>();
     for (const rule of allRules) {
+      if (rule.table_fqn.startsWith(SQL_CHECK_PREFIX)) {
+        catalogSet.add(CROSS_TABLE_CATALOG);
+        continue;
+      }
       const { catalog, schema } = parseFqn(rule.table_fqn);
       if (catalog) {
         catalogSet.add(catalog);
@@ -265,9 +270,20 @@ function DraftsPage() {
 
   const rules = useMemo(() => {
     return allRules.filter((rule) => {
-      const { catalog, schema } = parseFqn(rule.table_fqn);
-      if (catalogFilter !== "all" && catalog !== catalogFilter) return false;
-      if (schemaFilter !== "all" && schema !== schemaFilter) return false;
+      const isSqlCheck = rule.table_fqn.startsWith(SQL_CHECK_PREFIX);
+      if (catalogFilter !== "all") {
+        if (catalogFilter === CROSS_TABLE_CATALOG) {
+          if (!isSqlCheck) return false;
+        } else {
+          if (isSqlCheck) return false;
+          const { catalog } = parseFqn(rule.table_fqn);
+          if (catalog !== catalogFilter) return false;
+        }
+      }
+      if (schemaFilter !== "all" && !isSqlCheck) {
+        const { schema } = parseFqn(rule.table_fqn);
+        if (schema !== schemaFilter) return false;
+      }
       if (mySubmissionsOnly && currentUserEmail) {
         const submitter = rule.updated_by ?? rule.created_by ?? "";
         if (submitter !== currentUserEmail) return false;
@@ -384,10 +400,24 @@ function DraftsPage() {
     [bulkBusy, selectedRules, invalidateRules],
   );
 
-  const handleBulkApprove = () =>
+  const [bulkApproveOpen, setBulkApproveOpen] = useState(false);
+  const [bulkRejectOpen, setBulkRejectOpen] = useState(false);
+  const handleBulkApprove = () => setBulkApproveOpen(true);
+  const confirmBulkApprove = () => {
+    setBulkApproveOpen(false);
     bulkAction(approveRule, "Approved", "some rules could not be approved");
-  const handleBulkReject = () =>
+  };
+  const handleBulkReject = () => setBulkRejectOpen(true);
+  const confirmBulkReject = () => {
+    setBulkRejectOpen(false);
     bulkAction(rejectRule, "Rejected", "some rules could not be rejected");
+  };
+  const [bulkRevokeOpen, setBulkRevokeOpen] = useState(false);
+  const handleBulkRevoke = () => setBulkRevokeOpen(true);
+  const confirmBulkRevoke = () => {
+    setBulkRevokeOpen(false);
+    bulkAction(revokeRule, "Revoked", "some rules could not be revoked");
+  };
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const handleBulkDelete = () => {
     setBulkDeleteOpen(true);
@@ -396,17 +426,25 @@ function DraftsPage() {
     setBulkDeleteOpen(false);
     bulkAction(deleteRuleById, "Deleted", "some rules could not be deleted");
   };
-  const handleBulkSubmit = useCallback(async () => {
-    const eligible = selectedRules.filter((r) => r.status === "draft" && r.rule_id && !duplicateInfo.has(r.rule_id));
-    const skipped = selectedRules.length - eligible.length;
-    if (eligible.length === 0) {
+  const [bulkSubmitOpen, setBulkSubmitOpen] = useState(false);
+  const bulkSubmitEligible = useMemo(
+    () => selectedRules.filter((r) => r.status === "draft" && r.rule_id && !duplicateInfo.has(r.rule_id)),
+    [selectedRules, duplicateInfo],
+  );
+  const handleBulkSubmit = useCallback(() => {
+    if (bulkSubmitEligible.length === 0) {
       toast.warning(`All ${selectedRules.length} selected rule(s) are duplicates and cannot be submitted`);
       return;
     }
+    setBulkSubmitOpen(true);
+  }, [bulkSubmitEligible, selectedRules]);
+  const confirmBulkSubmit = useCallback(async () => {
+    setBulkSubmitOpen(false);
+    const skipped = selectedRules.length - bulkSubmitEligible.length;
     setBulkBusy(true);
     let ok = 0;
     let fail = 0;
-    for (const rule of eligible) {
+    for (const rule of bulkSubmitEligible) {
       try {
         await submitRuleForApproval(rule.rule_id!);
         ok++;
@@ -423,7 +461,7 @@ function DraftsPage() {
     if (skipped > 0) parts.push(`${skipped} skipped (duplicate)`);
     if (fail === 0) toast.success(parts.join(", "));
     else toast.warning(parts.join(", "));
-  }, [selectedRules, duplicateInfo, bulkBusy, invalidateRules]);
+  }, [selectedRules, bulkSubmitEligible, invalidateRules]);
 
   const ruleKey = (rule: RuleCatalogEntryOut) => rule.rule_id ?? rule.table_fqn;
 
@@ -633,6 +671,11 @@ function DraftsPage() {
                       {canApproveRules && selectedRules.some((r) => r.status === "pending_approval") && (
                         <Button size="sm" variant="outline" className="gap-1 h-7 text-xs text-red-600" onClick={handleBulkReject}>
                           <XCircle className="h-3 w-3" /> Reject
+                        </Button>
+                      )}
+                      {selectedRules.some((r) => r.status === "pending_approval") && (canApproveRules || selectedRules.some((r) => (r.updated_by ?? r.created_by) === currentUserEmail)) && (
+                        <Button size="sm" variant="outline" className="gap-1 h-7 text-xs text-amber-600" onClick={handleBulkRevoke}>
+                          <Undo2 className="h-3 w-3" /> Revoke
                         </Button>
                       )}
                       {canEditRules && (
@@ -858,8 +901,8 @@ function DraftsPage() {
                                     className="gap-1.5 h-7 text-xs"
                                     onClick={() =>
                                       rule.table_fqn.startsWith(SQL_CHECK_PREFIX)
-                                        ? navigate({ to: "/rules/create-sql", search: { edit: rule.table_fqn } })
-                                        : navigate({ to: "/rules/generate", search: { table: rule.table_fqn, rule_id: rule.rule_id! } })
+                                        ? navigate({ to: "/rules/create-sql", search: { edit: rule.table_fqn, from: "drafts" } })
+                                        : navigate({ to: "/rules/single-table", search: { table: rule.table_fqn, rule_id: rule.rule_id!, from: "drafts" } })
                                     }
                                   >
                                     <ExternalLink className="h-3 w-3" />
@@ -921,6 +964,79 @@ function DraftsPage() {
               className="bg-destructive text-white hover:bg-destructive/90"
             >
               Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={bulkRevokeOpen} onOpenChange={setBulkRevokeOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Revoke {selectedRules.length} rule{selectedRules.length !== 1 ? "s" : ""}</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to revoke {selectedRules.length} selected rule{selectedRules.length !== 1 ? "s" : ""}? They will be moved back to draft status.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmBulkRevoke}>
+              Revoke
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={bulkSubmitOpen} onOpenChange={setBulkSubmitOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Submit {bulkSubmitEligible.length} rule{bulkSubmitEligible.length !== 1 ? "s" : ""} for approval</AlertDialogTitle>
+            <AlertDialogDescription>
+              {bulkSubmitEligible.length} of {selectedRules.length} selected rule{selectedRules.length !== 1 ? "s" : ""} will be submitted for approval.
+              {selectedRules.length - bulkSubmitEligible.length > 0 &&
+                ` ${selectedRules.length - bulkSubmitEligible.length} will be skipped (not eligible or duplicate).`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmBulkSubmit}>
+              Submit
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={bulkApproveOpen} onOpenChange={setBulkApproveOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Approve {selectedRules.length} rule{selectedRules.length !== 1 ? "s" : ""}</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to approve {selectedRules.length} selected rule{selectedRules.length !== 1 ? "s" : ""}? Approved rules will become active immediately.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmBulkApprove}>
+              Approve
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={bulkRejectOpen} onOpenChange={setBulkRejectOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Reject {selectedRules.length} rule{selectedRules.length !== 1 ? "s" : ""}</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to reject {selectedRules.length} selected rule{selectedRules.length !== 1 ? "s" : ""}? Rejected rules will be moved back to the drafts list.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmBulkReject}
+              className="bg-destructive text-white hover:bg-destructive/90"
+            >
+              Reject
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

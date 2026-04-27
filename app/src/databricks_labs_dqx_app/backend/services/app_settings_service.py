@@ -3,8 +3,8 @@ import logging
 
 from databricks.labs.blueprint.installation import Installation
 from databricks.labs.dqx.config import WorkspaceConfig
-from databricks.sdk import WorkspaceClient
-from databricks.sdk.service.sql import Disposition, Format, StatementState
+
+from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -19,12 +19,9 @@ class AppSettingsService:
     calling user's OBO token.
     """
 
-    def __init__(self, ws: WorkspaceClient, warehouse_id: str, catalog: str, schema: str) -> None:
-        self._ws = ws
-        self._warehouse_id = warehouse_id
-        self._catalog = catalog
-        self._schema = schema
-        self._table = f"{catalog}.{schema}.dq_app_settings"
+    def __init__(self, sql: SqlExecutor) -> None:
+        self._sql = sql
+        self._table = f"{sql.catalog}.{sql.schema}.dq_app_settings"
 
     # ------------------------------------------------------------------
     # Public API
@@ -40,19 +37,18 @@ class AppSettingsService:
             "  updated_by STRING"
             ")"
         )
-        self._execute(sql)
+        self._sql.execute(sql)
         logger.info(f"Ensured settings table exists: {self._table}")
 
     def get_config(self) -> WorkspaceConfig:
         """Load the workspace config from the settings table."""
         sql = f"SELECT setting_value FROM {self._table} WHERE setting_key = '{_CONFIG_KEY}'"
-        rows = self._query(sql)
+        rows = self._sql.query(sql)
         if not rows:
             logger.info("No config found in settings table, returning default")
             return WorkspaceConfig(run_configs=[])
 
         raw = rows[0][0]
-        # Undo damage from earlier save_config that used \' instead of ''
         cleaned = raw.replace("\\'", "'") if "\\'" in raw else raw
         data = json.loads(cleaned, strict=False)
         result = Installation._unmarshal_type(data, "dq_app_settings", WorkspaceConfig)
@@ -79,7 +75,7 @@ class AppSettingsService:
             "WHEN NOT MATCHED THEN INSERT (setting_key, setting_value, updated_at) "
             f"VALUES ('{_CONFIG_KEY}', '{escaped}', current_timestamp())"
         )
-        self._execute(sql)
+        self._sql.execute(sql)
         logger.info("Saved workspace config to settings table")
         return config
 
@@ -89,7 +85,7 @@ class AppSettingsService:
 
         escaped_key = escape_sql_string(key)
         sql = f"SELECT setting_value FROM {self._table} WHERE setting_key = '{escaped_key}'"
-        rows = self._query(sql)
+        rows = self._sql.query(sql)
         return rows[0][0] if rows else None
 
     def save_setting(self, key: str, value: str) -> None:
@@ -108,41 +104,5 @@ class AppSettingsService:
             "WHEN NOT MATCHED THEN INSERT (setting_key, setting_value, updated_at) "
             f"VALUES ('{escaped_key}', '{escaped_val}', current_timestamp())"
         )
-        self._execute(sql)
+        self._sql.execute(sql)
         logger.info("Saved setting: %s", key)
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    def _execute(self, sql: str) -> None:
-        """Execute a SQL statement that doesn't return rows."""
-        resp = self._ws.statement_execution.execute_statement(
-            warehouse_id=self._warehouse_id,
-            statement=sql,
-            catalog=self._catalog,
-            schema=self._schema,
-            disposition=Disposition.INLINE,
-            format=Format.JSON_ARRAY,
-        )
-        if resp.status and resp.status.state == StatementState.FAILED:
-            msg = resp.status.error.message if resp.status.error else "Unknown error"
-            raise RuntimeError(f"SQL execution failed: {msg}")
-
-    def _query(self, sql: str) -> list[list[str]]:
-        """Execute a SQL query and return rows as lists of strings."""
-        resp = self._ws.statement_execution.execute_statement(
-            warehouse_id=self._warehouse_id,
-            statement=sql,
-            catalog=self._catalog,
-            schema=self._schema,
-            disposition=Disposition.INLINE,
-            format=Format.JSON_ARRAY,
-        )
-        if resp.status and resp.status.state == StatementState.FAILED:
-            msg = resp.status.error.message if resp.status.error else "Unknown error"
-            raise RuntimeError(f"SQL execution failed: {msg}")
-
-        if resp.result and resp.result.data_array:
-            return resp.result.data_array
-        return []

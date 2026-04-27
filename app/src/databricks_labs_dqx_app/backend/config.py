@@ -19,7 +19,7 @@ if env_file.exists():
 class AppConfig(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=env_file,
-        env_prefix=f"{app_name.upper()}_",
+        env_prefix="DQX_",
         extra="ignore",
         env_nested_delimiter="__",
         populate_by_name=True,

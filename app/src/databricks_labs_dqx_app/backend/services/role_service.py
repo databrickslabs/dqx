@@ -9,10 +9,8 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from databricks.sdk import WorkspaceClient
-from databricks.sdk.service.sql import Disposition, Format, StatementState
-
 from databricks_labs_dqx_app.backend.common.authorization import ROLE_PRIORITY, UserRole
+from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
 logger = logging.getLogger(__name__)
@@ -39,12 +37,9 @@ class RoleService:
     OBO token.
     """
 
-    def __init__(self, ws: WorkspaceClient, warehouse_id: str, catalog: str, schema: str) -> None:
-        self._ws = ws
-        self._warehouse_id = warehouse_id
-        self._catalog = catalog
-        self._schema = schema
-        self._table = f"{catalog}.{schema}.dq_role_mappings"
+    def __init__(self, sql: SqlExecutor) -> None:
+        self._sql = sql
+        self._table = f"{sql.catalog}.{sql.schema}.dq_role_mappings"
         self._mappings_cache: list[RoleMapping] | None = None
         self._mappings_cache_expires: float = 0.0
 
@@ -58,7 +53,7 @@ class RoleService:
             f"CAST(created_at AS STRING), updated_by, CAST(updated_at AS STRING) "
             f"FROM {self._table} ORDER BY role, group_name"
         )
-        rows = self._query(sql)
+        rows = self._sql.query(sql)
         mappings = [
             RoleMapping(
                 role=row[0],
@@ -87,7 +82,7 @@ class RoleService:
             f"CAST(created_at AS STRING), updated_by, CAST(updated_at AS STRING) "
             f"FROM {self._table} WHERE role = '{escaped_role}' ORDER BY group_name"
         )
-        rows = self._query(sql)
+        rows = self._sql.query(sql)
         return [
             RoleMapping(
                 role=row[0],
@@ -120,7 +115,7 @@ class RoleService:
             f"VALUES ('{escaped_role}', '{escaped_group}', '{escaped_user}', current_timestamp(), "
             f"'{escaped_user}', current_timestamp())"
         )
-        self._execute(sql)
+        self._sql.execute(sql)
         self.invalidate_mappings_cache()
         logger.info(f"Created/updated role mapping: {role} -> {group_name}")
 
@@ -139,7 +134,7 @@ class RoleService:
         escaped_group = escape_sql_string(group_name)
 
         sql = f"DELETE FROM {self._table} WHERE role = '{escaped_role}' AND group_name = '{escaped_group}'"
-        self._execute(sql)
+        self._sql.execute(sql)
         self.invalidate_mappings_cache()
         logger.info(f"Deleted role mapping: {role} -> {group_name}")
 
@@ -187,35 +182,3 @@ class RoleService:
                 return role
 
         return UserRole.VIEWER
-
-    def _execute(self, sql: str) -> None:
-        """Execute a SQL statement that doesn't return rows."""
-        resp = self._ws.statement_execution.execute_statement(
-            warehouse_id=self._warehouse_id,
-            statement=sql,
-            catalog=self._catalog,
-            schema=self._schema,
-            disposition=Disposition.INLINE,
-            format=Format.JSON_ARRAY,
-        )
-        if resp.status and resp.status.state == StatementState.FAILED:
-            msg = resp.status.error.message if resp.status.error else "Unknown error"
-            raise RuntimeError(f"SQL execution failed: {msg}")
-
-    def _query(self, sql: str) -> list[list[str]]:
-        """Execute a SQL query and return rows as lists of strings."""
-        resp = self._ws.statement_execution.execute_statement(
-            warehouse_id=self._warehouse_id,
-            statement=sql,
-            catalog=self._catalog,
-            schema=self._schema,
-            disposition=Disposition.INLINE,
-            format=Format.JSON_ARRAY,
-        )
-        if resp.status and resp.status.state == StatementState.FAILED:
-            msg = resp.status.error.message if resp.status.error else "Unknown error"
-            raise RuntimeError(f"SQL execution failed: {msg}")
-
-        if resp.result and resp.result.data_array:
-            return resp.result.data_array
-        return []

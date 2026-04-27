@@ -24,7 +24,7 @@ function LandingPage() {
     <div className="flex flex-col items-center -mt-4">
       <section className="flex flex-col items-center text-center px-6 pt-14 pb-12 w-full">
         <div className="flex items-center gap-3 mb-6">
-          <img src="/dqx-logo.svg" alt="DQX" className="h-11 w-11" />
+          <img src="/dqx-logo.svg" alt="DQX Studio" className="h-11 w-11" />
           <h1 className="text-4xl sm:text-5xl font-bold tracking-tight">
             {__APP_NAME__}
           </h1>
@@ -35,7 +35,7 @@ function LandingPage() {
         </p>
         <div className="flex flex-wrap items-center justify-center gap-3">
           <Button asChild size="lg" className="gap-2">
-            <Link to="/profiler">
+            <Link to="/rules/create">
               Get Started
               <ArrowRight className="h-4 w-4" />
             </Link>

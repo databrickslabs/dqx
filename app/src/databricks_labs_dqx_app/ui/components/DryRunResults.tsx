@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -8,6 +8,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Download,
+  Info,
 } from "lucide-react";
 import type { DryRunResultsOut } from "@/lib/api";
 import {
@@ -22,6 +23,72 @@ interface DryRunResultsProps {
 }
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50] as const;
+const EXPORT_MAX_ROWS = 50_000;
+const ERROR_SUMMARY_DEFAULT_LIMIT = 5;
+
+function formatError(err: unknown): string {
+  if (typeof err === "string") return err;
+  if (err && typeof err === "object") {
+    const obj = err as Record<string, unknown>;
+    if (typeof obj.message === "string") return obj.message;
+    if (typeof obj.name === "string" && typeof obj.message === "string")
+      return `${obj.name}: ${obj.message}`;
+    try {
+      return JSON.stringify(err);
+    } catch {
+      return "[error]";
+    }
+  }
+  return String(err ?? "");
+}
+
+function summarizeErrorText(raw: string): string {
+  const msgMatch = raw.match(/message='([^']+)'/);
+  if (msgMatch) return msgMatch[1];
+  const msgMatch2 = raw.match(/message="([^"]+)"/);
+  if (msgMatch2) return msgMatch2[1];
+  if (raw.length > 200) return raw.slice(0, 200) + "...";
+  return raw;
+}
+
+function _triggerDownload(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function _cellString(v: unknown): string {
+  return typeof v === "object" && v !== null ? JSON.stringify(v) : String(v ?? "");
+}
+
+function downloadAsCSV(rows: Record<string, unknown>[], filename: string): void {
+  if (rows.length === 0) return;
+  const keys = Array.from(new Set(rows.flatMap(Object.keys)));
+  const escape = (v: unknown) => {
+    const s = _cellString(v);
+    return s.includes(",") || s.includes('"') || s.includes("\n") ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const lines = [keys.join(","), ...rows.map((r) => keys.map((k) => escape(r[k])).join(","))];
+  _triggerDownload(new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8;" }), filename);
+}
+
+function downloadAsExcel(rows: Record<string, unknown>[], filename: string): void {
+  if (rows.length === 0) return;
+  const keys = Array.from(new Set(rows.flatMap(Object.keys)));
+  const escXml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  let xml = '<?xml version="1.0"?><?mso-application progid="Excel.Sheet"?>';
+  xml += '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">';
+  xml += "<Worksheet ss:Name=\"Sample\"><Table>";
+  xml += "<Row>" + keys.map((k) => `<Cell><Data ss:Type="String">${escXml(k)}</Data></Cell>`).join("") + "</Row>";
+  for (const r of rows) {
+    xml += "<Row>" + keys.map((k) => `<Cell><Data ss:Type="String">${escXml(_cellString(r[k]))}</Data></Cell>`).join("") + "</Row>";
+  }
+  xml += "</Table></Worksheet></Workbook>";
+  _triggerDownload(new Blob([xml], { type: "application/vnd.ms-excel" }), filename);
+}
 
 export function DryRunResults({ result }: DryRunResultsProps) {
   const totalRows = result.total_rows ?? 0;
@@ -31,6 +98,30 @@ export function DryRunResults({ result }: DryRunResultsProps) {
   const sampleInvalid = result.sample_invalid ?? [];
 
   const passRate = totalRows > 0 ? Math.round((validRows / totalRows) * 100) : 0;
+
+  const [showAllErrors, setShowAllErrors] = useState(false);
+  const visibleErrorSummary = showAllErrors
+    ? errorSummary
+    : errorSummary.slice(0, ERROR_SUMMARY_DEFAULT_LIMIT);
+  const hiddenErrorCount = errorSummary.length - ERROR_SUMMARY_DEFAULT_LIMIT;
+
+  const cleanedSampleRows = useMemo(() => {
+    return sampleInvalid.map((r) => {
+      const { _warnings, _rule_name, _errors, ...rest } = r as Record<string, unknown>;
+      return {
+        ...rest,
+        errors: Array.isArray(_errors) ? _errors.map(formatError).join("; ") : String(_errors ?? ""),
+      };
+    });
+  }, [sampleInvalid]);
+
+  const downloadSampleCSV = useCallback(() => {
+    downloadAsCSV(cleanedSampleRows, `sample_invalid_${result.run_id}.csv`);
+  }, [cleanedSampleRows, result.run_id]);
+
+  const downloadSampleExcel = useCallback(() => {
+    downloadAsExcel(cleanedSampleRows, `sample_invalid_${result.run_id}.xls`);
+  }, [cleanedSampleRows, result.run_id]);
 
   const [pageSize, setPageSize] = useState<number>(10);
   const [currentPage, setCurrentPage] = useState(0);
@@ -128,19 +219,24 @@ export function DryRunResults({ result }: DryRunResultsProps) {
           <h4 className="text-sm font-medium flex items-center gap-1.5">
             <AlertTriangle className="h-4 w-4 text-amber-500" />
             Error Summary
+            <span className="text-muted-foreground font-normal">
+              ({errorSummary.length} distinct)
+            </span>
           </h4>
           <div className="border rounded-lg overflow-hidden">
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b bg-muted/50">
                   <th className="text-left p-2 font-medium">Error</th>
-                  <th className="text-right p-2 font-medium">Count</th>
+                  <th className="text-right p-2 font-medium w-20">Count</th>
                 </tr>
               </thead>
               <tbody>
-                {errorSummary.map((item, idx) => (
+                {visibleErrorSummary.map((item, idx) => (
                   <tr key={idx} className="border-b last:border-b-0">
-                    <td className="p-2 text-muted-foreground">{String(item.error ?? "")}</td>
+                    <td className="p-2 text-muted-foreground" title={String(item.error ?? "")}>
+                      {summarizeErrorText(String(item.error ?? ""))}
+                    </td>
                     <td className="p-2 text-right tabular-nums">
                       <Badge variant="secondary" className="text-xs">
                         {String(item.count ?? 0)}
@@ -150,6 +246,14 @@ export function DryRunResults({ result }: DryRunResultsProps) {
                 ))}
               </tbody>
             </table>
+            {hiddenErrorCount > 0 && (
+              <button
+                className="w-full py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+                onClick={() => setShowAllErrors((v) => !v)}
+              >
+                {showAllErrors ? "Show less" : `Show ${hiddenErrorCount} more...`}
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -165,17 +269,64 @@ export function DryRunResults({ result }: DryRunResultsProps) {
                 ({hasQuarantine ? `${quarantineTotal} quarantined` : `${sampleInvalid.length} samples`})
               </span>
             </h4>
-            {hasQuarantine && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 gap-1.5 text-xs"
-                onClick={() => exportQuarantineRecords(result.run_id, "csv")}
-              >
-                <Download className="h-3.5 w-3.5" />
-                Export all {quarantineTotal} rows
-              </Button>
-            )}
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {hasQuarantine ? (
+                <>
+                  <span className="text-xs text-muted-foreground">
+                    Export {quarantineTotal > EXPORT_MAX_ROWS ? `first ${EXPORT_MAX_ROWS.toLocaleString()} of ` : ""}
+                    {quarantineTotal.toLocaleString()} rows:
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 gap-1.5 text-xs"
+                    onClick={() => exportQuarantineRecords(result.run_id, "csv")}
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    CSV
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 gap-1.5 text-xs"
+                    onClick={() => exportQuarantineRecords(result.run_id, "xlsx")}
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    Excel
+                  </Button>
+                  {quarantineTotal > EXPORT_MAX_ROWS && (
+                    <span className="text-[10px] text-amber-500 flex items-center gap-0.5">
+                      <Info className="h-3 w-3" />
+                      Max {EXPORT_MAX_ROWS.toLocaleString()} rows per export
+                    </span>
+                  )}
+                </>
+              ) : sampleInvalid.length > 0 ? (
+                <>
+                  <span className="text-xs text-muted-foreground">
+                    Download {sampleInvalid.length} sample rows:
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 gap-1.5 text-xs"
+                    onClick={downloadSampleCSV}
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    CSV
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 gap-1.5 text-xs"
+                    onClick={downloadSampleExcel}
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    Excel
+                  </Button>
+                </>
+              ) : null}
+            </div>
           </div>
 
           <div className="border rounded-lg overflow-auto max-h-[420px]">
@@ -209,7 +360,7 @@ export function DryRunResults({ result }: DryRunResultsProps) {
                         <div className="flex flex-wrap gap-1">
                           {(row.errors ?? []).map((err, ei) => (
                             <Badge key={ei} variant="destructive" className="text-[10px] whitespace-nowrap">
-                              {String(err)}
+                              {formatError(err)}
                             </Badge>
                           ))}
                         </div>

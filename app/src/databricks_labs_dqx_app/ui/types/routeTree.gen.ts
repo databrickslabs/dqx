@@ -21,8 +21,8 @@ import { Route as SidebarConfigRouteImport } from './../routes/_sidebar/config'
 import { Route as SidebarRunsIndexRouteImport } from './../routes/_sidebar/runs.index'
 import { Route as SidebarRulesIndexRouteImport } from './../routes/_sidebar/rules.index'
 import { Route as SidebarRunsRunNameRouteImport } from './../routes/_sidebar/runs.$runName'
+import { Route as SidebarRulesSingleTableRouteImport } from './../routes/_sidebar/rules.single-table'
 import { Route as SidebarRulesImportRouteImport } from './../routes/_sidebar/rules.import'
-import { Route as SidebarRulesGenerateRouteImport } from './../routes/_sidebar/rules.generate'
 import { Route as SidebarRulesDraftsRouteImport } from './../routes/_sidebar/rules.drafts'
 import { Route as SidebarRulesCreateSqlRouteImport } from './../routes/_sidebar/rules.create-sql'
 import { Route as SidebarRulesCreateReusableRouteImport } from './../routes/_sidebar/rules.create-reusable'
@@ -88,14 +88,14 @@ const SidebarRunsRunNameRoute = SidebarRunsRunNameRouteImport.update({
   path: '/$runName',
   getParentRoute: () => SidebarRunsRoute,
 } as any)
+const SidebarRulesSingleTableRoute = SidebarRulesSingleTableRouteImport.update({
+  id: '/single-table',
+  path: '/single-table',
+  getParentRoute: () => SidebarRulesRoute,
+} as any)
 const SidebarRulesImportRoute = SidebarRulesImportRouteImport.update({
   id: '/import',
   path: '/import',
-  getParentRoute: () => SidebarRulesRoute,
-} as any)
-const SidebarRulesGenerateRoute = SidebarRulesGenerateRouteImport.update({
-  id: '/generate',
-  path: '/generate',
   getParentRoute: () => SidebarRulesRoute,
 } as any)
 const SidebarRulesDraftsRoute = SidebarRulesDraftsRouteImport.update({
@@ -139,8 +139,8 @@ export interface FileRoutesByFullPath {
   '/rules/create-reusable': typeof SidebarRulesCreateReusableRoute
   '/rules/create-sql': typeof SidebarRulesCreateSqlRoute
   '/rules/drafts': typeof SidebarRulesDraftsRoute
-  '/rules/generate': typeof SidebarRulesGenerateRoute
   '/rules/import': typeof SidebarRulesImportRoute
+  '/rules/single-table': typeof SidebarRulesSingleTableRoute
   '/runs/$runName': typeof SidebarRunsRunNameRoute
   '/rules/': typeof SidebarRulesIndexRoute
   '/runs/': typeof SidebarRunsIndexRoute
@@ -157,8 +157,8 @@ export interface FileRoutesByTo {
   '/rules/create-reusable': typeof SidebarRulesCreateReusableRoute
   '/rules/create-sql': typeof SidebarRulesCreateSqlRoute
   '/rules/drafts': typeof SidebarRulesDraftsRoute
-  '/rules/generate': typeof SidebarRulesGenerateRoute
   '/rules/import': typeof SidebarRulesImportRoute
+  '/rules/single-table': typeof SidebarRulesSingleTableRoute
   '/runs/$runName': typeof SidebarRunsRunNameRoute
   '/rules': typeof SidebarRulesIndexRoute
   '/runs': typeof SidebarRunsIndexRoute
@@ -179,8 +179,8 @@ export interface FileRoutesById {
   '/_sidebar/rules/create-reusable': typeof SidebarRulesCreateReusableRoute
   '/_sidebar/rules/create-sql': typeof SidebarRulesCreateSqlRoute
   '/_sidebar/rules/drafts': typeof SidebarRulesDraftsRoute
-  '/_sidebar/rules/generate': typeof SidebarRulesGenerateRoute
   '/_sidebar/rules/import': typeof SidebarRulesImportRoute
+  '/_sidebar/rules/single-table': typeof SidebarRulesSingleTableRoute
   '/_sidebar/runs/$runName': typeof SidebarRunsRunNameRoute
   '/_sidebar/rules/': typeof SidebarRulesIndexRoute
   '/_sidebar/runs/': typeof SidebarRunsIndexRoute
@@ -201,8 +201,8 @@ export interface FileRouteTypes {
     | '/rules/create-reusable'
     | '/rules/create-sql'
     | '/rules/drafts'
-    | '/rules/generate'
     | '/rules/import'
+    | '/rules/single-table'
     | '/runs/$runName'
     | '/rules/'
     | '/runs/'
@@ -219,8 +219,8 @@ export interface FileRouteTypes {
     | '/rules/create-reusable'
     | '/rules/create-sql'
     | '/rules/drafts'
-    | '/rules/generate'
     | '/rules/import'
+    | '/rules/single-table'
     | '/runs/$runName'
     | '/rules'
     | '/runs'
@@ -240,8 +240,8 @@ export interface FileRouteTypes {
     | '/_sidebar/rules/create-reusable'
     | '/_sidebar/rules/create-sql'
     | '/_sidebar/rules/drafts'
-    | '/_sidebar/rules/generate'
     | '/_sidebar/rules/import'
+    | '/_sidebar/rules/single-table'
     | '/_sidebar/runs/$runName'
     | '/_sidebar/rules/'
     | '/_sidebar/runs/'
@@ -338,18 +338,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SidebarRunsRunNameRouteImport
       parentRoute: typeof SidebarRunsRoute
     }
+    '/_sidebar/rules/single-table': {
+      id: '/_sidebar/rules/single-table'
+      path: '/single-table'
+      fullPath: '/rules/single-table'
+      preLoaderRoute: typeof SidebarRulesSingleTableRouteImport
+      parentRoute: typeof SidebarRulesRoute
+    }
     '/_sidebar/rules/import': {
       id: '/_sidebar/rules/import'
       path: '/import'
       fullPath: '/rules/import'
       preLoaderRoute: typeof SidebarRulesImportRouteImport
-      parentRoute: typeof SidebarRulesRoute
-    }
-    '/_sidebar/rules/generate': {
-      id: '/_sidebar/rules/generate'
-      path: '/generate'
-      fullPath: '/rules/generate'
-      preLoaderRoute: typeof SidebarRulesGenerateRouteImport
       parentRoute: typeof SidebarRulesRoute
     }
     '/_sidebar/rules/drafts': {
@@ -396,8 +396,8 @@ interface SidebarRulesRouteChildren {
   SidebarRulesCreateReusableRoute: typeof SidebarRulesCreateReusableRoute
   SidebarRulesCreateSqlRoute: typeof SidebarRulesCreateSqlRoute
   SidebarRulesDraftsRoute: typeof SidebarRulesDraftsRoute
-  SidebarRulesGenerateRoute: typeof SidebarRulesGenerateRoute
   SidebarRulesImportRoute: typeof SidebarRulesImportRoute
+  SidebarRulesSingleTableRoute: typeof SidebarRulesSingleTableRoute
   SidebarRulesIndexRoute: typeof SidebarRulesIndexRoute
 }
 
@@ -407,8 +407,8 @@ const SidebarRulesRouteChildren: SidebarRulesRouteChildren = {
   SidebarRulesCreateReusableRoute: SidebarRulesCreateReusableRoute,
   SidebarRulesCreateSqlRoute: SidebarRulesCreateSqlRoute,
   SidebarRulesDraftsRoute: SidebarRulesDraftsRoute,
-  SidebarRulesGenerateRoute: SidebarRulesGenerateRoute,
   SidebarRulesImportRoute: SidebarRulesImportRoute,
+  SidebarRulesSingleTableRoute: SidebarRulesSingleTableRoute,
   SidebarRulesIndexRoute: SidebarRulesIndexRoute,
 }
 

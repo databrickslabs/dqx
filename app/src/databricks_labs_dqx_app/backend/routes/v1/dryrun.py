@@ -7,17 +7,24 @@ from uuid import uuid4
 
 from databricks.labs.dqx.checks_validator import ChecksValidationStatus
 from databricks.sdk import WorkspaceClient
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
+
+from databricks_labs_dqx_app.backend.common.authorization import UserRole
 
 from databricks_labs_dqx_app.backend.config import AppConfig
 from databricks_labs_dqx_app.backend.dependencies import (
+    CurrentUserRole,
     get_check_validator,
     get_conf,
     get_job_service,
     get_obo_ws,
     get_rules_catalog_service,
+    get_sp_sql_executor,
+    get_user_catalog_names,
     get_view_service,
+    require_role,
 )
+from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 from databricks_labs_dqx_app.backend.logger import logger
 from databricks_labs_dqx_app.backend.models import (
     BatchRunFromCatalogIn,
@@ -29,7 +36,7 @@ from databricks_labs_dqx_app.backend.models import (
     ValidationRunSummaryOut,
 )
 from databricks_labs_dqx_app.backend.services.job_service import JobService
-from databricks_labs_dqx_app.backend.run_status_manager import get_run_metadata, update_run_status
+from databricks_labs_dqx_app.backend.run_status_manager import get_run_metadata, has_terminal_result, update_run_status
 from databricks_labs_dqx_app.backend.services.rules_catalog_service import RulesCatalogService
 from databricks_labs_dqx_app.backend.services.view_service import ViewService
 
@@ -37,6 +44,7 @@ router = APIRouter()
 
 _DRYRUN_TABLE = "dq_validation_runs"
 _SQL_CHECK_PREFIX = "__sql_check__/"
+_NON_VIEWERS = [UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTHOR]
 
 
 def _extract_sql_query(checks: list[dict[str, Any]]) -> str | None:
@@ -48,17 +56,34 @@ def _extract_sql_query(checks: list[dict[str, Any]]) -> str | None:
     return None
 
 
-@router.get("/runs", response_model=list[ValidationRunSummaryOut], operation_id="listValidationRuns")
-def list_validation_runs(
+def _catalog_of(fqn: str) -> str:
+    """Extract the catalog part from a fully qualified table name."""
+    if fqn.startswith(_SQL_CHECK_PREFIX):
+        fqn = fqn[len(_SQL_CHECK_PREFIX) :]
+    parts = fqn.split(".", 1)
+    return parts[0] if parts else ""
+
+
+@router.get(
+    "/runs",
+    response_model=list[ValidationRunSummaryOut],
+    operation_id="listValidationRuns",
+    dependencies=[require_role(*_NON_VIEWERS)],
+)
+async def list_validation_runs(
     job_svc: Annotated[JobService, Depends(get_job_service)],
     app_conf: Annotated[AppConfig, Depends(get_conf)],
+    user_catalogs: Annotated[frozenset[str], Depends(get_user_catalog_names)],
 ) -> list[ValidationRunSummaryOut]:
-    """Return validation (dry-run) history, newest first."""
+    """Return validation (dry-run) history filtered to user-accessible catalogs."""
     try:
         table = f"{app_conf.catalog}.{app_conf.schema_name}.dq_validation_runs"
         rows = job_svc.list_dryrun_rows(table)
         results: list[ValidationRunSummaryOut] = []
         for row in rows:
+            fqn = row.get("source_table_fqn") or ""
+            if not fqn.startswith(_SQL_CHECK_PREFIX) and _catalog_of(fqn) not in user_catalogs:
+                continue
             checks: list[dict[str, Any]] = []
             raw = row.get("checks_json")
             if raw:
@@ -71,7 +96,7 @@ def list_validation_runs(
             results.append(
                 ValidationRunSummaryOut(
                     run_id=row.get("run_id") or "",
-                    source_table_fqn=row.get("source_table_fqn") or "",
+                    source_table_fqn=fqn,
                     status=row.get("status"),
                     requesting_user=row.get("requesting_user"),
                     canceled_by=row.get("canceled_by"),
@@ -82,6 +107,7 @@ def list_validation_runs(
                     invalid_rows=int(v) if (v := row.get("invalid_rows")) else None,
                     created_at=row.get("created_at"),
                     run_type=row.get("run_type"),
+                    error_message=row.get("error_message"),
                     checks=checks,
                 )
             )
@@ -198,12 +224,14 @@ def submit_dry_run(
             view_fqn = view_svc.create_view(body.table_fqn)
 
         # Submit job using SP credentials
-        config = {
+        config: dict[str, Any] = {
             "checks": body.checks,
             "sample_size": body.sample_size,
             "source_table_fqn": body.table_fqn,
             "is_sql_check": is_sql_check,
         }
+        if body.skip_history:
+            config["skip_history"] = True
         job_run_id = job_svc.submit_run(
             task_type="dryrun",
             view_fqn=view_fqn,
@@ -212,16 +240,17 @@ def submit_dry_run(
             requesting_user=requesting_user,
         )
 
-        runs_table = f"{app_conf.catalog}.{app_conf.schema_name}.dq_validation_runs"
-        job_svc.record_dryrun_started(
-            table=runs_table,
-            run_id=run_id,
-            requesting_user=requesting_user,
-            source_table_fqn=body.table_fqn,
-            view_fqn=view_fqn,
-            sample_size=body.sample_size,
-            job_run_id=job_run_id,
-        )
+        if not body.skip_history:
+            runs_table = f"{app_conf.catalog}.{app_conf.schema_name}.dq_validation_runs"
+            job_svc.record_dryrun_started(
+                table=runs_table,
+                run_id=run_id,
+                requesting_user=requesting_user,
+                source_table_fqn=body.table_fqn,
+                view_fqn=view_fqn,
+                sample_size=body.sample_size,
+                job_run_id=job_run_id,
+            )
 
         return DryRunSubmitOut(run_id=run_id, job_run_id=job_run_id, view_fqn=view_fqn)
     except HTTPException:
@@ -237,43 +266,73 @@ def get_dry_run_status(
     job_svc: Annotated[JobService, Depends(get_job_service)],
     view_svc: Annotated[ViewService, Depends(get_view_service)],
     app_conf: Annotated[AppConfig, Depends(get_conf)],
+    sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+    job_run_id_param: Annotated[int | None, Query(alias="job_run_id")] = None,
+    view_fqn_param: Annotated[str | None, Query(alias="view_fqn")] = None,
 ) -> RunStatusOut:
-    """Poll the status of a dry-run job. Cleans up the view when job terminates."""
-    try:
-        meta = get_run_metadata(job_svc, app_conf, _DRYRUN_TABLE, run_id)
-        if meta.job_run_id is None:
-            return RunStatusOut(
-                run_id=run_id,
-                state="TERMINATED",
-                result_state="FAILED",
-                message="Run metadata is missing job_run_id. The run may have been created before tracking was enabled.",
-            )
+    """Poll the status of a dry-run job. Cleans up the view when job terminates.
 
-        status = job_svc.get_run_status(meta.job_run_id)
+    When *job_run_id* and optionally *view_fqn* are supplied as query
+    parameters the endpoint skips the database lookup, which is required
+    for validation dry runs that are not recorded in the history table.
+    """
+    try:
+        if job_run_id_param is not None:
+            resolved_job_run_id = job_run_id_param
+            resolved_view_fqn = view_fqn_param
+            has_history_row = False
+        else:
+            meta = get_run_metadata(sql, app_conf, _DRYRUN_TABLE, run_id)
+            if meta.job_run_id is None:
+                terminal = has_terminal_result(sql, app_conf, _DRYRUN_TABLE, run_id)
+                if terminal:
+                    if meta.view_fqn and "tmp_view_" in meta.view_fqn:
+                        try:
+                            view_svc.drop_view(meta.view_fqn)
+                        except Exception:
+                            pass
+                    return RunStatusOut(
+                        run_id=run_id,
+                        state="TERMINATED",
+                        result_state="SUCCESS" if terminal == "SUCCESS" else "FAILED",
+                        message=None if terminal == "SUCCESS" else f"Run finished with status: {terminal}",
+                        view_cleaned_up=True,
+                    )
+                return RunStatusOut(
+                    run_id=run_id,
+                    state="TERMINATED",
+                    result_state="FAILED",
+                    message="Run metadata is missing job_run_id. The run may have been created before tracking was enabled.",
+                )
+            resolved_job_run_id = meta.job_run_id
+            resolved_view_fqn = meta.view_fqn
+            has_history_row = True
+
+        status = job_svc.get_run_status(resolved_job_run_id)
         view_cleaned_up = False
 
         is_terminal = status.state in ("TERMINATED", "INTERNAL_ERROR", "SKIPPED")
 
-        if is_terminal and meta.view_fqn:
+        if is_terminal and resolved_view_fqn:
             try:
-                view_svc.drop_view(meta.view_fqn)
+                view_svc.drop_view(resolved_view_fqn)
                 view_cleaned_up = True
-                logger.info("Cleaned up temporary view: %s", meta.view_fqn)
+                logger.info("Cleaned up temporary view: %s", resolved_view_fqn)
             except Exception as cleanup_err:
-                logger.warning("Failed to clean up view %s: %s", meta.view_fqn, cleanup_err)
+                logger.warning("Failed to clean up view %s: %s", resolved_view_fqn, cleanup_err)
 
-        if is_terminal and status.state != "TERMINATED":
+        if has_history_row and is_terminal and status.state != "TERMINATED":
             update_run_status(
-                job_svc,
+                sql,
                 app_conf,
                 _DRYRUN_TABLE,
                 run_id,
                 status=status.state,
                 error_message=status.message,
             )
-        elif is_terminal and status.result_state and status.result_state != "SUCCESS":
+        elif has_history_row and is_terminal and status.result_state and status.result_state != "SUCCESS":
             update_run_status(
-                job_svc,
+                sql,
                 app_conf,
                 _DRYRUN_TABLE,
                 run_id,
@@ -299,17 +358,35 @@ def cancel_dry_run(
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
     job_svc: Annotated[JobService, Depends(get_job_service)],
     app_conf: Annotated[AppConfig, Depends(get_conf)],
+    sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+    user_role: CurrentUserRole,
+    job_run_id_param: Annotated[int | None, Query(alias="job_run_id")] = None,
 ) -> dict[str, str]:
-    """Cancel a running dry-run job."""
+    """Cancel a running dry-run job.
+
+    When *job_run_id* is supplied as a query parameter the endpoint
+    skips the database lookup (needed for validation dry runs that were
+    not recorded in the history table). Ownership is still enforced via
+    the Databricks Jobs API — only admins/approvers may cancel others' runs.
+    """
     try:
         canceling_user = obo_ws.current_user.me().user_name or "unknown"
+        can_cancel_others = user_role in (UserRole.ADMIN, UserRole.RULE_APPROVER)
 
-        meta = get_run_metadata(job_svc, app_conf, _DRYRUN_TABLE, run_id)
-        if meta.requesting_user and meta.requesting_user != canceling_user:
+        if job_run_id_param is not None:
+            run_owner = job_svc.get_run_creator(job_run_id_param)
+            if run_owner and run_owner != canceling_user and not can_cancel_others:
+                raise HTTPException(status_code=403, detail="You can only cancel your own runs")
+            job_svc.cancel_run(job_run_id_param)
+            return {"status": "canceled", "run_id": run_id}
+
+        meta = get_run_metadata(sql, app_conf, _DRYRUN_TABLE, run_id)
+        is_owner = not meta.requesting_user or meta.requesting_user == canceling_user
+        if not is_owner and not can_cancel_others:
             raise HTTPException(status_code=403, detail="You can only cancel your own runs")
         if meta.job_run_id is None:
             update_run_status(
-                job_svc,
+                sql,
                 app_conf,
                 _DRYRUN_TABLE,
                 run_id,
@@ -320,7 +397,7 @@ def cancel_dry_run(
 
         job_svc.cancel_run(meta.job_run_id)
         update_run_status(
-            job_svc,
+            sql,
             app_conf,
             _DRYRUN_TABLE,
             run_id,
@@ -341,6 +418,8 @@ def get_dry_run_results(
     run_id: str,
     job_svc: Annotated[JobService, Depends(get_job_service)],
     app_conf: Annotated[AppConfig, Depends(get_conf)],
+    user_catalogs: Annotated[frozenset[str], Depends(get_user_catalog_names)],
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
 ) -> DryRunResultsOut:
     """Read dry-run results from the Delta table."""
     try:
@@ -349,6 +428,10 @@ def get_dry_run_results(
 
         if row is None:
             raise HTTPException(status_code=404, detail=f"No results found for run_id={run_id}")
+
+        fqn = row.get("source_table_fqn") or ""
+        if not fqn.startswith(_SQL_CHECK_PREFIX) and _catalog_of(fqn) not in user_catalogs:
+            raise HTTPException(status_code=403, detail="You do not have access to this run's catalog")
 
         if row.get("status") == "FAILED":
             raise HTTPException(status_code=500, detail=f"Dry run failed: {row.get('error_message', 'Unknown error')}")

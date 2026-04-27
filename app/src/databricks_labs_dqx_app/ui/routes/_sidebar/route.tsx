@@ -34,7 +34,7 @@ function Layout() {
 
   const isCreateActive =
     location.pathname.startsWith("/rules/create") ||
-    location.pathname.startsWith("/rules/generate") ||
+    location.pathname.startsWith("/rules/single-table") ||
     location.pathname.startsWith("/rules/import") ||
     location.pathname.startsWith("/profiler");
 
@@ -42,11 +42,11 @@ function Layout() {
 
   const createChildren = [
     {
-      to: "/rules/generate",
+      to: "/rules/single-table",
       label: "Single table rules",
       icon: <Sparkles size={14} />,
       match: (path: string) =>
-        path.startsWith("/rules/generate") || path.startsWith("/rules/create"),
+        path.startsWith("/rules/single-table") || path.startsWith("/rules/create"),
     },
     {
       to: "/rules/create-sql",

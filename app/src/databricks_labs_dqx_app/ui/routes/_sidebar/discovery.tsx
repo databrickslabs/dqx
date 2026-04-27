@@ -14,6 +14,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
+  AlertCircle,
   Database,
   Table2,
   Columns3,
@@ -153,14 +154,23 @@ function RulesPanel({ tableFqn }: { tableFqn: string }) {
         <CardDescription>
           {isLoading
             ? "Checking for existing rules..."
-            : hasRules
-              ? `${entry.checks.length} rule${entry.checks.length !== 1 ? "s" : ""} defined for this table`
-              : "No quality rules defined for this table yet."}
+            : error
+              ? "Failed to load rules for this table."
+              : hasRules
+                ? `${entry.checks.length} rule${entry.checks.length !== 1 ? "s" : ""} defined for this table`
+                : "No quality rules defined for this table yet."}
         </CardDescription>
       </CardHeader>
       <CardContent>
         {isLoading && (
           <Skeleton className="h-12 w-full" />
+        )}
+
+        {!isLoading && error && (
+          <div className="flex items-center gap-2 text-sm text-destructive">
+            <AlertCircle className="h-4 w-4 shrink-0" />
+            <span>Could not load rules: {(error as Error).message}</span>
+          </div>
         )}
 
         {hasRules && (
@@ -185,7 +195,7 @@ function RulesPanel({ tableFqn }: { tableFqn: string }) {
               className="gap-2"
               onClick={() =>
                 navigate({
-                  to: "/rules/generate",
+                  to: "/rules/single-table",
                   search: { table: tableFqn },
                 })
               }
@@ -206,7 +216,7 @@ function RulesPanel({ tableFqn }: { tableFqn: string }) {
               className="gap-2"
               onClick={() =>
                 navigate({
-                  to: "/rules/generate",
+                  to: "/rules/single-table",
                   search: { table: tableFqn },
                 })
               }

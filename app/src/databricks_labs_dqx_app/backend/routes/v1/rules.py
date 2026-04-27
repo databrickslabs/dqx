@@ -4,7 +4,12 @@ from databricks.sdk import WorkspaceClient
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from databricks_labs_dqx_app.backend.common.authorization import UserRole
-from databricks_labs_dqx_app.backend.dependencies import get_obo_ws, get_rules_catalog_service, require_role
+from databricks_labs_dqx_app.backend.dependencies import (
+    get_obo_ws,
+    get_rules_catalog_service,
+    get_user_catalog_names,
+    require_role,
+)
 from databricks_labs_dqx_app.backend.logger import logger
 from databricks_labs_dqx_app.backend.models import (
     BatchSaveRulesIn,
@@ -24,6 +29,14 @@ _AUTHORS_AND_ABOVE = [UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTH
 _APPROVERS_ONLY = [UserRole.ADMIN, UserRole.RULE_APPROVER]
 
 _SQL_CHECK_PREFIX = "__sql_check__/"
+
+
+def _catalog_of(fqn: str) -> str:
+    """Extract the catalog part from a fully qualified table name."""
+    if fqn.startswith(_SQL_CHECK_PREFIX):
+        fqn = fqn[len(_SQL_CHECK_PREFIX) :]
+    parts = fqn.split(".", 1)
+    return parts[0] if parts else ""
 
 
 def _display_name(fqn: str) -> str:
@@ -57,14 +70,19 @@ def _entry_to_out(entry) -> RuleCatalogEntryOut:
     operation_id="listRules",
     dependencies=[require_role(*_ALL_ROLES)],
 )
-def list_rules(
+async def list_rules(
     svc: Annotated[RulesCatalogService, Depends(get_rules_catalog_service)],
+    user_catalogs: Annotated[frozenset[str], Depends(get_user_catalog_names)],
     status: Annotated[str | None, Query(description="Filter by status")] = None,
 ) -> list[RuleCatalogEntryOut]:
-    """List all individual rules, optionally filtered by status."""
+    """List rules filtered to catalogs the current user can access."""
     try:
         entries = svc.list_rules(status=status)
-        return [_entry_to_out(e) for e in entries]
+        return [
+            _entry_to_out(e)
+            for e in entries
+            if e.table_fqn.startswith(_SQL_CHECK_PREFIX) or _catalog_of(e.table_fqn) in user_catalogs
+        ]
     except Exception as e:
         logger.error(f"Failed to list rules: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to list rules: {e}")
@@ -79,9 +97,12 @@ def list_rules(
 def get_rules(
     table_fqn: str,
     svc: Annotated[RulesCatalogService, Depends(get_rules_catalog_service)],
+    user_catalogs: Annotated[frozenset[str], Depends(get_user_catalog_names)],
 ) -> list[RuleCatalogEntryOut]:
     """Get all individual rules for a specific table."""
     try:
+        if not table_fqn.startswith(_SQL_CHECK_PREFIX) and _catalog_of(table_fqn) not in user_catalogs:
+            raise HTTPException(status_code=403, detail="You do not have access to this table's catalog")
         entries = svc.list_rules_for_table(table_fqn)
         if not entries:
             raise HTTPException(status_code=404, detail=f"No rules found for table: {table_fqn}")
@@ -173,7 +194,12 @@ def check_duplicates(
 ) -> CheckDuplicatesOut:
     """Check if any of the provided checks already exist for the given table."""
     try:
-        dupes = svc.find_duplicates(body.table_fqn, body.checks, exclude_rule_id=body.exclude_rule_id)
+        dupes = svc.find_duplicates(
+            body.table_fqn,
+            body.checks,
+            exclude_rule_id=body.exclude_rule_id,
+            exclude_rule_ids=body.exclude_rule_ids or None,
+        )
         return CheckDuplicatesOut(duplicates=dupes)
     except Exception as e:
         logger.error(f"Failed to check duplicates: {e}", exc_info=True)

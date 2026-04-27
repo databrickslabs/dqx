@@ -9,7 +9,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-04-14T15:12:14.773448Z"
+exclude-newer = "2026-04-20T06:50:35.222515Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
@@ -726,7 +726,6 @@ provides-extras = ["anomaly", "cli", "datacontract", "llm", "pii"]
 [package.metadata.requires-dev]
 dev = [
     { name = "black", specifier = "~=24.8.0" },
-    { name = "chispa", specifier = "~=0.10.1" },
     { name = "coverage", extras = ["toml"], specifier = "~=7.4.4" },
     { name = "databricks-connect", marker = "python_full_version >= '3.12'", specifier = "~=17.3" },
     { name = "databricks-labs-pylint", specifier = "~=0.5" },
@@ -767,7 +766,6 @@ lint = [
     { name = "types-requests", specifier = "~=2.31.0" },
 ]
 test = [
-    { name = "chispa", specifier = "~=0.10.1" },
     { name = "coverage", extras = ["toml"], specifier = "~=7.4.4" },
     { name = "databricks-connect", marker = "python_full_version >= '3.12'", specifier = "~=17.3" },
     { name = "databricks-labs-pytester", specifier = "~=0.7.4" },
@@ -797,6 +795,7 @@ dependencies = [
     { name = "databricks-sdk" },
     { name = "databricks-sql-connector", extra = ["pyarrow"] },
     { name = "fastapi" },
+    { name = "openpyxl" },
     { name = "pydantic-settings" },
     { name = "uvicorn" },
 ]
@@ -813,6 +812,7 @@ requires-dist = [
     { name = "databricks-sdk", specifier = "~=0.73" },
     { name = "databricks-sql-connector", extras = ["pyarrow"], specifier = "==4.2.5" },
     { name = "fastapi", specifier = "~=0.119" },
+    { name = "openpyxl", specifier = ">=3.1" },
     { name = "pydantic-settings", specifier = "~=2.11" },
     { name = "uvicorn", specifier = "~=0.37" },
 ]

@@ -4,8 +4,7 @@ import logging
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from databricks.sdk import WorkspaceClient
-from databricks.sdk.service.sql import Disposition, Format, StatementState
+from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -31,12 +30,9 @@ class Comment:
 class CommentsService:
     VALID_ENTITY_TYPES = {"run", "rule"}
 
-    def __init__(self, ws: WorkspaceClient, warehouse_id: str, catalog: str, schema: str) -> None:
-        self._ws = ws
-        self._warehouse_id = warehouse_id
-        self._catalog = catalog
-        self._schema = schema
-        self._table = f"{catalog}.{schema}.dq_comments"
+    def __init__(self, sql: SqlExecutor) -> None:
+        self._sql = sql
+        self._table = f"{sql.catalog}.{sql.schema}.dq_comments"
 
     def add_comment(self, entity_type: str, entity_id: str, user_email: str, comment: str) -> Comment:
         from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, validate_entity_type
@@ -55,7 +51,7 @@ class CommentsService:
             f"VALUES ('{comment_id}', '{e_type}', '{e_entity_id}', "
             f"'{e_email}', '{e_comment}', '{now}')"
         )
-        self._execute(sql)
+        self._sql.execute(sql)
         logger.info("Added comment %s on %s/%s by %s", comment_id, entity_type, entity_id, user_email)
 
         return Comment(
@@ -80,7 +76,7 @@ class CommentsService:
             f"WHERE entity_type = '{e_type}' AND entity_id = '{e_entity_id}' "
             f"ORDER BY created_at ASC LIMIT 200"
         )
-        rows = self._query(sql)
+        rows = self._sql.query(sql)
         return [
             Comment(
                 comment_id=row[0],
@@ -99,35 +95,5 @@ class CommentsService:
         e_id = escape_sql_string(comment_id)
         e_email = escape_sql_string(user_email)
         sql = f"DELETE FROM {self._table} " f"WHERE comment_id = '{e_id}' AND user_email = '{e_email}'"
-        self._execute(sql)
+        self._sql.execute(sql)
         logger.info("Deleted comment %s by %s", comment_id, user_email)
-
-    def _execute(self, sql: str) -> None:
-        resp = self._ws.statement_execution.execute_statement(
-            warehouse_id=self._warehouse_id,
-            statement=sql,
-            catalog=self._catalog,
-            schema=self._schema,
-            disposition=Disposition.INLINE,
-            format=Format.JSON_ARRAY,
-        )
-        if resp.status and resp.status.state == StatementState.FAILED:
-            msg = resp.status.error.message if resp.status.error else "Unknown error"
-            raise RuntimeError(f"SQL execution failed: {msg}")
-
-    def _query(self, sql: str) -> list[list[str]]:
-        resp = self._ws.statement_execution.execute_statement(
-            warehouse_id=self._warehouse_id,
-            statement=sql,
-            catalog=self._catalog,
-            schema=self._schema,
-            disposition=Disposition.INLINE,
-            format=Format.JSON_ARRAY,
-        )
-        if resp.status and resp.status.state == StatementState.FAILED:
-            msg = resp.status.error.message if resp.status.error else "Unknown error"
-            raise RuntimeError(f"SQL execution failed: {msg}")
-
-        if resp.result and resp.result.data_array:
-            return resp.result.data_array
-        return []

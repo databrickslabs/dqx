@@ -10,6 +10,7 @@ from databricks_labs_dqx_app.backend.dependencies import get_obo_ws, get_user_ro
 from databricks_labs_dqx_app.backend.models import InstallationSettings
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.settings import SettingsManager
+from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 from databricks.labs.dqx.config import RunConfig, InputConfig, OutputConfig, WorkspaceConfig
 from databricks.labs.dqx.config_serializer import ConfigSerializer
 from databricks.sdk import WorkspaceClient
@@ -105,12 +106,8 @@ def api_client(ws, test_app_folder, monkeypatch, make_schema):
 
     warehouse_id = os.environ.get("DATABRICKS_WAREHOUSE_ID", "")
     test_schema = make_schema(catalog_name=TEST_CATALOG)
-    _settings_svc = AppSettingsService(
-        ws=ws,
-        warehouse_id=warehouse_id,
-        catalog=TEST_CATALOG,
-        schema=test_schema.name,
-    )
+    _sql = SqlExecutor(ws=ws, warehouse_id=warehouse_id, catalog=TEST_CATALOG, schema=test_schema.name)
+    _settings_svc = AppSettingsService(sql=_sql)
     _settings_svc.ensure_table()
 
     async def override_get_app_settings_service() -> AppSettingsService:

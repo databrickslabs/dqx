@@ -28,8 +28,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from databricks.sdk import WorkspaceClient
-from databricks.sdk.service.sql import Disposition, Format, StatementState
+from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -357,24 +356,16 @@ class MigrationRunner:
 
     Usage::
 
-        runner = MigrationRunner(ws=rt.ws, warehouse_id=wh_id,
-                                 catalog="dqx", schema="dqx_app")
+        runner = MigrationRunner(sql=sql_executor)
         applied = runner.run_all()
         # applied == number of migrations just executed (0 if already up to date)
     """
 
-    def __init__(
-        self,
-        ws: WorkspaceClient,
-        warehouse_id: str,
-        catalog: str,
-        schema: str,
-    ) -> None:
-        self._ws = ws
-        self._warehouse_id = warehouse_id
-        self._catalog = catalog
-        self._schema = schema
-        self._meta_table = _META_TABLE.format(catalog=catalog, schema=schema)
+    def __init__(self, sql: SqlExecutor) -> None:
+        self._sql = sql
+        self._catalog = sql.catalog
+        self._schema = sql.schema
+        self._meta_table = _META_TABLE.format(catalog=sql.catalog, schema=sql.schema)
 
     # ------------------------------------------------------------------
     # Public API
@@ -442,7 +433,7 @@ class MigrationRunner:
         statement-execution API would cause it to fail before the DDL runs.
         """
         sql = f"CREATE SCHEMA IF NOT EXISTS {self._catalog}.{self._schema}"
-        self._execute_bootstrap(sql)
+        self._sql.execute_no_schema(sql)
         logger.debug("Ensured schema exists: %s.%s", self._catalog, self._schema)
 
     def _ensure_meta_table(self) -> None:
@@ -454,7 +445,7 @@ class MigrationRunner:
             "  applied_at TIMESTAMP NOT NULL"
             ")"
         )
-        self._execute(sql)
+        self._sql.execute(sql)
         logger.debug("Ensured migrations meta-table exists: %s", self._meta_table)
 
     def _applied_versions(self) -> set[int]:
@@ -462,68 +453,20 @@ class MigrationRunner:
 
     def _applied_at_map(self) -> dict[int, str]:
         sql = f"SELECT version, CAST(applied_at AS STRING) FROM {self._meta_table} ORDER BY version"
-        rows = self._query(sql)
+        rows = self._sql.query(sql)
         return {int(row[0]): row[1] for row in rows}
 
     def _apply(self, migration: Migration) -> None:
         sql = migration.sql_template.format(catalog=self._catalog, schema=self._schema)
-        self._execute(sql)
+        self._sql.execute(sql)
 
         record_sql = (
             f"INSERT INTO {self._meta_table} (version, description, applied_at) "
             f"VALUES ({migration.version}, '{migration.description.replace(chr(39), chr(39)*2)}', current_timestamp())"
         )
-        self._execute(record_sql)
+        self._sql.execute(record_sql)
         logger.info(
             "Migration v%d applied successfully: %s",
             migration.version,
             migration.description,
         )
-
-    def _execute_bootstrap(self, sql: str) -> None:
-        """Execute DDL with catalog-only context (no schema).
-
-        Used for statements that must run before the target schema exists,
-        e.g. ``CREATE SCHEMA``.  All table references in ``sql`` must be
-        fully-qualified (catalog.schema.table).
-        """
-        resp = self._ws.statement_execution.execute_statement(
-            warehouse_id=self._warehouse_id,
-            statement=sql,
-            catalog=self._catalog,
-            disposition=Disposition.INLINE,
-            format=Format.JSON_ARRAY,
-        )
-        if resp.status and resp.status.state == StatementState.FAILED:
-            msg = resp.status.error.message if resp.status.error else "Unknown error"
-            raise RuntimeError(f"Migration SQL failed: {msg}\nSQL: {sql}")
-
-    def _execute(self, sql: str) -> None:
-        resp = self._ws.statement_execution.execute_statement(
-            warehouse_id=self._warehouse_id,
-            statement=sql,
-            catalog=self._catalog,
-            schema=self._schema,
-            disposition=Disposition.INLINE,
-            format=Format.JSON_ARRAY,
-        )
-        if resp.status and resp.status.state == StatementState.FAILED:
-            msg = resp.status.error.message if resp.status.error else "Unknown error"
-            raise RuntimeError(f"Migration SQL failed: {msg}\nSQL: {sql}")
-
-    def _query(self, sql: str) -> list[list[str]]:
-        resp = self._ws.statement_execution.execute_statement(
-            warehouse_id=self._warehouse_id,
-            statement=sql,
-            catalog=self._catalog,
-            schema=self._schema,
-            disposition=Disposition.INLINE,
-            format=Format.JSON_ARRAY,
-        )
-        if resp.status and resp.status.state == StatementState.FAILED:
-            msg = resp.status.error.message if resp.status.error else "Unknown error"
-            raise RuntimeError(f"Migration query failed: {msg}\nSQL: {sql}")
-
-        if resp.result and resp.result.data_array:
-            return resp.result.data_array
-        return []

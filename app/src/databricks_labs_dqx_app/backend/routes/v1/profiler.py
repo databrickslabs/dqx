@@ -7,13 +7,18 @@ from uuid import uuid4
 from databricks.sdk import WorkspaceClient
 from fastapi import APIRouter, Depends, HTTPException
 
+from databricks_labs_dqx_app.backend.common.authorization import UserRole
 from databricks_labs_dqx_app.backend.config import AppConfig
 from databricks_labs_dqx_app.backend.dependencies import (
+    CurrentUserRole,
     get_conf,
     get_job_service,
     get_obo_ws,
+    get_sp_sql_executor,
     get_view_service,
+    require_role,
 )
+from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 from databricks_labs_dqx_app.backend.logger import logger
 from databricks_labs_dqx_app.backend.models import (
     BatchProfileRunIn,
@@ -24,7 +29,7 @@ from databricks_labs_dqx_app.backend.models import (
     ProfileRunSummaryOut,
     RunStatusOut,
 )
-from databricks_labs_dqx_app.backend.run_status_manager import get_run_metadata, update_run_status
+from databricks_labs_dqx_app.backend.run_status_manager import get_run_metadata, has_terminal_result, update_run_status
 from databricks_labs_dqx_app.backend.services.job_service import JobService
 from databricks_labs_dqx_app.backend.services.view_service import ViewService
 
@@ -32,8 +37,16 @@ router = APIRouter()
 
 _PROFILER_TABLE = "dq_profiling_results"
 
+_ALL_ROLES = [UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTHOR, UserRole.VIEWER]
+_AUTHORS_AND_ABOVE = [UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTHOR]
 
-@router.get("/runs", response_model=list[ProfileRunSummaryOut], operation_id="listProfileRuns")
+
+@router.get(
+    "/runs",
+    response_model=list[ProfileRunSummaryOut],
+    operation_id="listProfileRuns",
+    dependencies=[require_role(*_ALL_ROLES)],
+)
 def list_profile_runs(
     job_svc: Annotated[JobService, Depends(get_job_service)],
     app_conf: Annotated[AppConfig, Depends(get_conf)],
@@ -62,7 +75,12 @@ def list_profile_runs(
         raise HTTPException(status_code=500, detail=f"Failed to list profile runs: {e}")
 
 
-@router.post("/run", response_model=ProfileRunOut, operation_id="submitProfileRun")
+@router.post(
+    "/run",
+    response_model=ProfileRunOut,
+    operation_id="submitProfileRun",
+    dependencies=[require_role(*_AUTHORS_AND_ABOVE)],
+)
 def submit_profile_run(
     body: ProfileRunIn,
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
@@ -116,7 +134,12 @@ def submit_profile_run(
         raise HTTPException(status_code=500, detail=f"Failed to submit profile run: {e}")
 
 
-@router.post("/batch-run", response_model=BatchProfileRunOut, operation_id="submitBatchProfileRun")
+@router.post(
+    "/batch-run",
+    response_model=BatchProfileRunOut,
+    operation_id="submitBatchProfileRun",
+    dependencies=[require_role(*_AUTHORS_AND_ABOVE)],
+)
 def submit_batch_profile_run(
     body: BatchProfileRunIn,
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
@@ -190,17 +213,37 @@ def submit_batch_profile_run(
         raise HTTPException(status_code=500, detail=f"Failed to submit batch profile run: {e}")
 
 
-@router.get("/runs/{run_id}/status", response_model=RunStatusOut, operation_id="getProfileRunStatus")
+@router.get(
+    "/runs/{run_id}/status",
+    response_model=RunStatusOut,
+    operation_id="getProfileRunStatus",
+    dependencies=[require_role(*_ALL_ROLES)],
+)
 def get_profile_run_status(
     run_id: str,
     job_svc: Annotated[JobService, Depends(get_job_service)],
     view_svc: Annotated[ViewService, Depends(get_view_service)],
     app_conf: Annotated[AppConfig, Depends(get_conf)],
+    sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
 ) -> RunStatusOut:
     """Poll the status of a profiler job run. Cleans up the view when job terminates."""
     try:
-        meta = get_run_metadata(job_svc, app_conf, _PROFILER_TABLE, run_id)
+        meta = get_run_metadata(sql, app_conf, _PROFILER_TABLE, run_id)
         if meta.job_run_id is None:
+            terminal = has_terminal_result(sql, app_conf, _PROFILER_TABLE, run_id)
+            if terminal:
+                if meta.view_fqn and "tmp_view_" in meta.view_fqn:
+                    try:
+                        view_svc.drop_view(meta.view_fqn)
+                    except Exception:
+                        pass
+                return RunStatusOut(
+                    run_id=run_id,
+                    state="TERMINATED",
+                    result_state="SUCCESS" if terminal == "SUCCESS" else "FAILED",
+                    message=None if terminal == "SUCCESS" else f"Run finished with status: {terminal}",
+                    view_cleaned_up=True,
+                )
             return RunStatusOut(
                 run_id=run_id,
                 state="TERMINATED",
@@ -223,7 +266,7 @@ def get_profile_run_status(
 
         if is_terminal and status.state != "TERMINATED":
             update_run_status(
-                job_svc,
+                sql,
                 app_conf,
                 _PROFILER_TABLE,
                 run_id,
@@ -232,7 +275,7 @@ def get_profile_run_status(
             )
         elif is_terminal and status.result_state and status.result_state != "SUCCESS":
             update_run_status(
-                job_svc,
+                sql,
                 app_conf,
                 _PROFILER_TABLE,
                 run_id,
@@ -252,24 +295,32 @@ def get_profile_run_status(
         raise HTTPException(status_code=500, detail=f"Failed to get run status: {e}")
 
 
-@router.post("/runs/{run_id}/cancel", operation_id="cancelProfileRun")
+@router.post(
+    "/runs/{run_id}/cancel",
+    operation_id="cancelProfileRun",
+    dependencies=[require_role(*_AUTHORS_AND_ABOVE)],
+)
 def cancel_profile_run(
     run_id: str,
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
     job_svc: Annotated[JobService, Depends(get_job_service)],
     view_svc: Annotated[ViewService, Depends(get_view_service)],
     app_conf: Annotated[AppConfig, Depends(get_conf)],
+    sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+    user_role: CurrentUserRole,
 ) -> dict[str, str]:
     """Cancel a running profiler job."""
     try:
         canceling_user = obo_ws.current_user.me().user_name or "unknown"
 
-        meta = get_run_metadata(job_svc, app_conf, _PROFILER_TABLE, run_id)
-        if meta.requesting_user and meta.requesting_user != canceling_user:
+        meta = get_run_metadata(sql, app_conf, _PROFILER_TABLE, run_id)
+        is_owner = not meta.requesting_user or meta.requesting_user == canceling_user
+        can_cancel_others = user_role in (UserRole.ADMIN, UserRole.RULE_APPROVER)
+        if not is_owner and not can_cancel_others:
             raise HTTPException(status_code=403, detail="You can only cancel your own runs")
         if meta.job_run_id is None:
             update_run_status(
-                job_svc,
+                sql,
                 app_conf,
                 _PROFILER_TABLE,
                 run_id,
@@ -280,7 +331,7 @@ def cancel_profile_run(
 
         job_svc.cancel_run(meta.job_run_id)
         update_run_status(
-            job_svc,
+            sql,
             app_conf,
             _PROFILER_TABLE,
             run_id,
@@ -302,7 +353,12 @@ def cancel_profile_run(
         raise HTTPException(status_code=500, detail=f"Failed to cancel run: {e}")
 
 
-@router.get("/runs/{run_id}/results", response_model=ProfileResultsOut, operation_id="getProfileRunResults")
+@router.get(
+    "/runs/{run_id}/results",
+    response_model=ProfileResultsOut,
+    operation_id="getProfileRunResults",
+    dependencies=[require_role(*_ALL_ROLES)],
+)
 def get_profile_run_results(
     run_id: str,
     job_svc: Annotated[JobService, Depends(get_job_service)],

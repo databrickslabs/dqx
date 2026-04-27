@@ -58,7 +58,7 @@ function SidebarLayout({ children }: SidebarLayoutProps) {
           <footer className="shrink-0 border-t bg-background py-2 px-6">
             <div className="max-w-7xl mx-auto flex items-center justify-between text-[11px] text-muted-foreground">
               <span>
-                DQX — Data Quality Explorer
+                DQX Studio — Data Quality Explorer
                 {appVersion ? ` · v${appVersion}` : ""}
               </span>
               <a

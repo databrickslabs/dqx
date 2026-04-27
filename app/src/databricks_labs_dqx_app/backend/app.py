@@ -10,10 +10,12 @@ from fastapi import FastAPI
 
 from ._scheduler_registry import get_scheduler, set_scheduler
 from .config import conf
-from .dependencies import get_migration_runner, get_sp_ws
+from .dependencies import get_sp_ws
 from .logger import logger
+from .migrations import MigrationRunner
 from .routes import api_router
 from .services.scheduler_service import SchedulerService
+from .sql_executor import SqlExecutor
 from .utils import add_not_found_handler
 
 
@@ -168,7 +170,9 @@ async def lifespan(app: FastAPI):
     try:
         sp_ws = await get_sp_ws()
         assert sp_ws is not None
-        runner = await get_migration_runner(sp_ws=sp_ws)
+        wh_id = os.environ.get("DATABRICKS_WAREHOUSE_ID") or os.environ.get("DATABRICKS_SQL_WAREHOUSE_ID") or ""
+        sp_sql = SqlExecutor(ws=sp_ws, warehouse_id=wh_id, catalog=conf.catalog, schema=conf.schema_name)
+        runner = MigrationRunner(sql=sp_sql)
         applied = runner.run_all()
         if applied:
             logger.info("Applied %d database migration(s)", applied)

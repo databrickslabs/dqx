@@ -14,6 +14,8 @@ _FQN_PART_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_\-]*$")
 
 _SQL_CHECK_RE = re.compile(r"^__sql_check__/[a-zA-Z0-9_\-]+$")
 
+_SCHEDULE_NAME_RE = re.compile(r"^[a-zA-Z0-9_\-]{1,64}$")
+
 
 def escape_sql_string(value: str) -> str:
     """Escape a value for embedding in a SQL single-quoted string literal.
@@ -63,6 +65,20 @@ def quote_fqn(fqn: str) -> str:
     """
     parts = fqn.split(".")
     return ".".join(f"`{p.strip('`')}`" for p in parts)
+
+
+def validate_schedule_name(name: str) -> str:
+    """Validate that a schedule name contains only safe characters.
+
+    Raises ValueError if the name doesn't match ``^[a-zA-Z0-9_-]{1,64}$``.
+    Returns the validated name unchanged.
+    """
+    if not _SCHEDULE_NAME_RE.match(name):
+        raise ValueError(
+            f"Invalid schedule name: '{name}'. "
+            "Must be 1–64 characters using only letters, digits, underscores, or hyphens."
+        )
+    return name
 
 
 def validate_entity_type(entity_type: str, valid_types: set[str]) -> str:

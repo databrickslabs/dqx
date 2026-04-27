@@ -47,6 +47,8 @@ def _validate_fqn(fqn: str) -> str:
 
 def _quote_fqn(fqn: str) -> str:
     return ".".join(f"`{p.strip('`')}`" for p in fqn.split("."))
+
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 
@@ -75,12 +77,26 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--config_json", required=True, help="JSON config for the task")
     parser.add_argument("--run_id", required=True, help="App-generated run ID for tracking")
     parser.add_argument("--requesting_user", default="unknown", help="Email of the requesting user")
+    parser.add_argument("--warehouse_id", default="", help="SQL warehouse ID for view cleanup")
     return parser.parse_args()
 
 
-def _read_view_with_retry(spark: SparkSession, view_fqn: str, max_retries: int = 5, delay: float = 2.0):
-    """Read a view with retries to handle Unity Catalog metadata propagation delays."""
+def _read_view_with_retry(
+    spark: SparkSession,
+    view_fqn: str,
+    max_retries: int = 10,
+    initial_delay: float = 2.0,
+    max_delay: float = 15.0,
+):
+    """Read a view with exponential-backoff retries for UC metadata propagation.
+
+    Under concurrent load (e.g. batch profiling of multiple tables) the
+    GRANT / view creation may take longer to propagate to serverless
+    compute. The default budget is ~80 s which covers typical propagation
+    delays.
+    """
     last_error: Exception | None = None
+    delay = initial_delay
     for attempt in range(max_retries):
         try:
             df = spark.table(view_fqn)
@@ -98,6 +114,7 @@ def _read_view_with_retry(spark: SparkSession, view_fqn: str, max_retries: int =
                     e,
                 )
                 time.sleep(delay)
+                delay = min(delay * 1.5, max_delay)
             else:
                 logger.error("View %s not accessible after %d attempts", view_fqn, max_retries)
     if last_error is not None:
@@ -186,6 +203,7 @@ def _run_dryrun(
     checks = config.get("checks", [])
     sample_size = config.get("sample_size", 1000)
     source_table_fqn = config.get("source_table_fqn", "")
+    run_type = "preview" if config.get("skip_history") else "dryrun"
     result_table = f"{result_catalog}.{result_schema}.dq_validation_runs"
 
     if config.get("is_sql_check"):
@@ -200,6 +218,7 @@ def _run_dryrun(
             requesting_user,
             result_catalog,
             result_schema,
+            run_type=run_type,
         )
         return
 
@@ -248,7 +267,7 @@ def _run_dryrun(
                 "SUCCESS",
                 None,
                 now,
-                "dryrun",
+                run_type,
             )
         ],
         schema=(
@@ -261,27 +280,29 @@ def _run_dryrun(
         ),
     )
     result_row.writeTo(result_table).append()
-    logger.info("Dry-run results written to %s (run_id=%s)", result_table, run_id)
+    logger.info("Dry-run results written to %s (run_id=%s, run_type=%s)", result_table, run_id, run_type)
 
-    _write_quarantine_records(
-        spark, invalid_df, run_id, source_table_fqn, requesting_user, result_catalog, result_schema
-    )
+    if run_type != "preview":
+        _write_quarantine_records(
+            spark, invalid_df, run_id, source_table_fqn, requesting_user, result_catalog, result_schema
+        )
 
     pass_rate = (valid_rows / total_rows * 100.0) if total_rows > 0 else 100.0
-    _write_metrics_row(
-        spark,
-        run_id,
-        source_table_fqn,
-        "dryrun",
-        total_rows,
-        valid_rows,
-        invalid_rows,
-        pass_rate,
-        error_summary,
-        requesting_user,
-        result_catalog,
-        result_schema,
-    )
+    if run_type != "preview":
+        _write_metrics_row(
+            spark,
+            run_id,
+            source_table_fqn,
+            run_type,
+            total_rows,
+            valid_rows,
+            invalid_rows,
+            pass_rate,
+            error_summary,
+            requesting_user,
+            result_catalog,
+            result_schema,
+        )
 
 
 def _run_dryrun_sql_check(
@@ -295,6 +316,7 @@ def _run_dryrun_sql_check(
     requesting_user: str,
     result_catalog: str,
     result_schema: str,
+    run_type: str = "dryrun",
 ) -> None:
     """Run a cross-table SQL check dry run.
 
@@ -321,7 +343,8 @@ def _run_dryrun_sql_check(
         sample_invalid = [row.asDict(recursive=True) for row in sample_rows]
 
     now = datetime.now(timezone.utc).isoformat()
-    run_type = "scheduled" if sample_size == 0 else "dryrun"
+    if run_type == "dryrun" and sample_size == 0:
+        run_type = "scheduled"
     result_row = spark.createDataFrame(
         [
             (
@@ -356,21 +379,22 @@ def _run_dryrun_sql_check(
         "SQL-check %s results written to %s (run_id=%s, violations=%d)", run_type, result_table, run_id, invalid_rows
     )
 
-    pass_rate = 0.0 if invalid_rows > 0 else 100.0
-    _write_metrics_row(
-        spark,
-        run_id,
-        source_table_fqn,
-        "dryrun",
-        total_rows,
-        valid_rows,
-        invalid_rows,
-        pass_rate,
-        error_summary,
-        requesting_user,
-        result_catalog,
-        result_schema,
-    )
+    if run_type != "preview":
+        pass_rate = 0.0 if invalid_rows > 0 else 100.0
+        _write_metrics_row(
+            spark,
+            run_id,
+            source_table_fqn,
+            run_type,
+            total_rows,
+            valid_rows,
+            invalid_rows,
+            pass_rate,
+            error_summary,
+            requesting_user,
+            result_catalog,
+            result_schema,
+        )
 
 
 def _write_quarantine_records(
@@ -593,6 +617,7 @@ def _write_error(
     view_fqn: str,
     error_message: str,
     checks: list[dict[str, Any]] | None = None,
+    skip_history: bool = False,
 ) -> None:
     """Write a FAILED status row so the app can report the error."""
     now = datetime.now(timezone.utc).isoformat()
@@ -626,7 +651,12 @@ def _write_error(
         )
     else:
         table = f"{result_catalog}.{result_schema}.dq_validation_runs"
-        error_run_type = "scheduled" if task_type == "scheduled" else "dryrun"
+        if skip_history:
+            error_run_type = "preview"
+        elif task_type == "scheduled":
+            error_run_type = "scheduled"
+        else:
+            error_run_type = "dryrun"
         row = spark.createDataFrame(
             [
                 (
@@ -716,18 +746,37 @@ def main() -> None:
                 args.view_fqn,
                 str(exc),
                 checks=config.get("checks"),
+                skip_history=bool(config.get("skip_history")),
             )
         except Exception as write_exc:
             logger.error("Failed to write error result: %s", write_exc, exc_info=True)
         sys.exit(1)
     finally:
-        if args.task_type != "scheduled":
-            try:
-                _validate_fqn(args.view_fqn)
-                logger.info("Dropping temporary view: %s", args.view_fqn)
-                spark.sql(f"DROP VIEW IF EXISTS {_quote_fqn(args.view_fqn)}")
-            except Exception as drop_exc:
-                logger.warning("Failed to drop view %s: %s", args.view_fqn, drop_exc)
+        if args.task_type != "scheduled" and "tmp_view_" in args.view_fqn:
+            _validate_fqn(args.view_fqn)
+            drop_sql = f"DROP VIEW IF EXISTS {_quote_fqn(args.view_fqn)}"
+            dropped = False
+
+            if args.warehouse_id:
+                try:
+                    logger.info("Dropping view %s via SQL warehouse %s", args.view_fqn, args.warehouse_id)
+                    ws.statement_execution.execute_statement(
+                        warehouse_id=args.warehouse_id,
+                        statement=drop_sql,
+                        wait_timeout="30s",
+                    )
+                    logger.info("Dropped view %s via SQL warehouse", args.view_fqn)
+                    dropped = True
+                except Exception as sql_exc:
+                    logger.warning("SQL warehouse DROP failed for %s: %s", args.view_fqn, sql_exc)
+
+            if not dropped:
+                try:
+                    logger.info("Dropping view %s via spark.sql", args.view_fqn)
+                    spark.sql(drop_sql)
+                    logger.info("Dropped temporary view: %s", args.view_fqn)
+                except Exception as spark_exc:
+                    logger.warning("Failed to drop view %s: %s", args.view_fqn, spark_exc)
 
 
 if __name__ == "__main__":

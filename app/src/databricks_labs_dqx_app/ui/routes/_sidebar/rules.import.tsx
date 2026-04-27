@@ -39,8 +39,15 @@ import {
 } from "@/lib/api-custom";
 import { CatalogBrowser } from "@/components/CatalogBrowser";
 
+interface ImportSearchParams {
+  from?: string;
+}
+
 export const Route = createFileRoute("/_sidebar/rules/import")({
   component: ImportRulesPage,
+  validateSearch: (search: Record<string, unknown>): ImportSearchParams => ({
+    from: typeof search.from === "string" ? search.from : undefined,
+  }),
 });
 
 function ImportRulesPage() {
@@ -48,18 +55,19 @@ function ImportRulesPage() {
   if (!canCreateRules) return <Navigate to="/rules/active" replace />;
 
   const navigate = useNavigate();
-
   return (
     <div className="space-y-6">
       <PageBreadcrumb
         items={[{ label: "Create Rules", to: "/rules/create" }]}
         page="Import rules"
       />
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">Import rules</h1>
-        <p className="text-muted-foreground">
-          Import data quality rules from a YAML file or a Delta table.
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Import rules</h1>
+          <p className="text-muted-foreground">
+            Import data quality rules from a YAML file or a Delta table.
+          </p>
+        </div>
       </div>
 
       <Tabs defaultValue="yaml" className="space-y-4">

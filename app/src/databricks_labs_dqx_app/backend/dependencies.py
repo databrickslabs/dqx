@@ -29,6 +29,7 @@ from .services.rules_catalog_service import RulesCatalogService
 from .services.comments_service import CommentsService
 from .services.schedule_config_service import ScheduleConfigService
 from .services.view_service import ViewService
+from .sql_executor import SqlExecutor
 
 _SP_TTL = 45 * 60  # 45 minutes
 _OBO_TTL = 45 * 60  # 45 minutes
@@ -87,44 +88,58 @@ def _get_warehouse_id() -> str:
 
 
 # ---------------------------------------------------------------------------
+# SqlExecutor factories
+# ---------------------------------------------------------------------------
+
+
+async def get_sp_sql_executor(
+    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
+) -> SqlExecutor:
+    """SqlExecutor using the app's service-principal credentials (main schema)."""
+    return SqlExecutor(
+        ws=sp_ws,
+        warehouse_id=_get_warehouse_id(),
+        catalog=conf.catalog,
+        schema=conf.schema_name,
+    )
+
+
+async def get_obo_sql_executor(
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+) -> SqlExecutor:
+    """SqlExecutor using the caller's OBO credentials (tmp schema)."""
+    return SqlExecutor(
+        ws=obo_ws,
+        warehouse_id=_get_warehouse_id(),
+        catalog=conf.catalog,
+        schema=conf.tmp_schema_name,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Service factories
 # ---------------------------------------------------------------------------
 
 
 async def get_migration_runner(
-    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
+    sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
 ) -> MigrationRunner:
     """Create a MigrationRunner using app (SP) credentials."""
-    return MigrationRunner(
-        ws=sp_ws,
-        warehouse_id=_get_warehouse_id(),
-        catalog=conf.catalog,
-        schema=conf.schema_name,
-    )
+    return MigrationRunner(sql=sql)
 
 
 async def get_app_settings_service(
-    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
+    sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
 ) -> AppSettingsService:
     """Create an AppSettingsService using app (SP) credentials."""
-    return AppSettingsService(
-        ws=sp_ws,
-        warehouse_id=_get_warehouse_id(),
-        catalog=conf.catalog,
-        schema=conf.schema_name,
-    )
+    return AppSettingsService(sql=sql)
 
 
 async def get_role_service(
-    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
+    sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
 ) -> RoleService:
     """Create a RoleService using app (SP) credentials."""
-    return RoleService(
-        ws=sp_ws,
-        warehouse_id=_get_warehouse_id(),
-        catalog=conf.catalog,
-        schema=conf.schema_name,
-    )
+    return RoleService(sql=sql)
 
 
 async def get_ai_rules_service(
@@ -140,15 +155,10 @@ async def get_ai_rules_service(
 
 
 async def get_rules_catalog_service(
-    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
+    sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
 ) -> RulesCatalogService:
     """Create a RulesCatalogService using app (SP) credentials."""
-    return RulesCatalogService(
-        ws=sp_ws,
-        warehouse_id=_get_warehouse_id(),
-        catalog=conf.catalog,
-        schema=conf.schema_name,
-    )
+    return RulesCatalogService(sql=sql)
 
 
 async def get_discovery_service(
@@ -161,42 +171,27 @@ async def get_discovery_service(
 
 
 async def get_view_service(
-    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    sql: Annotated[SqlExecutor, Depends(get_obo_sql_executor)],
 ) -> ViewService:
     """Create a ViewService using the OBO-authenticated WorkspaceClient.
 
     View creation uses the user's token so that table permissions are enforced.
     """
-    return ViewService(
-        ws=obo_ws,
-        warehouse_id=_get_warehouse_id(),
-        catalog=conf.catalog,
-        schema=conf.tmp_schema_name,
-    )
+    return ViewService(sql=sql)
 
 
 async def get_comments_service(
-    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
+    sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
 ) -> CommentsService:
     """Create a CommentsService using app (SP) credentials."""
-    return CommentsService(
-        ws=sp_ws,
-        warehouse_id=_get_warehouse_id(),
-        catalog=conf.catalog,
-        schema=conf.schema_name,
-    )
+    return CommentsService(sql=sql)
 
 
 async def get_schedule_config_service(
-    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
+    sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
 ) -> ScheduleConfigService:
     """Create a ScheduleConfigService using app (SP) credentials."""
-    return ScheduleConfigService(
-        ws=sp_ws,
-        warehouse_id=_get_warehouse_id(),
-        catalog=conf.catalog,
-        schema=conf.schema_name,
-    )
+    return ScheduleConfigService(sql=sql)
 
 
 def get_conf() -> AppConfig:
@@ -213,18 +208,13 @@ def get_check_validator() -> Callable[[list[Any]], ChecksValidationStatus]:
 
 async def get_job_service(
     sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
+    sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
 ) -> JobService:
     """Create a JobService using app (SP) credentials.
 
     Job submission and polling run as the app's service principal.
     """
-    return JobService(
-        ws=sp_ws,
-        job_id=conf.job_id,
-        catalog=conf.catalog,
-        schema=conf.schema_name,
-        warehouse_id=_get_warehouse_id(),
-    )
+    return JobService(ws=sp_ws, job_id=conf.job_id, sql=sql)
 
 
 async def get_sql_connector(
@@ -298,10 +288,20 @@ def require_role(*roles: UserRole):
 CurrentUserRole = Annotated[UserRole, Depends(get_user_role)]
 
 
+async def get_user_catalog_names(
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+) -> frozenset[str]:
+    """Return the set of catalog names the current user can access (via OBO)."""
+    catalogs = await asyncio.to_thread(lambda: list(obo_ws.catalogs.list()))
+    return frozenset(c.name for c in catalogs if c.name)
+
+
 # Re-export rt for any remaining usages during transition
 __all__ = [
     "get_sp_ws",
     "get_obo_ws",
+    "get_sp_sql_executor",
+    "get_obo_sql_executor",
     "get_conf",
     "get_check_validator",
     "get_migration_runner",
@@ -318,5 +318,6 @@ __all__ = [
     "get_schedule_config_service",
     "require_role",
     "CurrentUserRole",
+    "get_user_catalog_names",
     "rt",
 ]
