@@ -30,7 +30,6 @@ import yaml
 import pytest
 import pyspark.sql.functions as F
 from pyspark.sql import Column, DataFrame, SparkSession
-from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 
 from databricks.labs.dqx.check_funcs import has_no_aggr_outliers
 from databricks.labs.dqx.engine import DQEngine

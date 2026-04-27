@@ -1819,7 +1819,7 @@ You can also define your own custom dataset-level checks (see [Creating custom c
 | `is_data_fresh_per_time_window`    | Freshness check that validates whether at least X records arrive within every Y-minute time window.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | `column`: timestamp column (can be a string column name or a column expression); `window_minutes`: time window in minutes to check for data arrival; `min_records_per_window`: minimum number of records expected per time window; `lookback_windows`: (optional) number of time windows to look back from `curr_timestamp`, it filters records to include only those within the specified number of time windows from `curr_timestamp` (if no lookback is provided, the check is applied to the entire dataset); `curr_timestamp`: (optional) current timestamp column (if not provided, current_timestamp() function is used)                                                                                                                                                                                                                                                                              |
 | `has_valid_schema`                 | Schema check that validates whether the DataFrame schema matches an expected schema. In non-strict mode, validates that all expected columns exist with compatible types (allows extra columns). In strict mode, validates exact schema match (same columns, same order, same types) for all columns by default or for all columns specified in `columns`. This check is applied at the dataset level and reports schema violations for all rows in the DataFrame when incompatibilities are detected. All columns in the `exclude_columns` list will be ignored even if the column is present in the `columns` list.                                                                               | `expected_schema`: (optional) expected schema as a DDL string (e.g., "id INT, name STRING") or StructType object; `ref_df_name`: (optional) name of the reference DataFrame to load the schema from (dictionary of DataFrames can be passed when applying checks); `ref_table`: (optional) fully qualified reference table name to load the schema from (e.g. "catalog.schema.table"); exactly one of `expected_schema`, `ref_df_name`, or `ref_table` must be provided; `columns`: (optional) list of columns to validate (if not provided, all columns are considered); `strict`: (optional) whether to perform strict schema validation (default: False) - False: validates that all expected columns exist with compatible types, True: validates exact schema match; `exclude_columns`: (optional) list of columns to ignore during validation (if not provided, all columns are considered);           |
 | `has_no_outliers`                  | Checks whether the values in the input column contain any outliers. This function implements a median absolute deviation (MAD) algorithm to find outliers.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | `column`: column of type numeric to check (can be a string column name or a column expression);                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `has_no_row_anomalies`             | Flags rows that are anomalous according to a trained ML model. The model learns "normal" patterns from your training data; at check time each row is scored (severity percentile 0–100) and optionally enriched with SHAP contributions. Requires a model trained with the outlier engine first. See [Row Outlier Detection](#row-outlier-detection) below for training, full parameters, and usage.                                                                                                                                                                                                                                                                                                | `model_name`: fully qualified model name (e.g. catalog.schema.model_name); `registry_table`: fully qualified registry table (e.g. catalog.schema.model_registry); `threshold`: (optional) severity percentile threshold (default 95); `drift_threshold`: (optional) warn when score distribution drifts from training (None = off); `enable_contributions`: (optional) add SHAP per-feature contributions to `_dq_info` (default False); `enable_confidence_std`: (optional) add ensemble score std to `_dq_info` (default False). See [Row Outlier Detection](/docs/reference/quality_checks#row-outlier-detection) section for full parameter details.                                                                                                                                                                                                                                                     |
+| `has_no_row_anomalies`             | Flags rows that are anomalous according to a trained ML model. The model learns "normal" patterns from your training data; at check time each row is scored (severity percentile 0–100) and optionally enriched with SHAP contributions. Requires a model trained with the anomaly engine first. See [Row Anomaly Detection](#row-anomaly-detection) below for training, full parameters, and usage.                                                                                                                                                                                                                                                                                                | `model_name`: fully qualified model name (e.g. catalog.schema.model_name); `registry_table`: fully qualified registry table (e.g. catalog.schema.model_registry); `threshold`: (optional) severity percentile threshold (default 95); `drift_threshold`: (optional) warn when score distribution drifts from training (None = off); `enable_contributions`: (optional) add SHAP per-feature contributions to `_dq_info` (default False); `enable_confidence_std`: (optional) add ensemble score std to `_dq_info` (default False). See [Row Anomaly Detection](/docs/reference/quality_checks#row-anomaly-detection) section for full parameter details.                                                                                                                                                                                                                                                     |
 | `are_polygons_mutually_disjoint`   | Checks whether the polygons in a geometry column are mutually disjoint. Polygons sharing an edge or boundary are considered intersecting. Nulls and invalid geometries are excluded from the check. Requires Databricks runtime 17.1 or above.                                                                                                                                                                                                                                                                                                                                                                                                                                                      | `column`: column to check (can be a string column name or a column expression), must contain polygon or multipolygon geometries                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 
 <Admonition type="tip" title="Row filter">
@@ -2558,6 +2558,50 @@ checks = [
       },
     ),
 
+    # has_no_aggr_outliers check — daily row count over all rows (3-sigma band, 14-interval history)
+    DQDatasetRule(
+      criticality="warn",
+      check_func=check_funcs.has_no_aggr_outliers,
+      column="*",
+      check_func_kwargs={
+        "time_column": "event_date",
+        "aggr_type": "count",          # other types: sum, avg, min, max, stddev, etc.
+        "sigma": 3.0,                  # fire when |current - baseline| > 3 * stddev
+        "lookback_num_intervals": 14,  # number of preceding buckets for the rolling baseline
+        "warmup_num_intervals": 7,     # suppress the check until at least 7 historical buckets exist
+      },
+    ),
+
+    # has_no_aggr_outliers check — daily sum of revenue grouped by region
+    DQDatasetRule(
+      criticality="warn",
+      check_func=check_funcs.has_no_aggr_outliers,
+      column="revenue",
+      check_func_kwargs={
+        "time_column": "event_date",
+        "aggr_type": "sum",
+        "sigma": 3.0,
+        "lookback_num_intervals": 14,
+        "warmup_num_intervals": 7,
+        "group_by": ["region"],
+      },
+    ),
+
+    # has_no_aggr_outliers check — hourly average latency
+    DQDatasetRule(
+      criticality="error",
+      check_func=check_funcs.has_no_aggr_outliers,
+      column="latency_ms",
+      check_func_kwargs={
+        "time_column": "request_time",
+        "aggr_type": "avg",
+        "sigma": 2.5,
+        "lookback_num_intervals": 48,  # 48 hourly buckets ≈ 2 days of history
+        "warmup_num_intervals": 12,
+        "time_interval": "hour",       # bucket by hour instead of day
+      },
+    ),
+
     # foreign_key check using reference DataFrame
     DQDatasetRule(
       criticality="error",
@@ -2977,13 +3021,13 @@ Using non-curated aggregate functions is supported with the following limitation
 - Some aggregate functions are only available in newer versions of the Databricks Runtime. If a function is unavailable in your environment, DQX will raise an error indicating the minimum required runtime version. Use the latest Databricks Runtime version for best compatibility.
 </Admonition>
 
-## Row Outlier Detection
+## Row Anomaly Detection
 
-Detects unusual rows by learning what "normal" looks like across multiple columns, then flags rows that deviate. Train on recent "good" data so the outlier model learns typical ranges and combinations (e.g., amount and quantity together), not just single-column thresholds.
+Detects unusual rows by learning what "normal" looks like across multiple columns, then flags rows that deviate. Train on recent "good" data so the anomaly model learns typical ranges and combinations (e.g., amount and quantity together), not just single-column thresholds.
 
 **Current algorithm**: IsolationForest (scikit-learn with Spark scoring, requires Spark >= 3.4). Future releases may add additional algorithms behind the same interface.
 
-For a conceptual overview (including how this complements Databricks data quality monitoring), see [Row Outlier Detection](/docs/guide/row_outlier_detection).
+For a conceptual overview (including how this complements Databricks data quality monitoring), see [Row Anomaly Detection](/docs/guide/row_anomaly_detection).
 
 ### Model training
 
@@ -2991,21 +3035,21 @@ Before you can flag unusual rows, the system needs to learn what "normal" looks 
 
 **Python**
 ```python
-from databricks.labs.dqx.outlier.outlier_engine import OutlierEngine
+from databricks.labs.dqx.anomaly.anomaly_engine import AnomalyEngine
 from databricks.sdk import WorkspaceClient
 
-outlier_engine = OutlierEngine(WorkspaceClient())
+anomaly_engine = AnomalyEngine(WorkspaceClient())
 
-model_name = outlier_engine.train(
+model_name = anomaly_engine.train(
   df=spark.table("catalog.schema.orders"),
   model_name="catalog.schema.orders_monitor",  # fully qualified UC name
   columns=["amount", "quantity"],  # optional; omit to use all supported columns
-  registry_table="catalog.schema.dqx_outlier_models",  # fully qualified UC name
+  registry_table="catalog.schema.dqx_anomaly_models",  # fully qualified UC name
 )
 ```
 
 <Admonition type="warning" title="Exclude identifier columns">
-Avoid ID‑like columns (order IDs, user IDs). They are often unique and can dominate the model, reducing outlier quality.
+Avoid ID‑like columns (order IDs, user IDs). They are often unique and can dominate the model, reducing anomaly quality.
 If you must keep IDs in the dataset, use `exclude_columns` or pass a curated `columns` list of behavioral fields.
 </Admonition>
 
@@ -3015,15 +3059,15 @@ run_configs:
 - name: orders
   input_config:
     location: catalog.schema.orders
-  outlier_config:
+  anomaly_config:
     columns: [amount, quantity]   # optional; omit to use all supported columns
     model_name: catalog.schema.orders_monitor
-    registry_table: catalog.schema.dqx_outlier_models
+    registry_table: catalog.schema.dqx_anomaly_models
 ```
 
 ### Training Parameters
 
-The `outlier_engine.train()` method accepts several parameters to tune model behavior, performance, and accuracy.
+The `anomaly_engine.train()` method accepts several parameters to tune model behavior, performance, and accuracy.
 
 #### Basic Training Parameters
 
@@ -3031,17 +3075,17 @@ Required arguments: `df`, `model_name`, `registry_table`. Optional parameters:
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `columns` | list[str] | None | Columns to use for row outlier detection (auto-discovered if omitted) |
+| `columns` | list[str] | None | Columns to use for row anomaly detection (auto-discovered if omitted) |
 | `segment_by` | list[str] | None | Train separate models per segment. When both `columns` and `segment_by` are omitted, DQX may auto-discover segment columns (e.g. categorical, 2–50 distinct values) and train a segmented model. Use `segment_by=[]` to force a single global model. |
 | `exclude_columns` | list[str] | None | Columns to exclude from training (e.g., IDs, labels, ground truth) |
-| `expected_outlier_rate` | float | 0.02 | Expected fraction of anomalies in your data (0.02 = 2%). Sets model contamination parameter. |
-| `params` | OutlierParams | None | Optional. Advanced tuning parameters. See sections below for details. |
+| `expected_anomaly_rate` | float | 0.02 | Expected fraction of anomalies in your data (0.02 = 2%). Sets model contamination parameter. |
+| `params` | AnomalyParams | None | Optional. Advanced tuning parameters. See sections below for details. |
 
-**Validation**: Training parameters are validated before model fitting. Invalid values (for example `sample_fraction <= 0`, `train_ratio > 1`, or `expected_outlier_rate > 0.5`) fail fast with `InvalidParameterError`.
+**Validation**: Training parameters are validated before model fitting. Invalid values (for example `sample_fraction <= 0`, `train_ratio > 1`, or `expected_anomaly_rate > 0.5`) fail fast with `InvalidParameterError`.
 
-#### OutlierParams (Advanced Tuning)
+#### AnomalyParams (Advanced Tuning)
 
-Pass an `OutlierParams` object to the `params` argument to customize training behavior:
+Pass an `AnomalyParams` object to the `params` argument to customize training behavior:
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -3056,7 +3100,7 @@ Pass an `IsolationForestConfig` object to `params.algorithm_config` to tune the 
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `contamination` | float | auto | Expected outlier proportion. Auto-set from `expected_outlier_rate` if not specified. |
+| `contamination` | float | auto | Expected outlier proportion. Auto-set from `expected_anomaly_rate` if not specified. |
 | `num_trees` | int | 200 | Number of trees in the forest. More trees = better accuracy but slower training. |
 | `max_depth` | int | None | Maximum tree depth. Auto-calculated as log2(sample_size) if None. |
 | `subsampling_rate` | float | None | Per-tree subsampling rate. None uses sklearn defaults. |
@@ -3079,14 +3123,14 @@ Pass a `FeatureEngineeringConfig` object to `params.feature_engineering` to cont
 #### Example: Custom Training Parameters
 
 ```python
-from databricks.labs.dqx.outlier.outlier_engine import OutlierEngine
-from databricks.labs.dqx.config import OutlierParams, IsolationForestConfig, FeatureEngineeringConfig
+from databricks.labs.dqx.anomaly.anomaly_engine import AnomalyEngine
+from databricks.labs.dqx.config import AnomalyParams, IsolationForestConfig, FeatureEngineeringConfig
 from databricks.sdk import WorkspaceClient
 
-outlier_engine = OutlierEngine(WorkspaceClient())
+anomaly_engine = AnomalyEngine(WorkspaceClient())
 
 # Configure advanced parameters
-params = OutlierParams(
+params = AnomalyParams(
   sample_fraction=0.5,         # Use 50% of data for faster training
   max_rows=500_000,            # Cap at 500K rows
   ensemble_size=5,             # 5-model ensemble for higher accuracy
@@ -3099,11 +3143,11 @@ params = OutlierParams(
   ),
 )
 
-model_name = outlier_engine.train(
+model_name = anomaly_engine.train(
   df=spark.table("catalog.schema.orders"),
   model_name="catalog.schema.orders_monitor",
-  registry_table="catalog.schema.dqx_outlier_models",
-  expected_outlier_rate=0.05,  # Expect 5% anomalies
+  registry_table="catalog.schema.dqx_anomaly_models",
+  expected_anomaly_rate=0.05,  # Expect 5% anomalies
   params=params,
 )
 ```
@@ -3111,7 +3155,7 @@ model_name = outlier_engine.train(
 <Admonition type="tip" title="Quick Tuning Tips">
 - **Too many false positives?** Increase `threshold` (95 → 98) in scoring, or increase `ensemble_size` (3 → 5)
 - **Training too slow?** Decrease `sample_fraction`, `max_rows`, or `num_trees`; disable SHAP explainability with `enable_contributions=False`
-- **Missing real anomalies?** Decrease `threshold` (95 → 90) in scoring, or increase `expected_outlier_rate`
+- **Missing real anomalies?** Decrease `threshold` (95 → 90) in scoring, or increase `expected_anomaly_rate`
 - **Reproducible results needed?** Set `random_seed` in `IsolationForestConfig`
 - **High-cardinality categoricals slow?** Increase `categorical_cardinality_threshold` to use Frequency encoding
 </Admonition>
@@ -3123,7 +3167,7 @@ Use the model name returned by training.
 **Python**
 ```python
 from databricks.labs.dqx.rule import DQDatasetRule
-from databricks.labs.dqx.outlier.check_funcs import has_no_row_anomalies
+from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies
 
 checks = [
   DQDatasetRule(
@@ -3131,22 +3175,22 @@ checks = [
     check_func=has_no_row_anomalies,
     check_func_kwargs={
       "model_name": "catalog.schema.orders_monitor",  # fully qualified name
-      "registry_table": "catalog.schema.dqx_outlier_models",   # fully qualified name
+      "registry_table": "catalog.schema.dqx_anomaly_models",   # fully qualified name
       "threshold": 95.0, # percentile cutoff (0-100); higher = fewer anomalies
    }
   )
 ]
 ```
 
-**Define outlier check declaratively in YAML**
+**Define anomaly check declaratively in YAML**
 ```yaml
 # checks.yml
 - criticality: warn
   check:
     function: has_no_row_anomalies
     arguments:
-      model_name: catalog.schema.dqx_outlier_orders
-      registry_table: catalog.schema.dqx_outlier_models
+      model_name: catalog.schema.dqx_anomaly_orders
+      registry_table: catalog.schema.dqx_anomaly_models
       threshold: 95.0  # optional
 ```
 
@@ -3159,13 +3203,13 @@ checks = [
 - `threshold`: Severity percentile threshold (0–100, default 95).
 - `row_filter`: Optional SQL expression to filter rows before scoring.
 - `drift_threshold`: Optional float (e.g. 3.0) to enable drift detection; default None (disabled). When set, a warning is emitted if the scoring distribution at check time deviates from training. A value of 3.0 corresponds to roughly 3-sigma deviation from training statistics. See the section below for more details.
-- `enable_contributions`: Include per-feature contributions in `_dq_info[0].outlier.contributions` (default `False`). Set `True` for explainability; adds significant scoring cost. See the section below and [Schema of _dq_info](/docs/guide/row_outlier_detection#schema-of-the-info-column-_dq_info) for field details.
+- `enable_contributions`: Include per-feature contributions in `_dq_info[0].anomaly.contributions` (default `False`). Set `True` for explainability; adds significant scoring cost. See the section below and [Schema of _dq_info](/docs/guide/row_anomaly_detection#schema-of-the-info-column-_dq_info) for field details.
 - `enable_confidence_std`: Include `confidence_std` for ensembles (default `False`). Useful when using ensemble training.
 
 **Notes**
 - For workflow training, `model_name` and `registry_table` are required and must be fully qualified names. Both are stored in Unity Catalog.
 - Scoring uses the columns the model was trained on.
-- Rows with nulls in outlier columns are skipped (not flagged).
+- Rows with nulls in anomaly columns are skipped (not flagged).
 - When `row_filter` is used, all original rows are preserved; non-filtered rows have `null` scores.
 - Row alignment is handled internally; no row-id parameters are required.
 
@@ -3179,7 +3223,7 @@ After training, the model registry stores comprehensive validation metrics:
 Query the registry table to view metrics:
 ```sql
 SELECT model_name, metrics, training_time
-FROM catalog.schema.dqx_outlier_models
+FROM catalog.schema.dqx_anomaly_models
 WHERE status = 'active'
 ORDER BY training_time DESC
 ```
@@ -3190,7 +3234,7 @@ Contributions are disabled by default for performance. Set `enable_contributions
 
 ```python
 from databricks.labs.dqx.rule import DQDatasetRule
-from databricks.labs.dqx.outlier.check_funcs import has_no_row_anomalies
+from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies
 
 checks = [
   DQDatasetRule(
@@ -3198,7 +3242,7 @@ checks = [
     check_func=has_no_row_anomalies,
     check_func_kwargs={
       "model_name": "catalog.schema.orders_monitor",  # fully qualified name
-      "registry_table": "catalog.schema.dqx_outlier_models",   # fully qualified name
+      "registry_table": "catalog.schema.dqx_anomaly_models",   # fully qualified name
       "threshold": 95.0, # percentile cutoff (0-100); higher = fewer anomalies
       "enable_contributions": True,  # Optional: per-feature contributions (slower)
    }
@@ -3206,21 +3250,21 @@ checks = [
 ]
 ```
 
-When `enable_contributions=True`, the `_dq_info` column includes `contributions` (per-feature contribution percentages). For the full list of fields in `_dq_info` and the nested `outlier` struct, see [Schema of the info column (_dq_info)](/docs/guide/row_outlier_detection#schema-of-the-info-column-_dq_info).
+When `enable_contributions=True`, the `_dq_info` column includes `contributions` (per-feature contribution percentages). For the full list of fields in `_dq_info` and the nested `anomaly` struct, see [Schema of the info column (_dq_info)](/docs/guide/row_anomaly_detection#schema-of-the-info-column-_dq_info).
 
 Example: triage top anomalies and inspect contributions:
 ```python
 import pyspark.sql.functions as F
 
 top = scored_df.orderBy(
-  F.col("_dq_info").getItem(0).getField("outlier").getField("severity_percentile").desc()
+  F.col("_dq_info").getItem(0).getField("anomaly").getField("severity_percentile").desc()
 ).limit(20)
 
 display(
   top.select(
     "transaction_id", "date", "amount", "quantity",
-    F.col("_dq_info").getItem(0).getField("outlier").getField("severity_percentile").alias("severity_percentile"),
-    F.col("_dq_info").getItem(0).getField("outlier").getField("contributions").alias("contributions"),
+    F.col("_dq_info").getItem(0).getField("anomaly").getField("severity_percentile").alias("severity_percentile"),
+    F.col("_dq_info").getItem(0).getField("anomaly").getField("contributions").alias("contributions"),
   )
 )
 ```
@@ -3231,7 +3275,7 @@ Automatically detects when current data distribution differs significantly from 
 
 ```python
 from databricks.labs.dqx.rule import DQDatasetRule
-from databricks.labs.dqx.outlier.check_funcs import has_no_row_anomalies
+from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies
 
 checks = [
   DQDatasetRule(
@@ -3239,7 +3283,7 @@ checks = [
     check_func=has_no_row_anomalies,
     check_func_kwargs={
       "model_name": "catalog.schema.orders_monitor",  # fully qualified name
-      "registry_table": "catalog.schema.dqx_outlier_models",   # fully qualified name
+      "registry_table": "catalog.schema.dqx_anomaly_models",   # fully qualified name
       "drift_threshold": 3.0,  # Enable drift detection; 3.0 = ~3-sigma deviation
    }
   )
