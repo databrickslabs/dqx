@@ -1972,13 +1972,13 @@ def has_no_aggr_outliers(
         )
         message = F.concat_ws(
             "",
-            F.lit(f"{aggr_type}({aggr_col_str}) current="),
+            F.lit(f"{aggr_type}({aggr_col_str}): current="),
             F.col("__dq_current").cast("string"),
-            F.lit(" baseline="),
+            F.lit(", baseline="),
             F.col("__dq_mu").cast("string"),
-            F.lit(" stddev="),
+            F.lit(", stddev="),
             F.col("__dq_sigma").cast("string"),
-            F.lit(" delta="),
+            F.lit(", delta="),
             delta_expr.cast("string"),
             F.lit(f" exceeds {sigma} x stddev (lookback={lookback_num_intervals} intervals)"),
         )

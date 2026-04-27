@@ -97,9 +97,11 @@ def test_detects_spike_over_3_sigma(spark: SparkSession):
 
     msgs = [r[0] for r in result.collect()]
     assert all(m is not None for m in msgs), f"Expected all rows to violate but got: {msgs}"
-    # Check the message format (no Unicode symbols)
-    assert "avg(metric) current=" in msgs[0]
-    assert "baseline=" in msgs[0]
+    # Check the message format — comma-separated metrics, no Unicode symbols
+    assert "avg(metric): current=" in msgs[0]
+    assert ", baseline=" in msgs[0]
+    assert ", stddev=" in msgs[0]
+    assert ", delta=" in msgs[0]
     assert "exceeds 3.0 x stddev" in msgs[0]
     assert "lookback=14 intervals" in msgs[0]
 
