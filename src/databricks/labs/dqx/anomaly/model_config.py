@@ -20,6 +20,17 @@ class ModelIdentity:
     mlflow_run_id: str
     status: str = "active"
 
+    @property
+    def model_uris(self) -> list[str]:
+        # Ensemble records store comma-separated MLflow URIs; single-model records store one URI.
+        # Comma is always the list separator (set via ",".join(...) in training_strategies); MLflow
+        # URIs do not legitimately contain commas.
+        return self.model_uri.split(",")
+
+    @property
+    def is_ensemble(self) -> bool:
+        return len(self.model_uris) > 1
+
 
 @dataclass
 class TrainingMetadata:

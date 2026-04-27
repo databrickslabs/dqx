@@ -13,7 +13,7 @@ import pytest
 from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.anomaly import anomaly_llm_explainer as llm_explainer
-from databricks.labs.dqx.anomaly.anomaly_llm_explainer import DSPY_AVAILABLE
+from databricks.labs.dqx.anomaly.anomaly_llm_explainer import DSPY_AVAILABLE, ExplanationContext
 from databricks.labs.dqx.config import LLMModelConfig
 from tests.integration_anomaly.constants import (
     DEFAULT_SCORE_THRESHOLD,
@@ -248,3 +248,84 @@ def test_ai_explanation_one_llm_call_per_group(
     assert len({e["narrative"] for e in explanations}) == 1
     assert len({e["pattern"] for e in explanations}) == 1
     assert all(e["group_size"] == len(explanations) for e in explanations)
+
+
+# ---------------------------------------------------------------------------
+# Direct add_explanation_column tests against a synthetic scored DataFrame.
+# These exercise the Spark-side ranking + cap path without needing a model.
+# ---------------------------------------------------------------------------
+
+
+def _build_synthetic_scored_df(spark: SparkSession, rows: list[tuple[float, dict[str, float]]]):
+    """Build a minimal scored DataFrame the explainer accepts: severity, contributions, score_std."""
+    from pyspark.sql.types import DoubleType, MapType, StringType, StructField, StructType
+
+    schema = StructType(
+        [
+            StructField("severity_percentile", DoubleType(), False),
+            StructField("anomaly_score_std", DoubleType(), True),
+            StructField("anomaly_contributions", MapType(StringType(), DoubleType()), True),
+        ]
+    )
+    data = [(sev, 0.0, contrib) for sev, contrib in rows]
+    return spark.createDataFrame(data, schema=schema)
+
+
+def _ctx(max_groups: int = 500, redact_columns: tuple[str, ...] = ()) -> ExplanationContext:
+    return ExplanationContext(
+        severity_col="severity_percentile",
+        contributions_col="anomaly_contributions",
+        score_std_col="anomaly_score_std",
+        ai_explanation_col="ai_explanation",
+        threshold=95.0,
+        model_name="catalog.schema.synthetic",
+        llm_model_config=LLMModelConfig(model_name="databricks/stub", api_key="stub", api_base="https://stub"),
+        max_groups=max_groups,
+        redact_columns=redact_columns,
+    )
+
+
+def test_ai_explanation_warning_logged_when_max_groups_exceeded(spark: SparkSession, mock_llm, caplog):
+    """Two distinct patterns + max_groups=1 → highest-ranked group keeps its narrative;
+    the dropped group's rows get a null struct, and a warning is emitted with concrete counts."""
+    rows = [
+        # Pattern "amount+quantity", size 3, avg sev 99.0 → rank score 297
+        (99.0, {"amount": 80.0, "quantity": 15.0, "discount": 5.0}),
+        (99.0, {"amount": 80.0, "quantity": 15.0, "discount": 5.0}),
+        (99.0, {"amount": 80.0, "quantity": 15.0, "discount": 5.0}),
+        # Pattern "amount+discount", size 2, avg sev 96.0 → rank score 192 (dropped)
+        (96.0, {"amount": 70.0, "discount": 25.0, "quantity": 5.0}),
+        (96.0, {"amount": 70.0, "discount": 25.0, "quantity": 5.0}),
+    ]
+    df = _build_synthetic_scored_df(spark, rows)
+
+    with caplog.at_level("WARNING", logger=llm_explainer.__name__):
+        result = llm_explainer.add_explanation_column(
+            df, _ctx(max_groups=1), segment_values=None, is_ensemble=False, drift_summary="none"
+        )
+
+    explanations = [r["ai_explanation"] for r in result.collect()]
+    populated = [e for e in explanations if e is not None]
+    null_count = sum(1 for e in explanations if e is None)
+    assert len(populated) == 3, "kept group of size 3 should have populated struct"
+    assert null_count == 2, "dropped group of size 2 should have null struct"
+    assert {e["pattern"] for e in populated} == {"amount+quantity"}
+
+    warnings = [r for r in caplog.records if r.levelname == "WARNING" and "exceeded max_groups" in r.getMessage()]
+    assert len(warnings) == 1
+    msg = warnings[0].getMessage()
+    assert "{}" not in msg, "lazy formatting must interpolate values"
+    assert "1 groups covering 2 rows" in msg
+    assert "max_groups=1" in msg
+
+
+def test_ai_explanation_handles_empty_input_dataframe(spark: SparkSession, mock_llm):
+    """Empty input → empty output with the explanation struct column attached, no LLM call, no warning."""
+    df = _build_synthetic_scored_df(spark, rows=[])
+
+    result = llm_explainer.add_explanation_column(
+        df, _ctx(max_groups=2), segment_values=None, is_ensemble=False, drift_summary="none"
+    )
+
+    assert "ai_explanation" in result.columns
+    assert result.count() == 0

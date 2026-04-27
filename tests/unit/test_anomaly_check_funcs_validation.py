@@ -122,26 +122,6 @@ def test_has_no_row_anomalies_ai_explanation_requires_contributions():
 
 
 def test_has_no_row_anomalies_ai_explanation_requires_dspy():
-    """enable_ai_explanation=True raises when dspy is not importable."""
-    from databricks.labs.dqx.anomaly import anomaly_llm_explainer
-
-    with pytest.raises(InvalidParameterError, match="enable_ai_explanation=True requires the 'dspy' dependency"):
-        with patch.object(check_funcs, "SHAP_AVAILABLE", True):
-            with patch.object(anomaly_llm_explainer, "DSPY_AVAILABLE", False):
-                import importlib
-
-                importlib.reload(check_funcs)
-                # Patch DSPY_AVAILABLE on the check_funcs module after reload
-                with patch.object(check_funcs, "DSPY_AVAILABLE", False):
-                    has_no_row_anomalies(
-                        model_name="catalog.schema.model",
-                        registry_table="catalog.schema.table",
-                        enable_ai_explanation=True,
-                        enable_contributions=True,
-                    )
-
-
-def test_has_no_row_anomalies_ai_explanation_requires_dspy_direct():
     """enable_ai_explanation=True raises when DSPY_AVAILABLE is False on check_funcs module."""
     from databricks.labs.dqx.anomaly import check_funcs as cf
 

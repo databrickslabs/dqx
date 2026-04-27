@@ -12,7 +12,7 @@ import pyspark.sql.functions as F
 from pyspark.sql import Column, DataFrame
 
 from databricks.labs.dqx.anomaly.model_discovery import fetch_model_columns_and_segments
-from databricks.labs.dqx.anomaly.scoring_config import ScoringConfig
+from databricks.labs.dqx.anomaly.scoring_config import ScoringConfig, ScoringOutputColumns
 from databricks.labs.dqx.anomaly.scoring_utils import check_reserved_row_id_columns
 from databricks.labs.dqx.anomaly.scoring_orchestrator import run_anomaly_scoring
 from databricks.labs.dqx.anomaly.explainability import SHAP_AVAILABLE
@@ -43,10 +43,65 @@ def _coerce_llm_model_config(value: LLMModelConfig | dict | None) -> LLMModelCon
                 f"Allowed keys: {sorted(_LLM_MODEL_CONFIG_KEYS)}."
             )
         return LLMModelConfig(**value)
-    raise InvalidParameterError(
-        "llm_model_config must be an LLMModelConfig instance or a dict with keys "
-        "{model_name, api_key, api_base}."
+    message = (
+        "llm_model_config must be an LLMModelConfig instance or a dict with keys" " {model_name, api_key, api_base}."
     )
+    raise InvalidParameterError(message)
+
+
+def _validate_anomaly_check_args(
+    model_name: str,
+    registry_table: str,
+    threshold: float,
+    drift_threshold: float | None,
+    enable_contributions: bool,
+    enable_ai_explanation: bool,
+    redact_columns: list[str] | None,
+    max_groups: int,
+) -> None:
+    """Validate has_no_row_anomalies arguments. Raises InvalidParameterError on failure."""
+    if not model_name:
+        raise InvalidParameterError(
+            "model_name parameter is required. Example: has_no_row_anomalies(model_name='catalog.schema.my_model', ...)"
+        )
+
+    if not registry_table:
+        raise InvalidParameterError(
+            "registry_table parameter is required. Example: registry_table='catalog.schema.dqx_anomaly_models'"
+        )
+
+    validate_fully_qualified_name(model_name, label="model_name")
+    validate_fully_qualified_name(registry_table, label="registry_table")
+
+    if not 0.0 <= float(threshold) <= 100.0:
+        raise InvalidParameterError("threshold must be between 0.0 and 100.0.")
+
+    if drift_threshold is not None and drift_threshold <= 0:
+        raise InvalidParameterError("drift_threshold must be greater than 0 when provided.")
+
+    if enable_contributions and not SHAP_AVAILABLE:
+        raise InvalidParameterError(
+            "enable_contributions=True requires the 'shap' dependency. "
+            "Install anomaly extras: pip install databricks-labs-dqx[anomaly]"
+        )
+
+    if enable_ai_explanation and not enable_contributions:
+        raise InvalidParameterError(
+            "enable_ai_explanation=True requires enable_contributions=True. "
+            "SHAP contributions are used as input to the LLM explanation."
+        )
+
+    if enable_ai_explanation and not DSPY_AVAILABLE:
+        raise InvalidParameterError(
+            "enable_ai_explanation=True requires the 'dspy' dependency. "
+            "Install: pip install databricks-labs-dqx[anomaly,llm]"
+        )
+
+    if redact_columns is not None and not isinstance(redact_columns, list):
+        raise InvalidParameterError("redact_columns must be a list of column name strings.")
+
+    if not isinstance(max_groups, int) or isinstance(max_groups, bool) or max_groups <= 0:
+        raise InvalidParameterError("max_groups must be a positive integer.")
 
 
 @register_rule("dataset")
@@ -148,58 +203,28 @@ def has_no_row_anomalies(
         >>> df_scored.select(col("_dq_info").getItem(0).getField("anomaly").getField("score"), ...)
         >>> df_scored.filter(col("_dq_info").getItem(0).getField("anomaly").getField("is_anomaly"))
     """
-    if not model_name:
-        raise InvalidParameterError(
-            "model_name parameter is required. Example: has_no_row_anomalies(model_name='catalog.schema.my_model', ...)"
-        )
-
-    if not registry_table:
-        raise InvalidParameterError(
-            "registry_table parameter is required. Example: registry_table='catalog.schema.dqx_anomaly_models'"
-        )
-
-    validate_fully_qualified_name(model_name, label="model_name")
-    validate_fully_qualified_name(registry_table, label="registry_table")
-
-    if not 0.0 <= float(threshold) <= 100.0:
-        raise InvalidParameterError("threshold must be between 0.0 and 100.0.")
-
-    if drift_threshold is not None and drift_threshold <= 0:
-        raise InvalidParameterError("drift_threshold must be greater than 0 when provided.")
-
-    if enable_contributions and not SHAP_AVAILABLE:
-        raise InvalidParameterError(
-            "enable_contributions=True requires the 'shap' dependency. "
-            "Install anomaly extras: pip install databricks-labs-dqx[anomaly]"
-        )
-
-    if enable_ai_explanation and not enable_contributions:
-        raise InvalidParameterError(
-            "enable_ai_explanation=True requires enable_contributions=True. "
-            "SHAP contributions are used as input to the LLM explanation."
-        )
-
-    if enable_ai_explanation and not DSPY_AVAILABLE:
-        raise InvalidParameterError(
-            "enable_ai_explanation=True requires the 'dspy' dependency. "
-            "Install: pip install databricks-labs-dqx[anomaly,llm]"
-        )
-
-    if redact_columns is not None and not isinstance(redact_columns, list):
-        raise InvalidParameterError("redact_columns must be a list of column name strings.")
-
-    if not isinstance(max_groups, int) or isinstance(max_groups, bool) or max_groups <= 0:
-        raise InvalidParameterError("max_groups must be a positive integer.")
+    _validate_anomaly_check_args(
+        model_name=model_name,
+        registry_table=registry_table,
+        threshold=threshold,
+        drift_threshold=drift_threshold,
+        enable_contributions=enable_contributions,
+        enable_ai_explanation=enable_ai_explanation,
+        redact_columns=redact_columns,
+        max_groups=max_groups,
+    )
 
     llm_model_config = _coerce_llm_model_config(llm_model_config)
 
     row_id_col = f"__dqx_row_id_{uuid.uuid4().hex}"
-    score_col = f"__dq_anomaly_score_{uuid.uuid4().hex}"
-    score_std_col = f"__dq_anomaly_score_std_{uuid.uuid4().hex}"
-    contributions_col = f"__dq_anomaly_contributions_{uuid.uuid4().hex}"
-    severity_col = f"__dq_severity_percentile_{uuid.uuid4().hex}"
-    ai_explanation_col = f"__dq_ai_explanation_{uuid.uuid4().hex}"
-    info_col = f"__dqx_info_{uuid.uuid4().hex}"
+    output_columns = ScoringOutputColumns(
+        score=f"__dq_anomaly_score_{uuid.uuid4().hex}",
+        score_std=f"__dq_anomaly_score_std_{uuid.uuid4().hex}",
+        contributions=f"__dq_anomaly_contributions_{uuid.uuid4().hex}",
+        severity=f"__dq_severity_percentile_{uuid.uuid4().hex}",
+        ai_explanation=f"__dq_ai_explanation_{uuid.uuid4().hex}",
+        info=f"__dqx_info_{uuid.uuid4().hex}",
+    )
 
     def apply(df: DataFrame) -> DataFrame:
         check_reserved_row_id_columns(df)
@@ -214,21 +239,15 @@ def has_no_row_anomalies(
             merge_columns=[row_id_col],
             row_filter=row_filter,
             drift_threshold=drift_threshold,
-            drift_threshold_value=drift_threshold if drift_threshold is not None else 3.0,
             enable_contributions=enable_contributions,
             enable_confidence_std=enable_confidence_std,
             enable_ai_explanation=enable_ai_explanation,
-            ai_explanation_col=ai_explanation_col,
             llm_model_config=llm_model_config,
             redact_columns=redact_columns or [],
             max_groups=max_groups,
             segment_by=segment_by,
             driver_only=driver_only,
-            score_col=score_col,
-            score_std_col=score_std_col,
-            contributions_col=contributions_col,
-            severity_col=severity_col,
-            info_col=info_col,
+            output_columns=output_columns,
         )
 
         result = run_anomaly_scoring(df_to_score, config, registry_table, model_name)
@@ -237,8 +256,8 @@ def has_no_row_anomalies(
     message = F.concat_ws(
         "",
         F.lit("Anomaly severity "),
-        F.round(F.col(info_col).anomaly.severity_percentile, 1).cast("string"),
+        F.round(F.col(output_columns.info).anomaly.severity_percentile, 1).cast("string"),
         F.lit(f" exceeded threshold {threshold}"),
     )
-    condition_expr = F.col(info_col).anomaly.is_anomaly
-    return make_condition(condition_expr, message, "has_row_anomalies"), apply, info_col
+    condition_expr = F.col(output_columns.info).anomaly.is_anomaly
+    return make_condition(condition_expr, message, "has_row_anomalies"), apply, output_columns.info

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import os
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import pyspark.sql.functions as F
@@ -38,6 +39,39 @@ logger = logging.getLogger(__name__)
 
 _TOP_N = 5
 _PATTERN_COL = "__dqx_pattern"
+
+
+@dataclass(frozen=True)
+class ExplanationContext:
+    """Decoupled inputs for the LLM group explainer.
+
+    Any anomaly check that produces a severity column + contributions map can build one of
+    these and call ``add_explanation_column`` directly — no ScoringConfig required.
+    """
+
+    severity_col: str
+    contributions_col: str
+    score_std_col: str
+    ai_explanation_col: str
+    threshold: float
+    model_name: str
+    llm_model_config: LLMModelConfig | None = None
+    max_groups: int = 500
+    redact_columns: tuple[str, ...] = ()
+
+    @classmethod
+    def from_scoring_config(cls, config: "ScoringConfig") -> "ExplanationContext":
+        return cls(
+            severity_col=config.severity_col,
+            contributions_col=config.contributions_col,
+            score_std_col=config.score_std_col,
+            ai_explanation_col=config.ai_explanation_col,
+            threshold=config.threshold,
+            model_name=config.model_name,
+            llm_model_config=config.llm_model_config,
+            max_groups=config.max_groups,
+            redact_columns=tuple(config.redact_columns or ()),
+        )
 
 
 if DSPY_AVAILABLE:
@@ -97,9 +131,6 @@ if DSPY_AVAILABLE:
         action: str = dspy.OutputField(
             desc="One sentence, max 20 words. What a data analyst should investigate for this group."
         )
-
-else:
-    AnomalyGroupExplanationSignature = None  # type: ignore[assignment,misc]
 
 
 def _build_lm_config(llm_model_config: LLMModelConfig) -> dict:
@@ -190,16 +221,21 @@ def _aggregate_groups(
     severity_col: str,
     score_std_col: str,
     redact_set: frozenset[str],
-) -> list[dict]:
-    """Aggregate anomalous rows into per-pattern group metadata.
+    max_groups: int,
+) -> tuple[list[dict], int, int]:
+    """Aggregate anomalous rows into per-pattern group metadata, capped by ``max_groups``.
 
-    Returns a list of dicts, one per pattern, with keys:
-      pattern, group_size, group_avg_severity, severity_min, severity_max,
-      mean_std, mean_contributions (dict[str, float]).
+    Ranking and the cap are applied inside Spark (``orderBy(...).limit(max_groups)``) so the
+    driver only ever collects at most ``max_groups`` rows, regardless of pattern cardinality.
+    Some driver-side materialization is unavoidable because the LLM call is driver-side by
+    design (DSPy is not shipped to executors).
 
-    Aggregation is distributed in Spark where possible; mean_contributions
-    is computed via a second distributed step (explode → avg per key → collect)
-    to avoid unbounded driver-side pulls.
+    Tie-break: secondary sort on the pattern key keeps the result deterministic across runs
+    when several patterns share the same ``group_size * group_avg_severity``.
+
+    Returns:
+        (kept_rows, dropped_groups_count, dropped_rows_count) where the counts describe the
+        groups that exceeded the cap and whose rows will receive a null ai_explanation.
     """
     primary = anomalous.groupBy(_PATTERN_COL).agg(
         F.count(F.lit(1)).alias("group_size"),
@@ -217,8 +253,28 @@ def _aggregate_groups(
         F.map_from_entries(F.collect_list(F.struct(F.col("__k"), F.col("__mean")))).alias("mean_contributions")
     )
 
-    joined = primary.join(per_pattern_contrib, on=_PATTERN_COL, how="left")
-    return [row.asDict(recursive=True) for row in joined.collect()]
+    joined = primary.join(per_pattern_contrib, on=_PATTERN_COL, how="left").cache()
+    try:
+        totals = joined.agg(
+            F.count(F.lit(1)).alias("total_groups"),
+            F.sum("group_size").alias("total_rows"),
+        ).collect()[0]
+        total_groups = int(totals["total_groups"] or 0)
+        total_rows = int(totals["total_rows"] or 0)
+
+        ranked = (
+            joined.withColumn("__rank_score", F.col("group_size") * F.col("group_avg_severity"))
+            .orderBy(F.desc("__rank_score"), F.asc(_PATTERN_COL))
+            .limit(max_groups)
+        )
+        kept_rows = [row.asDict(recursive=True) for row in ranked.collect()]
+    finally:
+        joined.unpersist()
+
+    kept_rows_count = sum(int(r.get("group_size") or 0) for r in kept_rows)
+    dropped_groups_count = max(0, total_groups - len(kept_rows))
+    dropped_rows_count = max(0, total_rows - kept_rows_count)
+    return kept_rows, dropped_groups_count, dropped_rows_count
 
 
 def _build_empty_explanation_column() -> Column:
@@ -238,19 +294,9 @@ def _build_group_result_schema() -> StructType:
     )
 
 
-def _rank_and_split_groups(groups: list[dict], max_groups: int) -> tuple[list[dict], list[dict]]:
-    """Rank groups by group_size * group_avg_severity desc; return (kept, dropped)."""
-    ranked = sorted(
-        groups,
-        key=lambda g: (g["group_size"] or 0) * (g["group_avg_severity"] or 0.0),
-        reverse=True,
-    )
-    return ranked[:max_groups], ranked[max_groups:]
-
-
 def _call_llm_for_groups(
     kept_groups: list[dict],
-    config: ScoringConfig,
+    ctx: ExplanationContext,
     segment_str: str,
     is_ensemble: bool,
     drift_summary: str,
@@ -258,31 +304,31 @@ def _call_llm_for_groups(
 ) -> list[tuple]:
     """Invoke the LLM once per retained group. Returns rows for the result DataFrame."""
     result_rows: list[tuple] = []
-    for g in kept_groups:
-        contrib_str = format_contributions_map(g.get("mean_contributions") or {}, top_n=_TOP_N)
+    for group in kept_groups:
+        contrib_str = format_contributions_map(group.get("mean_contributions") or {}, top_n=_TOP_N)
         severity_range = _format_severity_range(
-            float(g["group_avg_severity"]),
-            float(g["severity_min"]),
-            float(g["severity_max"]),
+            float(group["group_avg_severity"]),
+            float(group["severity_min"]),
+            float(group["severity_max"]),
         )
         prediction = predictor(
             feature_contributions=contrib_str,
-            group_size=f"{int(g['group_size'])} rows",
+            group_size=f"{int(group['group_size'])} rows",
             severity_range=severity_range,
-            confidence=_derive_confidence(g.get("mean_std"), is_ensemble),
+            confidence=_derive_confidence(group.get("mean_std"), is_ensemble),
             segment=segment_str,
-            threshold=str(config.threshold),
-            model_name=config.model_name,
+            threshold=str(ctx.threshold),
+            model_name=ctx.model_name,
             drift_summary=drift_summary or "none",
         )
         result_rows.append(
             (
-                g[_PATTERN_COL],
+                group[_PATTERN_COL],
                 prediction.narrative,
                 prediction.business_impact,
                 prediction.action,
-                int(g["group_size"]),
-                float(g["group_avg_severity"]),
+                int(group["group_size"]),
+                float(group["group_avg_severity"]),
             )
         )
     return result_rows
@@ -291,7 +337,7 @@ def _call_llm_for_groups(
 def _attach_explanation_struct(
     df_with_pattern: DataFrame,
     result_sdf: DataFrame,
-    config: ScoringConfig,
+    ctx: ExplanationContext,
 ) -> DataFrame:
     """Join per-pattern LLM results back onto the scored DataFrame and wrap as a struct.
 
@@ -299,9 +345,9 @@ def _attach_explanation_struct(
     """
     joined = df_with_pattern.join(result_sdf, on=_PATTERN_COL, how="left")
     return joined.withColumn(
-        config.ai_explanation_col,
+        ctx.ai_explanation_col,
         F.when(
-            (F.col(config.severity_col) >= F.lit(config.threshold)) & F.col("narrative").isNotNull(),
+            (F.col(ctx.severity_col) >= F.lit(ctx.threshold)) & F.col("narrative").isNotNull(),
             F.struct(
                 F.col("narrative").alias("narrative"),
                 F.col("business_impact").alias("business_impact"),
@@ -323,7 +369,7 @@ def _attach_explanation_struct(
 
 def add_explanation_column(
     df: DataFrame,
-    config: ScoringConfig,
+    ctx: ExplanationContext,
     segment_values: dict[str, str] | None,
     is_ensemble: bool,
     drift_summary: str = "none",
@@ -334,49 +380,44 @@ def add_explanation_column(
     sorted top-2 contributing SHAP features. The LLM is called once per group and every
     row in that group receives the same narrative/business_impact/action, plus the
     group's size and mean severity. Rows below threshold or in groups exceeding
-    config.max_groups receive a null struct.
+    ``ctx.max_groups`` receive a null struct.
 
     Preconditions (caller's responsibility):
-      - config.enable_contributions is True
       - dspy is importable
-      - df has config.score_col, config.score_std_col, config.severity_col,
-        and config.contributions_col.
+      - df has ctx.score_std_col, ctx.severity_col, and ctx.contributions_col.
     """
-    llm_cfg = config.llm_model_config or LLMModelConfig()
+    llm_cfg = ctx.llm_model_config or LLMModelConfig()
     lm_config = _build_lm_config(llm_cfg)
-    redact_set = frozenset(config.redact_columns or [])
+    redact_set = frozenset(ctx.redact_columns)
     segment_str = _format_segment(segment_values)
 
-    df_with_pattern = df.withColumn(_PATTERN_COL, _pattern_spark_expr(config.contributions_col, redact_set))
+    df_with_pattern = df.withColumn(_PATTERN_COL, _pattern_spark_expr(ctx.contributions_col, redact_set))
 
-    anomalous = df_with_pattern.filter(F.col(config.severity_col) >= F.lit(config.threshold))
-    groups = _aggregate_groups(
+    anomalous = df_with_pattern.filter(F.col(ctx.severity_col) >= F.lit(ctx.threshold))
+    kept, dropped_groups_count, dropped_rows_count = _aggregate_groups(
         anomalous,
-        contributions_col=config.contributions_col,
-        severity_col=config.severity_col,
-        score_std_col=config.score_std_col,
+        contributions_col=ctx.contributions_col,
+        severity_col=ctx.severity_col,
+        score_std_col=ctx.score_std_col,
         redact_set=redact_set,
+        max_groups=ctx.max_groups,
     )
 
-    if not groups:
-        return df_with_pattern.withColumn(config.ai_explanation_col, _build_empty_explanation_column()).drop(
-            _PATTERN_COL
-        )
+    if not kept:
+        return df_with_pattern.withColumn(ctx.ai_explanation_col, _build_empty_explanation_column()).drop(_PATTERN_COL)
 
-    kept, dropped = _rank_and_split_groups(groups, config.max_groups)
-    if dropped:
-        dropped_rows = sum(int(g["group_size"] or 0) for g in dropped)
+    if dropped_groups_count:
         logger.warning(
-            "ai_explanation: %d groups covering %d rows exceeded max_groups=%d; " "their ai_explanation will be null.",
-            len(dropped),
-            dropped_rows,
-            config.max_groups,
+            "ai_explanation: %s groups covering %s rows exceeded max_groups=%s; " "their ai_explanation will be null.",
+            dropped_groups_count,
+            dropped_rows_count,
+            ctx.max_groups,
         )
 
-    lm = dspy.LM(**lm_config)
+    language_model = dspy.LM(**lm_config)
     predictor = dspy.Predict(AnomalyGroupExplanationSignature)
-    with dspy.settings.context(lm=lm):
-        result_rows = _call_llm_for_groups(kept, config, segment_str, is_ensemble, drift_summary, predictor)
+    with dspy.settings.context(lm=language_model):
+        result_rows = _call_llm_for_groups(kept, ctx, segment_str, is_ensemble, drift_summary, predictor)
 
     result_sdf = df.sparkSession.createDataFrame(result_rows, schema=_build_group_result_schema())
-    return _attach_explanation_struct(df_with_pattern, result_sdf, config)
+    return _attach_explanation_struct(df_with_pattern, result_sdf, ctx)
