@@ -253,23 +253,27 @@ def _aggregate_groups(
         F.map_from_entries(F.collect_list(F.struct(F.col("__k"), F.col("__mean")))).alias("mean_contributions")
     )
 
-    joined = primary.join(per_pattern_contrib, on=_PATTERN_COL, how="left").cache()
-    try:
-        totals = joined.agg(
-            F.count(F.lit(1)).alias("total_groups"),
-            F.sum("group_size").alias("total_rows"),
-        ).collect()[0]
-        total_groups = int(totals["total_groups"] or 0)
-        total_rows = int(totals["total_rows"] or 0)
+    # Rank + cap the per-pattern aggregates before joining contributions, so the join is on
+    # at most ``max_groups`` rows. Totals are read from the same ``primary`` aggregate via a
+    # separate action — we deliberately avoid ``.cache()`` here because PERSIST TABLE is not
+    # supported on Databricks serverless compute. ``primary`` is a per-pattern roll-up so the
+    # second action is cheap relative to the LLM calls that follow.
+    totals_row = primary.agg(
+        F.count(F.lit(1)).alias("total_groups"),
+        F.sum("group_size").alias("total_rows"),
+    ).collect()[0]
+    total_groups = int(totals_row["total_groups"] or 0)
+    total_rows = int(totals_row["total_rows"] or 0)
 
-        ranked = (
-            joined.withColumn("__rank_score", F.col("group_size") * F.col("group_avg_severity"))
-            .orderBy(F.desc("__rank_score"), F.asc(_PATTERN_COL))
-            .limit(max_groups)
-        )
-        kept_rows = [row.asDict(recursive=True) for row in ranked.collect()]
-    finally:
-        joined.unpersist()
+    ranked = (
+        primary.withColumn("__rank_score", F.col("group_size") * F.col("group_avg_severity"))
+        .orderBy(F.desc("__rank_score"), F.asc(_PATTERN_COL))
+        .limit(max_groups)
+    )
+    kept_rows = [
+        row.asDict(recursive=True)
+        for row in ranked.join(per_pattern_contrib, on=_PATTERN_COL, how="left").collect()
+    ]
 
     kept_rows_count = sum(int(r.get("group_size") or 0) for r in kept_rows)
     dropped_groups_count = max(0, total_groups - len(kept_rows))
@@ -408,10 +412,8 @@ def add_explanation_column(
 
     if dropped_groups_count:
         logger.warning(
-            "ai_explanation: %s groups covering %s rows exceeded max_groups=%s; " "their ai_explanation will be null.",
-            dropped_groups_count,
-            dropped_rows_count,
-            ctx.max_groups,
+            f"ai_explanation: {dropped_groups_count} groups covering {dropped_rows_count} rows "
+            f"exceeded max_groups={ctx.max_groups}; their ai_explanation will be null."
         )
 
     language_model = dspy.LM(**lm_config)
