@@ -23,6 +23,12 @@ def mark_tmp_schema_ready() -> None:
     _tmp_schema_ready = True
 
 
+def reset_tmp_schema_ready() -> None:
+    """Reset the flag — only used in tests."""
+    global _tmp_schema_ready
+    _tmp_schema_ready = False
+
+
 class ViewService:
     """Create and drop temporary views via the SQL Statement Execution API."""
 

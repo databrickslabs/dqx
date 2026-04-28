@@ -53,7 +53,11 @@ from databricks_labs_dqx_app.backend.services.rules_catalog_service import (
     RuleCatalogEntry,
     RulesCatalogService,
 )
-from databricks_labs_dqx_app.backend.services.view_service import ViewService
+from databricks_labs_dqx_app.backend.services.view_service import (
+    ViewService,
+    mark_tmp_schema_ready,
+    reset_tmp_schema_ready,
+)
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 from databricks_labs_dqx_app.backend.settings import SettingsManager
 from fastapi import HTTPException
@@ -1240,11 +1244,9 @@ class TestViewService:
 
     @pytest.fixture(autouse=True)
     def _reset_schema_flag(self):
-        import databricks_labs_dqx_app.backend.services.view_service as vs_mod  # pylint: disable=import-outside-toplevel
-
-        vs_mod._tmp_schema_ready = True  # pylint: disable=protected-access
+        mark_tmp_schema_ready()
         yield
-        vs_mod._tmp_schema_ready = False  # pylint: disable=protected-access
+        reset_tmp_schema_ready()
 
     @pytest.fixture
     def ws(self) -> WorkspaceClient:
