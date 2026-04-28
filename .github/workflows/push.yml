@@ -143,6 +143,10 @@ jobs:
         with:
           bun-version: "1.3.11"
 
+      - name: Install JavaScript dependencies
+        run: make app-install
+        working-directory: .
+
       - name: Build app
         run: make app-build
         working-directory: .
