@@ -2,7 +2,6 @@ import { createFileRoute } from "@tanstack/react-router";
 import { PageBreadcrumb } from "@/components/apx/PageBreadcrumb";
 import {
   useListRules,
-  type RuleCatalogEntryOut,
   type User as UserType,
 } from "@/lib/api";
 import { isAxiosError } from "axios";

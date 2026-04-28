@@ -163,7 +163,7 @@ function YamlImportCard({ onDone }: { onDone: () => void }) {
       for (const rule of savedRules) {
         if (!rule.rule_id) continue;
         try {
-          await submitRuleForApproval(rule.rule_id, {});
+          await submitRuleForApproval(rule.rule_id, null);
           submitted++;
         } catch {
           failed++;

@@ -9,7 +9,6 @@ import {
   useListRules,
   RunConfig,
   type RuleCatalogEntryOut,
-  type User as UserType,
 } from "@/lib/api";
 import axios, { isAxiosError } from "axios";
 import {
@@ -37,14 +36,12 @@ import {
   CheckCircle2,
   XCircle,
   Clock,
-  User,
   Search,
   CalendarClock,
   Layers,
   Database,
   Table2,
   Zap,
-  ChevronDown,
   ChevronRight,
   X,
 } from "lucide-react";
@@ -105,34 +102,6 @@ export const Route = createFileRoute("/_sidebar/runs")({
 const _SQL_CHECK_PREFIX = "__sql_check__/";
 function cleanFqn(fqn: string) {
   return fqn.startsWith(_SQL_CHECK_PREFIX) ? fqn.slice(_SQL_CHECK_PREFIX.length) : fqn;
-}
-
-function statusBadge(status: string | null) {
-  switch (status) {
-    case "SUCCESS":
-      return (
-        <Badge variant="outline" className="gap-1 border-green-500 text-green-600">
-          <CheckCircle2 className="h-3 w-3" />
-          Success
-        </Badge>
-      );
-    case "FAILED":
-      return (
-        <Badge variant="outline" className="gap-1 border-red-500 text-red-600">
-          <XCircle className="h-3 w-3" />
-          Failed
-        </Badge>
-      );
-    case "RUNNING":
-      return (
-        <Badge variant="outline" className="gap-1 border-amber-500 text-amber-600">
-          <Clock className="h-3 w-3 animate-spin" />
-          Running
-        </Badge>
-      );
-    default:
-      return <Badge variant="secondary">{status ?? "Unknown"}</Badge>;
-  }
 }
 
 type GroupMode = "none" | "catalog" | "schema";
