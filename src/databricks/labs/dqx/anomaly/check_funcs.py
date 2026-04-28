@@ -43,10 +43,9 @@ def _coerce_llm_model_config(value: LLMModelConfig | dict | None) -> LLMModelCon
                 f"Allowed keys: {sorted(_LLM_MODEL_CONFIG_KEYS)}."
             )
         return LLMModelConfig(**value)
-    message = (
-        "llm_model_config must be an LLMModelConfig instance or a dict with keys" " {model_name, api_key, api_base}."
+    raise InvalidParameterError(
+        "llm_model_config must be an LLMModelConfig instance or a dict with keys {model_name, api_key, api_base}."
     )
-    raise InvalidParameterError(message)
 
 
 def _validate_anomaly_check_args(
