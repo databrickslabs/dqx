@@ -430,55 +430,6 @@ export const useValidateChecks = <
 };
 
 // ---------------------------------------------------------------------------
-// Import rules from Delta table
-// ---------------------------------------------------------------------------
-
-export interface ImportFromTableIn {
-  source_table_fqn: string;
-}
-
-export interface ImportFromTableOut {
-  imported: number;
-  skipped: number;
-  errors: Array<{ table_fqn: string; error: string }>;
-}
-
-export const importRulesFromTable = (
-  body: ImportFromTableIn,
-  options?: AxiosRequestConfig,
-): Promise<AxiosResponse<ImportFromTableOut>> => {
-  return axios.default.post(`/api/v1/rules/import-from-table`, body, options);
-};
-
-export const useImportRulesFromTable = <
-  TError = AxiosError<unknown>,
-  TContext = unknown,
->(
-  options?: {
-    mutation?: UseMutationOptions<
-      Awaited<ReturnType<typeof importRulesFromTable>>,
-      TError,
-      { data: ImportFromTableIn },
-      TContext
-    >;
-    axios?: AxiosRequestConfig;
-  },
-): UseMutationResult<
-  Awaited<ReturnType<typeof importRulesFromTable>>,
-  TError,
-  { data: ImportFromTableIn },
-  TContext
-> => {
-  const { mutation: mutationOptions, axios: axiosOptions } = options ?? {};
-
-  const mutationFn = (props: { data: ImportFromTableIn }) => {
-    return importRulesFromTable(props.data, axiosOptions);
-  };
-
-  return useMutation({ mutationFn, mutationKey: ["importRulesFromTable"], ...mutationOptions });
-};
-
-// ---------------------------------------------------------------------------
 // Comments
 // ---------------------------------------------------------------------------
 

@@ -14,15 +14,8 @@ import {
 import axios, { isAxiosError } from "axios";
 import {
   useBatchRunFromCatalog,
-  useListValidationRuns,
   getListValidationRunsQueryKey,
-  type ValidationRunSummaryOut,
 } from "@/lib/api-custom";
-import { useGetDryRunResults, type DryRunResultsOut } from "@/lib/api";
-import { DryRunResults } from "@/components/DryRunResults";
-import { CommentThread } from "@/components/CommentThread";
-import { useCurrentUserSuspense } from "@/hooks/use-suspense-queries";
-import selector from "@/lib/selector";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -99,6 +92,7 @@ import { getDryRunStatus, type RunStatusOut } from "@/lib/api";
 import { cancelDryRun } from "@/lib/api-custom";
 import { CircleStop, ShieldAlert } from "lucide-react";
 import { parseFqn, formatDateTime as formatDate } from "@/lib/format-utils";
+import { usePermissions } from "@/hooks/use-permissions";
 
 export const Route = createFileRoute("/_sidebar/runs")({
   component: RunsPage,
@@ -540,13 +534,20 @@ function resolveScheduleScope(
 }
 
 // ---------------------------------------------------------------------------
-// Main page — three top-level tabs: Execute, Schedules, History
+// Main page — two top-level tabs: Execute, Schedules
 // ---------------------------------------------------------------------------
 
 function RunsPage() {
   const navigate = useNavigate();
+  const { isViewer, isAdmin } = usePermissions();
   const params = useParams({ strict: false }) as { runName?: string };
   const currentRunName = params.runName;
+
+  useEffect(() => {
+    if (isViewer) {
+      navigate({ to: "/runs-history", replace: true });
+    }
+  }, [isViewer, navigate]);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isDeletingRun, setIsDeletingRun] = useState(false);
   const queryClient = useQueryClient();
@@ -615,10 +616,6 @@ function RunsPage() {
               <CalendarClock className="h-4 w-4" />
               Schedules
             </TabsTrigger>
-            <TabsTrigger value="history" className="gap-2">
-              <History className="h-4 w-4" />
-              History
-            </TabsTrigger>
           </TabsList>
         </div>
 
@@ -627,7 +624,7 @@ function RunsPage() {
             {({ reset }) => (
               <ErrorBoundary onReset={reset} fallbackRender={ExecuteTabError}>
                 <Suspense fallback={<ExecuteTabSkeleton />}>
-                  <ExecuteTab onGoToHistory={() => setActiveTab("history")} />
+                  <ExecuteTab onGoToHistory={() => navigate({ to: "/runs-history" })} />
                 </Suspense>
               </ErrorBoundary>
             )}
@@ -657,6 +654,7 @@ function RunsPage() {
                           currentRunName={currentRunName}
                           onAddRun={() => setIsCreateOpen(true)}
                           onDeletingChange={setIsDeletingRun}
+                          isAdmin={isAdmin}
                         />
                       </Suspense>
                     </ErrorBoundary>
@@ -668,6 +666,7 @@ function RunsPage() {
             <div className="flex flex-col flex-1 overflow-hidden h-full">
               <div className="flex items-center justify-between mb-4 shrink-0">
                 <h2 className="font-semibold text-lg text-foreground">Scheduled Runs</h2>
+                {isAdmin && (
                 <Button
                   variant="outline"
                   size="sm"
@@ -677,6 +676,7 @@ function RunsPage() {
                   <Plus className="h-4 w-4" />
                   New Schedule
                 </Button>
+                )}
               </div>
               <div className="flex-1 overflow-y-auto">
                 <QueryErrorResetBoundary>
@@ -693,17 +693,6 @@ function RunsPage() {
           )}
         </TabsContent>
 
-        <TabsContent value="history" className="flex-1 overflow-hidden mt-0">
-          <QueryErrorResetBoundary>
-            {({ reset }) => (
-              <ErrorBoundary onReset={reset} fallbackRender={RunHistoryError}>
-                <Suspense fallback={<RunHistorySkeleton />}>
-                  <RunHistoryTab />
-                </Suspense>
-              </ErrorBoundary>
-            )}
-          </QueryErrorResetBoundary>
-        </TabsContent>
       </Tabs>
 
       <CreateRunDialog
@@ -1501,527 +1490,6 @@ function ExecuteTabError({ resetErrorBoundary }: { resetErrorBoundary: () => voi
 }
 
 // ===========================================================================
-// Run History Tab
-// ===========================================================================
-
-function RunHistoryTab() {
-  const { data: currentUser } = useCurrentUserSuspense(selector<UserType>());
-  const currentUserEmail = currentUser?.user_name ?? "";
-
-  const [catalogFilter, setCatalogFilter] = useState("all");
-  const [schemaFilter, setSchemaFilter] = useState("all");
-  const [tableSearch, setTableSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
-  const [runTypeFilter, setRunTypeFilter] = useState("all");
-  const [invalidOnly, setInvalidOnly] = useState(false);
-  const [myRunsOnly, setMyRunsOnly] = useState(false);
-  const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
-
-  const { data: runsResp, isLoading, error, refetch } = useListValidationRuns();
-  const { data: rulesResp } = useListRules({ status: "approved" }, { query: {} });
-
-  const rulesByTable = useMemo(() => {
-    const map = new Map<string, Record<string, unknown>[]>();
-    const rules = Array.isArray(rulesResp?.data) ? rulesResp.data : [];
-    for (const rule of rules) {
-      const existing = map.get(rule.table_fqn);
-      if (existing) {
-        existing.push(...rule.checks);
-      } else {
-        map.set(rule.table_fqn, [...rule.checks]);
-      }
-    }
-    return map;
-  }, [rulesResp]);
-
-  const allRuns: ValidationRunSummaryOut[] = useMemo(() => {
-    const raw = Array.isArray(runsResp?.data) ? runsResp.data : [];
-    return raw.map((run) => {
-      if (run.checks && run.checks.length > 0) return run;
-      const fallback = rulesByTable.get(run.source_table_fqn);
-      if (fallback && fallback.length > 0) {
-        return { ...run, checks: fallback };
-      }
-      return run;
-    });
-  }, [runsResp, rulesByTable]);
-
-  const [tableFilter, setTableFilter] = useState("all");
-
-  const { catalogs, schemasByCatalog, tablesByCatalogSchema } = useMemo(() => {
-    const catalogSet = new Set<string>();
-    const schemaMap = new Map<string, Set<string>>();
-    const tableMap = new Map<string, Set<string>>();
-    for (const run of allRuns) {
-      if (run.source_table_fqn.startsWith(_SQL_CHECK_PREFIX)) {
-        catalogSet.add("Cross-table rules");
-        continue;
-      }
-      const { catalog, schema, table } = parseFqn(run.source_table_fqn);
-      if (catalog) {
-        catalogSet.add(catalog);
-        if (!schemaMap.has(catalog)) schemaMap.set(catalog, new Set());
-        if (schema) schemaMap.get(catalog)!.add(schema);
-      }
-      if (catalog && schema && table) {
-        const key = `${catalog}.${schema}`;
-        if (!tableMap.has(key)) tableMap.set(key, new Set());
-        tableMap.get(key)!.add(table);
-      }
-    }
-    return {
-      catalogs: Array.from(catalogSet).sort(),
-      schemasByCatalog: Object.fromEntries(
-        Array.from(schemaMap.entries()).map(([cat, schemas]) => [cat, Array.from(schemas).sort()]),
-      ),
-      tablesByCatalogSchema: Object.fromEntries(
-        Array.from(tableMap.entries()).map(([key, tables]) => [key, Array.from(tables).sort()]),
-      ),
-    };
-  }, [allRuns]);
-
-  const runs = useMemo(() => {
-    return allRuns.filter((run) => {
-      const isSqlCheck = run.source_table_fqn.startsWith(_SQL_CHECK_PREFIX);
-      if (catalogFilter !== "all") {
-        if (catalogFilter === "Cross-table rules") {
-          if (!isSqlCheck) return false;
-        } else {
-          if (isSqlCheck) return false;
-          const { catalog } = parseFqn(run.source_table_fqn);
-          if (catalog !== catalogFilter) return false;
-        }
-      }
-      if (!isSqlCheck) {
-        const { schema, table } = parseFqn(run.source_table_fqn);
-        if (schemaFilter !== "all" && schema !== schemaFilter) return false;
-        if (tableFilter !== "all" && table !== tableFilter) return false;
-        if (tableSearch && !table.toLowerCase().includes(tableSearch.toLowerCase()) && !run.source_table_fqn.toLowerCase().includes(tableSearch.toLowerCase())) return false;
-      } else if (tableSearch) {
-        const name = run.source_table_fqn.slice(_SQL_CHECK_PREFIX.length);
-        if (!name.toLowerCase().includes(tableSearch.toLowerCase())) return false;
-      }
-      if (statusFilter !== "all" && run.status !== statusFilter) return false;
-      if (runTypeFilter !== "all" && (run.run_type ?? "dryrun") !== runTypeFilter) return false;
-      if (invalidOnly && !(run.invalid_rows != null && run.invalid_rows > 0)) return false;
-      if (myRunsOnly && currentUserEmail && run.requesting_user !== currentUserEmail) return false;
-      return true;
-    });
-  }, [allRuns, catalogFilter, schemaFilter, tableFilter, tableSearch, statusFilter, runTypeFilter, invalidOnly, myRunsOnly, currentUserEmail]);
-
-  const availableSchemas = catalogFilter !== "all" ? schemasByCatalog[catalogFilter] || [] : [];
-  const availableTables = (catalogFilter !== "all" && schemaFilter !== "all")
-    ? tablesByCatalogSchema[`${catalogFilter}.${schemaFilter}`] || []
-    : [];
-
-  const handleCatalogChange = (value: string) => {
-    setCatalogFilter(value);
-    setSchemaFilter("all");
-    setTableFilter("all");
-  };
-
-  const handleSchemaChange = (value: string) => {
-    setSchemaFilter(value);
-    setTableFilter("all");
-  };
-
-  const hasActiveFilters = catalogFilter !== "all" || schemaFilter !== "all" || tableFilter !== "all" || tableSearch !== "" || statusFilter !== "all" || runTypeFilter !== "all" || invalidOnly || myRunsOnly;
-
-  return (
-    <div className="space-y-4 h-full overflow-y-auto">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-xl font-bold tracking-tight">Run History</h2>
-          <p className="text-muted-foreground text-sm">
-            View past rule validation results.
-          </p>
-        </div>
-        <Button variant="ghost" size="sm" onClick={() => refetch()} className="gap-1.5 text-xs">
-          <RotateCcw className="h-3.5 w-3.5" />
-          Refresh
-        </Button>
-      </div>
-
-      <Card>
-        <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle className="flex items-center gap-2 text-base">
-                <History className="h-4 w-4" />
-                Validation runs
-              </CardTitle>
-              <CardDescription>
-                {isLoading
-                  ? "Loading..."
-                  : `${runs.length} run${runs.length !== 1 ? "s" : ""}${
-                      runs.length !== allRuns.length ? ` (filtered from ${allRuns.length})` : ""
-                    }`}
-              </CardDescription>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2 flex-wrap pt-2">
-            <Select value={catalogFilter} onValueChange={handleCatalogChange}>
-              <SelectTrigger className="w-[160px]">
-                <SelectValue placeholder="All Catalogs" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Catalogs</SelectItem>
-                {catalogs.map((cat) => (
-                  <SelectItem key={cat} value={cat}>{cat}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-
-            <Select value={schemaFilter} onValueChange={handleSchemaChange} disabled={catalogFilter === "all"}>
-              <SelectTrigger className="w-[160px]">
-                <SelectValue placeholder="All Schemas" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Schemas</SelectItem>
-                {availableSchemas.map((sch) => (
-                  <SelectItem key={sch} value={sch}>{sch}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-
-            <Select value={tableFilter} onValueChange={setTableFilter} disabled={schemaFilter === "all"}>
-              <SelectTrigger className="w-[180px]">
-                <SelectValue placeholder="All Tables" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Tables</SelectItem>
-                {availableTables.map((tbl) => (
-                  <SelectItem key={tbl} value={tbl}>{tbl}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="w-[140px]">
-                <SelectValue placeholder="All Statuses" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Statuses</SelectItem>
-                <SelectItem value="SUCCESS">Success</SelectItem>
-                <SelectItem value="FAILED">Failed</SelectItem>
-                <SelectItem value="RUNNING">Running</SelectItem>
-              </SelectContent>
-            </Select>
-
-            <Select value={runTypeFilter} onValueChange={setRunTypeFilter}>
-              <SelectTrigger className="w-[140px]">
-                <SelectValue placeholder="All Types" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Types</SelectItem>
-                <SelectItem value="dryrun">Manual</SelectItem>
-                <SelectItem value="scheduled">Scheduled</SelectItem>
-              </SelectContent>
-            </Select>
-
-            <Button
-              variant={invalidOnly ? "default" : "outline"}
-              size="sm"
-              className="h-9 gap-1.5 text-xs"
-              onClick={() => setInvalidOnly((prev) => !prev)}
-            >
-              <AlertCircle className="h-3.5 w-3.5" />
-              Has invalid
-            </Button>
-
-            <Button
-              variant={myRunsOnly ? "default" : "outline"}
-              size="sm"
-              className="h-9 gap-1.5 text-xs"
-              onClick={() => setMyRunsOnly((prev) => !prev)}
-            >
-              <User className="h-3.5 w-3.5" />
-              My runs
-            </Button>
-
-            {hasActiveFilters && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-9 text-xs"
-                onClick={() => {
-                  setCatalogFilter("all");
-                  setSchemaFilter("all");
-                  setTableFilter("all");
-                  setTableSearch("");
-                  setStatusFilter("all");
-                  setRunTypeFilter("all");
-                  setInvalidOnly(false);
-                  setMyRunsOnly(false);
-                }}
-              >
-                Clear filters
-              </Button>
-            )}
-          </div>
-        </CardHeader>
-        <CardContent>
-          {isLoading && (
-            <div className="space-y-2">
-              {[1, 2, 3].map((i) => <Skeleton key={i} className="h-14 w-full" />)}
-            </div>
-          )}
-
-          {error && (
-            isAxiosError(error) && error.response?.status === 403 ? (
-              <div className="flex flex-col items-center justify-center py-16 text-center">
-                <ShieldAlert className="h-12 w-12 text-destructive/30 mb-3" />
-                <p className="text-destructive text-sm mb-1">Insufficient permissions</p>
-                <p className="text-muted-foreground/70 text-xs">
-                  You need Author, Approver, or Admin permissions to view run history.
-                </p>
-              </div>
-            ) : (
-              <p className="text-destructive text-sm">Failed to load run history: {(error as Error).message}</p>
-            )
-          )}
-
-          {!isLoading && !error && runs.length > 0 && (
-            <FadeIn duration={0.3}>
-              <div className="border rounded-lg overflow-x-auto">
-                <table className="w-full text-sm min-w-[900px]">
-                  <thead>
-                    <tr className="border-b bg-muted/50">
-                      <th className="w-8 p-3"></th>
-                      <th className="text-left p-3 font-medium">Table</th>
-                      <th className="text-left p-3 font-medium">Type</th>
-                      <th className="text-left p-3 font-medium">Status</th>
-                      <th className="text-left p-3 font-medium">Rules</th>
-                      <th className="text-left p-3 font-medium">Requested by</th>
-                      <th className="text-right p-3 font-medium">Total</th>
-                      <th className="text-right p-3 font-medium">Valid</th>
-                      <th className="text-right p-3 font-medium">Invalid</th>
-                      <th className="text-left p-3 font-medium">Run date</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {runs.map((run) => {
-                      const invalidPct =
-                        run.total_rows && run.invalid_rows
-                          ? ((run.invalid_rows / run.total_rows) * 100).toFixed(1)
-                          : null;
-                      const isExpanded = expandedRunId === run.run_id;
-                      return (
-                        <RunHistoryRow
-                          key={run.run_id}
-                          run={run}
-                          invalidPct={invalidPct}
-                          isExpanded={isExpanded}
-                          onToggle={() => setExpandedRunId(isExpanded ? null : run.run_id)}
-                        />
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </FadeIn>
-          )}
-
-          {!isLoading && !error && runs.length === 0 && (
-            <div className="flex flex-col items-center justify-center py-16 text-center">
-              <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center mb-6">
-                <History className="h-8 w-8 text-muted-foreground" />
-              </div>
-              <h3 className="text-lg font-medium text-muted-foreground">
-                {hasActiveFilters ? "No matching runs" : "No runs yet"}
-              </h3>
-              <p className="text-muted-foreground/70 text-sm mt-1 max-w-md">
-                {hasActiveFilters
-                  ? "Try adjusting your filters to find runs."
-                  : "Execute approved rules from the Execute tab to see results here."}
-              </p>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
-
-// ===========================================================================
-// Skeletons / Error states
-// ===========================================================================
-
-function RunHistorySkeleton() {
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div className="space-y-2">
-          <Skeleton className="h-7 w-32" />
-          <Skeleton className="h-4 w-64" />
-        </div>
-        <Skeleton className="h-9 w-28" />
-      </div>
-      <Skeleton className="h-64 w-full" />
-    </div>
-  );
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Run History Row with expandable detail
-// ──────────────────────────────────────────────────────────────────────────────
-
-function RunHistoryRow({
-  run,
-  invalidPct,
-  isExpanded,
-  onToggle,
-}: {
-  run: ValidationRunSummaryOut;
-  invalidPct: string | null;
-  isExpanded: boolean;
-  onToggle: () => void;
-}) {
-  const { data: resultsResp, isLoading: isLoadingResults } = useGetDryRunResults(
-    run.run_id,
-    { query: { enabled: isExpanded && run.status === "SUCCESS" } },
-  );
-  const results: DryRunResultsOut | null = isExpanded && resultsResp?.data ? resultsResp.data : null;
-
-  return (
-    <>
-      <tr
-        className={cn(
-          "border-b hover:bg-muted/30 transition-colors cursor-pointer",
-          isExpanded && "bg-muted/20",
-        )}
-        onClick={onToggle}
-      >
-        <td className="p-3 w-8">
-          {isExpanded ? (
-            <ChevronDown className="h-4 w-4 text-muted-foreground" />
-          ) : (
-            <ChevronRight className="h-4 w-4 text-muted-foreground" />
-          )}
-        </td>
-        <td className="p-3 font-mono text-xs">{cleanFqn(run.source_table_fqn)}</td>
-        <td className="p-3">
-          <Badge variant={(run.run_type ?? "dryrun") === "scheduled" ? "default" : "outline"} className="text-[10px]">
-            {(run.run_type ?? "dryrun") === "scheduled" ? "Scheduled" : "Manual"}
-          </Badge>
-        </td>
-        <td className="p-3">
-          <div className="flex flex-col gap-0.5">
-            {statusBadge(run.status)}
-            {run.status === "CANCELED" && run.canceled_by && (
-              <span className="text-[10px] text-muted-foreground" title={`Canceled by ${run.canceled_by}`}>
-                by {run.canceled_by.split("@")[0]}
-              </span>
-            )}
-          </div>
-        </td>
-        <td className="p-3">
-          {run.checks && run.checks.length > 0 ? (() => {
-            const labels = run.checks.map((c: Record<string, unknown>) => {
-              const check = c.check as Record<string, unknown> | undefined;
-              const fn = check?.function as string | undefined;
-              const args = check?.arguments as Record<string, unknown> | undefined;
-              if (!fn) return c.name as string ?? "check";
-              const col = args?.column as string | undefined;
-              return col ? `${fn}(${col})` : fn;
-            });
-            const MAX_SHOWN = 3;
-            const shown = labels.slice(0, MAX_SHOWN);
-            const remaining = labels.length - MAX_SHOWN;
-            return (
-              <div className="flex flex-col gap-0.5 max-w-[240px]" title={labels.join("\n")}>
-                {shown.map((label, i) => (
-                  <span key={i} className="font-mono text-[11px] text-muted-foreground truncate">{label}</span>
-                ))}
-                {remaining > 0 && (
-                  <span className="text-[10px] text-muted-foreground/70">+{remaining} more</span>
-                )}
-              </div>
-            );
-          })() : (
-            <span className="text-xs text-muted-foreground">—</span>
-          )}
-        </td>
-        <td className="p-3 text-xs text-muted-foreground truncate max-w-[180px]" title={run.requesting_user ?? ""}>
-          {run.requesting_user ?? "—"}
-        </td>
-        <td className="p-3 text-right tabular-nums">{run.total_rows?.toLocaleString() ?? "—"}</td>
-        <td className="p-3 text-right tabular-nums text-green-600">
-          {run.valid_rows?.toLocaleString() ?? "—"}
-        </td>
-        <td className="p-3 text-right tabular-nums">
-          {run.invalid_rows != null ? (
-            <span className={run.invalid_rows > 0 ? "text-red-600 font-medium" : ""}>
-              {run.invalid_rows.toLocaleString()}
-              {invalidPct && run.invalid_rows > 0 && (
-                <span className="text-muted-foreground font-normal ml-1">({invalidPct}%)</span>
-              )}
-            </span>
-          ) : (
-            "—"
-          )}
-        </td>
-        <td className="p-3 text-xs text-muted-foreground whitespace-nowrap" title={run.created_at ?? ""}>
-          {formatDate(run.created_at)}
-        </td>
-      </tr>
-      {isExpanded && (
-        <tr>
-          <td colSpan={10} className="p-0">
-            <div className="border-t bg-muted/10 p-4 space-y-4">
-              {run.status === "FAILED" && run.error_message && (
-                <div className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950/30 p-3">
-                  <AlertCircle className="h-4 w-4 text-red-600 shrink-0 mt-0.5" />
-                  <div className="text-sm">
-                    <p className="font-medium text-red-700 dark:text-red-400">Run failed</p>
-                    <p className="text-red-600 dark:text-red-300 mt-0.5 whitespace-pre-wrap break-words font-mono text-xs">{run.error_message}</p>
-                  </div>
-                </div>
-              )}
-              {run.status !== "SUCCESS" && !run.error_message && run.status !== "CANCELED" && (
-                <div className="text-sm text-muted-foreground">
-                  Detailed results are available for completed (SUCCESS) runs.
-                </div>
-              )}
-              {run.status === "CANCELED" && !run.error_message && (
-                <div className="text-sm text-muted-foreground">
-                  This run was canceled.
-                </div>
-              )}
-              {run.status === "SUCCESS" && isLoadingResults && (
-                <div className="flex items-center gap-2 text-muted-foreground text-sm py-4">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Loading results...
-                </div>
-              )}
-              {results && <DryRunResults result={results} />}
-              <CommentThread entityType="run" entityId={run.run_id} />
-            </div>
-          </td>
-        </tr>
-      )}
-    </>
-  );
-}
-
-function RunHistoryError({ resetErrorBoundary }: { resetErrorBoundary: () => void }) {
-  return (
-    <div className="flex flex-col items-center justify-center py-16 text-center">
-      <AlertCircle className="h-12 w-12 text-destructive/30 mb-3" />
-      <p className="text-muted-foreground text-sm mb-1">Failed to load run history</p>
-      <p className="text-muted-foreground/70 text-xs mb-3">
-        The validation runs table may not exist yet. Run some rules first.
-      </p>
-      <Button variant="outline" size="sm" onClick={resetErrorBoundary} className="gap-2">
-        <RotateCcw className="h-3 w-3" />
-        Retry
-      </Button>
-    </div>
-  );
-}
-
-// ===========================================================================
 // Schedules Tab — preserved configuration editor
 // ===========================================================================
 
@@ -2313,10 +1781,12 @@ function RunEditorContainer({
   currentRunName,
   onAddRun,
   onDeletingChange,
+  isAdmin,
 }: {
   currentRunName?: string;
   onAddRun: () => void;
   onDeletingChange: (isDeleting: boolean) => void;
+  isAdmin: boolean;
 }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -2493,8 +1963,8 @@ function RunEditorContainer({
   }
 
   if (!currentRunName) return <SelectRunState />;
-  if (entryNotFound) return <RunNotFoundState runName={currentRunName} onAddRun={onAddRun} />;
-  if (!scheduleEntry) return <EmptyState onAddRun={onAddRun} />;
+  if (entryNotFound) return <RunNotFoundState runName={currentRunName} onAddRun={onAddRun} isAdmin={isAdmin} />;
+  if (!scheduleEntry) return <EmptyState onAddRun={onAddRun} isAdmin={isAdmin} />;
 
   return (
     <RunEditor
@@ -2512,11 +1982,12 @@ function RunEditorContainer({
       isDeleting={isDeleting}
       isDeleteOpen={isDeleteOpen}
       setIsDeleteOpen={setIsDeleteOpen}
+      isAdmin={isAdmin}
     />
   );
 }
 
-function EmptyState({ onAddRun }: { onAddRun: () => void }) {
+function EmptyState({ onAddRun, isAdmin }: { onAddRun: () => void; isAdmin: boolean }) {
   return (
     <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
       <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mb-6">
@@ -2525,17 +1996,19 @@ function EmptyState({ onAddRun }: { onAddRun: () => void }) {
       <h3 className="text-xl font-semibold mb-2">No Scheduled Runs</h3>
       <p className="text-muted-foreground mb-6 max-w-md">
         Scheduled runs define how DQX Studio automatically processes your data quality checks
-        on a recurring or time-based cadence. Create your first schedule to get started.
+        on a recurring or time-based cadence.{isAdmin ? " Create your first schedule to get started." : ""}
       </p>
+      {isAdmin && (
       <Button onClick={onAddRun} className="gap-2">
         <Plus className="h-4 w-4" />
         Create Your First Schedule
       </Button>
+      )}
     </div>
   );
 }
 
-function RunNotFoundState({ runName, onAddRun }: { runName: string; onAddRun: () => void }) {
+function RunNotFoundState({ runName, onAddRun, isAdmin }: { runName: string; onAddRun: () => void; isAdmin: boolean }) {
   return (
     <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
       <div className="w-16 h-16 rounded-full bg-destructive/10 flex items-center justify-center mb-6">
@@ -2551,10 +2024,12 @@ function RunNotFoundState({ runName, onAddRun }: { runName: string; onAddRun: ()
         <Button variant="outline" asChild>
           <Link to="/runs">View All Schedules</Link>
         </Button>
+        {isAdmin && (
         <Button onClick={onAddRun} className="gap-2">
           <Plus className="h-4 w-4" />
           Create New Schedule
         </Button>
+        )}
       </div>
     </div>
   );
@@ -2593,6 +2068,7 @@ interface RunEditorProps {
   isDeleting: boolean;
   isDeleteOpen: boolean;
   setIsDeleteOpen: (open: boolean) => void;
+  isAdmin: boolean;
 }
 
 function RunEditor({
@@ -2610,8 +2086,9 @@ function RunEditor({
   isDeleting,
   isDeleteOpen,
   setIsDeleteOpen,
+  isAdmin,
 }: RunEditorProps) {
-  const isLocked = isSaving || isDeleting || !!isRunning;
+  const isLocked = isSaving || isDeleting || !!isRunning || !isAdmin;
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
@@ -2619,10 +2096,11 @@ function RunEditor({
         <div className="flex-1">
           <h2 className="text-2xl font-bold tracking-tight">{runName}</h2>
           <p className="text-muted-foreground text-sm mt-0.5">
-            Edit schedule configuration
-            {isDirty && <span className="text-amber-500 ml-2">• Unsaved changes</span>}
+            {isAdmin ? "Edit schedule configuration" : "View schedule configuration"}
+            {isDirty && isAdmin && <span className="text-amber-500 ml-2">• Unsaved changes</span>}
           </p>
         </div>
+        {isAdmin && (
         <div className="flex items-center gap-2">
             {onRunNow && (
               <Button variant="outline" size="sm" onClick={onRunNow} disabled={isDirty || isLocked} title={isDirty ? "Save changes before running" : "Run this schedule now"} className="gap-1.5">
@@ -2664,6 +2142,7 @@ function RunEditor({
               </AlertDialogContent>
             </AlertDialog>
           </div>
+        )}
       </div>
       <div className="flex-1 min-h-0 mt-4">
         <FormEditor yamlContent={yamlContent} setYamlContent={setYamlContent} setIsDirty={setIsDirty} isLocked={isLocked} />

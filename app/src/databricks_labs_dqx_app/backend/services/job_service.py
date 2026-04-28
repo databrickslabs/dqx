@@ -198,7 +198,7 @@ class JobService:
         self,
         table: str,
         select_cols: str,
-        limit: int = 100,
+        limit: int = 500,
     ) -> list[dict[str, str | None]]:
         """Read the most recent result rows from a Delta table, newest first.
 
@@ -218,11 +218,11 @@ class JobService:
         )
         return self._sql.query_dicts(sql)
 
-    def list_run_rows(self, table: str, limit: int = 100) -> list[dict[str, str | None]]:
+    def list_run_rows(self, table: str, limit: int = 500) -> list[dict[str, str | None]]:
         """Read the most recent profiler result rows."""
         return self._list_deduplicated_rows(table, self._PROFILE_COLS, limit)
 
-    def list_dryrun_rows(self, table: str, limit: int = 100) -> list[dict[str, str | None]]:
+    def list_dryrun_rows(self, table: str, limit: int = 500) -> list[dict[str, str | None]]:
         """Read the most recent dry-run result rows, excluding ad-hoc preview runs.
 
         A run is considered a history-visible run when:

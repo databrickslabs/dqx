@@ -54,6 +54,8 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { Badge } from "@/components/ui/badge";
+import { CatalogBrowser } from "@/components/CatalogBrowser";
+import { Switch } from "@/components/ui/switch";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -79,6 +81,11 @@ export const Route = createFileRoute("/_sidebar/rules/create-sql")({
 });
 
 const SQL_CHECK_PREFIX = "__sql_check__/";
+
+function resolveTableFqn(check: SqlCheckDraft): string {
+  if (check.targetTable.trim()) return check.targetTable.trim();
+  return `${SQL_CHECK_PREFIX}${check.name.trim().replace(/\s+/g, "_").toLowerCase()}`;
+}
 
 const SQL_NAME_REGEX = /^[a-zA-Z][a-zA-Z0-9_]{0,127}$/;
 const SQL_DDL_DML_PATTERN = /\b(DROP|DELETE|INSERT|UPDATE|ALTER|TRUNCATE|CREATE|GRANT|REVOKE|MERGE)\b/i;
@@ -114,6 +121,7 @@ interface SqlCheckDraft {
   query: string;
   criticality: "warn" | "error";
   weight: number;
+  targetTable: string;
 }
 
 function newSqlCheck(): SqlCheckDraft {
@@ -123,6 +131,7 @@ function newSqlCheck(): SqlCheckDraft {
     query: "",
     criticality: "warn",
     weight: 3,
+    targetTable: "",
   };
 }
 
@@ -155,6 +164,8 @@ function CreateSqlCheckPage() {
   useEffect(() => {
     if (!existingRule?.data || initialized) return;
     const entries = Array.isArray(existingRule.data) ? existingRule.data : [existingRule.data];
+    const tableFqn = entries[0]?.table_fqn ?? "";
+    const isAssignedToTable = tableFqn && !tableFqn.startsWith(SQL_CHECK_PREFIX);
     const allChecks = entries.flatMap((e) => e.checks ?? []);
     const loaded: SqlCheckDraft[] = allChecks.map((c: Record<string, unknown>) => {
       const check = (c.check ?? {}) as Record<string, unknown>;
@@ -165,6 +176,7 @@ function CreateSqlCheckPage() {
         query: (args.query as string) ?? "",
         criticality: ((c.criticality as string) === "error" ? "error" : "warn") as "warn" | "error",
         weight: Number(c.weight ?? 3),
+        targetTable: isAssignedToTable ? tableFqn : "",
       };
     });
     if (loaded.length > 0) {
@@ -179,7 +191,7 @@ function CreateSqlCheckPage() {
   const dupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const checksFingerprint = useMemo(() => {
-    return checks.filter((c) => c.name.trim() && c.query.trim()).map((c) => `${c.id}:${c.name}:${c.query}`).join("|");
+    return checks.filter((c) => c.name.trim() && c.query.trim()).map((c) => `${c.id}:${c.name}:${c.query}:${c.targetTable}`).join("|");
   }, [checks]);
 
   useEffect(() => {
@@ -191,7 +203,7 @@ function CreateSqlCheckPage() {
       setDupChecking(true);
       const dups = new Set<string>();
       for (const check of eligible) {
-        const tableFqn = `${SQL_CHECK_PREFIX}${check.name.trim().replace(/\s+/g, "_").toLowerCase()}`;
+        const tableFqn = resolveTableFqn(check);
         const payload = [{
           name: check.name.trim(),
           criticality: check.criticality,
@@ -254,6 +266,7 @@ function CreateSqlCheckPage() {
           query,
           criticality: (raw.criticality as string) === "error" ? "error" : "warn",
           weight: 3,
+          targetTable: "",
         });
       }
       if (drafts.length === 0) {
@@ -360,7 +373,7 @@ function CreateSqlCheckPage() {
     setDryRunCheckId(check.id);
 
     const checkName = check.name.trim() || `dryrun_${Date.now()}`;
-    const tableFqn = `${SQL_CHECK_PREFIX}${checkName.replace(/\s+/g, "_").toLowerCase()}`;
+    const tableFqn = resolveTableFqn({ ...check, name: checkName });
     const checksPayload = [{
       name: checkName,
       criticality: check.criticality,
@@ -428,7 +441,7 @@ function CreateSqlCheckPage() {
     let failCount = 0;
 
     for (const check of checks) {
-      const tableFqn = `${SQL_CHECK_PREFIX}${check.name.trim().replace(/\s+/g, "_").toLowerCase()}`;
+      const tableFqn = resolveTableFqn(check);
       const checkPayload = [
         {
           name: check.name.trim(),
@@ -623,6 +636,11 @@ function CreateSqlCheckPage() {
                 </div>
               </div>
 
+              <TargetTableSection
+                check={check}
+                onUpdate={(val) => updateCheck(check.id, { targetTable: val })}
+              />
+
               <div className="space-y-1.5">
                 <Label htmlFor={`query-${check.id}`}>SQL query</Label>
                 <Textarea
@@ -780,6 +798,55 @@ function CreateSqlCheckPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+    </div>
+  );
+}
+
+function TargetTableSection({
+  check,
+  onUpdate,
+}: {
+  check: SqlCheckDraft;
+  onUpdate: (value: string) => void;
+}) {
+  const [assignToTable, setAssignToTable] = useState(!!check.targetTable);
+
+  useEffect(() => {
+    setAssignToTable(!!check.targetTable);
+  }, [check.targetTable]);
+
+  const handleToggle = (on: boolean) => {
+    setAssignToTable(on);
+    if (!on) onUpdate("");
+  };
+
+  return (
+    <div className="space-y-2 rounded-lg border border-dashed p-3 bg-muted/20">
+      <div className="flex items-center gap-3">
+        <Switch
+          id={`assign-table-${check.id}`}
+          checked={assignToTable}
+          onCheckedChange={handleToggle}
+        />
+        <div className="flex-1">
+          <Label htmlFor={`assign-table-${check.id}`} className="text-sm font-medium cursor-pointer">
+            Assign to a table
+          </Label>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            {assignToTable
+              ? "This rule will be grouped with the selected table's rules, making it available for that table's pipeline."
+              : "Saved as a standalone cross-table check by default."}
+          </p>
+        </div>
+      </div>
+      {assignToTable && (
+        <div className="pl-10">
+          <CatalogBrowser
+            value={check.targetTable}
+            onChange={onUpdate}
+          />
+        </div>
+      )}
     </div>
   );
 }

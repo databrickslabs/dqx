@@ -172,12 +172,15 @@ async def get_discovery_service(
 
 async def get_view_service(
     sql: Annotated[SqlExecutor, Depends(get_obo_sql_executor)],
+    sp_sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
 ) -> ViewService:
-    """Create a ViewService using the OBO-authenticated WorkspaceClient.
+    """Create a ViewService with split auth.
 
-    View creation uses the user's token so that table permissions are enforced.
+    View creation uses the user's OBO token so that table permissions are
+    enforced.  Schema DDL uses the SP executor so that users don't need
+    catalog-level CREATE SCHEMA privileges.
     """
-    return ViewService(sql=sql)
+    return ViewService(sql=sql, sp_sql=sp_sql)
 
 
 async def get_comments_service(

@@ -25,9 +25,11 @@ import {
   ChevronRight,
   Database,
   Trash2,
+  Download,
 } from "lucide-react";
 import { FadeIn } from "@/components/anim/FadeIn";
 import { toast } from "sonner";
+import yaml from "js-yaml";
 import {
   useListRules,
   type RuleCatalogEntryOut,
@@ -80,7 +82,7 @@ function ActiveRulesPage() {
   const [sourceFilter, setSourceFilter] = useState("all");
   const [expandedTables, setExpandedTables] = useState<Set<string>>(new Set());
 
-  const { canCreateRules, canApproveRules } = usePermissions();
+  const { canCreateRules, canApproveRules, canExportRules } = usePermissions();
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
 
   const { data: rulesResp, isLoading, error, refetch } = useListRules({ status: "approved" });
@@ -191,6 +193,40 @@ function ActiveRulesPage() {
     }
   };
 
+  const exportRulesAsYaml = (rules: RuleCatalogEntryOut[], filename: string) => {
+    const grouped = new Map<string, Record<string, unknown>[]>();
+    for (const rule of rules) {
+      const fqn = rule.table_fqn;
+      if (!grouped.has(fqn)) grouped.set(fqn, []);
+      grouped.get(fqn)!.push(...rule.checks);
+    }
+
+    const sections: string[] = [];
+    for (const [fqn, checks] of grouped) {
+      sections.push(`# ${fqn}\n${yaml.dump(checks, { lineWidth: -1 })}`);
+    }
+
+    const content = sections.join("\n");
+    const blob = new Blob([content], { type: "text/yaml;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success(`Exported ${rules.length} rule(s) as YAML`);
+  };
+
+  const handleExportAll = () => {
+    if (filteredRules.length === 0) return;
+    exportRulesAsYaml(filteredRules, "dqx-rules.yml");
+  };
+
+  const handleExportTable = (fqn: string, rules: RuleCatalogEntryOut[]) => {
+    const safeName = fqn.replace(/[^a-zA-Z0-9._-]/g, "_");
+    exportRulesAsYaml(rules, `${safeName}-rules.yml`);
+  };
+
   return (
     <div className="space-y-6">
       <div className="space-y-2">
@@ -202,12 +238,20 @@ function ActiveRulesPage() {
               Approved rules currently enforced on your tables.
             </p>
           </div>
-          {canCreateRules && (
-            <Button onClick={() => navigate({ to: "/rules/create" })} className="gap-2">
-              <Plus className="h-4 w-4" />
-              Create rules
-            </Button>
-          )}
+          <div className="flex items-center gap-2">
+            {canExportRules && filteredRules.length > 0 && (
+              <Button variant="outline" onClick={handleExportAll} className="gap-2">
+                <Download className="h-4 w-4" />
+                Export YAML
+              </Button>
+            )}
+            {canCreateRules && (
+              <Button onClick={() => navigate({ to: "/rules/create" })} className="gap-2">
+                <Plus className="h-4 w-4" />
+                Create rules
+              </Button>
+            )}
+          </div>
         </div>
       </div>
 
@@ -330,6 +374,8 @@ function ActiveRulesPage() {
                   canDelete={canApproveRules}
                   onDelete={requestDelete}
                   pendingDelete={pendingDelete}
+                  canExport={canExportRules}
+                  onExport={handleExportTable}
                 />
               )}
               {viewMode === "by-rule" && (
@@ -390,9 +436,11 @@ interface ByTableViewProps {
   canDelete: boolean;
   onDelete: (rule: RuleCatalogEntryOut) => void;
   pendingDelete: string | null;
+  canExport: boolean;
+  onExport: (fqn: string, rules: RuleCatalogEntryOut[]) => void;
 }
 
-function ByTableView({ groups, expandedTables, onToggle, onNavigate, canDelete, onDelete, pendingDelete }: ByTableViewProps) {
+function ByTableView({ groups, expandedTables, onToggle, onNavigate, canDelete, onDelete, pendingDelete, canExport, onExport }: ByTableViewProps) {
   return (
     <div className="space-y-2">
       {groups.map(({ fqn, displayName, rules }) => {
@@ -483,6 +531,17 @@ function ByTableView({ groups, expandedTables, onToggle, onNavigate, canDelete, 
                   </tbody>
                 </table>
                 <div className="border-t p-2 px-4 flex justify-end gap-1">
+                  {canExport && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 text-xs gap-1"
+                      onClick={() => onExport(fqn, rules)}
+                    >
+                      <Download className="h-3 w-3" />
+                      Export YAML
+                    </Button>
+                  )}
                   <Button
                     variant="ghost"
                     size="sm"

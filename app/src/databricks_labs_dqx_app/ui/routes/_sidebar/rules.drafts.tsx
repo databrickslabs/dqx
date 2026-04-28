@@ -31,6 +31,9 @@ import {
 } from "@/components/ui/select";
 import {
   AlertTriangle,
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
   ChevronDown,
   ChevronUp,
   ClipboardCheck,
@@ -171,12 +174,51 @@ function getCheckDetails(rule: RuleCatalogEntryOut): {
   };
 }
 
+type SortKey = "table" | "check" | "status" | "created_by" | "modified";
+type SortDir = "asc" | "desc";
+
+function SortableHeader({
+  label,
+  sortKey,
+  active,
+  direction,
+  onSort,
+}: {
+  label: string;
+  sortKey: SortKey;
+  active: boolean;
+  direction: SortDir;
+  onSort: (key: SortKey) => void;
+}) {
+  const Icon = active ? (direction === "asc" ? ArrowUp : ArrowDown) : ArrowUpDown;
+  return (
+    <button
+      className="flex items-center gap-1 hover:text-foreground transition-colors"
+      onClick={() => onSort(sortKey)}
+    >
+      {label}
+      <Icon className={`h-3 w-3 ${active ? "text-foreground" : "text-muted-foreground/50"}`} />
+    </button>
+  );
+}
+
 function DraftsPage() {
   const navigate = useNavigate();
   const [statusFilter, setStatusFilter] = useState("all");
   const [catalogFilter, setCatalogFilter] = useState("all");
   const [schemaFilter, setSchemaFilter] = useState("all");
   const [mySubmissionsOnly, setMySubmissionsOnly] = useState(false);
+  const [sort, setSort] = useState<{ key: SortKey; dir: SortDir }>({ key: "modified", dir: "desc" });
+  const sortKey = sort.key;
+  const sortDir = sort.dir;
+  const handleSort = useCallback((key: SortKey) => {
+    setSort((prev) => {
+      if (prev.key === key) {
+        return { key, dir: prev.dir === "asc" ? "desc" : "asc" };
+      }
+      return { key, dir: key === "modified" ? "desc" : "asc" };
+    });
+  }, []);
   const [expandedRules, setExpandedRules] = useState<Set<string>>(new Set());
   const toggleExpand = (key: string) =>
     setExpandedRules((prev) => {
@@ -269,7 +311,7 @@ function DraftsPage() {
   }, [allRules]);
 
   const rules = useMemo(() => {
-    return allRules.filter((rule) => {
+    const filtered = allRules.filter((rule) => {
       const isSqlCheck = rule.table_fqn.startsWith(SQL_CHECK_PREFIX);
       if (catalogFilter !== "all") {
         if (catalogFilter === CROSS_TABLE_CATALOG) {
@@ -290,7 +332,38 @@ function DraftsPage() {
       }
       return true;
     });
-  }, [allRules, catalogFilter, schemaFilter, mySubmissionsOnly, currentUserEmail]);
+
+    const statusOrder: Record<string, number> = {
+      pending_approval: 0,
+      draft: 1,
+      rejected: 2,
+    };
+    const dir = sortDir === "asc" ? 1 : -1;
+    return [...filtered].sort((a, b) => {
+      let cmp = 0;
+      switch (sortKey) {
+        case "table":
+          cmp = (a.display_name || a.table_fqn).localeCompare(b.display_name || b.table_fqn);
+          break;
+        case "check": {
+          const aCheck = describeCheck(a);
+          const bCheck = describeCheck(b);
+          cmp = aCheck.localeCompare(bCheck);
+          break;
+        }
+        case "status":
+          cmp = (statusOrder[a.status ?? ""] ?? 9) - (statusOrder[b.status ?? ""] ?? 9);
+          break;
+        case "created_by":
+          cmp = (a.updated_by ?? a.created_by ?? "").localeCompare(b.updated_by ?? b.created_by ?? "");
+          break;
+        case "modified":
+          cmp = (a.updated_at ?? a.created_at ?? "").localeCompare(b.updated_at ?? b.created_at ?? "");
+          break;
+      }
+      return cmp * dir;
+    });
+  }, [allRules, catalogFilter, schemaFilter, mySubmissionsOnly, currentUserEmail, sortKey, sortDir]);
 
   const availableSchemas = catalogFilter !== "all" ? schemasByCatalog[catalogFilter] || [] : [];
 
@@ -673,7 +746,7 @@ function DraftsPage() {
                           <XCircle className="h-3 w-3" /> Reject
                         </Button>
                       )}
-                      {selectedRules.some((r) => r.status === "pending_approval") && (canApproveRules || selectedRules.some((r) => (r.updated_by ?? r.created_by) === currentUserEmail)) && (
+                      {selectedRules.some((r) => r.status === "pending_approval" || r.status === "rejected") && (canApproveRules || selectedRules.some((r) => r.status === "pending_approval" && (r.updated_by ?? r.created_by) === currentUserEmail)) && (
                         <Button size="sm" variant="outline" className="gap-1 h-7 text-xs text-amber-600" onClick={handleBulkRevoke}>
                           <Undo2 className="h-3 w-3" /> Revoke
                         </Button>
@@ -701,11 +774,21 @@ function DraftsPage() {
                           aria-label="Select all"
                         />
                       </th>
-                      <th className="text-left p-3 font-medium whitespace-nowrap">Table</th>
-                      <th className="text-left p-3 font-medium whitespace-nowrap">Check</th>
-                      <th className="text-left p-3 font-medium whitespace-nowrap">Status</th>
-                      <th className="text-left p-3 font-medium whitespace-nowrap">Submitted by</th>
-                      <th className="text-left p-3 font-medium whitespace-nowrap">Modified</th>
+                      <th className="text-left p-3 font-medium whitespace-nowrap">
+                        <SortableHeader label="Table" sortKey="table" active={sortKey === "table"} direction={sortDir} onSort={handleSort} />
+                      </th>
+                      <th className="text-left p-3 font-medium whitespace-nowrap">
+                        <SortableHeader label="Check" sortKey="check" active={sortKey === "check"} direction={sortDir} onSort={handleSort} />
+                      </th>
+                      <th className="text-left p-3 font-medium whitespace-nowrap">
+                        <SortableHeader label="Status" sortKey="status" active={sortKey === "status"} direction={sortDir} onSort={handleSort} />
+                      </th>
+                      <th className="text-left p-3 font-medium whitespace-nowrap">
+                        <SortableHeader label="Created by" sortKey="created_by" active={sortKey === "created_by"} direction={sortDir} onSort={handleSort} />
+                      </th>
+                      <th className="text-left p-3 font-medium whitespace-nowrap">
+                        <SortableHeader label="Modified" sortKey="modified" active={sortKey === "modified"} direction={sortDir} onSort={handleSort} />
+                      </th>
                       <th className="text-right p-3 font-medium whitespace-nowrap sticky right-0 bg-muted/50">Actions</th>
                     </tr>
                   </thead>
@@ -846,6 +929,19 @@ function DraftsPage() {
                                 <Undo2 className="h-3 w-3" />
                               </Button>
                             )}
+                            {rule.status === "rejected" && canApproveRules && rule.rule_id && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={busy}
+                                onClick={() => handleRevoke(rule)}
+                                className="gap-1 h-7 text-xs text-amber-600"
+                                title="Move rejected rule back to draft"
+                              >
+                                <Undo2 className="h-3 w-3" />
+                                {busy ? "..." : "Unreject"}
+                              </Button>
+                            )}
                             {canEditRules && rule.rule_id && (
                               <Button
                                 size="sm"
@@ -894,7 +990,7 @@ function DraftsPage() {
                                 </div>
                               )}
                               <div className="flex items-center gap-2 pt-1">
-                                {rule.status === "draft" && canEditRules && rule.rule_id && (
+                                {(rule.status === "draft" || rule.status === "rejected") && canEditRules && rule.rule_id && (
                                   <Button
                                     size="sm"
                                     variant="outline"

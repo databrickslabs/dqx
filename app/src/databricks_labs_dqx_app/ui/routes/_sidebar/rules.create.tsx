@@ -31,7 +31,7 @@ const OPTIONS = [
     to: "/rules/import",
     icon: Upload,
     title: "Import rules",
-    description: "Import rules from a YAML/JSON file or an existing Delta table.",
+    description: "Import rules from a YAML file.",
   },
 ] as const;
 

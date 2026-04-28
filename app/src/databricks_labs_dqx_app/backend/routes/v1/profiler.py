@@ -273,6 +273,15 @@ def get_profile_run_status(
                 status=status.state,
                 error_message=status.message,
             )
+        elif is_terminal and status.result_state and status.result_state == "CANCELED":
+            update_run_status(
+                sql,
+                app_conf,
+                _PROFILER_TABLE,
+                run_id,
+                status="CANCELED",
+                error_message=status.message or "Canceled externally",
+            )
         elif is_terminal and status.result_state and status.result_state != "SUCCESS":
             update_run_status(
                 sql,

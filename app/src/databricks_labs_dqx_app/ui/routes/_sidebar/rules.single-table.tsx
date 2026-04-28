@@ -140,7 +140,7 @@ function checkToDict(c: CheckDraft): Record<string, unknown> {
 
 function getCheckColumns(c: CheckDraft): string[] {
   const colName = c.args["col_name"];
-  if (!colName) return [];
+  if (!colName || colName.trim() === "*") return [];
   if (c.fn === "is_unique") {
     return colName.split(",").map((s) => s.trim()).filter(Boolean);
   }

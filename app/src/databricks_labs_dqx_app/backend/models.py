@@ -265,16 +265,6 @@ class ValidateChecksOut(BaseModel):
     errors: list[str] = Field(default_factory=list, description="Validation error messages")
 
 
-class ImportFromTableIn(BaseModel):
-    source_table_fqn: str = Field(description="Fully qualified name of the Delta table containing rules to import")
-
-
-class ImportFromTableOut(BaseModel):
-    imported: int = Field(default=0, description="Number of rule sets successfully imported")
-    skipped: int = Field(default=0, description="Number of rule sets skipped due to validation errors")
-    errors: list[dict[str, str]] = Field(default_factory=list, description="Per-table errors: [{table_fqn, error}]")
-
-
 # ---------------------------------------------------------------------------
 # Comments models
 # ---------------------------------------------------------------------------

@@ -5,16 +5,6 @@ Web application for the DQX framework — a UI for authoring and managing data q
 - **[Local Development →](DEVELOPMENT.md)** — set up your environment, run dev servers, test changes
 - **[Deployment →](DEPLOYMENT.md)** — deploy to Databricks Apps via DABs
 
-## Development Tools
-
-| Tool | Purpose |
-|---|---|
-| **uv** | Python package manager and virtual environment |
-| **yarn** | JavaScript/TypeScript package manager |
-| **apx** | Databricks App eXtension — orchestrates dev servers (backend, frontend, OpenAPI watcher). Dev-only; not used in production. |
-
-> Lock files (`yarn.lock` and `uv.lock`) must be committed to ensure reproducible builds.
-
 ## Architecture
 
 - **Backend**: FastAPI (`src/databricks_labs_dqx_app/backend/`) — REST API under `/api`, no Spark in the app process
@@ -41,23 +31,13 @@ Operations the app owns and manages run as the app's own service principal:
 - **Rules catalog CRUD** (reading and writing the rules Delta table)
 - **Schema migrations** (creating and evolving Delta tables)
 - **App settings** (reading and writing settings from the Delta table)
+- **Wheel upload** — on startup the app uploads DQX wheels to the UC volume and patches the task-runner job environment
 
 This ensures:
-- ✅ Users only see data they have permission to access
-- ✅ No elevated privileges required for browsing or profiling
-- ✅ Internal app state managed consistently under the SP identity
-- ✅ Audit logs correctly attribute actions to individual users
-
-#### Wheel upload identity
-
-On startup the app uploads DQX wheels to the UC volume (`DQX_WHEELS_VOLUME`) and patches the task-runner job environment. The identity used depends on where the app runs:
-
-| Environment | Identity | How |
-|---|---|---|
-| **Databricks Apps** | App service principal | Platform injects M2M OAuth env vars automatically |
-| **Local dev** | Your user account | SDK default auth chain (profile / PAT / `databricks auth login`) |
-
-When running locally your user account needs `WRITE_VOLUME` on `<catalog>.dqx_app.wheels`. In production this is handled automatically by DABs.
+- Users only see data they have permission to access
+- No elevated privileges required for browsing or profiling
+- Internal app state managed consistently under the SP identity
+- Audit logs correctly attribute actions to individual users
 
 ### Async Job Pattern (Profiler & Dry-Run)
 
@@ -82,14 +62,6 @@ User request
 ```
 
 `DQX_JOB_ID` identifies which job to submit runs to (injected by DABs in production; set manually in `.env` for local dev).
-
-### Build Process
-
-`uv run apx build` performs three steps:
-
-1. **OpenAPI schema generation** — extracts the API contract from FastAPI; orval generates `ui/lib/api.ts` (TypeScript types + React Query hooks)
-2. **UI compilation** — Vite compiles React/TypeScript into optimised assets in `__dist__/`
-3. **Python wheel packaging** — bundles backend + compiled frontend into a single wheel at `app/.build/databricks_labs_dqx_app-*-py3-none-any.whl`
 
 ### Routing
 

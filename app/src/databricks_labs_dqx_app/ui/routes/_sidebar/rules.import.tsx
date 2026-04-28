@@ -10,33 +10,23 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from "@/components/ui/tabs";
-import {
   Upload,
-  FileText,
-  Database,
   Loader2,
   CheckCircle2,
   XCircle,
   AlertTriangle,
+  Save,
+  Send,
 } from "lucide-react";
 import { toast } from "sonner";
 import yaml from "js-yaml";
-import { type SaveRulesIn, saveRules } from "@/lib/api";
-import {
-  useValidateChecks,
-  useImportRulesFromTable,
-} from "@/lib/api-custom";
+import { type SaveRulesIn, saveRules, submitRuleForApproval } from "@/lib/api";
+import { useValidateChecks } from "@/lib/api-custom";
 import { CatalogBrowser } from "@/components/CatalogBrowser";
 
 interface ImportSearchParams {
@@ -65,40 +55,21 @@ function ImportRulesPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Import rules</h1>
           <p className="text-muted-foreground">
-            Import data quality rules from a YAML file or a Delta table.
+            Import data quality rules from a YAML file.
           </p>
         </div>
       </div>
 
-      <Tabs defaultValue="yaml" className="space-y-4">
-        <TabsList>
-          <TabsTrigger value="yaml" className="gap-2">
-            <FileText className="h-4 w-4" />
-            YAML File
-          </TabsTrigger>
-          <TabsTrigger value="delta" className="gap-2">
-            <Database className="h-4 w-4" />
-            Delta Table
-          </TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="yaml">
-          <YamlImportTab onDone={() => navigate({ to: "/rules/drafts" })} />
-        </TabsContent>
-
-        <TabsContent value="delta">
-          <DeltaImportTab onDone={() => navigate({ to: "/rules/drafts" })} />
-        </TabsContent>
-      </Tabs>
+      <YamlImportCard onDone={() => navigate({ to: "/rules/drafts" })} />
     </div>
   );
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// YAML Import Tab
+// YAML Import
 // ──────────────────────────────────────────────────────────────────────────────
 
-function YamlImportTab({ onDone }: { onDone: () => void }) {
+function YamlImportCard({ onDone }: { onDone: () => void }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [yamlText, setYamlText] = useState("");
   const [parsedChecks, setParsedChecks] = useState<Record<string, unknown>[] | null>(null);
@@ -125,15 +96,27 @@ function YamlImportTab({ onDone }: { onDone: () => void }) {
     setParsedChecks(null);
     setParseError(null);
     setValidationResult(null);
+
+    const trimmed = text.trim();
+    if (!trimmed || trimmed === "-") return;
+
     try {
       const parsed = yaml.load(text);
+      if (parsed == null) return;
       if (!Array.isArray(parsed)) {
-        setParseError("YAML must be a list of check definitions (e.g. [{check: {function: ..., arguments: ...}, criticality: ...}])");
+        setParseError(
+          "YAML must be a list of check definitions, for example:\n" +
+          "- criticality: error\n" +
+          "  check:\n" +
+          "    function: is_not_null\n" +
+          "    arguments:\n" +
+          "      column: id",
+        );
         return;
       }
       setParsedChecks(parsed as Record<string, unknown>[]);
-    } catch (err) {
-      setParseError(`YAML parse error: ${(err as Error).message}`);
+    } catch {
+      // Incomplete YAML while the user is still typing — suppress until they stop
     }
   };
 
@@ -152,17 +135,48 @@ function YamlImportTab({ onDone }: { onDone: () => void }) {
     }
   };
 
-  const handleImport = async () => {
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleSaveAsDrafts = async () => {
     if (!parsedChecks || !targetTable) return;
     setIsSaving(true);
     try {
       await saveRules({ table_fqn: targetTable, checks: parsedChecks, source: "imported" } as SaveRulesIn);
-      toast.success(`Imported ${parsedChecks.length} check(s) for ${targetTable.split(".").pop()}`);
+      toast.success(`Saved ${parsedChecks.length} check(s) as drafts`);
       onDone();
     } catch {
-      toast.error("Failed to import rules");
+      toast.error("Failed to save rules");
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handleSubmitForReview = async () => {
+    if (!parsedChecks || !targetTable) return;
+    setIsSubmitting(true);
+    try {
+      const resp = await saveRules({ table_fqn: targetTable, checks: parsedChecks, source: "imported" } as SaveRulesIn);
+      const savedRules = resp.data;
+
+      let submitted = 0;
+      let failed = 0;
+      for (const rule of savedRules) {
+        if (!rule.rule_id) continue;
+        try {
+          await submitRuleForApproval(rule.rule_id, {});
+          submitted++;
+        } catch {
+          failed++;
+        }
+      }
+
+      if (submitted > 0) toast.success(`Submitted ${submitted} rule(s) for review`);
+      if (failed > 0) toast.error(`${failed} rule(s) failed to submit — saved as drafts instead`);
+      onDone();
+    } catch {
+      toast.error("Failed to save rules");
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -225,7 +239,7 @@ function YamlImportTab({ onDone }: { onDone: () => void }) {
         {parseError && (
           <div className="flex items-start gap-2 p-3 rounded-lg bg-destructive/10 text-destructive text-sm">
             <XCircle className="h-4 w-4 mt-0.5 shrink-0" />
-            {parseError}
+            <pre className="whitespace-pre-wrap font-mono text-xs">{parseError}</pre>
           </div>
         )}
 
@@ -318,137 +332,36 @@ function YamlImportTab({ onDone }: { onDone: () => void }) {
             )}
             Validate
           </Button>
-          <Button
-            onClick={handleImport}
-            disabled={!parsedChecks || !targetTable || isSaving}
-            className="gap-2"
-            size="sm"
-          >
-            {isSaving ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Upload className="h-4 w-4" />
-            )}
-            Import {parsedChecks ? `${parsedChecks.length} check${parsedChecks.length !== 1 ? "s" : ""}` : ""}
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Delta Table Import Tab
-// ──────────────────────────────────────────────────────────────────────────────
-
-function DeltaImportTab({ onDone }: { onDone: () => void }) {
-  const [sourceTable, setSourceTable] = useState("");
-  const importMutation = useImportRulesFromTable();
-
-  const handleImport = async () => {
-    if (!sourceTable) {
-      toast.error("Enter the source Delta table FQN");
-      return;
-    }
-    if (sourceTable.split(".").length !== 3) {
-      toast.error("Table FQN must be 3-part: catalog.schema.table");
-      return;
-    }
-    try {
-      const resp = await importMutation.mutateAsync({ data: { source_table_fqn: sourceTable } });
-      const { imported, skipped, errors } = resp.data;
-      if (imported > 0) {
-        toast.success(`Imported ${imported} rule set${imported !== 1 ? "s" : ""}${skipped > 0 ? `, ${skipped} skipped` : ""}`);
-      }
-      if (skipped > 0 && imported === 0) {
-        toast.error(`All ${skipped} rule sets were skipped due to errors`);
-      }
-      if (errors.length > 0) {
-        for (const err of errors.slice(0, 3)) {
-          toast.error(`${err.table_fqn}: ${err.error}`);
-        }
-      }
-      if (imported > 0) onDone();
-    } catch (err) {
-      const axErr = err as { response?: { data?: { detail?: string } } };
-      toast.error(axErr?.response?.data?.detail ?? "Failed to import from Delta table");
-    }
-  };
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-base">
-          <Database className="h-4 w-4" />
-          Import from Delta Table
-        </CardTitle>
-        <CardDescription>
-          Import rules from a Delta table that follows the DQX rules schema
-          (<code className="text-xs bg-muted px-1 rounded">table_fqn STRING, checks STRING</code>).
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-6">
-        <div className="space-y-2">
-          <Label>Source table FQN</Label>
-          <Input
-            value={sourceTable}
-            onChange={(e) => setSourceTable(e.target.value)}
-            placeholder="catalog.schema.rules_table"
-            className="font-mono text-sm max-w-md"
-          />
-          <p className="text-xs text-muted-foreground">
-            The table must have at least <code className="bg-muted px-1 rounded">table_fqn</code> and{" "}
-            <code className="bg-muted px-1 rounded">checks</code> columns.
-            Each row's checks will be validated before import.
-          </p>
-        </div>
-
-        {/* Import result */}
-        {importMutation.isSuccess && (
-          <div className="p-4 rounded-lg border space-y-2">
-            <div className="flex items-center gap-2 text-sm font-medium">
-              <CheckCircle2 className="h-4 w-4 text-green-600" />
-              Import complete
-            </div>
-            <div className="grid grid-cols-3 gap-4 text-sm">
-              <div>
-                <span className="text-muted-foreground">Imported:</span>{" "}
-                <span className="font-medium text-green-600">{importMutation.data.data.imported}</span>
-              </div>
-              <div>
-                <span className="text-muted-foreground">Skipped:</span>{" "}
-                <span className="font-medium text-amber-600">{importMutation.data.data.skipped}</span>
-              </div>
-              <div>
-                <span className="text-muted-foreground">Errors:</span>{" "}
-                <span className="font-medium text-red-600">{importMutation.data.data.errors.length}</span>
-              </div>
-            </div>
-            {importMutation.data.data.errors.length > 0 && (
-              <div className="mt-2 space-y-1 max-h-[150px] overflow-auto">
-                {importMutation.data.data.errors.map((err, i) => (
-                  <div key={i} className="text-xs text-destructive flex gap-1">
-                    <XCircle className="h-3 w-3 mt-0.5 shrink-0" />
-                    <span><span className="font-mono">{err.table_fqn}</span>: {err.error}</span>
-                  </div>
-                ))}
-              </div>
-            )}
+          <div className="ml-auto flex items-center gap-2">
+            <Button
+              variant="outline"
+              onClick={handleSaveAsDrafts}
+              disabled={!parsedChecks || !targetTable || isSaving || isSubmitting}
+              className="gap-2"
+              size="sm"
+            >
+              {isSaving ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Save className="h-4 w-4" />
+              )}
+              Save as drafts
+            </Button>
+            <Button
+              onClick={handleSubmitForReview}
+              disabled={!parsedChecks || !targetTable || isSaving || isSubmitting}
+              className="gap-2"
+              size="sm"
+            >
+              {isSubmitting ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Send className="h-4 w-4" />
+              )}
+              Submit for review
+            </Button>
           </div>
-        )}
-
-        <Button
-          onClick={handleImport}
-          disabled={!sourceTable || importMutation.isPending}
-          className="gap-2"
-        >
-          {importMutation.isPending ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Upload className="h-4 w-4" />
-          )}
-          {importMutation.isPending ? "Importing..." : "Import rules"}
-        </Button>
+        </div>
       </CardContent>
     </Card>
   );

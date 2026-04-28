@@ -1,6 +1,6 @@
 import { createFileRoute, Link, Navigate } from "@tanstack/react-router";
 import { formatDateTime as formatDate } from "@/lib/format-utils";
-import { useState, useCallback, useEffect, useRef, useMemo } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo, type ReactNode } from "react";
 import { usePermissions } from "@/hooks/use-permissions";
 import { PageBreadcrumb } from "@/components/apx/PageBreadcrumb";
 import {
@@ -13,6 +13,13 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -25,11 +32,16 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
   BarChart3,
   Play,
   Loader2,
   CheckCircle2,
   AlertTriangle,
+  ChevronLeft,
+  ChevronRight as ChevronRightIcon,
   Clock,
   XCircle,
   History,
@@ -187,6 +199,53 @@ function parseTableFqn(fqn: string): { catalog: string; schema: string; table: s
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
+// Sortable column header
+// ──────────────────────────────────────────────────────────────────────────────
+
+type SortDir = "asc" | "desc";
+
+function SortableHeader<K extends string>({
+  label,
+  sortKey,
+  active,
+  direction,
+  onSort,
+  children,
+  align = "left",
+}: {
+  label: string;
+  sortKey: K;
+  active: boolean;
+  direction: SortDir;
+  onSort: (key: K) => void;
+  children?: ReactNode;
+  align?: "left" | "right";
+}) {
+  const Icon = active ? (direction === "asc" ? ArrowUp : ArrowDown) : ArrowUpDown;
+  return (
+    <button
+      className={`flex items-center gap-1 hover:text-foreground transition-colors ${align === "right" ? "ml-auto" : ""}`}
+      onClick={() => onSort(sortKey)}
+    >
+      {children}
+      {label}
+      <Icon className={`h-3 w-3 ${active ? "text-foreground" : "text-muted-foreground/50"}`} />
+    </button>
+  );
+}
+
+function useSort<K extends string>(defaultKey: K, defaultDir: SortDir = "desc") {
+  const [sort, setSort] = useState<{ key: K; dir: SortDir }>({ key: defaultKey, dir: defaultDir });
+  const handleSort = useCallback((key: K) => {
+    setSort((prev) => {
+      if (prev.key === key) return { key, dir: prev.dir === "asc" ? "desc" : "asc" };
+      return { key, dir: key === ("started" as string) || key === ("run_date" as string) ? "desc" : "asc" };
+    });
+  }, []);
+  return { sortKey: sort.key, sortDir: sort.dir, handleSort };
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 // Main Page Component
 // ──────────────────────────────────────────────────────────────────────────────
 
@@ -227,15 +286,111 @@ function ProfilerPage() {
   const { data: currentUser } = useCurrentUserSuspense(selector<UserType>());
   const currentUserEmail = currentUser?.user_name ?? "";
   const [myRunsOnly, setMyRunsOnly] = useState(false);
+  const [hCatalogFilter, setHCatalogFilter] = useState("all");
+  const [hSchemaFilter, setHSchemaFilter] = useState("all");
+  const [hTableFilter, setHTableFilter] = useState("all");
 
   const submitMutation = useSubmitProfileRun();
   const batchSubmitMutation = useSubmitBatchProfileRun();
   const { data: runsResp, isLoading: runsLoading, refetch: refetchRuns } = useListProfileRuns();
   const allRuns: ProfileRunSummaryOut[] = runsResp?.data ?? [];
+
+  const { hCatalogs, hSchemasByCatalog, hTablesByCatalogSchema } = useMemo(() => {
+    const catalogSet = new Set<string>();
+    const schemaMap = new Map<string, Set<string>>();
+    const tableMap = new Map<string, Set<string>>();
+    for (const run of allRuns) {
+      const parts = parseTableFqn(run.source_table_fqn);
+      if (!parts) continue;
+      catalogSet.add(parts.catalog);
+      if (!schemaMap.has(parts.catalog)) schemaMap.set(parts.catalog, new Set());
+      schemaMap.get(parts.catalog)!.add(parts.schema);
+      const key = `${parts.catalog}.${parts.schema}`;
+      if (!tableMap.has(key)) tableMap.set(key, new Set());
+      tableMap.get(key)!.add(parts.table);
+    }
+    return {
+      hCatalogs: Array.from(catalogSet).sort(),
+      hSchemasByCatalog: Object.fromEntries(
+        Array.from(schemaMap.entries()).map(([c, s]) => [c, Array.from(s).sort()]),
+      ),
+      hTablesByCatalogSchema: Object.fromEntries(
+        Array.from(tableMap.entries()).map(([k, t]) => [k, Array.from(t).sort()]),
+      ),
+    };
+  }, [allRuns]);
+
+  const hAvailableSchemas = hCatalogFilter !== "all" ? hSchemasByCatalog[hCatalogFilter] || [] : [];
+  const hAvailableTables = (hCatalogFilter !== "all" && hSchemaFilter !== "all")
+    ? hTablesByCatalogSchema[`${hCatalogFilter}.${hSchemaFilter}`] || []
+    : [];
+
+  const handleHCatalogChange = (value: string) => {
+    setHCatalogFilter(value);
+    setHSchemaFilter("all");
+    setHTableFilter("all");
+  };
+  const handleHSchemaChange = (value: string) => {
+    setHSchemaFilter(value);
+    setHTableFilter("all");
+  };
+
+  const hasHistoryFilters = hCatalogFilter !== "all" || hSchemaFilter !== "all" || hTableFilter !== "all" || myRunsOnly;
+
+  type ProfileSortKey = "table" | "status" | "rows" | "duration" | "started" | "by";
+  const { sortKey: pSortKey, sortDir: pSortDir, handleSort: handleProfileSort } = useSort<ProfileSortKey>("started");
+
   const runs = useMemo(() => {
-    if (!myRunsOnly || !currentUserEmail) return allRuns;
-    return allRuns.filter((r) => r.requesting_user === currentUserEmail);
-  }, [allRuns, myRunsOnly, currentUserEmail]);
+    const filtered = allRuns.filter((r) => {
+      if (myRunsOnly && currentUserEmail && r.requesting_user !== currentUserEmail) return false;
+      const parts = parseTableFqn(r.source_table_fqn);
+      if (hCatalogFilter !== "all") {
+        if (!parts || parts.catalog !== hCatalogFilter) return false;
+      }
+      if (hSchemaFilter !== "all") {
+        if (!parts || parts.schema !== hSchemaFilter) return false;
+      }
+      if (hTableFilter !== "all") {
+        if (!parts || parts.table !== hTableFilter) return false;
+      }
+      return true;
+    });
+    const dir = pSortDir === "asc" ? 1 : -1;
+    return [...filtered].sort((a, b) => {
+      let cmp = 0;
+      switch (pSortKey) {
+        case "table":
+          cmp = (a.source_table_fqn ?? "").localeCompare(b.source_table_fqn ?? "");
+          break;
+        case "status":
+          cmp = (a.status ?? "").localeCompare(b.status ?? "");
+          break;
+        case "rows":
+          cmp = (a.rows_profiled ?? 0) - (b.rows_profiled ?? 0);
+          break;
+        case "duration":
+          cmp = (a.duration_seconds ?? 0) - (b.duration_seconds ?? 0);
+          break;
+        case "started":
+          cmp = (a.created_at ?? "").localeCompare(b.created_at ?? "");
+          break;
+        case "by":
+          cmp = (a.requesting_user ?? "").localeCompare(b.requesting_user ?? "");
+          break;
+      }
+      return cmp * dir;
+    });
+  }, [allRuns, myRunsOnly, currentUserEmail, hCatalogFilter, hSchemaFilter, hTableFilter, pSortKey, pSortDir]);
+
+  const HISTORY_PAGE_SIZE = 25;
+  const [historyPage, setHistoryPage] = useState(1);
+  const historyTotalPages = Math.max(1, Math.ceil(runs.length / HISTORY_PAGE_SIZE));
+  const pagedRuns = useMemo(
+    () => runs.slice((historyPage - 1) * HISTORY_PAGE_SIZE, historyPage * HISTORY_PAGE_SIZE),
+    [runs, historyPage],
+  );
+
+  useEffect(() => { setHistoryPage(1); }, [myRunsOnly, hCatalogFilter, hSchemaFilter, hTableFilter, pSortKey, pSortDir]);
 
   const { data: columnsResp } = useGetTableColumns(
     tableParts?.catalog ?? "",
@@ -951,7 +1106,7 @@ function ProfilerPage() {
 
       {/* Past runs */}
       <Card>
-        <CardHeader>
+        <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
             <div>
               <CardTitle className="flex items-center gap-2">
@@ -962,7 +1117,7 @@ function ProfilerPage() {
                 {runsLoading
                   ? "Loading..."
                   : `${runs.length} run${runs.length !== 1 ? "s" : ""}${
-                      myRunsOnly && runs.length !== allRuns.length ? ` (filtered from ${allRuns.length})` : ""
+                      runs.length !== allRuns.length ? ` (filtered from ${allRuns.length})` : ""
                     }`}
               </CardDescription>
             </div>
@@ -982,6 +1137,60 @@ function ProfilerPage() {
               </Button>
             </div>
           </div>
+
+          <div className="flex items-center gap-2 flex-wrap pt-2">
+            <Select value={hCatalogFilter} onValueChange={handleHCatalogChange}>
+              <SelectTrigger className="w-[160px] h-8 text-xs">
+                <SelectValue placeholder="All Catalogs" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Catalogs</SelectItem>
+                {hCatalogs.map((cat) => (
+                  <SelectItem key={cat} value={cat}>{cat}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            <Select value={hSchemaFilter} onValueChange={handleHSchemaChange} disabled={hCatalogFilter === "all"}>
+              <SelectTrigger className="w-[160px] h-8 text-xs">
+                <SelectValue placeholder="All Schemas" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Schemas</SelectItem>
+                {hAvailableSchemas.map((sch) => (
+                  <SelectItem key={sch} value={sch}>{sch}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            <Select value={hTableFilter} onValueChange={setHTableFilter} disabled={hSchemaFilter === "all"}>
+              <SelectTrigger className="w-[180px] h-8 text-xs">
+                <SelectValue placeholder="All Tables" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Tables</SelectItem>
+                {hAvailableTables.map((tbl) => (
+                  <SelectItem key={tbl} value={tbl}>{tbl}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            {hasHistoryFilters && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 text-xs"
+                onClick={() => {
+                  setHCatalogFilter("all");
+                  setHSchemaFilter("all");
+                  setHTableFilter("all");
+                  setMyRunsOnly(false);
+                }}
+              >
+                Clear filters
+              </Button>
+            )}
+          </div>
         </CardHeader>
         <CardContent>
           {runsLoading && (
@@ -999,24 +1208,36 @@ function ProfilerPage() {
           )}
 
           {!runsLoading && runs.length > 0 && (
+            <>
             <div className="border rounded-lg overflow-hidden">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b bg-muted/50">
-                    <th className="text-left p-3 font-medium">Table</th>
-                    <th className="text-left p-3 font-medium">Status</th>
-                    <th className="text-left p-3 font-medium">Rows</th>
-                    <th className="text-left p-3 font-medium">Duration</th>
                     <th className="text-left p-3 font-medium">
-                      <Clock className="h-3.5 w-3.5 inline mr-1" />
-                      Started
+                      <SortableHeader label="Table" sortKey="table" active={pSortKey === "table"} direction={pSortDir} onSort={handleProfileSort} />
                     </th>
-                    <th className="text-left p-3 font-medium">By</th>
+                    <th className="text-left p-3 font-medium">
+                      <SortableHeader label="Status" sortKey="status" active={pSortKey === "status"} direction={pSortDir} onSort={handleProfileSort} />
+                    </th>
+                    <th className="text-left p-3 font-medium">
+                      <SortableHeader label="Rows" sortKey="rows" active={pSortKey === "rows"} direction={pSortDir} onSort={handleProfileSort} />
+                    </th>
+                    <th className="text-left p-3 font-medium">
+                      <SortableHeader label="Duration" sortKey="duration" active={pSortKey === "duration"} direction={pSortDir} onSort={handleProfileSort} />
+                    </th>
+                    <th className="text-left p-3 font-medium">
+                      <SortableHeader label="Started" sortKey="started" active={pSortKey === "started"} direction={pSortDir} onSort={handleProfileSort}>
+                        <Clock className="h-3.5 w-3.5" />
+                      </SortableHeader>
+                    </th>
+                    <th className="text-left p-3 font-medium">
+                      <SortableHeader label="By" sortKey="by" active={pSortKey === "by"} direction={pSortDir} onSort={handleProfileSort} />
+                    </th>
                     <th className="p-3"></th>
                   </tr>
                 </thead>
                 <tbody>
-                  {runs.map((run) => (
+                  {pagedRuns.map((run) => (
                     <tr
                       key={run.run_id}
                       className="border-b last:border-b-0 hover:bg-muted/30 transition-colors"
@@ -1064,6 +1285,57 @@ function ProfilerPage() {
                 </tbody>
               </table>
             </div>
+
+            {historyTotalPages > 1 && (
+              <div className="flex items-center justify-between pt-3">
+                <p className="text-xs text-muted-foreground">
+                  Showing {(historyPage - 1) * HISTORY_PAGE_SIZE + 1}–{Math.min(historyPage * HISTORY_PAGE_SIZE, runs.length)} of {runs.length}
+                </p>
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8 w-8 p-0"
+                    disabled={historyPage <= 1}
+                    onClick={() => setHistoryPage((p) => p - 1)}
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </Button>
+                  {Array.from({ length: historyTotalPages }, (_, i) => i + 1)
+                    .filter((p) => p === 1 || p === historyTotalPages || Math.abs(p - historyPage) <= 2)
+                    .reduce<(number | "...")[]>((acc, p, i, arr) => {
+                      if (i > 0 && p - arr[i - 1] > 1) acc.push("...");
+                      acc.push(p);
+                      return acc;
+                    }, [])
+                    .map((p, i) =>
+                      p === "..." ? (
+                        <span key={`ellipsis-${i}`} className="px-1 text-xs text-muted-foreground">...</span>
+                      ) : (
+                        <Button
+                          key={p}
+                          variant={p === historyPage ? "default" : "outline"}
+                          size="sm"
+                          className="h-8 w-8 p-0 text-xs"
+                          onClick={() => setHistoryPage(p)}
+                        >
+                          {p}
+                        </Button>
+                      ),
+                    )}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8 w-8 p-0"
+                    disabled={historyPage >= historyTotalPages}
+                    onClick={() => setHistoryPage((p) => p + 1)}
+                  >
+                    <ChevronRightIcon className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            )}
+            </>
           )}
         </CardContent>
       </Card>

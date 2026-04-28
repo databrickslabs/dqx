@@ -8,11 +8,9 @@
 - **Databricks CLI** — `pip install databricks-cli`
 - Access to a Databricks workspace
 
-## apx — the app dev toolchain
+## Command Reference
 
-`apx` is the project's development CLI, installed as part of the app's Python dependencies. It wraps the full build pipeline (OpenAPI generation, React/TypeScript compilation, wheel packaging) and manages the local dev servers (FastAPI backend, Vite HMR, OpenAPI watcher) as background processes.
-
-Every `uv run apx` command below has a root-level `make` equivalent that also handles environment setup (build constraints, `UV_BUILD_CONSTRAINT`). **Prefer `make` from the project root** — use `uv run apx` directly only when working inside the `app/` directory.
+`apx` is the project's development CLI, installed as part of the app's Python dependencies. Every `uv run apx` command has a root-level `make` equivalent that also handles environment setup. **Prefer `make` from the project root.**
 
 | `make` (from root) | `apx` equivalent (from `app/`) | What it does |
 |---|---|---|
@@ -24,6 +22,8 @@ Every `uv run apx` command below has a root-level `make` equivalent that also ha
 | `make fmt` | — | Format Python (run from root before committing) |
 | `make test` | — | Unit tests |
 | `make integration` | — | Integration tests (requires live workspace) |
+
+> Lock files (`yarn.lock` and `uv.lock`) must be committed to ensure reproducible builds.
 
 ## 1. Configure Authentication
 
@@ -55,17 +55,15 @@ make app-install   # JS dependencies (yarn)
 cd app && uv sync  # Python dependencies
 ```
 
-Or from the `app/` directory directly:
+Or from the `app/` directory:
 ```bash
 uv sync
 yarn install --frozen-lockfile
 ```
 
-> **Lock files**: `yarn.lock` and `uv.lock` must be committed — they ensure reproducible builds.
-
 ## 3. Build
 
-The project requires a build step because the React frontend must be compiled before the backend can serve it.
+The React frontend must be compiled before the backend can serve it.
 
 From the **project root**:
 ```bash
@@ -104,8 +102,7 @@ Access the app at:
 uv run apx dev logs          # view all logs
 uv run apx dev logs -f       # stream logs in real time
 uv run apx dev status        # check server status
-make app-stop-dev            # stop all servers (from root)
-uv run apx dev stop          # stop all servers (from app/)
+make app-stop-dev            # stop all servers
 ```
 
 ## Development Workflow
@@ -124,17 +121,12 @@ uv run apx dev stop          # stop all servers (from app/)
 ## Code Quality
 
 ```bash
-# Type-check and lint (TypeScript + Python)
-make app-check        # from project root
-uv run apx dev check  # from app/ directory
-
-# Format and lint Python
-make fmt              # from project root (run before every commit)
+make app-check   # TypeScript + Python type-check and lint
+make fmt          # format Python (run before every commit)
 ```
 
 ## Testing
 
-Run from the **project root**:
 ```bash
 make test          # unit tests
 make integration   # integration tests (requires live workspace)
@@ -142,25 +134,12 @@ make integration   # integration tests (requires live workspace)
 
 ## Permissions
 
-### Wheel upload
-
-On startup the app uploads DQX wheels to `DQX_WHEELS_VOLUME` and patches the task-runner job environment. Locally this runs as your personal user account (SDK default auth); on Databricks Apps it runs as the app's service principal.
-
-| Environment | Identity | How |
-|---|---|---|
-| Local dev | Your user account | SDK default auth chain (profile / PAT / `databricks auth login`) |
-| Databricks Apps | App service principal | Platform injects M2M OAuth env vars automatically |
+The profiler creates a temporary view using your OBO token and submits a Databricks Job as the service principal. You need `USE CATALOG` + `USE SCHEMA` + `SELECT` on the tables you want to profile, plus `DQX_JOB_ID` set to a deployed task-runner job. See [README.md](README.md) for the full authentication model.
 
 If the wheel upload fails locally with a `403`, grant your user write access:
 ```bash
 databricks volumes grant <catalog>.dqx_app.wheels WRITE_VOLUME --user <your-email> -p <your-profile>
 ```
-
-### Profiler / dry-run
-
-The profiler creates a temporary view using your OBO token (inheriting your UC permissions) and submits a Databricks Job as the service principal. You need:
-- `USE CATALOG` + `USE SCHEMA` + `SELECT` on the tables you want to profile
-- `DQX_JOB_ID` set to a deployed task-runner job
 
 ## Troubleshooting
 

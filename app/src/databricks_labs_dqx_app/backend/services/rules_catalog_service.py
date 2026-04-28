@@ -435,15 +435,6 @@ class RulesCatalogService:
         logger.info("Backfilled rule_id for %d rule(s)", total)
         return total
 
-    def read_external_rules_table(self, source_table_fqn: str) -> list[dict[str, str]]:
-        """Read rows from an external Delta table with the same schema as dq_quality_rules."""
-        from databricks_labs_dqx_app.backend.sql_utils import quote_fqn, validate_fqn
-
-        validate_fqn(source_table_fqn)
-        sql = f"SELECT table_fqn, checks FROM {quote_fqn(source_table_fqn)}"
-        rows = self._sql.query(sql)
-        return [{"table_fqn": row[0] or "", "checks": row[1] or "[]"} for row in rows]
-
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------

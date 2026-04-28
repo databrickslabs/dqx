@@ -13,6 +13,7 @@ import {
   ClipboardCheck,
   ChevronDown,
   PenLine,
+  History,
 } from "lucide-react";
 import {
   SidebarGroup,
@@ -30,7 +31,7 @@ export const Route = createFileRoute("/_sidebar")({
 
 function Layout() {
   const location = useLocation();
-  const { canCreateRules } = usePermissions();
+  const { canCreateRules, isViewer } = usePermissions();
 
   const isCreateActive =
     location.pathname.startsWith("/rules/create") ||
@@ -149,7 +150,10 @@ function Layout() {
               </Link>
             </SidebarMenuItem>
 
-            {/* Run Rules */}
+            <hr className="my-2 border-sidebar-border" />
+
+            {/* Run Rules — hidden for viewers */}
+            {!isViewer && (
             <SidebarMenuItem>
               <Link
                 to="/runs"
@@ -162,6 +166,23 @@ function Layout() {
               >
                 <PlayCircle size={16} />
                 <span>Run Rules</span>
+              </Link>
+            </SidebarMenuItem>
+            )}
+
+            {/* Runs History — visible to all */}
+            <SidebarMenuItem>
+              <Link
+                to="/runs-history"
+                className={cn(
+                  "flex items-center gap-2 p-2 rounded-lg",
+                  location.pathname.startsWith("/runs-history")
+                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                    : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                )}
+              >
+                <History size={16} />
+                <span>Runs History</span>
               </Link>
             </SidebarMenuItem>
           </SidebarMenu>

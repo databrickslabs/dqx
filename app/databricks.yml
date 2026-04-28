@@ -101,7 +101,7 @@ resources:
             permission: "CAN_MANAGE"
 
       permissions:
-        - user_name: "*"
+        - group_name: "account users"
           level: "CAN_USE"
 
   sql_warehouses:

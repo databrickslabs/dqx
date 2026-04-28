@@ -14,24 +14,41 @@ from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 logger = logging.getLogger(__name__)
 
 
+_tmp_schema_ready = False
+
+
+def mark_tmp_schema_ready() -> None:
+    """Called at startup after the SP has ensured the tmp schema exists."""
+    global _tmp_schema_ready
+    _tmp_schema_ready = True
+
+
 class ViewService:
     """Create and drop temporary views via the SQL Statement Execution API."""
 
-    def __init__(self, sql: SqlExecutor) -> None:
+    def __init__(self, sql: SqlExecutor, sp_sql: SqlExecutor | None = None) -> None:
         self._sql = sql
-        self._schema_ensured = False
+        self._sp_sql = sp_sql
 
     def _ensure_schema(self) -> None:
-        """Create the tmp schema if it doesn't exist."""
-        if self._schema_ensured:
+        """Ensure the tmp schema exists. Uses SP credentials for DDL if available."""
+        global _tmp_schema_ready
+        if _tmp_schema_ready:
             return
         cat = self._sql.catalog.replace("`", "")
         schema = self._sql.schema.replace("`", "")
-        sql = f"CREATE SCHEMA IF NOT EXISTS `{cat}`.`{schema}`"
-        logger.info("Ensuring tmp schema exists: %s.%s", self._sql.catalog, self._sql.schema)
-        self._sql.execute_no_schema(sql)
-        self._schema_ensured = True
-        logger.info("Tmp schema ensured: %s.%s", self._sql.catalog, self._sql.schema)
+        if self._sp_sql is None:
+            raise RuntimeError(
+                f"Tmp schema `{cat}`.`{schema}` has not been created yet and no "
+                f"service principal is available. Check app startup logs."
+            )
+        try:
+            self._sp_sql.execute_no_schema(f"CREATE SCHEMA IF NOT EXISTS `{cat}`.`{schema}`")
+            _tmp_schema_ready = True
+        except Exception as e:
+            raise RuntimeError(
+                f"Cannot create tmp schema `{cat}`.`{schema}` via service principal. " f"Original error: {e}"
+            ) from e
 
     def create_view(self, source_table_fqn: str, sample_limit: int | None = None) -> str:
         """Create a temporary view over *source_table_fqn*.
@@ -60,7 +77,20 @@ class ViewService:
             self._sql.execute(grant_sql)
             logger.info("Granted SELECT on %s to account users", view_name)
         except Exception as e:
-            logger.warning("Failed to grant SELECT on %s: %s (job may fail if running as different user)", view_name, e)
+            logger.error(
+                "GRANT SELECT failed on %s: %s — the background job (running as SP) "
+                "will not be able to read this view. Check that the user has GRANT "
+                "privileges on schema %s.%s",
+                view_name,
+                e,
+                self._sql.catalog,
+                self._sql.schema,
+            )
+            raise RuntimeError(
+                f"Cannot grant SELECT on temporary view to account users. "
+                f"Ensure the user has ownership or GRANT privilege on "
+                f"schema {self._sql.catalog}.{self._sql.schema}: {e}"
+            ) from e
 
         if not self._view_exists(view_name):
             raise RuntimeError(f"View creation succeeded but view not found: {view_name}")
@@ -111,7 +141,17 @@ class ViewService:
             self._sql.execute(grant_sql)
             logger.info("Granted SELECT on %s to account users", view_name)
         except Exception as e:
-            logger.warning("Failed to grant SELECT on %s: %s", view_name, e)
+            logger.error(
+                "GRANT SELECT failed on SQL-check view %s: %s — the background job "
+                "will not be able to read this view.",
+                view_name,
+                e,
+            )
+            raise RuntimeError(
+                f"Cannot grant SELECT on temporary view to account users. "
+                f"Ensure the user has ownership or GRANT privilege on "
+                f"schema {self._sql.catalog}.{self._sql.schema}: {e}"
+            ) from e
 
         if not self._view_exists(view_name):
             raise RuntimeError(f"View creation succeeded but view not found: {view_name}")

@@ -1238,6 +1238,13 @@ class TestJobService:
 class TestViewService:
     """Unit tests for ViewService."""
 
+    @pytest.fixture(autouse=True)
+    def _reset_schema_flag(self):
+        import databricks_labs_dqx_app.backend.services.view_service as vs_mod
+        vs_mod._tmp_schema_ready = True
+        yield
+        vs_mod._tmp_schema_ready = False
+
     @pytest.fixture
     def ws(self) -> WorkspaceClient:
         ws = create_autospec(WorkspaceClient)

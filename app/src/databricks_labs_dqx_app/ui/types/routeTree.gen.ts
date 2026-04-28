@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './../routes/__root'
 import { Route as SidebarRouteRouteImport } from './../routes/_sidebar/route'
 import { Route as IndexRouteImport } from './../routes/index'
+import { Route as SidebarRunsHistoryRouteImport } from './../routes/_sidebar/runs-history'
 import { Route as SidebarRunsRouteImport } from './../routes/_sidebar/runs'
 import { Route as SidebarRulesRouteImport } from './../routes/_sidebar/rules'
 import { Route as SidebarProfilerRouteImport } from './../routes/_sidebar/profiler'
@@ -37,6 +38,11 @@ const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
+} as any)
+const SidebarRunsHistoryRoute = SidebarRunsHistoryRouteImport.update({
+  id: '/runs-history',
+  path: '/runs-history',
+  getParentRoute: () => SidebarRouteRoute,
 } as any)
 const SidebarRunsRoute = SidebarRunsRouteImport.update({
   id: '/runs',
@@ -134,6 +140,7 @@ export interface FileRoutesByFullPath {
   '/profiler': typeof SidebarProfilerRoute
   '/rules': typeof SidebarRulesRouteWithChildren
   '/runs': typeof SidebarRunsRouteWithChildren
+  '/runs-history': typeof SidebarRunsHistoryRoute
   '/rules/active': typeof SidebarRulesActiveRoute
   '/rules/create': typeof SidebarRulesCreateRoute
   '/rules/create-reusable': typeof SidebarRulesCreateReusableRoute
@@ -152,6 +159,7 @@ export interface FileRoutesByTo {
   '/home': typeof SidebarHomeRoute
   '/profile': typeof SidebarProfileRoute
   '/profiler': typeof SidebarProfilerRoute
+  '/runs-history': typeof SidebarRunsHistoryRoute
   '/rules/active': typeof SidebarRulesActiveRoute
   '/rules/create': typeof SidebarRulesCreateRoute
   '/rules/create-reusable': typeof SidebarRulesCreateReusableRoute
@@ -174,6 +182,7 @@ export interface FileRoutesById {
   '/_sidebar/profiler': typeof SidebarProfilerRoute
   '/_sidebar/rules': typeof SidebarRulesRouteWithChildren
   '/_sidebar/runs': typeof SidebarRunsRouteWithChildren
+  '/_sidebar/runs-history': typeof SidebarRunsHistoryRoute
   '/_sidebar/rules/active': typeof SidebarRulesActiveRoute
   '/_sidebar/rules/create': typeof SidebarRulesCreateRoute
   '/_sidebar/rules/create-reusable': typeof SidebarRulesCreateReusableRoute
@@ -196,6 +205,7 @@ export interface FileRouteTypes {
     | '/profiler'
     | '/rules'
     | '/runs'
+    | '/runs-history'
     | '/rules/active'
     | '/rules/create'
     | '/rules/create-reusable'
@@ -214,6 +224,7 @@ export interface FileRouteTypes {
     | '/home'
     | '/profile'
     | '/profiler'
+    | '/runs-history'
     | '/rules/active'
     | '/rules/create'
     | '/rules/create-reusable'
@@ -235,6 +246,7 @@ export interface FileRouteTypes {
     | '/_sidebar/profiler'
     | '/_sidebar/rules'
     | '/_sidebar/runs'
+    | '/_sidebar/runs-history'
     | '/_sidebar/rules/active'
     | '/_sidebar/rules/create'
     | '/_sidebar/rules/create-reusable'
@@ -267,6 +279,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/_sidebar/runs-history': {
+      id: '/_sidebar/runs-history'
+      path: '/runs-history'
+      fullPath: '/runs-history'
+      preLoaderRoute: typeof SidebarRunsHistoryRouteImport
+      parentRoute: typeof SidebarRouteRoute
     }
     '/_sidebar/runs': {
       id: '/_sidebar/runs'
@@ -438,6 +457,7 @@ interface SidebarRouteRouteChildren {
   SidebarProfilerRoute: typeof SidebarProfilerRoute
   SidebarRulesRoute: typeof SidebarRulesRouteWithChildren
   SidebarRunsRoute: typeof SidebarRunsRouteWithChildren
+  SidebarRunsHistoryRoute: typeof SidebarRunsHistoryRoute
 }
 
 const SidebarRouteRouteChildren: SidebarRouteRouteChildren = {
@@ -448,6 +468,7 @@ const SidebarRouteRouteChildren: SidebarRouteRouteChildren = {
   SidebarProfilerRoute: SidebarProfilerRoute,
   SidebarRulesRoute: SidebarRulesRouteWithChildren,
   SidebarRunsRoute: SidebarRunsRouteWithChildren,
+  SidebarRunsHistoryRoute: SidebarRunsHistoryRoute,
 }
 
 const SidebarRouteRouteWithChildren = SidebarRouteRoute._addFileChildren(

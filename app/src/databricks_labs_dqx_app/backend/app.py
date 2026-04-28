@@ -15,6 +15,7 @@ from .logger import logger
 from .migrations import MigrationRunner
 from .routes import api_router
 from .services.scheduler_service import SchedulerService
+from .services.view_service import mark_tmp_schema_ready
 from .sql_executor import SqlExecutor
 from .utils import add_not_found_handler
 
@@ -178,6 +179,24 @@ async def lifespan(app: FastAPI):
             logger.info("Applied %d database migration(s)", applied)
         else:
             logger.info("Database schema is up to date")
+
+        try:
+            tmp_cat = conf.catalog.replace("`", "")
+            tmp_sch = conf.tmp_schema_name.replace("`", "")
+            sp_sql.execute_no_schema(f"CREATE SCHEMA IF NOT EXISTS `{tmp_cat}`.`{tmp_sch}`")
+            mark_tmp_schema_ready()
+            logger.info("Ensured tmp schema exists: %s.%s", tmp_cat, tmp_sch)
+        except Exception as tmp_e:
+            logger.warning("Could not create tmp schema %s.%s: %s", conf.catalog, conf.tmp_schema_name, tmp_e)
+
+        try:
+            cat = conf.catalog.replace("`", "")
+            sp_sql.execute_no_schema(f"GRANT USE CATALOG ON CATALOG `{cat}` TO `account users`")
+            logger.info("Granted USE CATALOG on %s to account users", cat)
+        except Exception as grant_e:
+            logger.warning(
+                "Could not grant USE CATALOG on %s: %s (users may need this granted manually)", conf.catalog, grant_e
+            )
     except Exception as e:
         logger.warning("Could not run database migrations (will retry on first request): %s", e)
 

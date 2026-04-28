@@ -44,6 +44,7 @@ router = APIRouter()
 
 _DRYRUN_TABLE = "dq_validation_runs"
 _SQL_CHECK_PREFIX = "__sql_check__/"
+_ALL_ROLES = [UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTHOR, UserRole.VIEWER]
 _NON_VIEWERS = [UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTHOR]
 
 
@@ -68,7 +69,7 @@ def _catalog_of(fqn: str) -> str:
     "/runs",
     response_model=list[ValidationRunSummaryOut],
     operation_id="listValidationRuns",
-    dependencies=[require_role(*_NON_VIEWERS)],
+    dependencies=[require_role(*_ALL_ROLES)],
 )
 async def list_validation_runs(
     job_svc: Annotated[JobService, Depends(get_job_service)],
@@ -329,6 +330,15 @@ def get_dry_run_status(
                 run_id,
                 status=status.state,
                 error_message=status.message,
+            )
+        elif has_history_row and is_terminal and status.result_state and status.result_state == "CANCELED":
+            update_run_status(
+                sql,
+                app_conf,
+                _DRYRUN_TABLE,
+                run_id,
+                status="CANCELED",
+                error_message=status.message or "Canceled externally",
             )
         elif has_history_row and is_terminal and status.result_state and status.result_state != "SUCCESS":
             update_run_status(
