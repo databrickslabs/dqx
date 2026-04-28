@@ -21,6 +21,11 @@ git config --global commit.gpgsign true  # GPG-sign all commits (required)
 git verify-commit <hash>   # verify after first commit
 ```
 
+### Dependency installs and lock files
+
+- Use **`make dev`** from the repo root to create `.venv` and install Python dependencies. Do **not** run `uv sync`, `uv lock`, or `uv add` for normal setup — that bypasses `UV_FROZEN=1` and may modify `uv.lock` or bake in internal registry URLs.
+- To **update lock files** after intentional dependency changes: `make lock-dependencies` (root `uv.lock` and `.build-constraints.txt`) and/or `make lock-app-dependencies` (`app/uv.lock`) of the app.
+
 ---
 
 ## Project Overview
