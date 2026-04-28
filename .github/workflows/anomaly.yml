@@ -57,11 +57,12 @@ jobs:
           EOF
 
       - name: Run anomaly integration tests
-        uses: databrickslabs/sandbox/acceptance@83461e5dd7021feabb1a9ca3ee10d6f46b72092a # acceptance/v0.4.6
+        uses: databrickslabs/sandbox/acceptance@5584c09f2c3618a09e6e04c0f8579c97ca2b05f3 # PR #730 (test)
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
           timeout: 3h
           codegen_path: tests/integration_anomaly/.codegen.json
+          n: 4
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
@@ -114,11 +115,12 @@ jobs:
           EOF
 
       - name: Run anomaly integration tests on serverless cluster
-        uses: databrickslabs/sandbox/acceptance@83461e5dd7021feabb1a9ca3ee10d6f46b72092a # acceptance/v0.4.6
+        uses: databrickslabs/sandbox/acceptance@5584c09f2c3618a09e6e04c0f8579c97ca2b05f3 # PR #730 (test)
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
           timeout: 3h
           codegen_path: tests/integration_anomaly/.codegen.json
+          n: 4
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
