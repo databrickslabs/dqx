@@ -1240,10 +1240,11 @@ class TestViewService:
 
     @pytest.fixture(autouse=True)
     def _reset_schema_flag(self):
-        import databricks_labs_dqx_app.backend.services.view_service as vs_mod
-        vs_mod._tmp_schema_ready = True
+        import databricks_labs_dqx_app.backend.services.view_service as vs_mod  # pylint: disable=import-outside-toplevel
+
+        vs_mod._tmp_schema_ready = True  # pylint: disable=protected-access
         yield
-        vs_mod._tmp_schema_ready = False
+        vs_mod._tmp_schema_ready = False  # pylint: disable=protected-access
 
     @pytest.fixture
     def ws(self) -> WorkspaceClient:
