@@ -135,7 +135,7 @@ test = [
     "pytest-cov~=4.1.0",
     "pytest-mock~=3.14.0",
     "pytest-timeout~=2.3.1",
-    "pytest-xdist~=3.5.0",
+    "pytest-xdist>=3.5,<3.9",
     "pytest-rerunfailures~=14.0",
     "pytest-benchmark~=5.1.0",
     "databricks-connect~=17.3 ; python_version >= '3.12'",  # bundles spark 4.0.0
