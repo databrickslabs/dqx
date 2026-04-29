@@ -29,6 +29,7 @@ import logging
 from dataclasses import dataclass
 
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
+from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
 logger = logging.getLogger(__name__)
 
@@ -181,14 +182,16 @@ MIGRATIONS: list[Migration] = [
         version=13,
         description="Add canceled_by and updated_at audit columns to dq_validation_runs",
         sql_template=(
-            f"ALTER TABLE {_PLACEHOLDER}.dq_validation_runs " "ADD COLUMNS (canceled_by STRING, updated_at STRING)"
+            f"ALTER TABLE {_PLACEHOLDER}.dq_validation_runs ADD COLUMN IF NOT EXISTS canceled_by STRING;"
+            f"ALTER TABLE {_PLACEHOLDER}.dq_validation_runs ADD COLUMN IF NOT EXISTS updated_at STRING"
         ),
     ),
     Migration(
         version=14,
         description="Add canceled_by and updated_at audit columns to dq_profiling_results",
         sql_template=(
-            f"ALTER TABLE {_PLACEHOLDER}.dq_profiling_results " "ADD COLUMNS (canceled_by STRING, updated_at STRING)"
+            f"ALTER TABLE {_PLACEHOLDER}.dq_profiling_results ADD COLUMN IF NOT EXISTS canceled_by STRING;"
+            f"ALTER TABLE {_PLACEHOLDER}.dq_profiling_results ADD COLUMN IF NOT EXISTS updated_at STRING"
         ),
     ),
     Migration(
@@ -238,7 +241,7 @@ MIGRATIONS: list[Migration] = [
     Migration(
         version=19,
         description="Add source column to dq_quality_rules",
-        sql_template=(f"ALTER TABLE {_PLACEHOLDER}.dq_quality_rules " "ADD COLUMNS (source STRING)"),
+        sql_template=(f"ALTER TABLE {_PLACEHOLDER}.dq_quality_rules " "ADD COLUMN IF NOT EXISTS source STRING"),
     ),
     Migration(
         version=20,
@@ -317,27 +320,29 @@ MIGRATIONS: list[Migration] = [
     Migration(
         version=27,
         description="Add rule_id column to dq_quality_rules for per-check granularity",
-        sql_template=(f"ALTER TABLE {_PLACEHOLDER}.dq_quality_rules " "ADD COLUMNS (rule_id STRING)"),
+        sql_template=(f"ALTER TABLE {_PLACEHOLDER}.dq_quality_rules " "ADD COLUMN IF NOT EXISTS rule_id STRING"),
     ),
     Migration(
         version=28,
         description="Add rule_id column to dq_quality_rules_history",
-        sql_template=(f"ALTER TABLE {_PLACEHOLDER}.dq_quality_rules_history " "ADD COLUMNS (rule_id STRING)"),
+        sql_template=(
+            f"ALTER TABLE {_PLACEHOLDER}.dq_quality_rules_history " "ADD COLUMN IF NOT EXISTS rule_id STRING"
+        ),
     ),
     Migration(
         version=29,
         description="Add run_type column to dq_validation_runs to distinguish dryrun vs scheduled",
-        sql_template=(f"ALTER TABLE {_PLACEHOLDER}.dq_validation_runs " "ADD COLUMNS (run_type STRING)"),
+        sql_template=(f"ALTER TABLE {_PLACEHOLDER}.dq_validation_runs " "ADD COLUMN IF NOT EXISTS run_type STRING"),
     ),
     Migration(
         version=30,
         description="Add job_run_id column to dq_validation_runs for server-side run verification",
-        sql_template=(f"ALTER TABLE {_PLACEHOLDER}.dq_validation_runs " "ADD COLUMNS (job_run_id BIGINT)"),
+        sql_template=(f"ALTER TABLE {_PLACEHOLDER}.dq_validation_runs " "ADD COLUMN IF NOT EXISTS job_run_id BIGINT"),
     ),
     Migration(
         version=31,
         description="Add job_run_id column to dq_profiling_results for server-side run verification",
-        sql_template=(f"ALTER TABLE {_PLACEHOLDER}.dq_profiling_results " "ADD COLUMNS (job_run_id BIGINT)"),
+        sql_template=(f"ALTER TABLE {_PLACEHOLDER}.dq_profiling_results " "ADD COLUMN IF NOT EXISTS job_run_id BIGINT"),
     ),
 ]
 
@@ -456,13 +461,33 @@ class MigrationRunner:
         rows = self._sql.query(sql)
         return {int(row[0]): row[1] for row in rows}
 
-    def _apply(self, migration: Migration) -> None:
-        sql = migration.sql_template.format(catalog=self._catalog, schema=self._schema)
-        self._sql.execute(sql)
+    _IDEMPOTENT_ERROR_FRAGMENTS = (
+        "COLUMN_ALREADY_EXISTS",
+        "FIELDS_ALREADY_EXISTS",
+        "already has liquid clustering defined",
+    )
 
+    def _apply(self, migration: Migration) -> None:
+        formatted = migration.sql_template.format(catalog=self._catalog, schema=self._schema)
+        for stmt in formatted.split(";"):
+            stmt = stmt.strip()
+            if stmt:
+                try:
+                    self._sql.execute(stmt)
+                except Exception as exc:
+                    if any(frag in str(exc) for frag in self._IDEMPOTENT_ERROR_FRAGMENTS):
+                        logger.warning(
+                            "Migration v%d DDL already applied (safe to skip): %s",
+                            migration.version,
+                            exc,
+                        )
+                    else:
+                        raise
+
+        escaped_desc = escape_sql_string(migration.description)
         record_sql = (
             f"INSERT INTO {self._meta_table} (version, description, applied_at) "
-            f"VALUES ({migration.version}, '{migration.description.replace(chr(39), chr(39)*2)}', current_timestamp())"
+            f"VALUES ({migration.version}, '{escaped_desc}', current_timestamp())"
         )
         self._sql.execute(record_sql)
         logger.info(

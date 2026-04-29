@@ -49,7 +49,7 @@ class ScheduleConfigService:
 
     def get(self, name: str) -> ScheduleConfigEntry | None:
         validate_schedule_name(name)
-        escaped = self._esc(name)
+        escaped = escape_sql_string(name)
         sql = (
             f"SELECT schedule_name, config_json, version, created_by, "
             f"CAST(created_at AS STRING), updated_by, CAST(updated_at AS STRING) "
@@ -67,11 +67,12 @@ class ScheduleConfigService:
         user_email: str,
     ) -> ScheduleConfigEntry:
         validate_schedule_name(name)
-        escaped_name = self._esc(name)
         config_json = json.dumps(config)
-        escaped_json = self._esc(config_json)
-        e_email = self._esc(user_email)
         now = datetime.now(timezone.utc).isoformat()
+
+        escaped_name = escape_sql_string(name)
+        escaped_json = escape_sql_string(config_json)
+        escaped_user = escape_sql_string(user_email)
 
         sql = (
             f"MERGE INTO {self._table} AS target "
@@ -80,11 +81,11 @@ class ScheduleConfigService:
             "WHEN MATCHED THEN UPDATE SET "
             f"  config_json = '{escaped_json}', "
             "  version = target.version + 1, "
-            f"  updated_by = '{e_email}', "
+            f"  updated_by = '{escaped_user}', "
             f"  updated_at = '{now}' "
             "WHEN NOT MATCHED THEN INSERT "
             "(schedule_name, config_json, version, created_by, created_at, updated_by, updated_at) "
-            f"VALUES ('{escaped_name}', '{escaped_json}', 1, '{e_email}', '{now}', '{e_email}', '{now}')"
+            f"VALUES ('{escaped_name}', '{escaped_json}', 1, '{escaped_user}', '{now}', '{escaped_user}', '{now}')"
         )
         self._sql.execute(sql)
         self._record_history(name, config_json, user_email, "save")
@@ -114,14 +115,14 @@ class ScheduleConfigService:
                 "delete",
                 version=existing.version,
             )
-        escaped_name = self._esc(name)
-        sql = f"DELETE FROM {self._table} WHERE schedule_name = '{escaped_name}'"
+        escaped = escape_sql_string(name)
+        sql = f"DELETE FROM {self._table} WHERE schedule_name = '{escaped}'"
         self._sql.execute(sql)
         logger.info("Deleted schedule config: %s (user=%s)", name, user_email)
 
     def get_history(self, name: str) -> list[dict[str, Any]]:
         validate_schedule_name(name)
-        escaped = self._esc(name)
+        escaped = escape_sql_string(name)
         sql = (
             f"SELECT schedule_name, config_json, version, action, changed_by, "
             f"CAST(changed_at AS STRING) "
@@ -161,23 +162,20 @@ class ScheduleConfigService:
         version: int = 0,
     ) -> None:
         try:
-            escaped_name = self._esc(name)
-            escaped_json = self._esc(config_json)
-            e_email = self._esc(user_email)
             now = datetime.now(timezone.utc).isoformat()
+            escaped_name = escape_sql_string(name)
+            escaped_json = escape_sql_string(config_json)
+            escaped_user = escape_sql_string(user_email)
+            escaped_action = escape_sql_string(action)
             sql = (
                 f"INSERT INTO {self._history_table} "
                 "(schedule_name, config_json, version, action, changed_by, changed_at) "
-                f"VALUES ('{escaped_name}', '{escaped_json}', {int(version)}, "
-                f"'{action}', '{e_email}', '{now}')"
+                f"VALUES ('{escaped_name}', '{escaped_json}', {version}, '{escaped_action}', "
+                f"'{escaped_user}', '{now}')"
             )
             self._sql.execute(sql)
         except Exception:
             logger.warning("Failed to record history for %s (non-fatal)", name, exc_info=True)
-
-    @staticmethod
-    def _esc(value: str) -> str:
-        return escape_sql_string(value)
 
     def _row_to_entry(self, row: list[str]) -> ScheduleConfigEntry:
         try:

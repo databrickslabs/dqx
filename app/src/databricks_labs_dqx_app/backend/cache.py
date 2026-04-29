@@ -30,6 +30,8 @@ logger = logging.getLogger(__name__)
 DEFAULT_TTL = 300  # 5 minutes
 T = TypeVar("T")
 
+MISS = object()  # sentinel distinguishing "not in cache" from a cached None
+
 
 class CacheFactory:
     """Async in-memory cache with per-key TTL.
@@ -51,13 +53,14 @@ class CacheFactory:
     # -- core operations ------------------------------------------------
 
     async def get(self, key: str) -> Any:
+        """Return the cached value, or the ``_MISS`` sentinel if absent/expired."""
         entry = self._store.get(key)
         if entry is None:
-            return None
+            return MISS
         value, expires_at = entry
         if time.monotonic() > expires_at:
             self._store.pop(key, None)
-            return None
+            return MISS
         return value
 
     async def set(self, key: str, value: Any, ttl: int | None = None) -> None:
@@ -144,7 +147,7 @@ class CacheFactory:
 
                 # Fast path — check before acquiring lock
                 hit = await self.get(cache_key)
-                if hit is not None:
+                if hit is not MISS:
                     logger.debug("Cache HIT  %s", cache_key)
                     return hit  # type: ignore[return-value]
 
@@ -152,18 +155,17 @@ class CacheFactory:
                 async with self._get_lock(cache_key):
                     # Re-check inside lock (another coroutine may have populated it)
                     hit = await self.get(cache_key)
-                    if hit is not None:
+                    if hit is not MISS:
                         logger.debug("Cache HIT (post-lock) %s", cache_key)
                         return hit  # type: ignore[return-value]
 
                     logger.debug("Cache MISS %s", cache_key)
                     result = await fn(*args, **kwargs)
 
-                    if result is not None:
-                        if reliable:
-                            await self.set_reliable(cache_key, result, ttl=ttl)
-                        else:
-                            self.set_fire_and_forget(cache_key, result, ttl=ttl)
+                    if reliable:
+                        await self.set_reliable(cache_key, result, ttl=ttl)
+                    else:
+                        self.set_fire_and_forget(cache_key, result, ttl=ttl)
 
                 return result
 

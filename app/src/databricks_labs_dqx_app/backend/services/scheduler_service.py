@@ -403,10 +403,9 @@ class SchedulerService:
         """Get merged checks from all approved rule rows for a table."""
         from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
-        escaped = escape_sql_string(table_fqn)
+        e_fqn = escape_sql_string(table_fqn)
         sql = (
-            f"SELECT table_fqn, checks FROM {self._rules_table} "
-            f"WHERE table_fqn = '{escaped}' AND status = 'approved'"
+            f"SELECT table_fqn, checks FROM {self._rules_table} " f"WHERE table_fqn = '{e_fqn}' AND status = 'approved'"
         )
         rows = self._sql.query(sql)
         if not rows:

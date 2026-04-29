@@ -37,7 +37,7 @@ def _query_quarantine(
     total_count = int(count_rows[0][0] or 0) if count_rows and count_rows[0] else 0
 
     data_sql = (
-        f"SELECT quarantine_id, run_id, source_table_fqn, requesting_user, "  # noqa: S608
+        f"SELECT quarantine_id, run_id, source_table_fqn, requesting_user, "
         f"row_data, errors, created_at "
         f"FROM {table} WHERE run_id = '{er}' "
         f"ORDER BY created_at DESC LIMIT {limit} OFFSET {offset}"
@@ -121,7 +121,7 @@ def export_quarantine_records(
     run_id: str,
     sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
     app_conf: Annotated[AppConfig, Depends(get_conf)],
-    format: str = Query("csv", regex="^(csv|json|xlsx)$"),
+    format: str = Query("csv", pattern="^(csv|json|xlsx)$"),
     max_rows: int = Query(_EXPORT_MAX_ROWS, ge=1, le=_EXPORT_MAX_ROWS),
 ) -> StreamingResponse:
     """Export quarantine records for a run as CSV or JSON download (capped)."""
@@ -131,9 +131,9 @@ def export_quarantine_records(
     er = escape_sql_string(run_id)
 
     stmt = (
-        f"SELECT quarantine_id, run_id, source_table_fqn, requesting_user, "  # noqa: S608
+        f"SELECT quarantine_id, run_id, source_table_fqn, requesting_user, "
         f"row_data, errors, created_at "
-        f"FROM {table} WHERE run_id = '{er}' ORDER BY created_at DESC "
+        f"FROM {table} WHERE run_id = '{er}' ORDER BY created_at DESC "  # noqa: S608
         f"LIMIT {int(max_rows)}"
     )
     rows = sql.query_dicts(stmt)

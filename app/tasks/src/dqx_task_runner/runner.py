@@ -19,6 +19,7 @@ import sys
 import time
 import re
 from datetime import datetime, timezone, date
+from decimal import Decimal
 from typing import Any
 
 from databricks.sdk import WorkspaceClient
@@ -28,6 +29,7 @@ logger = logging.getLogger("dqx_task_runner")
 
 _FQN_PART_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_\-]*$")
 _SQL_CHECK_RE = re.compile(r"^__sql_check__/[a-zA-Z0-9_\-]+$")
+_RUN_ID_RE = re.compile(r"^[a-zA-Z0-9_\-]{1,64}$")
 
 
 def _validate_fqn(fqn: str) -> str:
@@ -49,6 +51,16 @@ def _quote_fqn(fqn: str) -> str:
     return ".".join(f"`{p.strip('`')}`" for p in fqn.split("."))
 
 
+def _validate_run_id(run_id: str) -> str:
+    """Validate that a run_id is safe for use in SQL identifiers."""
+    if not _RUN_ID_RE.match(run_id):
+        raise ValueError(
+            f"Invalid run_id: '{run_id}'. "
+            "Must be 1-64 characters using only letters, digits, underscores, or hyphens."
+        )
+    return run_id
+
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 
@@ -60,6 +72,8 @@ class DateTimeEncoder(json.JSONEncoder):
             return o.isoformat()
         if isinstance(o, date):
             return o.isoformat()
+        if isinstance(o, Decimal):
+            return float(o)
         return super().default(o)
 
 
@@ -692,6 +706,7 @@ def _write_error(
 
 def main() -> None:
     args = _parse_args()
+    _validate_run_id(args.run_id)
     config = json.loads(args.config_json)
     source_table_fqn = config.get("source_table_fqn", "")
 

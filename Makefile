@@ -98,6 +98,23 @@ app-stop-dev:
 app-check:
 	cd app && $(UV_RUN) apx dev check
 
+# Grant Unity Catalog permissions after bundle deploy.
+# Usage: make app-grant-permissions PROFILE=my-profile
+app-grant-permissions:
+	@test -n "$(PROFILE)" || (echo "Usage: make app-grant-permissions PROFILE=<databricks-profile>"; exit 1)
+	app/scripts/post_deploy_grants.sh -p $(PROFILE)
+
+# Full deploy: build, bundle deploy, grant permissions, and start the app.
+# Usage: make app-deploy PROFILE=my-profile TARGET=dev
+app-deploy: app-build
+	@test -n "$(PROFILE)" || (echo "Usage: make app-deploy PROFILE=<databricks-profile> TARGET=<bundle-target>"; exit 1)
+	@test -n "$(TARGET)" || (echo "Usage: make app-deploy PROFILE=<databricks-profile> TARGET=<bundle-target>"; exit 1)
+	cd app && databricks bundle deploy -p $(PROFILE) -t $(TARGET)
+	app/scripts/post_deploy_grants.sh -p $(PROFILE)
+	cd app && databricks bundle run $(APP_NAME) -p $(PROFILE) -t $(TARGET)
+
+APP_NAME ?= databricks-labs-dqx-app
+
 # Regenerate app lockfiles (uv.lock, .build-constraints.txt) and
 # scrub private-proxy URLs so the committed files resolve against whatever
 # registry the install environment is configured for (JFrog in CI, public in fork PRs).
@@ -130,4 +147,4 @@ lock-dependencies:
 	perl -pi -e 's|registry = "https://[^"]*"|registry = "https://pypi.org/simple"|g' uv.lock
 
 .DEFAULT: all
-.PHONY: all clean dev lint fmt test integration e2e perf anomaly coverage combine-coverage docs-build docs-serve-dev docs-install docs-serve docs-clean app-install app-build app-start-dev app-stop-dev app-check fork-sync build lock-dependencies lock-app-dependencies
+.PHONY: all clean dev lint fmt test integration e2e perf anomaly coverage combine-coverage docs-build docs-serve-dev docs-install docs-serve docs-clean app-install app-build app-start-dev app-stop-dev app-check app-grant-permissions app-deploy fork-sync build lock-dependencies lock-app-dependencies

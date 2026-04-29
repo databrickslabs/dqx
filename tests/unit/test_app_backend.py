@@ -8,7 +8,7 @@ from unittest.mock import create_autospec
 
 import pytest
 
-from databricks_labs_dqx_app.backend.cache import CacheFactory
+from databricks_labs_dqx_app.backend.cache import CacheFactory, MISS
 from databricks_labs_dqx_app.backend.config import AppConfig
 from databricks_labs_dqx_app.backend.dependencies import get_obo_ws
 from databricks_labs_dqx_app.backend.logger import CustomFormatter, get_logger, setup_logger
@@ -931,12 +931,12 @@ def _make_tabular_response(columns: list[str], rows: list[list[str]]) -> Stateme
 class TestCacheFactory:
     """Unit tests for the async in-memory CacheFactory."""
 
-    def test_get_returns_none_for_missing_key(self) -> None:
-        """Missing key should return None."""
+    def test_get_returns_miss_for_missing_key(self) -> None:
+        """Missing key should return the _MISS sentinel."""
 
         async def _() -> None:
             cache = CacheFactory()
-            assert await cache.get("absent") is None
+            assert await cache.get("absent") is MISS
 
         asyncio.run(_())
 
@@ -950,14 +950,14 @@ class TestCacheFactory:
 
         asyncio.run(_())
 
-    def test_get_returns_none_after_ttl_expires(self) -> None:
-        """Expired entries should not be returned."""
+    def test_get_returns_miss_after_ttl_expires(self) -> None:
+        """Expired entries should return the _MISS sentinel."""
 
         async def _() -> None:
             cache = CacheFactory(ttl=0)
             await cache.set("key", "value", ttl=0)
             # TTL=0 means already expired at the moment of set
-            assert await cache.get("key") is None
+            assert await cache.get("key") is MISS
 
         asyncio.run(_())
 
@@ -968,7 +968,7 @@ class TestCacheFactory:
             cache = CacheFactory()
             await cache.set("key", "value")
             await cache.delete("key")
-            assert await cache.get("key") is None
+            assert await cache.get("key") is MISS
 
         asyncio.run(_())
 
@@ -980,8 +980,8 @@ class TestCacheFactory:
             await cache.set("a", 1)
             await cache.set("b", 2)
             await cache.clear()
-            assert await cache.get("a") is None
-            assert await cache.get("b") is None
+            assert await cache.get("a") is MISS
+            assert await cache.get("b") is MISS
 
         asyncio.run(_())
 
@@ -1506,8 +1506,11 @@ class TestMigrationRunner:
 
     def test_run_all_applies_all_when_none_applied(self, ws: WorkspaceClient) -> None:
         """run_all should apply every migration when none are recorded yet."""
-        # schema + meta table + applied_at_map query + 2 calls per migration (DDL + INSERT)
-        total_responses = 3 + 2 * len(MIGRATIONS)
+        # schema + meta table + applied_at_map query + per-migration calls
+        # Most migrations: 1 DDL + 1 INSERT = 2 calls each
+        # Multi-statement migrations (v13, v14): 2 DDL + 1 INSERT = 3 calls each
+        extra_stmts = sum(m.sql_template.count(";") for m in MIGRATIONS)
+        total_responses = 3 + 2 * len(MIGRATIONS) + extra_stmts
         ws.statement_execution.execute_statement.side_effect = [_ok_response()] * total_responses  # type: ignore[attr-defined]
 
         runner = MigrationRunner(sql=SqlExecutor(ws=ws, warehouse_id="wh", catalog="cat", schema="sch"))
@@ -1519,10 +1522,13 @@ class TestMigrationRunner:
         """run_all should only apply migrations that are not yet recorded."""
         n_already_applied = 3
         applied_rows = [[str(m.version), "2025-01-01T00:00:00"] for m in MIGRATIONS[:n_already_applied]]
-        pending = len(MIGRATIONS) - n_already_applied
-        # schema + meta table + applied_at query + 2 calls per pending migration (DDL + INSERT)
+        pending_migrations = MIGRATIONS[n_already_applied:]
+        pending = len(pending_migrations)
+        extra_stmts = sum(m.sql_template.count(";") for m in pending_migrations)
+        # schema + meta table + applied_at query + per-pending-migration calls
         ws.statement_execution.execute_statement.side_effect = (  # type: ignore[attr-defined]
-            [_ok_response(), _ok_response(), _ok_response(applied_rows)] + [_ok_response()] * (2 * pending)
+            [_ok_response(), _ok_response(), _ok_response(applied_rows)]
+            + [_ok_response()] * (2 * pending + extra_stmts)
         )
 
         runner = MigrationRunner(sql=SqlExecutor(ws=ws, warehouse_id="wh", catalog="cat", schema="sch"))

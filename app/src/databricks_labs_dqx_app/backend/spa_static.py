@@ -14,6 +14,28 @@ from starlette.staticfiles import StaticFiles
 from starlette.types import Scope
 
 
+_ASSET_EXTS = (
+    ".js",
+    ".mjs",
+    ".css",
+    ".map",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".svg",
+    ".ico",
+    ".woff",
+    ".woff2",
+    ".json",
+    ".webmanifest",
+    ".txt",
+    ".ttf",
+    ".eot",
+    ".gif",
+    ".webp",
+)
+
+
 class SPAStaticFiles(StaticFiles):
     """Serve static assets with an ``index.html`` fallback for SPA routing."""
 
@@ -23,6 +45,6 @@ class SPAStaticFiles(StaticFiles):
         except HTTPException as exc:
             if exc.status_code == 404:
                 last_segment = path.rsplit("/", 1)[-1]
-                if "." not in last_segment:
+                if not last_segment.endswith(_ASSET_EXTS):
                     return await super().get_response("/index.html", scope)
             raise

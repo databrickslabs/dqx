@@ -1,18 +1,2 @@
 command:
   ["uvicorn", "databricks_labs_dqx_app.backend.app:app", "--workers", "2"]
-
-env:
-  - name: DATABRICKS_WAREHOUSE_ID
-    valueFrom: dqx-sql-warehouse
-  - name: DQX_CATALOG
-    value: tsh_dqx_app_demo_catalog
-  - name: DQX_SCHEMA
-    value: dqx_app
-  - name: DQX_JOB_ID
-    valueFrom: dqx-task-runner-job
-  - name: DQX_TMP_SCHEMA
-    value: dqx_app_tmp
-  - name: DQX_ADMIN_GROUP
-    value: admins
-  - name: DQX_WHEELS_VOLUME
-    value: /Volumes/tsh_dqx_app_demo_catalog/dqx_app/wheels

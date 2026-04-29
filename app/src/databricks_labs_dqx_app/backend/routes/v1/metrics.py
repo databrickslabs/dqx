@@ -51,13 +51,13 @@ def get_metrics_trend(
         raise HTTPException(status_code=403, detail="You do not have access to this table's catalog")
 
     table = f"{app_conf.catalog}.{app_conf.schema_name}.dq_metrics"
-    et = escape_sql_string(table_fqn)
+    e_fqn = escape_sql_string(table_fqn)
 
     stmt = (
-        f"SELECT metric_id, run_id, source_table_fqn, run_type, "  # noqa: S608
+        f"SELECT metric_id, run_id, source_table_fqn, run_type, "
         f"total_rows, valid_rows, invalid_rows, pass_rate, "
         f"error_breakdown, requesting_user, created_at "
-        f"FROM {table} WHERE source_table_fqn = '{et}' "
+        f"FROM {table} WHERE source_table_fqn = '{e_fqn}' "  # noqa: S608
         f"ORDER BY created_at DESC LIMIT {limit}"
     )
     try:

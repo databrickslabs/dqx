@@ -7,6 +7,7 @@ from typing import Any
 from uuid import uuid4
 
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
+from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +85,7 @@ class RulesCatalogService:
         Duplicate checks (same function + arguments for the same table) are
         silently skipped.  Returns the list of newly created entries.
         """
-        from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, validate_fqn
+        from databricks_labs_dqx_app.backend.sql_utils import validate_fqn
 
         validate_fqn(table_fqn)
         self._validate_sql_checks(checks)
@@ -98,19 +99,20 @@ class RulesCatalogService:
             logger.info("Skipped %d duplicate check(s) for table %s", len(duplicates), table_fqn)
 
         now = datetime.now(timezone.utc).isoformat()
-        e_email = escape_sql_string(user_email)
-        e_fqn = escape_sql_string(table_fqn)
+        e_table = escape_sql_string(table_fqn)
         e_source = escape_sql_string(source)
+        e_user = escape_sql_string(user_email)
 
         created: list[RuleCatalogEntry] = []
         for check in non_dup_checks:
             rule_id = uuid4().hex[:16]
-            single_check_json = escape_sql_string(json.dumps([check]))
+            single_check_json = json.dumps([check])
+            e_checks = escape_sql_string(single_check_json)
             sql = (
                 f"INSERT INTO {self._table} "
                 "(table_fqn, checks, version, status, source, created_by, created_at, updated_by, updated_at, rule_id) "
-                f"VALUES ('{e_fqn}', '{single_check_json}', 1, 'draft', '{e_source}', "
-                f"'{e_email}', '{now}', '{e_email}', '{now}', '{rule_id}')"
+                f"VALUES ('{e_table}', '{e_checks}', 1, 'draft', '{e_source}', "
+                f"'{e_user}', '{now}', '{e_user}', '{now}', '{rule_id}')"
             )
             self._sql.execute(sql)
             self._record_history(table_fqn, single_check_json, 1, source, user_email, now, "save", rule_id)
@@ -138,24 +140,23 @@ class RulesCatalogService:
         user_email: str,
     ) -> RuleCatalogEntry:
         """Update the check definition for an existing rule, incrementing version and resetting to draft."""
-        from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
-
         self._validate_sql_checks(checks)
         entry = self.get_by_rule_id(rule_id)
         if entry is None:
             raise RuntimeError(f"Rule not found: {rule_id}")
 
-        checks_json = escape_sql_string(json.dumps(checks))
-        e_email = escape_sql_string(user_email)
-        e_rule_id = escape_sql_string(rule_id)
+        checks_json = json.dumps(checks)
         now = datetime.now(timezone.utc).isoformat()
+        e_checks = escape_sql_string(checks_json)
+        e_user = escape_sql_string(user_email)
+        e_rule_id = escape_sql_string(rule_id)
 
         sql = (
             f"UPDATE {self._table} SET "
-            f"  checks = '{checks_json}', "
+            f"  checks = '{e_checks}', "
             "  version = version + 1, "
             "  status = 'draft', "
-            f"  updated_by = '{e_email}', "
+            f"  updated_by = '{e_user}', "
             f"  updated_at = '{now}' "
             f"WHERE rule_id = '{e_rule_id}'"
         )
@@ -197,10 +198,8 @@ class RulesCatalogService:
 
     def get_by_rule_id(self, rule_id: str) -> RuleCatalogEntry | None:
         """Get a single rule by its rule_id."""
-        from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
-
-        e_id = escape_sql_string(rule_id)
-        sql = f"SELECT {self._SELECT_COLS} FROM {self._table} WHERE rule_id = '{e_id}'"
+        e_rule_id = escape_sql_string(rule_id)
+        sql = f"SELECT {self._SELECT_COLS} FROM {self._table} WHERE rule_id = '{e_rule_id}'"  # noqa: S608
         rows = self._sql.query(sql)
         if not rows:
             return None
@@ -208,10 +207,8 @@ class RulesCatalogService:
 
     def list_rules_for_table(self, table_fqn: str, status: str | None = None) -> list[RuleCatalogEntry]:
         """List all individual rules for a given table, optionally filtered by status."""
-        from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
-
-        e_fqn = escape_sql_string(table_fqn)
-        sql = f"SELECT {self._SELECT_COLS} FROM {self._table} WHERE table_fqn = '{e_fqn}'"
+        e_table = escape_sql_string(table_fqn)
+        sql = f"SELECT {self._SELECT_COLS} FROM {self._table} WHERE table_fqn = '{e_table}'"  # noqa: S608
         if status:
             e_status = escape_sql_string(status)
             sql += f" AND status = '{e_status}'"
@@ -221,8 +218,6 @@ class RulesCatalogService:
 
     def list_rules(self, status: str | None = None) -> list[RuleCatalogEntry]:
         """List all individual rules, optionally filtered by status."""
-        from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
-
         sql = f"SELECT {self._SELECT_COLS} FROM {self._table}"
         if status:
             e_status = escape_sql_string(status)
@@ -304,11 +299,9 @@ class RulesCatalogService:
 
     def delete(self, rule_id: str, user_email: str) -> None:
         """Delete a single rule by rule_id."""
-        from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
-
         entry = self.get_by_rule_id(rule_id)
-        e_id = escape_sql_string(rule_id)
-        sql = f"DELETE FROM {self._table} WHERE rule_id = '{e_id}'"
+        e_rule_id = escape_sql_string(rule_id)
+        sql = f"DELETE FROM {self._table} WHERE rule_id = '{e_rule_id}'"
         self._sql.execute(sql)
         now = datetime.now(timezone.utc).isoformat()
         table_fqn = entry.table_fqn if entry else "unknown"
@@ -319,10 +312,8 @@ class RulesCatalogService:
 
     def delete_by_table(self, table_fqn: str, user_email: str) -> None:
         """Delete all rules for a table."""
-        from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
-
-        e_fqn = escape_sql_string(table_fqn)
-        sql = f"DELETE FROM {self._table} WHERE table_fqn = '{e_fqn}'"
+        e_table = escape_sql_string(table_fqn)
+        sql = f"DELETE FROM {self._table} WHERE table_fqn = '{e_table}'"
         self._sql.execute(sql)
         now = datetime.now(timezone.utc).isoformat()
         self._record_history(table_fqn, None, 0, "ui", user_email, now, "delete_all")
@@ -358,20 +349,17 @@ class RulesCatalogService:
                 f"but current is v{entry.version}. Another user may have modified the rule."
             )
 
-        from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
-
-        e_id = escape_sql_string(rule_id)
-        e_status = escape_sql_string(status)
-        e_email = escape_sql_string(user_email)
         now = datetime.now(timezone.utc).isoformat()
+        e_status = escape_sql_string(status)
+        e_user = escape_sql_string(user_email)
+        e_rule_id = escape_sql_string(rule_id)
 
-        version_guard = f" AND version = {int(entry.version)}"
         sql = (
             f"UPDATE {self._table} SET "
             f"  status = '{e_status}', "
-            f"  updated_by = '{e_email}', "
+            f"  updated_by = '{e_user}', "
             f"  updated_at = '{now}' "
-            f"WHERE rule_id = '{e_id}'{version_guard}"
+            f"WHERE rule_id = '{e_rule_id}' AND version = {entry.version}"
         )
         self._sql.execute(sql)
         self._record_history(
@@ -501,20 +489,18 @@ class RulesCatalogService:
         rule_id: str | None = None,
     ) -> None:
         """Insert an audit row into the history table (best-effort)."""
-        from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
-
         try:
-            e_fqn = escape_sql_string(table_fqn)
-            e_checks = escape_sql_string(checks_json) if checks_json else ""
-            e_email = escape_sql_string(user_email)
+            e_table = escape_sql_string(table_fqn)
+            e_checks = escape_sql_string(checks_json or "")
             e_source = escape_sql_string(source)
             e_action = escape_sql_string(action)
-            e_rule_id = escape_sql_string(rule_id) if rule_id else ""
+            e_user = escape_sql_string(user_email)
+            e_rule_id = escape_sql_string(rule_id or "")
             sql = (
                 f"INSERT INTO {self._history_table} "
                 "(table_fqn, checks, version, source, action, changed_by, changed_at, rule_id) VALUES "
-                f"('{e_fqn}', '{e_checks}', {int(version)}, '{e_source}', '{e_action}', "
-                f"'{e_email}', '{timestamp}', '{e_rule_id}')"
+                f"('{e_table}', '{e_checks}', {version}, '{e_source}', '{e_action}', "
+                f"'{e_user}', '{timestamp}', '{e_rule_id}')"
             )
             self._sql.execute(sql)
         except Exception:
