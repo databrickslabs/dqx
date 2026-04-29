@@ -12,14 +12,16 @@ description: >
 
 Apply checks with `DQEngine`. There are six method families — pick by **(1) rule form** and **(2) what output you want**.
 
-| Rule form | Append results as columns | Split valid / invalid | End-to-end (read + check + write) |
-|---|---|---|---|
-| Classes (`DQRowRule`, …) | `apply_checks` | `apply_checks_and_split` | `apply_checks_and_save_in_table` |
-| Metadata (`list[dict]`) | `apply_checks_by_metadata` | `apply_checks_by_metadata_and_split` | `apply_checks_by_metadata_and_save_in_table` |
+| Rule form                                                                      | Append results as columns  | Split valid / invalid                 | End-to-end (read + check + write)            |
+|--------------------------------------------------------------------------------|----------------------------|---------------------------------------|----------------------------------------------|
+| Classes (`DQRowRule`, …)                                                       | `apply_checks`             | `apply_checks_and_split`              | `apply_checks_and_save_in_table`             |
+| Metadata (`list[dict]`, loadable from YAML / JSON / Delta — see `dqx-storage`) | `apply_checks_by_metadata` | `apply_checks_by_metadata_and_split`  | `apply_checks_by_metadata_and_save_in_table` |
 
 For the end-to-end methods see the `dqx-end-to-end` skill. Streaming uses the same methods as batch.
 
-## Minimal example
+## Examples
+
+### Using DQX Classes
 
 ```python
 from databricks.labs.dqx import check_funcs
@@ -45,12 +47,29 @@ annotated = dq.apply_checks(df, checks)
 valid_df, invalid_df = dq.apply_checks_and_split(df, checks)
 ```
 
-## Metadata form (loaded from storage)
+### Using Metadata (loaded from storage)
 
 ```python
-# checks loaded from YAML/JSON/Delta via a storage config — see dqx-storage skill
 dq = DQEngine(WorkspaceClient())
+
+checks = """
+- criticality: warn
+  check:
+    function: is_not_null
+    arguments:
+      column: col3
+
+- criticality: error
+  check:
+    function: is_unique
+    arguments:
+      columns: [col1, col2]
+"""
+
+# Option A — one output DataFrame with _warnings / _errors columns appended.
 annotated = dq.apply_checks_by_metadata(df, checks_metadata)
+
+# Option B — split on error severity. Warnings ride along with valid_df.
 valid_df, invalid_df = dq.apply_checks_by_metadata_and_split(df, checks_metadata)
 ```
 

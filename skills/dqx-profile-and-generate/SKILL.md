@@ -24,6 +24,11 @@ generator = DQGenerator(ws)
 df = spark.read.table("catalog.schema.input")
 
 # Step 1 — profile. Returns summary stats + DQProfile candidates per column.
+# Three entry points, pick by what you have on hand:
+#   - profiler.profile(df, ...)                       — in-memory DataFrame
+#   - profiler.profile_table(input_config=..., ...)   — single Unity Catalog table by InputConfig
+#   - profiler.profile_tables_for_patterns(           — many tables; returns
+#         patterns=["catalog.schema.*"], ...)              dict[table_fqn -> (stats, profiles)]
 summary_stats, profiles = profiler.profile(df)
 
 # Step 2 — turn candidates into DQX checks (declarative list[dict]).
@@ -34,14 +39,13 @@ for c in checks:
     print(c)
 ```
 
-Profiling is **a one-time bootstrap action** per dataset. The candidate checks need human review before apply — don't auto-apply the raw output to production.
+Profiling is **a one-time bootstrap action** per dataset. The candidate checks need human review before apply — don't auto-apply the raw output to production data.
 
 ## Scoping the profile
 
-`DQProfiler.profile(df, columns=None, options=None)` — `columns` is a top-level kwarg; the tuning keys below live in the `options` dict.
+`DQProfiler.profile(df, columns=None, options=None)` — `columns` is a top-level kwarg limiting the profiled columns; the following optional keys are set via the `options` dict:
 
-- **`columns`** *(top-level)* — list of column names to restrict analysis to.
-- **`sample_fraction`** — float 0–1 (e.g. `0.1` for 10% sample). Use on huge tables.
+- **`sample_fraction`** — float 0–1 (e.g. `0.1` for 10% sample). Use on large tables.
 - **`sample_seed`** — int; pair with `sample_fraction` for reproducible runs.
 - **`limit`** — absolute row cap (e.g. `1_000_000`).
 - **`filter`** — SQL string applied before profiling (`"event_date >= '2026-01-01'"`).
@@ -55,7 +59,7 @@ summary_stats, profiles = profiler.profile(
 )
 ```
 
-## DLT / Lakeflow expectations
+## Generating DLT / Lakeflow expectations
 
 ```python
 from databricks.labs.dqx.profiler.dlt_generator import DQDltGenerator
