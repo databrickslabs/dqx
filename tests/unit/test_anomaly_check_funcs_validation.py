@@ -23,97 +23,177 @@ from databricks.labs.dqx.errors import InvalidParameterError
 
 def test_has_no_row_anomalies_requires_model_name():
     """model_name is required (non-empty)."""
-    with pytest.raises(InvalidParameterError, match="model_name parameter is required"):
-        has_no_row_anomalies(
-            model_name="",
-            registry_table="catalog.schema.table",
-        )
-    with pytest.raises(InvalidParameterError, match="model_name parameter is required"):
-        has_no_row_anomalies(
-            model_name=None,
-            registry_table="catalog.schema.table",
-        )
+    with pytest.raises(InvalidParameterError) as exc_info:
+        has_no_row_anomalies(model_name="", registry_table="catalog.schema.table")
+    assert "model_name parameter is required" in str(exc_info.value)
+
+    with pytest.raises(InvalidParameterError) as exc_info:
+        has_no_row_anomalies(model_name=None, registry_table="catalog.schema.table")
+    assert "model_name parameter is required" in str(exc_info.value)
 
 
 def test_has_no_row_anomalies_requires_registry_table():
     """registry_table is required (non-empty)."""
-    with pytest.raises(InvalidParameterError, match="registry_table parameter is required"):
-        has_no_row_anomalies(
-            model_name="catalog.schema.model",
-            registry_table="",
-        )
-    with pytest.raises(InvalidParameterError, match="registry_table parameter is required"):
-        has_no_row_anomalies(
-            model_name="catalog.schema.model",
-            registry_table=None,
-        )
+    with pytest.raises(InvalidParameterError) as exc_info:
+        has_no_row_anomalies(model_name="catalog.schema.model", registry_table="")
+    assert "registry_table parameter is required" in str(exc_info.value)
+
+    with pytest.raises(InvalidParameterError) as exc_info:
+        has_no_row_anomalies(model_name="catalog.schema.model", registry_table=None)
+    assert "registry_table parameter is required" in str(exc_info.value)
 
 
 def test_has_no_row_anomalies_requires_fully_qualified_model():
     """model_name must be fully qualified (catalog.schema.table)."""
-    with pytest.raises(InvalidParameterError, match="model_name must be fully qualified"):
-        has_no_row_anomalies(
-            model_name="schema.model",
-            registry_table="catalog.schema.table",
-        )
+    with pytest.raises(InvalidParameterError) as exc_info:
+        has_no_row_anomalies(model_name="schema.model", registry_table="catalog.schema.table")
+    assert "model_name must be fully qualified" in str(exc_info.value)
 
 
 def test_has_no_row_anomalies_requires_fully_qualified_registry_table():
     """registry_table must be fully qualified (catalog.schema.table)."""
-    with pytest.raises(InvalidParameterError, match="registry_table must be fully qualified"):
-        has_no_row_anomalies(
-            model_name="catalog.schema.model",
-            registry_table="schema.table",
-        )
+    with pytest.raises(InvalidParameterError) as exc_info:
+        has_no_row_anomalies(model_name="catalog.schema.model", registry_table="schema.table")
+    assert "registry_table must be fully qualified" in str(exc_info.value)
 
 
 def test_has_no_row_anomalies_rejects_threshold_out_of_range():
     """threshold must be between 0.0 and 100.0."""
-    with pytest.raises(InvalidParameterError, match="threshold must be between 0.0 and 100.0"):
+    with pytest.raises(InvalidParameterError) as exc_info:
         has_no_row_anomalies(
             model_name="catalog.schema.model",
             registry_table="catalog.schema.table",
             threshold=120.0,
         )
-    with pytest.raises(InvalidParameterError, match="threshold must be between 0.0 and 100.0"):
+    assert "threshold must be between 0.0 and 100.0" in str(exc_info.value)
+
+    with pytest.raises(InvalidParameterError) as exc_info:
         has_no_row_anomalies(
             model_name="catalog.schema.model",
             registry_table="catalog.schema.table",
             threshold=-0.1,
         )
+    assert "threshold must be between 0.0 and 100.0" in str(exc_info.value)
 
 
 def test_has_no_row_anomalies_rejects_non_positive_drift_threshold():
     """drift_threshold must be > 0 when provided."""
-    with pytest.raises(InvalidParameterError, match="drift_threshold must be greater than 0"):
+    with pytest.raises(InvalidParameterError) as exc_info:
         has_no_row_anomalies(
             model_name="catalog.schema.model",
             registry_table="catalog.schema.table",
             drift_threshold=-0.1,
         )
-    with pytest.raises(InvalidParameterError, match="drift_threshold must be greater than 0"):
+    assert "drift_threshold must be greater than 0" in str(exc_info.value)
+
+    with pytest.raises(InvalidParameterError) as exc_info:
         has_no_row_anomalies(
             model_name="catalog.schema.model",
             registry_table="catalog.schema.table",
             drift_threshold=0,
         )
+    assert "drift_threshold must be greater than 0" in str(exc_info.value)
 
 
 def test_has_no_row_anomalies_enable_contributions_requires_shap():
     """enable_contributions=True requires SHAP; raises when SHAP is not available."""
-    with pytest.raises(InvalidParameterError, match="enable_contributions=True requires the 'shap' dependency"):
-        with patch.object(check_funcs, "SHAP_AVAILABLE", False):
+    with patch.object(check_funcs, "SHAP_AVAILABLE", False):
+        with pytest.raises(InvalidParameterError) as exc_info:
             has_no_row_anomalies(
                 model_name="catalog.schema.model",
                 registry_table="catalog.schema.table",
                 enable_contributions=True,
             )
+    assert "enable_contributions=True requires the 'shap' dependency" in str(exc_info.value)
+
+
+def test_has_no_row_anomalies_ai_explanation_requires_contributions():
+    """enable_ai_explanation=True without enable_contributions=True raises InvalidParameterError."""
+    with pytest.raises(InvalidParameterError) as exc_info:
+        has_no_row_anomalies(
+            model_name="catalog.schema.model",
+            registry_table="catalog.schema.table",
+            enable_ai_explanation=True,
+            enable_contributions=False,
+        )
+    assert "enable_ai_explanation=True requires enable_contributions=True" in str(exc_info.value)
+
+
+def test_has_no_row_anomalies_ai_explanation_requires_dspy():
+    """enable_ai_explanation=True raises when DSPY_AVAILABLE is False on check_funcs module."""
+    with patch.object(check_funcs, "SHAP_AVAILABLE", True), patch.object(check_funcs, "DSPY_AVAILABLE", False):
+        with pytest.raises(InvalidParameterError) as exc_info:
+            has_no_row_anomalies(
+                model_name="catalog.schema.model",
+                registry_table="catalog.schema.table",
+                enable_ai_explanation=True,
+                enable_contributions=True,
+            )
+    assert "enable_ai_explanation=True requires the 'dspy' dependency" in str(exc_info.value)
+
+
+def test_has_no_row_anomalies_redact_columns_must_be_list():
+    """redact_columns that is not a list raises InvalidParameterError."""
+    with pytest.raises(InvalidParameterError) as exc_info:
+        has_no_row_anomalies(
+            model_name="catalog.schema.model",
+            registry_table="catalog.schema.table",
+            redact_columns="customer_id",  # type: ignore[arg-type]
+        )
+    assert "redact_columns must be a list" in str(exc_info.value)
+
+
+@pytest.mark.parametrize("bad_value", [0, -1, -100])
+def test_has_no_row_anomalies_max_groups_must_be_positive(bad_value):
+    """max_groups <= 0 raises InvalidParameterError."""
+    with pytest.raises(InvalidParameterError) as exc_info:
+        has_no_row_anomalies(
+            model_name="catalog.schema.model",
+            registry_table="catalog.schema.table",
+            max_groups=bad_value,
+        )
+    assert "max_groups must be a positive integer" in str(exc_info.value)
+
+
+@pytest.mark.parametrize("bad_value", ["500", 500.0, None, [500]])
+def test_has_no_row_anomalies_max_groups_must_be_int(bad_value):
+    """max_groups non-int raises InvalidParameterError."""
+    with pytest.raises(InvalidParameterError) as exc_info:
+        has_no_row_anomalies(
+            model_name="catalog.schema.model",
+            registry_table="catalog.schema.table",
+            max_groups=bad_value,  # type: ignore[arg-type]
+        )
+    assert "max_groups must be a positive integer" in str(exc_info.value)
 
 
 def test_resolve_scoring_strategy_raises_for_unknown_algorithm():
     """resolve_scoring_strategy raises InvalidParameterError for an unrecognised algorithm name."""
-    with pytest.raises(InvalidParameterError, match="Unsupported model algorithm 'UnknownAlgorithm'"):
+    with pytest.raises(InvalidParameterError) as exc_info:
         resolve_scoring_strategy("UnknownAlgorithm")
+    assert "Unsupported model algorithm 'UnknownAlgorithm'" in str(exc_info.value)
+
+
+def test_has_no_row_anomalies_rejects_llm_model_config_unknown_keys():
+    """llm_model_config dict with keys outside {model_name, api_key, api_base} is rejected."""
+    with pytest.raises(InvalidParameterError) as exc_info:
+        has_no_row_anomalies(
+            model_name="catalog.schema.model",
+            registry_table="catalog.schema.table",
+            llm_model_config={"model_name": "x", "api_base_url": "oops"},
+        )
+    assert "unknown keys" in str(exc_info.value)
+
+
+def test_has_no_row_anomalies_rejects_llm_model_config_wrong_type():
+    """llm_model_config that is neither LLMModelConfig nor dict is rejected."""
+    with pytest.raises(InvalidParameterError) as exc_info:
+        has_no_row_anomalies(
+            model_name="catalog.schema.model",
+            registry_table="catalog.schema.table",
+            llm_model_config="databricks/foo",  # type: ignore[arg-type]
+        )
+    assert "must be an LLMModelConfig instance or a dict" in str(exc_info.value)
 
 
 def test_resolve_scoring_strategy_returns_strategy_for_isolation_forest():

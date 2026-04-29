@@ -221,8 +221,8 @@ def check_segment_drift(
     segment_model: AnomalyModelRecord,
     drift_threshold: float | None,
     drift_threshold_value: float,
-) -> None:
-    """Check and warn about data drift in a segment."""
+) -> DriftResult | None:
+    """Check and warn about data drift in a segment. Returns the DriftResult when computed."""
     if drift_threshold is not None and segment_model.training.baseline_stats:
         drift_df, drift_columns = prepare_drift_df(segment_df, columns, segment_model)
         drift_result = compute_drift_score(
@@ -242,6 +242,8 @@ def check_segment_drift(
                 UserWarning,
                 stacklevel=5,
             )
+        return drift_result
+    return None
 
 
 def check_and_warn_drift(
@@ -251,8 +253,8 @@ def check_and_warn_drift(
     model_name: str,
     drift_threshold: float | None,
     drift_threshold_value: float,
-) -> None:
-    """Check for data drift and issue warning if detected."""
+) -> DriftResult | None:
+    """Check for data drift and issue warning if detected. Returns the DriftResult when computed."""
     if drift_threshold is not None and record.training.baseline_stats:
         drift_df, drift_columns = prepare_drift_df(df, columns, record)
         drift_result = compute_drift_score(
@@ -274,3 +276,18 @@ def check_and_warn_drift(
                 UserWarning,
                 stacklevel=3,
             )
+        return drift_result
+    return None
+
+
+def format_drift_summary(drift_result: "DriftResult | None") -> str:
+    """Format a DriftResult for inclusion in the LLM prompt.
+
+    Returns 'none' when no drift was computed or no drift detected; otherwise
+    a semicolon-separated list of drifted feature names with their drift scores,
+    e.g. 'drift detected: amount=4.12; quantity=3.55'.
+    """
+    if drift_result is None or not drift_result.drift_detected:
+        return "none"
+    parts = [f"{col}={drift_result.column_scores.get(col, 0.0):.2f}" for col in drift_result.drifted_columns]
+    return "drift detected: " + "; ".join(parts)
