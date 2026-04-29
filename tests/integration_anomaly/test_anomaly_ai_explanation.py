@@ -113,7 +113,7 @@ def test_ai_explanation_populated_for_anomalous_row(
 
 
 def test_ai_explanation_null_for_non_anomalous_row(
-    spark: SparkSession, shared_3d_model, test_df_factory, anomaly_scorer, mock_llm
+    spark: SparkSession, shared_3d_model, test_df_factory, anomaly_scorer
 ):
     """Rows below the severity threshold keep ai_explanation null."""
     # Row drawn from the training distribution (see get_standard_3d_training_data: i=100).
@@ -316,7 +316,7 @@ def test_ai_explanation_warning_logged_when_max_groups_exceeded(spark: SparkSess
     assert "max_groups=1" in msg
 
 
-def test_ai_explanation_handles_empty_input_dataframe(spark: SparkSession, mock_llm):
+def test_ai_explanation_handles_empty_input_dataframe(spark: SparkSession):
     """Empty input → empty output with the explanation struct column attached, no LLM call, no warning."""
     df = _build_synthetic_scored_df(spark, rows=[])
 

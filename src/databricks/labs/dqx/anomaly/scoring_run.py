@@ -16,7 +16,11 @@ from databricks.labs.dqx.anomaly.ensemble_scorer import (
 from databricks.labs.dqx.anomaly.model_config import compute_config_hash
 from databricks.labs.dqx.anomaly.model_loader import check_model_staleness
 from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRecord, AnomalyModelRegistry
-from databricks.labs.dqx.anomaly.anomaly_llm_explainer import ExplanationContext, add_explanation_column
+from databricks.labs.dqx.anomaly.anomaly_llm_explainer import (
+    ExplanationContext,
+    add_explanation_column,
+    build_language_model,
+)
 from databricks.labs.dqx.anomaly.scoring_utils import (
     add_info_column,
     add_severity_percentile_column,
@@ -189,6 +193,7 @@ def score_single_segment(
     segment_df: DataFrame,
     segment_model: AnomalyModelRecord,
     config: ScoringConfig,
+    language_model: object | None = None,
 ) -> DataFrame:
     """Score a single segment with its specific model."""
     drift_result = check_segment_drift(
@@ -247,6 +252,7 @@ def score_single_segment(
             segment_model.segmentation.segment_values,
             segment_model.identity.is_ensemble,
             drift_summary=format_drift_summary(drift_result),
+            language_model=language_model,
         )
 
     segment_scored = add_info_column(
@@ -284,6 +290,10 @@ def score_segmented(
 
     df_to_score = apply_row_filter(df, config.row_filter)
 
+    shared_lm = (
+        build_language_model(ExplanationContext.from_scoring_config(config)) if config.enable_ai_explanation else None
+    )
+
     scored_dfs: list[DataFrame] = []
 
     for segment_model in all_segments:
@@ -294,7 +304,7 @@ def score_segmented(
         segment_df = df_to_score.filter(segment_filter)
         if segment_df.limit(1).count() == 0:
             continue
-        segment_scored = score_single_segment(segment_df, segment_model, config)
+        segment_scored = score_single_segment(segment_df, segment_model, config, language_model=shared_lm)
         scored_dfs.append(segment_scored)
 
     if not scored_dfs:

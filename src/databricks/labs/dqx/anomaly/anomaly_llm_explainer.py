@@ -271,8 +271,7 @@ def _aggregate_groups(
         .limit(max_groups)
     )
     kept_rows = [
-        row.asDict(recursive=True)
-        for row in ranked.join(per_pattern_contrib, on=_PATTERN_COL, how="left").collect()
+        row.asDict(recursive=True) for row in ranked.join(per_pattern_contrib, on=_PATTERN_COL, how="left").collect()
     ]
 
     kept_rows_count = sum(int(r.get("group_size") or 0) for r in kept_rows)
@@ -371,12 +370,24 @@ def _attach_explanation_struct(
     )
 
 
+def build_language_model(ctx: ExplanationContext) -> object:
+    """Construct a dspy.LM from the context's LLM config.
+
+    Call once and pass the result to *add_explanation_column* when scoring multiple
+    segments so the same LM instance is reused across all segment calls instead of
+    being reconstructed per segment.
+    """
+    llm_cfg = ctx.llm_model_config or LLMModelConfig()
+    return dspy.LM(**_build_lm_config(llm_cfg))
+
+
 def add_explanation_column(
     df: DataFrame,
     ctx: ExplanationContext,
     segment_values: dict[str, str] | None,
     is_ensemble: bool,
     drift_summary: str = "none",
+    language_model: object | None = None,
 ) -> DataFrame:
     """Add the AI explanation column to df using the group-based algorithm.
 
@@ -386,12 +397,15 @@ def add_explanation_column(
     group's size and mean severity. Rows below threshold or in groups exceeding
     ``ctx.max_groups`` receive a null struct.
 
+    Pass a pre-built *language_model* (from *build_language_model*) when calling this
+    function for multiple segments to reuse the same dspy.LM instance.
+
     Preconditions (caller's responsibility):
       - dspy is importable
       - df has ctx.score_std_col, ctx.severity_col, and ctx.contributions_col.
     """
-    llm_cfg = ctx.llm_model_config or LLMModelConfig()
-    lm_config = _build_lm_config(llm_cfg)
+    if language_model is None:
+        language_model = build_language_model(ctx)
     redact_set = frozenset(ctx.redact_columns)
     segment_str = _format_segment(segment_values)
 
@@ -416,7 +430,6 @@ def add_explanation_column(
             f"exceeded max_groups={ctx.max_groups}; their ai_explanation will be null."
         )
 
-    language_model = dspy.LM(**lm_config)
     predictor = dspy.Predict(AnomalyGroupExplanationSignature)
     with dspy.settings.context(lm=language_model):
         result_rows = _call_llm_for_groups(kept, ctx, segment_str, is_ensemble, drift_summary, predictor)

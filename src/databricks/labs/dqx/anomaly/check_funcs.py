@@ -4,6 +4,7 @@ Check functions for row anomaly detection.
 Facade: public rule entry point. Orchestration and scoring live in sibling modules.
 """
 
+import dataclasses
 import importlib.util
 import uuid
 from typing import Any
@@ -24,7 +25,7 @@ from databricks.labs.dqx.rule import register_rule
 
 DSPY_AVAILABLE = importlib.util.find_spec("dspy") is not None
 
-_LLM_MODEL_CONFIG_KEYS = {"model_name", "api_key", "api_base"}
+_LLM_MODEL_CONFIG_KEYS = {f.name for f in dataclasses.fields(LLMModelConfig)}
 
 
 def _coerce_llm_model_config(value: LLMModelConfig | dict | None) -> LLMModelConfig | None:
