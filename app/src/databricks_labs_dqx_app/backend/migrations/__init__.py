@@ -18,9 +18,14 @@ Example::
         description="Add name column to dq_app_settings",
         sql_template=(
             "ALTER TABLE {catalog}.{schema}.dq_app_settings "
-            "ADD COLUMN IF NOT EXISTS name STRING"
+            "ADD COLUMN name STRING"
         ),
     )
+
+.. note::
+    Do **not** use ``ADD COLUMN IF NOT EXISTS`` — it is not supported on
+    all Databricks SQL warehouse versions.  The ``_apply`` method catches
+    ``COLUMN_ALREADY_EXISTS`` errors automatically, providing idempotency.
 """
 
 from __future__ import annotations
@@ -182,16 +187,16 @@ MIGRATIONS: list[Migration] = [
         version=13,
         description="Add canceled_by and updated_at audit columns to dq_validation_runs",
         sql_template=(
-            f"ALTER TABLE {_PLACEHOLDER}.dq_validation_runs ADD COLUMN IF NOT EXISTS canceled_by STRING;"
-            f"ALTER TABLE {_PLACEHOLDER}.dq_validation_runs ADD COLUMN IF NOT EXISTS updated_at STRING"
+            f"ALTER TABLE {_PLACEHOLDER}.dq_validation_runs ADD COLUMN canceled_by STRING;"
+            f"ALTER TABLE {_PLACEHOLDER}.dq_validation_runs ADD COLUMN updated_at STRING"
         ),
     ),
     Migration(
         version=14,
         description="Add canceled_by and updated_at audit columns to dq_profiling_results",
         sql_template=(
-            f"ALTER TABLE {_PLACEHOLDER}.dq_profiling_results ADD COLUMN IF NOT EXISTS canceled_by STRING;"
-            f"ALTER TABLE {_PLACEHOLDER}.dq_profiling_results ADD COLUMN IF NOT EXISTS updated_at STRING"
+            f"ALTER TABLE {_PLACEHOLDER}.dq_profiling_results ADD COLUMN canceled_by STRING;"
+            f"ALTER TABLE {_PLACEHOLDER}.dq_profiling_results ADD COLUMN updated_at STRING"
         ),
     ),
     Migration(
@@ -241,7 +246,7 @@ MIGRATIONS: list[Migration] = [
     Migration(
         version=19,
         description="Add source column to dq_quality_rules",
-        sql_template=(f"ALTER TABLE {_PLACEHOLDER}.dq_quality_rules " "ADD COLUMN IF NOT EXISTS source STRING"),
+        sql_template=(f"ALTER TABLE {_PLACEHOLDER}.dq_quality_rules " "ADD COLUMN source STRING"),
     ),
     Migration(
         version=20,
@@ -320,29 +325,27 @@ MIGRATIONS: list[Migration] = [
     Migration(
         version=27,
         description="Add rule_id column to dq_quality_rules for per-check granularity",
-        sql_template=(f"ALTER TABLE {_PLACEHOLDER}.dq_quality_rules " "ADD COLUMN IF NOT EXISTS rule_id STRING"),
+        sql_template=(f"ALTER TABLE {_PLACEHOLDER}.dq_quality_rules " "ADD COLUMN rule_id STRING"),
     ),
     Migration(
         version=28,
         description="Add rule_id column to dq_quality_rules_history",
-        sql_template=(
-            f"ALTER TABLE {_PLACEHOLDER}.dq_quality_rules_history " "ADD COLUMN IF NOT EXISTS rule_id STRING"
-        ),
+        sql_template=(f"ALTER TABLE {_PLACEHOLDER}.dq_quality_rules_history " "ADD COLUMN rule_id STRING"),
     ),
     Migration(
         version=29,
         description="Add run_type column to dq_validation_runs to distinguish dryrun vs scheduled",
-        sql_template=(f"ALTER TABLE {_PLACEHOLDER}.dq_validation_runs " "ADD COLUMN IF NOT EXISTS run_type STRING"),
+        sql_template=(f"ALTER TABLE {_PLACEHOLDER}.dq_validation_runs " "ADD COLUMN run_type STRING"),
     ),
     Migration(
         version=30,
         description="Add job_run_id column to dq_validation_runs for server-side run verification",
-        sql_template=(f"ALTER TABLE {_PLACEHOLDER}.dq_validation_runs " "ADD COLUMN IF NOT EXISTS job_run_id BIGINT"),
+        sql_template=(f"ALTER TABLE {_PLACEHOLDER}.dq_validation_runs " "ADD COLUMN job_run_id BIGINT"),
     ),
     Migration(
         version=31,
         description="Add job_run_id column to dq_profiling_results for server-side run verification",
-        sql_template=(f"ALTER TABLE {_PLACEHOLDER}.dq_profiling_results " "ADD COLUMN IF NOT EXISTS job_run_id BIGINT"),
+        sql_template=(f"ALTER TABLE {_PLACEHOLDER}.dq_profiling_results " "ADD COLUMN job_run_id BIGINT"),
     ),
 ]
 
