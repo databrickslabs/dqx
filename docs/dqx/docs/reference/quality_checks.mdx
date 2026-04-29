@@ -4080,6 +4080,71 @@ Using DQX classes:
 When using dataset-level checks, the top-level `filter` condition is pushed down as `row_filter` to the check function and applied before aggregation, ensuring that the check operates only on the relevant subset of rows rather than on the aggregated results.
 </Admonition>
 
+## Customizing check messages
+
+Users can provide a Spark SQL expression to customize messages created by DQX failures. Set the `message` attribute of any `DQRule` to a SQL expression that returns a string value. This overrides the check function's default message.
+
+Custom SQL expressions support the following placeholders, which are substituted before evaluation:
+- `{rule_name}` is replaced with the name of the DQX rule
+- `{check_func_name}` is replaced with the name of the DQX check function
+- `{column_value}` is replaced with the observed column value (cast to string). This can only be used for single-column values.
+
+<Admonition type="tip" title="Null-safe dynamic messages">
+If your message references `{column_value}`, wrap it with `coalesce` to avoid null messages. In Spark SQL, `concat(..., null)` returns `null`.
+</Admonition>
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from databricks.labs.dqx import check_funcs
+    from databricks.labs.dqx.rule import DQRowRule
+
+    # simple static message
+    checks = [
+      DQRowRule(
+        name="email_not_null",
+        criticality="error",
+        check_func=check_funcs.is_not_null,
+        column="email",
+        message="'Email must not be null'",
+      )
+    ]
+
+    # dynamic message with column value
+    checks = [
+      DQRowRule(
+        name="age_positive",
+        criticality="error",
+        check_func=check_funcs.is_greater_than,
+        column="age",
+        check_func_kwargs={"limit": 0},
+        message="concat('{rule_name}', ': value ', coalesce(cast({column_value} as string), 'null'), ' is not valid')",
+      )
+    ]
+    ```
+  </TabItem>
+  <TabItem value="YAML" label="YAML">
+    ```yaml
+    - name: email_not_null
+      criticality: error
+      message: "'Email must not be null'"
+      check:
+        function: is_not_null
+        arguments:
+          column: email
+
+    - name: age_positive
+      criticality: error
+      message: "concat('{rule_name}', ': value ', coalesce(cast({column_value} as string), 'null'), ' is not valid')"
+      check:
+        function: is_greater_than
+        arguments:
+          column: age
+          limit: 0
+    ```
+  </TabItem>
+</Tabs>
+
 ## Converting checks between formats
 
 In DQX, checks can be defined either as Python classes or YAML declarations. When using YAML, the files are first parsed into dictionaries and then transformed into DQX class instances under the hood. Since both formats share the same internal structure, they are interchangeable and can be safely converted between one another.

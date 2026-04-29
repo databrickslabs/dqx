@@ -151,9 +151,11 @@ class DQRuleManager:
         # or use literal run time if explicitly overridden
         run_time_expr = F.current_timestamp() if self.run_time_overwrite is None else F.lit(self.run_time_overwrite)
 
+        message_col = self._build_message_col(condition)
+
         return F.struct(
             F.lit(self.check.name).alias("name"),
-            condition.alias("message"),
+            message_col.alias("message"),
             self.check.columns_as_string_expr.alias("columns"),
             F.lit(self.check.filter or None).cast("string").alias("filter"),
             F.lit(self.check.check_func.__name__).alias("function"),
@@ -166,6 +168,38 @@ class DQRuleManager:
             F.lit(self.rule_set_fingerprint).alias("rule_set_fingerprint"),
             F.lit(skipped or None).alias("skipped"),
         ).cast(dq_result_item_schema)
+
+    def _build_message_col(self, condition: Column) -> Column:
+        """
+        Builds the message column, using the default message or a custom Spark SQL expression if
+        specified in the rule definition. The SQL expression supports placeholders that are
+        substituted before evaluation:
+
+        * '{rule_name}' is replaced with the quoted name of the DQX rule
+        * '{check_func_name}' is replaced with the quoted name of the DQX check function
+        * '{column_value}' is replaced with a SQL reference to the column value (cast to string)
+
+        Args:
+            condition: Default DQX condition message returned by evaluating the DQX check function
+
+        Returns:
+            The custom DQX condition message if specified in the rule definition, otherwise the default DQX condition
+            message
+        """
+        if self.check.message is None:
+            return condition
+
+        column_value_sql = f"CAST(`{self.check.column}` AS STRING)" if self.check.column else "NULL"
+        escaped_check_name = self.check.name.replace("'", "\\'")
+        escaped_check_function = self.check.check_func.__name__.replace("'", "\\'")
+
+        message_expr = self.check.message
+        message_expr = message_expr.replace("{rule_name}", escaped_check_name)
+        message_expr = message_expr.replace("{check_func_name}", escaped_check_function)
+        message_expr = message_expr.replace("{column_value}", column_value_sql)
+
+        custom_message = F.expr(message_expr)
+        return F.when(condition.isNotNull(), custom_message).otherwise(F.lit(None).cast("string"))
 
     def _get_invalid_cols_message(self) -> str:
         """
