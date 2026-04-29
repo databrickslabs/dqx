@@ -141,7 +141,7 @@ test = [
     "databricks-connect~=17.3 ; python_version >= '3.12'",  # bundles spark 4.0.0
     "dbldatagen~=0.4.0",
     "pyparsing~=3.2.3",
-    "jmespath~=1.0.1",
+    "jmespath>=1.0.1,<1.2.0",
     "psycopg2-binary~=2.9.10",
     "fastapi>=0.119.0,<1.0",
     "dbt-core~=1.11.6",
