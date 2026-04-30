@@ -1893,6 +1893,7 @@ class TestDryRunRoutes:
         app_conf = AppConfig(catalog="cat", schema_name="sch", job_id="")
         result = get_dry_run_status(
             run_id="run-001",
+            obo_ws=mock_ws,
             job_svc=job_svc,
             view_svc=mock_view_svc,
             app_conf=app_conf,
@@ -1916,6 +1917,7 @@ class TestDryRunRoutes:
         with pytest.raises(HTTPException) as exc:
             get_dry_run_status(
                 run_id="run-001",
+                obo_ws=mock_ws,
                 job_svc=job_svc,
                 view_svc=mock_view_svc,
                 app_conf=app_conf,
