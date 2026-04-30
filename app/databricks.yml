@@ -1,13 +1,68 @@
 bundle:
   name: "databricks-labs-dqx-app"
 
+
+variables:
+  catalog_name:
+    description: "Name of the catalog for DQX app storage"
+    default: "dqx"
+  schema_name:
+    description: "Name of the schema for DQX app storage"
+    default: "dqx_app"
+  tmp_schema_name:
+    description: "Name of the schema for temporary views and intermediate processing"
+    default: "dqx_app_tmp"
+  admin_group:
+    description: "Databricks workspace group name for bootstrap Admin access"
+    default: "admins"
+  wheels_volume_name:
+    description: "Name of the UC volume for storing DQX wheel files"
+    default: "wheels"
+  dqx_service_principal_application_id:
+    description: "Application ID of the service principal for DQX tasks"
+    default: "00000000-0000-0000-0000-000000000000"
+  app_config:
+    type: complex
+    description: "Configuration for dqx app"
+    default:
+      # Multiple workers improve HTTP throughput. The in-process SchedulerService
+      # is guarded by a file lock so only one worker runs the scheduler loop.
+      # The in-memory CacheFactory (TTL-based, non-authoritative) warms
+      # independently per worker, which is acceptable for its use case.
+      command:
+        - "uvicorn"
+        - "databricks_labs_dqx_app.backend.app:app"
+        - "--workers"
+        - "1"
+      env:
+        - name: "DATABRICKS_WAREHOUSE_ID"
+          value_from: "dqx-sql-warehouse"
+        - name: "DQX_CATALOG"
+          value: "${var.catalog_name}"
+        - name: "DQX_SCHEMA"
+          value: "${var.schema_name}"
+        - name: "DQX_JOB_ID"
+          value_from: "dqx-task-runner-job"
+        - name: "DQX_TMP_SCHEMA"
+          value: "${var.tmp_schema_name}"
+        - name: "DQX_ADMIN_GROUP"
+          value: "${var.admin_group}"
+        - name: "DQX_WHEELS_VOLUME"
+          value: "/Volumes/${var.catalog_name}/${var.schema_name}/${var.wheels_volume_name}"
+
 sync:
   include:
     - .build
 
 artifacts:
   default:
-    build: uv run apx build
+    build: >
+      uv run apx build &&
+      uv build ../ --wheel --out-dir .build/ &&
+      uv build tasks/ --wheel --out-dir .build/tasks/ &&
+      dqx_whl=$(ls -1 .build/databricks_labs_dqx-*.whl | head -1 | xargs basename) &&
+      echo "$dqx_whl" | cat - .build/requirements.txt > .build/requirements.txt.tmp &&
+      mv .build/requirements.txt.tmp .build/requirements.txt
 
 resources:
   apps:
@@ -15,19 +70,158 @@ resources:
       name: "databricks-labs-dqx-app"
       description: "Databricks DQX App for Data Quality Monitoring"
       source_code_path: ".build"
+      config: ${var.app_config}
 
-      # Below are scopes available today, but they are not enough for the app features to work properly.
-      # After deploying the app, you need to enable additional scopes by running:
-      # Login: databricks auth login --host https://accounts.cloud.databricks.com --account-id <dbx-account-id> --profile <profile-name>
-      # `databricks account custom-app-integration update '<oauth2-app-client-id>' --json '{"scopes": ["openid", "profile", "email", "all-apis", "offline_access", "iam.current-user"]}'`
-      # where: <oauth2-app-client-id> is the Oauth2 App Client ID which can be found in the Apps UI under User authorization
-      # alternatively, you can find it by running: `databricks account custom-app-integration list`
+      # These scopes are NOT sufficient for all app features. After deploying,
+      # enable all-apis via the account-level CLI:
+      #   databricks auth login --host https://accounts.cloud.databricks.com \
+      #     --account-id <dbx-account-id> --profile <profile-name>
+      #   databricks account custom-app-integration update '<oauth2-app-client-id>' \
+      #     --json '{"scopes": ["openid", "profile", "email", "all-apis", "offline_access", "iam.current-user"]}'
+      # <oauth2-app-client-id> is in the Apps UI under User authorization,
+      # or run: databricks account custom-app-integration list
+      #
+      # The partial list below is the DABs-managed baseline; it does NOT
+      # replace the all-apis scope requirement above.
+      user_api_scopes:
+        - sql
+        - catalog.catalogs:read
+        - catalog.schemas:read
+        - catalog.tables:read
+        - serving.serving-endpoints
 
-      # use all-apis scope for full functionality instead of the limited scopes below
-      #user_api_scopes:
-      #  - files.files
+
+      resources:
+        - name: "dqx-sql-warehouse"
+          description: "SQL Warehouse for DQX app queries"
+          sql_warehouse:
+            id: ${resources.sql_warehouses.dqx_sql_warehouse.id}
+            permission: "CAN_USE"
+        - name: "dqx-task-runner-job"
+          description: "Job for async profiler and dry-run tasks"
+          job:
+            id: ${resources.jobs.dqx_task_runner.id}
+            permission: "CAN_MANAGE"
+
+      permissions:
+        - group_name: "account users"
+          level: "CAN_USE"
+
+  sql_warehouses:
+    dqx_sql_warehouse:
+      name: dqx-sql-warehouse
+      cluster_size: "X-Small"
+      enable_serverless_compute: true
+      max_num_clusters: 1
+      min_num_clusters: 1
+      auto_stop_mins: 10
+      permissions:
+        - group_name: "users"
+          level: "CAN_USE"
+
+  volumes:
+    dqx_wheels:
+      catalog_name: ${var.catalog_name}
+      schema_name: ${var.schema_name}
+      name: ${var.wheels_volume_name}
+      volume_type: MANAGED
+      grants:
+        - principal: ${resources.apps.databricks-labs-dqx-app.id}
+          privileges:
+            - ALL_PRIVILEGES
+        - principal: ${var.dqx_service_principal_application_id}
+          privileges:
+            - ALL_PRIVILEGES
+
+  schemas:
+    dqx_schema:
+      catalog_name: ${var.catalog_name}
+      name: ${var.schema_name}
+      grants:
+        - principal: ${resources.apps.databricks-labs-dqx-app.id}
+          privileges:
+            - ALL_PRIVILEGES
+        - principal: ${var.dqx_service_principal_application_id}
+          privileges:
+            - ALL_PRIVILEGES
+
+    dqx_tmp_schema:
+      catalog_name: ${var.catalog_name}
+      name: ${var.tmp_schema_name}
+      grants:
+        - principal: ${resources.apps.databricks-labs-dqx-app.id}
+          privileges:
+            - ALL_PRIVILEGES
+            - MANAGE
+        - principal: ${var.dqx_service_principal_application_id}
+          privileges:
+            - ALL_PRIVILEGES
+            - MANAGE
+        # account users need CREATE_TABLE so the app can create per-user
+        # temporary views in this schema via OBO tokens.
+        - principal: "account users"
+          privileges:
+            - USE_SCHEMA
+            - CREATE_TABLE
+
+  jobs:
+    dqx_task_runner:
+      name: "dqx-app-task-runner"
+      max_concurrent_runs: 10
+      tags:
+        app: "dqx"
+      run_as:
+        service_principal_name: ${var.dqx_service_principal_application_id}
+      tasks:
+        - task_key: "run_task"
+          python_wheel_task:
+            package_name: databricks_labs_dqx_task_runner
+            entry_point: dqx-task-runner
+            parameters:
+              - "--task_type"
+              - "{{job.parameters.task_type}}"
+              - "--view_fqn"
+              - "{{job.parameters.view_fqn}}"
+              - "--result_catalog"
+              - "{{job.parameters.result_catalog}}"
+              - "--result_schema"
+              - "{{job.parameters.result_schema}}"
+              - "--config_json"
+              - "{{job.parameters.config_json}}"
+              - "--run_id"
+              - "{{job.parameters.run_id}}"
+              - "--requesting_user"
+              - "{{job.parameters.requesting_user}}"
+          environment_key: "default"
+      environments:
+        - environment_key: "default"
+          spec:
+            client: "5"
+            dependencies:
+              - ./.build/tasks/databricks_labs_dqx_task_runner-*.whl
+              - ./.build/databricks_labs_dqx-*.whl
+      parameters:
+        - name: "task_type"
+          default: "profile"
+        - name: "view_fqn"
+          default: ""
+        - name: "result_catalog"
+          default: "${var.catalog_name}"
+        - name: "result_schema"
+          default: "${var.schema_name}"
+        - name: "config_json"
+          default: "{}"
+        - name: "run_id"
+          default: ""
+        - name: "requesting_user"
+          default: "unknown"
 
 targets:
   dev:
-    mode: development
-    default: true
+    workspace:
+      profile: <your-profile>
+    variables:
+      catalog_name: <your-catalog-name>
+      dqx_service_principal_application_id: <your-service-principal-application-id>
+    presets:
+      trigger_pause_status: PAUSED
