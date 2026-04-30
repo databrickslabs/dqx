@@ -122,6 +122,7 @@ async def list_validation_runs(
     "/batch-from-catalog",
     response_model=BatchRunFromCatalogOut,
     operation_id="batchRunFromCatalog",
+    dependencies=[require_role(*_NON_VIEWERS)],
 )
 def batch_run_from_catalog(
     body: BatchRunFromCatalogIn,
@@ -189,7 +190,12 @@ def batch_run_from_catalog(
     return BatchRunFromCatalogOut(submitted=submitted, errors=errors)
 
 
-@router.post("", response_model=DryRunSubmitOut, operation_id="submitDryRun")
+@router.post(
+    "",
+    response_model=DryRunSubmitOut,
+    operation_id="submitDryRun",
+    dependencies=[require_role(*_NON_VIEWERS)],
+)
 def submit_dry_run(
     body: DryRunIn,
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
@@ -261,9 +267,15 @@ def submit_dry_run(
         raise HTTPException(status_code=500, detail=f"Failed to submit dry run: {e}")
 
 
-@router.get("/runs/{run_id}/status", response_model=RunStatusOut, operation_id="getDryRunStatus")
+@router.get(
+    "/runs/{run_id}/status",
+    response_model=RunStatusOut,
+    operation_id="getDryRunStatus",
+    dependencies=[require_role(*_ALL_ROLES)],
+)
 def get_dry_run_status(
     run_id: str,
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
     job_svc: Annotated[JobService, Depends(get_job_service)],
     view_svc: Annotated[ViewService, Depends(get_view_service)],
     app_conf: Annotated[AppConfig, Depends(get_conf)],
@@ -276,9 +288,16 @@ def get_dry_run_status(
     When *job_run_id* and optionally *view_fqn* are supplied as query
     parameters the endpoint skips the database lookup, which is required
     for validation dry runs that are not recorded in the history table.
+    Ownership of the *job_run_id* is verified against the OBO caller via the
+    Databricks Jobs API so a client cannot use a guessed *view_fqn* to drop
+    another user's temporary view.
     """
     try:
         if job_run_id_param is not None:
+            requesting_user = obo_ws.current_user.me().user_name or "unknown"
+            run_owner = job_svc.get_run_creator(job_run_id_param)
+            if run_owner and run_owner != requesting_user:
+                raise HTTPException(status_code=403, detail="You can only check status of your own runs")
             resolved_job_run_id = job_run_id_param
             resolved_view_fqn = view_fqn_param
             has_history_row = False
@@ -357,12 +376,18 @@ def get_dry_run_status(
             message=status.message,
             view_cleaned_up=view_cleaned_up,
         )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("Failed to get dry run status (run_id=%s): %s", run_id, e, exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to get run status: {e}")
 
 
-@router.post("/runs/{run_id}/cancel", operation_id="cancelDryRun")
+@router.post(
+    "/runs/{run_id}/cancel",
+    operation_id="cancelDryRun",
+    dependencies=[require_role(*_NON_VIEWERS)],
+)
 def cancel_dry_run(
     run_id: str,
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
@@ -378,6 +403,11 @@ def cancel_dry_run(
     skips the database lookup (needed for validation dry runs that were
     not recorded in the history table). Ownership is still enforced via
     the Databricks Jobs API — only admins/approvers may cancel others' runs.
+
+    Note: a non-owner caller can confirm whether a given *job_run_id* exists
+    (and belongs to someone else) by observing the 403 response. This is
+    accepted — Databricks job IDs are large random integers and the response
+    leaks no identifying information beyond existence.
     """
     try:
         canceling_user = obo_ws.current_user.me().user_name or "unknown"
@@ -423,7 +453,12 @@ def cancel_dry_run(
         raise HTTPException(status_code=500, detail=f"Failed to cancel run: {e}")
 
 
-@router.get("/runs/{run_id}/results", response_model=DryRunResultsOut, operation_id="getDryRunResults")
+@router.get(
+    "/runs/{run_id}/results",
+    response_model=DryRunResultsOut,
+    operation_id="getDryRunResults",
+    dependencies=[require_role(*_ALL_ROLES)],
+)
 def get_dry_run_results(
     run_id: str,
     job_svc: Annotated[JobService, Depends(get_job_service)],

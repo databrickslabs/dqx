@@ -167,93 +167,86 @@ async def _update_job_wheels(sp_ws: WorkspaceClient, job_id: str, wheel_paths: l
 async def lifespan(app: FastAPI):
     logger.info(f"Starting app with configuration:\n{conf.model_dump_json(indent=2)}")
 
-    sp_ws: WorkspaceClient | None = None
+    # Service-principal auth and database migrations are required for the app to
+    # function correctly.  Failure here is fatal: a partial-state app silently
+    # surfaces confusing SQL errors on every request, so we'd rather fail loudly
+    # at startup and let the platform restart us / page the operator.
+    sp_ws = await get_sp_ws()
+    wh_id = os.environ.get("DATABRICKS_WAREHOUSE_ID") or os.environ.get("DATABRICKS_SQL_WAREHOUSE_ID") or ""
+    sp_sql = SqlExecutor(ws=sp_ws, warehouse_id=wh_id, catalog=conf.catalog, schema=conf.schema_name)
+    runner = MigrationRunner(sql=sp_sql)
+    applied = runner.run_all()
+    if applied:
+        logger.info("Applied %d database migration(s)", applied)
+    else:
+        logger.info("Database schema is up to date")
+
+    # Best-effort below — the app can recover from these failing.
+
     try:
-        sp_ws = await get_sp_ws()
-        assert sp_ws is not None
-        wh_id = os.environ.get("DATABRICKS_WAREHOUSE_ID") or os.environ.get("DATABRICKS_SQL_WAREHOUSE_ID") or ""
-        sp_sql = SqlExecutor(ws=sp_ws, warehouse_id=wh_id, catalog=conf.catalog, schema=conf.schema_name)
-        runner = MigrationRunner(sql=sp_sql)
-        applied = runner.run_all()
-        if applied:
-            logger.info("Applied %d database migration(s)", applied)
-        else:
-            logger.info("Database schema is up to date")
+        tmp_cat = conf.catalog.replace("`", "")
+        tmp_sch = conf.tmp_schema_name.replace("`", "")
+        sp_sql.execute_no_schema(f"CREATE SCHEMA IF NOT EXISTS `{tmp_cat}`.`{tmp_sch}`")
+        mark_tmp_schema_ready()
+        logger.info("Ensured tmp schema exists: %s.%s", tmp_cat, tmp_sch)
+    except Exception as tmp_e:
+        logger.warning("Could not create tmp schema %s.%s: %s", conf.catalog, conf.tmp_schema_name, tmp_e)
 
-        try:
-            tmp_cat = conf.catalog.replace("`", "")
-            tmp_sch = conf.tmp_schema_name.replace("`", "")
-            sp_sql.execute_no_schema(f"CREATE SCHEMA IF NOT EXISTS `{tmp_cat}`.`{tmp_sch}`")
-            mark_tmp_schema_ready()
-            logger.info("Ensured tmp schema exists: %s.%s", tmp_cat, tmp_sch)
-        except Exception as tmp_e:
-            logger.warning("Could not create tmp schema %s.%s: %s", conf.catalog, conf.tmp_schema_name, tmp_e)
-
-        try:
-            cat = conf.catalog.replace("`", "")
-            sp_sql.execute_no_schema(f"GRANT USE CATALOG ON CATALOG `{cat}` TO `account users`")
-            logger.info("Granted USE CATALOG on %s to account users", cat)
-        except Exception as grant_e:
-            logger.warning(
-                "Could not grant USE CATALOG on %s: %s (users may need this granted manually)", conf.catalog, grant_e
-            )
-    except Exception as e:
-        logger.warning("Could not run database migrations (will retry on first request): %s", e)
+    try:
+        cat = conf.catalog.replace("`", "")
+        sp_sql.execute_no_schema(f"GRANT USE CATALOG ON CATALOG `{cat}` TO `account users`")
+        logger.info("Granted USE CATALOG on %s to account users", cat)
+    except Exception as grant_e:
+        logger.warning(
+            "Could not grant USE CATALOG on %s: %s (users may need this granted manually)", conf.catalog, grant_e
+        )
 
     if not (conf.wheels_volume and conf.job_id):
         logger.warning("DQX_WHEELS_VOLUME or DQX_JOB_ID not set — task-runner job wheels will not be synced")
     else:
-        if sp_ws is None:
-            try:
-                sp_ws = await get_sp_ws()
-            except Exception as e:
-                logger.warning("Could not authenticate service principal — skipping wheel sync: %s", e, exc_info=True)
+        wheel_volume_paths: list[str] = []
+        try:
+            wheel_volume_paths, _ = await _upload_wheels_to_volume(sp_ws, conf.wheels_volume)
+        except Exception as e:
+            logger.warning(
+                "Could not upload wheels to volume — job environment will not be updated: %s", e, exc_info=True
+            )
 
-        if sp_ws is not None:
-            wheel_volume_paths: list[str] = []
+        if wheel_volume_paths:
             try:
-                wheel_volume_paths, _ = await _upload_wheels_to_volume(sp_ws, conf.wheels_volume)
+                await _update_job_wheels(sp_ws, conf.job_id, wheel_volume_paths)
             except Exception as e:
-                logger.warning(
-                    "Could not upload wheels to volume — job environment will not be updated: %s", e, exc_info=True
-                )
+                logger.warning("Could not update job environment: %s", e, exc_info=True)
 
-            if wheel_volume_paths:
-                try:
-                    await _update_job_wheels(sp_ws, conf.job_id, wheel_volume_paths)
-                except Exception as e:
-                    logger.warning("Could not update job environment: %s", e, exc_info=True)
-
-    if sp_ws is not None and conf.job_id:
-        if os.environ.get("DQX_SCHEDULER_DISABLED") == "1":
-            logger.info("Scheduler disabled via DQX_SCHEDULER_DISABLED=1")
-        elif not _try_acquire_scheduler_lease():
-            logger.info("Scheduler lease held by another worker — skipping")
-        else:
-            try:
-                _scheduler = SchedulerService(
-                    ws=sp_ws,
-                    warehouse_id=os.environ.get("DATABRICKS_WAREHOUSE_ID")
-                    or os.environ.get("DATABRICKS_SQL_WAREHOUSE_ID")
-                    or "",
-                    catalog=conf.catalog,
-                    schema=conf.schema_name,
-                    tmp_schema=conf.tmp_schema_name,
-                    job_id=conf.job_id,
-                )
-                set_scheduler(_scheduler)
-                _scheduler.start()
-                logger.info(
-                    "Scheduler background task started (job_id=%s, warehouse=%s)",
-                    conf.job_id,
-                    os.environ.get("DATABRICKS_WAREHOUSE_ID")
-                    or os.environ.get("DATABRICKS_SQL_WAREHOUSE_ID")
-                    or "(empty)",
-                )
-            except Exception as e:
-                logger.warning("Could not start scheduler: %s", e, exc_info=True)
+    if not conf.job_id:
+        logger.info("Scheduler not started (missing JOB_ID)")
+    elif os.environ.get("DQX_SCHEDULER_DISABLED") == "1":
+        logger.info("Scheduler disabled via DQX_SCHEDULER_DISABLED=1")
+    elif not _try_acquire_scheduler_lease():
+        logger.info("Scheduler lease held by another worker — skipping")
     else:
-        logger.info("Scheduler not started (missing SP credentials or JOB_ID)")
+        try:
+            _scheduler = SchedulerService(
+                ws=sp_ws,
+                warehouse_id=os.environ.get("DATABRICKS_WAREHOUSE_ID")
+                or os.environ.get("DATABRICKS_SQL_WAREHOUSE_ID")
+                or "",
+                catalog=conf.catalog,
+                schema=conf.schema_name,
+                tmp_schema=conf.tmp_schema_name,
+                job_id=conf.job_id,
+            )
+            set_scheduler(_scheduler)
+            _scheduler.start()
+            logger.info(
+                "Scheduler background task started (job_id=%s, warehouse=%s)",
+                conf.job_id,
+                os.environ.get("DATABRICKS_WAREHOUSE_ID")
+                or os.environ.get("DATABRICKS_SQL_WAREHOUSE_ID")
+                or "(empty)",
+            )
+        except Exception as e:
+            logger.warning("Could not start scheduler: %s", e, exc_info=True)
 
     yield
 

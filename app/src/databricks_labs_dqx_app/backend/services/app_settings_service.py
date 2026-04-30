@@ -48,9 +48,7 @@ class AppSettingsService:
             logger.info("No config found in settings table, returning default")
             return WorkspaceConfig(run_configs=[])
 
-        raw = rows[0][0]
-        cleaned = raw.replace("\\'", "'") if "\\'" in raw else raw
-        data = json.loads(cleaned, strict=False)
+        data = json.loads(rows[0][0])
         result = Installation._unmarshal_type(data, "dq_app_settings", WorkspaceConfig)
         if not isinstance(result, WorkspaceConfig):
             logger.warning("Config unmarshal returned unexpected type, using default")

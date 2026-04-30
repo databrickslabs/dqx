@@ -16,6 +16,9 @@ from databricks_labs_dqx_app.backend.models import (
 )
 from databricks_labs_dqx_app.backend.services.discovery import DiscoveryService
 
+# No router-level role guard: OBO auth via get_discovery_service rejects
+# unauthenticated callers, and Unity Catalog OBO permissions enforce what each
+# user can see at the data layer — that's the real authorization boundary.
 router = APIRouter()
 
 

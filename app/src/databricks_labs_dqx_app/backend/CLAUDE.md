@@ -9,24 +9,47 @@ FastAPI REST API serving as the DQX App backend. Deployed as a **Databricks App*
 ```
 backend/
 ├── app.py                 # FastAPI app factory, lifespan, static file mount
+├── cache.py               # CacheFactory — async in-memory TTL cache + @cached decorator
 ├── config.py              # AppConfig (Pydantic BaseSettings, DQX_ env prefix)
-├── dependencies.py        # FastAPI Depends() — OBO auth, Spark, DQEngine, services
+├── dependencies.py        # FastAPI Depends() — OBO/SP auth, RBAC, services
+├── migrations/            # MigrationRunner — versioned DDL applied at startup
 ├── models.py              # Pydantic request/response models
+├── run_status_manager.py  # Helpers for reading/updating dq_validation_runs status
 ├── settings.py            # SettingsManager — per-user prefs in ~/.dqx/app.yml
+├── sql_executor.py        # SqlExecutor — Databricks Statement Execution API wrapper
+├── sql_utils.py           # Shared SQL helpers: escape_sql_string, validate_fqn, quote_fqn
 ├── runtime.py             # Runtime singleton (lazy WorkspaceClient)
 ├── logger.py              # Custom logging formatter
-├── utils.py               # SPA fallback (404 → index.html)
+├── spa_static.py          # SPA static file handler (asset-extension allowlist for SPA fallback)
 ├── routes/
 │   └── v1/
-│       ├── me.py          # GET /version, GET /current-user
-│       ├── settings.py    # GET/POST /settings (install folder)
-│       ├── config.py      # Config + RunConfig + Checks CRUD
+│       ├── comments.py    # Comment threads on rules/runs
+│       ├── config.py      # Workspace config + RunConfig CRUD
 │       ├── discovery.py   # Unity Catalog browsing (catalogs/schemas/tables/columns)
-│       └── generate.py    # POST /ai/generate-checks
-├── services/
-│   └── discovery.py       # DiscoveryService (async UC listing via asyncio.to_thread)
+│       ├── dryrun.py      # Submit/poll/cancel dry-run jobs, list validation runs
+│       ├── generate.py    # POST /ai/generate-checks
+│       ├── import_rules.py # POST /validate-checks
+│       ├── me.py          # /version, /current-user, /current-user/role
+│       ├── metrics.py     # Quality metrics over time
+│       ├── profiler.py    # Submit/poll/cancel profiler jobs
+│       ├── quarantine.py  # List/export quarantine records (RULE_APPROVER+)
+│       ├── roles.py       # Manage role-to-group mappings (ADMIN only)
+│       ├── rules.py       # Rules CRUD + status transitions (submit/approve/reject)
+│       ├── schedules.py   # Schedule config CRUD
+│       └── settings.py    # GET/POST /settings (per-user install folder)
+├── services/              # Business logic layer (one class per concern)
+│   ├── ai_rules_service.py
+│   ├── app_settings_service.py
+│   ├── comments_service.py
+│   ├── discovery.py
+│   ├── job_service.py
+│   ├── role_service.py
+│   ├── rules_catalog_service.py
+│   ├── schedule_config_service.py
+│   ├── scheduler_service.py    # Background scheduler (asyncio task, file-locked to one worker)
+│   └── view_service.py         # Temp-view lifecycle for dry-run / profiler
 └── common/
-    ├── authorization.py   # UserRole enum, role-based access (stubbed — all users ADMIN)
+    ├── authorization.py   # UserRole enum + permission matrix (real RBAC)
     ├── authentication/
     │   └── sql.py         # SQLAuthentication (bearer token resolution)
     └── connectors/
@@ -35,18 +58,51 @@ backend/
 
 ## Key Patterns
 
-### OBO Authentication
+### OBO + SP Authentication
 
-All workspace operations use the user's identity via `X-Forwarded-Access-Token` header. The dependency chain:
+User-facing operations run as the calling user via `X-Forwarded-Access-Token` (OBO).
+Operations that need elevated permissions (catalog DDL, scheduler, migrations, job
+submission) run as the app's service principal. Dependencies expose both:
 
 ```
-get_obo_ws()           → WorkspaceClient(token=header_token, auth_type="pat")
-  ├─ get_spark()       → SparkSession with OBO token (strips OAuth env vars)
-  ├─ get_engine()      → DQEngine(obo_ws, spark)
-  ├─ get_generator()   → DQGenerator(obo_ws, spark, LLMModelConfig)
-  ├─ get_discovery_service() → DiscoveryService(obo_ws)
-  └─ get_config_serializer() → ConfigSerializer(obo_ws)
+get_obo_ws()              → WorkspaceClient(token=header_token, auth_type="pat")
+  ├─ get_obo_sql_executor() → SqlExecutor on tmp schema (user permissions)
+  ├─ get_view_service()     → user creates/drops their own temp views
+  ├─ get_discovery_service()→ user-scoped UC browsing
+  └─ get_user_catalog_names() → cached per token-hash, drives catalog filtering
+
+get_sp_ws()               → WorkspaceClient() (SP credentials, cached 45 min)
+  ├─ get_sp_sql_executor()  → SqlExecutor on main schema
+  ├─ get_job_service()      → submits/polls task-runner job
+  ├─ get_rules_catalog_service()
+  ├─ get_role_service()
+  └─ get_app_settings_service()
 ```
+
+User identity comes from `X-Forwarded-Email`; the OBO `me()` SCIM call is the
+fallback for local dev. `X-Forwarded-User` is **not** trusted (spoofable by upstream
+proxies).
+
+### Role-Based Access Control (RBAC)
+
+Defined in `common/authorization.py`:
+
+| Role | Permissions |
+|------|-------------|
+| `ADMIN` | All actions, including configure storage, manage roles, approve rules |
+| `RULE_APPROVER` | Create/edit rules, approve/reject submissions, configure storage, view quarantine |
+| `RULE_AUTHOR` | Create/edit/submit rules, generate via AI/profiler |
+| `VIEWER` | Read-only |
+
+Roles resolve from Databricks workspace group membership in `dq_role_mappings`
+(plus the bootstrap `DQX_ADMIN_GROUP`). `get_user_role` (in `dependencies.py`)
+performs resolution and degrades gracefully to `VIEWER` if SCIM/role-mapping is
+transiently unavailable.
+
+Routes enforce roles via `require_role(*roles)` either on the router
+(`APIRouter(dependencies=[require_role(...)])`) or per-route (`@router.get(..., dependencies=[require_role(...)])`).
+Handler-level ownership checks (e.g. `cancel_dry_run`) supplement role guards
+when a role alone isn't enough.
 
 ### Dependency Injection
 
@@ -107,6 +163,8 @@ uv run uvicorn databricks_labs_dqx_app.backend.app:app --reload  # Dev server
 
 ## Important Notes
 
-- The `common/authorization.py` role system is **stubbed** — all users are currently ADMIN. The permission matrix (Admin/Data Steward/Viewer) is planned but not yet enforced.
-- OAuth env vars (`DATABRICKS_CLIENT_ID`, `DATABRICKS_CLIENT_SECRET`) are temporarily stripped during Spark session creation to avoid multi-auth conflicts. See `_without_oauth_env_vars()` in `dependencies.py`.
-- The SPA fallback in `utils.py` serves `index.html` for any non-API 404, enabling client-side routing.
+- **SQL safety:** all interpolated identifiers must pass `validate_fqn` and be wrapped with `quote_fqn` from `sql_utils.py`. All string literals must be escaped with `escape_sql_string` (ANSI doubled quotes — never backslash). User-supplied SQL bodies must pass `is_sql_query_safe()` from the DQX library and raise `UnsafeSqlQueryError` on rejection.
+- **Migration startup:** SP authentication and `MigrationRunner.run_all()` are *required* — failure aborts the lifespan and the app refuses to start. Best-effort startup steps (tmp-schema creation, USE CATALOG grant, wheel sync) log warnings and continue.
+- **Scheduler:** runs in-process as an asyncio task, gated by an exclusive file lock (`/tmp/.dqx_scheduler.lock`) so only one uvicorn worker drives it. Disable with `DQX_SCHEDULER_DISABLED=1`.
+- **Caches:** `app_cache` (`cache.py`) is per-process in-memory with TTL. SP `WorkspaceClient`, OBO `WorkspaceClient`, and per-user catalog list are all cached. Use the `MISS` sentinel — never `is None` — to detect cache absence.
+- **SPA static files:** `spa_static.py` falls through to `index.html` only for non-asset paths (positive allowlist of asset extensions), so SPA routes containing dots still work.

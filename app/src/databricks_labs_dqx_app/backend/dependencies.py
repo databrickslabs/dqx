@@ -257,6 +257,11 @@ async def get_user_role(
     1. Bootstrap admin group from DQX_ADMIN_GROUP env var
     2. Groups mapped to roles in dq_role_mappings table
     3. Default to VIEWER if no mappings match
+
+    On transient failures (SCIM hiccup, role-mapping table unavailable) we
+    degrade gracefully to VIEWER instead of locking every user out with a 503.
+    Read-only endpoints stay reachable; privileged endpoints return 403 until
+    the upstream recovers, which is a clearer signal than service-unavailable.
     """
     try:
         user = await asyncio.to_thread(obo_ws.current_user.me)
@@ -267,11 +272,11 @@ async def get_user_role(
         logger.debug(f"Resolved role for {email}: {role.value}")
         return role
     except Exception as e:
-        logger.error(f"Error resolving role for {email}: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Role resolution is temporarily unavailable. Please try again later.",
-        ) from e
+        logger.warning(
+            f"Role resolution failed for {email}, falling back to VIEWER: {e}",
+            exc_info=True,
+        )
+        return UserRole.VIEWER
 
 
 def require_role(*roles: UserRole):
@@ -294,7 +299,14 @@ CurrentUserRole = Annotated[UserRole, Depends(get_user_role)]
 async def get_user_catalog_names(
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
 ) -> frozenset[str]:
-    """Return the set of catalog names the current user can access (via OBO)."""
+    """Return the set of catalog names the current user can access (via OBO).
+
+    Intentionally **not** cached: this list drives authorization filtering on
+    list endpoints (rules, dry-run runs/results), so a stale entry could leak
+    rows for a catalog whose grant was just revoked. The underlying OBO
+    ``WorkspaceClient`` is already cached, so each call only re-issues the
+    UC ``catalogs.list`` request, not the full auth handshake.
+    """
     catalogs = await asyncio.to_thread(lambda: list(obo_ws.catalogs.list()))
     return frozenset(c.name for c in catalogs if c.name)
 

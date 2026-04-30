@@ -7,6 +7,8 @@ from databricks_labs_dqx_app.backend.dependencies import get_obo_ws
 from databricks_labs_dqx_app.backend.models import InstallationSettings
 from databricks_labs_dqx_app.backend.settings import SettingsManager
 
+# No role guard: SettingsManager operates only on the caller's own
+# /Users/{user}/.dqx/app.yml, and OBO already enforces user-level isolation.
 router = APIRouter()
 
 

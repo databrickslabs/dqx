@@ -114,6 +114,10 @@ function YamlImportCard({ onDone }: { onDone: () => void }) {
         );
         return;
       }
+      if (parsed.some((item) => item == null || typeof item !== "object")) {
+        // Incomplete entry (e.g. a bare "- " while typing) — leave parsedChecks null
+        return;
+      }
       setParsedChecks(parsed as Record<string, unknown>[]);
     } catch {
       // Incomplete YAML while the user is still typing — suppress until they stop
@@ -246,7 +250,7 @@ function YamlImportCard({ onDone }: { onDone: () => void }) {
         {parsedChecks && (
           <div className="flex items-center gap-2 p-3 rounded-lg bg-green-50 dark:bg-green-950/30 text-green-700 dark:text-green-400 text-sm">
             <CheckCircle2 className="h-4 w-4 shrink-0" />
-            Parsed {parsedChecks.length} check{parsedChecks.length !== 1 ? "s" : ""} from YAML
+            Loaded {parsedChecks.length} check{parsedChecks.length !== 1 ? "s" : ""} from YAML
           </div>
         )}
 
@@ -266,12 +270,13 @@ function YamlImportCard({ onDone }: { onDone: () => void }) {
                 </thead>
                 <tbody>
                   {parsedChecks.map((c, i) => {
-                    const check = (c.check as Record<string, unknown>) ?? c;
+                    const entry = c ?? {};
+                    const check = (entry.check as Record<string, unknown>) ?? entry;
                     const fn = String(check.function ?? "—");
                     const args = check.arguments
                       ? JSON.stringify(check.arguments)
                       : "—";
-                    const crit = String(c.criticality ?? check.criticality ?? "warn");
+                    const crit = String(entry.criticality ?? check.criticality ?? "warn");
                     return (
                       <tr key={i} className="border-b last:border-b-0">
                         <td className="p-2 text-muted-foreground">{i + 1}</td>
