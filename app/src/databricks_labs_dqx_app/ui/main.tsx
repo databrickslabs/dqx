@@ -5,11 +5,24 @@ import "@/styles/globals.css";
 import { routeTree } from "@/types/routeTree.gen";
 
 import { RouterProvider, createRouter } from "@tanstack/react-router";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MutationCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AuthGuard } from "@/components/AuthGuard";
+import { toast } from "sonner";
+
+const mutationCache = new MutationCache({
+  onSuccess: (_data, _vars, _ctx, mutation) => {
+    const meta = mutation.meta as { successMessage?: string } | undefined;
+    if (meta?.successMessage) toast.success(meta.successMessage);
+  },
+  onError: (_error, _vars, _ctx, mutation) => {
+    const meta = mutation.meta as { errorMessage?: string } | undefined;
+    if (meta?.errorMessage) toast.error(meta.errorMessage);
+  },
+});
 
 // Create a new query client instance
 const queryClient = new QueryClient({
+  mutationCache,
   defaultOptions: {
     queries: {
       // Don't retry by default - AuthGuard handles initial auth flow
