@@ -19,7 +19,6 @@ from .services.view_service import mark_tmp_schema_ready
 from .sql_executor import SqlExecutor
 from .utils import add_not_found_handler
 
-
 _SCHEDULER_LOCK_PATH = Path("/tmp/.dqx_scheduler.lock")  # noqa: S108
 
 
@@ -241,9 +240,7 @@ async def lifespan(app: FastAPI):
             logger.info(
                 "Scheduler background task started (job_id=%s, warehouse=%s)",
                 conf.job_id,
-                os.environ.get("DATABRICKS_WAREHOUSE_ID")
-                or os.environ.get("DATABRICKS_SQL_WAREHOUSE_ID")
-                or "(empty)",
+                os.environ.get("DATABRICKS_WAREHOUSE_ID") or os.environ.get("DATABRICKS_SQL_WAREHOUSE_ID") or "(empty)",
             )
         except Exception as e:
             logger.warning("Could not start scheduler: %s", e, exc_info=True)
