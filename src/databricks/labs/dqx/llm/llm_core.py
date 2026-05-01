@@ -31,6 +31,9 @@ class LLMModelConfigurator:
         """
         Create an LM instance with current config for per-request override.
 
+        Budget caps (max_tokens, temperature, timeout) come from *LLMModelConfig* and are forwarded
+        to litellm via dspy.LM kwargs to bound cost and latency on pathological prompts (OWASP LLM04).
+
         Returns:
             A new LM instance configured with the current model config.
         """
@@ -39,6 +42,9 @@ class LLMModelConfigurator:
             model_type="chat",
             api_key=self._model_config.api_key or "",
             api_base=self._model_config.api_base or "",
+            max_tokens=self._model_config.max_tokens,
+            temperature=self._model_config.temperature,
+            timeout=self._model_config.timeout,
             max_retries=3,
         )
 

@@ -16,6 +16,7 @@ from pyspark.sql.types import DoubleType, MapType, StringType, StructField, Stru
 from databricks.labs.dqx.anomaly import anomaly_llm_explainer as llm_explainer
 from databricks.labs.dqx.anomaly.anomaly_llm_explainer import DSPY_AVAILABLE, ExplanationContext
 from databricks.labs.dqx.config import LLMModelConfig
+from databricks.labs.dqx.llm.llm_core import LLMModelConfigurator
 from tests.integration_anomaly.constants import (
     DEFAULT_SCORE_THRESHOLD,
     OUTLIER_AMOUNT,
@@ -61,7 +62,12 @@ def mock_llm(monkeypatch):
 
 
 def _llm_cfg() -> LLMModelConfig:
-    return LLMModelConfig(model_name="databricks/stub", api_key="stub", api_base="https://stub")
+    return LLMModelConfig(
+        model_name="databricks/stub",
+        api_key="stub",
+        api_base="https://stub.example.test",
+        api_base_allowed_hosts=("stub.example.test",),
+    )
 
 
 def _score_with_explanation(scorer, df, model_meta, **overrides):
@@ -276,7 +282,12 @@ def _ctx(max_groups: int = 500, redact_columns: tuple[str, ...] = ()) -> Explana
         ai_explanation_col="ai_explanation",
         threshold=95.0,
         model_name="catalog.schema.synthetic",
-        llm_model_config=LLMModelConfig(model_name="databricks/stub", api_key="stub", api_base="https://stub"),
+        llm_model_config=LLMModelConfig(
+            model_name="databricks/stub",
+            api_key="stub",
+            api_base="https://stub.example.test",
+            api_base_allowed_hosts=("stub.example.test",),
+        ),
         max_groups=max_groups,
         redact_columns=redact_columns,
     )
@@ -498,45 +509,88 @@ def _run_with_lm_capture(spark: SparkSession, monkeypatch, llm_model_config: LLM
     return lm_kwargs
 
 
-def test_lm_config_forces_openai_prefix_when_api_base_set_and_no_provider(spark: SparkSession, monkeypatch):
-    """Bare model name + api_base → litellm openai/ adapter (avoids ENDPOINT_NOT_FOUND on AI Gateway)."""
-    cfg = LLMModelConfig(model_name="databricks-qwen3-80b", api_key="tok", api_base="https://gw.example/v1")
-    captured = _run_with_lm_capture(spark, monkeypatch, cfg)
-
-    assert captured[0]["model"] == "openai/databricks-qwen3-80b"
-    assert captured[0]["api_base"] == "https://gw.example/v1"
-    assert captured[0]["api_key"] == "tok"
-    assert captured[0]["model_type"] == "chat"
-    assert "max_retries" in captured[0]
-
-
-def test_lm_config_preserves_explicit_provider_prefix(spark: SparkSession, monkeypatch):
-    """A model name that already contains '/' is passed through unchanged."""
-    cfg = LLMModelConfig(model_name="databricks/claude-sonnet", api_key="", api_base="https://gw.example/v1")
+def test_lm_config_passes_provider_prefixed_model_through(spark: SparkSession, monkeypatch):
+    """A provider-prefixed model + allowlisted api_base is forwarded to dspy.LM unchanged."""
+    cfg = LLMModelConfig(
+        model_name="databricks/claude-sonnet",
+        api_key="tok",
+        api_base="https://gw.example.test/v1",
+        api_base_allowed_hosts=("gw.example.test",),
+    )
     captured = _run_with_lm_capture(spark, monkeypatch, cfg)
 
     assert captured[0]["model"] == "databricks/claude-sonnet"
+    assert captured[0]["api_base"] == "https://gw.example.test/v1"
+    assert captured[0]["api_key"] == "tok"
+    assert captured[0]["model_type"] == "chat"
+    assert captured[0]["max_retries"] == 3
 
 
-def test_lm_config_no_prefix_or_creds_when_workspace_auth(spark: SparkSession, monkeypatch):
-    """Workspace-auth path: no api_base + empty creds → bare model, no api_base/api_key keys."""
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.delenv("OPENAI_API_BASE", raising=False)
+def test_lm_config_workspace_auth_with_empty_credentials(spark: SparkSession, monkeypatch):
+    """Workspace-auth path: empty api_key/api_base are forwarded as empty strings."""
     cfg = LLMModelConfig(model_name="databricks/claude-sonnet", api_key="", api_base="")
     captured = _run_with_lm_capture(spark, monkeypatch, cfg)
 
     assert captured[0]["model"] == "databricks/claude-sonnet"
-    assert "api_base" not in captured[0]
-    assert "api_key" not in captured[0]
+    assert captured[0]["api_base"] == ""
+    assert captured[0]["api_key"] == ""
 
 
-def test_lm_config_falls_back_to_openai_env_vars(spark: SparkSession, monkeypatch):
-    """Empty api_key/api_base on the config fall back to OPENAI_API_KEY / OPENAI_API_BASE."""
-    monkeypatch.setenv("OPENAI_API_KEY", "env-key")
-    monkeypatch.setenv("OPENAI_API_BASE", "https://env.example/v1")
-    cfg = LLMModelConfig(model_name="some-model", api_key="", api_base="")
+def test_lm_config_forwards_budget_caps(spark: SparkSession, monkeypatch):
+    """max_tokens / temperature / timeout from LLMModelConfig are forwarded to dspy.LM."""
+    cfg = LLMModelConfig(
+        model_name="databricks/claude-sonnet",
+        max_tokens=250,
+        temperature=0.4,
+        timeout=12.5,
+    )
     captured = _run_with_lm_capture(spark, monkeypatch, cfg)
 
-    assert captured[0]["api_key"] == "env-key"
-    assert captured[0]["api_base"] == "https://env.example/v1"
-    assert captured[0]["model"] == "openai/some-model"
+    assert captured[0]["max_tokens"] == 250
+    assert captured[0]["temperature"] == 0.4
+    assert captured[0]["timeout"] == 12.5
+
+
+def test_lm_config_default_budget_caps_applied(spark: SparkSession, monkeypatch):
+    """Default LLMModelConfig forwards the documented default caps to dspy.LM."""
+    cfg = LLMModelConfig()
+    captured = _run_with_lm_capture(spark, monkeypatch, cfg)
+
+    assert captured[0]["max_tokens"] == 1000
+    assert captured[0]["temperature"] == 0.0
+    assert captured[0]["timeout"] == 30.0
+
+
+def test_max_tokens_cap_enforced_by_live_llm(ws):
+    """Real LLM call must not return more completion tokens than max_tokens.
+
+    The *ws* fixture ensures the test is skipped when no Databricks workspace is
+    configured, and triggers the workspace-auth setup that the foundation-model
+    endpoint needs. Uses a deliberately verbose prompt to push the model past
+    the cap, then inspects litellm's usage.completion_tokens on the raw
+    response. A small margin (+8) accounts for tokenizer rounding across
+    providers.
+    """
+    if not DSPY_AVAILABLE:
+        pytest.skip("dspy not installed")
+    assert ws.current_user.me() is not None  # fail-fast if workspace auth is broken
+
+    cfg = LLMModelConfig(model_name="databricks/databricks-llama-4-maverick", max_tokens=20)
+    language_model = LLMModelConfigurator(cfg).create_lm()
+    long_prompt = (
+        "Write an extremely detailed 1000-word essay about the history of databases, "
+        "covering relational, NoSQL, and modern cloud lakehouse architectures."
+    )
+    completion = language_model(long_prompt)
+    assert completion, "LLM returned no text — endpoint may be misconfigured"
+
+    last = language_model.history[-1]
+    usage = last.get("usage") or last.get("response", {}).get("usage")
+    assert usage is not None, f"No usage block on response: {last!r}"
+    completion_tokens = (
+        usage.get("completion_tokens") if isinstance(usage, dict) else getattr(usage, "completion_tokens", None)
+    )
+    assert completion_tokens is not None, f"completion_tokens missing from usage: {usage!r}"
+    assert (
+        completion_tokens <= cfg.max_tokens + 8
+    ), f"LLM exceeded max_tokens={cfg.max_tokens}: completion_tokens={completion_tokens}"

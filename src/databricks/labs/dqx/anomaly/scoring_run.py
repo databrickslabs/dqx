@@ -137,7 +137,7 @@ def score_global_model(
             ExplanationContext.from_scoring_config(config),
             segment_values=None,
             is_ensemble=record.identity.is_ensemble,
-            drift_summary=format_drift_summary(drift_result),
+            drift_summary=format_drift_summary(drift_result, config.redact_columns),
         )
 
     scored_df = add_info_column(
@@ -251,7 +251,7 @@ def score_single_segment(
             ExplanationContext.from_scoring_config(config),
             segment_model.segmentation.segment_values,
             segment_model.identity.is_ensemble,
-            drift_summary=format_drift_summary(drift_result),
+            drift_summary=format_drift_summary(drift_result, config.redact_columns),
             language_model=language_model,
         )
 

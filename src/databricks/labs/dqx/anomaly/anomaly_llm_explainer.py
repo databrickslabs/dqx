@@ -12,13 +12,20 @@ Requires the 'llm' extra: pip install databricks-labs-dqx[anomaly,llm]
 from __future__ import annotations
 
 import logging
-import os
+import re
 from dataclasses import dataclass
+from functools import partial
 from typing import TYPE_CHECKING
 
 import pyspark.sql.functions as F
 from pyspark.sql import Column, DataFrame
 from pyspark.sql.types import DoubleType, LongType, StringType, StructField, StructType
+
+from databricks.labs.blueprint.parallel import Threads
+from databricks.labs.dqx.anomaly.anomaly_info_schema import ai_explanation_struct_schema
+from databricks.labs.dqx.anomaly.explainability import format_contributions_map
+from databricks.labs.dqx.config import LLMModelConfig
+from databricks.labs.dqx.llm.llm_core import LLMModelConfigurator
 
 try:
     import dspy  # type: ignore
@@ -28,10 +35,6 @@ except ImportError:
     dspy = None
     DSPY_AVAILABLE = False
 
-from databricks.labs.dqx.anomaly.anomaly_info_schema import ai_explanation_struct_schema
-from databricks.labs.dqx.anomaly.explainability import format_contributions_map
-from databricks.labs.dqx.config import LLMModelConfig
-
 if TYPE_CHECKING:
     from databricks.labs.dqx.anomaly.scoring_config import ScoringConfig
 
@@ -39,6 +42,33 @@ logger = logging.getLogger(__name__)
 
 _TOP_N = 5
 _PATTERN_COL = "__dqx_pattern"
+_LLM_FIELD_MAX_LEN = 500
+# Strip ASCII C0 controls (\x00-\x1f, includes \n \r \t \x1b) and DEL (\x7f).
+# These are the chars that can forge log entries (CWE-117) when LLM output is logged.
+_CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def _sanitize_llm_field(value: str | None) -> str | None:
+    """Coerce, strip control chars, and length-cap an LLM output field.
+
+    DSPy ``OutputField(desc=...)`` is guidance, not enforcement — a misbehaving or
+    jailbroken model can return non-str values, multi-KB strings, or control characters.
+    Treat LLM output as untrusted (OWASP LLM06).
+    """
+    if value is None:
+        return None
+    return _CONTROL_CHAR_RE.sub(" ", str(value))[:_LLM_FIELD_MAX_LEN]
+
+
+_DSPY_MISSING_MSG = (
+    "The 'dspy' dependency is required for AI explanations. Install: pip install databricks-labs-dqx[anomaly,llm]"
+)
+
+
+def _require_dspy() -> None:
+    """Raise a clear ImportError when dspy is not installed."""
+    if not DSPY_AVAILABLE:
+        raise ImportError(_DSPY_MISSING_MSG)
 
 
 @dataclass(frozen=True)
@@ -131,39 +161,6 @@ if DSPY_AVAILABLE:
         action: str = dspy.OutputField(
             desc="One sentence, max 20 words. What a data analyst should investigate for this group."
         )
-
-
-def _build_lm_config(llm_model_config: LLMModelConfig) -> dict:
-    """Convert LLMModelConfig to a dict suitable for dspy.LM(**config).
-
-    Routing rules:
-      - model_name already carries a litellm provider prefix ("provider/model") → pass through as-is.
-      - api_base is provided (explicitly or via OPENAI_API_BASE) → force the "openai/"
-        provider prefix so litellm uses its OpenAI-compatible adapter against that base URL.
-        Without this, a bare "databricks-foo" model name triggers litellm's native Databricks
-        provider and the custom endpoint is ignored (→ ENDPOINT_NOT_FOUND).
-      - Otherwise → pass through; litellm's default auto-detection applies.
-
-    api_key / api_base fall back to OPENAI_API_KEY / OPENAI_API_BASE env vars when
-    empty on the config, matching the common dspy/litellm usage pattern.
-    """
-    api_key = llm_model_config.api_key or os.environ.get("OPENAI_API_KEY", "")
-    api_base = llm_model_config.api_base or os.environ.get("OPENAI_API_BASE", "")
-
-    model = llm_model_config.model_name
-    if "/" not in model and api_base:
-        model = f"openai/{model}"
-
-    config: dict = {
-        "model": model,
-        "model_type": "chat",
-        "max_retries": 3,
-    }
-    if api_key:
-        config["api_key"] = api_key
-    if api_base:
-        config["api_base"] = api_base
-    return config
 
 
 def _derive_confidence(mean_std: float | None, is_ensemble: bool) -> str:
@@ -297,6 +294,60 @@ def _build_group_result_schema() -> StructType:
     )
 
 
+def _explain_one_group(
+    group: dict,
+    ctx: ExplanationContext,
+    segment_str: str,
+    is_ensemble: bool,
+    drift_summary: str,
+    predictor,
+    language_model,
+) -> tuple:
+    """Invoke the LLM for a single group. Returns a result tuple; on failure logs and emits a
+    null-explanation tuple so the surrounding scoring run isn't aborted by one bad call.
+
+    The dspy LM binding is applied inside this function because it's executed on a worker
+    thread (via *Threads.gather*) — *dspy.settings.context* uses contextvars and Python's
+    ThreadPoolExecutor does not propagate the submitter's context to worker threads, so the
+    binding from the caller would otherwise be lost.
+    """
+    pattern = group[_PATTERN_COL]
+    group_size = int(group["group_size"])
+    group_avg_severity = float(group["group_avg_severity"])
+    contrib_str = format_contributions_map(group.get("mean_contributions") or {}, top_n=_TOP_N)
+    severity_range = _format_severity_range(
+        group_avg_severity,
+        float(group["severity_min"]),
+        float(group["severity_max"]),
+    )
+    try:
+        with dspy.settings.context(lm=language_model):
+            prediction = predictor(
+                feature_contributions=contrib_str,
+                group_size=f"{group_size} rows",
+                severity_range=severity_range,
+                confidence=_derive_confidence(group.get("mean_std"), is_ensemble),
+                segment=segment_str,
+                threshold=str(ctx.threshold),
+                model_name=ctx.model_name,
+                drift_summary=drift_summary or "none",
+            )
+    except Exception as exc:  # pylint: disable=broad-except
+        # Sanitise the pattern key for the log line — it derives from column names that may
+        # contain newlines or control chars (CWE-117). Strip both before interpolating.
+        safe_pattern = pattern.replace("\n", "_").replace("\r", "_") if isinstance(pattern, str) else "<non-str>"
+        logger.warning(f"ai_explanation: LLM call failed for pattern '{safe_pattern}': {exc!r}")
+        return (pattern, None, None, None, group_size, group_avg_severity)
+    return (
+        pattern,
+        _sanitize_llm_field(prediction.narrative),
+        _sanitize_llm_field(prediction.business_impact),
+        _sanitize_llm_field(prediction.action),
+        group_size,
+        group_avg_severity,
+    )
+
+
 def _call_llm_for_groups(
     kept_groups: list[dict],
     ctx: ExplanationContext,
@@ -304,37 +355,28 @@ def _call_llm_for_groups(
     is_ensemble: bool,
     drift_summary: str,
     predictor,
+    language_model,
 ) -> list[tuple]:
-    """Invoke the LLM once per retained group. Returns rows for the result DataFrame."""
-    result_rows: list[tuple] = []
-    for group in kept_groups:
-        contrib_str = format_contributions_map(group.get("mean_contributions") or {}, top_n=_TOP_N)
-        severity_range = _format_severity_range(
-            float(group["group_avg_severity"]),
-            float(group["severity_min"]),
-            float(group["severity_max"]),
-        )
-        prediction = predictor(
-            feature_contributions=contrib_str,
-            group_size=f"{int(group['group_size'])} rows",
-            severity_range=severity_range,
-            confidence=_derive_confidence(group.get("mean_std"), is_ensemble),
-            segment=segment_str,
-            threshold=str(ctx.threshold),
-            model_name=ctx.model_name,
-            drift_summary=drift_summary or "none",
-        )
-        result_rows.append(
-            (
-                group[_PATTERN_COL],
-                prediction.narrative,
-                prediction.business_impact,
-                prediction.action,
-                int(group["group_size"]),
-                float(group["group_avg_severity"]),
-            )
-        )
-    return result_rows
+    """Invoke the LLM once per retained group, in parallel. Returns rows for the result DataFrame.
+
+    Uses *databricks.labs.blueprint.parallel.Threads.gather* so per-group failures are isolated
+    (logged + emitted as null-explanation tuples by *_explain_one_group*) instead of aborting
+    the whole scoring run. With the default *max_groups=500* and a sequential loop, p95 LLM
+    latency dominates wall time; thread-level concurrency cuts this dramatically because the
+    workload is IO-bound.
+    """
+    if not kept_groups:
+        return []
+    tasks = [
+        partial(_explain_one_group, group, ctx, segment_str, is_ensemble, drift_summary, predictor, language_model)
+        for group in kept_groups
+    ]
+    successes, errors = Threads.gather("ai_explanation", tasks)
+    if errors:
+        # _explain_one_group catches and logs per-group failures itself; anything here is a
+        # programming error in the worker (e.g. malformed group dict). Surface counts only.
+        logger.warning(f"ai_explanation: {len(errors)} unexpected worker errors (see prior logs).")
+    return list(successes)
 
 
 def _attach_explanation_struct(
@@ -377,8 +419,9 @@ def build_language_model(ctx: ExplanationContext) -> object:
     segments so the same LM instance is reused across all segment calls instead of
     being reconstructed per segment.
     """
+    _require_dspy()
     llm_cfg = ctx.llm_model_config or LLMModelConfig()
-    return dspy.LM(**_build_lm_config(llm_cfg))
+    return LLMModelConfigurator(llm_cfg).create_lm()
 
 
 def add_explanation_column(
@@ -401,9 +444,12 @@ def add_explanation_column(
     function for multiple segments to reuse the same dspy.LM instance.
 
     Preconditions (caller's responsibility):
-      - dspy is importable
       - df has ctx.score_std_col, ctx.severity_col, and ctx.contributions_col.
+
+    Raises:
+      ImportError: If the 'dspy' dependency is not installed.
     """
+    _require_dspy()
     if language_model is None:
         language_model = build_language_model(ctx)
     redact_set = frozenset(ctx.redact_columns)
@@ -431,8 +477,7 @@ def add_explanation_column(
         )
 
     predictor = dspy.Predict(AnomalyGroupExplanationSignature)
-    with dspy.settings.context(lm=language_model):
-        result_rows = _call_llm_for_groups(kept, ctx, segment_str, is_ensemble, drift_summary, predictor)
+    result_rows = _call_llm_for_groups(kept, ctx, segment_str, is_ensemble, drift_summary, predictor, language_model)
 
     result_sdf = df.sparkSession.createDataFrame(result_rows, schema=_build_group_result_schema())
     return _attach_explanation_struct(df_with_pattern, result_sdf, ctx)

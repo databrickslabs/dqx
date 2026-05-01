@@ -5,7 +5,6 @@ Facade: public rule entry point. Orchestration and scoring live in sibling modul
 """
 
 import dataclasses
-import importlib.util
 import uuid
 from typing import Any
 
@@ -23,7 +22,12 @@ from databricks.labs.dqx.config import LLMModelConfig
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.rule import register_rule
 
-DSPY_AVAILABLE = importlib.util.find_spec("dspy") is not None
+try:
+    import dspy  # type: ignore
+
+    DSPY_AVAILABLE = dspy is not None
+except ImportError:
+    DSPY_AVAILABLE = False
 
 _LLM_MODEL_CONFIG_KEYS = {f.name for f in dataclasses.fields(LLMModelConfig)}
 
@@ -49,6 +53,44 @@ def _coerce_llm_model_config(value: LLMModelConfig | dict | None) -> LLMModelCon
     )
 
 
+def _validate_required_names(model_name: str, registry_table: str) -> None:
+    if not model_name:
+        raise InvalidParameterError(
+            "model_name parameter is required. Example: has_no_row_anomalies(model_name='catalog.schema.my_model', ...)"
+        )
+    if not registry_table:
+        raise InvalidParameterError(
+            "registry_table parameter is required. Example: registry_table='catalog.schema.dqx_anomaly_models'"
+        )
+    validate_fully_qualified_name(model_name, label="model_name")
+    validate_fully_qualified_name(registry_table, label="registry_table")
+
+
+def _validate_thresholds(threshold: float, drift_threshold: float | None) -> None:
+    if not 0.0 <= float(threshold) <= 100.0:
+        raise InvalidParameterError("threshold must be between 0.0 and 100.0.")
+    if drift_threshold is not None and drift_threshold <= 0:
+        raise InvalidParameterError("drift_threshold must be greater than 0 when provided.")
+
+
+def _validate_explanation_flags(enable_contributions: bool, enable_ai_explanation: bool) -> None:
+    if enable_contributions and not SHAP_AVAILABLE:
+        raise InvalidParameterError(
+            "enable_contributions=True requires the 'shap' dependency. "
+            "Install anomaly extras: pip install databricks-labs-dqx[anomaly]"
+        )
+    if enable_ai_explanation and not enable_contributions:
+        raise InvalidParameterError(
+            "enable_ai_explanation=True requires enable_contributions=True. "
+            "SHAP contributions are used as input to the LLM explanation."
+        )
+    if enable_ai_explanation and not DSPY_AVAILABLE:
+        raise InvalidParameterError(
+            "enable_ai_explanation=True requires the 'dspy' dependency. "
+            "Install: pip install databricks-labs-dqx[anomaly,llm]"
+        )
+
+
 def _validate_anomaly_check_args(
     model_name: str,
     registry_table: str,
@@ -60,45 +102,13 @@ def _validate_anomaly_check_args(
     max_groups: int,
 ) -> None:
     """Validate has_no_row_anomalies arguments. Raises InvalidParameterError on failure."""
-    if not model_name:
-        raise InvalidParameterError(
-            "model_name parameter is required. Example: has_no_row_anomalies(model_name='catalog.schema.my_model', ...)"
-        )
+    _validate_required_names(model_name, registry_table)
+    _validate_thresholds(threshold, drift_threshold)
+    _validate_explanation_flags(enable_contributions, enable_ai_explanation)
 
-    if not registry_table:
-        raise InvalidParameterError(
-            "registry_table parameter is required. Example: registry_table='catalog.schema.dqx_anomaly_models'"
-        )
-
-    validate_fully_qualified_name(model_name, label="model_name")
-    validate_fully_qualified_name(registry_table, label="registry_table")
-
-    if not 0.0 <= float(threshold) <= 100.0:
-        raise InvalidParameterError("threshold must be between 0.0 and 100.0.")
-
-    if drift_threshold is not None and drift_threshold <= 0:
-        raise InvalidParameterError("drift_threshold must be greater than 0 when provided.")
-
-    if enable_contributions and not SHAP_AVAILABLE:
-        raise InvalidParameterError(
-            "enable_contributions=True requires the 'shap' dependency. "
-            "Install anomaly extras: pip install databricks-labs-dqx[anomaly]"
-        )
-
-    if enable_ai_explanation and not enable_contributions:
-        raise InvalidParameterError(
-            "enable_ai_explanation=True requires enable_contributions=True. "
-            "SHAP contributions are used as input to the LLM explanation."
-        )
-
-    if enable_ai_explanation and not DSPY_AVAILABLE:
-        raise InvalidParameterError(
-            "enable_ai_explanation=True requires the 'dspy' dependency. "
-            "Install: pip install databricks-labs-dqx[anomaly,llm]"
-        )
-
-    if redact_columns is not None and not isinstance(redact_columns, list):
-        raise InvalidParameterError("redact_columns must be a list of column name strings.")
+    if redact_columns is not None:
+        if not isinstance(redact_columns, list) or not all(isinstance(c, str) and c for c in redact_columns):
+            raise InvalidParameterError("redact_columns must be a list of non-empty column name strings.")
 
     if not isinstance(max_groups, int) or isinstance(max_groups, bool) or max_groups <= 0:
         raise InvalidParameterError("max_groups must be a positive integer.")
@@ -187,8 +197,11 @@ def has_no_row_anomalies(
             adapter (``openai/<model>``) — use this for AI Gateway and other OpenAI-compatible
             endpoints. ``api_key`` / ``api_base`` also fall back to ``OPENAI_API_KEY`` /
             ``OPENAI_API_BASE`` env vars when unset on the config.
-        redact_columns: Feature names to exclude from the LLM prompt. Only feature names and SHAP
-            percentages are ever sent — raw data values are never included.
+        redact_columns: Column names to exclude from the LLM prompt. Filters SHAP contribution
+            map keys and the top-2 pattern key. Does **not** redact segment values: when the
+            scored model is segmented, the segment ``key=value`` pairs (raw segmentation
+            column values) are included in the prompt. If those values are sensitive, avoid
+            segmenting the model on those columns.
         max_groups: Maximum number of distinct (segment, pattern) groups the LLM is called for
             per scoring run (default 500). Groups beyond this cap — ranked by
             group_size * group_avg_severity — get a null ai_explanation; a warning is logged.

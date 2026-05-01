@@ -5,6 +5,7 @@ significant changes; provides check/warn helpers for scoring pipelines.
 """
 
 import warnings
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 import pyspark.sql.functions as F
@@ -280,14 +281,26 @@ def check_and_warn_drift(
     return None
 
 
-def format_drift_summary(drift_result: "DriftResult | None") -> str:
+def format_drift_summary(
+    drift_result: "DriftResult | None",
+    redact_columns: Iterable[str] | None = None,
+) -> str:
     """Format a DriftResult for inclusion in the LLM prompt.
 
     Returns 'none' when no drift was computed or no drift detected; otherwise
     a semicolon-separated list of drifted feature names with their drift scores,
     e.g. 'drift detected: amount=4.12; quantity=3.55'.
+
+    Drifted columns listed in *redact_columns* are excluded from the per-feature
+    breakdown so their names are never sent to the LLM. When every drifted column
+    is redacted, the output collapses to an opaque 'drift detected (N features)'
+    indicator so the prompt still signals drift without leaking names.
     """
     if drift_result is None or not drift_result.drift_detected:
         return "none"
-    parts = [f"{col}={drift_result.column_scores.get(col, 0.0):.2f}" for col in drift_result.drifted_columns]
+    redact_set = frozenset(redact_columns or ())
+    visible = [col for col in drift_result.drifted_columns if col not in redact_set]
+    if not visible:
+        return f"drift detected ({len(drift_result.drifted_columns)} features)"
+    parts = [f"{col}={drift_result.column_scores.get(col, 0.0):.2f}" for col in visible]
     return "drift detected: " + "; ".join(parts)

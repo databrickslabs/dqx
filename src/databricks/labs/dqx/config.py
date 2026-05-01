@@ -1,6 +1,9 @@
 import abc
+import ipaddress
+import re
 from dataclasses import asdict, dataclass, field
 from functools import cached_property
+from urllib.parse import urlparse
 
 from databricks.labs.dqx.checks_serializer import SerializerFactory
 from databricks.labs.dqx.errors import InvalidConfigError, InvalidParameterError
@@ -190,16 +193,106 @@ class RunConfig:
     lakebase_port: str | None = None
 
 
+_DEFAULT_API_BASE_ALLOWED_HOSTS: tuple[str, ...] = (
+    ".databricks.com",
+    ".cloud.databricks.com",
+    ".azuredatabricks.net",
+    ".gcp.databricks.com",
+    ".openai.com",
+    ".anthropic.com",
+)
+
+# Matches a Databricks secret reference of the form 'scope/key': exactly one '/', no whitespace,
+# no scheme, both sides non-empty. URLs and bare hostnames must NOT pass this check.
+_SECRET_REF_RE = re.compile(r"^[^\s/:]+/[^\s/:]+$")
+
+
+def _normalize_host(host: str) -> str:
+    """Lower-case, strip IPv6 brackets and a trailing FQDN dot, IDNA-encode for unicode/punycode parity."""
+    host = host.lower().strip("[]").rstrip(".")
+    if not host:
+        return host
+    try:
+        return host.encode("idna").decode("ascii")
+    except UnicodeError:
+        return host
+
+
+def _is_ip_literal(host: str) -> bool:
+    """True if *host* parses as an IPv4 or IPv6 literal."""
+    try:
+        ipaddress.ip_address(host.strip("[]"))
+        return True
+    except ValueError:
+        return False
+
+
 @dataclass
 class LLMModelConfig:
     """Configuration for LLM model"""
 
     # The model to use for the DSPy language model
     model_name: str = "databricks/databricks-claude-sonnet-4-5"
-    # Optional API key for the model as text or secret scope/key. Not required by foundational models
+    # Optional API key for the model as text or secret scope/key. Not required by foundational models.
     api_key: str = ""  # when used with Profiler Workflow, this should be a secret: secret_scope/secret_key
-    # Optional API base URL for the model. Not required by foundational models
-    api_base: str = ""  # when used with Profiler Workflow, this should be a secret: secret_scope/secret_key
+    # Optional API base URL for the model. Not required by foundational models. When set as a URL,
+    # must use https and resolve to a host whose suffix is in the built-in allowlist (Databricks
+    # AWS/Azure/GCP, OpenAI, Anthropic) or *api_base_allowed_hosts* (e.g. AI Gateway hosts).
+    # When used with Profiler Workflow, this can also be a secret reference of the strict form
+    # 'secret_scope/secret_key' (no scheme, no whitespace) — resolved + revalidated downstream.
+    api_base: str = ""
+    # Per-call output token cap. Bounds cost and latency for pathological prompts (OWASP LLM04).
+    max_tokens: int = 1000
+    # Sampling temperature. 0.0 is deterministic; raise for more creative narratives.
+    temperature: float = 0.0
+    # Per-call wall-clock timeout in seconds.
+    timeout: float = 30.0
+    # Additional host suffixes to allow for *api_base*, on top of the built-in allowlist. Use this
+    # to permit explicitly approved AI Gateway hosts. Each entry is matched as a case-insensitive
+    # suffix of the URL host (e.g. ".gateway.corp.example"). IP literals must match exactly.
+    api_base_allowed_hosts: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.api_base:
+            return
+        if _SECRET_REF_RE.match(self.api_base):
+            return  # secret reference — resolved + revalidated by the workflow before use
+        if "://" not in self.api_base:
+            raise InvalidParameterError("api_base must be either an https URL or a 'secret_scope/secret_key' reference")
+        self._validate_api_base(self.api_base)
+
+    def _validate_api_base(self, api_base: str) -> None:
+        """Reject api_base URLs that don't pass scheme + host-suffix allowlist checks (CWE-918)."""
+        parsed = urlparse(api_base)
+        if parsed.scheme.lower() != "https":
+            raise InvalidParameterError(f"api_base must use https scheme, got {parsed.scheme or '<empty>'!r}")
+        raw_host = parsed.hostname or ""
+        host = _normalize_host(raw_host)
+        if not host:
+            raise InvalidParameterError("api_base must include a host")
+
+        host_is_ip = _is_ip_literal(host)
+        merged = (*_DEFAULT_API_BASE_ALLOWED_HOSTS, *self.api_base_allowed_hosts)
+        for entry in merged:
+            if not entry or not entry.strip():
+                continue  # ignore empty entries — they would otherwise match any host
+            normalized = _normalize_host(entry.lstrip("."))
+            if not normalized:
+                continue
+            entry_is_ip = _is_ip_literal(normalized)
+            # IP literals: exact match. Hostnames: exact match or strict subdomain (host endswith
+            # ".suffix"). Blocks "attacker.10.0.0.1" or "attackerexample.com" style bypasses.
+            if entry_is_ip or host_is_ip:
+                if host == normalized:
+                    return
+                continue
+            if host == normalized or host.endswith(f".{normalized}"):
+                return
+
+        raise InvalidParameterError(
+            f"api_base host {raw_host!r} is not in the allowed-hosts list. "
+            f"Extend LLMModelConfig.api_base_allowed_hosts to permit it."
+        )
 
 
 @dataclass(frozen=True)
