@@ -243,6 +243,17 @@ def test_llm_model_config_defaults():
     assert config.model_name == "databricks/databricks-claude-sonnet-4-5"
     assert config.api_key == ""
     assert config.api_base == ""
+    assert config.executor == "ai_query"
+
+
+def test_llm_model_config_executor_driver_is_accepted():
+    config = LLMModelConfig(executor="driver")
+    assert config.executor == "driver"
+
+
+def test_llm_model_config_rejects_unknown_executor():
+    with pytest.raises(InvalidParameterError, match="executor must be 'ai_query' or 'driver'"):
+        LLMModelConfig(executor="cluster")
 
 
 def test_llm_model_config_custom_values():

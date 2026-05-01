@@ -16,6 +16,7 @@ import pytest
 
 from databricks.labs.dqx.anomaly import anomaly_llm_explainer as llm_explainer
 from databricks.labs.dqx.anomaly.anomaly_llm_explainer import DSPY_AVAILABLE, ExplanationContext
+from databricks.labs.dqx.errors import InvalidParameterError
 
 pytestmark = pytest.mark.skipif(not DSPY_AVAILABLE, reason="dspy not installed")
 
@@ -179,6 +180,55 @@ def test_call_llm_for_groups_sanitizes_llm_output():
     assert len(narrative) == llm_explainer._LLM_FIELD_MAX_LEN
     assert impact == "impact  forged"
     assert action == "ok action"
+
+
+def test_ai_query_prompt_header_includes_instructions_and_field_descriptions():
+    """The ai_query header is rendered from the same shared dicts the DSPy signature reads.
+
+    Asserting on a few representative tokens from each section catches accidental drift between
+    the two executor paths without coupling the test to exact wording.
+    """
+    header = llm_explainer._render_ai_query_prompt_header()
+    assert "data quality analyst" in header  # instructions line
+    for input_name, _ in llm_explainer._PROMPT_INPUT_FIELDS:
+        assert f"- {input_name}:" in header
+    for output_name, _ in llm_explainer._PROMPT_OUTPUT_FIELDS:
+        assert f"- {output_name}:" in header
+    assert "Respond with ONLY a JSON object" in header
+
+
+def test_resolve_ai_query_endpoint_strips_databricks_prefix():
+    assert llm_explainer._resolve_ai_query_endpoint("databricks/databricks-claude-sonnet-4-5") == (
+        "databricks-claude-sonnet-4-5"
+    )
+
+
+def test_resolve_ai_query_endpoint_accepts_bare_endpoint_name():
+    assert llm_explainer._resolve_ai_query_endpoint("my-endpoint") == "my-endpoint"
+
+
+def test_resolve_ai_query_endpoint_rejects_non_databricks_provider():
+    with pytest.raises(InvalidParameterError, match="executor='ai_query' requires a Databricks"):
+        llm_explainer._resolve_ai_query_endpoint("openai/gpt-4")
+
+
+def test_resolve_ai_query_endpoint_rejects_empty_model_name():
+    with pytest.raises(InvalidParameterError, match="model_name is required"):
+        llm_explainer._resolve_ai_query_endpoint("")
+
+
+def test_ai_query_response_format_is_strict_json_schema():
+    """Response format pins the LLM to {narrative, business_impact, action} with strict mode.
+
+    Strict mode + ``additionalProperties:false`` blocks the model from smuggling extra fields.
+    Length-capping happens post-parse via *_sanitize* (Databricks ai_query rejects ``maxLength``
+    on string types in responseFormat — see comment on *_AI_QUERY_RESPONSE_FORMAT*).
+    """
+    schema = llm_explainer._AI_QUERY_RESPONSE_FORMAT
+    assert '"strict":true' in schema
+    assert '"additionalProperties":false' in schema
+    for field in ("narrative", "business_impact", "action"):
+        assert f'"{field}"' in schema
 
 
 def test_call_llm_for_groups_empty_input_returns_empty_list():

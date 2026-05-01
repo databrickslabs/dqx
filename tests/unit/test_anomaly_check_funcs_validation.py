@@ -119,8 +119,12 @@ def test_has_no_row_anomalies_ai_explanation_requires_contributions():
     assert "enable_ai_explanation=True requires enable_contributions=True" in str(exc_info.value)
 
 
-def test_has_no_row_anomalies_ai_explanation_requires_dspy():
-    """enable_ai_explanation=True raises when DSPY_AVAILABLE is False on check_funcs module."""
+def test_has_no_row_anomalies_ai_explanation_driver_requires_dspy():
+    """executor='driver' + enable_ai_explanation=True raises when DSPy is not installed.
+
+    The default executor is 'ai_query' (Spark SQL, no DSPy) — DSPy is only required for the
+    driver path, so the validator gates dspy availability behind that executor choice.
+    """
     with patch.object(check_funcs, "SHAP_AVAILABLE", True), patch.object(check_funcs, "DSPY_AVAILABLE", False):
         with pytest.raises(InvalidParameterError) as exc_info:
             has_no_row_anomalies(
@@ -128,8 +132,28 @@ def test_has_no_row_anomalies_ai_explanation_requires_dspy():
                 registry_table="catalog.schema.table",
                 enable_ai_explanation=True,
                 enable_contributions=True,
+                llm_model_config={"executor": "driver"},
             )
-    assert "enable_ai_explanation=True requires the 'dspy' dependency" in str(exc_info.value)
+    assert "executor='driver' requires the 'dspy' dependency" in str(exc_info.value)
+
+
+def test_has_no_row_anomalies_ai_explanation_default_executor_does_not_require_dspy():
+    """Default executor='ai_query' does NOT require dspy — runs entirely in Spark SQL."""
+    with patch.object(check_funcs, "SHAP_AVAILABLE", True), patch.object(check_funcs, "DSPY_AVAILABLE", False):
+        # Should not raise on dspy; downstream calls (model fetch) will fail later but the
+        # validation step we care about must accept the default executor.
+        try:
+            has_no_row_anomalies(
+                model_name="catalog.schema.model",
+                registry_table="catalog.schema.table",
+                enable_ai_explanation=True,
+                enable_contributions=True,
+            )
+        except InvalidParameterError as exc:
+            assert "dspy" not in str(exc), f"DSPy should not be required for ai_query path: {exc}"
+        except Exception:  # pylint: disable=broad-except
+            # Other errors (e.g. workspace lookups) are fine — we only assert on validator behavior.
+            pass
 
 
 def test_has_no_row_anomalies_redact_columns_must_be_list():

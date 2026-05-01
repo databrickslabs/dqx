@@ -251,8 +251,17 @@ class LLMModelConfig:
     # to permit explicitly approved AI Gateway hosts. Each entry is matched as a case-insensitive
     # suffix of the URL host (e.g. ".gateway.corp.example"). IP literals must match exactly.
     api_base_allowed_hosts: tuple[str, ...] = ()
+    # Where the LLM call is executed for AI explanations:
+    #   "ai_query" — Spark SQL ``ai_query`` on executors against a Databricks Model Serving endpoint
+    #                whose name is taken from *model_name* (provider prefix stripped). Scales with the
+    #                cluster, no driver collect — recommended default on Databricks.
+    #   "driver"   — DSPy on the driver, threaded fan-out. Use for non-Databricks endpoints
+    #                (any provider DSPy supports via *api_base*).
+    executor: str = "ai_query"
 
     def __post_init__(self) -> None:
+        if self.executor not in ("ai_query", "driver"):
+            raise InvalidParameterError(f"executor must be 'ai_query' or 'driver', got {self.executor!r}")
         if not self.api_base:
             return
         if _SECRET_REF_RE.match(self.api_base):

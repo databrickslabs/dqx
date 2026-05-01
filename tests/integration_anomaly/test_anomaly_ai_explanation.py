@@ -7,6 +7,7 @@ stubbed out — we exercise the real Spark/SHAP/_dq_info plumbing end-to-end.
 
 from __future__ import annotations
 
+import os
 from types import SimpleNamespace
 
 import pytest
@@ -16,6 +17,7 @@ from pyspark.sql.types import DoubleType, MapType, StringType, StructField, Stru
 from databricks.labs.dqx.anomaly import anomaly_llm_explainer as llm_explainer
 from databricks.labs.dqx.anomaly.anomaly_llm_explainer import DSPY_AVAILABLE, ExplanationContext
 from databricks.labs.dqx.config import LLMModelConfig
+from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.llm.llm_core import LLMModelConfigurator
 from tests.integration_anomaly.constants import (
     DEFAULT_SCORE_THRESHOLD,
@@ -594,3 +596,150 @@ def test_max_tokens_cap_enforced_by_live_llm(ws):
     assert (
         completion_tokens <= cfg.max_tokens + 8
     ), f"LLM exceeded max_tokens={cfg.max_tokens}: completion_tokens={completion_tokens}"
+
+
+# ---------------------------------------------------------------------------
+# ai_query executor path — these run a real Spark SQL ai_query call against a
+# Databricks Model Serving endpoint and so are skipped on workspaces without
+# Foundation Model APIs (or when the endpoint is unreachable). Override the
+# endpoint with the DQX_AI_QUERY_TEST_ENDPOINT env var if the default is not
+# available in your workspace.
+# ---------------------------------------------------------------------------
+
+
+_AI_QUERY_TEST_ENDPOINT = os.environ.get("DQX_AI_QUERY_TEST_ENDPOINT", "databricks-llama-4-maverick")
+
+
+def _ai_query_endpoint_available(spark: SparkSession) -> tuple[bool, str | None]:
+    """Cheap probe — does ai_query against the configured endpoint succeed?
+
+    Returns ``(available, error_message)``. The error message is surfaced in the skip reason so
+    a failing probe doesn't masquerade as 'endpoint not provisioned' — knowing why the probe
+    failed (auth, missing entitlement, wrong name) is what lets the user decide whether to set
+    DQX_AI_QUERY_TEST_ENDPOINT.
+    """
+    try:
+        spark.sql(
+            f"SELECT ai_query('{_AI_QUERY_TEST_ENDPOINT}', 'reply with the single word: ok', "
+            f"modelParameters => named_struct('max_tokens', 8, 'temperature', 0.0)) AS r"
+        ).collect()
+        return True, None
+    except Exception as exc:  # pylint: disable=broad-except
+        return False, repr(exc)
+
+
+@pytest.fixture
+def ai_query_endpoint(ws, spark):
+    """Skip the test when the workspace cannot reach the configured ai_query endpoint."""
+    assert ws.current_user.me() is not None  # fail-fast if workspace auth is broken
+    available, error = _ai_query_endpoint_available(spark)
+    if not available:
+        pytest.skip(
+            f"ai_query endpoint {_AI_QUERY_TEST_ENDPOINT!r} not reachable; "
+            f"set DQX_AI_QUERY_TEST_ENDPOINT to override. Probe error: {error}"
+        )
+    return _AI_QUERY_TEST_ENDPOINT
+
+
+def _ai_query_llm_cfg(endpoint: str) -> LLMModelConfig:
+    return LLMModelConfig(model_name=endpoint, executor="ai_query")
+
+
+def test_ai_query_explanation_populated_for_anomalous_row(
+    spark: SparkSession, shared_3d_model, test_df_factory, anomaly_scorer, ai_query_endpoint
+):
+    """ai_query path produces a non-null ai_explanation struct on anomalous rows.
+
+    Asserts only on structural properties — non-empty strings, length cap, struct fields —
+    so the test does not depend on the exact wording the model returns.
+    """
+    test_df = _make_outlier_df(spark, test_df_factory)
+    result_df = _score_with_explanation(
+        anomaly_scorer, test_df, shared_3d_model, llm_model_config=_ai_query_llm_cfg(ai_query_endpoint)
+    )
+    row = result_df.collect()[0]
+    anomaly_info = row["_dq_info"][0]["anomaly"]
+
+    assert anomaly_info["is_anomaly"] is True
+    explanation = anomaly_info["ai_explanation"]
+    assert explanation is not None, "ai_query returned a null struct on an anomalous row"
+    for field_name in ("narrative", "business_impact", "action"):
+        value = explanation[field_name]
+        assert isinstance(value, str) and value.strip(), f"{field_name!r} is empty"
+        assert len(value) <= llm_explainer._LLM_FIELD_MAX_LEN  # pylint: disable=protected-access
+    assert explanation["pattern"]
+    assert explanation["group_size"] == 1
+
+
+def test_ai_query_explanation_redact_columns_filters_prompt(
+    spark: SparkSession, shared_3d_model, test_df_factory, anomaly_scorer, ai_query_endpoint
+):
+    """redact_columns prevents the redacted feature name from appearing in any returned field.
+
+    Combined with the unit test on the prompt builder, this verifies redaction holds end-to-end:
+    not only is the name kept out of the prompt, but the model isn't somehow echoing it via
+    another channel (e.g. the pattern key or schema metadata).
+    """
+    test_df = _make_outlier_df(spark, test_df_factory)
+    result_df = _score_with_explanation(
+        anomaly_scorer,
+        test_df,
+        shared_3d_model,
+        llm_model_config=_ai_query_llm_cfg(ai_query_endpoint),
+        redact_columns=["amount"],
+    )
+    row = result_df.collect()[0]
+    explanation = row["_dq_info"][0]["anomaly"]["ai_explanation"]
+
+    assert explanation is not None
+    assert "amount" not in explanation["pattern"]
+    for field_name in ("narrative", "business_impact", "action"):
+        assert (
+            "amount" not in explanation[field_name].lower()
+        ), f"redacted column 'amount' leaked into {field_name}: {explanation[field_name]!r}"
+
+
+def test_ai_query_explanation_one_call_per_group(
+    spark: SparkSession, shared_3d_model, test_df_factory, anomaly_scorer, ai_query_endpoint
+):
+    """Multiple identical anomalous rows collapse into a single (segment, pattern) group.
+
+    The driver-path version of this test uses a counting predictor; the ai_query path runs on
+    executors so we can't intercept the call directly. Instead we assert the *observable*
+    contract: every flagged row in the group shares the same narrative and group_size, which
+    can only happen if the LLM was invoked once and the result fanned out via the join.
+    """
+    test_df = _make_outlier_df(spark, test_df_factory, repeat=5)
+    result_df = _score_with_explanation(
+        anomaly_scorer, test_df, shared_3d_model, llm_model_config=_ai_query_llm_cfg(ai_query_endpoint)
+    )
+    rows = result_df.collect()
+    explanations = [
+        r["_dq_info"][0]["anomaly"]["ai_explanation"] for r in rows if r["_dq_info"][0]["anomaly"]["is_anomaly"]
+    ]
+
+    assert len(explanations) == 5
+    # Single LLM call → single narrative + pattern shared across the group.
+    assert len({e["narrative"] for e in explanations}) == 1
+    assert len({e["pattern"] for e in explanations}) == 1
+    assert all(e["group_size"] == len(explanations) for e in explanations)
+
+
+def test_ai_query_executor_rejects_non_databricks_provider():
+    """``executor='ai_query'`` with a non-Databricks provider prefix surfaces InvalidParameterError.
+
+    Pure validation — no live call, no skip needed. Catches the case where a user copies a
+    DSPy/litellm-style ``provider/model`` config and forgets to switch executor.
+    """
+    cfg = LLMModelConfig(model_name="openai/gpt-4", executor="ai_query")
+    ctx = ExplanationContext(
+        severity_col="severity_percentile",
+        contributions_col="anomaly_contributions",
+        score_std_col="anomaly_score_std",
+        ai_explanation_col="ai_explanation",
+        threshold=95.0,
+        model_name="catalog.schema.m",
+        llm_model_config=cfg,
+    )
+    with pytest.raises(InvalidParameterError, match="executor='ai_query' requires a Databricks"):
+        llm_explainer._resolve_ai_query_endpoint(ctx.llm_model_config.model_name)  # pylint: disable=protected-access

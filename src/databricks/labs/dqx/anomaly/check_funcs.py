@@ -73,7 +73,11 @@ def _validate_thresholds(threshold: float, drift_threshold: float | None) -> Non
         raise InvalidParameterError("drift_threshold must be greater than 0 when provided.")
 
 
-def _validate_explanation_flags(enable_contributions: bool, enable_ai_explanation: bool) -> None:
+def _validate_explanation_flags(
+    enable_contributions: bool,
+    enable_ai_explanation: bool,
+    llm_model_config: LLMModelConfig | None,
+) -> None:
     if enable_contributions and not SHAP_AVAILABLE:
         raise InvalidParameterError(
             "enable_contributions=True requires the 'shap' dependency. "
@@ -84,10 +88,13 @@ def _validate_explanation_flags(enable_contributions: bool, enable_ai_explanatio
             "enable_ai_explanation=True requires enable_contributions=True. "
             "SHAP contributions are used as input to the LLM explanation."
         )
-    if enable_ai_explanation and not DSPY_AVAILABLE:
+    # DSPy is only required for the driver executor path; ai_query runs entirely in Spark SQL.
+    executor = (llm_model_config or LLMModelConfig()).executor
+    if enable_ai_explanation and executor == "driver" and not DSPY_AVAILABLE:
         raise InvalidParameterError(
-            "enable_ai_explanation=True requires the 'dspy' dependency. "
-            "Install: pip install databricks-labs-dqx[anomaly,llm]"
+            "enable_ai_explanation=True with executor='driver' requires the 'dspy' dependency. "
+            "Install: pip install databricks-labs-dqx[anomaly,llm], or use executor='ai_query' "
+            "(default) on Databricks."
         )
 
 
@@ -100,11 +107,12 @@ def _validate_anomaly_check_args(
     enable_ai_explanation: bool,
     redact_columns: list[str] | None,
     max_groups: int,
+    llm_model_config: LLMModelConfig | None,
 ) -> None:
     """Validate has_no_row_anomalies arguments. Raises InvalidParameterError on failure."""
     _validate_required_names(model_name, registry_table)
     _validate_thresholds(threshold, drift_threshold)
-    _validate_explanation_flags(enable_contributions, enable_ai_explanation)
+    _validate_explanation_flags(enable_contributions, enable_ai_explanation, llm_model_config)
 
     if redact_columns is not None:
         if not isinstance(redact_columns, list) or not all(isinstance(c, str) and c for c in redact_columns):
@@ -170,10 +178,20 @@ def has_no_row_anomalies(
         enable_confidence_std: Include ensemble confidence scores in _dq_info and top-level (default False).
             Automatically available when training with ensemble_size > 1 (default is 3).
         enable_ai_explanation: If True, add a human-readable LLM explanation for each anomalous row
-            (default False). Requires enable_contributions=True and the [llm] extra.
-            Output is in _dq_info[0].anomaly.ai_explanation.
+            (default False). Requires enable_contributions=True. By default the LLM call runs in
+            Spark via ``ai_query`` against a Databricks Model Serving endpoint — no extra deps.
+            Set ``llm_model_config.executor='driver'`` (and install the [llm] extra) to route
+            through DSPy instead, e.g. for non-Databricks providers. Output is in
+            _dq_info[0].anomaly.ai_explanation.
         llm_model_config: LLM model configuration. Defaults to LLMModelConfig()
-            (databricks/databricks-claude-sonnet-4-5).
+            (databricks/databricks-claude-sonnet-4-5, executor='ai_query').
+
+            ``executor`` selects how the LLM call runs:
+              - ``'ai_query'`` (default): Spark SQL ``ai_query`` on executors against a Databricks
+                Model Serving endpoint. Scales with the cluster, no DSPy required. *model_name*
+                must be a Databricks endpoint name (with or without the ``databricks/`` prefix).
+              - ``'driver'``: DSPy on the driver with threaded fan-out. Use for any provider DSPy
+                supports via *api_base*. Requires ``pip install databricks-labs-dqx[anomaly,llm]``.
 
             When wrapping this check in DQDatasetRule / DQRowRule, applying it via
             apply_checks / apply_checks_by_metadata, or declaring it in YAML: **pass a dict**
@@ -216,6 +234,8 @@ def has_no_row_anomalies(
         >>> df_scored.select(col("_dq_info").getItem(0).getField("anomaly").getField("score"), ...)
         >>> df_scored.filter(col("_dq_info").getItem(0).getField("anomaly").getField("is_anomaly"))
     """
+    llm_model_config = _coerce_llm_model_config(llm_model_config)
+
     _validate_anomaly_check_args(
         model_name=model_name,
         registry_table=registry_table,
@@ -225,9 +245,8 @@ def has_no_row_anomalies(
         enable_ai_explanation=enable_ai_explanation,
         redact_columns=redact_columns,
         max_groups=max_groups,
+        llm_model_config=llm_model_config,
     )
-
-    llm_model_config = _coerce_llm_model_config(llm_model_config)
 
     row_id_col = f"__dqx_row_id_{uuid.uuid4().hex}"
     output_columns = ScoringOutputColumns(
