@@ -78,11 +78,46 @@ Load into Python via `yaml.safe_load(...)`, then pass the resulting `list[dict]`
 - **Positional args** — `check_func_args=[[1, 2]]`; **keyword args** — `check_func_kwargs={"allowed": [1, 2]}`.
 - **Struct / map / array element** — use `F.try_element_at(...)` or dotted path (`col7.field1`) as the `column` value.
 - **User metadata** — annotate the rule with a `user_metadata` dict (e.g. `{"check_type": "completeness"}`) that flows into the result struct.
-- **Custom check** — pass any function that returns a PySpark `Column` as `check_func`, or use `sql_expression` / `sql_query` for inline SQL.
+- **Custom check** — pass any function that returns a PySpark `Column` as `check_func`. For inline SQL, use the fallback section below — only after confirming no built-in fits.
 - **Aggregate dataset-level** — `is_aggr_not_greater_than`, `is_aggr_not_less_than`, `is_aggr_equal`, `is_aggr_not_equal`; supply `aggr_type` (`count`, `avg`, `stddev`, `percentile`, `count_distinct`…), optional `group_by`, and `limit`.
 - **Uniqueness dataset-level** — `is_unique`, with `columns`, `nulls_distinct` (bool), and optional `row_filter`. Not an aggregate check — no `aggr_type`.
 
 Full reference: <https://databrickslabs.github.io/dqx/docs/reference/quality_checks>.
+
+## Fallback: custom SQL
+
+**Search `check_funcs` first** — the built-ins cover null/empty, range, set membership, regex, referential, aggregate, uniqueness, schema, freshness, comparison, and outlier cases with typed error messages and tested edge handling. Drop down to SQL only when no built-in fits.
+
+- `sql_expression` — **row-level** SQL boolean expression. Use when one row's validity depends on its own columns.
+- `sql_query` — **dataset-level** SQL query against `{{ input_view }}`. Use for cross-row aggregates, joins to reference DataFrames, or anything needing `GROUP BY`. Queries are validated by `is_sql_query_safe()` — read-only `SELECT`, no DDL/DML.
+
+```yaml
+# row-level: SQL expression evaluated per row
+- name: amount_positive_or_refunded
+  criticality: error
+  check:
+    function: sql_expression
+    arguments:
+      expression: amount > 0 OR refunded = true
+      msg: amount must be positive unless refunded
+
+# dataset-level: SQL query, joined back to rows via merge_columns
+- name: order_total_matches_lines
+  criticality: error
+  check:
+    function: sql_query
+    arguments:
+      query: |
+        SELECT order_id,
+               SUM(line_amount) <> order_total AS condition
+        FROM {{ input_view }}
+        GROUP BY order_id, order_total
+      merge_columns: [order_id]    # row-level: joins back per order_id
+      condition_column: condition  # column in query output; true = fail
+      # omit merge_columns for dataset-level (one verdict applies to every row)
+```
+
+For the equivalent class form, use `DQRowRule(check_func=check_funcs.sql_expression, check_func_kwargs={"expression": "..."})` or `DQDatasetRule(check_func=check_funcs.sql_query, check_func_kwargs={...})`.
 
 ## Converting between forms
 
@@ -106,6 +141,7 @@ status = DQEngine.validate_checks(checks)   # raises / returns ValidationStatus
 - **Do** give each rule a stable, snake_case `name` — it ends up in result columns and dashboards.
 - **Do** put shared rules in a YAML/JSON/Delta file and load them (see `dqx-storage`) — classes are fine for a handful, metadata scales.
 - **Don't** use a regex check for null / empty / range / referential / aggregate cases — DQX has a built-in for each; see `check_funcs`.
+- **Don't** reach for `sql_expression` / `sql_query` when a built-in covers the case — they bypass typed error messages and security guards. Search `check_funcs` first.
 - **Don't** put side effects in a custom `check_func` — it must return a `Column` expression only.
 
 Canonical docs: <https://databrickslabs.github.io/dqx/docs/guide/quality_checks_definition>.
