@@ -125,7 +125,7 @@ lint = [
     "pylint-pytest==2.0.0a1",
     "ruff~=0.3.4",
     "types-PyYAML~=6.0.3",
-    "types-requests~=2.31.0",
+    "types-requests>=2.31,<2.34",
 ]
 test = [
     "pip~=26.0",  # required by databricks-labs-blueprint WheelsV2 which calls `pip wheel`; remove after blueprint migrates to uv
