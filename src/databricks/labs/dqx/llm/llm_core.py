@@ -45,7 +45,7 @@ class LLMModelConfigurator:
             max_tokens=self._model_config.max_tokens,
             temperature=self._model_config.temperature,
             timeout=self._model_config.timeout,
-            max_retries=3,
+            max_retries=self._model_config.max_retries,
         )
 
 

@@ -18,6 +18,7 @@ from databricks.labs.dqx.anomaly.model_config import (
     compute_config_hash,
 )
 from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRegistry
+from databricks.labs.dqx.config import LLMModelConfig
 from databricks.labs.dqx.errors import InvalidParameterError
 
 
@@ -137,23 +138,20 @@ def test_has_no_row_anomalies_ai_explanation_driver_requires_dspy():
     assert "executor='driver' requires the 'dspy' dependency" in str(exc_info.value)
 
 
-def test_has_no_row_anomalies_ai_explanation_default_executor_does_not_require_dspy():
-    """Default executor='ai_query' does NOT require dspy — runs entirely in Spark SQL."""
+def test_validate_explanation_flags_default_executor_does_not_require_dspy():
+    """Default executor='ai_query' does NOT require dspy — runs entirely in Spark SQL.
+
+    Calls *_validate_explanation_flags* directly so the assertion is scoped to the validator
+    and doesn't depend on downstream workspace lookups or whether *has_no_row_anomalies*
+    happens to fail for an unrelated reason in the test env.
+    """
     with patch.object(check_funcs, "SHAP_AVAILABLE", True), patch.object(check_funcs, "DSPY_AVAILABLE", False):
-        # Should not raise on dspy; downstream calls (model fetch) will fail later but the
-        # validation step we care about must accept the default executor.
-        try:
-            has_no_row_anomalies(
-                model_name="catalog.schema.model",
-                registry_table="catalog.schema.table",
-                enable_ai_explanation=True,
-                enable_contributions=True,
-            )
-        except InvalidParameterError as exc:
-            assert "dspy" not in str(exc), f"DSPy should not be required for ai_query path: {exc}"
-        except Exception:  # pylint: disable=broad-except
-            # Other errors (e.g. workspace lookups) are fine — we only assert on validator behavior.
-            pass
+        # Default executor on a fresh LLMModelConfig is 'ai_query' — must not raise.
+        check_funcs._validate_explanation_flags(  # pylint: disable=protected-access
+            enable_contributions=True,
+            enable_ai_explanation=True,
+            llm_model_config=LLMModelConfig(),
+        )
 
 
 def test_has_no_row_anomalies_redact_columns_must_be_list():

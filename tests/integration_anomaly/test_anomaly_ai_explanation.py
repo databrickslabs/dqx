@@ -7,6 +7,7 @@ stubbed out — we exercise the real Spark/SHAP/_dq_info plumbing end-to-end.
 
 from __future__ import annotations
 
+import dataclasses
 import os
 from types import SimpleNamespace
 
@@ -64,11 +65,17 @@ def mock_llm(monkeypatch):
 
 
 def _llm_cfg() -> LLMModelConfig:
+    # executor='driver' is mandatory here: *mock_llm* monkeypatches dspy.LM / dspy.Predict,
+    # which are only consulted on the driver path. With the default 'ai_query' executor the
+    # tests would silently route through Spark SQL *ai_query* against a non-existent
+    # endpoint named 'stub' and 404. Tests that intentionally exercise the ai_query path
+    # construct their own config (see *test_ai_query_explanation_*).
     return LLMModelConfig(
         model_name="databricks/stub",
         api_key="stub",
         api_base="https://stub.example.test",
         api_base_allowed_hosts=("stub.example.test",),
+        executor="driver",
     )
 
 
@@ -277,6 +284,10 @@ def _patch_dspy(monkeypatch, lm_cls, predictor_cls):
 
 
 def _ctx(max_groups: int = 500, redact_columns: tuple[str, ...] = ()) -> ExplanationContext:
+    # executor='driver' for the same reason as in *_llm_cfg*: every caller of this helper
+    # uses *_patch_dspy* (driver-only seam) to capture LM/predictor kwargs. Without the
+    # explicit override the default 'ai_query' would send each test through Spark SQL
+    # against the non-existent 'stub' endpoint.
     return ExplanationContext(
         severity_col="severity_percentile",
         contributions_col="anomaly_contributions",
@@ -289,6 +300,7 @@ def _ctx(max_groups: int = 500, redact_columns: tuple[str, ...] = ()) -> Explana
             api_key="stub",
             api_base="https://stub.example.test",
             api_base_allowed_hosts=("stub.example.test",),
+            executor="driver",
         ),
         max_groups=max_groups,
         redact_columns=redact_columns,
@@ -490,10 +502,19 @@ def test_predictor_receives_all_signature_fields(spark: SparkSession, monkeypatc
 
 
 def _run_with_lm_capture(spark: SparkSession, monkeypatch, llm_model_config: LLMModelConfig):
+    """Drive *add_explanation_column* through the driver executor with a CapturingLM.
+
+    These tests assert on dspy.LM kwargs, so the executor must be 'driver' regardless of the
+    *LLMModelConfig.executor* default. Force-coerce here so callers don't have to repeat the
+    boilerplate (and so the suite doesn't silently switch paths when defaults change).
+    """
     if not DSPY_AVAILABLE:
         pytest.skip("dspy not installed")
     lm_cls, lm_kwargs = _capturing_lm()
     _patch_dspy(monkeypatch, lm_cls, _FakePredictor)
+
+    if llm_model_config.executor != "driver":
+        llm_model_config = dataclasses.replace(llm_model_config, executor="driver")
 
     df = _build_synthetic_scored_df(spark, [(99.0, {"amount": 80.0, "quantity": 20.0})])
     ctx = ExplanationContext(
@@ -526,6 +547,19 @@ def test_lm_config_passes_provider_prefixed_model_through(spark: SparkSession, m
     assert captured[0]["api_key"] == "tok"
     assert captured[0]["model_type"] == "chat"
     assert captured[0]["max_retries"] == 3
+
+
+def test_lm_config_forwards_max_retries_override(spark: SparkSession, monkeypatch):
+    """*max_retries* on LLMModelConfig overrides the default and is forwarded to dspy.LM.
+
+    Pinned here (not just in unit config tests) because the contract that matters for users is
+    "the value I set on LLMModelConfig actually reaches the LM constructor" — not whether the
+    field exists. *max_retries=0* is the most useful override (fail fast for tests / fail-soft
+    workflows), so we lock that case.
+    """
+    cfg = LLMModelConfig(model_name="databricks/claude-sonnet", max_retries=0)
+    captured = _run_with_lm_capture(spark, monkeypatch, cfg)
+    assert captured[0]["max_retries"] == 0
 
 
 def test_lm_config_workspace_auth_with_empty_credentials(spark: SparkSession, monkeypatch):

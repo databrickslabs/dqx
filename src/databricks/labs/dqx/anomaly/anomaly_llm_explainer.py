@@ -15,7 +15,7 @@ import logging
 import re
 from dataclasses import dataclass
 from functools import partial
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 import pyspark.sql.functions as F
 from pyspark.sql import Column, DataFrame
@@ -26,7 +26,12 @@ from databricks.labs.dqx.anomaly.anomaly_info_schema import ai_explanation_struc
 from databricks.labs.dqx.anomaly.explainability import format_contributions_map
 from databricks.labs.dqx.config import LLMModelConfig
 from databricks.labs.dqx.errors import InvalidParameterError
-from databricks.labs.dqx.llm.llm_core import LLMModelConfigurator
+
+# NB: ``llm_core`` does ``import dspy`` at module load. Importing it eagerly here would force the
+# DSPy dependency on every user of the explainer — including users on ``executor='ai_query'`` who
+# legitimately don't need it (the docstring promises the [llm] extra is optional on that path).
+# *LLMModelConfigurator* is therefore lazy-imported inside *build_language_model* below, which is
+# the only call site and is gated by *_require_dspy()*.
 
 # Single source of truth for the per-group prompt — used by both executors:
 #   - "driver": consumed structurally by *AnomalyGroupExplanationSignature* (DSPy reads the
@@ -331,15 +336,40 @@ def _build_group_result_schema() -> StructType:
     )
 
 
+_GroupResult = tuple[str, str | None, str | None, str | None, int, float]
+
+
+class _Prediction(Protocol):
+    """Structural type of *dspy.Predict(signature)(**kwargs)*'s return value.
+
+    DSPy is an optional dependency, so we describe the shape we actually consume rather than
+    importing *dspy.primitives.prediction.Prediction*.
+    """
+
+    narrative: str
+    business_impact: str
+    action: str
+
+
+class _GroupPredictor(Protocol):
+    """Structural type of the per-group predictor used by *_explain_one_group*.
+
+    Real implementation: *dspy.Predict(AnomalyGroupExplanationSignature)*. Tests substitute a
+    fake callable with the same shape — both satisfy this protocol without importing DSPy.
+    """
+
+    def __call__(self, **kwargs: object) -> _Prediction: ...
+
+
 def _explain_one_group(
     group: dict,
     ctx: ExplanationContext,
     segment_str: str,
     is_ensemble: bool,
     drift_summary: str,
-    predictor,
-    language_model,
-) -> tuple:
+    predictor: _GroupPredictor,
+    language_model: object,
+) -> _GroupResult:
     """Invoke the LLM for a single group. Returns a result tuple; on failure logs and emits a
     null-explanation tuple so the surrounding scoring run isn't aborted by one bad call.
 
@@ -369,7 +399,10 @@ def _explain_one_group(
                 model_name=ctx.model_name,
                 drift_summary=drift_summary or "none",
             )
-    except Exception as exc:  # pylint: disable=broad-except
+    except Exception as exc:
+        # Per-group LLM-call failure isolation — see pyproject.toml [tool.pylint-per-file-ignores]
+        # for the rationale on the broad catch (DSPy/litellm/network exceptions don't share a
+        # narrow base class, and one bad call must not abort the scoring run).
         # Sanitise the pattern key for the log line — it derives from column names that may
         # contain newlines or control chars (CWE-117). Strip both before interpolating.
         safe_pattern = pattern.replace("\n", "_").replace("\r", "_") if isinstance(pattern, str) else "<non-str>"
@@ -436,24 +469,42 @@ def _render_ai_query_prompt_header() -> str:
 
 _AI_QUERY_PROMPT_HEADER = _render_ai_query_prompt_header()
 
+# Databricks Model Serving endpoint name rules: 1–63 chars, must start with a letter, then any
+# of [letter, digit, hyphen, underscore]. This is the *platform's own* naming constraint — any
+# value Databricks would accept as an endpoint name passes; any value Databricks would reject
+# as an endpoint also fails here. The character class doubles as an anti-injection filter for
+# *_call_llm_for_groups_ai_query*, which f-string-interpolates this name into a SQL string.
+_AI_QUERY_ENDPOINT_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,62}$")
+
 
 def _resolve_ai_query_endpoint(model_name: str) -> str:
     """Map *LLMModelConfig.model_name* onto a Databricks Model Serving endpoint name.
 
     The default value carries a ``databricks/`` provider prefix because DSPy/litellm needs it; the
     SQL ``ai_query`` function takes the bare endpoint name. A non-Databricks prefix means the user
-    pointed at another provider — incompatible with ``executor='ai_query'``, surface a clear
-    error rather than silently producing a malformed call.
+    pointed at another provider — incompatible with ``executor='ai_query'``.
+
+    The returned name is also character-validated against *_AI_QUERY_ENDPOINT_RE*: the value is
+    interpolated into a SQL string built by *_call_llm_for_groups_ai_query*, so any character
+    outside Databricks's own endpoint-name rules is treated as a SQL-injection attempt and
+    rejected.
     """
     if not model_name:
         raise InvalidParameterError("model_name is required when executor='ai_query'.")
-    if "/" not in model_name:
-        return model_name
-    provider, _, endpoint = model_name.partition("/")
-    if provider != "databricks":
+    if "/" in model_name:
+        provider, _, endpoint = model_name.partition("/")
+        if provider != "databricks":
+            raise InvalidParameterError(
+                f"executor='ai_query' requires a Databricks serving endpoint, got provider {provider!r} "
+                f"in model_name={model_name!r}. Use executor='driver' for non-Databricks providers."
+            )
+    else:
+        endpoint = model_name
+    if not _AI_QUERY_ENDPOINT_RE.match(endpoint):
         raise InvalidParameterError(
-            f"executor='ai_query' requires a Databricks serving endpoint, got provider {provider!r} "
-            f"in model_name={model_name!r}. Use executor='driver' for non-Databricks providers."
+            f"ai_query endpoint name {endpoint!r} is not a valid Databricks Model Serving name. "
+            f"Names must start with a letter and contain only letters, digits, '-', or '_' "
+            f"(max 63 chars)."
         )
     return endpoint
 
@@ -620,13 +671,18 @@ def _call_llm_for_groups_ai_query(
     # ai_query is parameterised through the SQL string. *endpoint* is matched against the strict
     # serving-endpoint pattern in *_resolve_ai_query_endpoint*; max_tokens/temperature come from
     # validated config fields. responseFormat is a constant JSON literal (no user input).
+    # failOnError => false: per-row failures (after the platform's internal retries) yield NULL
+    # instead of aborting the whole job, matching the driver path's per-group failure isolation
+    # via *Threads.gather*. The platform's retry count itself is not exposed, so *max_retries*
+    # on *LLMModelConfig* is documented as driver-only.
     raw = enriched.withColumn(
         "__raw_response",
         F.expr(
             f"ai_query('{endpoint}', __prompt, "
             f"modelParameters => named_struct('max_tokens', {int(llm_cfg.max_tokens)}, "
             f"'temperature', {float(llm_cfg.temperature)}), "
-            f"responseFormat => '{_AI_QUERY_RESPONSE_FORMAT}')"
+            f"responseFormat => '{_AI_QUERY_RESPONSE_FORMAT}', "
+            f"failOnError => false)"
         ),
     )
 
@@ -698,6 +754,11 @@ def build_language_model(ctx: ExplanationContext) -> object:
     does not use DSPy at all.
     """
     _require_dspy()
+    # Lazy import: *llm_core* eagerly imports dspy at module load. Pulling it in only when the
+    # driver path actually constructs an LM keeps users on ``executor='ai_query'`` free of the
+    # dspy dependency, matching the documented install matrix.
+    from databricks.labs.dqx.llm.llm_core import LLMModelConfigurator  # pylint: disable=import-outside-toplevel
+
     llm_cfg = ctx.llm_model_config or LLMModelConfig()
     return LLMModelConfigurator(llm_cfg).create_lm()
 

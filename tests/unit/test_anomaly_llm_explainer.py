@@ -203,13 +203,47 @@ def test_resolve_ai_query_endpoint_strips_databricks_prefix():
     )
 
 
-def test_resolve_ai_query_endpoint_accepts_bare_endpoint_name():
-    assert llm_explainer._resolve_ai_query_endpoint("my-endpoint") == "my-endpoint"
+@pytest.mark.parametrize(
+    "model_name, expected_match",
+    [
+        # Wrong provider prefix — caught by the provider check before the regex runs.
+        pytest.param("openai/gpt-4", "executor='ai_query' requires a Databricks", id="wrong_provider"),
+        # SQL-injection shapes: quote, semicolon, comment marker. The endpoint string is
+        # f-string-interpolated into the *ai_query* SQL call, so anything the regex doesn't
+        # whitelist must be rejected here rather than reaching the SQL string.
+        pytest.param(
+            "my-endpoint'; DROP TABLE x--", "not a valid Databricks Model Serving name", id="sql_injection_quote"
+        ),
+        pytest.param("ep\"injected", "not a valid Databricks Model Serving name", id="double_quote"),
+        pytest.param("ep with spaces", "not a valid Databricks Model Serving name", id="contains_space"),
+        # Databricks-prefixed but the bare part is invalid — the prefix is stripped first,
+        # then the regex must still reject what's left.
+        pytest.param(
+            "databricks/bad name", "not a valid Databricks Model Serving name", id="databricks_prefix_invalid_suffix"
+        ),
+        # Databricks endpoint names must start with a letter.
+        pytest.param("1starts-with-digit", "not a valid Databricks Model Serving name", id="leading_digit"),
+        pytest.param("-leading-hyphen", "not a valid Databricks Model Serving name", id="leading_hyphen"),
+        # 64 chars (cap is 63) — boundary case for the length rule.
+        pytest.param("a" * 64, "not a valid Databricks Model Serving name", id="length_64_over_cap"),
+    ],
+)
+def test_resolve_ai_query_endpoint_rejects_invalid_endpoint(model_name, expected_match):
+    with pytest.raises(InvalidParameterError, match=expected_match):
+        llm_explainer._resolve_ai_query_endpoint(model_name)
 
 
-def test_resolve_ai_query_endpoint_rejects_non_databricks_provider():
-    with pytest.raises(InvalidParameterError, match="executor='ai_query' requires a Databricks"):
-        llm_explainer._resolve_ai_query_endpoint("openai/gpt-4")
+@pytest.mark.parametrize(
+    "model_name, expected",
+    [
+        pytest.param("my-endpoint", "my-endpoint", id="bare_simple"),
+        pytest.param("ep_with_underscores", "ep_with_underscores", id="underscores"),
+        pytest.param("ep-with-hyphens-123", "ep-with-hyphens-123", id="hyphens_and_digits"),
+        pytest.param("a" * 63, "a" * 63, id="length_63_at_cap"),
+    ],
+)
+def test_resolve_ai_query_endpoint_accepts_valid_names(model_name, expected):
+    assert llm_explainer._resolve_ai_query_endpoint(model_name) == expected
 
 
 def test_resolve_ai_query_endpoint_rejects_empty_model_name():

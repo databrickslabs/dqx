@@ -256,6 +256,31 @@ def test_llm_model_config_rejects_unknown_executor():
         LLMModelConfig(executor="cluster")
 
 
+def test_llm_model_config_max_retries_default():
+    assert LLMModelConfig().max_retries == 3
+
+
+def test_llm_model_config_max_retries_accepts_zero():
+    """0 disables retries entirely — useful for tests that want to surface failures fast."""
+    assert LLMModelConfig(max_retries=0).max_retries == 0
+
+
+def test_llm_model_config_rejects_negative_max_retries():
+    with pytest.raises(InvalidParameterError, match="max_retries must be a non-negative integer"):
+        LLMModelConfig(max_retries=-1)
+
+
+def test_llm_model_config_rejects_non_integer_max_retries():
+    with pytest.raises(InvalidParameterError, match="max_retries must be a non-negative integer"):
+        LLMModelConfig(max_retries=2.5)  # type: ignore[arg-type]
+
+
+def test_llm_model_config_rejects_bool_max_retries():
+    """``True``/``False`` are ints in Python but a clear typo in this context — reject explicitly."""
+    with pytest.raises(InvalidParameterError, match="max_retries must be a non-negative integer"):
+        LLMModelConfig(max_retries=True)  # type: ignore[arg-type]
+
+
 def test_llm_model_config_custom_values():
     config = LLMModelConfig(
         model_name="custom-model",

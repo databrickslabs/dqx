@@ -247,6 +247,10 @@ class LLMModelConfig:
     temperature: float = 0.0
     # Per-call wall-clock timeout in seconds.
     timeout: float = 30.0
+    # Number of retries on transient LLM-call failures. Driver path: forwarded to *dspy.LM* and
+    # applied per call. ai_query path: the *Databricks Model Serving* platform handles retries
+    # internally and does not expose the count, so this knob is effectively driver-only there.
+    max_retries: int = 3
     # Additional host suffixes to allow for *api_base*, on top of the built-in allowlist. Use this
     # to permit explicitly approved AI Gateway hosts. Each entry is matched as a case-insensitive
     # suffix of the URL host (e.g. ".gateway.corp.example"). IP literals must match exactly.
@@ -262,6 +266,8 @@ class LLMModelConfig:
     def __post_init__(self) -> None:
         if self.executor not in ("ai_query", "driver"):
             raise InvalidParameterError(f"executor must be 'ai_query' or 'driver', got {self.executor!r}")
+        if not isinstance(self.max_retries, int) or isinstance(self.max_retries, bool) or self.max_retries < 0:
+            raise InvalidParameterError(f"max_retries must be a non-negative integer, got {self.max_retries!r}")
         if not self.api_base:
             return
         if _SECRET_REF_RE.match(self.api_base):
