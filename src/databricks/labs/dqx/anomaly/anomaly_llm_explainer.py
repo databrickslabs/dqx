@@ -400,9 +400,11 @@ def _explain_one_group(
                 drift_summary=drift_summary or "none",
             )
     except Exception as exc:
-        # Per-group LLM-call failure isolation — see pyproject.toml [tool.pylint-per-file-ignores]
-        # for the rationale on the broad catch (DSPy/litellm/network exceptions don't share a
-        # narrow base class, and one bad call must not abort the scoring run).
+        # Per-group LLM-call failure isolation: DSPy's *AdapterParseError*, litellm errors,
+        # and network errors don't share a clean base class, and a single bad call must not
+        # abort the scoring run — every other group should still get its explanation.
+        # Narrowing the catch risks regressing this contract when DSPy/litellm grow new
+        # exception types.
         # Sanitise the pattern key for the log line — it derives from column names that may
         # contain newlines or control chars (CWE-117). Strip both before interpolating.
         safe_pattern = pattern.replace("\n", "_").replace("\r", "_") if isinstance(pattern, str) else "<non-str>"

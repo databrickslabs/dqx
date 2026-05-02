@@ -873,11 +873,6 @@ redefining-builtins-modules = ["six.moves", "past.builtins", "future.builtins", 
 "src/databricks/labs/dqx/anomaly/anomaly_workflow.py" = "import-outside-toplevel"
 "src/databricks/labs/dqx/check_funcs.py" = "protected-access"
 "tests/unit/test_anomaly_llm_explainer.py" = "protected-access"
-# Per-group LLM-call resilience (per mwojtyczka's review): one bad call must not abort the
-# scoring run. DSPy's exception surface spans dspy.utils.AdapterParseError, litellm errors,
-# and network errors that don't share a clean base class — narrowing risks letting a new
-# exception type regress that contract. Justification documented at the catch site.
-"src/databricks/labs/dqx/anomaly/anomaly_llm_explainer.py" = "broad-exception-caught"
 
 # This plugin is used to generate correct links in README showed on PyPi
 [tool.hatch.metadata.hooks.fancy-pypi-readme]
