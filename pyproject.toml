@@ -204,6 +204,7 @@ cache_dir = ".venv/pytest-cache"
 filterwarnings = ["ignore::DeprecationWarning"]
 markers = [
     "anomaly: marks tests as anomaly detection tests",
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
 ]
 pythonpath = ["src", "app/src"]
 

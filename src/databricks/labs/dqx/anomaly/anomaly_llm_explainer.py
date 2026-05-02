@@ -729,6 +729,20 @@ def _call_llm_for_groups_ai_query(
         ),
     )
 
+    # ``ai_query`` is endpoint-agnostic at the SQL level, but its *output column type* depends
+    # on the endpoint. Two shapes seen in practice:
+    #   - STRING: the raw JSON text (e.g. ``databricks-llama-4-maverick``).
+    #   - STRUCT<result: STRING, errorMessage: STRING>: the failOnError envelope used by some
+    #     endpoints (e.g. ``databricks-gemma-3-12b``); ``result`` holds the JSON text and
+    #     ``errorMessage`` is set on per-row failures.
+    # Detect the shape from the actual schema rather than hard-coding either, so the same code
+    # works against any serving endpoint without per-endpoint configuration.
+    raw_field = raw.schema["__raw_response"]
+    if isinstance(raw_field.dataType, StructType):
+        json_text_expr: Column = F.col("__raw_response.result")
+    else:
+        json_text_expr = F.col("__raw_response")
+
     response_schema = StructType(
         [
             StructField("narrative", StringType(), True),
@@ -736,7 +750,7 @@ def _call_llm_for_groups_ai_query(
             StructField("action", StringType(), True),
         ]
     )
-    parsed = raw.withColumn("__parsed", F.from_json(F.col("__raw_response"), response_schema))
+    parsed = raw.withColumn("__parsed", F.from_json(json_text_expr, response_schema))
 
     def _sanitize(col_name: str) -> Column:
         # Strip C0/DEL control chars and length-cap; matches _sanitize_llm_field on the driver path.

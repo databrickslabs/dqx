@@ -761,6 +761,58 @@ def test_ai_query_explanation_one_call_per_group(
     assert all(e["group_size"] == len(explanations) for e in explanations)
 
 
+# Regression test for ai_query response-shape portability. Different Databricks serving
+# endpoints return ``ai_query`` results in different SQL types — STRING for some (e.g.
+# ``databricks-llama-4-maverick``), STRUCT<result, errorMessage> envelope for others (e.g.
+# ``databricks-gemma-3-12b``). The DQX parser must adapt to both. This test sweeps a
+# representative set and skips endpoints that aren't reachable in the current workspace, so
+# it doubles as a portability matrix for whichever endpoints are provisioned.
+_AI_QUERY_REGRESSION_ENDPOINTS = [
+    "databricks-llama-4-maverick",
+    "databricks-gemma-3-12b",
+    "databricks-meta-llama-3-3-70b-instruct",
+    "databricks-claude-3-7-sonnet",
+    "databricks-gpt-oss-20b",
+]
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("endpoint", _AI_QUERY_REGRESSION_ENDPOINTS)
+def test_ai_query_response_shape_portability(
+    spark: SparkSession, shared_3d_model, test_df_factory, anomaly_scorer, endpoint
+):
+    """ai_query path produces a usable explanation regardless of the endpoint's response shape.
+
+    Regression for `from_json(__raw_response)` failing with DATATYPE_MISMATCH on endpoints
+    that return STRUCT<result, errorMessage> (e.g. databricks-gemma-3-12b) instead of the
+    plain STRING shape (e.g. databricks-llama-4-maverick). The shape detection in
+    *_call_llm_for_groups_ai_query* must adapt to both without per-endpoint configuration.
+    """
+    # Per-endpoint reachability check: skip individually so one missing endpoint doesn't mask
+    # the others' results — that's the whole point of the regression matrix.
+    try:
+        spark.sql(
+            f"SELECT ai_query('{endpoint}', 'reply ok', "
+            f"modelParameters => named_struct('max_tokens', 8, 'temperature', 0.0)) AS r"
+        ).collect()
+    except Exception as exc:  # pylint: disable=broad-except
+        pytest.skip(f"ai_query endpoint {endpoint!r} not reachable: {exc!r}"[:200])
+
+    test_df = _make_outlier_df(spark, test_df_factory)
+    result_df = _score_with_explanation(
+        anomaly_scorer, test_df, shared_3d_model, llm_model_config=_ai_query_llm_cfg(endpoint)
+    )
+    row = result_df.collect()[0]
+    anomaly_info = row["_dq_info"][0]["anomaly"]
+
+    assert anomaly_info["is_anomaly"] is True
+    explanation = anomaly_info["ai_explanation"]
+    assert explanation is not None, f"ai_query against {endpoint!r} returned a null struct"
+    for field_name in ("narrative", "business_impact", "action"):
+        value = explanation[field_name]
+        assert isinstance(value, str) and value.strip(), f"{endpoint!r}: {field_name!r} is empty"
+
+
 def test_ai_query_executor_rejects_non_databricks_provider():
     """``executor='ai_query'`` with a non-Databricks provider prefix surfaces InvalidParameterError.
 
