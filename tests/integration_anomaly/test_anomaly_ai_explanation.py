@@ -17,9 +17,11 @@ from pyspark.sql.types import DoubleType, MapType, StringType, StructField, Stru
 
 from databricks.labs.dqx.anomaly import anomaly_llm_explainer as llm_explainer
 from databricks.labs.dqx.anomaly.anomaly_llm_explainer import DSPY_AVAILABLE, ExplanationContext
-from databricks.labs.dqx.config import LLMModelConfig
+from databricks.labs.dqx.config import AnomalyParams, LLMModelConfig
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.llm.llm_core import LLMModelConfigurator
+from tests.constants import TEST_CATALOG
+from tests.integration_anomaly.conftest import create_anomaly_apply_fn, qualify_model_name
 from tests.integration_anomaly.constants import (
     DEFAULT_SCORE_THRESHOLD,
     OUTLIER_AMOUNT,
@@ -777,3 +779,109 @@ def test_ai_query_executor_rejects_non_databricks_provider():
     )
     with pytest.raises(InvalidParameterError, match="executor='ai_query' requires a Databricks"):
         llm_explainer._resolve_ai_query_endpoint(ctx.llm_model_config.model_name)  # pylint: disable=protected-access
+
+
+# ---------------------------------------------------------------------------
+# Global max_groups cap across segments — wiring test for *score_segmented*.
+# Trains a real 2-segment model (cheap settings) and counts predictor calls
+# end-to-end to verify the per-segment budget split actually bounds the total.
+# ---------------------------------------------------------------------------
+
+
+def test_max_groups_is_global_cap_across_segments(
+    spark: SparkSession,
+    make_schema,
+    make_random,
+    anomaly_engine,
+    monkeypatch,
+):
+    """*max_groups* bounds the total LLM call count across ALL segments, not per-segment.
+
+    Regression test for the per-segment-cap bug: previously *max_groups* applied
+    independently to each segment, so with N segments the worst case was N * max_groups
+    LLM calls. The fix splits the budget equally across eligible segments before
+    threading it into *add_explanation_column*. This test trains a real 2-segment model,
+    feeds enough distinct anomaly *patterns* per segment to exceed any per-segment cap,
+    and asserts total predictor invocations <= max_groups.
+
+    Driver path only — *_patch_dspy* installs a counting predictor that's only consulted
+    when *executor='driver'*. The ai_query path's bound is enforced by the same
+    *_split_max_groups_budget* helper at the SQL level (each segment runs an independent
+    *ai_query* call per group, capped by the per-segment budget).
+    """
+    if not DSPY_AVAILABLE:
+        pytest.skip("dspy not installed")
+
+    schema = make_schema(catalog_name=TEST_CATALOG)
+    suffix = make_random(8).lower()
+    model_name = f"{TEST_CATALOG}.{schema.name}.test_seg_cap_{suffix}"
+    registry_table = f"{TEST_CATALOG}.{schema.name}.dqx_anomaly_models_seg_cap_{suffix}"
+
+    # Two segments, ~30 normal rows each — enough for the trainer's minimum-rows
+    # check (>=10) without paying for hundreds of rows we don't need. Two columns
+    # so we get non-trivial SHAP contributions and distinct (segment, pattern) groups.
+    train_rows = []
+    for region, base in [("A", 100.0), ("B", 200.0)]:
+        for i in range(30):
+            train_rows.append((region, base + i * 0.5, base * 0.8 + i * 0.3))
+    train_df = spark.createDataFrame(train_rows, "region string, amount double, discount double")
+
+    anomaly_engine.train(
+        df=train_df,
+        columns=["amount", "discount"],
+        segment_by=["region"],
+        model_name=model_name,
+        registry_table=registry_table,
+        params=AnomalyParams(sample_fraction=1.0),
+    )
+
+    # Build a scoring DataFrame with multiple distinct outlier shapes per segment.
+    # The (segment, pattern) key is (region, sorted top-2 SHAP contributors), so
+    # varying which feature dominates per row produces distinct groups within a
+    # segment. With max_groups=3 and 2 segments, the per-segment budget is 1; if
+    # the cap were only per-segment we'd see >=4 LLM calls (2 patterns x 2 segments).
+    score_rows = []
+    for region in ("A", "B"):
+        # Pattern 1: amount-dominant outliers
+        score_rows.extend([(region, 9999.0, 1.0)] * 3)
+        # Pattern 2: discount-dominant outliers
+        score_rows.extend([(region, 1.0, 9999.0)] * 3)
+    score_df = spark.createDataFrame(score_rows, "region string, amount double, discount double")
+
+    call_count = 0
+
+    class _CountingPredictor:
+        def __init__(self, *_a, **_kw) -> None:
+            pass
+
+        def __call__(self, **_kwargs) -> SimpleNamespace:
+            nonlocal call_count
+            call_count += 1
+            return _CANNED
+
+    monkeypatch.setattr(dspy, "LM", _FakeLM)
+    monkeypatch.setattr(dspy, "Predict", _CountingPredictor)
+    monkeypatch.setattr(llm_explainer.dspy, "LM", _FakeLM)
+    monkeypatch.setattr(llm_explainer.dspy, "Predict", _CountingPredictor)
+
+    max_groups = 3
+    apply_fn = create_anomaly_apply_fn(
+        model_name=qualify_model_name(model_name, registry_table),
+        registry_table=registry_table,
+        threshold=DEFAULT_SCORE_THRESHOLD,
+        enable_contributions=True,
+        enable_ai_explanation=True,
+        llm_model_config=_llm_cfg(),
+        max_groups=max_groups,
+    )
+    apply_fn(score_df).collect()
+
+    # The whole point: total LLM calls across both segments stay <= max_groups.
+    # With per-segment cap (the bug) we'd see up to 2 * max_groups = 6 calls.
+    assert call_count <= max_groups, (
+        f"Global max_groups cap violated: {call_count} LLM calls observed, max_groups={max_groups}. "
+        f"Per-segment-cap regression — see *_split_max_groups_budget* in scoring_run.py."
+    )
+    # And we should have actually made at least one call (otherwise the test isn't
+    # exercising the cap at all — e.g. all anomalies fell below threshold).
+    assert call_count >= 1, "no LLM calls made — test setup didn't produce anomalies above threshold"

@@ -4,6 +4,8 @@ Provides score_global_model, score_segmented, and load_segment_models.
 Kept in one module to avoid over-fragmentation of the scoring layer.
 """
 
+import dataclasses
+
 import pyspark.sql.functions as F
 from pyspark.sql import DataFrame
 
@@ -35,6 +37,23 @@ from databricks.labs.dqx.anomaly.single_model_scorer import (
     score_with_sklearn_model_local,
 )
 from databricks.labs.dqx.errors import InvalidParameterError
+
+
+def _split_max_groups_budget(max_groups: int, num_eligible_segments: int) -> int:
+    """Allocate the per-segment LLM-call budget for *score_segmented*.
+
+    Equal split with a floor of 1: every eligible segment gets a chance to produce at
+    least one explanation, even when *max_groups* < *num_eligible_segments*.
+
+    Bound analysis: with N eligible segments and budget B, the total LLM-call cap is
+    ``N * (B // N) <= B`` when ``B >= N``. When ``B < N`` the floor of 1 kicks in and the
+    cap becomes ``N`` — wider than B but still finite and proportional to the input.
+    Documented as a deliberate tradeoff so the feature remains useful when users
+    drastically under-provision the budget.
+    """
+    if num_eligible_segments <= 0:
+        raise InvalidParameterError("num_eligible_segments must be positive")
+    return max(1, max_groups // num_eligible_segments)
 
 
 def score_global_model(
@@ -194,8 +213,15 @@ def score_single_segment(
     segment_model: AnomalyModelRecord,
     config: ScoringConfig,
     language_model: object | None = None,
+    max_groups_override: int | None = None,
 ) -> DataFrame:
-    """Score a single segment with its specific model."""
+    """Score a single segment with its specific model.
+
+    *max_groups_override*, when set, replaces *config.max_groups* in the
+    ExplanationContext for this segment only. Used by *score_segmented* to enforce a
+    *global* cap on LLM calls across segments — without it, *config.max_groups* applies
+    independently per segment and the worst-case total is ``num_segments * max_groups``.
+    """
     drift_result = check_segment_drift(
         segment_df,
         config.columns,
@@ -246,9 +272,12 @@ def score_single_segment(
     )
 
     if config.enable_ai_explanation:
+        explanation_ctx = ExplanationContext.from_scoring_config(config)
+        if max_groups_override is not None:
+            explanation_ctx = dataclasses.replace(explanation_ctx, max_groups=max_groups_override)
         segment_scored = add_explanation_column(
             segment_scored,
-            ExplanationContext.from_scoring_config(config),
+            explanation_ctx,
             segment_model.segmentation.segment_values,
             segment_model.identity.is_ensemble,
             drift_summary=format_drift_summary(drift_result, config.redact_columns),
@@ -294,17 +323,34 @@ def score_segmented(
         build_language_model(ExplanationContext.from_scoring_config(config)) if config.enable_ai_explanation else None
     )
 
-    scored_dfs: list[DataFrame] = []
-
+    # Two-pass loop so *max_groups* can be enforced as a global cap across segments. Without
+    # this, *config.max_groups* would apply independently per segment and the worst-case LLM
+    # call count would be ``num_eligible_segments * config.max_groups``. First pass filters
+    # the input by each segment's predicate and discards empty segments; second pass scores
+    # the survivors with an equal-split per-segment budget.
+    eligible: list[tuple[AnomalyModelRecord, DataFrame]] = []
     for segment_model in all_segments:
         segment_filter = build_segment_filter(segment_model.segmentation.segment_values)
         if segment_filter is None:
             continue
-
         segment_df = df_to_score.filter(segment_filter)
         if segment_df.limit(1).count() == 0:
             continue
-        segment_scored = score_single_segment(segment_df, segment_model, config, language_model=shared_lm)
+        eligible.append((segment_model, segment_df))
+
+    per_segment_budget = (
+        _split_max_groups_budget(config.max_groups, len(eligible)) if config.enable_ai_explanation and eligible else None
+    )
+
+    scored_dfs: list[DataFrame] = []
+    for segment_model, segment_df in eligible:
+        segment_scored = score_single_segment(
+            segment_df,
+            segment_model,
+            config,
+            language_model=shared_lm,
+            max_groups_override=per_segment_budget,
+        )
         scored_dfs.append(segment_scored)
 
     if not scored_dfs:

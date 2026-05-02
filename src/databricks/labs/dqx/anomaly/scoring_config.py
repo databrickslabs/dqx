@@ -55,6 +55,13 @@ class ScoringConfig:
     enable_ai_explanation: bool = False
     llm_model_config: LLMModelConfig | None = None
     redact_columns: list[str] = field(default_factory=list)
+    # Global upper bound on the number of LLM calls per scoring run when
+    # *enable_ai_explanation* is True. Anomalous rows are bucketed by (segment, pattern)
+    # and one LLM call per bucket is made; *max_groups* caps the number of buckets that
+    # actually receive an explanation, ranked by ``group_size * group_avg_severity``.
+    # For segmented scoring (*segment_by* set), the budget is split equally across
+    # eligible segments — total LLM calls stay <= *max_groups* regardless of segment
+    # count.
     max_groups: int = 500
     output_columns: ScoringOutputColumns = field(default_factory=ScoringOutputColumns)
 

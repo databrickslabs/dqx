@@ -163,6 +163,12 @@ class ExplanationContext:
     threshold: float
     model_name: str
     llm_model_config: LLMModelConfig | None = None
+    # Cap on LLM calls made by a single ``add_explanation_column`` invocation. When the
+    # caller is *score_segmented* this is the *per-segment budget* (split equally across
+    # segments by the caller); the *user-facing* global cap lives on
+    # ``ScoringConfig.max_groups`` and is divided before being threaded through here.
+    # When calling ``add_explanation_column`` directly (no segmentation), this value is
+    # the absolute cap on LLM calls for that one call.
     max_groups: int = 500
     redact_columns: tuple[str, ...] = ()
 
