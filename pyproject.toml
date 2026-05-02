@@ -194,7 +194,7 @@ exclude = ['venv', '.venv', 'demos/*', 'tests/e2e/*']
 
 [[tool.mypy.overrides]]
 # External packages without PEP 561 type stubs (unavoidable - these are third-party optional dependencies)
-module = ["google", "google.*", "pandas", "sklearn.*", "shap", "cloudpickle", "mlflow", "mlflow.*", "urllib3.*", "aiohttp.*"]
+module = ["google", "google.*", "pandas", "sklearn.*", "shap", "cloudpickle", "mlflow", "mlflow.*", "urllib3.*", "aiohttp.*", "openpyxl", "openpyxl.*"]
 ignore_missing_imports = true
 
 

@@ -1884,6 +1884,41 @@
     },
     {
       "group": null,
+      "name": "test_benchmark_has_no_aggr_outliers",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_has_no_aggr_outliers",
+      "params": null,
+      "param": null,
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 5,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "warmup": false
+      },
+      "stats": {
+        "min": 1.2321139149998999,
+        "max": 1.2765328400000726,
+        "mean": 1.2518448381999405,
+        "stddev": 0.016751338019946545,
+        "rounds": 5,
+        "median": 1.2508509150002283,
+        "iqr": 0.022468226500222954,
+        "q1": 1.2397441764996984,
+        "q3": 1.2622124029999213,
+        "iqr_outliers": 0,
+        "stddev_outliers": 2,
+        "outliers": "2;0",
+        "ld15iqr": 1.2321139149998999,
+        "hd15iqr": 1.2765328400000726,
+        "ops": 0.79882104353917,
+        "total": 6.259224190999703,
+        "iterations": 1
+      }
+    },
+    {
+      "group": null,
       "name": "test_benchmark_has_no_outliers",
       "fullname": "tests/perf/test_apply_checks.py::test_benchmark_has_no_outliers",
       "params": null,
