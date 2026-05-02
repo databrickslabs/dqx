@@ -339,7 +339,9 @@ def score_segmented(
         eligible.append((segment_model, segment_df))
 
     per_segment_budget = (
-        _split_max_groups_budget(config.max_groups, len(eligible)) if config.enable_ai_explanation and eligible else None
+        _split_max_groups_budget(config.max_groups, len(eligible))
+        if config.enable_ai_explanation and eligible
+        else None
     )
 
     scored_dfs: list[DataFrame] = []

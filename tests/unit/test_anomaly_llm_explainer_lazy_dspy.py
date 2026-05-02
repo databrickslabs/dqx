@@ -88,6 +88,5 @@ def test_llm_model_configurator_is_lazy_imported_inside_build_language_model():
     that re-introduces the eager import without a compensating in-function import."""
     inner = _function_local_imports(_explainer_path(), "build_language_model")
     assert any("LLMModelConfigurator" in n for n in inner), (
-        f"build_language_model is missing the lazy import of LLMModelConfigurator. "
-        f"Local imports were: {inner}"
+        f"build_language_model is missing the lazy import of LLMModelConfigurator. " f"Local imports were: {inner}"
     )

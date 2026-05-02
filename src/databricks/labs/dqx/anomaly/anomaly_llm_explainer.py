@@ -13,12 +13,13 @@ from __future__ import annotations
 
 import logging
 import re
+import warnings
 from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING, Protocol
 
 import pyspark.sql.functions as F
-from pyspark.sql import Column, DataFrame
+from pyspark.sql import Column, DataFrame, Window
 from pyspark.sql.types import DoubleType, LongType, StringType, StructField, StructType
 
 from databricks.labs.blueprint.parallel import Threads
@@ -299,25 +300,45 @@ def _aggregate_groups(
     )
 
     # Rank + cap the per-pattern aggregates before joining contributions, so the join is on
-    # at most ``max_groups`` rows. Totals are read from the same ``primary`` aggregate via a
-    # separate action — we deliberately avoid ``.cache()`` here because PERSIST TABLE is not
-    # supported on Databricks serverless compute. ``primary`` is a per-pattern roll-up so the
-    # second action is cheap relative to the LLM calls that follow.
-    totals_row = primary.agg(
-        F.count(F.lit(1)).alias("total_groups"),
-        F.sum("group_size").alias("total_rows"),
-    ).collect()[0]
-    total_groups = int(totals_row["total_groups"] or 0)
-    total_rows = int(totals_row["total_rows"] or 0)
+    # at most ``max_groups`` rows. Totals are computed as window aggregates over ``primary``
+    # and attached to the kept rows so a single ``collect()`` returns both the ranked groups
+    # and the run-level totals — avoids a second action on the same lineage. We deliberately
+    # do not ``.cache()`` ``anomalous`` here: PERSIST TABLE is unsupported on Databricks
+    # serverless and a library should not make storage decisions for the caller. Callers on
+    # classic compute can cache the upstream scored DataFrame themselves if desired.
+    # Unpartitioned window over per-pattern totals is intentional (run-level aggregates),
+    # so suppress Spark's generic single-partition perf warning at this call site only.
+    # Spark Connect emits the warning at DataFrame construction time (when ``.over(whole)``
+    # is called), not at action time, so the suppression must wrap construction *and* the
+    # subsequent ``collect()``.
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message=".*No Partition Defined for Window operation.*")
+        whole = Window.partitionBy()
+        rank_window = Window.orderBy(F.desc("__rank_score"), F.asc(_PATTERN_COL))
+        ranked_with_totals = (
+            primary.withColumn("__rank_score", F.col("group_size") * F.col("group_avg_severity"))
+            .withColumn("__total_groups", F.count(F.lit(1)).over(whole))
+            .withColumn("__total_rows", F.sum("group_size").over(whole))
+            .withColumn("__rn", F.row_number().over(rank_window))
+            .filter(F.col("__rn") <= max_groups)
+            .drop("__rn", "__rank_score")
+            .join(per_pattern_contrib, on=_PATTERN_COL, how="left")
+        )
+        collected = ranked_with_totals.collect()
 
-    ranked = (
-        primary.withColumn("__rank_score", F.col("group_size") * F.col("group_avg_severity"))
-        .orderBy(F.desc("__rank_score"), F.asc(_PATTERN_COL))
-        .limit(max_groups)
-    )
-    kept_rows = [
-        row.asDict(recursive=True) for row in ranked.join(per_pattern_contrib, on=_PATTERN_COL, how="left").collect()
-    ]
+    if collected:
+        total_groups = int(collected[0]["__total_groups"] or 0)
+        total_rows = int(collected[0]["__total_rows"] or 0)
+    else:
+        total_groups = 0
+        total_rows = 0
+
+    kept_rows = []
+    for row in collected:
+        d = row.asDict(recursive=True)
+        d.pop("__total_groups", None)
+        d.pop("__total_rows", None)
+        kept_rows.append(d)
 
     kept_rows_count = sum(int(r.get("group_size") or 0) for r in kept_rows)
     dropped_groups_count = max(0, total_groups - len(kept_rows))
@@ -626,29 +647,43 @@ def _aggregate_groups_spark(
         F.map_from_entries(F.collect_list(F.struct(F.col("__k"), F.col("__mean")))).alias("mean_contributions")
     )
 
-    totals_row = primary.agg(
-        F.count(F.lit(1)).alias("total_groups"),
-        F.sum("group_size").alias("total_rows"),
-    ).collect()[0]
-    total_groups = int(totals_row["total_groups"] or 0)
-    total_rows = int(totals_row["total_rows"] or 0)
+    # Single-action total/kept accounting: window aggregates over ``primary`` carry run-level
+    # totals onto each ranked row, so collecting the small (<= ``max_groups``) ranked
+    # projection gives us totals + kept counts without a second action on ``primary`` and
+    # without forcing materialisation of the join with ``per_pattern_contrib`` (which stays
+    # lazy and is consumed by ``ai_query`` on executors). Same rationale as
+    # *_aggregate_groups* re: avoiding ``.cache()`` for serverless compatibility.
+    # See *_aggregate_groups* — Spark Connect emits the single-partition window warning at
+    # construction time, so suppression must wrap both the DataFrame build and the action.
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message=".*No Partition Defined for Window operation.*")
+        whole = Window.partitionBy()
+        rank_window = Window.orderBy(F.desc("__rank_score"), F.asc(_PATTERN_COL))
+        ranked_with_totals = (
+            primary.withColumn("__rank_score", F.col("group_size") * F.col("group_avg_severity"))
+            .withColumn("__total_groups", F.count(F.lit(1)).over(whole))
+            .withColumn("__total_rows", F.sum("group_size").over(whole))
+            .withColumn("__rn", F.row_number().over(rank_window))
+            .filter(F.col("__rn") <= max_groups)
+            .drop("__rn", "__rank_score")
+        )
+        ranked_local = ranked_with_totals.select(
+            _PATTERN_COL, "group_size", "__total_groups", "__total_rows"
+        ).collect()
 
-    ranked = (
-        primary.withColumn("__rank_score", F.col("group_size") * F.col("group_avg_severity"))
-        .orderBy(F.desc("__rank_score"), F.asc(_PATTERN_COL))
-        .limit(max_groups)
-        .drop("__rank_score")
-    )
-    kept = ranked.join(per_pattern_contrib, on=_PATTERN_COL, how="left")
-
-    kept_totals = kept.agg(
-        F.count(F.lit(1)).alias("kept_groups"),
-        F.sum("group_size").alias("kept_rows"),
-    ).collect()[0]
-    kept_groups_count = int(kept_totals["kept_groups"] or 0)
-    kept_rows_count = int(kept_totals["kept_rows"] or 0)
-    dropped_groups_count = max(0, total_groups - kept_groups_count)
+    if ranked_local:
+        total_groups = int(ranked_local[0]["__total_groups"] or 0)
+        total_rows = int(ranked_local[0]["__total_rows"] or 0)
+    else:
+        total_groups = 0
+        total_rows = 0
+    kept_rows_count = sum(int(r["group_size"] or 0) for r in ranked_local)
+    dropped_groups_count = max(0, total_groups - len(ranked_local))
     dropped_rows_count = max(0, total_rows - kept_rows_count)
+
+    kept = ranked_with_totals.drop("__total_groups", "__total_rows").join(
+        per_pattern_contrib, on=_PATTERN_COL, how="left"
+    )
     return kept, dropped_groups_count, dropped_rows_count, total_groups
 
 
