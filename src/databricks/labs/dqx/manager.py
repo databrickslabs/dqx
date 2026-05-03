@@ -171,34 +171,24 @@ class DQRuleManager:
 
     def _build_message_col(self, condition: Column) -> Column:
         """
-        Builds the message column, using the default message or a custom Spark SQL expression if
-        specified in the rule definition. The SQL expression supports placeholders that are
-        substituted before evaluation:
-
-        * '{rule_name}' is replaced with the quoted name of the DQX rule
-        * '{check_func_name}' is replaced with the quoted name of the DQX check function
-        * '{column_value}' is replaced with a SQL reference to the column value (cast to string)
+        Builds the message column, using the default message or the user-supplied
+        ``message_expr`` from the rule definition. The expression is evaluated as-is — DQX
+        does not substitute placeholders. Accepts either a Spark SQL expression string or a
+        Spark Column.
 
         Args:
             condition: Default DQX condition message returned by evaluating the DQX check function
 
         Returns:
-            The custom DQX condition message if specified in the rule definition, otherwise the default DQX condition
-            message
+            The custom DQX condition message if ``message_expr`` is set on the rule, otherwise the
+            default DQX condition message.
         """
-        if self.check.message is None:
+        if self.check.message_expr is None:
             return condition
 
-        column_value_sql = f"CAST(`{self.check.column}` AS STRING)" if self.check.column else "NULL"
-        escaped_check_name = self.check.name.replace("'", "\\'")
-        escaped_check_function = self.check.check_func.__name__.replace("'", "\\'")
-
-        message_expr = self.check.message
-        message_expr = message_expr.replace("{rule_name}", escaped_check_name)
-        message_expr = message_expr.replace("{check_func_name}", escaped_check_function)
-        message_expr = message_expr.replace("{column_value}", column_value_sql)
-
-        custom_message = F.expr(message_expr)
+        custom_message = (
+            self.check.message_expr if isinstance(self.check.message_expr, Column) else F.expr(self.check.message_expr)
+        )
         return F.when(condition.isNotNull(), custom_message).otherwise(F.lit(None).cast("string"))
 
     def _get_invalid_cols_message(self) -> str:

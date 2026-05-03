@@ -4082,35 +4082,37 @@ When using dataset-level checks, the top-level `filter` condition is pushed down
 
 ## Customizing check messages
 
-Users can provide a Spark SQL expression to customize messages created by DQX failures. Set the `message` attribute of any `DQRule` to a SQL expression that returns a string value. This overrides the check function's default message.
+Users can override the default failure message of any `DQRule` by setting its `message_expr` attribute. The value is evaluated as-is — DQX does not substitute placeholders, so any column references, casts, or rule-identifying literals must be supplied directly by the caller.
 
-Custom SQL expressions support the following placeholders, which are substituted before evaluation:
-- `{rule_name}` is replaced with the name of the DQX rule
-- `{check_func_name}` is replaced with the name of the DQX check function
-- `{column_value}` is replaced with the observed column value (cast to string). This can only be used for single-column values.
+`message_expr` accepts either:
+- a Spark SQL expression string (evaluated via `F.expr(...)`), or
+- a Spark `Column` object (used directly).
+
+In the YAML/JSON metadata form, only the string variant is supported, because Spark `Column` objects have no canonical serialised representation.
 
 <Admonition type="tip" title="Null-safe dynamic messages">
-If your message references `{column_value}`, wrap it with `coalesce` to avoid null messages. In Spark SQL, `concat(..., null)` returns `null`.
+When your expression references a column, wrap it with `coalesce` to avoid null messages. In Spark SQL, `concat(..., null)` returns `null`.
 </Admonition>
 
 <Tabs>
   <TabItem value="Python" label="Python" default>
     ```python
+    import pyspark.sql.functions as F
     from databricks.labs.dqx import check_funcs
     from databricks.labs.dqx.rule import DQRowRule
 
-    # simple static message
+    # static message (string expression): "Email must not be null"
     checks = [
       DQRowRule(
         name="email_not_null",
         criticality="error",
         check_func=check_funcs.is_not_null,
         column="email",
-        message="'Email must not be null'",
+        message_expr="'Email must not be null'",
       )
     ]
 
-    # dynamic message with column value
+    # dynamic message with column value (string expression): "age_positive: value <value> is not valid"
     checks = [
       DQRowRule(
         name="age_positive",
@@ -4118,24 +4120,42 @@ If your message references `{column_value}`, wrap it with `coalesce` to avoid nu
         check_func=check_funcs.is_greater_than,
         column="age",
         check_func_kwargs={"limit": 0},
-        message="concat('{rule_name}', ': value ', coalesce(cast({column_value} as string), 'null'), ' is not valid')",
+        message_expr="concat('age_positive: value ', coalesce(cast(age as string), 'null'), ' is not valid')",
+      )
+    ]
+
+    # dynamic message with column value (Column expression): "age_positive: value <value> is not valid"
+    checks = [
+      DQRowRule(
+        name="age_positive",
+        criticality="error",
+        check_func=check_funcs.is_greater_than,
+        column="age",
+        check_func_kwargs={"limit": 0},
+        message_expr=F.concat(
+            F.lit("age_positive: value "),
+            F.coalesce(F.col("age").cast("string"), F.lit("null")),
+            F.lit(" is not valid"),
+        ),
       )
     ]
     ```
   </TabItem>
   <TabItem value="YAML" label="YAML">
     ```yaml
+    # static message: "Email must not be null"
     - name: email_not_null
       criticality: error
-      message: "'Email must not be null'"
+      message_expr: "'Email must not be null'"
       check:
         function: is_not_null
         arguments:
           column: email
 
+    # dynamic message with column value: "age_positive: value <value> is not valid"
     - name: age_positive
       criticality: error
-      message: "concat('{rule_name}', ': value ', coalesce(cast({column_value} as string), 'null'), ' is not valid')"
+      message_expr: "concat('age_positive: value ', coalesce(cast(age as string), 'null'), ' is not valid')"
       check:
         function: is_greater_than
         arguments:
