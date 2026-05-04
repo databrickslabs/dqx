@@ -52,7 +52,7 @@ valid_df, invalid_df = dq.apply_checks_and_split(df, checks)
 ```python
 dq = DQEngine(WorkspaceClient())
 
-checks = """
+checks_metadata = """
 - criticality: warn
   check:
     function: is_not_null
