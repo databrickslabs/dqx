@@ -6,7 +6,7 @@ Allows admins to manage role-to-group mappings for RBAC.
 from typing import Annotated
 
 from databricks.sdk import WorkspaceClient
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from databricks_labs_dqx_app.backend.common.authorization import UserRole
 from databricks_labs_dqx_app.backend.dependencies import (
@@ -91,14 +91,71 @@ def delete_role_mapping(
 @router.get("/groups", response_model=list[GroupOut], operation_id="listWorkspaceGroups")
 def list_workspace_groups(
     sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
+    search: Annotated[
+        str | None,
+        Query(
+            max_length=120,
+            description=(
+                "Optional case-insensitive substring filter on ``displayName``. "
+                "Translated to a SCIM ``filter`` query so the workspace does the "
+                "matching, never the app."
+            ),
+        ),
+    ] = None,
+    limit: Annotated[
+        int,
+        Query(
+            ge=1,
+            le=1000,
+            description="Maximum number of groups to return (default 200).",
+        ),
+    ] = 200,
 ) -> list[GroupOut]:
     """List available Databricks workspace groups (Admin only).
+
+    Optimised for large workspaces:
+
+    - Requests only ``id,displayName`` from SCIM via the ``attributes``
+      parameter. By default SCIM returns the full member roster for every
+      group, which on a workspace with thousands of groups (each holding
+      hundreds-to-thousands of members) can balloon the response into the
+      hundreds of MB and take many seconds to fetch + deserialise. Group
+      members are not needed for role mapping.
+    - Server-side search via ``?search=`` maps to SCIM
+      ``filter=displayName co "..."``, so the dropdown can be a typeahead
+      that pulls the top matches for whatever the user types instead of
+      shipping every group in the workspace.
+    - Hard ``?limit=`` cap (default 200, max 1000) so we never enumerate
+      every page of groups even without a search term.
 
     Uses the SP client which has full SCIM access without user-scope restrictions.
     """
     try:
-        groups = sp_ws.groups.list()
-        return [GroupOut(display_name=g.display_name or "", id=g.id) for g in groups if g.display_name]
+        # SCIM ``co`` is "contains" — the standard substring match. We
+        # escape any double-quotes the user typed so a stray ``"`` can't
+        # break out of the filter expression.
+        filter_expr: str | None = None
+        if search:
+            sanitised = search.replace('"', '\\"')
+            filter_expr = f'displayName co "{sanitised}"'
+
+        results: list[GroupOut] = []
+        # ``count`` controls SCIM page size. Bumping past ~200 yields
+        # diminishing returns and risks 4xx on workspaces with strict
+        # SCIM limits, so we clamp it to 200 even when ``limit`` is
+        # higher. Any over-fetch is bounded by ``limit`` below.
+        page_size = min(limit, 200)
+        for g in sp_ws.groups.list(
+            attributes="id,displayName",
+            filter=filter_expr,
+            count=page_size,
+        ):
+            if not g.display_name:
+                continue
+            results.append(GroupOut(display_name=g.display_name, id=g.id))
+            if len(results) >= limit:
+                break
+        return results
     except Exception as e:
         logger.error(f"Failed to list workspace groups: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to list workspace groups: {e}")

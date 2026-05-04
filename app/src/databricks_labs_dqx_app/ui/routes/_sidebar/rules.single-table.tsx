@@ -39,6 +39,7 @@ import {
   Table2,
   Play,
   SendHorizonal,
+  Info,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -1186,7 +1187,23 @@ function UnifiedRulesPage() {
                   </SelectContent>
                 </Select>
                 <div className="flex items-center gap-1.5">
-                  <Label className="text-xs text-muted-foreground whitespace-nowrap">Sample rows</Label>
+                  <Label className="text-xs text-muted-foreground whitespace-nowrap flex items-center gap-1">
+                    Sample rows
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Info className="h-3 w-3 cursor-help" />
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-xs">
+                        <p className="text-xs leading-relaxed">
+                          Dry-run validates only the first <strong>1–10,000 rows</strong>{" "}
+                          of the selected table — it&apos;s a fast preview, not a
+                          full validation. To run rules against every row, go to{" "}
+                          <strong>Run Rules</strong> and pick{" "}
+                          <strong>&quot;All rows&quot;</strong>.
+                        </p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </Label>
                   <Input
                     type="number"
                     min={1}
@@ -1196,6 +1213,9 @@ function UnifiedRulesPage() {
                     disabled={isBusy}
                     className="w-24 h-9 text-xs"
                   />
+                  <span className="text-[10px] text-muted-foreground whitespace-nowrap">
+                    max 10,000
+                  </span>
                 </div>
                 <Button
                   variant="outline"

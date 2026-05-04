@@ -190,7 +190,14 @@ markdown = { header_level_by_type = { Method = 3, Function = 3, Class = 2, Modul
 profile = "black"
 
 [tool.mypy]
-exclude = ['venv', '.venv', 'demos/*', 'tests/e2e/*']
+# ``app/*`` is a self-contained uv sub-project (``app/pyproject.toml``)
+# with its own venv, its own mypy config, and its own ``app/tests/``
+# suite. The library-level ``make fmt`` / ``make lint`` only cover the
+# DQX library itself, so we skip the whole subtree to avoid a
+# "Duplicate module named 'tests'" collision between the library's own
+# ``tests/`` package and ``app/tests/`` (both ship ``__init__.py``).
+# Type-check the app via ``cd app && uv run mypy .`` instead.
+exclude = ['venv', '.venv', 'demos/*', 'tests/e2e/*', 'app/*']
 
 [[tool.mypy.overrides]]
 # External packages without PEP 561 type stubs (unavoidable - these are third-party optional dependencies)

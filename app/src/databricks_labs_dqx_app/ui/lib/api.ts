@@ -49,6 +49,29 @@ export interface AnomalyConfig {
   registry_table?: AnomalyConfigRegistryTable;
 }
 
+/**
+ * Stable identifier for known error classes — currently one of ``INSUFFICIENT_PERMISSIONS``, ``TABLE_OR_VIEW_NOT_FOUND``, or ``UNKNOWN``. The UI uses this to surface a friendlier headline.
+ */
+export type BatchProfileRunFailureErrorCode = string | null;
+
+/**
+ * One per-table failure inside a partially-successful batch profile run.
+
+The route still returns 2xx when at least one table submitted
+successfully so the frontend can navigate to the runs list, but it
+surfaces individual per-table failures here so the UI can show the
+user *exactly* which tables failed and why (e.g. ``USE SCHEMA``
+permission missing on a specific catalog/schema).
+ */
+export interface BatchProfileRunFailure {
+  /** Fully qualified name of the table that failed to submit */
+  table_fqn: string;
+  /** Human-readable error message (often the underlying SQL error) */
+  error: string;
+  /** Stable identifier for known error classes — currently one of ``INSUFFICIENT_PERMISSIONS``, ``TABLE_OR_VIEW_NOT_FOUND``, or ``UNKNOWN``. The UI uses this to surface a friendlier headline. */
+  error_code?: BatchProfileRunFailureErrorCode;
+}
+
 export type BatchProfileRunInProfileOptionsAnyOf = { [key: string]: unknown };
 
 /**
@@ -72,6 +95,8 @@ export interface BatchProfileRunIn {
 export interface BatchProfileRunOut {
   /** One entry per table with run_id, job_run_id, view_fqn */
   runs: ProfileRunOut[];
+  /** Per-table failures encountered during batch submission. Empty when every table submitted successfully. The route still returns 2xx as long as at least one table submitted; clients should always check ``errors`` and surface them to the user. */
+  errors?: BatchProfileRunFailure[];
 }
 
 export interface BatchRunFromCatalogIn {
@@ -1144,6 +1169,19 @@ export interface WorkspaceConfigOutput {
 export type DeleteSchedule200 = { [key: string]: string };
 
 export type DeleteRoleMapping200 = { [key: string]: string };
+
+export type ListWorkspaceGroupsParams = {
+  /**
+   * Optional case-insensitive substring filter on ``displayName``. Translated to a SCIM ``filter`` query so the workspace does the matching, never the app.
+   */
+  search?: string | null;
+  /**
+   * Maximum number of groups to return (default 200).
+   * @minimum 1
+   * @maximum 1000
+   */
+  limit?: number;
+};
 
 export type ListRulesParams = {
   /**
@@ -5250,39 +5288,64 @@ export const useDeleteRoleMapping = <
 /**
  * List available Databricks workspace groups (Admin only).
 
+Optimised for large workspaces:
+
+- Requests only ``id,displayName`` from SCIM via the ``attributes``
+  parameter. By default SCIM returns the full member roster for every
+  group, which on a workspace with thousands of groups (each holding
+  hundreds-to-thousands of members) can balloon the response into the
+  hundreds of MB and take many seconds to fetch + deserialise. Group
+  members are not needed for role mapping.
+- Server-side search via ``?search=`` maps to SCIM
+  ``filter=displayName co "..."``, so the dropdown can be a typeahead
+  that pulls the top matches for whatever the user types instead of
+  shipping every group in the workspace.
+- Hard ``?limit=`` cap (default 200, max 1000) so we never enumerate
+  every page of groups even without a search term.
+
 Uses the SP client which has full SCIM access without user-scope restrictions.
  * @summary List Workspace Groups
  */
 export const listWorkspaceGroups = (
+  params?: ListWorkspaceGroupsParams,
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<GroupOut[]>> => {
-  return axios.default.get(`/api/v1/roles/groups`, options);
+  return axios.default.get(`/api/v1/roles/groups`, {
+    ...options,
+    params: { ...params, ...options?.params },
+  });
 };
 
-export const getListWorkspaceGroupsQueryKey = () => {
-  return [`/api/v1/roles/groups`] as const;
+export const getListWorkspaceGroupsQueryKey = (
+  params?: ListWorkspaceGroupsParams,
+) => {
+  return [`/api/v1/roles/groups`, ...(params ? [params] : [])] as const;
 };
 
 export const getListWorkspaceGroupsQueryOptions = <
   TData = Awaited<ReturnType<typeof listWorkspaceGroups>>,
   TError = AxiosError<HTTPValidationError>,
->(options?: {
-  query?: Partial<
-    UseQueryOptions<
-      Awaited<ReturnType<typeof listWorkspaceGroups>>,
-      TError,
-      TData
-    >
-  >;
-  axios?: AxiosRequestConfig;
-}) => {
+>(
+  params?: ListWorkspaceGroupsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listWorkspaceGroups>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+) => {
   const { query: queryOptions, axios: axiosOptions } = options ?? {};
 
-  const queryKey = queryOptions?.queryKey ?? getListWorkspaceGroupsQueryKey();
+  const queryKey =
+    queryOptions?.queryKey ?? getListWorkspaceGroupsQueryKey(params);
 
   const queryFn: QueryFunction<
     Awaited<ReturnType<typeof listWorkspaceGroups>>
-  > = ({ signal }) => listWorkspaceGroups({ signal, ...axiosOptions });
+  > = ({ signal }) => listWorkspaceGroups(params, { signal, ...axiosOptions });
 
   return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
     Awaited<ReturnType<typeof listWorkspaceGroups>>,
@@ -5300,6 +5363,7 @@ export function useListWorkspaceGroups<
   TData = Awaited<ReturnType<typeof listWorkspaceGroups>>,
   TError = AxiosError<HTTPValidationError>,
 >(
+  params: undefined | ListWorkspaceGroupsParams,
   options: {
     query: Partial<
       UseQueryOptions<
@@ -5326,6 +5390,7 @@ export function useListWorkspaceGroups<
   TData = Awaited<ReturnType<typeof listWorkspaceGroups>>,
   TError = AxiosError<HTTPValidationError>,
 >(
+  params?: ListWorkspaceGroupsParams,
   options?: {
     query?: Partial<
       UseQueryOptions<
@@ -5352,6 +5417,7 @@ export function useListWorkspaceGroups<
   TData = Awaited<ReturnType<typeof listWorkspaceGroups>>,
   TError = AxiosError<HTTPValidationError>,
 >(
+  params?: ListWorkspaceGroupsParams,
   options?: {
     query?: Partial<
       UseQueryOptions<
@@ -5374,6 +5440,7 @@ export function useListWorkspaceGroups<
   TData = Awaited<ReturnType<typeof listWorkspaceGroups>>,
   TError = AxiosError<HTTPValidationError>,
 >(
+  params?: ListWorkspaceGroupsParams,
   options?: {
     query?: Partial<
       UseQueryOptions<
@@ -5388,7 +5455,7 @@ export function useListWorkspaceGroups<
 ): UseQueryResult<TData, TError> & {
   queryKey: DataTag<QueryKey, TData, TError>;
 } {
-  const queryOptions = getListWorkspaceGroupsQueryOptions(options);
+  const queryOptions = getListWorkspaceGroupsQueryOptions(params, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
@@ -5403,23 +5470,27 @@ export function useListWorkspaceGroups<
 export const getListWorkspaceGroupsSuspenseQueryOptions = <
   TData = Awaited<ReturnType<typeof listWorkspaceGroups>>,
   TError = AxiosError<HTTPValidationError>,
->(options?: {
-  query?: Partial<
-    UseSuspenseQueryOptions<
-      Awaited<ReturnType<typeof listWorkspaceGroups>>,
-      TError,
-      TData
-    >
-  >;
-  axios?: AxiosRequestConfig;
-}) => {
+>(
+  params?: ListWorkspaceGroupsParams,
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof listWorkspaceGroups>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+) => {
   const { query: queryOptions, axios: axiosOptions } = options ?? {};
 
-  const queryKey = queryOptions?.queryKey ?? getListWorkspaceGroupsQueryKey();
+  const queryKey =
+    queryOptions?.queryKey ?? getListWorkspaceGroupsQueryKey(params);
 
   const queryFn: QueryFunction<
     Awaited<ReturnType<typeof listWorkspaceGroups>>
-  > = ({ signal }) => listWorkspaceGroups({ signal, ...axiosOptions });
+  > = ({ signal }) => listWorkspaceGroups(params, { signal, ...axiosOptions });
 
   return { queryKey, queryFn, ...queryOptions } as UseSuspenseQueryOptions<
     Awaited<ReturnType<typeof listWorkspaceGroups>>,
@@ -5438,6 +5509,7 @@ export function useListWorkspaceGroupsSuspense<
   TData = Awaited<ReturnType<typeof listWorkspaceGroups>>,
   TError = AxiosError<HTTPValidationError>,
 >(
+  params: undefined | ListWorkspaceGroupsParams,
   options: {
     query: Partial<
       UseSuspenseQueryOptions<
@@ -5456,6 +5528,7 @@ export function useListWorkspaceGroupsSuspense<
   TData = Awaited<ReturnType<typeof listWorkspaceGroups>>,
   TError = AxiosError<HTTPValidationError>,
 >(
+  params?: ListWorkspaceGroupsParams,
   options?: {
     query?: Partial<
       UseSuspenseQueryOptions<
@@ -5474,6 +5547,7 @@ export function useListWorkspaceGroupsSuspense<
   TData = Awaited<ReturnType<typeof listWorkspaceGroups>>,
   TError = AxiosError<HTTPValidationError>,
 >(
+  params?: ListWorkspaceGroupsParams,
   options?: {
     query?: Partial<
       UseSuspenseQueryOptions<
@@ -5496,6 +5570,7 @@ export function useListWorkspaceGroupsSuspense<
   TData = Awaited<ReturnType<typeof listWorkspaceGroups>>,
   TError = AxiosError<HTTPValidationError>,
 >(
+  params?: ListWorkspaceGroupsParams,
   options?: {
     query?: Partial<
       UseSuspenseQueryOptions<
@@ -5510,7 +5585,10 @@ export function useListWorkspaceGroupsSuspense<
 ): UseSuspenseQueryResult<TData, TError> & {
   queryKey: DataTag<QueryKey, TData, TError>;
 } {
-  const queryOptions = getListWorkspaceGroupsSuspenseQueryOptions(options);
+  const queryOptions = getListWorkspaceGroupsSuspenseQueryOptions(
+    params,
+    options,
+  );
 
   const query = useSuspenseQuery(
     queryOptions,

@@ -31,9 +31,15 @@ import {
   Send,
   Play,
   Square,
+  Info,
 } from "lucide-react";
 import { toast } from "sonner";
 import yaml from "js-yaml";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   type SaveRulesIn,
   type DryRunResultsOut,
@@ -524,21 +530,37 @@ function YamlImportCard({ onDone }: { onDone: () => void }) {
             Validate
           </Button>
 
-          <Select
-            value={String(dryRunSampleSize)}
-            onValueChange={(v) => setDryRunSampleSize(Number(v))}
-          >
-            <SelectTrigger className="w-[140px] h-8 text-xs" disabled={isDryRunning}>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="100">100 rows</SelectItem>
-              <SelectItem value="500">500 rows</SelectItem>
-              <SelectItem value="1000">1,000 rows</SelectItem>
-              <SelectItem value="5000">5,000 rows</SelectItem>
-              <SelectItem value="10000">10,000 rows</SelectItem>
-            </SelectContent>
-          </Select>
+          <div className="flex items-center gap-1.5">
+            <Select
+              value={String(dryRunSampleSize)}
+              onValueChange={(v) => setDryRunSampleSize(Number(v))}
+            >
+              <SelectTrigger className="w-[140px] h-8 text-xs" disabled={isDryRunning}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="100">100 rows</SelectItem>
+                <SelectItem value="500">500 rows</SelectItem>
+                <SelectItem value="1000">1,000 rows</SelectItem>
+                <SelectItem value="5000">5,000 rows</SelectItem>
+                <SelectItem value="10000">10,000 rows</SelectItem>
+              </SelectContent>
+            </Select>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Info className="h-3.5 w-3.5 text-muted-foreground cursor-help" />
+              </TooltipTrigger>
+              <TooltipContent className="max-w-xs">
+                <p className="text-xs leading-relaxed">
+                  Dry-run validates only the first <strong>1–10,000 rows</strong>{" "}
+                  of the target table — it&apos;s a fast preview, not a full
+                  validation. To run imported rules against every row after
+                  approval, go to <strong>Run Rules</strong> and pick{" "}
+                  <strong>&quot;All rows&quot;</strong>.
+                </p>
+              </TooltipContent>
+            </Tooltip>
+          </div>
 
           {!isDryRunning ? (
             <Button

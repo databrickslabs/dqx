@@ -210,8 +210,39 @@ class BatchProfileRunIn(BaseModel):
     )
 
 
+class BatchProfileRunFailure(BaseModel):
+    """One per-table failure inside a partially-successful batch profile run.
+
+    The route still returns 2xx when at least one table submitted
+    successfully so the frontend can navigate to the runs list, but it
+    surfaces individual per-table failures here so the UI can show the
+    user *exactly* which tables failed and why (e.g. ``USE SCHEMA``
+    permission missing on a specific catalog/schema).
+    """
+
+    table_fqn: str = Field(description="Fully qualified name of the table that failed to submit")
+    error: str = Field(description="Human-readable error message (often the underlying SQL error)")
+    error_code: str | None = Field(
+        default=None,
+        description=(
+            "Stable identifier for known error classes — currently one of "
+            "``INSUFFICIENT_PERMISSIONS``, ``TABLE_OR_VIEW_NOT_FOUND``, or "
+            "``UNKNOWN``. The UI uses this to surface a friendlier headline."
+        ),
+    )
+
+
 class BatchProfileRunOut(BaseModel):
     runs: list[ProfileRunOut] = Field(description="One entry per table with run_id, job_run_id, view_fqn")
+    errors: list[BatchProfileRunFailure] = Field(
+        default_factory=list,
+        description=(
+            "Per-table failures encountered during batch submission. Empty "
+            "when every table submitted successfully. The route still returns "
+            "2xx as long as at least one table submitted; clients should always "
+            "check ``errors`` and surface them to the user."
+        ),
+    )
 
 
 class BatchRunFromCatalogIn(BaseModel):

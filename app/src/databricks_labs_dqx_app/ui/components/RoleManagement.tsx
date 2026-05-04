@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Card,
@@ -9,6 +9,12 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import {
   Select,
   SelectContent,
@@ -17,7 +23,17 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Users, Plus, Trash2, Shield, AlertCircle } from "lucide-react";
+import {
+  Users,
+  Plus,
+  Trash2,
+  Shield,
+  AlertCircle,
+  ChevronsUpDown,
+  Check,
+  Search,
+  Loader2,
+} from "lucide-react";
 import {
   listRoleMappings,
   createRoleMapping,
@@ -26,6 +42,170 @@ import {
   listAvailableRoles,
   getListRoleMappingsQueryKey,
 } from "@/lib/api";
+import { cn } from "@/lib/utils";
+
+const GROUP_SEARCH_DEBOUNCE_MS = 250;
+// Server-side cap matches the FastAPI route's ``limit`` default. Going
+// higher does little for UX (nobody scrolls 200+ items in a popover) and
+// keeps SCIM responses snappy on huge workspaces.
+const GROUP_SEARCH_LIMIT = 200;
+
+/**
+ * Searchable group picker backed by the server-side
+ * ``GET /api/v1/roles/groups?search=&limit=`` endpoint.
+ *
+ * The previous implementation eagerly fetched every workspace group and
+ * rendered them in a Radix Select. On workspaces with thousands of groups
+ * (each carrying its full member roster in the SCIM payload) this would
+ * stall at "Loading…" for many seconds — sometimes indefinitely. We now
+ * push the matching to SCIM via ``filter=displayName co "..."`` and only
+ * render the top ``GROUP_SEARCH_LIMIT`` matches, refetched as the user
+ * types (debounced).
+ */
+function GroupCombobox({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (groupName: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [searchInput, setSearchInput] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  // Debounce so we don't fire one SCIM call per keystroke.
+  useEffect(() => {
+    const t = setTimeout(
+      () => setDebouncedSearch(searchInput.trim()),
+      GROUP_SEARCH_DEBOUNCE_MS,
+    );
+    return () => clearTimeout(t);
+  }, [searchInput]);
+
+  const {
+    data: groupsData,
+    isLoading,
+    isFetching,
+    error,
+  } = useQuery({
+    queryKey: ["workspaceGroups", debouncedSearch],
+    queryFn: () =>
+      listWorkspaceGroups({
+        search: debouncedSearch || undefined,
+        limit: GROUP_SEARCH_LIMIT,
+      }),
+    // Same group list rarely changes mid-session; cache it for a minute
+    // to avoid refetching when the user reopens the popover.
+    staleTime: 60_000,
+  });
+
+  const groups = groupsData?.data || [];
+  const reachedLimit = groups.length >= GROUP_SEARCH_LIMIT;
+
+  const handleSelect = (groupName: string) => {
+    onChange(groupName);
+    setOpen(false);
+    setSearchInput("");
+  };
+
+  return (
+    <Popover
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (next) {
+          // Defer focus so Radix's portal mount completes first.
+          requestAnimationFrame(() => inputRef.current?.focus());
+        } else {
+          setSearchInput("");
+        }
+      }}
+    >
+      <PopoverTrigger asChild>
+        <Button
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          className="w-full justify-between font-normal"
+        >
+          <span className={cn(!value && "text-muted-foreground")}>
+            {value || "Select group..."}
+          </span>
+          <ChevronsUpDown className="h-4 w-4 opacity-50 shrink-0" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent
+        className="p-0 w-[--radix-popover-trigger-width] min-w-[280px]"
+        align="start"
+      >
+        <div className="flex items-center gap-2 border-b px-3 py-2">
+          <Search className="h-4 w-4 text-muted-foreground shrink-0" />
+          <Input
+            ref={inputRef}
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            placeholder="Search groups..."
+            className="border-0 shadow-none focus-visible:ring-0 px-0 h-8"
+          />
+          {isFetching && !isLoading ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground shrink-0" />
+          ) : null}
+        </div>
+        <div className="max-h-64 overflow-y-auto py-1">
+          {isLoading ? (
+            <div className="px-3 py-6 text-center text-sm text-muted-foreground">
+              Loading...
+            </div>
+          ) : error ? (
+            <div className="px-3 py-6 text-center text-sm text-destructive">
+              Failed to load groups
+            </div>
+          ) : groups.length === 0 ? (
+            <div className="px-3 py-6 text-center text-sm text-muted-foreground">
+              {debouncedSearch
+                ? "No groups match that search"
+                : "No groups found"}
+            </div>
+          ) : (
+            <>
+              {groups.map((group) => {
+                const name = group.display_name;
+                const selected = name === value;
+                return (
+                  <button
+                    key={`${group.id ?? name}`}
+                    type="button"
+                    onClick={() => handleSelect(name)}
+                    className={cn(
+                      "w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left",
+                      "hover:bg-accent hover:text-accent-foreground",
+                      "focus:bg-accent focus:text-accent-foreground focus:outline-none",
+                    )}
+                  >
+                    <Check
+                      className={cn(
+                        "h-4 w-4 shrink-0",
+                        selected ? "opacity-100" : "opacity-0",
+                      )}
+                    />
+                    <span className="truncate">{name}</span>
+                  </button>
+                );
+              })}
+              {reachedLimit ? (
+                <div className="px-3 py-2 text-xs text-muted-foreground border-t mt-1">
+                  Showing first {GROUP_SEARCH_LIMIT} matches — refine your
+                  search to narrow results.
+                </div>
+              ) : null}
+            </>
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 const ROLE_LABELS: Record<string, string> = {
   admin: "Admin",
@@ -91,13 +271,7 @@ function AddRoleMappingForm({
     queryFn: () => listAvailableRoles(),
   });
 
-  const { data: groupsData, isLoading: groupsLoading } = useQuery({
-    queryKey: ["workspaceGroups"],
-    queryFn: () => listWorkspaceGroups(),
-  });
-
   const roles = rolesData?.data || [];
-  const groups = groupsData?.data || [];
 
   const handleAdd = () => {
     if (selectedRole && selectedGroup) {
@@ -132,24 +306,7 @@ function AddRoleMappingForm({
 
       <div className="flex-1 space-y-1">
         <label className="text-sm font-medium">Databricks Group</label>
-        <Select
-          value={selectedGroup}
-          onValueChange={setSelectedGroup}
-          disabled={groupsLoading}
-        >
-          <SelectTrigger>
-            <SelectValue
-              placeholder={groupsLoading ? "Loading..." : "Select group..."}
-            />
-          </SelectTrigger>
-          <SelectContent>
-            {groups.map((group) => (
-              <SelectItem key={group.display_name} value={group.display_name}>
-                {group.display_name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <GroupCombobox value={selectedGroup} onChange={setSelectedGroup} />
       </div>
 
       <Button
