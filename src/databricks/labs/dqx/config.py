@@ -1,9 +1,10 @@
 import abc
+from dataclasses import asdict, dataclass, field
 from functools import cached_property
-from dataclasses import dataclass, field, asdict
 
-from databricks.labs.dqx.checks_serializer import FILE_SERIALIZERS
+from databricks.labs.dqx.checks_serializer import SerializerFactory
 from databricks.labs.dqx.errors import InvalidConfigError, InvalidParameterError
+from databricks.labs.dqx.utils import VariableValue
 
 __all__ = [
     "WorkspaceConfig",
@@ -14,6 +15,11 @@ __all__ = [
     "ProfilerConfig",
     "LLMModelConfig",
     "LLMConfig",
+    "AnomalyConfig",
+    "AnomalyParams",
+    "IsolationForestConfig",
+    "FeatureEngineeringConfig",
+    "TemporalAnomalyConfig",
     "BaseChecksStorageConfig",
     "FileChecksStorageConfig",
     "WorkspaceFileChecksStorageConfig",
@@ -44,12 +50,16 @@ class OutputConfig:
     mode: str = "append"
     options: dict[str, str] = field(default_factory=dict)
     trigger: dict[str, str | bool] = field(default_factory=dict)
+    partition_by: list[str] = field(default_factory=list)
+    cluster_by: list[str] = field(default_factory=list)
 
     def __post_init__(self):
         """
         Normalize trigger configuration by converting string boolean representations to actual booleans.
         This is required due to the limitation of the config deserializer.
         """
+        if self.partition_by and self.cluster_by:
+            raise InvalidParameterError("Only one of partition_by or cluster_by is allowed")
         # Convert string representations of booleans to actual booleans
         for key, value in list(self.trigger.items()):
             if isinstance(value, str):
@@ -69,9 +79,84 @@ class ProfilerConfig:
     sample_seed: int | None = None  # seed for sampling
     limit: int = 1000  # limit the number of records to profile
     filter: str | None = None  # filter to apply to the data before profiling
+    criticality: str = "error"  # default criticality for generated rules ("error" or "warn")
     llm_primary_key_detection: bool = (
         False  # whether to use LLM for primary key detection to generate uniqueness checks
     )
+    # Override profiler default thresholds
+    max_null_ratio: float | None = None
+    max_empty_ratio: float | None = None
+
+
+@dataclass
+class IsolationForestConfig:
+    """Algorithm parameters for Spark ML IsolationForest."""
+
+    contamination: float | None = None
+    num_trees: int = 200
+    max_depth: int | None = None
+    subsampling_rate: float | None = None
+    random_seed: int = 42
+
+
+@dataclass
+class TemporalAnomalyConfig:
+    """Configuration for temporal feature extraction."""
+
+    timestamp_column: str
+    temporal_features: list[str] = field(default_factory=lambda: ["hour", "day_of_week", "month"])
+
+
+@dataclass
+class FeatureEngineeringConfig:
+    """Configuration for multi-type feature engineering in anomaly detection."""
+
+    max_input_columns: int = 25  # Soft limit - warns but proceeds if exceeded
+    max_engineered_features: int = 50  # Soft limit on total engineered features
+    categorical_cardinality_threshold: int = 20  # OneHot if <=20, Frequency if >20
+    # Datetime features (always 7 per column: hour_sin, hour_cos, dow_sin, dow_cos, month_sin, month_cos, is_weekend)
+    datetime_features: list[str] = field(
+        default_factory=lambda: ["hour_sin", "hour_cos", "dow_sin", "dow_cos", "month_sin", "month_cos", "is_weekend"]
+    )
+    enable_categorical: bool = True
+    enable_datetime: bool = True
+    enable_boolean: bool = True
+
+
+@dataclass
+class AnomalyParams:
+    """Optional tuning parameters for row anomaly detection.
+
+    Attributes:
+        sample_fraction: Fraction of data to sample for training (default 0.3).
+        max_rows: Maximum rows to use for training (default 1,000,000).
+        train_ratio: Train/validation split ratio (default 0.8).
+        ensemble_size: Number of models in ensemble (default 3). Set to None for single model.
+            Ensemble models provide:
+            - More robust anomaly scores (averaged across models)
+            - Confidence scores via standard deviation
+            - Better generalization
+            Performance: Optimized ensemble scoring makes this negligible overhead.
+        algorithm_config: Isolation Forest parameters (contamination, num_trees, seed).
+        feature_engineering: Feature engineering parameters (temporal features, scaling, etc.).
+    """
+
+    sample_fraction: float = 0.3
+    max_rows: int = 1_000_000
+    train_ratio: float = 0.8
+    ensemble_size: int | None = 3  # Default 3-model ensemble for robustness, tie-breaking, and confidence scores
+    algorithm_config: IsolationForestConfig = field(default_factory=IsolationForestConfig)
+    feature_engineering: FeatureEngineeringConfig = field(default_factory=FeatureEngineeringConfig)
+
+
+@dataclass
+class AnomalyConfig:
+    """Configuration for row anomaly detection."""
+
+    columns: list[str] | None = None  # Auto-discovered if omitted
+    segment_by: list[str] | None = None  # Auto-discovered if omitted (when columns also omitted)
+    model_name: str | None = None  # Optional in workflows; defaults to dqx_anomaly_<run_config.name>
+    registry_table: str | None = None
 
 
 @dataclass
@@ -96,6 +181,8 @@ class RunConfig:
     # mapping of fully qualified custom check function (e.g. my_func) to the module location in the workspace
     # (e.g. {"my_func": "/Workspace/my_repo/my_module.py"})
     custom_check_functions: dict[str, str] = field(default_factory=dict)
+
+    anomaly_config: AnomalyConfig | None = None  # optional anomaly detection configuration
 
     # Lakebase connection parameters, if wanting to store checks in lakebase database
     lakebase_instance_name: str | None = None
@@ -130,6 +217,8 @@ class ExtraParams:
     user_metadata: dict[str, str] = field(default_factory=dict)
     run_time_overwrite: str | None = None
     run_id_overwrite: str | None = None
+    suppress_skipped: bool = False
+    variables: dict[str, VariableValue] = field(default_factory=dict)
 
 
 @dataclass
@@ -153,11 +242,13 @@ class WorkspaceConfig:
     profiler_override_clusters: dict[str, str] | None = field(default_factory=dict)
     quality_checker_override_clusters: dict[str, str] | None = field(default_factory=dict)
     e2e_override_clusters: dict[str, str] | None = field(default_factory=dict)
+    anomaly_override_clusters: dict[str, str] | None = field(default_factory=dict)
 
     # extra spark config for jobs (applicable for non-serverless clusters only)
     profiler_spark_conf: dict[str, str] | None = field(default_factory=dict)
     quality_checker_spark_conf: dict[str, str] | None = field(default_factory=dict)
     e2e_spark_conf: dict[str, str] | None = field(default_factory=dict)
+    anomaly_spark_conf: dict[str, str] | None = field(default_factory=dict)
 
     profiler_max_parallelism: int = 4  # max parallelism for profiling multiple tables
     quality_checker_max_parallelism: int = 4  # max parallelism for quality checking multiple tables
@@ -253,13 +344,20 @@ class TableChecksStorageConfig(BaseChecksStorageConfig):
     Args:
         location: The table name where the checks are stored.
         run_config_name: The name of the run configuration to use for checks, e.g. input table or job name (use "default" if not provided).
-        mode: The mode for writing checks to a table (e.g., 'append' or 'overwrite').
-            The *overwrite* mode will only replace checks for the specific run config and not all checks in the table.
+        mode: The mode for writing checks to a table ('append' or 'overwrite', default 'append').
+            - **overwrite**: Replaces all rows for this run_config_name when the fingerprint differs.
+              Skips write when the fingerprint already exists.
+            - **append**: Adds new rows when the fingerprint differs; multiple versions can coexist.
+              Skips write when the fingerprint already exists.
+        rule_set_fingerprint: Optional SHA-256 fingerprint of the rule set to load.
+            When provided, loads rules matching this specific fingerprint instead of the latest batch.
+            When None (default), loads the latest batch.
     """
 
     location: str
     run_config_name: str = "default"  # to filter checks by run config
-    mode: str = "overwrite"
+    mode: str = "append"
+    rule_set_fingerprint: str | None = None  # to filter checks by rule set fingerprint
 
     def __post_init__(self):
         if not self.location:
@@ -277,8 +375,14 @@ class LakebaseChecksStorageConfig(BaseChecksStorageConfig):
         client_id: ID of the Databricks service principal to use for the Lakebase connection.
         port: The Lakebase port (default is '5432').
         run_config_name: Name of the run configuration to use for checks (default is 'default').
-        mode: The mode for writing checks to a table (e.g., 'append' or 'overwrite'). The *overwrite* mode
-              only replaces checks for the specific run config and not all checks in the table (default is 'overwrite').
+        mode: The mode for writing checks to a table ('append' or 'overwrite', default 'append').
+            - **overwrite**: Replaces all rows for this run_config_name when the fingerprint differs.
+              Skips write when the fingerprint already exists.
+            - **append**: Adds new rows when the fingerprint differs; multiple versions can coexist.
+              Skips write when the fingerprint already exists.
+        rule_set_fingerprint: Optional SHA-256 fingerprint of the rule set to load.
+            When provided, loads rules matching this specific fingerprint instead of the latest batch.
+            When None (default), loads the latest batch.
     """
 
     location: str
@@ -286,7 +390,8 @@ class LakebaseChecksStorageConfig(BaseChecksStorageConfig):
     client_id: str | None = None
     port: str = "5432"
     run_config_name: str = "default"
-    mode: str = "overwrite"
+    mode: str = "append"
+    rule_set_fingerprint: str | None = None
 
     def __post_init__(self):
         if not self.location or self.location == "":
@@ -351,7 +456,7 @@ class VolumeFileChecksStorageConfig(BaseChecksStorageConfig):
             raise InvalidParameterError("Invalid path: Path is missing a schema name")
         if len(parts) < 5 or not parts[4]:
             raise InvalidParameterError("Invalid path: Path is missing a volume name")
-        if len(parts) < 6 or not parts[-1].lower().endswith(tuple(FILE_SERIALIZERS.keys())):
+        if len(parts) < 6 or not parts[-1].lower().endswith(SerializerFactory.get_supported_extensions()):
             raise InvalidParameterError("Invalid path: Path must include a file name after the volume")
 
 

@@ -1,4 +1,5 @@
 import json
+from decimal import Decimal
 from unittest.mock import patch
 import pytest
 import yaml
@@ -20,6 +21,13 @@ TEST_CHECKS = [
         "check": {"function": "is_not_null", "for_each_column": ["col1", "col2"], "arguments": {}},
     },
     {
+        "name": "column_not_less_than",
+        "criticality": "error",
+        "check": {"function": "is_not_less_than", "arguments": {"column": "col2", "limit": 1.01}},
+        "filter": "Col3 >1",
+        "user_metadata": {"check_type": "standardization", "check_owner": "someone_else@email.com"},
+    },
+    {
         "check": {
             "function": "is_not_null",
             "arguments": {"column": "next_scheduled_date"},
@@ -32,6 +40,14 @@ TEST_CHECKS = [
         "check": {"function": "is_not_null", "arguments": {"column": "cost"}, "filter": None},
         "name": "cost_is_null",
         "criticality": "error",
+    },
+    {
+        "criticality": "warn",
+        "name": "col3_is_in_range",
+        "check": {
+            "function": "is_in_range",
+            "arguments": {"column": "col3", "min_limit": Decimal("0.01"), "max_limit": Decimal("999.99")},
+        },
     },
 ]
 

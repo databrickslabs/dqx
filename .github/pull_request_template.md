@@ -14,3 +14,9 @@ Resolves #..
 - [ ] added integration tests
 - [ ] added end-to-end tests
 - [ ] added performance tests
+
+### Documentation and Demos
+<!-- Any user facing changes require documentation and demos update -->
+
+- [ ] added/updated demos
+- [ ] added/updated docs

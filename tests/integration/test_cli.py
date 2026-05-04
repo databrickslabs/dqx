@@ -1,9 +1,8 @@
 import logging
 from dataclasses import dataclass
-import yaml
-import pytest
-from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 
+import pytest
+import yaml
 from databricks.labs.blueprint.parallel import ManyError
 from databricks.labs.dqx.cli import (
     open_remote_config,
@@ -20,7 +19,11 @@ from databricks.labs.dqx.config import WorkspaceConfig, InstallationChecksStorag
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.errors import InvalidConfigError
 from databricks.sdk.errors import NotFound
-from tests.integration.conftest import contains_expected_workflows
+
+from tests.integration.conftest import (
+    assert_df_equality_ignore_fingerprints as assert_df_equality,
+    contains_expected_workflows,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -140,8 +143,9 @@ def test_validate_checks_when_checks_file_missing(ws, installation_ctx):
         validate_checks(installation_ctx.workspace_client, ctx=installation_ctx.workspace_installer)
 
 
-def test_profiler(ws, spark, setup_workflows, caplog):
+def test_profiler(ws, spark_keep_alive, setup_workflows, caplog):
     installation_ctx, run_config = setup_workflows()
+    spark = spark_keep_alive.spark
 
     profile(installation_ctx.workspace_client, run_config=run_config.name, ctx=installation_ctx.workspace_installer)
 
@@ -164,8 +168,9 @@ def test_profiler(ws, spark, setup_workflows, caplog):
     assert "Completed profiler workflow run" in caplog.text
 
 
-def test_profiler_serverless(ws, spark, setup_serverless_workflows, caplog):
+def test_profiler_serverless(ws, spark_keep_alive, setup_serverless_workflows, caplog):
     installation_ctx, run_config = setup_serverless_workflows()
+    spark = spark_keep_alive.spark
 
     profile(installation_ctx.workspace_client, run_config=run_config.name, ctx=installation_ctx.workspace_installer)
 
@@ -188,7 +193,7 @@ def test_profiler_serverless(ws, spark, setup_serverless_workflows, caplog):
     assert "Completed profiler workflow run" in caplog.text
 
 
-def test_profiler_no_input_configured(ws, spark, setup_serverless_workflows):
+def test_profiler_no_input_configured(ws, spark_keep_alive, setup_serverless_workflows):
     installation_ctx, run_config = setup_serverless_workflows()
 
     config = installation_ctx.config
@@ -200,8 +205,9 @@ def test_profiler_no_input_configured(ws, spark, setup_serverless_workflows):
         profile(installation_ctx.workspace_client, run_config=run_config.name, ctx=installation_ctx.workspace_installer)
 
 
-def test_quality_checker(ws, spark, setup_workflows, caplog, expected_quality_checking_output):
+def test_quality_checker(ws, spark_keep_alive, setup_workflows, caplog, expected_quality_checking_output):
     installation_ctx, run_config = setup_workflows(checks=True)
+    spark = spark_keep_alive.spark
 
     apply_checks(
         installation_ctx.workspace_client, run_config=run_config.name, ctx=installation_ctx.workspace_installer
@@ -216,8 +222,11 @@ def test_quality_checker(ws, spark, setup_workflows, caplog, expected_quality_ch
     assert "Completed quality-checker workflow run" in caplog.text
 
 
-def test_quality_checker_serverless(ws, spark, setup_serverless_workflows, caplog, expected_quality_checking_output):
+def test_quality_checker_serverless(
+    ws, spark_keep_alive, setup_serverless_workflows, caplog, expected_quality_checking_output
+):
     installation_ctx, run_config = setup_serverless_workflows(checks=True)
+    spark = spark_keep_alive.spark
 
     apply_checks(
         installation_ctx.workspace_client, run_config=run_config.name, ctx=installation_ctx.workspace_installer
@@ -232,7 +241,7 @@ def test_quality_checker_serverless(ws, spark, setup_serverless_workflows, caplo
     assert "Completed quality-checker workflow run" in caplog.text
 
 
-def test_quality_checker_no_input_configured(ws, spark, setup_serverless_workflows):
+def test_quality_checker_no_input_configured(ws, spark_keep_alive, setup_serverless_workflows):
     installation_ctx, run_config = setup_serverless_workflows(checks=True)
 
     config = installation_ctx.config
@@ -246,14 +255,16 @@ def test_quality_checker_no_input_configured(ws, spark, setup_serverless_workflo
         )
 
 
-def test_e2e_workflow(ws, spark, setup_workflows, caplog):
+def test_e2e_workflow(ws, spark_keep_alive, setup_workflows, caplog):
     installation_ctx, run_config = setup_workflows()
+    spark = spark_keep_alive.spark
     e2e(installation_ctx.workspace_client, run_config=run_config.name, ctx=installation_ctx.workspace_installer)
     _assert_e2e_workflow(caplog, installation_ctx, run_config, spark)
 
 
-def test_e2e_workflow_serverless(ws, spark, setup_serverless_workflows, caplog):
+def test_e2e_workflow_serverless(ws, spark_keep_alive, setup_serverless_workflows, caplog):
     installation_ctx, run_config = setup_serverless_workflows()
+    spark = spark_keep_alive.spark
     e2e(installation_ctx.workspace_client, run_config=run_config.name, ctx=installation_ctx.workspace_installer)
     _assert_e2e_workflow(caplog, installation_ctx, run_config, spark)
 
@@ -289,7 +300,7 @@ def test_workflows(ws, installation_ctx):
     installation_ctx.installation_service.run()
     installed_workflows = workflows(installation_ctx.workspace_client, ctx=installation_ctx.workspace_installer)
 
-    expected_workflows_state = [{'workflow': 'profiler', 'state': 'UNKNOWN', 'started': '<never run>'}]
+    expected_workflows_state = [{"workflow": "profiler", "state": "UNKNOWN", "started": "<never run>"}]
     for state in expected_workflows_state:
         assert contains_expected_workflows(installed_workflows, state)
 
@@ -369,8 +380,9 @@ def test_validate_checks_with_custom_folder_invalid_checks(
         assert any(e in error["error"] for error in errors)
 
 
-def test_profile_with_custom_folder(ws, spark, setup_workflows_with_custom_folder, caplog):
+def test_profile_with_custom_folder(ws, spark_keep_alive, setup_workflows_with_custom_folder, caplog):
     installation_ctx, run_config = setup_workflows_with_custom_folder()
+    spark = spark_keep_alive.spark
     custom_folder = installation_ctx.installation.install_folder()
 
     profile(installation_ctx.workspace_client, run_config=run_config.name, install_folder=custom_folder)
@@ -395,9 +407,10 @@ def test_profile_with_custom_folder(ws, spark, setup_workflows_with_custom_folde
 
 
 def test_apply_checks_with_custom_folder(
-    ws, spark, setup_workflows_with_custom_folder, caplog, expected_quality_checking_output
+    ws, spark_keep_alive, setup_workflows_with_custom_folder, caplog, expected_quality_checking_output
 ):
     installation_ctx, run_config = setup_workflows_with_custom_folder(checks=True)
+    spark = spark_keep_alive.spark
     custom_folder = installation_ctx.installation.install_folder()
 
     apply_checks(installation_ctx.workspace_client, run_config=run_config.name, install_folder=custom_folder)
@@ -411,8 +424,9 @@ def test_apply_checks_with_custom_folder(
     assert "Completed quality-checker workflow run" in caplog.text
 
 
-def test_e2e_with_custom_folder(ws, spark, setup_workflows_with_custom_folder, caplog):
+def test_e2e_with_custom_folder(ws, spark_keep_alive, setup_workflows_with_custom_folder, caplog):
     installation_ctx, run_config = setup_workflows_with_custom_folder()
+    spark = spark_keep_alive.spark
     custom_folder = installation_ctx.installation.install_folder()
 
     e2e(installation_ctx.workspace_client, run_config=run_config.name, install_folder=custom_folder)
@@ -438,7 +452,7 @@ def test_workflows_with_custom_folder(ws, installation_ctx_custom_install_folder
         install_folder=custom_folder,
     )
 
-    expected_workflows_state = [{'workflow': 'profiler', 'state': 'UNKNOWN', 'started': '<never run>'}]
+    expected_workflows_state = [{"workflow": "profiler", "state": "UNKNOWN", "started": "<never run>"}]
     for state in expected_workflows_state:
         assert contains_expected_workflows(installed_workflows, state)
 

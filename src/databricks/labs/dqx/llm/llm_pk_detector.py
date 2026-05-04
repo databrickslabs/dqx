@@ -6,7 +6,7 @@ from typing import Any, Protocol
 
 import dspy  # type: ignore
 
-from databricks.labs.dqx.llm.table_manager import TableManager
+from databricks.labs.dqx.table_manager import TableManager
 
 logger = logging.getLogger(__name__)
 

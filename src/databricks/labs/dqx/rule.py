@@ -1,5 +1,7 @@
 import abc
+import hashlib
 import inspect
+import json
 import logging
 from enum import Enum
 from dataclasses import dataclass, field
@@ -14,8 +16,24 @@ from databricks.labs.dqx.errors import InvalidCheckError
 
 logger = logging.getLogger(__name__)
 
+__all__ = [
+    "CHECK_FUNC_REGISTRY",
+    "CHECK_FUNC_REGISTRY_ORIGINAL_COLUMNS_PRESELECTION",
+    "compute_rule_fingerprint",
+    "Criticality",
+    "DQDatasetRule",
+    "DQForEachColRule",
+    "DQRule",
+    "DQRowRule",
+    "MultipleColumnsMixin",
+    "SingleColumnMixin",
+    "normalize_bound_args",
+    "register_for_original_columns_preselection",
+    "register_rule",
+]
 
 CHECK_FUNC_REGISTRY: dict[str, str] = {}
+CHECK_FUNC_REGISTRY_ORIGINAL_COLUMNS_PRESELECTION: set[str] = set()
 
 
 def register_rule(rule_type: str) -> Callable:
@@ -26,25 +44,19 @@ def register_rule(rule_type: str) -> Callable:
     return wrapper
 
 
+def register_for_original_columns_preselection() -> Callable:
+    def wrapper(func: Callable) -> Callable:
+        CHECK_FUNC_REGISTRY_ORIGINAL_COLUMNS_PRESELECTION.add(func.__name__)
+        return func
+
+    return wrapper
+
+
 class Criticality(Enum):
     """Enum class to represent criticality of the check."""
 
     WARN = "warn"
     ERROR = "error"
-
-
-class DefaultColumnNames(Enum):
-    """Enum class to represent columns in the dataframe that will be used for error and warning reporting."""
-
-    ERRORS = "_errors"
-    WARNINGS = "_warnings"
-
-
-class ColumnArguments(Enum):
-    """Enum class that is used as input parsing for custom column naming."""
-
-    ERRORS = "errors"
-    WARNINGS = "warnings"
 
 
 class SingleColumnMixin:
@@ -207,6 +219,15 @@ class DQRule(abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleColumnsMixin):
 
         return args, kwargs
 
+    @ft.cached_property
+    def rule_fingerprint(self) -> str:
+        """Compute a deterministic SHA-256 hash of a single rule definition.
+
+        Returns:
+            A hex-encoded SHA-256 hash string.
+        """
+        return compute_rule_fingerprint(self.to_dict())
+
     def to_dict(self) -> dict:
         """
         Converts a DQRule instance into a structured dictionary.
@@ -214,7 +235,16 @@ class DQRule(abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleColumnsMixin):
         args, kwargs = self.prepare_check_func_args_and_kwargs()
         sig = inspect.signature(self.check_func)
         bound_args = sig.bind_partial(*args, **kwargs)
-        full_args = {key: normalize_bound_args(val) for key, val in bound_args.arguments.items()}
+        # allow_simple_expressions_only=False: to_dict() is used for fingerprinting and metadata only,
+        # not for round-trip serialization. Complex Column expressions (e.g. F.try_element_at(...))
+        # are serialized as their string representation here. Round-trip storage uses
+        # normalize_bound_args with the default allow_simple_expressions_only=True, which rejects
+        # complex expressions — so a check with a complex Column arg can never be stored, and no
+        # inconsistency between the fingerprint and the stored arguments can arise.
+        full_args = {
+            key: normalize_bound_args(val, allow_simple_expressions_only=False)
+            for key, val in bound_args.arguments.items()
+        }
 
         metadata = {
             "name": self.name,
@@ -297,7 +327,7 @@ class DQRule(abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleColumnsMixin):
         else:
             kwargs.pop("columns", None)  # Ensure required args aren't duplicated in kwargs
 
-        # Push down filter if supported
+        # Push down check filter as row_filter if supported by the check function
         if self.filter and "row_filter" in sig.parameters:
             kwargs["row_filter"] = self.filter
 
@@ -358,14 +388,19 @@ class DQDatasetRule(DQRule):
         Returns:
             The Spark Column representing the check condition.
         """
-        check_condition, _ = self.check  # lazy evaluation of check function parameters
+        check_condition, _, _ = self.check  # lazy evaluation of check function parameters
         return check_condition
 
     @ft.cached_property
-    def check(self) -> tuple[Column, Callable]:
+    def check(self) -> tuple[Column, Callable, str | None]:
+        """Return (condition, apply_func, and optionally info_column_name)."""
         args, kwargs = self.prepare_check_func_args_and_kwargs()
-        condition, apply_func = self.check_func(*args, **kwargs)
-        return condition, apply_func
+        result = self.check_func(*args, **kwargs)
+        if len(result) == 3:
+            condition, apply_func, info_column_name = result[0], result[1], result[2]
+            return condition, apply_func, info_column_name
+        condition, apply_func = result[0], result[1]
+        return condition, apply_func, None
 
 
 @dataclass(frozen=True)
@@ -435,3 +470,43 @@ class DQForEachColRule(DQRuleTypeMixin):
                     )
                 )
         return rules
+
+
+def compute_rule_fingerprint(check_dict: dict) -> str:
+    """Compute a deterministic SHA-256 hash of a single rule definition.
+
+    Normalizes the check dict before hashing so the same logical rule yields the same
+    fingerprint regardless of storage backend or code path (Delta, Lakebase, engine).
+    Normalization turns variants into a single canonical form.
+    After normalization, all equivalent rules hash to the same fingerprint.
+
+    Args:
+        check_dict: Dictionary representing a single check rule.
+
+    Returns:
+        A hex-encoded SHA-256 hash string.
+    """
+
+    def _normalize_value_for_serialization(val: Any) -> Any:
+        """Recursively normalize a value for JSON/serialization. Idempotent."""
+        if isinstance(val, dict):
+            return {k: _normalize_value_for_serialization(v) for k, v in val.items()}
+        return normalize_bound_args(val)
+
+    check_dict = _normalize_value_for_serialization(check_dict)
+
+    check_inner = check_dict.get("check") or {}
+    for_each_column = check_inner.get("for_each_column")
+    # Normalize to list: Spark ArrayType or other sources may return non-list iterables
+    if for_each_column is not None and not isinstance(for_each_column, list):
+        for_each_column = list(for_each_column)
+    fingerprint_data = {
+        "name": check_dict.get("name"),
+        "criticality": check_dict.get("criticality", "error"),
+        "function": check_inner.get("function"),
+        "arguments": check_inner.get("arguments"),
+        "filter": check_dict.get("filter"),
+        "for_each_column": sorted(for_each_column) if for_each_column else None,
+    }
+    canonical = json.dumps(fingerprint_data, sort_keys=True, default=str)
+    return hashlib.sha256(canonical.encode()).hexdigest()

@@ -32,6 +32,7 @@ from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.profiler.dlt_generator import DQDltGenerator
 from databricks.labs.dqx.config import WorkspaceFileChecksStorageConfig, TableChecksStorageConfig
 from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.checks_serializer import ChecksNormalizer
 from databricks.sdk import WorkspaceClient
 import os
 import yaml
@@ -64,7 +65,7 @@ print(profiles)
 # they should be manually reviewed before being applied to the data
 generator = DQGenerator(ws)
 checks = generator.generate_dq_rules(profiles)  # with default level "error"
-print(yaml.safe_dump(checks))
+print(yaml.safe_dump(ChecksNormalizer.normalize(checks)))
 
 # generate Lakeflow Pipeline (formerly Delta Live Table (DLT)) expectations
 dlt_generator = DQDltGenerator(ws)
@@ -473,10 +474,12 @@ display(spark.table(f"{demo_catalog_name}.{demo_schema_name}.dqx_quarantine"))
 
 # COMMAND ----------
 
-# end-to-end quality checking flow
+# End-to-end quality checking flow
+# By default, apply_checks_and_save_in_table method apply checks to the entire input table.
+# Incremental processing is supported using streaming with the AvailableNow trigger for batch-style execution, along with checkpointing to ensure consistency across runs.
 dq_engine.apply_checks_by_metadata_and_save_in_table(
     input_config=InputConfig("/databricks-datasets/delta-sharing/samples/nyctaxi_2019"),
-    checks=checks,
+    checks=checks,  # or provide checks_location and run_config_name to auto-load from checks storage
     output_config=OutputConfig(f"{demo_catalog_name}.{demo_schema_name}.dqx_e2e_output", mode="overwrite"),
     quarantine_config=OutputConfig(f"{demo_catalog_name}.{demo_schema_name}.dqx_e2e_quarantine", mode="overwrite")
 )
@@ -694,7 +697,7 @@ display(valid_and_quarantine_df)
 # MAGIC ### Extended Aggregate Functions for Data Quality Checks
 # MAGIC
 # MAGIC DQX now supports 20 curated aggregate functions for advanced data quality monitoring:
-# MAGIC - **Statistical functions**: `stddev`, `variance`, `median`, `mode`, `skewness`, `kurtosis` for anomaly detection
+# MAGIC - **Statistical functions**: `stddev`, `variance`, `median`, `mode`, `skewness`, `kurtosis` for outlier detection
 # MAGIC - **Percentile functions**: `percentile`, `approx_percentile` for SLA monitoring
 # MAGIC - **Cardinality functions**: `count_distinct`, `approx_count_distinct` (uses HyperLogLog++)
 # MAGIC - **Any Databricks built-in aggregate**: Supported with runtime validation
@@ -702,7 +705,7 @@ display(valid_and_quarantine_df)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC #### Example 1: Statistical Functions - Anomaly Detection with Standard Deviation
+# MAGIC #### Example 1: Statistical Functions with Standard Deviation
 # MAGIC
 # MAGIC Detect unusual variance in sensor readings per machine. High standard deviation indicates unstable sensors that may need calibration.
 
@@ -1479,3 +1482,61 @@ display(errors_df)
 # explode warnings
 warnings_df = valid_and_quarantine_df.select(F.explode(F.col("dq_warnings")).alias("dq")).select(F.expr("dq.*"))
 display(warnings_df)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Advanced: Variable Substitution
+# MAGIC
+# MAGIC DQX supports variable substitution in declarative check definitions (YAML, JSON, or Delta tables).
+# MAGIC This allows you to parameterize your rules and inject values at **load time** via the `variables` parameter in `load_checks`.
+# MAGIC
+# MAGIC ### Example Usage
+# MAGIC
+# MAGIC 1. Define a rule with `{{ placeholder }}` syntax.
+# MAGIC 2. Pass a dictionary of variables when loading the rules.
+
+# COMMAND ----------
+
+from databricks.labs.dqx.config import WorkspaceFileChecksStorageConfig
+
+# Save to a temporary file
+
+# Define parameterized checks
+parameterized_checks_yaml = """
+- criticality: error
+  name: "threshold_check_{{ threshold_name }}"
+  check:
+    function: is_not_greater_than
+    arguments:
+      column: "{{ target_column }}"
+      limit: "{{ max_value }}"
+"""
+
+# Save to a temporary file
+# demo_file_directory is defined at the beginning of this notebook
+temp_checks_path = os.path.join(demo_file_directory, "parameterized_checks.yml")
+with open(temp_checks_path, "w") as f:
+    f.write(parameterized_checks_yaml)
+
+dq_engine = DQEngine(WorkspaceClient())
+
+# Load checks with variable resolution
+# Resolution happens during the load process
+resolved_checks = dq_engine.load_checks(
+    config=WorkspaceFileChecksStorageConfig(location=temp_checks_path),
+    variables={
+        "threshold_name": "critical",
+        "target_column": "col1",
+        "max_value": 100
+    }
+)
+
+# The resolved checks now have the values injected
+# Note: DQEngine internally converts string numbers to their appropriate types if needed during validation or apply
+print(yaml.dump(resolved_checks))
+
+# Apply the resolved checks to a DataFrame
+data = spark.createDataFrame([[50], [150]], "col1: int")
+result_df = dq_engine.apply_checks_by_metadata(data, resolved_checks)
+display(result_df)

@@ -1,14 +1,20 @@
+import logging
 from unittest.mock import create_autospec
 
 import pytest
+from pyspark.sql import SparkSession
+
+from databricks.labs.dqx.checks_storage import (
+    BaseChecksStorageHandlerFactory,
+    ChecksStorageHandler,
+    VolumeFileChecksStorageHandler,
+)
+from databricks.labs.dqx.config import FileChecksStorageConfig, VolumeFileChecksStorageConfig, ExtraParams
+from databricks.labs.dqx.engine import DQEngine, DQEngineCore
+from databricks.labs.dqx.errors import InvalidCheckError, CheckDownloadError, InvalidConfigError
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import NotFound
 from databricks.sdk.service.files import DownloadResponse
-
-from databricks.labs.dqx.checks_storage import VolumeFileChecksStorageHandler
-from databricks.labs.dqx.config import VolumeFileChecksStorageConfig
-from databricks.labs.dqx.engine import DQEngineCore
-from databricks.labs.dqx.errors import InvalidCheckError, CheckDownloadError, InvalidConfigError
 
 
 def test_load_checks_from_local_file_json(make_local_check_file_as_json, expected_checks):
@@ -84,3 +90,421 @@ def test_file_download_contents_read_none():
 
     with pytest.raises(NotFound, match="No contents at Unity Catalog volume path"):
         handler.load(VolumeFileChecksStorageConfig(location="/Volumes/catalog/schema/volume/test_path.yml"))
+
+
+def test_load_checks_from_local_file_with_variables(tmp_path):
+    content = """- criticality: "{{ crit }}"
+  check:
+    function: is_not_null
+    arguments:
+      column: "{{ col }}"
+"""
+    file_path = tmp_path / "checks.yml"
+    file_path.write_text(content, encoding="utf-8")
+
+    checks = DQEngineCore.load_checks_from_local_file(str(file_path), variables={"crit": "error", "col": "id"})
+
+    assert checks == [
+        {"criticality": "error", "check": {"function": "is_not_null", "arguments": {"column": "id"}}},
+    ]
+
+
+def test_load_checks_from_local_file_variables_none(tmp_path):
+    content = """- criticality: error
+  check:
+    function: is_not_null
+    arguments:
+      column: id
+"""
+    file_path = tmp_path / "checks.yml"
+    file_path.write_text(content, encoding="utf-8")
+
+    checks = DQEngineCore.load_checks_from_local_file(str(file_path), variables=None)
+
+    assert checks == [
+        {"criticality": "error", "check": {"function": "is_not_null", "arguments": {"column": "id"}}},
+    ]
+
+
+def test_load_checks_from_local_file_variables_empty(tmp_path):
+    content = """- criticality: error
+  check:
+    function: is_not_null
+    arguments:
+      column: id
+"""
+    file_path = tmp_path / "checks.yml"
+    file_path.write_text(content, encoding="utf-8")
+
+    checks = DQEngineCore.load_checks_from_local_file(str(file_path), variables={})
+
+    assert checks == [
+        {"criticality": "error", "check": {"function": "is_not_null", "arguments": {"column": "id"}}},
+    ]
+
+
+def test_load_checks_with_variables():
+    ws = create_autospec(WorkspaceClient)
+    mock_spark = create_autospec(SparkSession)
+
+    raw_checks = [
+        {"criticality": "{{ crit }}", "check": {"function": "is_not_null", "arguments": {"column": "{{ col }}"}}}
+    ]
+
+    mock_factory = create_autospec(BaseChecksStorageHandlerFactory)
+    mock_handler = create_autospec(ChecksStorageHandler)
+    mock_factory.create.return_value = mock_handler
+    mock_handler.load.return_value = raw_checks
+
+    engine = DQEngine(ws, spark=mock_spark, checks_handler_factory=mock_factory)
+    config = FileChecksStorageConfig(location="checks.yml")
+
+    checks = engine.load_checks(config, variables={"crit": "error", "col": "id"})
+
+    assert checks == [
+        {"criticality": "error", "check": {"function": "is_not_null", "arguments": {"column": "id"}}},
+    ]
+
+
+def test_load_checks_variables_none():
+    ws = create_autospec(WorkspaceClient)
+    mock_spark = create_autospec(SparkSession)
+
+    raw_checks = [{"criticality": "error", "check": {"function": "is_not_null", "arguments": {"column": "id"}}}]
+
+    mock_factory = create_autospec(BaseChecksStorageHandlerFactory)
+    mock_handler = create_autospec(ChecksStorageHandler)
+    mock_factory.create.return_value = mock_handler
+    mock_handler.load.return_value = raw_checks
+
+    engine = DQEngine(ws, spark=mock_spark, checks_handler_factory=mock_factory)
+    config = FileChecksStorageConfig(location="checks.yml")
+
+    checks = engine.load_checks(config, variables=None)
+
+    assert checks == raw_checks
+
+
+def test_load_checks_from_local_file_unresolved_placeholder(tmp_path, caplog):
+    content = """- criticality: error
+  check:
+    function: is_not_null
+    arguments:
+      column: "{{ col }}"
+"""
+    file_path = tmp_path / "checks.yml"
+    file_path.write_text(content, encoding="utf-8")
+
+    with caplog.at_level(logging.WARNING):
+        checks = DQEngineCore.load_checks_from_local_file(str(file_path), variables={"other": "value"})
+
+    assert checks[0]["check"]["arguments"]["column"] == "{{ col }}"
+    assert any("Unresolved placeholder" in msg for msg in caplog.messages)
+
+
+def test_load_checks_with_engine_default_variables():
+    ws = create_autospec(WorkspaceClient)
+    mock_spark = create_autospec(SparkSession)
+
+    raw_checks = [
+        {"criticality": "{{ crit }}", "check": {"function": "is_not_null", "arguments": {"column": "{{ col }}"}}}
+    ]
+
+    mock_factory = create_autospec(BaseChecksStorageHandlerFactory)
+    mock_handler = create_autospec(ChecksStorageHandler)
+    mock_factory.create.return_value = mock_handler
+    mock_handler.load.return_value = raw_checks
+
+    extra_params = ExtraParams(variables={"crit": "error", "col": "default_col"})
+    engine = DQEngine(ws, spark=mock_spark, checks_handler_factory=mock_factory, extra_params=extra_params)
+    config = FileChecksStorageConfig(location="checks.yml")
+
+    checks = engine.load_checks(config)
+
+    assert checks == [
+        {"criticality": "error", "check": {"function": "is_not_null", "arguments": {"column": "default_col"}}},
+    ]
+
+
+def test_load_checks_per_call_overrides_engine_defaults():
+    ws = create_autospec(WorkspaceClient)
+    mock_spark = create_autospec(SparkSession)
+
+    raw_checks = [
+        {"criticality": "{{ crit }}", "check": {"function": "is_not_null", "arguments": {"column": "{{ col }}"}}}
+    ]
+
+    mock_factory = create_autospec(BaseChecksStorageHandlerFactory)
+    mock_handler = create_autospec(ChecksStorageHandler)
+    mock_factory.create.return_value = mock_handler
+    mock_handler.load.return_value = raw_checks
+
+    extra_params = ExtraParams(variables={"crit": "warn", "col": "default_col"})
+    engine = DQEngine(ws, spark=mock_spark, checks_handler_factory=mock_factory, extra_params=extra_params)
+    config = FileChecksStorageConfig(location="checks.yml")
+
+    checks = engine.load_checks(config, variables={"crit": "error"})
+
+    assert checks == [
+        {"criticality": "error", "check": {"function": "is_not_null", "arguments": {"column": "default_col"}}},
+    ]
+
+
+def test_extra_params_variables_substitution_and_overrides(tmp_path):
+    ws = create_autospec(WorkspaceClient)
+    mock_spark = create_autospec(SparkSession)
+
+    checks_yaml = """
+        - criticality: error
+          name: "id_check"
+          check:
+            function: is_not_null
+            arguments:
+              column: "{{ target_col }}"
+          user_metadata:
+            env: "{{ environment }}"
+            rule_id: "{{ nested_var }}"
+        """
+    checks_file = tmp_path / "checks_extra.yml"
+    checks_file.write_text(checks_yaml, encoding="utf-8")
+
+    raw_checks = DQEngineCore.load_checks_from_local_file(str(checks_file))
+    mock_factory = create_autospec(BaseChecksStorageHandlerFactory)
+    mock_handler = create_autospec(ChecksStorageHandler)
+    mock_factory.create.return_value = mock_handler
+    mock_handler.load.return_value = raw_checks
+
+    extra_params = ExtraParams(variables={"target_col": "id", "environment": "dev", "nested_var": "old"})
+    engine = DQEngine(ws, spark=mock_spark, checks_handler_factory=mock_factory, extra_params=extra_params)
+    config = FileChecksStorageConfig(location=str(checks_file))
+
+    checks = engine.load_checks(config, variables={"environment": "prod", "nested_var": "new"})
+
+    assert checks[0]["check"]["arguments"]["column"] == "id"
+    assert checks[0]["user_metadata"]["env"] == "prod"
+    assert checks[0]["user_metadata"]["rule_id"] == "new"
+
+
+def test_load_checks_by_metadata_and_split_with_variables(tmp_path):
+
+    checks_yaml = """
+        - criticality: error
+          name: "{{ col }}_null_check"
+          check:
+            function: is_not_null_and_not_empty
+            arguments:
+              column: "{{ col }}"
+        - criticality: warn
+          check:
+            function: sql_expression
+            arguments:
+              expression: "{{ expr_col }} > {{ threshold }}"
+        """
+    checks_file = tmp_path / "checks.yml"
+    checks_file.write_text(checks_yaml, encoding="utf-8")
+    checks = DQEngineCore.load_checks_from_local_file(
+        str(checks_file), variables={"col": "b", "expr_col": "a", "threshold": 1}
+    )
+
+    assert checks == [
+        {
+            "criticality": "error",
+            "name": "b_null_check",
+            "check": {
+                "function": "is_not_null_and_not_empty",
+                "arguments": {"column": "b"},
+            },
+        },
+        {
+            "criticality": "warn",
+            "check": {
+                "function": "sql_expression",
+                "arguments": {"expression": "a > 1"},
+            },
+        },
+    ]
+
+
+def test_load_checks_sql_query_no_variables(tmp_path, caplog):
+    checks_yaml = """
+        - criticality: error
+          check:
+            function: sql_query
+            arguments:
+              query: "SELECT id, COUNT(*) > 0 AS condition FROM {{ input_view }} GROUP BY id"
+              merge_columns:
+                - id
+        """
+    checks_file = tmp_path / "checks.yml"
+    checks_file.write_text(checks_yaml, encoding="utf-8")
+
+    with caplog.at_level(logging.WARNING):
+        checks = DQEngineCore.load_checks_from_local_file(str(checks_file))
+
+    assert not any("input_view" in msg for msg in caplog.messages)
+
+    assert checks == [
+        {
+            "criticality": "error",
+            "check": {
+                "function": "sql_query",
+                "arguments": {
+                    "query": "SELECT id, COUNT(*) > 0 AS condition FROM {{ input_view }} GROUP BY id",
+                    "merge_columns": ["id"],
+                },
+            },
+        },
+    ]
+
+
+def test_load_checks_sql_query_with_variables(tmp_path, caplog):
+    checks_yaml = """
+        - criticality: "{{ crit }}"
+          name: "count_check"
+          check:
+            function: sql_query
+            arguments:
+              query: "SELECT id, COUNT(*) > 0 AS condition FROM {{ input_view }} GROUP BY id"
+              merge_columns:
+                - id
+        """
+    checks_file = tmp_path / "checks.yml"
+    checks_file.write_text(checks_yaml, encoding="utf-8")
+
+    with caplog.at_level(logging.WARNING):
+        checks = DQEngineCore.load_checks_from_local_file(str(checks_file), variables={"crit": "error"})
+
+    assert checks == [
+        {
+            "criticality": "error",
+            "name": "count_check",
+            "check": {
+                "function": "sql_query",
+                "arguments": {
+                    "query": "SELECT id, COUNT(*) > 0 AS condition FROM {{ input_view }} GROUP BY id",
+                    "merge_columns": ["id"],
+                },
+            },
+        },
+    ]
+    # {{ input_view }} is left unresolved — it is resolved at runtime by sql_query itself
+    assert any("input_view" in msg for msg in caplog.messages)
+
+
+def test_save_checks_with_variables():
+    ws = create_autospec(WorkspaceClient)
+    mock_spark = create_autospec(SparkSession)
+
+    raw_checks = [
+        {"criticality": "{{ crit }}", "check": {"function": "is_not_null", "arguments": {"column": "{{ col }}"}}}
+    ]
+
+    mock_factory = create_autospec(BaseChecksStorageHandlerFactory)
+    mock_handler = create_autospec(ChecksStorageHandler)
+    mock_factory.create.return_value = mock_handler
+
+    engine = DQEngine(ws, spark=mock_spark, checks_handler_factory=mock_factory)
+    config = FileChecksStorageConfig(location="checks.yml")
+
+    engine.save_checks(raw_checks, config, variables={"crit": "error", "col": "id"})
+
+    mock_handler.save.assert_called_once_with(
+        [{"criticality": "error", "check": {"function": "is_not_null", "arguments": {"column": "id"}}}],
+        config,
+    )
+
+
+def test_save_checks_variables_none():
+    ws = create_autospec(WorkspaceClient)
+    mock_spark = create_autospec(SparkSession)
+
+    raw_checks = [{"criticality": "error", "check": {"function": "is_not_null", "arguments": {"column": "id"}}}]
+
+    mock_factory = create_autospec(BaseChecksStorageHandlerFactory)
+    mock_handler = create_autospec(ChecksStorageHandler)
+    mock_factory.create.return_value = mock_handler
+
+    engine = DQEngine(ws, spark=mock_spark, checks_handler_factory=mock_factory)
+    config = FileChecksStorageConfig(location="checks.yml")
+
+    engine.save_checks(raw_checks, config, variables=None)
+
+    mock_handler.save.assert_called_once_with(raw_checks, config)
+
+
+def test_save_checks_with_engine_default_variables():
+    ws = create_autospec(WorkspaceClient)
+    mock_spark = create_autospec(SparkSession)
+
+    raw_checks = [
+        {"criticality": "{{ crit }}", "check": {"function": "is_not_null", "arguments": {"column": "{{ col }}"}}}
+    ]
+
+    mock_factory = create_autospec(BaseChecksStorageHandlerFactory)
+    mock_handler = create_autospec(ChecksStorageHandler)
+    mock_factory.create.return_value = mock_handler
+
+    extra_params = ExtraParams(variables={"crit": "error", "col": "default_col"})
+    engine = DQEngine(ws, spark=mock_spark, checks_handler_factory=mock_factory, extra_params=extra_params)
+    config = FileChecksStorageConfig(location="checks.yml")
+
+    engine.save_checks(raw_checks, config)
+
+    mock_handler.save.assert_called_once_with(
+        [{"criticality": "error", "check": {"function": "is_not_null", "arguments": {"column": "default_col"}}}],
+        config,
+    )
+
+
+def test_save_checks_per_call_overrides_engine_defaults():
+    ws = create_autospec(WorkspaceClient)
+    mock_spark = create_autospec(SparkSession)
+
+    raw_checks = [
+        {"criticality": "{{ crit }}", "check": {"function": "is_not_null", "arguments": {"column": "{{ col }}"}}}
+    ]
+
+    mock_factory = create_autospec(BaseChecksStorageHandlerFactory)
+    mock_handler = create_autospec(ChecksStorageHandler)
+    mock_factory.create.return_value = mock_handler
+
+    extra_params = ExtraParams(variables={"crit": "warn", "col": "default_col"})
+    engine = DQEngine(ws, spark=mock_spark, checks_handler_factory=mock_factory, extra_params=extra_params)
+    config = FileChecksStorageConfig(location="checks.yml")
+
+    engine.save_checks(raw_checks, config, variables={"crit": "error"})
+
+    mock_handler.save.assert_called_once_with(
+        [{"criticality": "error", "check": {"function": "is_not_null", "arguments": {"column": "default_col"}}}],
+        config,
+    )
+
+
+def test_load_checks_by_metadata_with_variables_name_and_filter(tmp_path):
+
+    checks_yaml = """
+        - criticality: error
+          name: "{{ col }}_greater_than_{{ threshold }}"
+          check:
+            function: sql_expression
+            arguments:
+              expression: "{{ col }} > {{ threshold }}"
+          filter: "{{ filter_col }} IS NOT NULL"
+        """
+    checks_file = tmp_path / "checks.yml"
+    checks_file.write_text(checks_yaml, encoding="utf-8")
+    checks = DQEngineCore.load_checks_from_local_file(
+        str(checks_file), variables={"col": "a", "threshold": 1, "filter_col": "a"}
+    )
+
+    assert checks == [
+        {
+            "criticality": "error",
+            "name": "a_greater_than_1",
+            "check": {
+                "function": "sql_expression",
+                "arguments": {"expression": "a > 1"},
+            },
+            "filter": "a IS NOT NULL",
+        }
+    ]

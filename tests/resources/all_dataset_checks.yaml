@@ -234,3 +234,17 @@
     function: has_no_outliers
     arguments:
       column: col2
+
+# has_no_aggr_outliers check — rolling-window sigma outlier on a time-series aggregate
+# Uses col5 (date) as the time column and col2 (int) as the metric.
+# With only one date bucket in the integration test data, warmup is never reached
+# so the check passes silently — which exercises the full code path without false positives.
+- criticality: warn
+  check:
+    function: has_no_aggr_outliers
+    arguments:
+      column: col2
+      time_column: col5
+      aggr_type: avg
+      lookback_num_intervals: 2
+      warmup_num_intervals: 2

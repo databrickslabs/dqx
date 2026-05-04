@@ -1,0 +1,141 @@
+name: anomaly
+
+on:
+  pull_request:
+    types: [ opened, synchronize, ready_for_review ]
+  merge_group:
+    types: [ checks_requested ]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false  # don't cancel ongoing runs to ensure fixtures are completed and resources terminated
+
+jobs:
+  # Gate all downstream jobs behind a single check so PRs from forks (no access to the
+  # tool environment) and draft PRs do not trigger the expensive anomaly suite.
+  # PRs from forks are to be tested by the reviewer(s) / maintainer(s) before merging.
+  not-a-fork:
+    runs-on:
+      group: databrickslabs-protected-runner-group
+      labels: linux-ubuntu-latest
+    if: github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork
+    steps:
+      - run: echo "Not a fork PR, proceeding"
+
+  anomaly-tests:
+    needs: not-a-fork
+    environment: tool
+    runs-on:
+      group: larger-runners
+      labels: larger
+    permissions:
+      id-token: write
+      pull-requests: write
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Setup environment
+        uses: ./.github/actions/setup-env
+
+      - name: Pre-build DQX wheel
+        uses: ./.github/actions/prebuild-wheel
+
+      # Create .coveragerc with correct relative path to source code.
+      - name: Prepare code coverage configuration for anomaly tests
+        run: |
+          cat > tests/integration_anomaly/.coveragerc << EOF
+          [run]
+          source = ../../src
+          relative_files = true
+          parallel = true
+          EOF
+
+      - name: Run anomaly integration tests
+        uses: databrickslabs/sandbox/acceptance@83461e5dd7021feabb1a9ca3ee10d6f46b72092a # acceptance/v0.4.6
+        with:
+          vault_uri: ${{ secrets.VAULT_URI }}
+          timeout: 3h
+          codegen_path: tests/integration_anomaly/.codegen.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage
+          MLFLOW_ENABLE_DB_SDK: "true"
+          MLFLOW_TRACKING_URI: databricks
+          MLFLOW_REGISTRY_URI: databricks-uc
+          MLFLOW_HTTP_REQUEST_TIMEOUT: "600"
+          MLFLOW_HTTP_REQUEST_MAX_RETRIES: "9"
+      - name: Merge coverage reports and convert them to XML
+        run: make combine-coverage
+
+      - name: Publish test coverage
+        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
+        with:
+          use_oidc: true
+          files: coverage-combined.xml
+          flags: anomaly
+
+  anomaly-tests-serverless:
+    needs: not-a-fork
+    environment: tool
+    runs-on:
+      group: larger-runners
+      labels: larger
+    permissions:
+      id-token: write
+      pull-requests: write
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Setup environment
+        uses: ./.github/actions/setup-env
+
+      - name: Pre-build DQX wheel
+        uses: ./.github/actions/prebuild-wheel
+
+      # Create .coveragerc with correct relative path to source code.
+      - name: Prepare code coverage configuration for anomaly tests
+        run: |
+          cat > tests/integration_anomaly/.coveragerc << EOF
+          [run]
+          source = ../../src
+          relative_files = true
+          parallel = true
+          EOF
+
+      - name: Run anomaly integration tests on serverless cluster
+        uses: databrickslabs/sandbox/acceptance@83461e5dd7021feabb1a9ca3ee10d6f46b72092a # acceptance/v0.4.6
+        with:
+          vault_uri: ${{ secrets.VAULT_URI }}
+          timeout: 3h
+          codegen_path: tests/integration_anomaly/.codegen.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage
+          DATABRICKS_SERVERLESS_COMPUTE_ID: auto
+          MLFLOW_ENABLE_DB_SDK: "true"
+          MLFLOW_TRACKING_URI: databricks
+          MLFLOW_REGISTRY_URI: databricks-uc
+          MLFLOW_HTTP_REQUEST_TIMEOUT: "600"
+          MLFLOW_HTTP_REQUEST_MAX_RETRIES: "9"
+      - name: Merge coverage reports and convert them to XML
+        run: make combine-coverage
+
+      - name: Publish test coverage
+        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
+        with:
+          use_oidc: true
+          files: coverage-combined.xml
+          flags: anomaly-serverless

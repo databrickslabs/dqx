@@ -1,14 +1,15 @@
 import copy
-import os
+import inspect
 import logging
+import os
 from concurrent import futures
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import datetime
 from functools import cached_property
 from typing import Any
 from uuid import uuid4
 
-import pyspark
 import pyspark.sql.functions as F
 from pyspark.sql import DataFrame, Observation, SparkSession
 from pyspark.sql.streaming import StreamingQuery
@@ -16,6 +17,10 @@ from pyspark.sql.streaming import StreamingQuery
 from databricks.labs.dqx.base import DQEngineBase, DQEngineCoreBase
 from databricks.labs.dqx.checks_resolver import resolve_custom_check_functions_from_path
 from databricks.labs.dqx.checks_serializer import deserialize_checks
+from databricks.labs.dqx.rule_fingerprint import (
+    compute_rule_set_fingerprint,
+    compute_rule_set_fingerprint_by_metadata,
+)
 from databricks.labs.dqx.config_serializer import ConfigSerializer
 from databricks.labs.dqx.checks_storage import (
     FileChecksStorageHandler,
@@ -32,11 +37,11 @@ from databricks.labs.dqx.config import (
     ExtraParams,
 )
 from databricks.labs.dqx.manager import DQRuleManager
+from databricks.labs.dqx.reporting_columns import ColumnArguments, DefaultColumnNames, merge_info_columns
 from databricks.labs.dqx.rule import (
     Criticality,
-    ColumnArguments,
-    DefaultColumnNames,
     DQRule,
+    CHECK_FUNC_REGISTRY_ORIGINAL_COLUMNS_PRESELECTION,
 )
 from databricks.labs.dqx.checks_validator import ChecksValidator, ChecksValidationStatus
 from databricks.labs.dqx.schema import dq_result_schema
@@ -46,7 +51,7 @@ from databricks.labs.dqx.io import read_input_data, save_dataframe_as_table, get
 from databricks.labs.dqx.telemetry import telemetry_logger, log_telemetry, log_dataframe_telemetry
 from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.errors import InvalidCheckError, InvalidConfigError, InvalidParameterError
-from databricks.labs.dqx.utils import list_tables, safe_strip_file_from_path
+from databricks.labs.dqx.utils import list_tables, safe_strip_file_from_path, resolve_variables, VariableValue
 from databricks.labs.dqx.io import is_one_time_trigger
 
 logger = logging.getLogger(__name__)
@@ -80,6 +85,9 @@ class DQEngineCore(DQEngineCoreBase):
             ColumnArguments.WARNINGS: extra_params.result_column_names.get(
                 ColumnArguments.WARNINGS.value, DefaultColumnNames.WARNINGS.value
             ),
+            ColumnArguments.INFO: extra_params.result_column_names.get(
+                ColumnArguments.INFO.value, DefaultColumnNames.INFO.value
+            ),
         }
 
         self.spark = SparkSession.builder.getOrCreate() if spark is None else spark
@@ -87,6 +95,7 @@ class DQEngineCore(DQEngineCoreBase):
             datetime.fromisoformat(extra_params.run_time_overwrite) if extra_params.run_time_overwrite else None
         )
         self.engine_user_metadata = extra_params.user_metadata
+        self.suppress_skipped = extra_params.suppress_skipped
 
         self.observer = observer
         if self.observer:
@@ -121,6 +130,8 @@ class DQEngineCore(DQEngineCoreBase):
         Raises:
             InvalidCheckError: If any of the checks are invalid.
         """
+        self._validate_result_column_collisions(df)
+
         if not checks:
             observed_result = self._observe_metrics(self._append_empty_checks(df))
             if isinstance(observed_result, tuple):
@@ -136,19 +147,49 @@ class DQEngineCore(DQEngineCoreBase):
         warning_checks = self._get_check_columns(checks, Criticality.WARN.value)
         error_checks = self._get_check_columns(checks, Criticality.ERROR.value)
 
+        rule_set_fingerprint = compute_rule_set_fingerprint(checks) if checks else None
+
         result_df = self._create_results_array(
-            df, error_checks, self._result_column_names[ColumnArguments.ERRORS], ref_dfs
+            df,
+            error_checks,
+            self._result_column_names[ColumnArguments.ERRORS],
+            self._result_column_names[ColumnArguments.INFO],
+            ref_dfs,
+            rule_set_fingerprint=rule_set_fingerprint,
         )
         result_df = self._create_results_array(
-            result_df, warning_checks, self._result_column_names[ColumnArguments.WARNINGS], ref_dfs
+            result_df,
+            warning_checks,
+            self._result_column_names[ColumnArguments.WARNINGS],
+            self._result_column_names[ColumnArguments.INFO],
+            ref_dfs,
+            rule_set_fingerprint=rule_set_fingerprint,
         )
-        observed_result = self._observe_metrics(result_df)
+
+        # Duplicate check names are intentionally preserved — if two rules share a name,
+        # check_metrics will report each occurrence separately so the user can spot the overlap.
+        check_names = [check.name for check in checks]
+        observed_result = self._observe_metrics(result_df, check_names)
 
         if isinstance(observed_result, tuple):
             observed_df, observation = observed_result
             return observed_df, observation
 
         return observed_result
+
+    def _validate_result_column_collisions(self, df: DataFrame) -> None:
+        df_columns = set(df.columns)
+        errors_col = self._result_column_names[ColumnArguments.ERRORS]
+        warnings_col = self._result_column_names[ColumnArguments.WARNINGS]
+        info_col = self._result_column_names[ColumnArguments.INFO]
+
+        result_collisions = [col for col in (errors_col, warnings_col, info_col) if col in df_columns]
+        if result_collisions:
+            collisions_str = ", ".join(result_collisions)
+            raise InvalidParameterError(
+                "Input DataFrame contains reserved DQX result columns: "
+                f"{collisions_str}. Rename input columns or configure extra params in 'DQEngine' for 'result_column_names'."
+            )
 
     def apply_checks_and_split(
         self, df: DataFrame, checks: list[DQRule], ref_dfs: dict[str, DataFrame] | None = None
@@ -210,7 +251,6 @@ class DQEngineCore(DQEngineCoreBase):
             summary metrics. Summary metrics are returned by any `DQEngine` with an `observer` specified.
         """
         dq_rule_checks = deserialize_checks(checks, custom_check_functions)
-
         return self.apply_checks(df, dq_rule_checks, ref_dfs)
 
     def apply_checks_by_metadata_and_split(
@@ -302,19 +342,25 @@ class DQEngineCore(DQEngineCoreBase):
         )
 
     @staticmethod
-    def load_checks_from_local_file(filepath: str) -> list[dict]:
+    def load_checks_from_local_file(filepath: str, variables: dict[str, VariableValue] | None = None) -> list[dict]:
         """
         Load DQ rules (checks) from a local JSON or YAML file.
 
         The returned checks can be used as input to *apply_checks_by_metadata*.
 
+        **Security note:** variable values substituted into **sql_expression** checks are
+        not sanitized. Callers must ensure that variable values come from trusted sources.
+
         Args:
             filepath: Path to a file containing checks definitions.
+            variables: Optional mapping of placeholder names to replacement values. Replaces placeholders
+                in all string values of the check definitions before returning.
 
         Returns:
             List of DQ rules.
         """
-        return FileChecksStorageHandler().load(FileChecksStorageConfig(location=filepath))
+        checks = FileChecksStorageHandler().load(FileChecksStorageConfig(location=filepath))
+        return resolve_variables(checks=checks, variables=variables)
 
     @staticmethod
     def save_checks_in_local_file(checks: list[dict], filepath: str):
@@ -345,6 +391,38 @@ class DQEngineCore(DQEngineCoreBase):
         """Check if all elements in the checks list are instances of DQRule."""
         return all(isinstance(check, DQRule) for check in checks)
 
+    def _preselect_original_columns(self, df: DataFrame, check: DQRule) -> DQRule:
+        """
+        Certain data quality checks (such as has_valid_schema) require access to the DataFrame's original schema—before
+        any DQX metadata columns, e.g.
+         * DQX result columns (e.g. '_warnings' and '_errors')
+         * Internal columns added by dataset-level checks
+        To enable this, check functions that need the original schema must be registered with
+        the register_for_original_columns_preselection decorator.
+
+        Args:
+            df: Input DataFrame
+            check: Updated DQRule
+        """
+        # check func does not require original columns
+        if check.check_func.__name__ not in CHECK_FUNC_REGISTRY_ORIGINAL_COLUMNS_PRESELECTION:
+            return check
+
+        # columns already provided in the check func kwargs
+        if check.check_func_kwargs.get("columns"):
+            return check
+
+        # columns already provided in the check func args
+        if check.check_func_args:
+            check_func_signature = inspect.signature(check.check_func)
+            if check_func_signature.parameters.get("columns"):
+                return check
+
+        # preselect original columns
+        rule_kwargs = check.check_func_kwargs.copy()
+        rule_kwargs["columns"] = [col for col in df.columns if col not in set(self._result_column_names.values())]
+        return replace(check, check_func_kwargs=rule_kwargs)
+
     def _append_empty_checks(self, df: DataFrame) -> DataFrame:
         """Append empty checks at the end of DataFrame.
 
@@ -361,7 +439,13 @@ class DQEngineCore(DQEngineCoreBase):
         )
 
     def _create_results_array(
-        self, df: DataFrame, checks: list[DQRule], dest_col: str, ref_dfs: dict[str, DataFrame] | None = None
+        self,
+        df: DataFrame,
+        checks: list[DQRule],
+        dest_col: str,
+        dest_info_col: str,
+        ref_dfs: dict[str, DataFrame] | None = None,
+        rule_set_fingerprint: str | None = None,
     ) -> DataFrame:
         """
         Apply a list of data quality checks to a DataFrame and assemble their results into an array column.
@@ -375,7 +459,9 @@ class DQEngineCore(DQEngineCoreBase):
             df: The input DataFrame to which checks are applied.
             checks: List of DQRule instances representing the checks to apply.
             dest_col: Name of the output column where the check results map will be stored.
+            dest_info_col: Name of the output column where the check info struct will be stored.
             ref_dfs: Optional dictionary of reference DataFrames, keyed by name, for use by dataset-level checks.
+            rule_set_fingerprint: Fingerprint of the rule set
 
         Returns:
             DataFrame with an added array column (*dest_col*) containing the results of the applied checks.
@@ -386,21 +472,31 @@ class DQEngineCore(DQEngineCoreBase):
             return df.select("*", empty_result)
 
         check_conditions = []
+        info_col_names: list[str] = []
         current_df = df
+        original_columns = set(df.columns)
 
         for check in checks:
+            # each check pass may add new columns to the df and certain checks require original columns
+            normalized_check = self._preselect_original_columns(df, check)
             manager = DQRuleManager(
-                check=check,
+                check=normalized_check,
                 df=current_df,
                 spark=self.spark,
                 run_id=self.run_id,
                 engine_user_metadata=self.engine_user_metadata,
                 run_time_overwrite=self.run_time_overwrite,
                 ref_dfs=ref_dfs,
+                suppress_skipped=self.suppress_skipped,
+                rule_fingerprint=check.rule_fingerprint,
+                rule_set_fingerprint=rule_set_fingerprint,
             )
             log_telemetry(self.ws, "check", check.check_func.__name__)
             result = manager.process()
             check_conditions.append(result.condition)
+            if result.info_column_name:
+                # dataset-level checks can optionally add an info column to the result DataFrame
+                info_col_names.append(result.info_column_name)
             # The DataFrame should contain any new columns added by the dataset-level checks
             # to satisfy the check condition.
             current_df = result.check_df
@@ -416,15 +512,32 @@ class DQEngineCore(DQEngineCoreBase):
             ),
         )
 
-        # Ensure the result DataFrame has the same columns as the input DataFrame + the new result column
-        return result_df.select(*df.columns, dest_col)
+        result_df = merge_info_columns(dest_info_col, result_df, info_col_names=info_col_names)
 
-    def _observe_metrics(self, df: DataFrame) -> DataFrame | tuple[DataFrame, Observation]:
+        # Drop temporary columns used to build check conditions, while preserving result columns.
+        columns_to_drop = [
+            col
+            for col in result_df.columns
+            if col not in original_columns
+            and col != dest_col
+            and col != dest_info_col
+            and col != self._result_column_names[ColumnArguments.ERRORS]
+            and col != self._result_column_names[ColumnArguments.WARNINGS]
+        ]
+        if columns_to_drop:
+            result_df = result_df.drop(*columns_to_drop)
+
+        return result_df
+
+    def _observe_metrics(
+        self, df: DataFrame, check_names: list[str] | None = None
+    ) -> DataFrame | tuple[DataFrame, Observation]:
         """
         Adds Spark observable metrics to the input DataFrame.
 
         Args:
             df: Input DataFrame
+            check_names: Optional list of check names to include per-check metrics.
 
         Returns:
             The unmodified DataFrame with observed metrics and the corresponding Spark Observation
@@ -432,7 +545,7 @@ class DQEngineCore(DQEngineCoreBase):
         if not self.observer:
             return df
 
-        metric_exprs = [F.expr(metric_statement) for metric_statement in self.observer.metrics]
+        metric_exprs = [F.expr(m) for m in self.observer.get_metrics(check_names)]
         if not metric_exprs:
             return df
 
@@ -472,8 +585,9 @@ class DQEngine(DQEngineBase):
     ):
         super().__init__(workspace_client)
 
+        self._extra_params = extra_params or ExtraParams()
         self.spark = SparkSession.builder.getOrCreate() if spark is None else spark
-        self._engine = engine or DQEngineCore(workspace_client, spark, extra_params, observer)
+        self._engine = engine or DQEngineCore(workspace_client, spark, self._extra_params, observer)
         self._config_serializer = config_serializer or ConfigSerializer(workspace_client)
         self._checks_handler_factory: BaseChecksStorageHandlerFactory = (
             checks_handler_factory or ChecksStorageHandlerFactory(self.ws, self.spark)
@@ -545,7 +659,9 @@ class DQEngine(DQEngineBase):
             summary metrics. Summary metrics are returned by any `DQEngine` with an `observer` specified.
         """
         log_dataframe_telemetry(self.ws, self.spark, df)
-        return self._engine.apply_checks_by_metadata(df, checks, custom_check_functions, ref_dfs)
+        return self._engine.apply_checks_by_metadata(
+            df=df, checks=checks, custom_check_functions=custom_check_functions, ref_dfs=ref_dfs
+        )
 
     @telemetry_logger("engine", "apply_checks_by_metadata_and_split")
     def apply_checks_by_metadata_and_split(
@@ -574,18 +690,21 @@ class DQEngine(DQEngineBase):
             quality summary metrics. Summary metrics are returned by any `DQEngine` with an `observer` specified.
         """
         log_dataframe_telemetry(self.ws, self.spark, df)
-        return self._engine.apply_checks_by_metadata_and_split(df, checks, custom_check_functions, ref_dfs)
+        return self._engine.apply_checks_by_metadata_and_split(
+            df=df, checks=checks, custom_check_functions=custom_check_functions, ref_dfs=ref_dfs
+        )
 
     @telemetry_logger("engine", "apply_checks_and_save_in_table")
     def apply_checks_and_save_in_table(
         self,
-        checks: list[DQRule],
         input_config: InputConfig,
         output_config: OutputConfig,
+        checks: list[DQRule] | None = None,
         quarantine_config: OutputConfig | None = None,
         metrics_config: OutputConfig | None = None,
         ref_dfs: dict[str, DataFrame] | None = None,
         checks_location: str | None = None,
+        run_config_name: str = "default",
     ) -> None:
         """
         Apply data quality checks to input data and save results.
@@ -600,15 +719,29 @@ class DQEngine(DQEngineBase):
         tracked and written using *metrics_config*.
 
         Args:
-            checks: List of *DQRule* checks to apply.
             input_config: Input configuration (e.g., table/view or file location and read options).
             output_config: Output configuration (e.g., table name, mode, and write options).
+            checks: Optional list of *DQRule* checks to apply. If not provided, checks_location must be provided.
             quarantine_config: Optional configuration for writing invalid records.
             metrics_config: Optional configuration for writing summary metrics.
             ref_dfs: Optional reference DataFrames used by checks.
-            checks_location: Optional location of the checks. Used for reporting in the summary metrics table only.
+            checks_location: Optional location of the checks.  At least one of the parameters 'checks' or 'checks_location' must be provided.
+                - If 'checks' parameter is provided, it is only used for reporting purposes
+                - If 'checks' parameter is not provided, it is used for loading checks from the storage.
+            run_config_name: Name of the run configuration to use when loading checks from a table.
         """
         logger.info(f"Applying checks to {input_config.location}")
+
+        if checks is None and checks_location is None:
+            raise InvalidParameterError("Either 'checks_location' or 'checks' must be provided")
+
+        if checks is None and checks_location:
+            storage_handler, storage_config = self._checks_handler_factory.create_for_location(
+                location=checks_location, run_config_name=run_config_name
+            )
+            # raise an error if checks location not found
+            checks_metadata = storage_handler.load(storage_config)
+            checks = deserialize_checks(checks_metadata)
 
         df = read_input_data(self.spark, input_config)
 
@@ -634,6 +767,9 @@ class DQEngine(DQEngineBase):
             output_streaming_query = save_dataframe_as_table(checked_df, output_config)
             target_streaming_query = output_streaming_query
 
+        assert checks is not None  # guaranteed: either provided or loaded from checks_location above
+        rule_set_fingerprint = compute_rule_set_fingerprint(checks) if checks else None
+
         # Add listener for streaming metrics, targeting the specific query to avoid duplicates
         if self._engine.observer and metrics_config and target_streaming_query is not None:
             listener = self.get_streaming_metrics_listener(
@@ -641,8 +777,9 @@ class DQEngine(DQEngineBase):
                 output_config=output_config,
                 quarantine_config=quarantine_config,
                 metrics_config=metrics_config,
-                target_query_id=target_streaming_query.id,
                 checks_location=checks_location,
+                rule_set_fingerprint=rule_set_fingerprint,
+                target_query_id=target_streaming_query.id,
             )
             self.spark.streams.addListener(listener)
 
@@ -658,19 +795,21 @@ class DQEngine(DQEngineBase):
                 output_config=output_config,
                 quarantine_config=quarantine_config,
                 checks_location=checks_location,
+                rule_set_fingerprint=rule_set_fingerprint,
             )
 
     @telemetry_logger("engine", "apply_checks_by_metadata_and_save_in_table")
     def apply_checks_by_metadata_and_save_in_table(
         self,
-        checks: list[dict],
         input_config: InputConfig,
         output_config: OutputConfig,
+        checks: list[dict] | None = None,
         quarantine_config: OutputConfig | None = None,
         metrics_config: OutputConfig | None = None,
         custom_check_functions: dict[str, Callable] | None = None,
         ref_dfs: dict[str, DataFrame] | None = None,
         checks_location: str | None = None,
+        run_config_name: str = "default",  # required for checks stored in a table
     ) -> None:
         """
         Apply metadata-defined data quality checks to input data and save results.
@@ -682,21 +821,35 @@ class DQEngine(DQEngineBase):
         If *quarantine_config* is not provided, write all rows (including result columns) using *output_config*.
 
         Args:
-            checks: List of dicts describing checks. Each check dictionary must contain the following:
+            input_config: Input configuration (e.g., table/view or file location and read options).
+            output_config: Output configuration (e.g., table name, mode, and write options).
+            checks: Optional list of dicts containing checks to apply. If not provided, checks_location must be provided.
+                Each check dictionary must contain the following:
                 - *check* - A check definition including check function and arguments to use.
                 - *name* - Optional name for the resulting column. Auto-generated if not provided.
                 - *criticality* - Optional; either *error* (rows go only to the "bad" DataFrame) or *warn*
                   (rows appear in both DataFrames).
-            input_config: Input configuration (e.g., table/view or file location and read options).
-            output_config: Output configuration (e.g., table name, mode, and write options).
             quarantine_config: Optional configuration for writing invalid records.
             metrics_config: Optional configuration for writing summary metrics.
             custom_check_functions: Optional mapping of custom check function names
                 to callables/modules (e.g., globals()).
             ref_dfs: Optional reference DataFrames used by checks.
-            checks_location: Optional location of the checks. Used for reporting in the summary metrics table only.
+            checks_location: Optional location of the checks. At least one of the parameters 'checks' or 'checks_location' must be provided.
+                - If 'checks' param is provided, the parameter is only used for reporting purposes.
+                - If 'checks' param is not provided, the parameter is used for loading checks from the storage.
+            run_config_name: Name of the run configuration to use when loading checks from a table.
         """
         logger.info(f"Applying checks to {input_config.location}")
+
+        if checks is None and checks_location is None:
+            raise InvalidParameterError("Either 'checks_location' or 'checks' must be provided")
+
+        if checks is None and checks_location:
+            storage_handler, storage_config = self._checks_handler_factory.create_for_location(
+                location=checks_location, run_config_name=run_config_name
+            )
+            # raise an error if checks location not found
+            checks = storage_handler.load(storage_config)
 
         df = read_input_data(self.spark, input_config)
 
@@ -705,7 +858,9 @@ class DQEngine(DQEngineBase):
         quarantine_streaming_query = None
 
         if quarantine_config:
-            check_result = self.apply_checks_by_metadata_and_split(df, checks, custom_check_functions, ref_dfs)
+            check_result = self.apply_checks_by_metadata_and_split(
+                df=df, checks=checks, custom_check_functions=custom_check_functions, ref_dfs=ref_dfs
+            )
             if self._engine.observer:
                 good_df, bad_df, batch_observation = check_result
             else:
@@ -714,13 +869,20 @@ class DQEngine(DQEngineBase):
             quarantine_streaming_query = save_dataframe_as_table(bad_df, quarantine_config)
             target_streaming_query = quarantine_streaming_query
         else:
-            check_result = self.apply_checks_by_metadata(df, checks, custom_check_functions, ref_dfs)
+            check_result = self.apply_checks_by_metadata(
+                df=df, checks=checks, custom_check_functions=custom_check_functions, ref_dfs=ref_dfs
+            )
             if self._engine.observer:
                 checked_df, batch_observation = check_result
             else:
                 checked_df = check_result
             output_streaming_query = save_dataframe_as_table(checked_df, output_config)
             target_streaming_query = output_streaming_query
+
+        assert checks is not None  # guaranteed: either provided or loaded from checks_location above
+        rule_set_fingerprint = (
+            compute_rule_set_fingerprint_by_metadata(checks, custom_check_functions) if checks else None
+        )
 
         # Add listener for streaming metrics, targeting the specific query to avoid duplicates
         if self._engine.observer and metrics_config and target_streaming_query is not None:
@@ -729,8 +891,9 @@ class DQEngine(DQEngineBase):
                 output_config=output_config,
                 quarantine_config=quarantine_config,
                 metrics_config=metrics_config,
-                target_query_id=target_streaming_query.id,
                 checks_location=checks_location,
+                rule_set_fingerprint=rule_set_fingerprint,
+                target_query_id=target_streaming_query.id,
             )
             self.spark.streams.addListener(listener)
 
@@ -746,6 +909,7 @@ class DQEngine(DQEngineBase):
                 output_config=output_config,
                 quarantine_config=quarantine_config,
                 checks_location=checks_location,
+                rule_set_fingerprint=rule_set_fingerprint,
             )
 
     @telemetry_logger("engine", "apply_checks_and_save_in_tables")
@@ -886,7 +1050,11 @@ class DQEngine(DQEngineBase):
         Returns:
             ChecksValidationStatus indicating the validation result.
         """
-        return DQEngineCore.validate_checks(checks, custom_check_functions, validate_custom_check_functions)
+        return DQEngineCore.validate_checks(
+            checks=checks,
+            custom_check_functions=custom_check_functions,
+            validate_custom_check_functions=validate_custom_check_functions,
+        )
 
     def get_invalid(self, df: DataFrame) -> DataFrame:
         """
@@ -925,6 +1093,7 @@ class DQEngine(DQEngineBase):
         product_name: str = "dqx",
         assume_user: bool = True,
         install_folder: str | None = None,
+        rule_set_fingerprint: str | None = None,
     ):
         """
         Persist result DataFrames using explicit configs or the named run configuration.
@@ -946,6 +1115,7 @@ class DQEngine(DQEngineBase):
             product_name: Product/installation identifier used to resolve installation paths for config loading in install_folder is not provided (use "dqx" if not provided).
             assume_user: Whether to assume a per-user installation when loading the run configuration (use *True* if not provided, skipped if install_folder is provided).
             install_folder: Custom workspace installation folder. Required if DQX is installed in a custom folder.
+            rule_set_fingerprint: Optional SHA-256 fingerprint of the rule set used. Included in summary metrics when metrics_config is provided.
 
         Returns:
             None
@@ -971,7 +1141,7 @@ class DQEngine(DQEngineBase):
             )
             quarantine_config = run_config.quarantine_config
 
-        if self._engine.observer and metrics_config is None:
+        if observation is not None and metrics_config is None:
             run_config = self._config_serializer.load_run_config(
                 run_config_name=run_config_name,
                 assume_user=assume_user,
@@ -998,6 +1168,7 @@ class DQEngine(DQEngineBase):
                 output_config=output_config,
                 quarantine_config=quarantine_config,
                 metrics_config=metrics_config,
+                rule_set_fingerprint=rule_set_fingerprint,
                 target_query_id=target_query.id,
             )
             self.spark.streams.addListener(listener)
@@ -1012,10 +1183,13 @@ class DQEngine(DQEngineBase):
                 metrics_config=metrics_config,
                 output_config=output_config,
                 quarantine_config=quarantine_config,
+                rule_set_fingerprint=rule_set_fingerprint,
             )
 
     @telemetry_logger("engine", "load_checks")
-    def load_checks(self, config: BaseChecksStorageConfig) -> list[dict]:
+    def load_checks(
+        self, config: BaseChecksStorageConfig, variables: dict[str, VariableValue] | None = None
+    ) -> list[dict]:
         """Load DQ rules (checks) from the storage backend described by *config*.
 
         This method delegates to a storage handler selected by the factory
@@ -1030,8 +1204,16 @@ class DQEngine(DQEngineBase):
         - *InstallationChecksStorageConfig* (installation directory);
         - *VolumeFileChecksStorageConfig* (Unity Catalog volume file);
 
+        Per-call *variables* are merged with engine-level defaults from
+        *ExtraParams.variables* (per-call values take precedence on conflict).
+
+        **Security note:** variable values substituted into **sql_expression** checks are
+        not sanitized. Callers must ensure that variable values come from trusted sources.
+
         Args:
             config: Configuration object describing the storage backend.
+            variables: Optional mapping of placeholder names to replacement values. Replaces placeholders
+                in all string values of the check definitions before returning.
 
         Returns:
             List of DQ rules (checks) represented as dictionaries.
@@ -1040,10 +1222,31 @@ class DQEngine(DQEngineBase):
             InvalidConfigError: If the configuration type is unsupported.
         """
         handler = self._checks_handler_factory.create(config)
-        return handler.load(config)
+        checks = handler.load(config)
+        merged_variables = self._merge_variables(variables)
+        return resolve_variables(checks=checks, variables=merged_variables)
+
+    def _merge_variables(self, per_call: dict[str, VariableValue] | None) -> dict[str, VariableValue] | None:
+        """Merge engine-level default variables with per-call overrides.
+
+        Per-call values take precedence over engine-level defaults.
+        """
+        defaults = self._extra_params.variables
+        if not defaults and not per_call:
+            return None
+        if not defaults:
+            return per_call
+        if not per_call:
+            return defaults
+        return {**defaults, **per_call}
 
     @telemetry_logger("engine", "save_checks")
-    def save_checks(self, checks: list[dict], config: BaseChecksStorageConfig) -> None:
+    def save_checks(
+        self,
+        checks: list[dict],
+        config: BaseChecksStorageConfig,
+        variables: dict[str, VariableValue] | None = None,
+    ) -> None:
         """Persist DQ rules (checks) to the storage backend described by *config*.
 
         The appropriate storage handler is resolved from the configuration
@@ -1059,9 +1262,16 @@ class DQEngine(DQEngineBase):
         - *InstallationChecksStorageConfig* (installation directory);
         - *VolumeFileChecksStorageConfig* (Unity Catalog volume file);
 
+        Per-call *variables* are merged with engine-level defaults from
+        *ExtraParams.variables* (per-call values take precedence on conflict).
+        Variables are resolved before computing fingerprints and persisting,
+        ensuring that stored checks and their fingerprints are consistent.
+
         Args:
             checks: List of DQ rules (checks) to save (as dictionaries).
             config: Configuration object describing the storage backend and write options.
+            variables: Optional mapping of placeholder names to replacement values. Replaces placeholders
+                in all string values of the check definitions before saving.
 
         Returns:
             None
@@ -1069,8 +1279,10 @@ class DQEngine(DQEngineBase):
         Raises:
             InvalidConfigError: If the configuration type is unsupported.
         """
+        merged_variables = self._merge_variables(variables)
+        resolved_checks = resolve_variables(checks=checks, variables=merged_variables)
         handler = self._checks_handler_factory.create(config)
-        handler.save(checks, config)
+        handler.save(resolved_checks, config)
 
     @telemetry_logger("engine", "save_summary_metrics")
     def save_summary_metrics(
@@ -1081,6 +1293,7 @@ class DQEngine(DQEngineBase):
         output_config: OutputConfig | None = None,
         quarantine_config: OutputConfig | None = None,
         checks_location: str | None = None,
+        rule_set_fingerprint: str | None = None,
     ) -> None:
         """
         Save data quality summary metrics to a table.
@@ -1095,6 +1308,8 @@ class DQEngine(DQEngineBase):
             output_config: Optional output configuration with valid records location (included in metrics for traceability).
             quarantine_config: Optional quarantine configuration with invalid records location (included in metrics for traceability).
             checks_location: Location of the checks files (e.g., absolute workspace or volume directory, or delta table).
+            rule_set_fingerprint: Optional SHA-256 fingerprint of the rule set used for this run. Enables correlation with
+                checks storage and filtering metrics by rule set version.
 
         Note:
             The observation must have been triggered by an action (e.g., count(), write()) on the observed
@@ -1103,7 +1318,6 @@ class DQEngine(DQEngineBase):
             For streaming use spark.streams.addListener(get_streaming_metrics_listener(..))
         """
         if self._engine.observer:
-            self._validate_session_for_metrics()
             metrics_observation = DQMetricsObservation(
                 run_id=self._engine.run_id,
                 run_name=self._engine.observer.name,
@@ -1115,6 +1329,7 @@ class DQEngine(DQEngineBase):
                 output_location=output_config.location if output_config else None,
                 quarantine_location=quarantine_config.location if quarantine_config else None,
                 checks_location=checks_location,
+                rule_set_fingerprint=rule_set_fingerprint,
                 user_metadata=self._engine.engine_user_metadata,
             )
 
@@ -1129,6 +1344,7 @@ class DQEngine(DQEngineBase):
         output_config: OutputConfig | None = None,
         quarantine_config: OutputConfig | None = None,
         checks_location: str | None = None,
+        rule_set_fingerprint: str | None = None,
         target_query_id: str | None = None,
     ) -> StreamingMetricsListener:
         """
@@ -1140,6 +1356,7 @@ class DQEngine(DQEngineBase):
             output_config: Optional configuration for output data containing location.
             quarantine_config: Optional configuration for quarantine data containing location.
             checks_location: Optional location of the checks files (e.g., absolute workspace or volume directory, or delta table).
+            rule_set_fingerprint: Optional SHA-256 fingerprint of the rule set used for this run.
             target_query_id: Optional query ID of the specific streaming query to monitor. If provided, metrics will be collected only for this query.
 
         Returns:
@@ -1160,12 +1377,14 @@ class DQEngine(DQEngineBase):
         metrics_observation = DQMetricsObservation(
             run_id=self._engine.run_id,
             run_name=self._engine.observer.name,
+            run_time_overwrite=self._engine.run_time_overwrite,
             error_column_name=self._engine.result_column_names[ColumnArguments.ERRORS],
             warning_column_name=self._engine.result_column_names[ColumnArguments.WARNINGS],
             input_location=input_config.location if input_config else None,
             output_location=output_config.location if output_config else None,
             quarantine_location=quarantine_config.location if quarantine_config else None,
             checks_location=checks_location,
+            rule_set_fingerprint=rule_set_fingerprint,
             user_metadata=self._engine.engine_user_metadata,
         )
         return StreamingMetricsListener(metrics_config, metrics_observation, self.spark, target_query_id)
@@ -1211,18 +1430,6 @@ class DQEngine(DQEngineBase):
             ref_dfs=ref_dfs,
             checks_location=storage_config.location,
         )
-
-    def _validate_session_for_metrics(self) -> None:
-        """
-        Validates the session for metrics collection.
-
-        Raises:
-            TypeError: If the session is a SparkConnect session.
-        """
-        if isinstance(self.spark, pyspark.sql.connect.session.SparkSession):
-            raise TypeError(
-                "Metrics collection is not supported for SparkConnect sessions. Use a Spark cluster with Dedicated access mode to collect metrics."
-            )
 
     @staticmethod
     def _wait_for_one_time_trigger_streaming_queries(

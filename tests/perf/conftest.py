@@ -9,7 +9,7 @@ from pyspark.sql.types import _parse_datatype_string
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.config import ExtraParams
 
-from tests.conftest import TEST_CATALOG
+from tests.constants import TEST_CATALOG
 
 
 logging.getLogger("tests").setLevel("DEBUG")
@@ -74,6 +74,13 @@ def all_row_checks():
 @pytest.fixture
 def all_dataset_checks():
     file_path = Path(__file__).parent.parent / "resources" / "all_dataset_checks.yaml"
+    with open(file_path, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+
+@pytest.fixture
+def all_dataset_geo_checks():
+    file_path = Path(__file__).parent.parent / "resources" / "all_dateset_geo_checks.yaml"
     with open(file_path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
 

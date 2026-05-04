@@ -1,12 +1,12 @@
-from __future__ import annotations
-
 import logging
 import datetime
 import json
+from decimal import Decimal
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 from pyspark.sql import SparkSession
-from databricks.sdk import WorkspaceClient
 
+from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.base import DQEngineBase
 from databricks.labs.dqx.config import LLMModelConfig, InputConfig
 from databricks.labs.dqx.engine import DQEngine
@@ -27,11 +27,13 @@ except ImportError:
 # Conditional imports for data contract support
 try:
     from databricks.labs.dqx.datacontract.contract_rules_generator import DataContractRulesGenerator
-    from datacontract.data_contract import DataContract  # type: ignore
 
     DATACONTRACT_ENABLED = True
 except ImportError:
     DATACONTRACT_ENABLED = False
+
+if TYPE_CHECKING:
+    from datacontract.data_contract import DataContract
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +117,9 @@ class DQGenerator(DQEngineBase):
                 to infer schema. If not provided, LLM will be used to guess the table schema.
 
         Returns:
-            A list of dictionaries representing the generated data quality rules.
+            A list of dictionaries representing the generated data quality rules. Rules that fail
+            *DQEngine.validate_checks* (e.g. missing required arguments, unknown function names)
+            are dropped and logged at *WARNING*; only valid rules are returned.
 
         Raises:
             MissingParameterError: If DSPy compiler is not available.
@@ -138,33 +142,57 @@ class DQGenerator(DQEngineBase):
             user_input=user_input, schema_info=schema_info, summary_stats=summary_stats
         )
 
-        # Validate the generated rules
-        dq_rules = json.loads(prediction.quality_rules)
-        status = DQEngine.validate_checks(checks=dq_rules, custom_check_functions=self.custom_check_functions)
-        if status.has_errors:
-            logger.warning(f"Generated rules have validation errors: {status.errors}")
-        else:
+        # Validate the generated rules and drop any that fail — the LLM occasionally
+        # emits rules missing required arguments (e.g. `column` for `regex_match`),
+        # and returning them would raise `InvalidCheckError` at apply time.
+        raw_rules = json.loads(prediction.quality_rules)
+        dq_rules = self._filter_valid_rules(raw_rules)
+
+        if dq_rules:
             logger.info(f"Generated {len(dq_rules)} rules with LLM: {dq_rules}")
             logger.info(f"LLM reasoning: {prediction.reasoning}")
 
-        logger.info(f"✅ AI-Assisted quality rules generation completed. Generated {len(dq_rules)} rules.")
+        logger.info(
+            f"✅ AI-Assisted quality rules generation completed. Generated {len(dq_rules)} valid rule(s) "
+            f"out of {len(raw_rules)} LLM output(s)."
+        )
         return dq_rules
+
+    def _filter_valid_rules(self, rules: list[dict]) -> list[dict]:
+        """Return only rules that pass ``DQEngine.validate_checks``.
+
+        Rules rejected by the validator are logged at WARNING with the specific
+        validation errors so invalid LLM output is visible but does not propagate
+        to callers.
+        """
+        valid: list[dict] = []
+        for rule in rules:
+            status = DQEngine.validate_checks(checks=[rule], custom_check_functions=self.custom_check_functions)
+            if status.has_errors:
+                logger.warning(f"Dropping LLM-generated rule that failed validation: {rule}. Errors: {status.errors}")
+                continue
+            valid.append(rule)
+        return valid
 
     @telemetry_logger("generator", "generate_rules_from_contract")
     def generate_rules_from_contract(
         self,
-        contract: DataContract | None = None,
+        contract: "DataContract | None" = None,
         contract_file: str | None = None,
         contract_format: str = "odcs",
         generate_predefined_rules: bool = True,
         process_text_rules: bool = True,
+        generate_schema_validation: bool = True,
+        strict_schema_validation: bool = True,
         default_criticality: str = "error",
     ) -> list[dict]:
         """
         Generate DQX quality rules from a data contract specification.
 
-        Parses a data contract (currently supporting ODCS v3.0.x) and generates rules based on
+        Parses a data contract (ODCS v3.x; any apiVersion accepted by the library, e.g. v3.0.2, v3.1.0) and generates rules based on
         schema properties, explicit quality definitions, and text-based expectations.
+        When the contract defines a schema and generate_schema_validation is True, one dataset-level
+        has_valid_schema rule per schema is generated. strict_schema_validation is passed to the check.
 
         Args:
             contract: Pre-loaded DataContract object from datacontract-cli. Can be created with:
@@ -175,6 +203,8 @@ class DQGenerator(DQEngineBase):
             contract_format: Contract format specification (default is "odcs").
             generate_predefined_rules: Whether to generate rules from schema properties.
             process_text_rules: Whether to process text-based expectations using LLM.
+            generate_schema_validation: Whether to generate dataset-level has_valid_schema rules (default True).
+            strict_schema_validation: Passed as strict to has_valid_schema (default True = exact match; False = permissive).
             default_criticality: Default criticality for generated rules as "warn" or "error" (default is "error").
 
         Returns:
@@ -207,6 +237,8 @@ class DQGenerator(DQEngineBase):
             contract_format=contract_format,
             generate_predefined_rules=generate_predefined_rules,
             process_text_rules=process_text_rules,
+            generate_schema_validation=generate_schema_validation,
+            strict_schema_validation=strict_schema_validation,
             default_criticality=default_criticality,
         )
         logger.info(
@@ -253,7 +285,7 @@ class DQGenerator(DQEngineBase):
             return None
 
         def _is_num(value):
-            return isinstance(value, (int, float))
+            return isinstance(value, (int, float, Decimal))
 
         def _is_temporal(value):
             return isinstance(value, (datetime.date, datetime.datetime))
@@ -353,6 +385,28 @@ class DQGenerator(DQEngineBase):
         }
 
     @staticmethod
+    def dq_generate_is_not_empty(column: str, criticality: str = "error", **params: dict):
+        """
+        Generates a data quality rule to check if a column's value is not empty (nulls are allowed).
+
+        Args:
+            column: The name of the column to check.
+            criticality: The criticality of the rule as "warn" or "error" (default is "error").
+            params: Additional parameters, including whether to trim strings.
+
+        Returns:
+            A dictionary representing the data quality rule.
+        """
+        return {
+            "check": {
+                "function": "is_not_empty",
+                "arguments": {"column": column, "trim_strings": params.get("trim_strings", True)},
+            },
+            "name": f"{column}_is_not_empty",
+            "criticality": criticality,
+        }
+
+    @staticmethod
     def dq_generate_is_unique(column: str, criticality: str = "error", **params: dict):
         """Generates a data quality rule to check if specified columns are unique.
 
@@ -394,5 +448,6 @@ class DQGenerator(DQEngineBase):
         "is_in": dq_generate_is_in,
         "min_max": dq_generate_min_max,
         "is_not_null_or_empty": dq_generate_is_not_null_or_empty,
+        "is_not_empty": dq_generate_is_not_empty,
         "is_unique": dq_generate_is_unique,
     }

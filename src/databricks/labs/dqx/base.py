@@ -2,11 +2,14 @@ import abc
 from collections.abc import Callable
 from functools import cached_property
 from typing import final
+
 from pyspark.sql import DataFrame, Observation
+
+from databricks.labs.dqx.__about__ import __version__
 from databricks.labs.dqx.checks_validator import ChecksValidationStatus
 from databricks.labs.dqx.rule import DQRule
+from databricks.labs.dqx.utils import VariableValue
 from databricks.sdk import WorkspaceClient
-from databricks.labs.dqx.__about__ import __version__
 
 
 class DQEngineBase(abc.ABC):
@@ -175,14 +178,19 @@ class DQEngineCoreBase(DQEngineBase):
 
     @staticmethod
     @abc.abstractmethod
-    def load_checks_from_local_file(filepath: str) -> list[dict]:
+    def load_checks_from_local_file(filepath: str, variables: dict[str, VariableValue] | None = None) -> list[dict]:
         """
         Load DQ rules (checks) from a local JSON or YAML file.
 
         The returned checks can be used as input to *apply_checks_by_metadata*.
 
+        **Security note:** variable values substituted into **sql_expression** checks are
+        not sanitized. Callers must ensure that variable values come from trusted sources.
+
         Args:
             filepath: Path to a file containing checks definitions.
+            variables: Optional mapping of placeholder names to replacement values. Replaces placeholders
+                in all string values of the check definitions before returning.
 
         Returns:
             List of DQ rules (checks).

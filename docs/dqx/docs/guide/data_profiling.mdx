@@ -10,12 +10,15 @@ import useBaseUrl from '@docusaurus/useBaseUrl';
 # Profiling and Quality Checks Generation
 
 Data profiling can be run to profile input data and generate quality rule candidates with summary statistics.
+
 The generated data quality rules (checks) candidates can be used as input for the quality checking as described [here](/docs/guide/quality_checks_apply).
 In addition, the Lakeflow (DLT) generator can generate native Lakeflow Pipelines expectations.
 
 You can run profiling and quality checks generation using the following approaches:
 * [Programmatic approach](#programmatic-approach): you can use DQX classes to run the profiler and quality checks generator on DataFrames or tables, and [save the generated checks to a storage](/docs/guide/quality_checks_storage).
 * [No-code approach (Profiler Workflow)](#no-code-approach-profiler-workflow): you can run the profiler and quality checks generator on tables as a workflow if DQX is installed in the workspace as a tool. The workflow will save the generated checks to a file or table automatically.
+
+See [DQProfile Types](/docs/reference/profiler#dqprofile-types) for a complete list of profile types and associated DQX rules.
 
 <Admonition type="tip" title="Data profiling usage">
 Data profiling is typically performed as a one-time action for the input dataset to discover the initial set of quality rule candidates.
@@ -84,7 +87,7 @@ Data loaded as a DataFrame can be profiled using DQX classes to generate summary
   </TabItem>
 </Tabs>
 
-### Profiling a Table
+### Profiling a table
 
 Profiling and quality checks generation can be run on individual tables.
 
@@ -109,7 +112,7 @@ Profiling and quality checks generation can be run on individual tables.
   </TabItem>
 </Tabs>
 
-### Profiling multiple Tables
+### Profiling multiple tables
 
 The profiler can discover and profile multiple tables accessible via Unity Catalog. Tables can be passed explicitly as a list or be included/excluded using wildcard patterns (e.g. `"catalog.schema.*"`).
 
@@ -309,6 +312,7 @@ The following fields from the [configuration file](/docs/installation/#configura
     - `sample_seed`: seed for reproducible sampling.
     - `limit`: maximum number of records to analyze.
     - `filter`: filter for the input data as a string SQL expression
+    - `criticality`: default criticality for generated rules, either `error` or `warn` (default: `error`).
 - `checks_user_requirements`: (optional) user input for AI-assisted rule generation. Only supported if `serverless_clusters` is enabled.
 - `llm_config`: (optional) configuration for the llm-assisted features
 - `serverless_clusters`: whether to use serverless clusters for running the workflow (default: 'true'). Using serverless clusters is recommended as it allows for automated cluster management and scaling.
@@ -337,6 +341,7 @@ Example of the configuration file (relevant fields only):
       sample_fraction: 0.3
       summary_stats_file: profile_summary_stats.yml
       filter: "maintenance_type = 'preventive'"
+      criticality: error  # default criticality for generated rules ('error' or 'warn')
       llm_primary_key_detection: false
     checks_user_requirements: "business rules description"  # optional user input for the llm-assisted features
 ```
@@ -373,7 +378,7 @@ The profiler supports extensive configuration options to customize the profiling
 
       # String handling
       "trim_strings": True,         # Trim whitespace from strings before analysis
-      "max_empty_ratio": 0.02,      # Generate is_not_null_or_empty rule if <2% empty strings
+      "max_empty_ratio": 0.02,      # Generate is_not_null_or_empty or is_not_empty rule if <2% empty strings
 
       # Distinct value analysis
       "distinct_ratio": 0.01,       # Generate is_in rule if <1% distinct values
@@ -410,6 +415,7 @@ The profiler supports extensive configuration options to customize the profiling
         - `sample_seed`: seed for reproducible sampling.
         - `limit`: maximum number of records to analyze.
         - `filter`: string SQL expression to filter the input data
+        - `criticality`: default criticality for generated rules, either `error` or `warn` (default: `error`).
 
     You can open the configuration file to check available run configs and adjust the settings if needed:
     ```commandline
@@ -424,6 +430,7 @@ The profiler supports extensive configuration options to customize the profiling
         sample_fraction: 0.3 # Fraction of data to sample (30%)
         limit: 1000          # Maximum number of records to analyze
         sample_seed: 42      # Seed for reproducible results
+        criticality: error   # default criticality for generated rules ('error' or 'warn')
         llm_primary_key_detection: false  # whether to use llm-assisted pk detection to generate uniqueness check
       ...
     ```
@@ -431,7 +438,7 @@ The profiler supports extensive configuration options to customize the profiling
   </TabItem>
 </Tabs>
 
-#### Profiling options for multiple table
+#### Profiling options for multiple tables
 
 When profiling multiple tables, you can pass a list of dictionaries to apply different options to each one.
 Wildcard patterns are supported, allowing you to match table names and apply specific options based on those patterns.
@@ -483,7 +490,7 @@ Wildcard patterns are supported, allowing you to match table names and apply spe
   </TabItem>
 </Tabs>
 
-## Understanding summary statistics
+## Understanding summary statistics and profiles
 
 <Admonition type="info" title="How the data is profiled">
 To ensure efficiency, summary statistics are computed on a **sampled subset** of your data, not the entire dataset. By default, the profiler proceeds as follows:

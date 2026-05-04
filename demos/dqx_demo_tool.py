@@ -192,6 +192,7 @@ from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.config import InstallationChecksStorageConfig, WorkspaceFileChecksStorageConfig
 from databricks.labs.dqx.config_serializer import ConfigSerializer
 from databricks.labs.dqx.io import read_input_data
+from databricks.labs.dqx.checks_serializer import ChecksNormalizer
 from databricks.sdk import WorkspaceClient
 
 
@@ -218,7 +219,7 @@ print(profiles)
 # generate DQX quality rules/checks
 generator = DQGenerator(ws)
 checks = generator.generate_dq_rules(profiles)  # with default level "error"
-print(yaml.safe_dump(checks))
+print(yaml.safe_dump(ChecksNormalizer.normalize(checks)))
 
 # save generated checks to location specified in the default run configuration inside workspace installation folder
 dq_engine.save_checks(checks, config=InstallationChecksStorageConfig(
@@ -371,9 +372,10 @@ display(spark.sql(f"SELECT * FROM {run_config.quarantine_config.location}"))
 
 from databricks.labs.dqx.config import InputConfig, OutputConfig
 
-
+# By default, apply_checks_and_save_in_table method apply checks to the entire input table.
+# Incremental processing is supported using streaming with the AvailableNow trigger for batch-style execution, along with checkpointing to ensure consistency across runs.
 dq_engine.apply_checks_by_metadata_and_save_in_table(
-    checks=checks,
+    checks=checks,  # or provide checks_location and run_config_name to auto-load from checks storage
     input_config=run_config.input_config,
     output_config=run_config.output_config,
     quarantine_config=run_config.quarantine_config,

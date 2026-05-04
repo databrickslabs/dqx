@@ -32,3 +32,20 @@ class CheckDownloadError(InvalidCheckError):
 
 class ODCSContractError(DQXError):
     """Raised when there is an error related to ODCS data contracts."""
+
+
+class ComputationError(DQXError):
+    """Raised when an internal computation fails (e.g. aggregation returned no result, empty data)."""
+
+
+class ModelLoadError(DQXError):
+    """Raised when a model cannot be loaded (e.g. version mismatch, corrupted artifact)."""
+
+
+class InvalidPhysicalTypeError(ODCSContractError):
+    """Raised when a schema property is missing physicalType or physicalType is not a valid Unity Catalog data type.
+
+    For schema validation we require every property to have physicalType set to a Unity Catalog
+    type (e.g. STRING, INT, ARRAY<STRING>, DECIMAL(10,2)). See:
+    https://learn.microsoft.com/en-gb/azure/databricks/sql/language-manual/sql-ref-datatypes
+    """

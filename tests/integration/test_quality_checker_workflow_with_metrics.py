@@ -1,10 +1,24 @@
 from datetime import timedelta
-from chispa.dataframe_comparer import assert_df_equality  # type: ignore
+from pyspark.testing.utils import assertDataFrameEqual
 
 from databricks.labs.dqx.config import WorkspaceFileChecksStorageConfig
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.metrics_observer import OBSERVATION_TABLE_SCHEMA
-from tests.integration.conftest import assert_quarantine_and_output_dfs, assert_output_df, RUN_TIME, RUN_ID
+from databricks.labs.dqx.rule_fingerprint import compute_rule_set_fingerprint_by_metadata
+from tests.integration.conftest import (
+    assert_df_equality_ignore_fingerprints,
+    assert_quarantine_and_output_dfs,
+    assert_output_df,
+    RUN_TIME,
+    RUN_ID,
+    WORKFLOW_CHECKS,
+)
+
+_WORKFLOW_RULE_SET_FINGERPRINT = compute_rule_set_fingerprint_by_metadata(WORKFLOW_CHECKS)
+_WORKFLOW_CHECK_METRICS_VALUE = (
+    '[{"check_name":"id_is_not_null","error_count":1,"warning_count":0},'
+    '{"check_name":"name_is_not_null_and_not_empty","error_count":2,"warning_count":0}]'
+)
 
 
 def test_quality_checker_workflow_with_metrics(spark, setup_workflows_with_metrics, expected_quality_checking_output):
@@ -21,6 +35,7 @@ def test_quality_checker_workflow_with_metrics(spark, setup_workflows_with_metri
             "output_location": run_config.output_config.location,
             "quarantine_location": None,
             "checks_location": checks_location,
+            "rule_set_fingerprint": _WORKFLOW_RULE_SET_FINGERPRINT,
             "metric_name": "input_row_count",
             "metric_value": "10",
             "run_time": RUN_TIME,
@@ -35,6 +50,7 @@ def test_quality_checker_workflow_with_metrics(spark, setup_workflows_with_metri
             "output_location": run_config.output_config.location,
             "quarantine_location": None,
             "checks_location": checks_location,
+            "rule_set_fingerprint": _WORKFLOW_RULE_SET_FINGERPRINT,
             "metric_name": "error_row_count",
             "metric_value": "3",
             "run_time": RUN_TIME,
@@ -49,6 +65,7 @@ def test_quality_checker_workflow_with_metrics(spark, setup_workflows_with_metri
             "output_location": run_config.output_config.location,
             "quarantine_location": None,
             "checks_location": checks_location,
+            "rule_set_fingerprint": _WORKFLOW_RULE_SET_FINGERPRINT,
             "metric_name": "warning_row_count",
             "metric_value": "0",
             "run_time": RUN_TIME,
@@ -63,8 +80,24 @@ def test_quality_checker_workflow_with_metrics(spark, setup_workflows_with_metri
             "output_location": run_config.output_config.location,
             "quarantine_location": None,
             "checks_location": checks_location,
+            "rule_set_fingerprint": _WORKFLOW_RULE_SET_FINGERPRINT,
             "metric_name": "valid_row_count",
             "metric_value": "7",
+            "run_time": RUN_TIME,
+            "error_column_name": "_errors",
+            "warning_column_name": "_warnings",
+            "user_metadata": None,
+        },
+        {
+            "run_id": RUN_ID,
+            "run_name": "dqx",
+            "input_location": run_config.input_config.location,
+            "output_location": run_config.output_config.location,
+            "quarantine_location": None,
+            "checks_location": checks_location,
+            "rule_set_fingerprint": _WORKFLOW_RULE_SET_FINGERPRINT,
+            "metric_name": "check_metrics",
+            "metric_value": _WORKFLOW_CHECK_METRICS_VALUE,
             "run_time": RUN_TIME,
             "error_column_name": "_errors",
             "warning_column_name": "_warnings",
@@ -76,7 +109,7 @@ def test_quality_checker_workflow_with_metrics(spark, setup_workflows_with_metri
         "metric_name"
     )
     actual_metrics_df = spark.table(run_config.metrics_config.location).orderBy("metric_name")
-    assert_df_equality(expected_metrics_df, actual_metrics_df)
+    assertDataFrameEqual(expected_metrics_df, actual_metrics_df)
 
     assert_output_df(spark, expected_quality_checking_output, run_config.output_config)
 
@@ -98,6 +131,7 @@ def test_quality_checker_workflow_with_quarantine_and_metrics(
             "output_location": run_config.output_config.location,
             "quarantine_location": run_config.quarantine_config.location,
             "checks_location": checks_location,
+            "rule_set_fingerprint": _WORKFLOW_RULE_SET_FINGERPRINT,
             "metric_name": "input_row_count",
             "metric_value": "10",
             "run_time": RUN_TIME,
@@ -112,6 +146,7 @@ def test_quality_checker_workflow_with_quarantine_and_metrics(
             "output_location": run_config.output_config.location,
             "quarantine_location": run_config.quarantine_config.location,
             "checks_location": checks_location,
+            "rule_set_fingerprint": _WORKFLOW_RULE_SET_FINGERPRINT,
             "metric_name": "error_row_count",
             "metric_value": "3",
             "run_time": RUN_TIME,
@@ -126,6 +161,7 @@ def test_quality_checker_workflow_with_quarantine_and_metrics(
             "output_location": run_config.output_config.location,
             "quarantine_location": run_config.quarantine_config.location,
             "checks_location": checks_location,
+            "rule_set_fingerprint": _WORKFLOW_RULE_SET_FINGERPRINT,
             "metric_name": "warning_row_count",
             "metric_value": "0",
             "run_time": RUN_TIME,
@@ -140,6 +176,7 @@ def test_quality_checker_workflow_with_quarantine_and_metrics(
             "output_location": run_config.output_config.location,
             "quarantine_location": run_config.quarantine_config.location,
             "checks_location": checks_location,
+            "rule_set_fingerprint": _WORKFLOW_RULE_SET_FINGERPRINT,
             "metric_name": "valid_row_count",
             "metric_value": "7",
             "run_time": RUN_TIME,
@@ -154,8 +191,24 @@ def test_quality_checker_workflow_with_quarantine_and_metrics(
             "output_location": run_config.output_config.location,
             "quarantine_location": run_config.quarantine_config.location,
             "checks_location": checks_location,
+            "rule_set_fingerprint": _WORKFLOW_RULE_SET_FINGERPRINT,
             "metric_name": "total_ids",
             "metric_value": "10",
+            "run_time": RUN_TIME,
+            "error_column_name": "_errors",
+            "warning_column_name": "_warnings",
+            "user_metadata": None,
+        },
+        {
+            "run_id": RUN_ID,
+            "run_name": "dqx",
+            "input_location": run_config.input_config.location,
+            "output_location": run_config.output_config.location,
+            "quarantine_location": run_config.quarantine_config.location,
+            "checks_location": checks_location,
+            "rule_set_fingerprint": _WORKFLOW_RULE_SET_FINGERPRINT,
+            "metric_name": "check_metrics",
+            "metric_value": _WORKFLOW_CHECK_METRICS_VALUE,
             "run_time": RUN_TIME,
             "error_column_name": "_errors",
             "warning_column_name": "_warnings",
@@ -167,20 +220,24 @@ def test_quality_checker_workflow_with_quarantine_and_metrics(
         "metric_name"
     )
     actual_metrics_df = spark.table(run_config.metrics_config.location).orderBy("metric_name")
-    assert_df_equality(expected_metrics_df, actual_metrics_df)
+    assertDataFrameEqual(expected_metrics_df, actual_metrics_df)
 
     assert_quarantine_and_output_dfs(
         ws, spark, expected_quality_checking_output, run_config.output_config, run_config.quarantine_config
     )
 
 
-def test_e2e_workflow_with_metrics(spark, setup_workflows_with_metrics, expected_quality_checking_output):
+def test_e2e_workflow_with_metrics(ws, spark, setup_workflows_with_metrics, expected_quality_checking_output):
     """Test that e2e workflow generates checks and applies them with metrics."""
     ctx, run_config = setup_workflows_with_metrics(custom_metrics=["max(id) as max_id", "min(id) as min_id"])
 
     ctx.deployed_workflows.run_workflow("e2e", run_config.name)
 
     checks_location = f"{ctx.installation.install_folder()}/{run_config.checks_location}"
+    dq_engine = DQEngine(ws, spark)
+    checks = dq_engine.load_checks(config=WorkspaceFileChecksStorageConfig(location=checks_location))
+    rule_set_fingerprint = compute_rule_set_fingerprint_by_metadata(checks)
+
     expected_metrics = [
         {
             "run_id": RUN_ID,
@@ -189,6 +246,7 @@ def test_e2e_workflow_with_metrics(spark, setup_workflows_with_metrics, expected
             "output_location": run_config.output_config.location,
             "quarantine_location": None,
             "checks_location": checks_location,
+            "rule_set_fingerprint": rule_set_fingerprint,
             "metric_name": "input_row_count",
             "metric_value": "10",
             "run_time": RUN_TIME,
@@ -203,6 +261,7 @@ def test_e2e_workflow_with_metrics(spark, setup_workflows_with_metrics, expected
             "output_location": run_config.output_config.location,
             "quarantine_location": None,
             "checks_location": checks_location,
+            "rule_set_fingerprint": rule_set_fingerprint,
             "metric_name": "max_id",
             "metric_value": "6",
             "run_time": RUN_TIME,
@@ -217,6 +276,7 @@ def test_e2e_workflow_with_metrics(spark, setup_workflows_with_metrics, expected
             "output_location": run_config.output_config.location,
             "quarantine_location": None,
             "checks_location": checks_location,
+            "rule_set_fingerprint": rule_set_fingerprint,
             "metric_name": "min_id",
             "metric_value": "1",
             "run_time": RUN_TIME,
@@ -231,10 +291,10 @@ def test_e2e_workflow_with_metrics(spark, setup_workflows_with_metrics, expected
     )
     actual_metrics_df = (
         spark.table(run_config.metrics_config.location)
-        .where("metric_name NOT IN ('error_row_count', 'warning_row_count', 'valid_row_count')")
+        .where("metric_name NOT IN ('error_row_count', 'warning_row_count', 'valid_row_count', 'check_metrics')")
         .orderBy("metric_name")
     )
-    assert_df_equality(expected_metrics_df, actual_metrics_df)
+    assertDataFrameEqual(expected_metrics_df, actual_metrics_df)
     assert expected_quality_checking_output.count() == spark.table(run_config.output_config.location).count()
 
 
@@ -261,6 +321,7 @@ def test_custom_metrics_in_workflow_for_all_run_configs(
             "output_location": run_config.output_config.location,
             "quarantine_location": None,
             "checks_location": checks_location,
+            "rule_set_fingerprint": _WORKFLOW_RULE_SET_FINGERPRINT,
             "metric_name": "input_row_count",
             "metric_value": "10",
             "run_time": RUN_TIME,
@@ -275,6 +336,7 @@ def test_custom_metrics_in_workflow_for_all_run_configs(
             "output_location": run_config.output_config.location,
             "quarantine_location": None,
             "checks_location": checks_location,
+            "rule_set_fingerprint": _WORKFLOW_RULE_SET_FINGERPRINT,
             "metric_name": "min_id",
             "metric_value": "1",
             "run_time": RUN_TIME,
@@ -289,6 +351,7 @@ def test_custom_metrics_in_workflow_for_all_run_configs(
             "output_location": run_config.output_config.location,
             "quarantine_location": None,
             "checks_location": checks_location,
+            "rule_set_fingerprint": _WORKFLOW_RULE_SET_FINGERPRINT,
             "metric_name": "max_id",
             "metric_value": "6",
             "run_time": RUN_TIME,
@@ -303,6 +366,7 @@ def test_custom_metrics_in_workflow_for_all_run_configs(
             "output_location": run_config.output_config.location,
             "quarantine_location": None,
             "checks_location": checks_location,
+            "rule_set_fingerprint": _WORKFLOW_RULE_SET_FINGERPRINT,
             "metric_name": "total_sum_id",
             "metric_value": "27",
             "run_time": RUN_TIME,
@@ -317,6 +381,7 @@ def test_custom_metrics_in_workflow_for_all_run_configs(
             "output_location": run_config.output_config.location,
             "quarantine_location": None,
             "checks_location": checks_location,
+            "rule_set_fingerprint": _WORKFLOW_RULE_SET_FINGERPRINT,
             "metric_name": "total_ids",
             "metric_value": "10",
             "run_time": RUN_TIME,
@@ -331,6 +396,7 @@ def test_custom_metrics_in_workflow_for_all_run_configs(
             "output_location": run_config.output_config.location,
             "quarantine_location": None,
             "checks_location": checks_location,
+            "rule_set_fingerprint": _WORKFLOW_RULE_SET_FINGERPRINT,
             "metric_name": "id_range",
             "metric_value": "5",
             "run_time": RUN_TIME,
@@ -347,10 +413,10 @@ def test_custom_metrics_in_workflow_for_all_run_configs(
     )
     actual_metrics_df = (
         spark.table(run_config.metrics_config.location)
-        .where("metric_name NOT IN ('error_row_count', 'warning_row_count', 'valid_row_count')")
+        .where("metric_name NOT IN ('error_row_count', 'warning_row_count', 'valid_row_count', 'check_metrics')")
         .orderBy("metric_name")
     )
-    assert_df_equality(expected_metrics_df, actual_metrics_df)
+    assertDataFrameEqual(expected_metrics_df, actual_metrics_df)
 
     assert_output_df(spark, expected_quality_checking_output, run_config.output_config)
 
@@ -376,6 +442,7 @@ def test_quality_checker_workflow_with_streaming_quarantine_and_metrics(
             "output_location": run_config.output_config.location,
             "quarantine_location": run_config.quarantine_config.location,
             "checks_location": checks_location,
+            "rule_set_fingerprint": _WORKFLOW_RULE_SET_FINGERPRINT,
             "metric_name": "input_row_count",
             "metric_value": "10",
             "run_time": RUN_TIME,
@@ -390,6 +457,7 @@ def test_quality_checker_workflow_with_streaming_quarantine_and_metrics(
             "output_location": run_config.output_config.location,
             "quarantine_location": run_config.quarantine_config.location,
             "checks_location": checks_location,
+            "rule_set_fingerprint": _WORKFLOW_RULE_SET_FINGERPRINT,
             "metric_name": "error_row_count",
             "metric_value": "3",
             "run_time": RUN_TIME,
@@ -404,6 +472,7 @@ def test_quality_checker_workflow_with_streaming_quarantine_and_metrics(
             "output_location": run_config.output_config.location,
             "quarantine_location": run_config.quarantine_config.location,
             "checks_location": checks_location,
+            "rule_set_fingerprint": _WORKFLOW_RULE_SET_FINGERPRINT,
             "metric_name": "warning_row_count",
             "metric_value": "0",
             "run_time": RUN_TIME,
@@ -418,6 +487,7 @@ def test_quality_checker_workflow_with_streaming_quarantine_and_metrics(
             "output_location": run_config.output_config.location,
             "quarantine_location": run_config.quarantine_config.location,
             "checks_location": checks_location,
+            "rule_set_fingerprint": _WORKFLOW_RULE_SET_FINGERPRINT,
             "metric_name": "valid_row_count",
             "metric_value": "7",
             "run_time": RUN_TIME,
@@ -432,8 +502,24 @@ def test_quality_checker_workflow_with_streaming_quarantine_and_metrics(
             "output_location": run_config.output_config.location,
             "quarantine_location": run_config.quarantine_config.location,
             "checks_location": checks_location,
+            "rule_set_fingerprint": _WORKFLOW_RULE_SET_FINGERPRINT,
             "metric_name": "total_ids",
             "metric_value": "10",
+            "run_time": RUN_TIME,
+            "error_column_name": "_errors",
+            "warning_column_name": "_warnings",
+            "user_metadata": None,
+        },
+        {
+            "run_id": RUN_ID,
+            "run_name": "dqx",
+            "input_location": run_config.input_config.location,
+            "output_location": run_config.output_config.location,
+            "quarantine_location": run_config.quarantine_config.location,
+            "checks_location": checks_location,
+            "rule_set_fingerprint": _WORKFLOW_RULE_SET_FINGERPRINT,
+            "metric_name": "check_metrics",
+            "metric_value": _WORKFLOW_CHECK_METRICS_VALUE,
             "run_time": RUN_TIME,
             "error_column_name": "_errors",
             "warning_column_name": "_warnings",
@@ -445,7 +531,7 @@ def test_quality_checker_workflow_with_streaming_quarantine_and_metrics(
         spark.createDataFrame(expected_metrics, schema=OBSERVATION_TABLE_SCHEMA).drop("run_time").orderBy("metric_name")
     )
     actual_metrics_df = spark.table(run_config.metrics_config.location).drop("run_time").orderBy("metric_name")
-    assert_df_equality(expected_metrics_df, actual_metrics_df)
+    assertDataFrameEqual(expected_metrics_df, actual_metrics_df)
 
     assert_quarantine_and_output_dfs(
         ws, spark, expected_quality_checking_output, run_config.output_config, run_config.quarantine_config
@@ -477,6 +563,7 @@ def test_quality_checker_workflow_with_continuous_streaming_quarantine_and_metri
             "output_location": run_config.output_config.location,
             "quarantine_location": run_config.quarantine_config.location,
             "checks_location": checks_location,
+            "rule_set_fingerprint": _WORKFLOW_RULE_SET_FINGERPRINT,
             "metric_name": "input_row_count",
             "metric_value": "10",
             "run_time": RUN_TIME,
@@ -491,6 +578,7 @@ def test_quality_checker_workflow_with_continuous_streaming_quarantine_and_metri
             "output_location": run_config.output_config.location,
             "quarantine_location": run_config.quarantine_config.location,
             "checks_location": checks_location,
+            "rule_set_fingerprint": _WORKFLOW_RULE_SET_FINGERPRINT,
             "metric_name": "error_row_count",
             "metric_value": "3",
             "run_time": RUN_TIME,
@@ -505,6 +593,7 @@ def test_quality_checker_workflow_with_continuous_streaming_quarantine_and_metri
             "output_location": run_config.output_config.location,
             "quarantine_location": run_config.quarantine_config.location,
             "checks_location": checks_location,
+            "rule_set_fingerprint": _WORKFLOW_RULE_SET_FINGERPRINT,
             "metric_name": "warning_row_count",
             "metric_value": "0",
             "run_time": RUN_TIME,
@@ -519,6 +608,7 @@ def test_quality_checker_workflow_with_continuous_streaming_quarantine_and_metri
             "output_location": run_config.output_config.location,
             "quarantine_location": run_config.quarantine_config.location,
             "checks_location": checks_location,
+            "rule_set_fingerprint": _WORKFLOW_RULE_SET_FINGERPRINT,
             "metric_name": "valid_row_count",
             "metric_value": "7",
             "run_time": RUN_TIME,
@@ -533,8 +623,24 @@ def test_quality_checker_workflow_with_continuous_streaming_quarantine_and_metri
             "output_location": run_config.output_config.location,
             "quarantine_location": run_config.quarantine_config.location,
             "checks_location": checks_location,
+            "rule_set_fingerprint": _WORKFLOW_RULE_SET_FINGERPRINT,
             "metric_name": "total_ids",
             "metric_value": "10",
+            "run_time": RUN_TIME,
+            "error_column_name": "_errors",
+            "warning_column_name": "_warnings",
+            "user_metadata": None,
+        },
+        {
+            "run_id": RUN_ID,
+            "run_name": "dqx",
+            "input_location": run_config.input_config.location,
+            "output_location": run_config.output_config.location,
+            "quarantine_location": run_config.quarantine_config.location,
+            "checks_location": checks_location,
+            "rule_set_fingerprint": _WORKFLOW_RULE_SET_FINGERPRINT,
+            "metric_name": "check_metrics",
+            "metric_value": _WORKFLOW_CHECK_METRICS_VALUE,
             "run_time": RUN_TIME,
             "error_column_name": "_errors",
             "warning_column_name": "_warnings",
@@ -546,7 +652,7 @@ def test_quality_checker_workflow_with_continuous_streaming_quarantine_and_metri
         spark.createDataFrame(expected_metrics, schema=OBSERVATION_TABLE_SCHEMA).drop("run_time").orderBy("metric_name")
     )
     actual_metrics_df = spark.table(run_config.metrics_config.location).drop("run_time").orderBy("metric_name")
-    assert_df_equality(expected_metrics_df, actual_metrics_df)
+    assertDataFrameEqual(expected_metrics_df, actual_metrics_df)
 
     assert_quarantine_and_output_dfs(
         ws, spark, expected_quality_checking_output, run_config.output_config, run_config.quarantine_config
@@ -589,6 +695,7 @@ def test_quality_checker_workflow_with_quarantine_and_metrics_for_patterns(
             "output_location": output_location,
             "quarantine_location": quarantine_location,
             "checks_location": checks_location,
+            "rule_set_fingerprint": _WORKFLOW_RULE_SET_FINGERPRINT,
             "metric_name": "input_row_count",
             "metric_value": "10",
             "run_time": RUN_TIME,
@@ -603,6 +710,7 @@ def test_quality_checker_workflow_with_quarantine_and_metrics_for_patterns(
             "output_location": output_location,
             "quarantine_location": quarantine_location,
             "checks_location": checks_location,
+            "rule_set_fingerprint": _WORKFLOW_RULE_SET_FINGERPRINT,
             "metric_name": "error_row_count",
             "metric_value": "3",
             "run_time": RUN_TIME,
@@ -617,6 +725,7 @@ def test_quality_checker_workflow_with_quarantine_and_metrics_for_patterns(
             "output_location": output_location,
             "quarantine_location": quarantine_location,
             "checks_location": checks_location,
+            "rule_set_fingerprint": _WORKFLOW_RULE_SET_FINGERPRINT,
             "metric_name": "warning_row_count",
             "metric_value": "0",
             "run_time": RUN_TIME,
@@ -631,8 +740,24 @@ def test_quality_checker_workflow_with_quarantine_and_metrics_for_patterns(
             "output_location": output_location,
             "quarantine_location": quarantine_location,
             "checks_location": checks_location,
+            "rule_set_fingerprint": _WORKFLOW_RULE_SET_FINGERPRINT,
             "metric_name": "valid_row_count",
             "metric_value": "7",
+            "run_time": RUN_TIME,
+            "error_column_name": "_errors",
+            "warning_column_name": "_warnings",
+            "user_metadata": None,
+        },
+        {
+            "run_id": RUN_ID,
+            "run_name": "dqx",
+            "input_location": run_config.input_config.location,
+            "output_location": output_location,
+            "quarantine_location": quarantine_location,
+            "checks_location": checks_location,
+            "rule_set_fingerprint": _WORKFLOW_RULE_SET_FINGERPRINT,
+            "metric_name": "check_metrics",
+            "metric_value": _WORKFLOW_CHECK_METRICS_VALUE,
             "run_time": RUN_TIME,
             "error_column_name": "_errors",
             "warning_column_name": "_warnings",
@@ -644,14 +769,14 @@ def test_quality_checker_workflow_with_quarantine_and_metrics_for_patterns(
         "metric_name"
     )
     actual_metrics_df = spark.table(run_config.metrics_config.location).orderBy("metric_name")
-    assert_df_equality(expected_metrics_df, actual_metrics_df)
+    assertDataFrameEqual(expected_metrics_df, actual_metrics_df)
 
     dq_engine = DQEngine(ws, spark)
     expected_output_df = dq_engine.get_valid(expected_quality_checking_output)
     expected_quarantine_df = dq_engine.get_invalid(expected_quality_checking_output)
 
     output_df = spark.table(input_table + "_dq_output")
-    assert_df_equality(output_df, expected_output_df, ignore_nullable=True)
+    assert_df_equality_ignore_fingerprints(output_df, expected_output_df, ignore_nullable=True)
 
     quarantine_df = spark.table(input_table + "_dq_quarantine")
-    assert_df_equality(quarantine_df, expected_quarantine_df, ignore_nullable=True)
+    assert_df_equality_ignore_fingerprints(quarantine_df, expected_quarantine_df, ignore_nullable=True)

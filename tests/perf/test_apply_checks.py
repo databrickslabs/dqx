@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from databricks.labs.dqx.rule import DQRowRule, DQDatasetRule, DQForEachColRule
 from databricks.labs.dqx.config import ExtraParams
 import pytest
+import pyspark.sql.functions as F
 from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.geo import check_funcs as geo_check_funcs
 from tests.perf.conftest import DEFAULT_ROWS
@@ -29,8 +30,8 @@ def test_benchmark_apply_checks_all_dataset_checks(benchmark, ws, all_dataset_ch
 
 
 @pytest.mark.parametrize("column", ["col1", "col2", "col3", "col4", "col5", "col6", "col7", "col8"])
-@pytest.mark.benchmark(group="test_benchmark_is_null_or_empty")
-def test_benchmark_is_null_or_empty(benchmark, ws, generated_df, column):
+@pytest.mark.benchmark(group="test_benchmark_is_not_null_and_not_empty")
+def test_benchmark_is_not_null_and_not_empty(benchmark, ws, generated_df, column):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     checks = [
         DQRowRule(
@@ -52,8 +53,8 @@ def test_benchmark_is_null_or_empty(benchmark, ws, generated_df, column):
     indirect=True,
     ids=lambda param: f"n_rows_{param['n_rows']}_n_columns_{param['n_columns']}",
 )
-@pytest.mark.benchmark(group="test_benchmark_foreach_is_null_or_empty")
-def test_benchmark_foreach_is_null_or_empty(benchmark, ws, generated_string_df):
+@pytest.mark.benchmark(group="test_benchmark_foreach_is_not_null_and_not_empty")
+def test_benchmark_foreach_is_not_null_and_not_empty(benchmark, ws, generated_string_df):
     columns, df, n_rows = generated_string_df
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     checks = [
@@ -139,6 +140,126 @@ def test_benchmark_foreach_is_not_null(benchmark, ws, generated_string_df):
     checks = [
         *DQForEachColRule(
             check_func=check_funcs.is_not_null,
+            columns=columns,
+            criticality="error",
+        ).get_rules()
+    ]
+    benchmark.group += f"_{n_rows}_rows_{len(columns)}_columns"
+    result = benchmark(lambda: dq_engine.apply_checks(df, checks).count())
+    assert result == EXPECTED_ROWS
+
+
+@pytest.mark.parametrize("column", ["col1", "col2", "col3", "col4", "col5", "col6", "col7", "col8"])
+@pytest.mark.benchmark(group="test_benchmark_is_null")
+def test_benchmark_is_null(benchmark, ws, generated_df, column):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            name=f"{column}_is_null",
+            criticality="warn",
+            check_func=check_funcs.is_null,
+            column=column,
+        ),
+    ]
+    benchmark.group += f" {column}"
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+@pytest.mark.parametrize(
+    "generated_string_df",
+    [{"n_rows": DEFAULT_ROWS, "n_columns": 5, "percentNulls": 0.20}],
+    indirect=True,
+    ids=lambda param: f"n_rows_{param['n_rows']}_n_columns_{param['n_columns']}",
+)
+@pytest.mark.benchmark(group="test_benchmark_foreach_is_null")
+def test_benchmark_foreach_is_null(benchmark, ws, generated_string_df):
+    columns, df, n_rows = generated_string_df
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        *DQForEachColRule(
+            check_func=check_funcs.is_null,
+            columns=columns,
+            criticality="error",
+        ).get_rules()
+    ]
+    benchmark.group += f"_{n_rows}_rows_{len(columns)}_columns"
+    result = benchmark(lambda: dq_engine.apply_checks(df, checks).count())
+    assert result == EXPECTED_ROWS
+
+
+@pytest.mark.parametrize("column", ["col1", "col2", "col3", "col4", "col5", "col6", "col7", "col8"])
+@pytest.mark.benchmark(group="test_benchmark_is_empty")
+def test_benchmark_is_empty(benchmark, ws, generated_df, column):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            name=f"{column}_is_empty",
+            criticality="warn",
+            check_func=check_funcs.is_empty,
+            column=column,
+        ),
+    ]
+    benchmark.group += f" {column}"
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+@pytest.mark.parametrize(
+    "generated_string_df",
+    [{"n_rows": DEFAULT_ROWS, "n_columns": 5}],
+    indirect=True,
+    ids=lambda param: f"n_rows_{param['n_rows']}_n_columns_{param['n_columns']}",
+)
+@pytest.mark.benchmark(group="test_benchmark_foreach_is_empty")
+def test_benchmark_foreach_is_empty(benchmark, ws, generated_string_df):
+    columns, df, n_rows = generated_string_df
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        *DQForEachColRule(
+            check_func=check_funcs.is_empty,
+            columns=columns,
+            criticality="error",
+        ).get_rules()
+    ]
+    benchmark.group += f"_{n_rows}_rows_{len(columns)}_columns"
+    result = benchmark(lambda: dq_engine.apply_checks(df, checks).count())
+    assert result == EXPECTED_ROWS
+
+
+@pytest.mark.parametrize("column", ["col1", "col2", "col3", "col4", "col5", "col6", "col7", "col8"])
+@pytest.mark.benchmark(group="test_benchmark_is_null_or_empty")
+def test_benchmark_is_null_or_empty(benchmark, ws, generated_df, column):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            name=f"{column}_is_null_or_empty",
+            criticality="warn",
+            check_func=check_funcs.is_null_or_empty,
+            column=column,
+        ),
+    ]
+    benchmark.group += f" {column}"
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+@pytest.mark.parametrize(
+    "generated_string_df",
+    [{"n_rows": DEFAULT_ROWS, "n_columns": 5}],
+    indirect=True,
+    ids=lambda param: f"n_rows_{param['n_rows']}_n_columns_{param['n_columns']}",
+)
+@pytest.mark.benchmark(group="test_benchmark_foreach_is_null_or_empty")
+def test_benchmark_foreach_is_null_or_empty(benchmark, ws, generated_string_df):
+    columns, df, n_rows = generated_string_df
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        *DQForEachColRule(
+            check_func=check_funcs.is_null_or_empty,
             columns=columns,
             criticality="error",
         ).get_rules()
@@ -1768,6 +1889,21 @@ def test_benchmark_is_num_points_not_equal_to(skip_if_runtime_not_geo_compatible
     assert actual_count == EXPECTED_ROWS
 
 
+def test_benchmark_are_polygons_mutually_disjoint(skip_if_runtime_not_geo_compatible, benchmark, ws, generated_geo_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    geo_df_with_geom = generated_geo_df.withColumn("geom", F.col("polygon_geom"))
+    checks = [
+        DQDatasetRule(
+            criticality="error",
+            check_func=geo_check_funcs.are_polygons_mutually_disjoint,
+            column="geom",
+        )
+    ]
+    checked = dq_engine.apply_checks(geo_df_with_geom, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
 @pytest.mark.benchmark(group="test_benchmark_has_valid_schema")
 def test_benchmark_has_valid_schema(benchmark, ws, generated_df):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
@@ -1920,6 +2056,35 @@ def test_benchmark_is_aggr_count_distinct_no_group_by(benchmark, ws, generated_d
             check_func_kwargs={
                 "aggr_type": "count_distinct",
                 "limit": 1000000,
+            },
+        )
+    ]
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+def test_benchmark_has_no_aggr_outliers(benchmark, ws, generated_df):
+    """Benchmark rolling-window sigma outlier check on a time-series aggregate.
+
+    Uses col6 (timestamp spanning 1900–2025 at 1-second intervals) bucketed by day,
+    averaging col2 per day. With 100M rows and ~45k day-buckets the rolling-window
+    aggregation exercises both the groupBy/Window path and the broadcast join back to
+    every row in df.
+    """
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQDatasetRule(
+            criticality="warn",
+            check_func=check_funcs.has_no_aggr_outliers,
+            column="col2",
+            check_func_kwargs={
+                "time_column": "col6",
+                "aggr_type": "avg",
+                "time_interval": "day",
+                "lookback_num_intervals": 14,
+                "warmup_num_intervals": 7,
+                "sigma": 3.0,
             },
         )
     ]

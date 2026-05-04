@@ -93,6 +93,15 @@ commands:
         description: The timeout in minutes for the cli to wait for the workflow to complete.
       - name: install-folder
         description: (Optional) Custom installation folder. If not provided, the default installation folder is used.
+  - name: train-anomaly
+    description: Train anomaly detection model using the anomaly-trainer workflow.
+    flags:
+      - name: run-config
+        description: (Optional) Selects run configuration from installation config. If not provided, run it for all run configurations.
+      - name: timeout-minutes
+        description: The timeout in minutes for the cli to wait for the workflow to complete.
+      - name: install-folder
+        description: (Optional) Custom installation folder. If not provided, the default installation folder is used.
   - name: workflows
     description: Show deployed workflows and their latest run state.
     table_template: |-

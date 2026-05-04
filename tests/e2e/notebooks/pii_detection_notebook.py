@@ -20,7 +20,7 @@ test_import_pii_module_fails_without_installation()
 
 # COMMAND ----------
 
-%pip install 'databricks-labs-dqx[pii] @ {dbutils.widgets.get("test_library_ref")}' chispa==0.10.1
+%pip install 'databricks-labs-dqx[pii] @ {dbutils.widgets.get("test_library_ref")}'
 
 # pre-installing spaCy models used in tests to avoid OOM issues during execution
 %pip install "en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl"
@@ -41,7 +41,7 @@ import pyspark.sql.functions as F
 from databricks.labs.dqx.pii.nlp_engine_config import NLPEngineConfig
 from databricks.labs.dqx.check_funcs import is_not_null
 from databricks.labs.dqx.pii.pii_detection_funcs import does_not_contain_pii
-from chispa import assert_df_equality
+from pyspark.testing.utils import assertDataFrameEqual
 
 # COMMAND ----------
 # DBTITLE 1,test_does_not_contain_pii_basic
@@ -90,14 +90,12 @@ def test_does_not_contain_pii_basic():
         ],
         checked_schema,
     )
-    transforms = [
-        lambda df: df.select(
-            F.ilike("col1_contains_pii", F.lit("Column 'col1' contains PII: %")).alias("col1_contains_pii"),
-            F.ilike("col2_contains_pii", F.lit("Column 'col2' contains PII: %")).alias("col2_contains_pii"),
-            F.ilike("col3_contains_pii", F.lit("Column 'col3' contains PII: %")).alias("col3_contains_pii"),
-        )
-    ]
-    assert_df_equality(actual, expected, transforms=transforms)
+    transform = lambda df: df.select(
+        F.ilike("col1_contains_pii", F.lit("Column 'col1' contains PII: %")).alias("col1_contains_pii"),
+        F.ilike("col2_contains_pii", F.lit("Column 'col2' contains PII: %")).alias("col2_contains_pii"),
+        F.ilike("col3_contains_pii", F.lit("Column 'col3' contains PII: %")).alias("col3_contains_pii"),
+    )
+    assertDataFrameEqual(transform(actual), transform(expected))
 
 test_does_not_contain_pii_basic()
 
@@ -143,13 +141,11 @@ def test_does_not_contain_pii_with_entities_list():
         ],
         checked_schema,
     )
-    transforms = [
-        lambda df: df.select(
-            F.ilike("col1_contains_pii", F.lit("Column 'col1' contains PII: %")).alias("col1_contains_pii"),
-            F.ilike("col2_contains_pii", F.lit("Column 'col2' contains PII: %")).alias("col2_contains_pii"),
-        )
-    ]
-    assert_df_equality(actual, expected, transforms=transforms)
+    transform = lambda df: df.select(
+        F.ilike("col1_contains_pii", F.lit("Column 'col1' contains PII: %")).alias("col1_contains_pii"),
+        F.ilike("col2_contains_pii", F.lit("Column 'col2' contains PII: %")).alias("col2_contains_pii"),
+    )
+    assertDataFrameEqual(transform(actual), transform(expected))
 
 test_does_not_contain_pii_with_entities_list()
 
@@ -180,12 +176,10 @@ def test_does_not_contain_pii_with_builtin_nlp_engine_config():
         ],
         checked_schema,
     )
-    transforms = [
-        lambda df: df.select(
-            F.ilike("col1_contains_pii", F.lit("Column 'col1' contains PII: %")).alias("col1_contains_pii"),
-        )
-    ]
-    assert_df_equality(actual, expected, transforms=transforms)
+    transform = lambda df: df.select(
+        F.ilike("col1_contains_pii", F.lit("Column 'col1' contains PII: %")).alias("col1_contains_pii"),
+    )
+    assertDataFrameEqual(transform(actual), transform(expected))
 
 test_does_not_contain_pii_with_builtin_nlp_engine_config()
 
@@ -219,12 +213,10 @@ def test_does_not_contain_pii_with_custom_nlp_config_dict():
         ],
         checked_schema,
     )
-    transforms = [
-        lambda df: df.select(
-            F.ilike("col1_contains_pii", F.lit("Column 'col1' contains PII: %")).alias("col1_contains_pii"),
-        )
-    ]
-    assert_df_equality(actual, expected, transforms=transforms)
+    transform = lambda df: df.select(
+        F.ilike("col1_contains_pii", F.lit("Column 'col1' contains PII: %")).alias("col1_contains_pii"),
+    )
+    assertDataFrameEqual(transform(actual), transform(expected))
 
 test_does_not_contain_pii_with_custom_nlp_config_dict()
 

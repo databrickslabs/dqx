@@ -54,7 +54,7 @@ Here are the example steps to submit your first contribution:
 8. `make fmt` (Note: If you have an issue with `make fmt`, ensure your IDE folder is ignored in .gitignore. Already added for .idea/ and .cursor/)
 9. `make lint`
 10. .. fix if any issues are reported
-11. `make test` and `make integration`, and optionally `make coverage` (generate coverage report)
+11. `make test` (run unit tests), `make integration` (run integration tests), `make e2e` (run end-to-end tests) and optionally `make coverage` (generate coverage report). See below on how to setup the testing environment for integration tests.
 12. .. fix if any issues reported
 13. `git commit -S -a -m "message"`
 
@@ -84,13 +84,14 @@ Please make sure the following items are set up correctly in your local git conf
     Use a meaningful pull request title because it'll appear in the release notes. Use `Resolves #NUMBER` in pull
     request description to [automatically link it](https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/using-keywords-in-issues-and-pull-requests#linking-a-pull-request-to-an-issue)
     to an existing issue.
+15. Reviewers will be automatically assigned. Project maintainers will also add `Copilot` AI assistant as one of the reviewers to evaluate the code automatically.
 
 ## Definition of Done
 
 Please ensure the following DoDs are met before submitting your pull request:
 - [ ] **Code formatting** — Code is formatted consistently with the project style (`make fmt`).
 - [ ] **Linting & checks** — Code passes linting and static analysis (`make lint`).
-- [ ] **Testing** — Unit, integration, e2e and performance tests cover changes and all tests pass (`make test`, `make integration`, `make e2e`, `make perf`). Follow the [test pyramid](https://martinfowler.com/articles/practical-test-pyramid.html) principles. Most changes should be covered with unit tests, supplemented by integration tests when necessary, and only rarely with end-to-end or performance tests.
+- [ ] **Testing** — Unit, integration, and e2e tests cover changes and all tests pass (`make test`, `make integration`, `make e2e`). Performance tests (`make perf`) run nightly and do not need to pass before submitting a PR. Follow the [test pyramid](https://martinfowler.com/articles/practical-test-pyramid.html) principles. Most changes should be covered with unit tests, supplemented by integration tests when necessary, and only rarely with end-to-end or performance tests.
 - [ ] **Docstrings** — Public functions, classes, and modules include [Google Style Python Docstrings](https://sphinxcontrib-napoleon.readthedocs.io/en/latest/example_google.html). Docstrings are clean and consistent ([guidance](#writing-docstrings)).
 - [ ] **Documentation** — If user-facing behavior changes, ensure docs are updated. See [docs authoring](/docs/dev/docs_authoring).
 - [ ] **Demos** — If applicable, update or create demos to showcase new features or changes.
@@ -103,13 +104,11 @@ Please ensure the following DoDs are met before submitting your pull request:
 Alternatively, you may open a [Draft PR](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/proposing-changes-to-your-work-with-pull-requests/changing-the-stage-of-a-pull-request) if your work is not yet ready for submission.
 This is a good way to gather early feedback without needing to meet all Definition of Done (DoD) requirements.
 
-<Admonition type="warning" title="Integration and e2e tests">
+<Admonition type="warning" title="Special cases">
 * Draft PRs — Integration and end-to-end (e2e) tests are not run automatically on Draft PRs. These tests will only execute once the PR is marked as "Ready for Review".
-* Forked PRs — No checks are run automatically for PRs opened from forks.
-    Project maintainers must approve it.
-    Integration and end-to-end (e2e) tests cannot be run for PRs opened from forks.
-    In these cases, project maintainers will run the tests manually before merging the code.
-    The contributor should ensure that the tests are passing in their local environment before submitting the PR.
+* Forked PRs — The following applies for PRs opened from forks (external contributors scenario):
+    * Project maintainers must approve Github workflows (e.g. formatting, unit testing) before they run. Project maintainers must also trigger integration and end-to-end (e2e) tests.
+    * You can also run the tests locally using [Databricks Free Edition](https://www.databricks.com/learn/free-edition) with the exception of Lakebase tests, which require a standard workspace. When using Databricks Free you can ignore the Lakebase tests.
 
 In all cases, the full test suite is executed on code merged into `main` branch as part of the nightly CI/CD pipeline.
 </Admonition>
@@ -118,22 +117,21 @@ In all cases, the full test suite is executed on code merged into `main` branch 
 
 This section provides a step-by-step guide for setting up your local environment and dependencies for efficient development.
 
-To start with, install the required python version on your computer (see `python=<version>` field in [pyproject.toml](https://github.com/databrickslabs/dqx/blob/v0.12.0/pyproject.toml)).
+To start with, install the required python version on your computer (see `requires-python` field in [pyproject.toml](https://github.com/databrickslabs/dqx/blob/v0.13.0/pyproject.toml)).
 On MacOSX, run:
 ```
 # double check the required version in pyproject.toml
 brew install python@3.12
 ```
 
-Install [Hatch](https://github.com/pypa/hatch), which is our build tool.
+Install [uv](https://docs.astral.sh/uv/), which is our package manager and build tool.
 On MacOSX, this is achieved using the following:
 ```shell
-brew install hatch
+brew install uv
 ```
 
-Clone the repo and run the following command in your project’s root directory to create the default environment and install development dependencies:
+Clone the repo and run the following command in your project’s root directory to install development dependencies:
 ```shell
-hatch env create
 make dev
 ```
 
@@ -148,10 +146,94 @@ make lint
 make test
 ```
 
+### Managing dependencies
+
+The project uses `uv.lock` to pin exact dependency versions. The Makefile enforces `UV_FROZEN=1` by default,
+which prevents `uv` from modifying the lock file during normal operations like `make dev`, `make fmt`, or `make test`.
+
+To add, remove, or upgrade dependencies, use the `lock-dependencies` target:
+```shell
+make lock-dependencies
+```
+
+This target:
+1. Runs `uv lock` to resolve dependencies.
+2. Regenerates `.build-constraints.txt` with pinned build tool hashes.
+3. Normalizes registry URLs in `uv.lock` to public PyPI.
+
+<Admonition type="warning" title="Important">
+Always use `make` targets instead of running `uv` commands directly. The Makefile sets `UV_FROZEN=1` to protect the lock file — running `uv sync`, `uv lock`, or `uv add` directly bypasses this and may modify `uv.lock` with internal registry URLs. To update dependencies, use `make lock-dependencies` (core) or `make lock-app-dependencies` (app).
+</Admonition>
+
+### DQX App development
+
+The DQX App (under `app/`) is a FastAPI backend + React frontend packaged as a single Python wheel and deployed as a [Databricks App](https://docs.databricks.com/en/dev-tools/databricks-apps/index.html). See [app/README.md](https://github.com/databrickslabs/dqx/blob/v0.13.0/app/README.md) for architecture and local development, and [DQX App deployment](#dqx-app-deployment) below for the end-to-end deployment guide.
+
+Install the app's JavaScript dependencies (using the committed `yarn.lock`):
+```shell
+make app-install
+```
+
+Build the app (compiles the React frontend, generates the OpenAPI schema, and packages the Python wheel):
+```shell
+make app-build
+```
+
+Run TypeScript and Python checks against the built app (matches the CI check):
+```shell
+make app-check
+```
+
+Run the app locally for development (starts backend, frontend, and OpenAPI watcher — access at http://localhost:9001):
+```shell
+make app-start-dev
+```
+
+Stop the local development servers:
+```shell
+make app-stop-dev
+```
+
+Before running `make app-start-dev`, configure authentication to a Databricks workspace by creating an `app/.env` file (gitignored) with your profile and warehouse:
+```shell
+# app/.env
+DATABRICKS_CONFIG_PROFILE=<your-profile>        # from ~/.databrickscfg
+DATABRICKS_WAREHOUSE_ID=<your-warehouse-id>     # SQL Warehouses → connection details
+DQX_JOB_ID=<task-runner-job-id>                 # optional locally; required for profiler / dry-run
+```
+
+If you don't have a profile yet, run `databricks auth login --host <workspace-url> -p <your-profile>` first. See the [Development Mode](https://github.com/databrickslabs/dqx/blob/v0.13.0/app/README.md#development-mode) section of the app README for more detail.
+
+<Admonition type="note" title="Profiler and dry-run features require deployment">
+The **profiler** and **dry-run** features rely on a Databricks Job (`dqx-app-task-runner`) that only exists after you deploy the app bundle to a workspace. For local UI and backend development (routes, components, auth wiring, config), you can skip this — `DQX_JOB_ID` is not required and the app will start without it. All other features will work locally.
+
+To exercise the profiler or dry-run flows, deploy the app once to a workspace (see [DQX App deployment](#dqx-app-deployment) below) and test those features from the deployed app in the workspace (not from your local dev server).
+</Admonition>
+
+The DQX App under `app/` has its own Python and JavaScript lockfiles (`app/uv.lock`, `app/yarn.lock`, `app/.build-constraints.txt`). To refresh them, use:
+```shell
+make lock-app-dependencies
+```
+
+<Admonition type="note" title="Why only yarn.lock is committed">
+Only `app/yarn.lock` is committed for JavaScript dependencies — `app/bun.lock` and `app/package-lock.json` are gitignored. Both pin absolute registry URLs into every entry, which breaks builds on runners that can only reach internal mirrors. Yarn v1 classic lockfiles are registry-agnostic once the `resolved` lines are stripped, which `make lock-app-dependencies` handles automatically. If you run `bun install` or `npm install` locally, do not commit the generated lockfiles.
+</Admonition>
+
+### DQX App deployment
+
+Deploying the app to a workspace is required when you want to:
+
+- exercise the profiler or dry-run flows end-to-end (these depend on the `dqx-app-task-runner` Databricks Job and a UC volume that only exist after deploy),
+- verify a change behaves correctly under the production identity model (service principal + on-behalf-of), or
+- run a review pass against a deployed app before merging.
+
+For the full step-by-step (service principal creation, asset-bundle deploy, schema/volume permission grants, app start, troubleshooting) follow [app/DEPLOYMENT.md](https://github.com/databrickslabs/dqx/blob/v0.13.0/app/DEPLOYMENT.md).
+
 ### Running integration tests and code coverage
 
-Integration tests and code coverage are run automatically when you create a Pull Request in Github.
+Integration tests and code coverage are run automatically when you create a Pull Request in Github (except forks).
 You can also trigger the tests from a local machine by configuring authentication to a Databricks workspace.
+We recommend to use [Databricks Free Edition](https://www.databricks.com/learn/free-edition) for testing, as it provides a free cluster. You can skip Lakebase tests as Lakebase is not available on Databricks Free.
 
 #### Using terminal
 
@@ -180,7 +262,13 @@ Run integration tests with the following command:
 make integration
 ```
 
-Calculate test coverage and display report in HTML:
+Run end-to-end tests with the following command:
+```shell
+make e2e
+```
+Note that if you made code changes in the e2e tests, you need to push the changes first to the PR branch before running the tests from local machine.
+
+(Optional) Calculate test coverage and display report in HTML:
 ```shell
 make coverage
 ```
@@ -245,7 +333,7 @@ pip install git+https://github.com/your-username/dqx.git@feature_branch_name
 Alternatively, if you want to test before committing the changes, you can build the wheel package and upload it to the workspace manually:
 ```commandline
 # Create wheel inside dist/databricks_labs_dqx-<version>-py3-none-any.whl
-hatch build
+make build
 
 # Upload the wheel to the workspace and run
 pip install /<workspace-path>/databricks_labs_dqx-<version>-py3-none-any.whl
@@ -321,12 +409,15 @@ Pre-release versions (e.g. v0.1.12-alpha) do not trigger the release pipeline, a
 
 ## Performance testing
 
-Performance tests run automatically in two cases:
-* On every Pull Request in GitHub.
-* Nightly, on the main branch CI/CD pipeline.
+Performance tests run automatically as part of the **nightly** CI/CD pipeline on the `main` branch. They do not run on every Pull Request.
 
 All performance tests are located in the `tests/perf` folder. The tests use the [pytest-benchmark](https://pytest-benchmark.readthedocs.io/en/latest/) package.
 Performance tests should focus on the critical parts of the codebase where speed and efficiency matter most, such as the check functions.
+
+To run performance tests locally:
+```shell
+make perf
+```
 
 ### Baseline Metrics
 
@@ -334,8 +425,8 @@ Baseline performance results are stored in `tests/perf/.benchmarks/baseline.json
 These values are used to compare the performance of each new run against the baseline.
 The comparison allows 25% degradation before the test fails.
 
-The baseline file is managed automatically for every PR:
-* If `baseline.json` does not exist → it is created. To recreate it from scratch, delete the file in your PR.
+The baseline file is managed automatically by the nightly workflow:
+* If `baseline.json` does not exist → it is created.
 * If a test is removed → it is also removed from `baseline.json`.
 * If a new test is added → it is added to `baseline.json`.
 * If the same tests are present → the existing baseline values are kept (not overwritten).
@@ -346,9 +437,9 @@ Whenever the baseline is updated, the benchmark report in the documentation is r
 
 ### Updating Baseline and Reports
 
-Baseline and benchmark reports are committed automatically by the performance github workflow.
-However, these commits are not GPG-signed because your private key is not available to GitHub.
-Before merging a PR that updates the baseline or reports, you must manually sign and re-apply the commits using your local GPG key, as follows:
+When the nightly workflow detects baseline changes, it automatically opens a PR with the updated baseline and benchmark report.
+These commits are not GPG-signed because your private key is not available to GitHub.
+Before merging, you must manually sign and re-apply the commits using your local GPG key:
 ```shell
 git reset --soft $(git merge-base origin/main HEAD)  # point to the common ancestor of main and your branch
 #git reset --soft HEAD~<how-many-commit-go-back>  # alternatively, specify how many commits to go back
@@ -358,16 +449,7 @@ git push --force-with-lease origin HEAD
 
 ## Troubleshooting
 
-If you encounter any package dependency errors after `git pull`, run `make clean`
-
-### Resolving Hatch JSON TypeError
-
-If you encounter an error like:
-```text
-TypeError: the JSON object must be str, bytes or bytearray, not Sentinel
-```
-
-you can resolve it by downgrading the Click package to a compatible version that works with hatch: `pip install "click<8.3"`
+If you encounter any package dependency errors after `git pull`, run `make clean` followed by `make dev`.
 
 ### Common fixes for `mypy` errors
 
@@ -439,8 +521,11 @@ def method(self, arg1: str, arg2: int) -> str:
 <Admonition type="warning" title="Special Cases">
 * Avoid using backticks around object names in docstrings (e.g., \`arg1\`), as this can cause issues when rendering API documentation. Instead, use italics (e.g., \*arg1\*) to emphasize object names.
 * Double curly braces are not allowed in the description. Mask them with backslashes, e.g.: `{{`.
-If you need a code example, use triple backticks, e.g.:
+* If you want to add a code example to a docstring, use triple backticks. The following shows the literal text that must appear inside the docstring:
+
+````text
 ```python
 print("Hello, world!")
 ```
+````
 </Admonition>

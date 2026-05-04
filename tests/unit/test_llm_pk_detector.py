@@ -5,7 +5,7 @@ from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.config import InputConfig, LLMModelConfig
 from databricks.labs.dqx.llm.llm_pk_detector import LLMPrimaryKeyDetector, PredictionResult
-from databricks.labs.dqx.llm.table_manager import TableManager
+from databricks.labs.dqx.table_manager import TableManager
 from databricks.labs.dqx.profiler.profiler import DQProfiler
 
 

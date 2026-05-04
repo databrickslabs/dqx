@@ -1,15 +1,18 @@
-"""
-Data Contract to DQX Rules Generator.
+"""Data Contract to DQX Rules Generator.
 
-This module provides functionality to generate DQX quality rules from data contract
-specifications like ODCS (Open Data Contract Standard).
+Generates DQX quality rules from ODCS (Open Data Contract Standard) v3.x contracts.
+
+For schema validation we require every property to have physicalType set to a Unity Catalog
+data type (e.g. STRING, INT, ARRAY<STRING>, DECIMAL(10,2)). No ODCS→Unity mapping is performed.
+See: https://learn.microsoft.com/en-gb/azure/databricks/sql/language-manual/sql-ref-datatypes
 """
 
 import json
 import logging
+import re
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import yaml
 
@@ -27,31 +30,27 @@ from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import NotFound
 from databricks.labs.dqx.base import DQEngineBase
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.errors import ODCSContractError, ParameterError
+from databricks.labs.dqx.errors import InvalidPhysicalTypeError, ODCSContractError, ParameterError
 from databricks.labs.dqx.telemetry import telemetry_logger
-from databricks.labs.dqx.utils import missing_required_packages
-
-# Type checking imports (for type hints only, not evaluated at runtime)
-if TYPE_CHECKING:
-    from databricks.labs.dqx.llm.llm_engine import DQLLMEngine  # type: ignore
+from databricks.labs.dqx.package_utils import missing_required_packages
+from databricks.labs.dqx.llm.llm_engine import DQLLMEngine  # type: ignore
 
 logger = logging.getLogger(__name__)
 
 
 class DataContractRulesGenerator(DQEngineBase):
     """
-    Generator for creating DQX quality rules from ODCS v3.x data contracts.
+    Generator for DQX quality rules from ODCS v3.x data contracts.
 
-    This class processes Open Data Contract Standard (ODCS) v3.x contracts natively,
-    extracting constraints from logicalTypeOptions and generating DQX quality rules.
-    Supports predefined rules from schema properties, explicit rules from quality sections,
-    and text-based expectations processed via LLM.
+    Schema validation requires every property to have physicalType set to a Unity Catalog type.
+    We do not map ODCS types; invalid or missing physicalType raises InvalidPhysicalTypeError.
+    Supports predefined rules from schema, explicit quality sections, and LLM-based expectations.
     """
 
     def __init__(
         self,
         workspace_client: WorkspaceClient,
-        llm_engine: "DQLLMEngine | None" = None,
+        llm_engine: DQLLMEngine | None = None,
         custom_check_functions: dict[str, Callable] | None = None,
     ):
         """
@@ -85,6 +84,8 @@ class DataContractRulesGenerator(DQEngineBase):
         contract_format: str = "odcs",
         generate_predefined_rules: bool = True,
         process_text_rules: bool = True,
+        generate_schema_validation: bool = True,
+        strict_schema_validation: bool = True,
         default_criticality: str = "error",
     ) -> list[dict]:
         """
@@ -92,6 +93,9 @@ class DataContractRulesGenerator(DQEngineBase):
 
         Parses an ODCS v3.x contract natively and generates rules based on schema properties,
         logicalTypeOptions constraints, explicit quality definitions, and text-based expectations.
+        When the contract defines a schema and generate_schema_validation is True, one dataset-level
+        has_valid_schema rule per schema is generated. strict_schema_validation is passed as the
+        strict argument to has_valid_schema (default True = exact match).
 
         Args:
             contract: Pre-loaded DataContract object from datacontract-cli. Can be created with:
@@ -102,6 +106,8 @@ class DataContractRulesGenerator(DQEngineBase):
             contract_format: Contract format specification (default is "odcs"). Only "odcs" is supported.
             generate_predefined_rules: Whether to generate rules from schema properties (default True). Set to False to only generate explicit rules.
             process_text_rules: Whether to process text-based expectations using LLM (default True). Requires llm_engine to be provided in __init__.
+            generate_schema_validation: Whether to generate dataset-level has_valid_schema rules from the contract schema (default True).
+            strict_schema_validation: Passed as the strict argument to has_valid_schema (default True = exact columns, order, types; False = permissive).
             default_criticality: Default criticality level for generated rules (default is "error").
 
         Returns:
@@ -117,7 +123,14 @@ class DataContractRulesGenerator(DQEngineBase):
         odcs = self._load_contract_spec(contract, contract_file)
         self._validate_contract_spec(odcs)
 
-        dq_rules = self._generate_all_rules(odcs, generate_predefined_rules, process_text_rules, default_criticality)
+        dq_rules = self._generate_all_rules(
+            odcs,
+            generate_predefined_rules,
+            process_text_rules,
+            generate_schema_validation,
+            strict_schema_validation,
+            default_criticality,
+        )
         valid_rules = self._validate_generated_rules(dq_rules)
 
         return valid_rules
@@ -213,6 +226,8 @@ class DataContractRulesGenerator(DQEngineBase):
         odcs: OpenDataContractStandard,
         generate_predefined_rules: bool,
         process_text_rules: bool,
+        generate_schema_validation: bool,
+        strict_schema_validation: bool,
         default_criticality: str,
     ) -> list[dict]:
         """Generate all rules from ODCS v3.x contract schemas."""
@@ -221,6 +236,12 @@ class DataContractRulesGenerator(DQEngineBase):
         # ODCS v3.x uses schema_ list instead of models dict
         for schema_obj in odcs.schema_ or []:
             schema_name = schema_obj.name or "unknown_schema"
+
+            if generate_schema_validation:
+                schema_validation_rules = self._generate_schema_validation_rules_for_schema(
+                    schema_obj, schema_name, odcs, default_criticality, strict_schema_validation
+                )
+                dq_rules.extend(schema_validation_rules)
 
             if generate_predefined_rules:
                 predefined_rules = self._generate_predefined_rules_for_schema(
@@ -269,6 +290,254 @@ class DataContractRulesGenerator(DQEngineBase):
 
         return valid_rules
 
+    # Schema validation: require physicalType to be a Unity Catalog type; no mapping.
+    # See: https://learn.microsoft.com/en-gb/azure/databricks/sql/language-manual/sql-ref-datatypes
+    # VOID and OBJECT are excluded: VOID (NullType) cannot be stored in Delta Lake,
+    # and OBJECT cannot be stored in table columns. Both would fail StructType.fromDDL().
+    _UNITY_SIMPLE_TYPES: frozenset[str] = frozenset(
+        {
+            "STRING",
+            "INT",
+            "BIGINT",
+            "FLOAT",
+            "DOUBLE",
+            "BOOLEAN",
+            "DATE",
+            "TIMESTAMP",
+            "TIMESTAMP_NTZ",
+            "BINARY",
+            "VARIANT",
+            "SMALLINT",
+            "TINYINT",
+        }
+    )
+    # GEOGRAPHY, GEOMETRY, INTERVAL: we allow by prefix only; inner content is not validated.
+    # Malformed values (e.g. GEOGRAPHY(GARBAGE)) will pass here but may fail at DDL parse or runtime.
+    _UNITY_COMPLEX_PREFIXES: tuple[str, ...] = (
+        "GEOGRAPHY(",
+        "GEOMETRY(",
+        "INTERVAL ",
+    )
+    _UNITY_DECIMAL_PATTERN = re.compile(r"^DECIMAL\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)\s*$", re.IGNORECASE)
+    _MAX_TYPE_RECURSION_DEPTH = 50
+
+    @classmethod
+    def _extract_content_in_angle_brackets(cls, type_str: str) -> str:
+        """Return the substring between the first '<' and its matching '>'; uses bracket counting."""
+        start = type_str.find("<")
+        if start < 0:
+            raise InvalidPhysicalTypeError(f"physicalType '{type_str}' has no opening angle bracket for complex type.")
+        depth = 1
+        i = start + 1
+        while i < len(type_str) and depth > 0:
+            if type_str[i] == "<":
+                depth += 1
+            elif type_str[i] == ">":
+                depth -= 1
+            i += 1
+        if depth != 0:
+            raise InvalidPhysicalTypeError(f"physicalType '{type_str}' has unmatched angle brackets.")
+        return type_str[start + 1 : i - 1].strip()
+
+    @classmethod
+    def _split_top_level_comma(cls, content: str) -> list[str]:
+        """Split content by commas only when bracket depth is 0."""
+        parts: list[str] = []
+        depth = 0
+        start = 0
+        for i, char in enumerate(content):
+            if char in "<(":
+                depth += 1
+            elif char in ">)":
+                depth -= 1
+            elif char == "," and depth == 0:
+                parts.append(content[start:i].strip())
+                start = i + 1
+        parts.append(content[start:].strip())
+        return parts
+
+    @classmethod
+    def _validate_decimal(cls, decimal_match: re.Match[str]) -> str:
+        """Validate DECIMAL precision/scale and return normalized string."""
+        precision = int(decimal_match.group(1))
+        scale = int(decimal_match.group(2))
+        if precision < 1 or precision > 38:
+            raise InvalidPhysicalTypeError(
+                f"DECIMAL precision must be between 1 and 38 (Spark limit), got {precision}."
+            )
+        if scale < 0 or scale > precision:
+            raise InvalidPhysicalTypeError(f"DECIMAL scale must be between 0 and precision ({precision}), got {scale}.")
+        return f"DECIMAL({precision},{scale})"
+
+    @classmethod
+    def _validate_array_type(cls, type_str_stripped: str, type_str: str, depth: int) -> str:
+        """Validate ARRAY<T> and return normalized string."""
+        inner = cls._extract_content_in_angle_brackets(type_str_stripped)
+        if not inner:
+            raise InvalidPhysicalTypeError(
+                f"physicalType '{type_str}' has empty ARRAY element type. Use ARRAY<element_type>, e.g. ARRAY<STRING>."
+            )
+        validated_inner = cls._validate_unity_physical_type(inner, depth + 1)
+        return f"ARRAY<{validated_inner}>"
+
+    @classmethod
+    def _validate_map_type(cls, type_str_stripped: str, type_str: str, depth: int) -> str:
+        """Validate MAP<K,V> and return normalized string."""
+        inner = cls._extract_content_in_angle_brackets(type_str_stripped)
+        if not inner:
+            raise InvalidPhysicalTypeError(
+                f"physicalType '{type_str}' has empty MAP key/value types. Use MAP<key_type,value_type>, e.g. MAP<STRING,INT>."
+            )
+        key_value = cls._split_top_level_comma(inner)
+        if len(key_value) != 2:
+            raise InvalidPhysicalTypeError(
+                f"physicalType MAP must have exactly two type parameters (key, value), got {len(key_value)}."
+            )
+        validated_key = cls._validate_unity_physical_type(key_value[0], depth + 1)
+        validated_val = cls._validate_unity_physical_type(key_value[1], depth + 1)
+        return f"MAP<{validated_key},{validated_val}>"
+
+    @classmethod
+    def _parse_struct_field_and_validate(cls, field_spec: str, type_str: str, depth: int) -> str:
+        """Parse one STRUCT field 'name: type' and return 'name:validated_type'."""
+        if not field_spec:
+            raise InvalidPhysicalTypeError(f"physicalType STRUCT has empty field spec in '{type_str}'.")
+        colon_at = -1
+        bracket_depth = 0
+        for idx, char in enumerate(field_spec):
+            if char in "<(":
+                bracket_depth += 1
+            elif char in ">)":
+                bracket_depth -= 1
+            elif char == ":" and bracket_depth == 0:
+                colon_at = idx
+                break
+        if colon_at < 0:
+            raise InvalidPhysicalTypeError(f"physicalType STRUCT field must be 'name: type', got '{field_spec}'.")
+        field_name = field_spec[:colon_at].strip()
+        field_type = field_spec[colon_at + 1 :].strip()
+        if not field_name or not field_type:
+            raise InvalidPhysicalTypeError(f"physicalType STRUCT field has missing name or type in '{field_spec}'.")
+        validated_type = cls._validate_unity_physical_type(field_type, depth + 1)
+        return f"{field_name}:{validated_type}"
+
+    @classmethod
+    def _validate_struct_type(cls, type_str_stripped: str, type_str: str, depth: int) -> str:
+        """Validate STRUCT<...> and return normalized string."""
+        inner = cls._extract_content_in_angle_brackets(type_str_stripped)
+        if not inner:
+            raise InvalidPhysicalTypeError(
+                f"physicalType '{type_str}' has empty STRUCT fields. Use STRUCT<name:type,...>, e.g. STRUCT<id:STRING,count:INT>."
+            )
+        fields = cls._split_top_level_comma(inner)
+        validated_parts = [cls._parse_struct_field_and_validate(spec, type_str, depth) for spec in fields]
+        return "STRUCT<" + ",".join(validated_parts) + ">"
+
+    @classmethod
+    def _validate_unity_physical_type(cls, type_str: str, depth: int = 0) -> str:
+        """Validate and return normalized Unity Catalog type; inner types are validated recursively.
+
+        DECIMAL precision/scale are bounded by Spark's limit (precision <= 38, scale <= precision).
+        Raises InvalidPhysicalTypeError if invalid or recursion depth exceeded.
+        """
+        if depth > cls._MAX_TYPE_RECURSION_DEPTH:
+            raise InvalidPhysicalTypeError(
+                f"physicalType nesting exceeds maximum depth ({cls._MAX_TYPE_RECURSION_DEPTH}). "
+                "Check for malformed or excessively nested types."
+            )
+        type_str_stripped = type_str.strip()
+        if not type_str_stripped:
+            raise InvalidPhysicalTypeError(
+                "physicalType must be set to a Unity Catalog data type (e.g. STRING, INT, ARRAY<STRING>). "
+                "See: https://learn.microsoft.com/en-gb/azure/databricks/sql/language-manual/sql-ref-datatypes"
+            )
+        type_upper = type_str_stripped.upper()
+        if type_upper in cls._UNITY_SIMPLE_TYPES:
+            return type_upper
+        decimal_match = cls._UNITY_DECIMAL_PATTERN.match(type_str_stripped)
+        if decimal_match:
+            return cls._validate_decimal(decimal_match)
+        if type_upper.startswith("ARRAY<"):
+            return cls._validate_array_type(type_str_stripped, type_str, depth)
+        if type_upper.startswith("MAP<"):
+            return cls._validate_map_type(type_str_stripped, type_str, depth)
+        if type_upper.startswith("STRUCT<"):
+            return cls._validate_struct_type(type_str_stripped, type_str, depth)
+        if any(type_upper.startswith(prefix) for prefix in cls._UNITY_COMPLEX_PREFIXES):
+            return type_upper
+        allowed_hint = (
+            "Allowed types include: STRING, INT, BIGINT, FLOAT, DOUBLE, BOOLEAN, DATE, TIMESTAMP, "
+            "DECIMAL(p,s), ARRAY<T>, MAP<K,V>, STRUCT<...>. "
+        )
+        raise InvalidPhysicalTypeError(
+            f"physicalType '{type_str}' is not a valid Unity Catalog data type. {allowed_hint}"
+            "See: https://learn.microsoft.com/en-gb/azure/databricks/sql/language-manual/sql-ref-datatypes"
+        )
+
+    def _schema_object_to_ddl(self, schema_obj: SchemaObject, schema_name: str = "") -> str:
+        """Build a Spark/Unity Catalog DDL string from an ODCS schema object.
+
+        Every property must have physicalType set to a Unity Catalog type. Raises
+        InvalidPhysicalTypeError (with schema and property name) when missing or invalid.
+        """
+        parts: list[str] = []
+        for prop in schema_obj.properties or []:
+            if not prop.name:
+                logger.warning(
+                    f"Schema '{schema_name}' has a field with no 'name'; it will be excluded from schema validation. Set the 'name' attribute on every property in the contract schema."
+                )
+                continue
+            # SchemaProperty from ODCS model defines physicalType (may be None if omitted in contract).
+            physical_type = prop.physicalType
+            if not physical_type:
+                raise InvalidPhysicalTypeError(
+                    f"Schema '{schema_name}', property '{prop.name}': physicalType is required. "
+                    "Set physicalType to a Unity Catalog data type (e.g. STRING, INT). "
+                    "See: https://learn.microsoft.com/en-gb/azure/databricks/sql/language-manual/sql-ref-datatypes"
+                )
+            try:
+                unity_type = self._validate_unity_physical_type(physical_type)
+            except InvalidPhysicalTypeError as e:
+                raise InvalidPhysicalTypeError(f"Schema '{schema_name}', property '{prop.name}': {e!s}") from e
+            col_name = prop.name
+            # Databricks/ANSI: valid unquoted identifier = start with letter/underscore, then [a-zA-Z0-9_]*.
+            # We do not check reserved keywords; Databricks handles that when parsing the DDL.
+            if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", col_name):
+                col_name = f"`{col_name}`"
+            parts.append(f"{col_name} {unity_type}")
+        return ", ".join(parts)
+
+    def _generate_schema_validation_rules_for_schema(
+        self,
+        schema_obj: SchemaObject,
+        schema_name: str,
+        odcs: OpenDataContractStandard,
+        default_criticality: str,
+        strict_schema_validation: bool,
+    ) -> list[dict]:
+        """Generate one dataset-level has_valid_schema rule per ODCS schema. strict_schema_validation is passed to the check."""
+        ddl = self._schema_object_to_ddl(schema_obj, schema_name)
+        if not ddl:
+            logger.warning(f"Schema '{schema_name}' has no flat properties; skipping schema validation rule.")
+            return []
+        contract_metadata = {
+            "contract_id": odcs.id or "unknown",
+            "contract_version": odcs.version or "unknown",
+            "odcs_version": odcs.apiVersion or "unknown",
+            "schema": schema_name,
+            "rule_type": "schema_validation",
+        }
+        rule = {
+            "check": {
+                "function": "has_valid_schema",
+                "arguments": {"expected_schema": ddl, "strict": strict_schema_validation},
+            },
+            "name": f"{schema_name}_schema_validation",
+            "criticality": default_criticality,
+            "user_metadata": contract_metadata,
+        }
+        return [rule]
+
     # ODCS v3.x Native Support Methods
     def _generate_predefined_rules_for_schema(
         self, schema_obj: SchemaObject, schema_name: str, odcs: OpenDataContractStandard, default_criticality: str
@@ -310,9 +579,10 @@ class DataContractRulesGenerator(DQEngineBase):
             )
             return []
 
-        # Skip properties without a name
         if not prop.name:
-            logger.warning(f"Skipping property without name in schema '{schema_name}'")
+            logger.warning(
+                f"Schema '{schema_name}' has a field with no 'name'; no quality checks will be generated for it. Set the 'name' attribute on every property in the contract schema."
+            )
             return []
 
         column_path = f"{parent_path}.{prop.name}" if parent_path else prop.name
@@ -871,11 +1141,15 @@ class DataContractRulesGenerator(DQEngineBase):
         """
         columns = []
 
+        schema_name_for_log = schema_obj.name or "unknown"
+
         def _extract_columns(props: list[SchemaProperty] | None, prefix: str = "") -> None:
             """Recursively extract column information from properties."""
             for prop in props or []:
-                # Skip properties without a name
                 if not prop.name:
+                    logger.warning(
+                        f"Schema '{schema_name_for_log}' has a field with no 'name'; no rules will be generated from its text expectations. Set the 'name' attribute on every property in the contract schema."
+                    )
                     continue
 
                 column_path = f"{prefix}.{prop.name}" if prefix else prop.name

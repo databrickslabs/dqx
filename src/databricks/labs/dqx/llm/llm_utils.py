@@ -13,13 +13,10 @@ from databricks.labs.dqx.errors import DQXError
 from databricks.labs.dqx.rule import CHECK_FUNC_REGISTRY
 from databricks.labs.dqx.config import InputConfig
 from databricks.labs.dqx.io import read_input_data
-from databricks.labs.dqx.llm.table_manager import TableManager
 
 logger = logging.getLogger(__name__)
 
-# Re-export TableManager for backward compatibility
 __all__ = [
-    "TableManager",
     "get_check_function_definitions",
     "get_required_check_functions_definitions",
     "get_required_summary_stats",
@@ -44,7 +41,7 @@ def get_check_function_definitions(custom_check_functions: dict[str, Callable] |
         list[dict]: A list of dictionaries, each containing the definition of a check function.
     """
     function_docs: list[dict[str, str]] = []
-    for name, func_type in CHECK_FUNC_REGISTRY.items():
+    for name, func_type in list(CHECK_FUNC_REGISTRY.items()):
         func = resolve_check_function(name, custom_check_functions, fail_on_missing=False)
         if func is None:
             logger.warning(f"Check function {name} not found in the registry")

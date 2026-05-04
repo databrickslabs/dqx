@@ -1,24 +1,29 @@
 import logging
 import os
+import threading
 from datetime import datetime, timezone
 from io import BytesIO
 from typing import Any
 from unittest.mock import patch
+from pyspark.sql import DataFrame, functions as F
+from pyspark.sql.types import ArrayType, StructType
+from pyspark.testing.utils import assertDataFrameEqual
 
-from chispa import assert_df_equality  # type: ignore
-from pyspark.sql import DataFrame
 import pytest
 from databricks.sdk.service.workspace import ImportFormat
 from databricks.labs.blueprint.installation import Installation
 from databricks.labs.pytester.fixtures.baseline import factory
+from databricks.labs.dqx.checks_serializer import serialize_checks
+from databricks.labs.dqx.rule_fingerprint import compute_rule_fingerprint, compute_rule_set_fingerprint_by_metadata
 from databricks.labs.dqx.checks_storage import InstallationChecksStorageHandler
 from databricks.labs.dqx.config import InputConfig, OutputConfig, InstallationChecksStorageConfig, ExtraParams
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.installer.mixins import InstallationMixin
+from databricks.labs.dqx.rule import DQRule
 from databricks.labs.dqx.schema import dq_result_schema
 from databricks.sdk.service.compute import DataSecurityMode, Kind
 
-from tests.conftest import TEST_CATALOG
+from tests.constants import TEST_CATALOG
 
 
 logging.getLogger("tests").setLevel("DEBUG")
@@ -33,12 +38,72 @@ RUN_ID = "2f9120cf-e9f2-446a-8278-12d508b00639"
 EXTRA_PARAMS = ExtraParams(run_time_overwrite=RUN_TIME.isoformat(), run_id_overwrite=RUN_ID)
 
 
+FINGERPRINT_FIELDS = ["rule_fingerprint", "rule_set_fingerprint"]
+
+
+def _strip_fingerprints_from_result_column(df: DataFrame, col_name: str) -> DataFrame:
+    """Remove fingerprint fields from a result array column (_errors or _warnings)."""
+
+    schema = df.schema
+    if col_name not in df.columns:
+        return df
+
+    field = schema[col_name]
+    if not isinstance(field.dataType, ArrayType) or not isinstance(field.dataType.elementType, StructType):
+        return df
+
+    struct_fields = field.dataType.elementType.fieldNames()
+    keep_fields = [f for f in struct_fields if f not in FINGERPRINT_FIELDS]
+
+    return df.withColumn(
+        col_name,
+        F.when(
+            F.col(col_name).isNotNull(),
+            F.transform(
+                F.col(col_name),
+                lambda x: F.struct(*[x[f].alias(f) for f in keep_fields]),
+            ),
+        ),
+    )
+
+
+_FINGERPRINT_COLUMNS = ("_errors", "dq_errors", "_warnings", "dq_warnings")
+
+
+def _strip_all_fingerprints(df: DataFrame) -> DataFrame:
+    """Remove fingerprint fields from all known result columns."""
+    for col in _FINGERPRINT_COLUMNS:
+        df = _strip_fingerprints_from_result_column(df, col)
+    return df
+
+
+def assert_df_equality_ignore_fingerprints(
+    df1: DataFrame,
+    df2: DataFrame,
+    **kwargs,
+):
+    """Assert DataFrame equality after stripping fingerprint fields from result columns."""
+    df1_clean = _strip_all_fingerprints(df1)
+    df2_clean = _strip_all_fingerprints(df2)
+
+    check_row_order = not kwargs.pop("ignore_row_order", False)
+    ignore_column_order = kwargs.pop("ignore_column_order", False)
+    kwargs.pop("ignore_nullable", None)
+    assertDataFrameEqual(
+        df1_clean, df2_clean, checkRowOrder=check_row_order, ignoreColumnOrder=ignore_column_order, **kwargs
+    )
+
+
 def build_quality_violation(
     name: str,
     message: str,
     columns: list[str] | None,
     *,
     function: str = "is_not_null_and_not_empty",
+    filter_expr: str | None = None,
+    user_metadata: dict | None = None,
+    rule_fingerprint: str | None = None,
+    rule_set_fingerprint: str | None = None,
 ) -> dict[str, Any]:
     """Helper for constructing expected violation entries with shared metadata."""
 
@@ -46,12 +111,102 @@ def build_quality_violation(
         "name": name,
         "message": message,
         "columns": columns,
-        "filter": None,
+        "filter": filter_expr,
         "function": function,
         "run_time": RUN_TIME,
         "run_id": RUN_ID,
-        "user_metadata": {},
+        "user_metadata": user_metadata or {},
+        "rule_fingerprint": rule_fingerprint,
+        "rule_set_fingerprint": rule_set_fingerprint,
     }
+
+
+def assert_check_and_split_results(
+    checked: DataFrame,
+    good_df: DataFrame,
+    bad_df: DataFrame,
+    expected: DataFrame,
+    columns: list[str],
+    *,
+    ignore_column_order: bool = False,
+) -> None:
+    """Assert equality of checked, bad, and good DataFrames against expected results."""
+    assert_df_equality_ignore_fingerprints(
+        checked, expected, ignore_nullable=True, ignore_column_order=ignore_column_order
+    )
+    assert_df_equality_ignore_fingerprints(
+        bad_df, expected.where(F.col("_errors").isNotNull() | F.col("_warnings").isNotNull()), ignore_nullable=True
+    )
+    assert_df_equality_ignore_fingerprints(
+        good_df, expected.where(F.col("_errors").isNull()).select(*columns), ignore_nullable=True
+    )
+
+
+class SparkKeepAlive:
+    """
+    Utility to keep Spark Connect session alive during long-running operations.
+
+    Runs lightweight queries periodically to prevent INACTIVITY_TIMEOUT.
+    """
+
+    def __init__(self, spark, interval_seconds=60, join_timeout=5):
+        """
+        Args:
+            spark: SparkSession to keep alive
+            interval_seconds: How often to run keep-alive query (default 60s)
+            join_timeout: Seconds to wait for the background thread to stop (default 5s)
+        """
+        self.spark = spark
+        self.interval = interval_seconds
+        self._join_timeout = join_timeout
+        self._stop_flag = threading.Event()
+        self._thread = None
+
+    def _keep_alive_loop(self):
+        """Background thread that runs periodic queries."""
+        logger.debug(f"SparkKeepAlive started (interval={self.interval}s)")
+
+        while not self._stop_flag.is_set():
+            try:
+                # Lightweight query to keep session active
+                self.spark.sql("SELECT 1").collect()
+                logger.debug("SparkKeepAlive: sent keep-alive query")
+            except Exception as e:
+                logger.warning(f"SparkKeepAlive: query failed: {e}")
+
+            # Wait for interval or stop signal
+            self._stop_flag.wait(self.interval)
+
+        logger.debug("SparkKeepAlive stopped")
+
+    def start(self):
+        """Start the keep-alive background thread."""
+        if self._thread and self._thread.is_alive():
+            logger.warning("SparkKeepAlive already running")
+            return
+
+        self._stop_flag.clear()
+        self._thread = threading.Thread(target=self._keep_alive_loop, daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        """Stop the keep-alive background thread."""
+        if self._thread and self._thread.is_alive():
+            self._stop_flag.set()
+            self._thread.join(timeout=self._join_timeout)
+            if self._thread.is_alive():
+                logger.warning(f"SparkKeepAlive thread did not stop within {self._join_timeout}s")
+
+
+@pytest.fixture
+def spark_keep_alive(spark):
+    """
+    Fixture that provides a SparkKeepAlive utility to prevent session timeouts during long-running tests (e.g. workflows).
+    """
+    keep_alive = SparkKeepAlive(spark, interval_seconds=60)
+    keep_alive.start()
+    yield keep_alive
+    keep_alive.stop()
 
 
 @pytest.fixture
@@ -306,6 +461,9 @@ def _setup_workflows_deps(
     # ensure tests are deterministic
     run_config.profiler_config.sample_fraction = 1.0
     run_config.profiler_config.sample_seed = 100
+    # relax null/empty thresholds so the profiler generates is_not_null / is_not_null_or_empty
+    run_config.profiler_config.max_null_ratio = 0.25
+    run_config.profiler_config.max_empty_ratio = 0.25
 
     ctx.installation.save(ctx.config)
 
@@ -358,21 +516,24 @@ def expected_quality_checking_output(spark) -> DataFrame:
     )
 
 
+WORKFLOW_CHECKS = [
+    {
+        "name": "id_is_not_null",
+        "criticality": "error",
+        "check": {"function": "is_not_null", "arguments": {"column": "id"}},
+    },
+    {
+        "name": "name_is_not_null_and_not_empty",
+        "criticality": "error",
+        "check": {"function": "is_not_null_and_not_empty", "arguments": {"column": "name"}},
+    },
+]
+
+
 def _setup_quality_checks(ctx, spark, ws):
     config = ctx.config
     checks_location = config.get_run_config().checks_location
-    checks = [
-        {
-            "name": "id_is_not_null",
-            "criticality": "error",
-            "check": {"function": "is_not_null", "arguments": {"column": "id"}},
-        },
-        {
-            "name": "name_is_not_null_and_not_empty",
-            "criticality": "error",
-            "check": {"function": "is_not_null_and_not_empty", "arguments": {"column": "name"}},
-        },
-    ]
+    checks = WORKFLOW_CHECKS
     config = InstallationChecksStorageConfig(
         location=checks_location,
         product_name=ctx.installation.product(),
@@ -431,12 +592,58 @@ def assert_quarantine_and_output_dfs(ws, spark, expected_output, output_config, 
     expected_quarantine_df = dq_engine.get_invalid(expected_output)
 
     output_df = spark.table(output_config.location)
-    assert_df_equality(output_df, expected_output_df, ignore_nullable=True)
+    assert_df_equality_ignore_fingerprints(output_df, expected_output_df, ignore_nullable=True)
 
     quarantine_df = spark.table(quarantine_config.location)
-    assert_df_equality(quarantine_df, expected_quarantine_df, ignore_nullable=True)
+    assert_df_equality_ignore_fingerprints(quarantine_df, expected_quarantine_df, ignore_nullable=True)
 
 
 def assert_output_df(spark, expected_output, output_config):
     checked_df = spark.table(output_config.location)
-    assert_df_equality(checked_df, expected_output, ignore_nullable=True)
+    assert_df_equality_ignore_fingerprints(checked_df, expected_output, ignore_nullable=True)
+
+
+def generate_checks_with_rule_and_set_fingerprint_from_rules(rules: list[DQRule]) -> list[dict]:
+    """Generate check dicts with rule_fingerprint and rule_set_fingerprint from DQRule instances."""
+    checks_dict = serialize_checks(rules)
+    rule_set_fingerprint = compute_rule_set_fingerprint_by_metadata(checks_dict)
+    return [
+        {**check, "rule_fingerprint": compute_rule_fingerprint(check), "rule_set_fingerprint": rule_set_fingerprint}
+        for check in checks_dict
+    ]
+
+
+def generate_checks_with_rule_and_set_fingerprint_from_dicts(checks: list[dict]) -> list[dict]:
+    """Generate check dicts with rule_fingerprint and rule_set_fingerprint from check dicts."""
+    checks_dict = [dict(check) for check in checks]
+    rule_set_fingerprint = compute_rule_set_fingerprint_by_metadata(checks_dict)
+    return [
+        {**check, "rule_fingerprint": compute_rule_fingerprint(check), "rule_set_fingerprint": rule_set_fingerprint}
+        for check in checks_dict
+    ]
+
+
+def get_rule_fingerprint_from_checks(
+    versioning_rules_checks: list[dict] | None, check_name: str, criticality: str
+) -> str | None:
+    """Extract the rule_fingerprint for the first check matching name and criticality."""
+    if not versioning_rules_checks:
+        return None
+    match = next(
+        (c for c in versioning_rules_checks if c.get("name") == check_name and c.get("criticality") == criticality),
+        None,
+    )
+    return match.get("rule_fingerprint") if match else None
+
+
+def get_rule_set_fingerprint_from_checks(versioning_rules_checks: list[dict] | None) -> str | None:
+    """
+    Helper function to extract the rule_set_fingerprint from the versioning rules checks
+    based on the check name, function, criticality and column (if applicable).
+    versioning_rules_checks: list of versioning rules checks
+    check_name: name of the check
+    """
+
+    if not versioning_rules_checks:
+        return None
+    return versioning_rules_checks[0].get("rule_set_fingerprint", None)

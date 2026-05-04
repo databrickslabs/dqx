@@ -3,11 +3,16 @@ import json
 import datetime
 import logging
 import re
+from decimal import Decimal
+from enum import Enum
 from importlib.util import find_spec
-from typing import Any
+from typing import Any, TypeVar, overload
 from fnmatch import fnmatch
+from pathlib import Path
+
 
 from pyspark.sql import Column
+from pyspark.sql.types import StructType
 
 # Import spark connect column if spark session is created using spark connect
 try:
@@ -19,14 +24,23 @@ import pyspark.sql.functions as F
 from databricks.sdk import WorkspaceClient
 from databricks.labs.blueprint.limiter import rate_limited
 from databricks.labs.dqx.errors import InvalidParameterError
+from databricks.labs.dqx.table_manager import SparkTableDataProvider
 from databricks.sdk.errors import NotFound
 
 logger = logging.getLogger(__name__)
 
 
+T = TypeVar("T")
+
+
 COLUMN_NORMALIZE_EXPRESSION = re.compile("[^a-zA-Z0-9]+")
-COLUMN_PATTERN = re.compile(r"Column<'(.*?)(?: AS (\w+))?'>$")
+COLUMN_PATTERN = re.compile(r"Column<'(.*?)(?: AS (\w+))?'>$", re.DOTALL)
 INVALID_COLUMN_NAME_PATTERN = re.compile(r"[\s,;{}\(\)\n\t=]+")
+_UNRESOLVED_PLACEHOLDER_PATTERN = re.compile(r"\{\{[^}]*\}\}")
+_SCALAR_VARIABLE_TYPES = (str, int, float, bool, Decimal, datetime.date, datetime.datetime, datetime.time)
+
+VariableValue = str | int | float | bool | Decimal | datetime.date | datetime.datetime | datetime.time
+"""Supported scalar types for variable substitution values."""
 
 
 def get_column_name_or_alias(
@@ -60,8 +74,11 @@ def get_column_name_or_alias(
     if isinstance(column, str):
         col_str = column
     else:
-        # Extract the last alias or column name from the PySpark Column string representation
-        match = COLUMN_PATTERN.search(str(column))
+        # Extract the last alias or column name from the PySpark Column string representation.
+        # Strip the representation first to guard against trailing whitespace or CRLF line endings
+        # that may appear in some PySpark versions (e.g. Databricks Serverless v5), which would prevent the
+        # end-of-string anchor in COLUMN_PATTERN from matching.
+        match = COLUMN_PATTERN.search(str(column).strip())
         if not match:
             raise InvalidParameterError(f"Invalid column expression: {column}")
         col_expr, alias = match.groups()
@@ -121,15 +138,46 @@ def is_simple_column_expression(col_name: str) -> bool:
     return not bool(INVALID_COLUMN_NAME_PATTERN.search(col_name))
 
 
-def normalize_bound_args(val: Any) -> Any:
+def _normalize_leaf_value(val: Any, allow_simple_expressions_only: bool) -> Any:
+    """Normalize a leaf (non-collection) value. Called by normalize_bound_args."""
+    if isinstance(val, (str, int, float, bool)):
+        return val
+
+    if isinstance(val, (datetime.date, datetime.datetime)):
+        return str(val)
+
+    if isinstance(val, Decimal):
+        return {"__decimal__": str(val)}
+
+    column_types: tuple[type[Any], ...] = (Column, ConnectColumn) if ConnectColumn is not None else (Column,)
+    if isinstance(val, column_types):
+        return get_column_name_or_alias(val, allow_simple_expressions_only=allow_simple_expressions_only)
+
+    if isinstance(val, StructType):
+        return val.simpleString()
+
+    if isinstance(val, Enum):
+        return normalize_bound_args(val.value, allow_simple_expressions_only)
+
+    raise TypeError(f"Unsupported type for normalization: {type(val).__name__}")
+
+
+def normalize_bound_args(val: Any, allow_simple_expressions_only: bool = True) -> Any:
     """
     Normalize a value or collection of values for consistent processing.
 
-    Handles primitives, dates, and column-like objects. Lists, tuples, and sets are
+    Handles primitives, dates, Decimal, and column-like objects. Lists, tuples, and sets are
     recursively normalized with type preserved.
+
+    For Decimal values, uses a special JSON-serializable format to preserve type information
+    for round-trip deserialization.
 
     Args:
         val: Value or collection of values to normalize.
+        allow_simple_expressions_only: If True (default), Column values must be simple expressions
+            (e.g. F.col("name")). If False, complex expressions (e.g. F.try_element_at(...)) are
+            allowed and serialized as their string representation. Use False when serializing
+            for fingerprinting/metadata only, where round-trip reconstruction is not required.
 
     Returns:
         Normalized value or collection.
@@ -137,25 +185,16 @@ def normalize_bound_args(val: Any) -> Any:
     Raises:
         TypeError: If a column type is unsupported.
     """
-    if isinstance(val, (list, tuple, set)):
-        normalized = [normalize_bound_args(v) for v in val]
-        return normalized
+    if val is None:
+        return None
 
-    if isinstance(val, (str, int, float, bool)):
-        return val
+    if isinstance(val, (list, tuple, set, frozenset)):
+        return [normalize_bound_args(v, allow_simple_expressions_only) for v in val]
 
-    if isinstance(val, (datetime.date, datetime.datetime)):
-        return str(val)
+    if isinstance(val, dict):
+        return {k: normalize_bound_args(v, allow_simple_expressions_only) for k, v in val.items()}
 
-    if ConnectColumn is not None:
-        column_types: tuple[type[Any], ...] = (Column, ConnectColumn)
-    else:
-        column_types = (Column,)
-
-    if isinstance(val, column_types):
-        col_str = get_column_name_or_alias(val, allow_simple_expressions_only=True)
-        return col_str
-    raise TypeError(f"Unsupported type for normalization: {type(val).__name__}")
+    return _normalize_leaf_value(val, allow_simple_expressions_only)
 
 
 def normalize_col_str(col_str: str) -> str:
@@ -210,7 +249,7 @@ def safe_json_load(value: str):
         value: The value to parse as JSON.
     """
     try:
-        return json.loads(value)  # load as json if possible
+        return json.loads(value)
     except json.JSONDecodeError:
         return value
 
@@ -451,6 +490,56 @@ def to_lowercase(col_expr: Column, is_array: bool = False) -> Column:
     return F.lower(col_expr)
 
 
+def table_exists(spark: Any, table: str) -> bool:
+    """
+    Check if a table exists (Unity Catalog compatible).
+
+    Uses the catalog API only (no Spark job). Requires Spark 3.4+ for
+    fully qualified table names (e.g. catalog.schema.table).
+
+    Args:
+        spark: SparkSession instance.
+        table: Fully qualified table name (e.g. "catalog.schema.table").
+
+    Returns:
+        True if the table exists, False otherwise.
+    """
+    return spark.catalog.tableExists(table)
+
+
+def get_table_primary_keys(table: str, spark: Any) -> set[str]:
+    """
+    Retrieve primary key columns from Unity Catalog table metadata.
+
+    Uses SparkTableDataProvider (table_manager) to read table properties and
+    parses the primary key constraint into a set of column names.
+
+    Args:
+        table: Fully qualified table name (e.g., "catalog.schema.table")
+        spark: SparkSession instance
+
+    Returns:
+        Set of column names that are primary keys. Returns empty set if:
+        - Table doesn't exist
+        - No primary key is defined
+        - Metadata is not accessible
+
+    Examples:
+        >>> pk_cols = get_table_primary_keys("main.default.users", spark)
+        >>> if "user_id" in pk_cols:
+        ...     print("user_id is a primary key")
+    """
+    try:
+        provider = SparkTableDataProvider(spark)
+        pk_str = provider.get_existing_primary_key(table)
+        if pk_str is None:
+            return set()
+        return {c.strip() for c in pk_str.split(",")}
+    except Exception:
+        # Silently handle errors (table not found, permissions, etc.)
+        return set()
+
+
 def missing_required_packages(packages: list[str]) -> bool:
     """
     Checks if any of the required packages are missing.
@@ -462,3 +551,142 @@ def missing_required_packages(packages: list[str]) -> bool:
         True if any package is missing, False otherwise.
     """
     return not all(find_spec(spec) for spec in packages)
+
+
+def _replace_template(text: str, variables: dict[str, str]) -> str:
+    """Replace **{{ key }}** placeholders in *text* with values from *variables*.
+
+    Uses a single-pass regex substitution.
+    Tolerates whitespace inside braces (e.g. **{{ key }}**, **{{key}}**).
+    Logs a warning if any unresolved **{{ ... }}** placeholders remain after substitution.
+
+    Args:
+        text: Input string potentially containing **{{ key }}** placeholders.
+        variables: Pre-stringified mapping of placeholder names to values.
+
+    Returns:
+        String with all matching placeholders replaced.
+    """
+    if not variables:
+        if _UNRESOLVED_PLACEHOLDER_PATTERN.search(text):
+            logger.warning(f"Unresolved placeholder found: '{text}'")
+        return text
+
+    def _resolve(match_obj: re.Match[str]) -> str:
+        key = match_obj.group(0).strip("{} \t")
+        if key in variables:
+            return variables[key]
+        unresolved.append(key)
+        return match_obj.group(0)
+
+    unresolved: list[str] = []
+    output = _UNRESOLVED_PLACEHOLDER_PATTERN.sub(_resolve, text)
+    if unresolved:
+        logger.warning(
+            f"Unresolved placeholders found: {unresolved}. "
+            f"They may be resolved at runtime for certain checks (e.g. sql_query)."
+        )
+    return output
+
+
+@overload
+def _substitute_variables(obj: str, variables: dict[str, str]) -> str: ...
+
+
+@overload
+def _substitute_variables(obj: list[T], variables: dict[str, str]) -> list[T]: ...
+
+
+@overload
+def _substitute_variables(obj: dict[str, T], variables: dict[str, str]) -> dict[str, T]: ...
+
+
+@overload
+def _substitute_variables(obj: T, variables: dict[str, str]) -> T: ...
+
+
+def _substitute_variables(obj: Any, variables: dict[str, str]) -> Any:
+    """Recursively replace **{{ key }}** placeholders in all string values within *obj*.
+
+    Traverses dicts, lists, and strings. Non-string/non-collection values are
+    returned unchanged. Dict keys are not substituted.
+
+    Args:
+        obj: A string, dict, list, or other value to process.
+        variables: Pre-stringified mapping of placeholder names to values.
+
+    Returns:
+        A new object with all string values having placeholders replaced.
+    """
+    if isinstance(obj, str):
+        return _replace_template(obj, variables)
+    if isinstance(obj, dict):
+        return {k: _substitute_variables(v, variables) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_substitute_variables(item, variables) for item in obj]
+    return obj
+
+
+def _validate_variable_types(variables: dict[str, VariableValue]) -> None:
+    """Raise :class:`InvalidParameterError` if any variable value is not a supported scalar type."""
+    for key, val in variables.items():
+        if not isinstance(val, _SCALAR_VARIABLE_TYPES):
+            raise InvalidParameterError(
+                f"Variable '{key}' has unsupported type '{type(val).__name__}'. "
+                f"Only scalar types are supported: str, int, float, bool, Decimal, "
+                f"datetime.date, datetime.datetime, datetime.time."
+            )
+
+
+def resolve_variables(checks: list[dict], variables: dict[str, VariableValue] | None) -> list[dict]:
+    """Resolve variable substitution in check definitions.
+
+    Replaces placeholders in all string values of *checks* with the corresponding values
+    from *variables*.
+
+    Variable values must be scalar types (e.g. *str*, *int*, *float*, *bool*, *Decimal*,
+    *datetime.date*, *datetime.datetime*, *datetime.time*). Non-string scalars are
+    converted to strings via *str()* in the substituted string. Collection type
+    variables (e.g. *list*, *dict*, *set*, etc.) are rejected with
+    *databricks.labs.dqx.errors.InvalidParameterError* because their string representation
+    is rarely meaningful in SQL or column expressions.
+
+    Logs a warning for any placeholders that remain unresolved after substitution
+    (e.g. misspelled variable names).
+
+    Note:
+    Variable values substituted into *sql_expression* checks are not sanitized and are
+    passed directly to *F.expr()*. Callers must **ensure variable values come from trusted
+    sources** to prevent SQL injection.
+
+    Args:
+        checks: List of check definition dictionaries (metadata format).
+        variables: Mapping of placeholder names to scalar replacement values.
+            If *None* or empty the checks are returned unchanged.
+
+    Returns:
+        A new list of check dicts with placeholders resolved, or the original list
+        when no substitution is needed.
+
+    Raises:
+        InvalidParameterError: If any variable value is not a supported scalar type.
+    """
+    if not variables:
+        return checks
+
+    _validate_variable_types(variables)
+    str_variables = {k: str(v) for k, v in variables.items()}
+    return _substitute_variables(checks, str_variables)
+
+
+def get_file_extension(file_path: str | os.PathLike) -> str:
+    """
+    Extract file extension from a file path.
+
+    Args:
+        file_path: File path as string or path-like object.
+
+    Returns:
+        File extension (e.g., ".json", ".yaml", ".yml") or empty string if no extension.
+    """
+    return Path(file_path).suffix

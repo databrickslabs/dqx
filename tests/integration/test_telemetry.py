@@ -5,7 +5,7 @@ from databricks.labs.dqx.telemetry import (
     get_paths_from_spark_plan,
     get_spark_plan_as_string,
 )
-from tests.conftest import TEST_CATALOG
+from tests.constants import TEST_CATALOG
 
 
 def test_get_tables_and_paths_from_file_delta_dataframe(ws, spark, make_schema, make_random, make_volume):

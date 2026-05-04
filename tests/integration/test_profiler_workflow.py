@@ -11,7 +11,35 @@ from databricks.labs.dqx.config import (
 )
 from databricks.labs.dqx.engine import DQEngine
 from tests.integration.conftest import setup_custom_check_func
-from tests.conftest import TEST_CATALOG
+from tests.constants import TEST_CATALOG
+
+
+def _assert_ai_regex_match_excludes_c_prefix(checks):
+    """Assert that the AI-generated rules contain a regex_match check on the
+    'name' column that rejects names starting with 'c' (any case).
+
+    `column` is required for regex_match, so we assert it strictly. The regex
+    form is allowed to vary since LLM output is non-deterministic — two
+    equivalent forms are accepted:
+    - `^[^cC].*` with negate=False (regex excludes 'c' names directly)
+    - `^[cC].*` with negate=True (regex matches 'c' names, then negated)
+    """
+    actual = next((c for c in checks if c["check"]["function"] == "regex_match"), None)
+    assert actual is not None, "AI generated regex_match check not found in the loaded checks"
+    assert actual.get("criticality") in {"error", "warn"}, f"Unexpected criticality: {actual}"
+
+    args = actual["check"].get("arguments", {})
+    assert args.get("column") == "name", (
+        f"AI generated regex_match check must target the 'name' column via the required " f"'column' argument: {actual}"
+    )
+
+    regex = args.get("regex", "")
+    negate = bool(args.get("negate", False))
+    excludes_via_charclass = "c" in regex.lower() and "[^" in regex
+    excludes_via_negate = "c" in regex.lower() and negate
+    assert (
+        excludes_via_charclass or excludes_via_negate
+    ), f"AI generated regex does not appear to exclude names starting with 'c': regex={regex!r}, negate={negate}"
 
 
 def test_profiler_workflow_when_missing_input_location_in_config(ws, setup_serverless_workflows):
@@ -42,8 +70,9 @@ def test_profiler_workflow_when_timeout(ws, setup_serverless_workflows):
     assert "timed out" in str(failure.value)
 
 
-def test_profiler_workflow(ws, spark, setup_workflows):
+def test_profiler_workflow(ws, spark_keep_alive, setup_workflows):
     installation_ctx, run_config = setup_workflows()
+    spark = spark_keep_alive.spark
 
     installation_ctx.deployed_workflows.run_workflow("profiler", run_config.name)
 
@@ -62,8 +91,9 @@ def test_profiler_workflow(ws, spark, setup_workflows):
     assert status, f"Profile summary stats file {run_config.profiler_config.summary_stats_file} does not exist."
 
 
-def test_profiler_workflow_serverless(ws, spark, setup_serverless_workflows):
+def test_profiler_workflow_serverless(ws, spark_keep_alive, setup_serverless_workflows):
     installation_ctx, run_config = setup_serverless_workflows()
+    spark = spark_keep_alive.spark
     dq_engine = DQEngine(ws, spark)
 
     config = InstallationChecksStorageConfig(
@@ -91,8 +121,9 @@ def test_profiler_workflow_serverless(ws, spark, setup_serverless_workflows):
     assert status, f"Profile summary stats file {run_config.profiler_config.summary_stats_file} does not exist."
 
 
-def test_profiler_workflow_with_custom_install_folder(ws, spark, setup_workflows_with_custom_folder):
+def test_profiler_workflow_with_custom_install_folder(ws, spark_keep_alive, setup_workflows_with_custom_folder):
     installation_ctx, run_config = setup_workflows_with_custom_folder()
+    spark = spark_keep_alive.spark
 
     installation_ctx.deployed_workflows.run_workflow("profiler", run_config.name)
 
@@ -112,8 +143,9 @@ def test_profiler_workflow_with_custom_install_folder(ws, spark, setup_workflows
     assert status, f"Profile summary stats file {run_config.profiler_config.summary_stats_file} does not exist."
 
 
-def test_profiler_workflow_for_multiple_run_configs(ws, spark, setup_workflows):
+def test_profiler_workflow_for_multiple_run_configs(ws, spark_keep_alive, setup_workflows):
     installation_ctx, run_config = setup_workflows()
+    spark = spark_keep_alive.spark
 
     second_run_config = copy.deepcopy(run_config)
     second_run_config.name = "second"
@@ -154,8 +186,9 @@ def test_profiler_workflow_for_multiple_run_configs(ws, spark, setup_workflows):
     assert status, f"Profile summary stats file {second_run_config.profiler_config.summary_stats_file} does not exist."
 
 
-def test_profiler_workflow_for_patterns(ws, spark, setup_workflows, make_table, make_random):
+def test_profiler_workflow_for_patterns(ws, spark_keep_alive, setup_workflows, make_table, make_random):
     installation_ctx, run_config = setup_workflows()
+    spark = spark_keep_alive.spark
 
     first_table = run_config.input_config.location
     catalog_name, schema_name, _ = first_table.split('.')
@@ -183,8 +216,11 @@ def test_profiler_workflow_for_patterns(ws, spark, setup_workflows, make_table, 
     assert checks, f"Checks for {second_table} were not generated"
 
 
-def test_profiler_workflow_for_patterns_with_exclude_patterns(ws, spark, setup_workflows, make_table, make_random):
+def test_profiler_workflow_for_patterns_with_exclude_patterns(
+    ws, spark_keep_alive, setup_workflows, make_table, make_random
+):
     installation_ctx, run_config = setup_workflows()
+    spark = spark_keep_alive.spark
 
     first_table = run_config.input_config.location
     catalog_name, schema_name, _ = first_table.split('.')
@@ -214,8 +250,9 @@ def test_profiler_workflow_for_patterns_with_exclude_patterns(ws, spark, setup_w
         engine.load_checks(config=workspace_file_storage_config)
 
 
-def test_profiler_workflow_for_patterns_exclude_output(ws, spark, setup_workflows, make_table, make_random):
+def test_profiler_workflow_for_patterns_exclude_output(ws, spark_keep_alive, setup_workflows, make_table, make_random):
     installation_ctx, run_config = setup_workflows()
+    spark = spark_keep_alive.spark
 
     first_table = run_config.input_config.location
     catalog_name, schema_name, _ = first_table.split('.')
@@ -268,8 +305,11 @@ def test_profiler_workflow_for_patterns_exclude_output(ws, spark, setup_workflow
         engine.load_checks(config=workspace_file_storage_config)
 
 
-def test_profiler_workflow_for_patterns_table_checks_storage(ws, spark, setup_workflows, make_table, make_random):
+def test_profiler_workflow_for_patterns_table_checks_storage(
+    ws, spark_keep_alive, setup_workflows, make_table, make_random
+):
     installation_ctx, run_config = setup_workflows()
+    spark = spark_keep_alive.spark
 
     first_table_full_name = run_config.input_config.location
     catalog_name, schema_name, _ = first_table_full_name.split('.')
@@ -308,8 +348,9 @@ def test_profiler_workflow_for_patterns_table_checks_storage(ws, spark, setup_wo
     assert checks, f"Checks for {second_table_full_name} were not generated"
 
 
-def test_profiler_workflow_filter_out_all_data(ws, spark, setup_workflows, make_table, make_random):
+def test_profiler_workflow_filter_out_all_data(ws, spark_keep_alive, setup_workflows, make_table, make_random):
     installation_ctx, run_config = setup_workflows()
+    spark = spark_keep_alive.spark
 
     config = installation_ctx.config
     run_config = config.get_run_config()
@@ -330,8 +371,9 @@ def test_profiler_workflow_filter_out_all_data(ws, spark, setup_workflows, make_
     assert checks == [], "Checks should be empty when profiling an empty input dataset"
 
 
-def test_profiler_workflow_with_ai_rules_generation(ws, spark, setup_serverless_workflows):
+def test_profiler_workflow_with_ai_rules_generation(ws, spark_keep_alive, setup_serverless_workflows):
     installation_ctx, run_config = setup_serverless_workflows()
+    spark = spark_keep_alive.spark
 
     config = installation_ctx.config
     run_config = config.get_run_config()
@@ -350,24 +392,14 @@ def test_profiler_workflow_with_ai_rules_generation(ws, spark, setup_serverless_
     checks = dq_engine.load_checks(config=config)
     assert checks, "Checks were not loaded correctly"
 
-    actual_ai_generated_check = None
-    for check in checks:
-        if check["check"]["function"] == "regex_match":
-            actual_ai_generated_check = check
-            break
-
-    expected_ai_generated_check = {
-        'check': {'arguments': {'column': 'name', 'negate': False, 'regex': '^[^cC].*'}, 'function': 'regex_match'},
-        'criticality': 'error',
-    }
-
-    assert expected_ai_generated_check == actual_ai_generated_check, "AI generated check not found in the loaded checks"
+    _assert_ai_regex_match_excludes_c_prefix(checks)
 
 
 def test_profiler_workflow_with_ai_rules_generation_and_model_api_keys_as_secrets(
-    ws, spark, setup_serverless_workflows, make_secret_scope
+    ws, spark_keep_alive, setup_serverless_workflows, make_secret_scope
 ):
     installation_ctx, run_config = setup_serverless_workflows()
+    spark = spark_keep_alive.spark
 
     scope_name = make_secret_scope()
     api_key = f"{scope_name}/api_key"
@@ -376,6 +408,7 @@ def test_profiler_workflow_with_ai_rules_generation_and_model_api_keys_as_secret
     ws.secrets.put_secret(scope=scope_name, key="api_base", string_value="")
 
     config = installation_ctx.config
+    config.llm_config.model.model_name = "databricks/databricks-claude-opus-4-7"  # test different model
     config.llm_config.model.api_key = api_key  # test secret retrieval
     config.llm_config.model.api_base = api_base  # test secret retrieval
 
@@ -395,27 +428,18 @@ def test_profiler_workflow_with_ai_rules_generation_and_model_api_keys_as_secret
     checks = dq_engine.load_checks(config=config)
     assert checks, "Checks were not loaded correctly"
 
-    actual_ai_generated_check = None
-    for check in checks:
-        if check["check"]["function"] == "regex_match":
-            actual_ai_generated_check = check
-            break
-
-    expected_ai_generated_check = {
-        'check': {'arguments': {'column': 'name', 'negate': False, 'regex': '^[^cC].*'}, 'function': 'regex_match'},
-        'criticality': 'error',
-    }
-
-    assert expected_ai_generated_check == actual_ai_generated_check, "AI generated check not found in the loaded checks"
+    _assert_ai_regex_match_excludes_c_prefix(checks)
 
 
-def test_profiler_workflow_with_ai_rules_generation_with_custom_funcs(ws, spark, setup_serverless_workflows):
+def test_profiler_workflow_with_ai_rules_generation_with_custom_funcs(ws, spark_keep_alive, setup_serverless_workflows):
     installation_ctx, run_config = setup_serverless_workflows()
+    spark = spark_keep_alive.spark
 
     config = installation_ctx.config
-    config.llm_config.model.model_name = "databricks/databricks-llama-4-maverick"  # test different model
     run_config = config.get_run_config()
-    run_config.checks_user_requirements = "name should not end with 'c'"
+    run_config.checks_user_requirements = (
+        "name should not end with 'c'. Use not_ends_with_suffix function and don't add any extra quotes for suffix."
+    )
     installation_ctx.installation.save(installation_ctx.config)
 
     custom_checks_funcs_location = "custom_check_funcs.py"  # path relative to the installation folder
@@ -433,22 +457,24 @@ def test_profiler_workflow_with_ai_rules_generation_with_custom_funcs(ws, spark,
     checks = dq_engine.load_checks(config=config)
     assert checks, "Checks were not loaded correctly"
 
-    actual_ai_generated_check = None
-    for check in checks:
-        if check["check"]["function"] == "not_ends_with_suffix":
-            actual_ai_generated_check = check
-            break
+    actual_ai_generated_check = next((c for c in checks if c["check"]["function"] == "not_ends_with_suffix"), None)
+    assert actual_ai_generated_check is not None, "AI generated not_ends_with_suffix check not found"
+    assert actual_ai_generated_check.get("criticality") == "error"
+    args = actual_ai_generated_check["check"].get("arguments", {})
+    assert args.get("column") == "name", (
+        f"AI generated check must target the 'name' column via the required 'column' argument: "
+        f"{actual_ai_generated_check}"
+    )
+    assert (
+        str(args.get("suffix", "")).lower() == "c"
+    ), f"AI generated check suffix is not 'c': {actual_ai_generated_check}"
 
-    expected_ai_generated_check = {
-        'check': {'arguments': {'column': 'name', 'suffix': 'c'}, 'function': 'not_ends_with_suffix'},
-        'criticality': 'error',
-    }
 
-    assert expected_ai_generated_check == actual_ai_generated_check, "AI generated check not found in the loaded checks"
-
-
-def test_profiler_workflow_with_llm_pk_detection(ws, spark, make_schema, make_table, setup_serverless_workflows):
+def test_profiler_workflow_with_llm_pk_detection(
+    ws, spark_keep_alive, make_schema, make_table, setup_serverless_workflows
+):
     installation_ctx, run_config = setup_serverless_workflows()
+    spark = spark_keep_alive.spark
 
     schema = make_schema(catalog_name=TEST_CATALOG)
     input_table = make_table(

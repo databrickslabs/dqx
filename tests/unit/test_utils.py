@@ -1,9 +1,14 @@
-from datetime import date, datetime
+import logging
+from datetime import date, datetime, time
+from decimal import Decimal
+from enum import Enum
 from typing import Any
+from pathlib import Path
 from unittest.mock import Mock
 import pyspark.sql.functions as F
 import pytest
 from pyspark.sql import Column
+from pyspark.sql.types import IntegerType, StringType, StructField, StructType
 
 from databricks.labs.dqx.io import read_input_data, get_reference_dataframes
 from databricks.labs.dqx.utils import (
@@ -13,12 +18,15 @@ from databricks.labs.dqx.utils import (
     safe_json_load,
     get_columns_as_strings,
     is_simple_column_expression,
-    normalize_bound_args,
     safe_strip_file_from_path,
     missing_required_packages,
+    get_file_extension,
+    resolve_variables,
 )
+from databricks.labs.dqx.rule import normalize_bound_args
 from databricks.labs.dqx.errors import InvalidParameterError, InvalidConfigError
 from databricks.labs.dqx.config import InputConfig
+from databricks.labs.dqx.pii.nlp_engine_config import NLPEngineConfig
 
 
 def test_get_column_name():
@@ -105,6 +113,15 @@ def test_get_col_name_as_str():
 def test_get_col_name_expr_not_found():
     with pytest.raises(InvalidParameterError, match="Invalid column expression"):
         get_column_name_or_alias(Mock())
+
+
+def test_get_col_name_with_trailing_crlf():
+    """Serverless v5 may append CRLF to the column string representation,
+    which would prevent the end-of-string anchor in COLUMN_PATTERN from matching."""
+    col = Mock()
+    col.__str__ = Mock(return_value="Column<'!(EXISTS (SELECT 1 FROM t WHERE x = a))'>\r\n")
+    actual = get_column_name_or_alias(col, normalize=True)
+    assert actual == "_exists_select_1_from_t_where_x_a"
 
 
 def test_get_col_name_not_simple_expression() -> None:
@@ -316,6 +333,7 @@ def test_is_simple_column_expression(column: str, expected: bool):
         (123, 123),
         (45.67, 45.67),
         (True, True),
+        (False, False),
         # Dates
         (date(2023, 1, 1), "2023-01-01"),
         (datetime(2023, 1, 1, 12, 0, 0), "2023-01-01 12:00:00"),
@@ -324,7 +342,7 @@ def test_is_simple_column_expression(column: str, expected: bool):
         ((4, 5, 6), [4, 5, 6]),
         # PySpark Column
         (F.col("col_name"), "col_name"),
-        (F.col("col_name"), "col_name"),
+        (F.col("a").alias("b"), "b"),
     ],
 )
 def test_normalize_bound_args(input_value: Any, expected_output: Any):
@@ -333,7 +351,112 @@ def test_normalize_bound_args(input_value: Any, expected_output: Any):
 
 def test_normalize_bound_args_unsupported_type():
     with pytest.raises(TypeError, match="Unsupported type for normalization"):
-        normalize_bound_args({"a": 1})
+        normalize_bound_args(object())
+
+
+def test_normalize_bound_args_handle_none():
+    assert normalize_bound_args(None) is None
+
+
+def test_normalize_bound_args_complex_column_default_rejects():
+    """Default allow_simple_expressions_only=True rejects complex Column expressions."""
+    with pytest.raises(InvalidParameterError, match="Only simple references are allowed"):
+        normalize_bound_args(F.try_element_at("arr_col", F.lit(1)))
+
+
+def test_normalize_bound_args_complex_column_allowed_when_opted_in():
+    """allow_simple_expressions_only=False accepts complex Column expressions for serialization."""
+    result = normalize_bound_args(F.try_element_at("arr_col", F.lit(1)), allow_simple_expressions_only=False)
+    assert "try_element_at" in result
+
+
+def test_complex_column_serialized_for_fingerprinting_is_not_round_trip_safe():
+    """Serializing a complex Column with allow_simple_expressions_only=False is a one-way operation.
+
+    The resulting string contains the expression details but is NOT a valid simple column name.
+    Round-tripping it through normalize_bound_args (default allow_simple_expressions_only=True)
+    returns it as a plain string — it is never reconstructed as the original Column expression.
+    This confirms that dicts produced by DQRule.to_dict() (which uses allow_simple_expressions_only=False)
+    cannot be fed back into apply_checks_by_metadata to recover the original Column behaviour.
+    """
+    complex_col = F.try_element_at("arr_col", F.lit(1))
+
+    serialized = normalize_bound_args(complex_col, allow_simple_expressions_only=False)
+
+    # Result is a string containing expression details, not a Column object
+    assert isinstance(serialized, str)
+    assert "try_element_at" in serialized
+
+    # The string is NOT a valid simple column reference (contains special chars like parentheses)
+    assert not is_simple_column_expression(serialized)
+
+    # Round-trip: normalize_bound_args treats the string as a plain column-name string,
+    # it does NOT reconstruct the original Column expression
+    round_tripped = normalize_bound_args(serialized)
+    assert isinstance(round_tripped, str)
+    assert round_tripped == serialized  # unchanged — no reconstruction happened
+
+
+def test_normalize_bound_args_struct_type():
+    """StructType is normalized to simpleString for fingerprinting (e.g. has_valid_schema with df.schema)."""
+    schema = StructType([StructField("id", IntegerType()), StructField("name", StringType())])
+    result = normalize_bound_args(schema)
+    assert result == "struct<id:int,name:string>"
+
+
+def test_normalize_bound_args_dict():
+    """Dict is recursively normalized for fingerprinting (e.g. custom checks with dict args)."""
+    result = normalize_bound_args({"min": 1, "max": 10})
+    assert result == {"min": 1, "max": 10}
+
+    result = normalize_bound_args({"nested": {"a": 1, "b": "x"}})
+    assert result == {"nested": {"a": 1, "b": "x"}}
+
+
+def test_normalize_bound_args_set():
+    """Set is recursively normalized to list for fingerprinting."""
+    result = normalize_bound_args({1, 2, 3})
+    assert sorted(result) == [1, 2, 3]
+
+
+def test_normalize_bound_args_decimal():
+    """Decimal is normalized to __decimal__ format for round-trip serialization."""
+    result = normalize_bound_args(Decimal("123.45"))
+    assert result == {"__decimal__": "123.45"}
+
+
+def test_normalize_bound_args_nested_collections():
+    """Nested dict/list/set with Decimal and Enum are recursively normalized."""
+
+    class TestEnum(Enum):
+        X = "x"
+
+    result = normalize_bound_args({"a": [Decimal("1.0"), TestEnum.X], "b": {1, 2}})
+    assert result["a"] == [{"__decimal__": "1.0"}, "x"]
+    assert sorted(result["b"]) == [1, 2]
+
+
+def test_normalize_bound_args_frozenset():
+    """Frozenset is recursively normalized for fingerprinting."""
+    result = normalize_bound_args(frozenset({1, 2, 3}))
+    assert sorted(result) == [1, 2, 3]
+
+
+def test_normalize_bound_args_enum():
+    """Enum (e.g. NLPEngineConfig, Criticality) is normalized to its value for fingerprinting."""
+
+    class TestEnum(Enum):
+        FOO = "foo_value"
+        BAR = {"key": "val"}
+
+    assert normalize_bound_args(TestEnum.FOO) == "foo_value"
+    assert normalize_bound_args(TestEnum.BAR) == {"key": "val"}
+
+
+def test_normalize_bound_args_nlp_engine_config():
+    """NLPEngineConfig enum from PII module is normalized (used by does_not_contain_pii)."""
+    result = normalize_bound_args(NLPEngineConfig.SPACY_SMALL)
+    assert result == {"nlp_engine_name": "spacy", "models": [{"lang_code": "en", "model_name": "en_core_web_sm"}]}
 
 
 def test_get_reference_dataframes_with_missing_ref_tables(mock_spark) -> None:
@@ -380,3 +503,347 @@ def test_safe_strip_file_from_path(path: str, expected: str):
 )
 def test_missing_required_packages(packages, expected):
     assert missing_required_packages(packages) == expected
+
+
+@pytest.mark.parametrize(
+    "file_path, expected_extension",
+    [
+        ("/path/to/file.json", ".json"),
+        ("/path/to/file.yaml", ".yaml"),
+        ("/path/to/file.yml", ".yml"),
+        ("file.json", ".json"),
+        ("file.yaml", ".yaml"),
+        ("file.yml", ".yml"),
+        ("/path/to/file", ""),
+        ("file", ""),
+        ("/path/to/file.JSON", ".JSON"),  # Case preserved, will be lowercased by serializer
+        ("/path/to/file.YAML", ".YAML"),
+        ("/path/to/file.with.multiple.dots.json", ".json"),
+        ("", ""),
+    ],
+)
+def test_get_file_extension(file_path: str, expected_extension: str):
+    """Test get_file_extension function with various file paths."""
+    assert get_file_extension(file_path) == expected_extension
+
+
+def test_get_file_extension_with_path_object():
+    """Test get_file_extension function with Path object."""
+    file_path = Path("/path/to/file.json")
+    assert get_file_extension(file_path) == ".json"
+
+
+def test_resolve_variables_replaces_all_string_fields():
+    checks = [
+        {
+            "criticality": "error",
+            "name": "{{ col }}_not_null",
+            "check": {
+                "function": "is_not_null",
+                "arguments": {"column": "{{ col }}"},
+            },
+            "filter": "{{ filter_col }} = 'active'",
+        }
+    ]
+    variables = {"col": "email", "filter_col": "status"}
+    result = resolve_variables(checks, variables)
+
+    assert result[0]["name"] == "email_not_null"
+    assert result[0]["check"]["arguments"]["column"] == "email"
+    assert result[0]["filter"] == "status = 'active'"
+
+
+def test_resolve_variables_empty_variables():
+    checks = [{"name": "{{ x }}"}]
+    result = resolve_variables(checks, {})
+    assert result is checks  # same object, no copy
+    assert result[0]["name"] == "{{ x }}"
+
+
+def test_resolve_variables_non_string_values_converted():
+    checks = [
+        {
+            "check": {
+                "function": "sql_expression",
+                "arguments": {"expression": "{{ col }} > {{ threshold }}"},
+            },
+        }
+    ]
+    variables = {"col": "age", "threshold": 18}
+    result = resolve_variables(checks, variables)
+    assert result[0]["check"]["arguments"]["expression"] == "age > 18"
+
+
+def test_resolve_variables_does_not_mutate_original():
+    checks = [
+        {
+            "name": "{{ col }}_check",
+            "check": {
+                "function": "is_not_null",
+                "arguments": {"column": "{{ col }}"},
+            },
+        }
+    ]
+    variables = {"col": "name"}
+    resolve_variables(checks, variables)
+
+    # Original must be unchanged
+    assert checks[0]["name"] == "{{ col }}_check"
+    assert checks[0]["check"]["arguments"]["column"] == "{{ col }}"
+
+
+def test_resolve_variables_nested_dicts():
+    checks = [
+        {
+            "check": {
+                "function": "sql_expression",
+                "arguments": {
+                    "expression": "{{ col }} IS NOT NULL",
+                },
+            },
+            "user_metadata": {"owner": "{{ team }}"},
+        }
+    ]
+    variables = {"col": "id", "team": "data-eng"}
+    result = resolve_variables(checks, variables)
+
+    assert result[0]["check"]["arguments"]["expression"] == "id IS NOT NULL"
+    assert result[0]["user_metadata"]["owner"] == "data-eng"
+
+
+def test_resolve_variables_partial_replacement():
+    checks = [{"name": "{{ p1 }}_greater_than_{{ threshold }}"}]
+    variables = {"p1": "column1", "threshold": 10}
+    result = resolve_variables(checks, variables)
+    assert result[0]["name"] == "column1_greater_than_10"
+
+
+def test_resolve_variables_unresolved_placeholder_warning(caplog):
+    checks = [{"name": "{{ resolved }}_{{ unresolved }}"}]
+    variables = {"resolved": "ok"}
+    with caplog.at_level(logging.WARNING, logger="databricks.labs.dqx.utils"):
+        result = resolve_variables(checks, variables)
+
+    assert result[0]["name"] == "ok_{{ unresolved }}"
+    assert any("Unresolved placeholder" in msg for msg in caplog.messages)
+
+
+def test_resolve_variables_whitespace_tolerance():
+    checks = [
+        {"a": "{{x}}", "b": "{{ x }}", "c": "{{  x  }}"},
+    ]
+    variables = {"x": "val"}
+    result = resolve_variables(checks, variables)
+    assert result[0]["a"] == "val"
+    assert result[0]["b"] == "val"
+    assert result[0]["c"] == "val"
+
+
+def test_resolve_variables_non_string_dict_values_untouched():
+    checks = [
+        {
+            "criticality": "error",
+            "check": {
+                "function": "is_in_list",
+                "arguments": {"column": "{{ col }}", "allowed": [1, 2, 3]},
+            },
+        }
+    ]
+    variables = {"col": "status"}
+    result = resolve_variables(checks, variables)
+    assert result[0]["check"]["arguments"]["column"] == "status"
+    assert result[0]["check"]["arguments"]["allowed"] == [1, 2, 3]
+    assert result[0]["criticality"] == "error"
+
+
+def test_resolve_variables_for_each_column():
+    checks = [
+        {
+            "criticality": "error",
+            "check": {
+                "function": "is_not_null",
+                "for_each_column": ["{{ col1 }}", "{{ col2 }}"],
+            },
+        }
+    ]
+    variables = {"col1": "first_name", "col2": "last_name"}
+    result = resolve_variables(checks, variables)
+    assert result[0]["check"]["for_each_column"] == ["first_name", "last_name"]
+
+
+def test_resolve_variables_multiple_checks():
+    checks = [
+        {
+            "name": "{{ col }}_not_null",
+            "check": {"function": "is_not_null", "arguments": {"column": "{{ col }}"}},
+        },
+        {
+            "name": "{{ col2 }}_not_empty",
+            "check": {"function": "is_not_empty", "arguments": {"column": "{{ col2 }}"}},
+        },
+    ]
+    variables = {"col": "a", "col2": "b"}
+    result = resolve_variables(checks, variables)
+    assert result[0]["name"] == "a_not_null"
+    assert result[0]["check"]["arguments"]["column"] == "a"
+    assert result[1]["name"] == "b_not_empty"
+    assert result[1]["check"]["arguments"]["column"] == "b"
+
+
+def test_resolve_variables_empty_checks_list():
+    result = resolve_variables([], {"col": "x"})
+    assert result == []
+
+
+def test_resolve_variables_empty_string_value():
+    checks = [{"name": "prefix_{{ col }}_suffix"}]
+    result = resolve_variables(checks, {"col": ""})
+    assert result[0]["name"] == "prefix__suffix"
+
+
+def test_resolve_variables_value_contains_braces():
+    """Variable value itself contains {{ }} — should NOT be re-expanded."""
+    checks = [{"expr": "{{ col }}"}]
+    result = resolve_variables(checks, {"col": "{{ other }}"})
+    assert result[0]["expr"] == "{{ other }}"
+
+
+def test_resolve_variables_key_with_regex_special_chars():
+    """Variable keys with regex metacharacters must be escaped properly."""
+    checks = [{"name": "{{ col.name }}_check", "filter": "{{ col+1 }} > 0"}]
+    variables = {"col.name": "revenue", "col+1": "amount"}
+    result = resolve_variables(checks, variables)
+    assert result[0]["name"] == "revenue_check"
+    assert result[0]["filter"] == "amount > 0"
+
+
+def test_resolve_variables_same_placeholder_repeated_in_string():
+    checks = [{"expr": "{{ x }} + {{ x }}"}]
+    result = resolve_variables(checks, {"x": "col"})
+    assert result[0]["expr"] == "col + col"
+
+
+def test_resolve_variables_deeply_nested():
+    checks = [{"a": {"b": {"c": {"d": "{{ v }}"}}}}]
+    result = resolve_variables(checks, {"v": "deep"})
+    assert result[0]["a"]["b"]["c"]["d"] == "deep"
+
+
+def test_resolve_variables_value_with_backslash():
+    """Backslashes in values should be treated literally (no regex group refs)."""
+    checks = [{"path": "{{ p }}"}]
+    result = resolve_variables(checks, {"p": r"C:\Users\test"})
+    assert result[0]["path"] == r"C:\Users\test"
+
+
+def test_resolve_variables_rejects_list_value():
+    checks = [{"check": {"arguments": {"column": "{{ col }}"}}}]
+    with pytest.raises(InvalidParameterError, match="unsupported type 'list'"):
+        resolve_variables(checks, {"col": ["a", "b"]})
+
+
+def test_resolve_variables_rejects_dict_value():
+    checks = [{"check": {"arguments": {"column": "{{ col }}"}}}]
+    with pytest.raises(InvalidParameterError, match="unsupported type 'dict'"):
+        resolve_variables(checks, {"col": {"nested": "value"}})
+
+
+def test_resolve_variables_accepts_decimal_value():
+    checks = [{"expr": "col > {{ threshold }}"}]
+    result = resolve_variables(checks, {"threshold": Decimal("3.14")})
+    assert result[0]["expr"] == "col > 3.14"
+
+
+def test_resolve_variables_accepts_bool_value():
+    checks = [{"expr": "{{ flag }}"}]
+    result = resolve_variables(checks, {"flag": True})
+    assert result[0]["expr"] == "True"
+
+
+def test_resolve_variables_false_bool():
+    checks = [{"expr": "{{ flag }}"}]
+    result = resolve_variables(checks, {"flag": False})
+    assert result[0]["expr"] == "False"
+
+
+def test_resolve_variables_rejects_none_value():
+    checks = [{"col": "{{ col }}"}]
+    with pytest.raises(InvalidParameterError, match="unsupported type 'NoneType'"):
+        resolve_variables(checks, {"col": None})
+
+
+def test_resolve_variables_rejects_set_value():
+    checks = [{"col": "{{ col }}"}]
+    with pytest.raises(InvalidParameterError, match="unsupported type 'set'"):
+        resolve_variables(checks, {"col": {1, 2}})
+
+
+def test_resolve_variables_rejects_tuple_value():
+    checks = [{"col": "{{ col }}"}]
+    with pytest.raises(InvalidParameterError, match="unsupported type 'tuple'"):
+        resolve_variables(checks, {"col": (1, 2)})
+
+
+def test_resolve_variables_dict_keys_not_substituted():
+    checks = [{"{{ col }}": "value", "other": "{{ col }}"}]
+    result = resolve_variables(checks, {"col": "replaced"})
+    assert "{{ col }}" in result[0]
+    assert result[0]["{{ col }}"] == "value"
+    assert result[0]["other"] == "replaced"
+
+
+def test_resolve_variables_nan():
+    checks = [{"expr": "{{ val }}"}]
+    result = resolve_variables(checks, {"val": float("nan")})
+    assert result[0]["expr"] == "nan"
+
+
+def test_resolve_variables_inf():
+    checks = [{"expr": "{{ val }}"}]
+    result = resolve_variables(checks, {"val": float("inf")})
+    assert result[0]["expr"] == "inf"
+
+
+def test_resolve_variables_multiple_unresolved_warns(caplog):
+    checks = [{"expr": "{{ a }} and {{ b }}"}]
+    with caplog.at_level(logging.WARNING):
+        result = resolve_variables(checks, {"a": "x"})
+    assert result[0]["expr"] == "x and {{ b }}"
+    assert any("Unresolved placeholder" in msg for msg in caplog.messages)
+
+
+def test_resolve_variables_none_vars_no_warning(caplog):
+    checks = [{"col": "{{ x }}"}]
+    with caplog.at_level(logging.WARNING):
+        result = resolve_variables(checks, None)
+    assert result[0]["col"] == "{{ x }}"
+    assert not any("Unresolved placeholder" in msg for msg in caplog.messages)
+
+    with caplog.at_level(logging.WARNING):
+        result = resolve_variables(checks, {})
+    assert result[0]["col"] == "{{ x }}"
+    assert not any("Unresolved placeholder" in msg for msg in caplog.messages)
+
+
+def test_resolve_variables_unicode_values():
+    checks = [{"col": "{{ col }}"}]
+    result = resolve_variables(checks, {"col": "prénom"})
+    assert result[0]["col"] == "prénom"
+
+
+def test_resolve_variables_accepts_date():
+    checks = [{"expr": "date > '{{ d }}'"}]
+    result = resolve_variables(checks, {"d": date(2024, 1, 15)})
+    assert result[0]["expr"] == "date > '2024-01-15'"
+
+
+def test_resolve_variables_accepts_datetime():
+    checks = [{"expr": "ts > '{{ ts }}'"}]
+    result = resolve_variables(checks, {"ts": datetime(2024, 1, 15, 10, 30)})
+    assert "2024-01-15" in result[0]["expr"]
+
+
+def test_resolve_variables_accepts_time():
+    checks = [{"expr": "t > '{{ t }}'"}]
+    result = resolve_variables(checks, {"t": time(10, 30)})
+    assert result[0]["expr"] == "t > '10:30:00'"
