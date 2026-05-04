@@ -124,17 +124,21 @@ If you already maintain rules in YAML or JSON, the **Import rules** flow lets yo
 
 The accepted formats are the same as the programmatic storage formats — see [Quality Checks Definition](/docs/guide/quality_checks_definition) for the schema.
 
+### Dry-run before committing
+
+While authoring, each rule supports a **dry run** that evaluates the check against a small sample of the target table without persisting results. Use it to sanity-check that your rule behaves as expected before submitting it for approval.
+
 ## Reviewing and approving drafts
 
 Drafts live on the **Drafts & Review** page. The workflow depends on your role:
 
-- **Authors** see their drafts and can edit, delete, or submit them for approval. They cannot approve their own drafts unless they are admins.
+- **Authors** see their drafts and can edit, delete, or submit them for approval. They cannot approve their own drafts unless they are admins or approvers.
 - **Approvers and admins** see all drafts across the workspace. They can approve or reject each one with an optional comment.
 
 Approved drafts disappear from this page and show up on **Active Rules**. Rejected drafts remain visible so the author can edit and resubmit.
 
 <Admonition type="note" title="Four-eyes principle">
-By design, a non-admin author cannot approve their own draft. This enforces a minimum of two people touching every rule before it becomes active — reducing accidental outages caused by a single contributor. Admins are exempt and can approve drafts they authored themselves, since they already hold the highest level of trust in the workspace.
+By design, a draft author who does not also hold approval rights cannot approve their own draft. This enforces a minimum of two people touching every rule before it becomes active — reducing accidental outages caused by a single contributor. Admins and approvers, who already hold approval rights for the workspace, are exempt and can approve drafts they authored themselves.
 </Admonition>
 
 ## Browsing active rules
@@ -163,10 +167,6 @@ Both are managed from the **Run Rules** page, which is visible to users with the
 4. Click **Run** to submit. DQX Studio creates a Databricks Job run and shows you a progress indicator.
 
 You can leave the page while a run is in flight — it will continue in the background and surface in **Runs History** when it finishes.
-
-### Dry-run before committing
-
-Each rule supports a **dry run** that evaluates the check against a small sample of the target table without persisting results. Use it while authoring to sanity-check that your rule behaves as expected.
 
 ### Scheduled runs
 
