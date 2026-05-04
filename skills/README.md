@@ -20,8 +20,4 @@ See the [installation and usage guide](https://databrickslabs.github.io/dqx/docs
 
 ## Scope and guardrails
 
-DQX's agent skills are scoped to DQX's public APIs as documented at [databrickslabs.github.io/dqx](https://databrickslabs.github.io/dqx/docs/guide/). They intentionally:
-
-- Use the declarative YAML / dictionary form for portability when defining many checks and use DQX classes when defining a few rules interactively.
-- Always import from `databricks.labs.dqx.*` (never guess module paths).
-- Point to the canonical documentation for any topic outside the skill's core responsibility.
+DQX's agent skills are scoped to DQX's public APIs. See [Extending DQX skills](https://databrickslabs.github.io/dqx/docs/guide/ai_tools_skills#extending-dqx-skills) on the docs site for the full list of design guidelines.

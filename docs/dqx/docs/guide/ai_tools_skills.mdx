@@ -103,10 +103,12 @@ Agents will load the relevant skill into context, follow its patterns, and link 
 
 ## Extending DQX skills
 
-Follow these guidelines when extending DQX skills:
+DQX's agent skills are scoped to DQX's public APIs. Follow these guidelines when extending them:
 
 - Skills should stay short; the full `SKILL.md` is loaded every time the skill fires, so every line costs tokens on every invocation.
 - Prefer linking to `/docs/...` over duplicating content; the skill's job is to tell the model **when** and **how** to use the API, not to reprint the reference.
+- Always import from `databricks.labs.dqx.*` — never guess module paths.
+- Point to the canonical documentation for any topic outside the skill's core responsibility.
 - Changes to the public DQX API should be reflected in the matching skill in the same PR. See [Contributing](/docs/dev/contributing) for the full workflow.
 
 ## Source
