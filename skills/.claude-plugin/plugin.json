@@ -1,0 +1,27 @@
+{
+  "name": "dqx",
+  "version": "0.1.0",
+  "description": "DQX by Databricks Labs — AI assistant skills for defining, applying, storing, and profiling data quality rules in PySpark.",
+  "author": {
+    "name": "Databricks Labs",
+    "email": "labs@databricks.com"
+  },
+  "homepage": "https://databrickslabs.github.io/dqx/",
+  "repository": "https://github.com/databrickslabs/dqx.git",
+  "license": "SEE LICENSE IN LICENSE",
+  "keywords": [
+    "databricks",
+    "dqx",
+    "data-quality",
+    "pyspark",
+    "delta",
+    "unity-catalog"
+  ],
+  "skills": [
+    "./dqx-define-checks",
+    "./dqx-apply-checks",
+    "./dqx-end-to-end",
+    "./dqx-profile-and-generate",
+    "./dqx-storage"
+  ]
+}
