@@ -7,10 +7,7 @@
     "email": "labs@databricks.com"
   },
   "homepage": "https://databrickslabs.github.io/dqx/",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/databrickslabs/dqx.git"
-  },
+  "repository": "https://github.com/databrickslabs/dqx.git",
   "license": "SEE LICENSE IN LICENSE",
   "keywords": [
     "databricks",
