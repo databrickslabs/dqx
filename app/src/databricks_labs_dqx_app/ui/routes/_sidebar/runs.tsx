@@ -1,6 +1,7 @@
 import {
   createFileRoute,
   Link,
+  Navigate,
   useNavigate,
   useParams,
 } from "@tanstack/react-router";
@@ -90,8 +91,14 @@ import { cancelDryRun } from "@/lib/api-custom";
 import { CircleStop, ShieldAlert } from "lucide-react";
 import { parseFqn, formatDateTime as formatDate } from "@/lib/format-utils";
 import { usePermissions } from "@/hooks/use-permissions";
+import { requireRunnerOrRedirect } from "@/lib/route-guards";
 
 export const Route = createFileRoute("/_sidebar/runs")({
+  // URL-level guard: aborts the route load before the page ever mounts
+  // when the user lacks the RUNNER role. This complements the in-component
+  // ``<Navigate>`` fallback below (kept as a defensive belt-and-suspenders
+  // for any edge case where the component renders before the loader).
+  beforeLoad: requireRunnerOrRedirect,
   component: RunsPage,
 });
 
@@ -508,15 +515,17 @@ function resolveScheduleScope(
 
 function RunsPage() {
   const navigate = useNavigate();
-  const { isViewer, isAdmin } = usePermissions();
+  const { canRunRules, isAdmin } = usePermissions();
   const params = useParams({ strict: false }) as { runName?: string };
   const currentRunName = params.runName;
 
-  useEffect(() => {
-    if (isViewer) {
-      navigate({ to: "/runs-history", replace: true });
-    }
-  }, [isViewer, navigate]);
+  // The Run Rules page is gated on the orthogonal RUNNER role (admins
+  // are implicit runners). Anyone who lands here without the privilege —
+  // whether by typing the URL or via a stale link — gets bounced to
+  // Runs History, which is universally readable.
+  if (!canRunRules) {
+    return <Navigate to="/runs-history" replace />;
+  }
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isDeletingRun, setIsDeletingRun] = useState(false);
   const queryClient = useQueryClient();

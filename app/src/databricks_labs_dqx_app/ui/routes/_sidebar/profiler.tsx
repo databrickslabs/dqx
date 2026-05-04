@@ -1491,11 +1491,27 @@ function ProfileResults({
         if (k === "trim_strings") continue;
         args[k] = v;
       }
-      return {
+      // Fold the profiler-suggested weight into user_metadata so the rule
+      // round-trips through the same labels-only model used by the rest of
+      // the app. ``weight=3`` is omitted (it's the implicit default).
+      const userMetadata: Record<string, string> = {};
+      const existingMd = rule.user_metadata;
+      if (existingMd && typeof existingMd === "object") {
+        for (const [k, v] of Object.entries(existingMd as Record<string, unknown>)) {
+          if (typeof v === "string") userMetadata[k] = v;
+        }
+      }
+      if (typeof rule.weight === "number" && rule.weight !== 3 && !("weight" in userMetadata)) {
+        userMetadata.weight = String(rule.weight);
+      }
+      const out: Record<string, unknown> = {
         criticality: String(rule.criticality ?? "warn"),
-        weight: typeof rule.weight === "number" ? rule.weight : 3,
         check: { function: fn, arguments: args },
       };
+      if (Object.keys(userMetadata).length > 0) {
+        out.user_metadata = userMetadata;
+      }
+      return out;
     });
     try {
       await saveRules.mutateAsync({ data: { table_fqn: tableFqn, checks: normalizedRules } });

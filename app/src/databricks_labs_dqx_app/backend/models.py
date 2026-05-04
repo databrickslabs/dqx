@@ -312,7 +312,24 @@ class QuarantineListOut(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class CheckMetricBreakdown(BaseModel):
+    """Per-check error/warning breakdown produced by ``DQMetricsObserver``."""
+
+    check_name: str
+    error_count: int = 0
+    warning_count: int = 0
+
+
 class MetricSnapshotOut(BaseModel):
+    """One row in the validation trend chart for a given source table.
+
+    Pivoted from the long-format ``dq_metrics`` table by the metrics
+    route so existing UI components keep working unchanged. Some
+    fields (``error_row_count``, ``warning_row_count``, ``check_metrics``,
+    ``custom_metrics``) are new additions exposed by ``DQMetricsObserver``;
+    older snapshots predating the migration leave them ``None``.
+    """
+
     metric_id: str
     run_id: str
     source_table_fqn: str
@@ -320,8 +337,13 @@ class MetricSnapshotOut(BaseModel):
     total_rows: int | None = None
     valid_rows: int | None = None
     invalid_rows: int | None = None
+    error_row_count: int | None = None
+    warning_row_count: int | None = None
     pass_rate: float | None = None
     error_breakdown: list[dict[str, Any]] | None = None
+    check_metrics: list[CheckMetricBreakdown] | None = None
+    custom_metrics: dict[str, Any] | None = None
+    rule_set_fingerprint: str | None = None
     requesting_user: str | None = None
     created_at: str | None = None
 
@@ -365,6 +387,14 @@ class UserRoleOut(BaseModel):
     email: str
     role: str
     permissions: list[str] = Field(default_factory=list, description="List of permissions granted to this role")
+    is_runner: bool = Field(
+        default=False,
+        description=(
+            "Whether the user holds the orthogonal RUNNER role. Admins are "
+            "always runners. Other roles only become runners when their "
+            "group is explicitly mapped to RUNNER."
+        ),
+    )
 
 
 class InstallationSettings(BaseModel):

@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from databricks_labs_dqx_app.backend.common.authorization import UserRole
 from databricks_labs_dqx_app.backend.dependencies import (
+    CurrentUserRole,
     get_obo_ws,
     get_rules_catalog_service,
     get_user_catalog_names,
@@ -41,6 +42,41 @@ def _catalog_of(fqn: str) -> str:
 
 def _display_name(fqn: str) -> str:
     return fqn[len(_SQL_CHECK_PREFIX) :] if fqn.startswith(_SQL_CHECK_PREFIX) else fqn
+
+
+_PRIVILEGED_ROLES = frozenset({UserRole.ADMIN, UserRole.RULE_APPROVER})
+
+
+def _ensure_owner_or_privileged(
+    svc: RulesCatalogService,
+    rule_id: str,
+    user_email: str,
+    user_role: UserRole,
+    action: str,
+) -> None:
+    """Authors may only act on their own rules.
+
+    Admins and approvers can act on any rule. For everyone else (i.e. plain
+    ``RULE_AUTHOR``) we require the requesting user to be the rule's original
+    creator. Raises 403 on mismatch and 404 on missing rule.
+
+    ``action`` is interpolated into the error message ("delete", "submit", …).
+    """
+    if user_role in _PRIVILEGED_ROLES:
+        return
+    entry = svc.get_by_rule_id(rule_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail=f"Rule not found: {rule_id}")
+    owner = (entry.created_by or "").strip().lower()
+    me = (user_email or "").strip().lower()
+    if not owner or owner != me:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"You can only {action} rules you authored. "
+                f"This rule was created by {entry.created_by or 'someone else'}."
+            ),
+        )
 
 
 def _entry_to_out(entry) -> RuleCatalogEntryOut:
@@ -129,21 +165,29 @@ def save_rules(
     body: SaveRulesIn,
     svc: Annotated[RulesCatalogService, Depends(get_rules_catalog_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    user_role: CurrentUserRole,
 ) -> list[RuleCatalogEntryOut]:
     """Save rules. Each check becomes an individual rule row.
 
-    If ``rule_id`` is set, updates an existing rule instead.
+    If ``rule_id`` is set, this updates an existing rule. Authors can only
+    update rules they themselves authored — otherwise they could silently
+    overwrite the contents of another user's rule (and then chain it with
+    submit/delete, which our other gates would reject only by accident).
+    Admins and approvers can update any rule.
     """
     try:
         user = obo_ws.current_user.me()
         user_email = user.user_name or "unknown"
 
         if body.rule_id:
+            _ensure_owner_or_privileged(svc, body.rule_id, user_email, user_role, "edit")
             entry = svc.update_rule(body.rule_id, body.checks, user_email)
             return [_entry_to_out(entry)]
 
         entries = svc.save(body.table_fqn, body.checks, user_email, source=body.source)
         return [_entry_to_out(e) for e in entries]
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to save rules for {body.table_fqn}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to save rules: {e}")
@@ -220,13 +264,21 @@ def delete_rule(
     rule_id: str,
     svc: Annotated[RulesCatalogService, Depends(get_rules_catalog_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    user_role: CurrentUserRole,
 ) -> dict[str, str]:
-    """Delete a single rule by rule_id."""
+    """Delete a single rule by rule_id.
+
+    Authors can only delete rules they themselves created. Admins and
+    approvers may delete any rule.
+    """
     try:
         user = obo_ws.current_user.me()
         user_email = user.user_name or "unknown"
+        _ensure_owner_or_privileged(svc, rule_id, user_email, user_role, "delete")
         svc.delete(rule_id, user_email)
         return {"status": "deleted", "rule_id": rule_id}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to delete rule {rule_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to delete rule: {e}")
@@ -247,15 +299,23 @@ def submit_for_approval(
     rule_id: str,
     svc: Annotated[RulesCatalogService, Depends(get_rules_catalog_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    user_role: CurrentUserRole,
     body: SetStatusIn | None = None,
 ) -> RuleCatalogEntryOut:
-    """Submit an individual rule for approval."""
+    """Submit an individual rule for approval.
+
+    Authors can only submit rules they themselves drafted. Admins and
+    approvers may submit any rule.
+    """
     try:
         user = obo_ws.current_user.me()
         user_email = user.user_name or "unknown"
+        _ensure_owner_or_privileged(svc, rule_id, user_email, user_role, "submit")
         expected_version = body.expected_version if body else None
         entry = svc.set_status(rule_id, "pending_approval", user_email, expected_version)
         return _entry_to_out(entry)
+    except HTTPException:
+        raise
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except RuntimeError as e:
@@ -275,15 +335,25 @@ def revoke_submission(
     rule_id: str,
     svc: Annotated[RulesCatalogService, Depends(get_rules_catalog_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    user_role: CurrentUserRole,
     body: SetStatusIn | None = None,
 ) -> RuleCatalogEntryOut:
-    """Revoke a pending submission back to draft."""
+    """Revoke a pending submission back to draft.
+
+    Authors can only revoke their own submissions. Admins and approvers may
+    revoke any submission (paired with the existing ownership check on
+    ``submit_for_approval`` so an author can't reach in and revoke someone
+    else's submission they didn't make).
+    """
     try:
         user = obo_ws.current_user.me()
         user_email = user.user_name or "unknown"
+        _ensure_owner_or_privileged(svc, rule_id, user_email, user_role, "revoke")
         expected_version = body.expected_version if body else None
         entry = svc.set_status(rule_id, "draft", user_email, expected_version)
         return _entry_to_out(entry)
+    except HTTPException:
+        raise
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except RuntimeError as e:

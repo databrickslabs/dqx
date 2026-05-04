@@ -19,6 +19,22 @@ dev = [
     "apx",
     "ruff>=0.14.7",
 ]
+test = [
+    "pytest~=8.3",
+    "pytest-asyncio~=0.24",
+    "pytest-cov~=5.0",
+    "pytest-mock~=3.14",
+    "httpx~=0.28",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --strict-config"
+asyncio_mode = "auto"
+filterwarnings = [
+    "ignore::DeprecationWarning:pydantic.*",
+    "ignore::PendingDeprecationWarning",
+]
 
 [tool.apx.metadata]
 app-name = "DQX Studio"

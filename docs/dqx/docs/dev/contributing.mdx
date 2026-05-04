@@ -167,6 +167,14 @@ Always use `make` targets instead of running `uv` commands directly. The Makefil
 
 ### DQX App development
 
+<Admonition type="note" title="Naming: Studio vs. App">
+We use two names for the same thing depending on audience:
+- **DQX Studio** — the product name shown to end users (browser title, home page, sidebar header). This is what user-facing documentation, marketing, and in-app copy uses. See the [DQX Studio user guide](/docs/guide/dqx_studio).
+- **DQX App** — the engineering name used in the codebase: the `app/` folder, the Python package `databricks-labs-dqx-app`, the deployed app resource `databricks-labs-dqx-app`, and Unity Catalog schemas prefixed `dqx_app`. This section and the rest of the developer docs use "DQX App" because it refers to those concrete artifacts.
+
+Both names refer to the exact same application — only the audience differs.
+</Admonition>
+
 The DQX App (under `app/`) is a FastAPI backend + React frontend packaged as a single Python wheel and deployed as a [Databricks App](https://docs.databricks.com/en/dev-tools/databricks-apps/index.html). See [app/README.md](https://github.com/databrickslabs/dqx/blob/v0.13.0/app/README.md) for architecture and local development, and [DQX App deployment](#dqx-app-deployment) below for the end-to-end deployment guide.
 
 Install the app's JavaScript dependencies (using the committed `yarn.lock`):

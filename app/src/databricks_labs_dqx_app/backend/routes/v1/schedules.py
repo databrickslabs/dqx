@@ -10,6 +10,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_obo_ws,
     get_schedule_config_service,
     require_role,
+    require_runner,
 )
 from databricks_labs_dqx_app.backend.logger import logger
 from databricks_labs_dqx_app.backend.models import (
@@ -21,8 +22,13 @@ from databricks_labs_dqx_app.backend.services.schedule_config_service import Sch
 
 router = APIRouter()
 
-_ALL_ROLES = [UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTHOR, UserRole.VIEWER]
 _ADMINS = [UserRole.ADMIN]
+
+# Schedule listing/reading is gated on the orthogonal runner role rather
+# than on the primary-role hierarchy: the schedules tab lives inside the
+# Run Rules page, which only runners (admins implicitly, others by
+# explicit RUNNER mapping) are allowed to see. Mutation endpoints stay
+# admin-only.
 
 
 def _notify_scheduler() -> None:
@@ -38,7 +44,7 @@ def _notify_scheduler() -> None:
     "",
     response_model=list[ScheduleConfigOut],
     operation_id="listSchedules",
-    dependencies=[require_role(*_ALL_ROLES)],
+    dependencies=[require_runner()],
 )
 def list_schedules(
     svc: Annotated[ScheduleConfigService, Depends(get_schedule_config_service)],
@@ -67,7 +73,7 @@ def list_schedules(
     "/{name}",
     response_model=ScheduleConfigOut,
     operation_id="getSchedule",
-    dependencies=[require_role(*_ALL_ROLES)],
+    dependencies=[require_runner()],
 )
 def get_schedule(
     name: str,
@@ -146,7 +152,7 @@ def delete_schedule(
     "/{name}/history",
     response_model=list[ScheduleConfigHistoryOut],
     operation_id="getScheduleHistory",
-    dependencies=[require_role(*_ALL_ROLES)],
+    dependencies=[require_runner()],
 )
 def get_schedule_history(
     name: str,

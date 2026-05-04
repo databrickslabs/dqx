@@ -27,8 +27,8 @@ As a best practice, you should always pin the version so that your code is not a
 pip install databricks-labs-dqx==0.8.0
 ```
 
-DQX also integrates seamlessly with Databricks Asset Bundles (DAB).
-You can add DQX as a [library dependency](https://docs.databricks.com/aws/en/dev-tools/bundles/library-dependencies#pypi-package) in your DAB configuration to install it on your cluster:
+DQX also integrates seamlessly with [Declarative Automation Bundles](https://docs.databricks.com/aws/en/dev-tools/bundles/) (DABs, formerly Databricks Asset Bundles).
+You can add DQX as a [library dependency](https://docs.databricks.com/aws/en/dev-tools/bundles/library-dependencies#pypi-package) in your bundle configuration to install it on your cluster:
 ```yaml
 resources:
   jobs:
@@ -363,8 +363,8 @@ Restart the kernel after the package is installed in the notebook:
 dbutils.library.restartPython()
 ```
 
-DQX also integrates seamlessly with Databricks Asset Bundles (DAB).
-You can add DQX as a [library dependency](https://docs.databricks.com/aws/en/dev-tools/bundles/library-dependencies) in your DAB configuration (either by using PYPI package or a wheel file) to install it on your cluster:
+DQX also integrates seamlessly with Declarative Automation Bundles (DABs).
+You can add DQX as a [library dependency](https://docs.databricks.com/aws/en/dev-tools/bundles/library-dependencies) in your bundle configuration (either by using PYPI package or a wheel file) to install it on your cluster:
 ```yaml
 resources:
   jobs:

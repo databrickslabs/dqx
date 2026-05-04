@@ -98,11 +98,30 @@ app-stop-dev:
 app-check:
 	cd app && $(UV_RUN) apx dev check
 
+# Run the app's backend unit-test suite (pytest, no Databricks dependencies).
+# Usage:  make app-test            # run everything
+#         make app-test K=expr     # forward -k filter to pytest
+#         make app-test COV=1      # also produce coverage XML report
+#
+# The sync line cd's once and groups the fallback in a subshell. Without
+# the parentheses, ``A && B || cd app && C`` parses left-to-right as
+# ``((A && B) || cd app) && C`` (POSIX: && and || share precedence, left-
+# associative), so a failure in B re-runs ``cd app`` from inside ``dqx/app``,
+# fails, and aborts. The parens isolate the OR fallback to just the sync
+# step. ``--extra all`` is best-effort: it currently doesn't exist on this
+# pyproject, so the fallback always wins; the structure is preserved so
+# adding an ``all`` extra later "just works".
+app-test:
+	cd app && (uv sync --group test --extra all 2>/dev/null || uv sync --group test)
+	cd app && $(UV_RUN) --group test pytest tests/ \
+	  $(if $(K),-k "$(K)") \
+	  $(if $(COV),--cov=src/databricks_labs_dqx_app/backend --cov-report=term-missing --cov-report=xml:coverage-app.xml)
+
 # Grant Unity Catalog permissions after bundle deploy.
 # Usage: make app-grant-permissions PROFILE=my-profile
 app-grant-permissions:
-	@test -n "$(PROFILE)" || (echo "Usage: make app-grant-permissions PROFILE=<databricks-profile>"; exit 1)
-	app/scripts/post_deploy_grants.sh -p $(PROFILE)
+	@test -n "$(PROFILE)" || (echo "Usage: make app-grant-permissions PROFILE=<databricks-profile> [TARGET=<bundle-target>]"; exit 1)
+	app/scripts/post_deploy_grants.sh -p $(PROFILE) $(if $(TARGET),-t $(TARGET))
 
 # Full deploy: build, bundle deploy, grant permissions, and start the app.
 # Usage: make app-deploy PROFILE=my-profile TARGET=dev
@@ -110,7 +129,7 @@ app-deploy: app-build
 	@test -n "$(PROFILE)" || (echo "Usage: make app-deploy PROFILE=<databricks-profile> TARGET=<bundle-target>"; exit 1)
 	@test -n "$(TARGET)" || (echo "Usage: make app-deploy PROFILE=<databricks-profile> TARGET=<bundle-target>"; exit 1)
 	cd app && databricks bundle deploy -p $(PROFILE) -t $(TARGET)
-	app/scripts/post_deploy_grants.sh -p $(PROFILE)
+	app/scripts/post_deploy_grants.sh -p $(PROFILE) -t $(TARGET)
 	cd app && databricks bundle run $(APP_NAME) -p $(PROFILE) -t $(TARGET)
 
 APP_NAME ?= databricks-labs-dqx-app
@@ -147,4 +166,4 @@ lock-dependencies:
 	perl -pi -e 's|registry = "https://[^"]*"|registry = "https://pypi.org/simple"|g' uv.lock
 
 .DEFAULT: all
-.PHONY: all clean dev lint fmt test integration e2e perf anomaly coverage combine-coverage docs-build docs-serve-dev docs-install docs-serve docs-clean app-install app-build app-start-dev app-stop-dev app-check app-grant-permissions app-deploy fork-sync build lock-dependencies lock-app-dependencies
+.PHONY: all clean dev lint fmt test integration e2e perf anomaly coverage combine-coverage docs-build docs-serve-dev docs-install docs-serve docs-clean app-install app-build app-start-dev app-stop-dev app-check app-test app-grant-permissions app-deploy fork-sync build lock-dependencies lock-app-dependencies

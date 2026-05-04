@@ -32,13 +32,17 @@ const ROLE_LABELS: Record<string, string> = {
   rule_approver: "Approver",
   rule_author: "Author",
   viewer: "Viewer",
+  runner: "Runner",
 };
 
 const ROLE_DESCRIPTIONS: Record<string, string> = {
-  admin: "Full access including role management",
+  admin: "Full access including role management (admins are implicit runners)",
   rule_approver: "Can approve/reject rules and all author permissions",
   rule_author: "Can create, edit, and submit rules",
   viewer: "Read-only access to rules",
+  // Runner is intentionally additive — assigning it does NOT grant author
+  // or approver privileges. It only unlocks the Run Rules page.
+  runner: "Can run approved rules from the Run Rules page (additive — independent of other roles)",
 };
 
 function RoleMappingRow({

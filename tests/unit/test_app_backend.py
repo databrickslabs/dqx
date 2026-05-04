@@ -9,6 +9,7 @@ from unittest.mock import create_autospec
 import pytest
 
 from databricks_labs_dqx_app.backend.cache import CacheFactory, MISS
+from databricks_labs_dqx_app.backend.common.authorization import UserRole
 from databricks_labs_dqx_app.backend.config import AppConfig
 from databricks_labs_dqx_app.backend.dependencies import get_obo_ws
 from databricks_labs_dqx_app.backend.logger import CustomFormatter, get_logger, setup_logger
@@ -47,6 +48,7 @@ from databricks_labs_dqx_app.backend.routes.v1.rules import (
     save_rules,
     submit_for_approval,
 )
+from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.services.discovery import DiscoveryService
 from databricks_labs_dqx_app.backend.services.job_service import JobService, RunStatus
 from databricks_labs_dqx_app.backend.services.rules_catalog_service import (
@@ -851,7 +853,10 @@ class TestRulesRoutesWrite:
     def test_save_rules_success(self, mock_svc, mock_obo_ws, sample_entry):
         mock_svc.save.return_value = [sample_entry]
         body = SaveRulesIn(table_fqn="catalog.schema.table", checks=_SAMPLE_CHECKS)
-        result = save_rules(body=body, svc=mock_svc, obo_ws=mock_obo_ws)
+        # ``user_role`` is required for the ownership-check branch on the
+        # update path; ADMIN bypasses it so this test stays focused on the
+        # happy-path save semantics rather than authorization.
+        result = save_rules(body=body, svc=mock_svc, obo_ws=mock_obo_ws, user_role=UserRole.ADMIN)
         assert len(result) == 1
         assert result[0].version == 1
         mock_svc.save.assert_called_once_with("catalog.schema.table", _SAMPLE_CHECKS, "alice@example.com", source="ui")
@@ -860,18 +865,20 @@ class TestRulesRoutesWrite:
         mock_svc.save.side_effect = RuntimeError("db error")
         body = SaveRulesIn(table_fqn="c.s.t", checks=_SAMPLE_CHECKS)
         with pytest.raises(HTTPException) as exc:
-            save_rules(body=body, svc=mock_svc, obo_ws=mock_obo_ws)
+            save_rules(body=body, svc=mock_svc, obo_ws=mock_obo_ws, user_role=UserRole.ADMIN)
         assert exc.value.status_code == 500
 
     def test_delete_rules_success(self, mock_svc, mock_obo_ws):
-        result = delete_rule(rule_id="rule-1", svc=mock_svc, obo_ws=mock_obo_ws)
+        result = delete_rule(rule_id="rule-1", svc=mock_svc, obo_ws=mock_obo_ws, user_role=UserRole.ADMIN)
         assert result["status"] == "deleted"
         mock_svc.delete.assert_called_once_with("rule-1", "alice@example.com")
 
     def test_submit_for_approval_success(self, mock_svc, mock_obo_ws, sample_entry):
         sample_entry.status = "pending_approval"
         mock_svc.set_status.return_value = sample_entry
-        result = submit_for_approval(rule_id="rule-1", svc=mock_svc, obo_ws=mock_obo_ws, body=None)
+        result = submit_for_approval(
+            rule_id="rule-1", svc=mock_svc, obo_ws=mock_obo_ws, user_role=UserRole.ADMIN, body=None
+        )
         assert result.status == "pending_approval"
         mock_svc.set_status.assert_called_once_with("rule-1", "pending_approval", "alice@example.com", None)
 
@@ -879,19 +886,19 @@ class TestRulesRoutesWrite:
         sample_entry.status = "pending_approval"
         mock_svc.set_status.return_value = sample_entry
         body = SetStatusIn(status="pending_approval", expected_version=3)
-        submit_for_approval(rule_id="rule-1", svc=mock_svc, obo_ws=mock_obo_ws, body=body)
+        submit_for_approval(rule_id="rule-1", svc=mock_svc, obo_ws=mock_obo_ws, user_role=UserRole.ADMIN, body=body)
         mock_svc.set_status.assert_called_once_with("rule-1", "pending_approval", "alice@example.com", 3)
 
     def test_submit_returns_400_on_value_error(self, mock_svc, mock_obo_ws):
         mock_svc.set_status.side_effect = ValueError("bad transition")
         with pytest.raises(HTTPException) as exc:
-            submit_for_approval(rule_id="rule-1", svc=mock_svc, obo_ws=mock_obo_ws, body=None)
+            submit_for_approval(rule_id="rule-1", svc=mock_svc, obo_ws=mock_obo_ws, user_role=UserRole.ADMIN, body=None)
         assert exc.value.status_code == 400
 
     def test_submit_returns_409_on_runtime_error(self, mock_svc, mock_obo_ws):
         mock_svc.set_status.side_effect = RuntimeError("version conflict")
         with pytest.raises(HTTPException) as exc:
-            submit_for_approval(rule_id="rule-1", svc=mock_svc, obo_ws=mock_obo_ws, body=None)
+            submit_for_approval(rule_id="rule-1", svc=mock_svc, obo_ws=mock_obo_ws, user_role=UserRole.ADMIN, body=None)
         assert exc.value.status_code == 409
 
     def test_approve_rules_success(self, mock_svc, mock_obo_ws, sample_entry):
@@ -1544,9 +1551,19 @@ class TestMigrationRunner:
         with pytest.raises(RuntimeError, match="SQL execution failed"):
             runner.run_all()
 
-    def test_status_returns_all_migrations_with_applied_flag(self, ws: WorkspaceClient) -> None:
+    @pytest.mark.parametrize(
+        "n_applied",
+        # Cover the two branches we can always reach (none applied, all
+        # applied) plus a mixed case when there are enough migrations to
+        # have one. After the v1 baseline consolidation ``len(MIGRATIONS) == 1``
+        # so the mixed case collapses out — kept in the param list for
+        # forward-compat if future migrations are appended.
+        [0, len(MIGRATIONS)] + ([len(MIGRATIONS) // 2] if len(MIGRATIONS) >= 3 else []),
+    )
+    def test_status_returns_all_migrations_with_applied_flag(
+        self, ws: WorkspaceClient, n_applied: int
+    ) -> None:
         """status should list every migration with correct applied/pending flags."""
-        n_applied = 2
         applied_rows = [[str(m.version), "2025-01-01T00:00:00"] for m in MIGRATIONS[:n_applied]]
         ws.statement_execution.execute_statement.side_effect = [  # type: ignore[attr-defined]
             _ok_response(),  # _ensure_schema
@@ -1802,11 +1819,22 @@ class TestDryRunRoutes:
         ws.current_user.me.return_value = mock_user
         return ws
 
+    @pytest.fixture
+    def mock_settings_svc(self) -> AppSettingsService:
+        # ``submit_dry_run`` reads global custom-metric SQL expressions
+        # via ``AppSettingsService.get_custom_metrics`` and threads them
+        # into the task runner. The dryrun unit tests don't exercise
+        # custom metrics, so we just stub an empty list.
+        svc = create_autospec(AppSettingsService)
+        svc.get_custom_metrics.return_value = []  # type: ignore[attr-defined]
+        return svc
+
     def test_submit_dry_run_success(
         self,
         mock_job_svc: JobService,
         mock_view_svc: ViewService,
         mock_obo_ws: WorkspaceClient,
+        mock_settings_svc: AppSettingsService,
     ) -> None:
         """submit_dry_run should validate checks, create view, submit job and return run ids."""
         validation = ChecksValidationStatus()
@@ -1821,6 +1849,7 @@ class TestDryRunRoutes:
             view_svc=mock_view_svc,
             job_svc=mock_job_svc,
             validate_checks_fn=lambda checks: validation,
+            settings_svc=mock_settings_svc,
             app_conf=app_conf,
         )
 
@@ -1834,6 +1863,7 @@ class TestDryRunRoutes:
         mock_job_svc: JobService,
         mock_view_svc: ViewService,
         mock_obo_ws: WorkspaceClient,
+        mock_settings_svc: AppSettingsService,
     ) -> None:
         """submit_dry_run should raise HTTP 400 when check validation reports errors."""
         validation = ChecksValidationStatus(_errors=["Unknown function: bad_func"])
@@ -1847,6 +1877,7 @@ class TestDryRunRoutes:
                 view_svc=mock_view_svc,
                 job_svc=mock_job_svc,
                 validate_checks_fn=lambda checks: validation,
+                settings_svc=mock_settings_svc,
                 app_conf=app_conf,
             )
 
@@ -1857,6 +1888,7 @@ class TestDryRunRoutes:
         mock_job_svc: JobService,
         mock_view_svc: ViewService,
         mock_obo_ws: WorkspaceClient,
+        mock_settings_svc: AppSettingsService,
     ) -> None:
         """submit_dry_run should raise HTTP 500 when view creation fails."""
         validation = ChecksValidationStatus()
@@ -1871,6 +1903,7 @@ class TestDryRunRoutes:
                 view_svc=mock_view_svc,
                 job_svc=mock_job_svc,
                 validate_checks_fn=lambda checks: validation,
+                settings_svc=mock_settings_svc,
                 app_conf=app_conf,
             )
 

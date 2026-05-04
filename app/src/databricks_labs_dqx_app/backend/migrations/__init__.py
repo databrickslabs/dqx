@@ -1,31 +1,46 @@
 """Database migration runner for DQX App.
 
 Migrations are versioned DDL statements applied in order against the
-configured catalog/schema.  The runner tracks every applied version
-in a ``dq_migrations`` meta-table, so re-starting the app never
-re-applies a migration that already succeeded.
+configured catalog/schema. The runner tracks every applied version in a
+``dq_migrations`` meta-table, so re-starting the app never re-applies a
+migration that already succeeded.
 
-Adding a new table or schema change
-------------------------------------
-Append a new :class:`Migration` entry to ``MIGRATIONS``.  Never edit
-or reorder existing entries — only append.  The version number must be
-strictly monotonically increasing.
+Schema baseline
+---------------
+The app has not shipped to external users, so the schema is delivered
+as a **single consolidated baseline** rather than 36 incremental
+migrations. Every table is created at its final shape, with liquid
+clustering inlined into the ``CREATE TABLE`` statement.
+
+Adding a new table or schema change after baseline
+--------------------------------------------------
+Append a new :class:`Migration` entry with the next monotonically
+increasing version number. **Never edit or reorder existing entries.**
+For column additions use ``ALTER TABLE ... ADD COLUMN`` (do *not* use
+``ADD COLUMN IF NOT EXISTS`` — it is not supported on all Databricks
+SQL warehouse versions; ``_apply`` instead catches and tolerates
+``COLUMN_ALREADY_EXISTS`` so re-running is safe).
 
 Example::
 
     Migration(
-        version=3,
-        description="Add name column to dq_app_settings",
+        version=2,
+        description="Add description column to dq_role_mappings",
         sql_template=(
-            "ALTER TABLE {catalog}.{schema}.dq_app_settings "
-            "ADD COLUMN name STRING"
+            "ALTER TABLE {catalog}.{schema}.dq_role_mappings "
+            "ADD COLUMN description STRING"
         ),
     )
 
-.. note::
-    Do **not** use ``ADD COLUMN IF NOT EXISTS`` — it is not supported on
-    all Databricks SQL warehouse versions.  The ``_apply`` method catches
-    ``COLUMN_ALREADY_EXISTS`` errors automatically, providing idempotency.
+Upgrading an existing dev workspace
+-----------------------------------
+A workspace that previously ran the legacy v1–v36 sequence will have
+``dq_migrations`` rows for versions that no longer exist. The cleanest
+path is::
+
+    DROP SCHEMA <catalog>.<schema> CASCADE;
+
+then redeploy — the consolidated baseline runs from scratch.
 """
 
 from __future__ import annotations
@@ -52,40 +67,59 @@ class Migration:
     sql_template: str
 
 
-# Order is significant.  Never change or remove existing entries.
+# Order is significant. Never change or remove existing entries — only
+# append new ones.
+#
+# v1 is the consolidated baseline created on 2026-05-03 by collapsing
+# the original v1–v36 incremental sequence. Each table is defined at
+# its final shape with liquid clustering inlined; the legacy
+# wide-format ``dq_metrics`` (renamed to ``dq_metrics_v1_legacy`` in
+# the original v32) is dropped from the baseline because it has no
+# clean-install consumer.
 MIGRATIONS: list[Migration] = [
     Migration(
         version=1,
-        description="Create dq_app_settings table",
+        description="Baseline schema — all DQX App tables at their final shape",
         sql_template=(
+            # Settings — single-row-per-key key/value store (workspace
+            # config, label catalog, custom metrics, timezone, ...).
             f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_app_settings ("
             "  setting_key STRING NOT NULL,"
             "  setting_value STRING,"
             "  updated_at TIMESTAMP,"
             "  updated_by STRING"
-            ")"
-        ),
-    ),
-    Migration(
-        version=2,
-        description="Create dq_quality_rules table",
-        sql_template=(
+            ") CLUSTER BY (setting_key);"
+            #
+            # Active rule catalog. ``rule_id`` is a per-check stable
+            # identifier; ``source`` records which authoring path
+            # produced the rule (single-table, sql, profiler, import).
             f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_quality_rules ("
             "  table_fqn STRING NOT NULL,"
             "  checks STRING NOT NULL,"
             "  version INT,"
             "  status STRING,"
+            "  source STRING,"
+            "  rule_id STRING,"
             "  created_by STRING,"
             "  created_at TIMESTAMP,"
             "  updated_by STRING,"
             "  updated_at TIMESTAMP"
-            ")"
-        ),
-    ),
-    Migration(
-        version=3,
-        description="Create dq_profiling_results table",
-        sql_template=(
+            ") CLUSTER BY (table_fqn, status);"
+            #
+            # Append-only audit trail for rule changes.
+            f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_quality_rules_history ("
+            "  table_fqn STRING NOT NULL,"
+            "  checks STRING,"
+            "  version INT,"
+            "  source STRING,"
+            "  rule_id STRING,"
+            "  action STRING NOT NULL,"
+            "  changed_by STRING,"
+            "  changed_at TIMESTAMP"
+            ") CLUSTER BY (table_fqn, changed_at);"
+            #
+            # Profiler runs — one row per profile job. Mutable
+            # lifecycle (RUNNING → SUCCESS/FAILED/CANCELED).
             f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_profiling_results ("
             "  run_id STRING NOT NULL,"
             "  requesting_user STRING,"
@@ -99,14 +133,16 @@ MIGRATIONS: list[Migration] = [
             "  generated_rules_json STRING,"
             "  status STRING,"
             "  error_message STRING,"
+            "  canceled_by STRING,"
+            "  updated_at STRING,"
+            "  job_run_id BIGINT,"
+            "  rule_set_fingerprint STRING,"
             "  created_at STRING"
-            ")"
-        ),
-    ),
-    Migration(
-        version=4,
-        description="Create dq_validation_runs table",
-        sql_template=(
+            ") CLUSTER BY (source_table_fqn, created_at);"
+            #
+            # Validation (dryrun + scheduled) runs — one row per run,
+            # mutable lifecycle. Joins to ``dq_metrics`` on
+            # ``(run_id, rule_set_fingerprint)``.
             f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_validation_runs ("
             "  run_id STRING NOT NULL,"
             "  requesting_user STRING,"
@@ -121,34 +157,16 @@ MIGRATIONS: list[Migration] = [
             "  sample_invalid_json STRING,"
             "  status STRING,"
             "  error_message STRING,"
+            "  canceled_by STRING,"
+            "  updated_at STRING,"
+            "  run_type STRING,"
+            "  job_run_id BIGINT,"
+            "  rule_set_fingerprint STRING,"
             "  created_at STRING"
-            ")"
-        ),
-    ),
-    Migration(
-        version=5,
-        description="Liquid cluster dq_quality_rules by table_fqn and status",
-        sql_template=(f"ALTER TABLE {_PLACEHOLDER}.dq_quality_rules " "CLUSTER BY (table_fqn, status)"),
-    ),
-    Migration(
-        version=6,
-        description="Liquid cluster dq_profiling_results by source_table_fqn and created_at",
-        sql_template=(f"ALTER TABLE {_PLACEHOLDER}.dq_profiling_results " "CLUSTER BY (source_table_fqn, created_at)"),
-    ),
-    Migration(
-        version=7,
-        description="Liquid cluster dq_validation_runs by source_table_fqn and created_at",
-        sql_template=(f"ALTER TABLE {_PLACEHOLDER}.dq_validation_runs " "CLUSTER BY (source_table_fqn, created_at)"),
-    ),
-    Migration(
-        version=8,
-        description="Liquid cluster dq_app_settings by setting_key",
-        sql_template=(f"ALTER TABLE {_PLACEHOLDER}.dq_app_settings " "CLUSTER BY (setting_key)"),
-    ),
-    Migration(
-        version=9,
-        description="Create dq_role_mappings table for RBAC",
-        sql_template=(
+            ") CLUSTER BY (source_table_fqn, created_at);"
+            #
+            # RBAC: maps app roles (ADMIN/RULE_APPROVER/RULE_AUTHOR/
+            # VIEWER/RUNNER) to Databricks workspace groups.
             f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_role_mappings ("
             "  role STRING NOT NULL,"
             "  group_name STRING NOT NULL,"
@@ -156,18 +174,9 @@ MIGRATIONS: list[Migration] = [
             "  created_at TIMESTAMP,"
             "  updated_by STRING,"
             "  updated_at TIMESTAMP"
-            ")"
-        ),
-    ),
-    Migration(
-        version=10,
-        description="Liquid cluster dq_role_mappings by role",
-        sql_template=(f"ALTER TABLE {_PLACEHOLDER}.dq_role_mappings " "CLUSTER BY (role)"),
-    ),
-    Migration(
-        version=11,
-        description="Create dq_comments table",
-        sql_template=(
+            ") CLUSTER BY (role);"
+            #
+            # Per-entity comment threads (rules, runs, profiles, ...).
             f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_comments ("
             "  comment_id STRING NOT NULL,"
             "  entity_type STRING NOT NULL,"
@@ -175,34 +184,9 @@ MIGRATIONS: list[Migration] = [
             "  user_email STRING NOT NULL,"
             "  comment STRING NOT NULL,"
             "  created_at TIMESTAMP"
-            ")"
-        ),
-    ),
-    Migration(
-        version=12,
-        description="Liquid cluster dq_comments by entity_type and entity_id",
-        sql_template=(f"ALTER TABLE {_PLACEHOLDER}.dq_comments " "CLUSTER BY (entity_type, entity_id)"),
-    ),
-    Migration(
-        version=13,
-        description="Add canceled_by and updated_at audit columns to dq_validation_runs",
-        sql_template=(
-            f"ALTER TABLE {_PLACEHOLDER}.dq_validation_runs ADD COLUMN canceled_by STRING;"
-            f"ALTER TABLE {_PLACEHOLDER}.dq_validation_runs ADD COLUMN updated_at STRING"
-        ),
-    ),
-    Migration(
-        version=14,
-        description="Add canceled_by and updated_at audit columns to dq_profiling_results",
-        sql_template=(
-            f"ALTER TABLE {_PLACEHOLDER}.dq_profiling_results ADD COLUMN canceled_by STRING;"
-            f"ALTER TABLE {_PLACEHOLDER}.dq_profiling_results ADD COLUMN updated_at STRING"
-        ),
-    ),
-    Migration(
-        version=15,
-        description="Create dq_quarantine_records table",
-        sql_template=(
+            ") CLUSTER BY (entity_type, entity_id);"
+            #
+            # Quarantined invalid rows captured during validation.
             f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_quarantine_records ("
             "  quarantine_id STRING NOT NULL,"
             "  run_id STRING NOT NULL,"
@@ -211,80 +195,38 @@ MIGRATIONS: list[Migration] = [
             "  row_data STRING,"
             "  errors STRING,"
             "  created_at STRING"
-            ")"
-        ),
-    ),
-    Migration(
-        version=16,
-        description="Liquid cluster dq_quarantine_records by run_id and source_table_fqn",
-        sql_template=(f"ALTER TABLE {_PLACEHOLDER}.dq_quarantine_records " "CLUSTER BY (run_id, source_table_fqn)"),
-    ),
-    Migration(
-        version=17,
-        description="Create dq_metrics table for quality trend tracking",
-        sql_template=(
+            ") CLUSTER BY (run_id, source_table_fqn);"
+            #
+            # Long-format observability events written by
+            # DQMetricsObserver. Schema mirrors the public DQX
+            # OBSERVATION_TABLE_SCHEMA so AI/BI dashboard templates
+            # targeting the spec drop straight in.
             f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_metrics ("
-            "  metric_id STRING NOT NULL,"
             "  run_id STRING NOT NULL,"
-            "  source_table_fqn STRING NOT NULL,"
-            "  run_type STRING,"
-            "  total_rows INT,"
-            "  valid_rows INT,"
-            "  invalid_rows INT,"
-            "  pass_rate DOUBLE,"
-            "  error_breakdown STRING,"
-            "  requesting_user STRING,"
-            "  created_at STRING"
-            ")"
-        ),
-    ),
-    Migration(
-        version=18,
-        description="Liquid cluster dq_metrics by source_table_fqn and created_at",
-        sql_template=(f"ALTER TABLE {_PLACEHOLDER}.dq_metrics " "CLUSTER BY (source_table_fqn, created_at)"),
-    ),
-    Migration(
-        version=19,
-        description="Add source column to dq_quality_rules",
-        sql_template=(f"ALTER TABLE {_PLACEHOLDER}.dq_quality_rules " "ADD COLUMN source STRING"),
-    ),
-    Migration(
-        version=20,
-        description="Create dq_quality_rules_history table",
-        sql_template=(
-            f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_quality_rules_history ("
-            "  table_fqn STRING NOT NULL,"
-            "  checks STRING,"
-            "  version INT,"
-            "  source STRING,"
-            "  action STRING NOT NULL,"
-            "  changed_by STRING,"
-            "  changed_at TIMESTAMP"
-            ")"
-        ),
-    ),
-    Migration(
-        version=21,
-        description="Liquid cluster dq_quality_rules_history by table_fqn and changed_at",
-        sql_template=(f"ALTER TABLE {_PLACEHOLDER}.dq_quality_rules_history " "CLUSTER BY (table_fqn, changed_at)"),
-    ),
-    Migration(
-        version=22,
-        description="Create dq_schedule_runs table for tracking scheduled run triggers",
-        sql_template=(
+            "  run_name STRING,"
+            "  input_location STRING,"
+            "  output_location STRING,"
+            "  quarantine_location STRING,"
+            "  checks_location STRING,"
+            "  rule_set_fingerprint STRING,"
+            "  metric_name STRING NOT NULL,"
+            "  metric_value STRING,"
+            "  run_time TIMESTAMP NOT NULL,"
+            "  error_column_name STRING,"
+            "  warning_column_name STRING,"
+            "  user_metadata MAP<STRING, STRING>"
+            ") CLUSTER BY (input_location, run_time);"
+            #
+            # Scheduler bookkeeping: last/next run pointer per schedule.
             f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_schedule_runs ("
             "  schedule_name STRING NOT NULL,"
             "  last_run_at TIMESTAMP,"
             "  next_run_at TIMESTAMP,"
             "  last_run_id STRING,"
             "  status STRING"
-            ")"
-        ),
-    ),
-    Migration(
-        version=23,
-        description="Create dq_schedule_configs table for separate per-schedule storage",
-        sql_template=(
+            ");"
+            #
+            # Per-schedule live config (cron/interval, scope filters).
             f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_schedule_configs ("
             "  schedule_name STRING NOT NULL,"
             "  config_json STRING NOT NULL,"
@@ -293,18 +235,9 @@ MIGRATIONS: list[Migration] = [
             "  created_at TIMESTAMP,"
             "  updated_by STRING,"
             "  updated_at TIMESTAMP"
-            ")"
-        ),
-    ),
-    Migration(
-        version=24,
-        description="Liquid cluster dq_schedule_configs by schedule_name",
-        sql_template=(f"ALTER TABLE {_PLACEHOLDER}.dq_schedule_configs " "CLUSTER BY (schedule_name)"),
-    ),
-    Migration(
-        version=25,
-        description="Create dq_schedule_configs_history table for change tracking",
-        sql_template=(
+            ") CLUSTER BY (schedule_name);"
+            #
+            # Append-only audit trail for schedule changes.
             f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_schedule_configs_history ("
             "  schedule_name STRING NOT NULL,"
             "  config_json STRING,"
@@ -312,40 +245,8 @@ MIGRATIONS: list[Migration] = [
             "  action STRING NOT NULL,"
             "  changed_by STRING,"
             "  changed_at TIMESTAMP"
-            ")"
+            ") CLUSTER BY (schedule_name, changed_at)"
         ),
-    ),
-    Migration(
-        version=26,
-        description="Liquid cluster dq_schedule_configs_history by schedule_name and changed_at",
-        sql_template=(
-            f"ALTER TABLE {_PLACEHOLDER}.dq_schedule_configs_history " "CLUSTER BY (schedule_name, changed_at)"
-        ),
-    ),
-    Migration(
-        version=27,
-        description="Add rule_id column to dq_quality_rules for per-check granularity",
-        sql_template=(f"ALTER TABLE {_PLACEHOLDER}.dq_quality_rules " "ADD COLUMN rule_id STRING"),
-    ),
-    Migration(
-        version=28,
-        description="Add rule_id column to dq_quality_rules_history",
-        sql_template=(f"ALTER TABLE {_PLACEHOLDER}.dq_quality_rules_history " "ADD COLUMN rule_id STRING"),
-    ),
-    Migration(
-        version=29,
-        description="Add run_type column to dq_validation_runs to distinguish dryrun vs scheduled",
-        sql_template=(f"ALTER TABLE {_PLACEHOLDER}.dq_validation_runs " "ADD COLUMN run_type STRING"),
-    ),
-    Migration(
-        version=30,
-        description="Add job_run_id column to dq_validation_runs for server-side run verification",
-        sql_template=(f"ALTER TABLE {_PLACEHOLDER}.dq_validation_runs " "ADD COLUMN job_run_id BIGINT"),
-    ),
-    Migration(
-        version=31,
-        description="Add job_run_id column to dq_profiling_results for server-side run verification",
-        sql_template=(f"ALTER TABLE {_PLACEHOLDER}.dq_profiling_results " "ADD COLUMN job_run_id BIGINT"),
     ),
 ]
 
@@ -464,9 +365,17 @@ class MigrationRunner:
         rows = self._sql.query(sql)
         return {int(row[0]): row[1] for row in rows}
 
+    # Errors that mean "the desired state is already in place" — safe
+    # to swallow so that re-running a migration is a no-op. The
+    # baseline statement uses ``CREATE TABLE IF NOT EXISTS``, but if a
+    # future migration appends an ``ALTER TABLE … ADD COLUMN`` or
+    # ``CLUSTER BY`` and the workspace already has it, we don't want
+    # the whole migration to abort.
     _IDEMPOTENT_ERROR_FRAGMENTS = (
         "COLUMN_ALREADY_EXISTS",
         "FIELDS_ALREADY_EXISTS",
+        "TABLE_OR_VIEW_ALREADY_EXISTS",
+        "TABLE_ALREADY_EXISTS",
         "already has liquid clustering defined",
     )
 

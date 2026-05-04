@@ -3,19 +3,31 @@ import { QueryErrorResetBoundary, useQueryClient } from "@tanstack/react-query";
 import { ErrorBoundary } from "react-error-boundary";
 import { Button } from "@/components/ui/button";
 import { PageBreadcrumb } from "@/components/apx/PageBreadcrumb";
-import { AlertCircle, Globe, Loader2, Search } from "lucide-react";
+import { AlertCircle, Globe, Loader2, Search, Tags, Plus, Trash2, X } from "lucide-react";
 import { FadeIn } from "@/components/anim/FadeIn";
 import { ShinyText } from "@/components/anim/ShinyText";
 import { RoleManagement } from "@/components/RoleManagement";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { useTimezone, useSaveTimezone, getTimezoneQueryKey } from "@/lib/api-custom";
+import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
+import {
+  useTimezone,
+  useSaveTimezone,
+  getTimezoneQueryKey,
+  useLabelDefinitions,
+  useSaveLabelDefinitions,
+  getLabelDefinitionsQueryKey,
+  type LabelDefinition,
+} from "@/lib/api-custom";
+import type { AxiosError } from "axios";
 import { toast } from "sonner";
 import { useCurrentUserRoleSuspense } from "@/hooks/use-suspense-queries";
 import { usePermissions } from "@/hooks/use-permissions";
@@ -141,10 +153,6 @@ function TimezoneSettings() {
           <Globe className="h-5 w-5" />
           Display Timezone
         </CardTitle>
-        <CardDescription>
-          Choose the timezone used to display all dates and times across the app.
-          Internally, all data is stored in UTC.
-        </CardDescription>
       </CardHeader>
       <CardContent>
         <div className="flex items-center gap-3">
@@ -204,6 +212,384 @@ function TimezoneSettings() {
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Label Definitions — admin-managed catalog of label keys + allowed values.
+// Drives the constrained label picker on rule authoring pages, including the
+// reserved ``weight`` key (which controls the weight selector / row).
+// ─────────────────────────────────────────────────────────────────────────────
+
+const LABEL_KEY_RE = /^[A-Za-z][A-Za-z0-9_]*$/;
+const RESERVED_WEIGHT_KEY = "weight";
+
+interface DraftDefinition extends LabelDefinition {
+  draftId: string;
+  newValueDraft: string;
+}
+
+function defToDraft(d: LabelDefinition): DraftDefinition {
+  return {
+    draftId: crypto.randomUUID(),
+    key: d.key,
+    description: d.description ?? "",
+    values: [...d.values],
+    allow_custom_values: !!d.allow_custom_values,
+    newValueDraft: "",
+  };
+}
+
+function draftToDef(d: DraftDefinition): LabelDefinition {
+  return {
+    key: d.key.trim(),
+    description: (d.description ?? "").trim(),
+    values: d.values.map((v) => v.trim()).filter(Boolean),
+    allow_custom_values: d.allow_custom_values,
+  };
+}
+
+function LabelDefinitionsSettings() {
+  const { data, isLoading } = useLabelDefinitions();
+  const queryClient = useQueryClient();
+  const saveMutation = useSaveLabelDefinitions();
+
+  const [drafts, setDrafts] = useState<DraftDefinition[]>([]);
+  const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
+    if (data && !hydrated) {
+      setDrafts((data.definitions ?? []).map(defToDraft));
+      setHydrated(true);
+    }
+  }, [data, hydrated]);
+
+  const isDirty = useMemo(() => {
+    if (!data) return false;
+    const a = data.definitions ?? [];
+    const b = drafts.map(draftToDef);
+    if (a.length !== b.length) return true;
+    return JSON.stringify(a) !== JSON.stringify(b);
+  }, [data, drafts]);
+
+  const validation = useMemo(() => {
+    const errors: string[] = [];
+    const seen = new Set<string>();
+    for (const d of drafts) {
+      const k = d.key.trim();
+      if (!k) {
+        errors.push("Every definition needs a key.");
+        continue;
+      }
+      if (!LABEL_KEY_RE.test(k)) {
+        errors.push(
+          `Key "${k}" must start with a letter and contain only letters, digits, and underscores.`,
+        );
+      }
+      if (seen.has(k)) errors.push(`Duplicate key "${k}".`);
+      seen.add(k);
+    }
+    return errors;
+  }, [drafts]);
+
+  const updateDraft = (draftId: string, patch: Partial<DraftDefinition>) => {
+    setDrafts((prev) => prev.map((d) => (d.draftId === draftId ? { ...d, ...patch } : d)));
+  };
+
+  const removeDraft = (draftId: string) =>
+    setDrafts((prev) => prev.filter((d) => d.draftId !== draftId));
+
+  const addDraft = (initialKey?: string) =>
+    setDrafts((prev) => [
+      ...prev,
+      {
+        draftId: crypto.randomUUID(),
+        key: initialKey ?? "",
+        description: "",
+        values: [],
+        allow_custom_values: false,
+        newValueDraft: "",
+      },
+    ]);
+
+  const addValue = (draftId: string) => {
+    const target = drafts.find((d) => d.draftId === draftId);
+    if (!target) return;
+    const v = target.newValueDraft.trim();
+    if (!v) return;
+    if (target.values.includes(v)) {
+      updateDraft(draftId, { newValueDraft: "" });
+      return;
+    }
+    updateDraft(draftId, {
+      values: [...target.values, v],
+      newValueDraft: "",
+    });
+  };
+
+  const removeValue = (draftId: string, value: string) => {
+    const target = drafts.find((d) => d.draftId === draftId);
+    if (!target) return;
+    updateDraft(draftId, { values: target.values.filter((v) => v !== value) });
+  };
+
+  const handleSave = () => {
+    if (validation.length > 0) {
+      toast.error(validation[0]);
+      return;
+    }
+    const definitions = drafts.map(draftToDef);
+    saveMutation.mutate(
+      { data: { definitions } },
+      {
+        onSuccess: (resp) => {
+          queryClient.invalidateQueries({ queryKey: getLabelDefinitionsQueryKey() });
+          setDrafts(resp.data.definitions.map(defToDraft));
+          toast.success(
+            definitions.length === 0
+              ? "Cleared label catalog."
+              : `Saved ${definitions.length} label definition${definitions.length === 1 ? "" : "s"}.`,
+          );
+        },
+        onError: (err: unknown) => {
+          const axErr = err as AxiosError<{ detail?: string }>;
+          toast.error(axErr?.response?.data?.detail ?? "Failed to save label definitions");
+        },
+      },
+    );
+  };
+
+  const handleReset = () => {
+    setDrafts((data?.definitions ?? []).map(defToDraft));
+  };
+
+  const hasWeightKey = drafts.some((d) => d.key.trim() === RESERVED_WEIGHT_KEY);
+
+  if (isLoading) {
+    return <Skeleton className="h-40 w-full" />;
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Tags className="h-5 w-5" />
+          Label Catalog
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {drafts.length === 0 && (
+          <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
+            No label definitions yet.
+          </div>
+        )}
+        {drafts.map((d) => (
+          <DefinitionEditorCard
+            key={d.draftId}
+            draft={d}
+            onChange={(patch) => updateDraft(d.draftId, patch)}
+            onRemove={() => removeDraft(d.draftId)}
+            onAddValue={() => addValue(d.draftId)}
+            onRemoveValue={(v) => removeValue(d.draftId, v)}
+          />
+        ))}
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => addDraft()} className="gap-1.5">
+            <Plus className="h-3.5 w-3.5" />
+            Add label definition
+          </Button>
+          {!hasWeightKey && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => addDraft(RESERVED_WEIGHT_KEY)}
+              className="gap-1.5 text-xs text-muted-foreground"
+              title="Add a weight label with values 1..5 quickly"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Add weight definition
+            </Button>
+          )}
+        </div>
+        {validation.length > 0 && (
+          <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 space-y-1">
+            {validation.map((msg, i) => (
+              <p key={i} className="text-xs text-destructive flex items-start gap-1.5">
+                <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                <span>{msg}</span>
+              </p>
+            ))}
+          </div>
+        )}
+        <div className="flex items-center gap-2 pt-2 border-t">
+          <Button
+            size="sm"
+            onClick={handleSave}
+            disabled={!isDirty || validation.length > 0 || saveMutation.isPending}
+          >
+            {saveMutation.isPending && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}
+            Save changes
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={handleReset}
+            disabled={!isDirty || saveMutation.isPending}
+          >
+            Reset
+          </Button>
+          {!isDirty && (data?.definitions?.length ?? 0) > 0 && (
+            <span className="text-xs text-muted-foreground">
+              {data?.definitions?.length} definition
+              {(data?.definitions?.length ?? 0) === 1 ? "" : "s"} active
+            </span>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+interface DefinitionEditorCardProps {
+  draft: DraftDefinition;
+  onChange: (patch: Partial<DraftDefinition>) => void;
+  onRemove: () => void;
+  onAddValue: () => void;
+  onRemoveValue: (value: string) => void;
+}
+
+function DefinitionEditorCard({
+  draft,
+  onChange,
+  onRemove,
+  onAddValue,
+  onRemoveValue,
+}: DefinitionEditorCardProps) {
+  const keyValid = !draft.key || LABEL_KEY_RE.test(draft.key.trim());
+  const isWeight = draft.key.trim() === RESERVED_WEIGHT_KEY;
+  return (
+    <div className={cn("rounded-md border p-3 space-y-3", isWeight ? "bg-blue-50/30 border-blue-200/60" : "bg-muted/20")}>
+      <div className="flex items-start gap-3">
+        <div className="grid grid-cols-[180px_1fr] gap-3 flex-1 items-start">
+          <div className="space-y-1">
+            <Label className="text-xs flex items-center gap-1.5">
+              Key
+              {isWeight && (
+                <Badge variant="secondary" className="h-4 px-1 text-[10px] font-normal">
+                  reserved
+                </Badge>
+              )}
+            </Label>
+            <Input
+              value={draft.key}
+              onChange={(e) => onChange({ key: e.target.value })}
+              placeholder="e.g. team"
+              className={cn("h-8 text-xs font-mono", !keyValid && "border-destructive")}
+            />
+            {!keyValid && (
+              <p className="text-[10px] text-destructive">
+                Letters, digits, underscore. Must start with a letter.
+              </p>
+            )}
+            {isWeight && (
+              <p className="text-[10px] text-blue-700">
+                Drives the weight picker on rule authoring pages.
+              </p>
+            )}
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">
+              Description <span className="text-muted-foreground">(optional)</span>
+            </Label>
+            <Textarea
+              value={draft.description ?? ""}
+              onChange={(e) => onChange({ description: e.target.value })}
+              placeholder={isWeight ? "Rule weight (1 = informational, 5 = critical)" : "What this label captures (e.g. Owning team)"}
+              className="text-xs min-h-[32px] py-1.5"
+              rows={1}
+            />
+          </div>
+        </div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 shrink-0 text-destructive hover:text-destructive"
+          onClick={onRemove}
+          aria-label="Remove definition"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+      <div className="space-y-1.5">
+        <div className="flex items-center justify-between">
+          <Label className="text-xs">
+            Allowed values{" "}
+            <span className="text-muted-foreground">
+              (leave empty for a boolean tag)
+            </span>
+          </Label>
+          <label className="flex items-center gap-1.5 text-xs cursor-pointer">
+            <Checkbox
+              checked={draft.allow_custom_values}
+              onCheckedChange={(c) => onChange({ allow_custom_values: c === true })}
+            />
+            <span>Allow custom values</span>
+          </label>
+        </div>
+        {draft.values.length > 0 ? (
+          <div className="flex flex-wrap gap-1.5">
+            {draft.values.map((v) => (
+              <Badge
+                key={v}
+                variant="secondary"
+                className="h-6 gap-1 pl-2 pr-1 text-xs font-normal"
+              >
+                <span className="font-mono">{v}</span>
+                <button
+                  type="button"
+                  className="ml-0.5 rounded-full hover:bg-foreground/10 p-0.5"
+                  onClick={() => onRemoveValue(v)}
+                  aria-label={`Remove value ${v}`}
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </Badge>
+            ))}
+          </div>
+        ) : (
+          <p className="text-[11px] italic text-muted-foreground">
+            No values — authors will toggle this label as a boolean tag (
+            <code>true</code>/<code>false</code>).
+          </p>
+        )}
+        <div className="flex items-center gap-1.5">
+          <Input
+            value={draft.newValueDraft}
+            onChange={(e) => onChange({ newValueDraft: e.target.value })}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                onAddValue();
+              }
+            }}
+            placeholder={isWeight ? "add weight value (e.g. 1)" : "add value… (press Enter)"}
+            className="h-7 text-xs flex-1 font-mono"
+          />
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-7 text-xs gap-1"
+            disabled={!draft.newValueDraft.trim()}
+            onClick={onAddValue}
+          >
+            <Plus className="h-3 w-3" />
+            Add
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ConfigPage() {
   const { isAdmin } = usePermissions();
   const navigate = useNavigate();
@@ -239,6 +625,13 @@ function ConfigPage() {
               <ErrorBoundary onReset={reset} fallbackRender={SectionError}>
                 <Suspense fallback={<Skeleton className="h-40 w-full" />}>
                   <TimezoneSettings />
+                </Suspense>
+              </ErrorBoundary>
+            </FadeIn>
+            <FadeIn delay={0.1}>
+              <ErrorBoundary onReset={reset} fallbackRender={SectionError}>
+                <Suspense fallback={<Skeleton className="h-40 w-full" />}>
+                  <LabelDefinitionsSettings />
                 </Suspense>
               </ErrorBoundary>
             </FadeIn>

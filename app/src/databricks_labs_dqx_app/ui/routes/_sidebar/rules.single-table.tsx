@@ -24,6 +24,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { CatalogBrowser } from "@/components/CatalogBrowser";
+import { ColumnDiscoveryPanel } from "@/components/ColumnDiscoveryPanel";
 import { DryRunResults } from "@/components/DryRunResults";
 import {
   Sparkles,
@@ -51,7 +52,9 @@ import {
   type DryRunResultsOut,
 } from "@/lib/api";
 import { useQueryClient } from "@tanstack/react-query";
-import { filterTablesByColumns, checkDuplicates, type CheckDuplicatesIn, submitRuleForApproval, cancelDryRun, getDryRunStatusCustom } from "@/lib/api-custom";
+import { filterTablesByColumns, checkDuplicates, type CheckDuplicatesIn, submitRuleForApproval, cancelDryRun, getDryRunStatusCustom, useLabelDefinitions, type LabelDefinition } from "@/lib/api-custom";
+import { LabelsEditor } from "@/components/Labels";
+import { getUserMetadata } from "@/lib/format-utils";
 import { useJobPolling } from "@/hooks/use-job-polling";
 import {
   Tooltip,
@@ -76,31 +79,269 @@ import {
 
 type SearchParams = { table?: string; rule_id?: string; from?: string };
 
-const CHECK_FUNCTIONS = [
-  { value: "is_not_null", label: "is_not_null", args: ["col_name"] },
-  { value: "is_not_empty", label: "is_not_empty", args: ["col_name"] },
-  { value: "is_not_null_and_not_empty", label: "is_not_null_and_not_empty", args: ["col_name"] },
-  { value: "is_in_list", label: "is_in_list", args: ["col_name", "allowed"] },
-  { value: "is_not_in_list", label: "is_not_in_list", args: ["col_name", "forbidden"] },
-  { value: "is_min", label: "is_min", args: ["col_name", "limit"] },
-  { value: "is_max", label: "is_max", args: ["col_name", "limit"] },
-  { value: "is_in_range", label: "is_in_range", args: ["col_name", "min_limit", "max_limit"] },
-  { value: "is_valid_date", label: "is_valid_date", args: ["col_name", "date_format"] },
-  { value: "is_valid_timestamp", label: "is_valid_timestamp", args: ["col_name", "timestamp_format"] },
-  { value: "is_valid_regex", label: "is_valid_regex", args: ["col_name", "regex"] },
-  { value: "is_unique", label: "is_unique", args: ["col_name"] },
-  { value: "is_not_negative", label: "is_not_negative", args: ["col_name"] },
-  { value: "sql_expression", label: "sql_expression", args: ["expression", "msg"] },
+/**
+ * Argument shape that drives both UI rendering and payload serialization.
+ *
+ * - ``column`` — single column name (writes to ``column`` key in payload).
+ * - ``list_csv`` — comma-separated values; serialized as a JSON list.
+ * - ``number`` — numeric input; serialized as a number.
+ * - ``string`` — free-form string; serialized verbatim.
+ * - ``boolean`` — true/false select; serialized as a JSON boolean.
+ *
+ * ``required`` controls whether the rule is allowed to save with this arg
+ * empty. ``defaultValue`` (only meaningful for booleans today) is auto-
+ * filled when the user picks the function so the input doesn't render as
+ * blank.
+ */
+type ArgType = "column" | "list_csv" | "number" | "string" | "boolean";
+
+interface CheckFunctionArg {
+  /** Local key under ``CheckDraft.args``. ``col_name`` is mapped to the
+   *  engine's ``column`` key at serialization time via
+   *  :data:`UI_TO_ENGINE_ARG_MAP`. */
+  name: string;
+  label: string;
+  type: ArgType;
+  required: boolean;
+  /** Default to inject when the function is selected (used for booleans
+   *  so the dropdown shows DQX's documented default). */
+  defaultValue?: string;
+  /** Placeholder text for the input. */
+  hint?: string;
+  /** Helper text rendered under the input (small, muted). */
+  help?: string;
+}
+
+interface CheckFunctionDef {
+  value: string;
+  label: string;
+  args: CheckFunctionArg[];
+  /** Cross-arg validation — runs after per-arg checks. Returns ``null``
+   *  when the combined arg state is valid, otherwise an error message. */
+  crossArgValidate?: (args: Record<string, string>) => string | null;
+}
+
+const CHECK_FUNCTIONS: CheckFunctionDef[] = [
+  {
+    value: "is_not_null",
+    label: "is_not_null",
+    args: [
+      { name: "col_name", label: "Column Name", type: "column", required: true, hint: "e.g. id" },
+    ],
+  },
+  {
+    value: "is_not_empty",
+    label: "is_not_empty",
+    args: [
+      { name: "col_name", label: "Column Name", type: "column", required: true, hint: "e.g. id" },
+      {
+        name: "trim_strings",
+        label: "Trim Strings",
+        type: "boolean",
+        required: false,
+        defaultValue: "false",
+        help: "When true, treat whitespace-only values as empty.",
+      },
+    ],
+  },
+  {
+    value: "is_not_null_and_not_empty",
+    label: "is_not_null_and_not_empty",
+    args: [
+      { name: "col_name", label: "Column Name", type: "column", required: true, hint: "e.g. id" },
+      {
+        name: "trim_strings",
+        label: "Trim Strings",
+        type: "boolean",
+        required: false,
+        defaultValue: "false",
+        help: "When true, treat whitespace-only values as empty.",
+      },
+    ],
+  },
+  {
+    value: "is_in_list",
+    label: "is_in_list",
+    args: [
+      { name: "col_name", label: "Column Name", type: "column", required: true },
+      { name: "allowed", label: "Allowed Values", type: "list_csv", required: true, hint: "comma-separated, e.g. A,B,C" },
+      {
+        name: "case_sensitive",
+        label: "Case Sensitive",
+        type: "boolean",
+        required: false,
+        defaultValue: "true",
+        help: "When false, the comparison is case-insensitive.",
+      },
+    ],
+  },
+  {
+    value: "is_not_in_list",
+    label: "is_not_in_list",
+    args: [
+      { name: "col_name", label: "Column Name", type: "column", required: true },
+      { name: "forbidden", label: "Not Allowed Values", type: "list_csv", required: true, hint: "comma-separated" },
+      {
+        name: "case_sensitive",
+        label: "Case Sensitive",
+        type: "boolean",
+        required: false,
+        defaultValue: "true",
+        help: "When false, the comparison is case-insensitive.",
+      },
+    ],
+  },
+  {
+    value: "is_not_less_than",
+    label: "is_not_less_than",
+    args: [
+      { name: "col_name", label: "Column Name", type: "column", required: true },
+      { name: "limit", label: "Limit", type: "number", required: true, hint: "minimum acceptable value" },
+    ],
+  },
+  {
+    value: "is_not_greater_than",
+    label: "is_not_greater_than",
+    args: [
+      { name: "col_name", label: "Column Name", type: "column", required: true },
+      { name: "limit", label: "Limit", type: "number", required: true, hint: "maximum acceptable value" },
+    ],
+  },
+  {
+    value: "is_in_range",
+    label: "is_in_range",
+    args: [
+      { name: "col_name", label: "Column Name", type: "column", required: true },
+      { name: "min_limit", label: "Min Limit", type: "number", required: false, hint: "min value" },
+      { name: "max_limit", label: "Max Limit", type: "number", required: false, hint: "max value" },
+    ],
+    // Each bound is individually optional in DQX (``min_limit=None,
+    // max_limit=None``) but a check with neither bound is meaningless,
+    // so we require at least one to be set.
+    crossArgValidate: (args) => {
+      const hasMin = (args.min_limit ?? "").trim() !== "";
+      const hasMax = (args.max_limit ?? "").trim() !== "";
+      if (!hasMin && !hasMax) return "Provide at least one of Min Limit or Max Limit.";
+      return null;
+    },
+  },
+  {
+    value: "is_valid_date",
+    label: "is_valid_date",
+    args: [
+      { name: "col_name", label: "Column Name", type: "column", required: true },
+      {
+        name: "date_format",
+        label: "Date Format",
+        type: "string",
+        required: false,
+        hint: "e.g. yyyy-MM-dd",
+        help: "Optional. Leave blank to use DQX's default ISO date parser.",
+      },
+    ],
+  },
+  {
+    value: "is_valid_timestamp",
+    label: "is_valid_timestamp",
+    args: [
+      { name: "col_name", label: "Column Name", type: "column", required: true },
+      {
+        name: "timestamp_format",
+        label: "Timestamp Format",
+        type: "string",
+        required: false,
+        hint: "e.g. yyyy-MM-dd HH:mm:ss",
+        help: "Optional. Leave blank to use DQX's default ISO timestamp parser.",
+      },
+    ],
+  },
+  {
+    value: "is_valid_regex",
+    label: "is_valid_regex",
+    args: [
+      { name: "col_name", label: "Column Name", type: "column", required: true },
+      { name: "regex", label: "Regex Pattern", type: "string", required: true, hint: "e.g. ^[A-Z]+$" },
+    ],
+  },
+  {
+    value: "is_unique",
+    label: "is_unique",
+    args: [
+      {
+        name: "col_name",
+        label: "Column Name(s)",
+        type: "column",
+        required: true,
+        hint: "comma-separated, e.g. id or col1, col2",
+      },
+      {
+        name: "nulls_distinct",
+        label: "Nulls Distinct",
+        type: "boolean",
+        required: false,
+        defaultValue: "true",
+        help: "When true (default), NULL values are treated as distinct from each other.",
+      },
+    ],
+  },
+  {
+    value: "is_not_negative",
+    label: "is_not_negative",
+    args: [
+      { name: "col_name", label: "Column Name", type: "column", required: true },
+    ],
+  },
+  {
+    value: "sql_expression",
+    label: "sql_expression",
+    args: [
+      { name: "expression", label: "Expression", type: "string", required: true, hint: "SQL expression, e.g. col > 0" },
+      { name: "msg", label: "Error Message", type: "string", required: false, hint: "Optional error message override" },
+      { name: "name", label: "Check Name", type: "string", required: false, hint: "Optional custom name" },
+      {
+        name: "negate",
+        label: "Negate",
+        type: "boolean",
+        required: false,
+        defaultValue: "false",
+        help: "When true, the rule fails when the expression evaluates to true.",
+      },
+    ],
+  },
 ];
+
+/**
+ * Pre-DQX-rename function names that still appear in old saved rules and
+ * AI-generated outputs. Mapping these on load lets users edit legacy
+ * rules through the new schema without losing them; on save the
+ * canonical name is used. (DQX itself rejects these names at validate
+ * time, which is one of the bugs we're fixing.)
+ */
+const LEGACY_FN_NAME_MAP: Record<string, string> = {
+  is_min: "is_not_less_than",
+  is_max: "is_not_greater_than",
+};
 
 interface CheckDraft {
   id: string;
   fn: string;
   args: Record<string, string>;
   criticality: "warn" | "error";
-  weight: number;
+  /**
+   * Free-form labels, including the reserved ``weight`` key. All authoring,
+   * editing, and round-trip happens through ``user_metadata`` — there is no
+   * separate native ``weight`` field on the rule.
+   */
+  userMetadata: Record<string, string>;
   targetTables: string[];
   ruleId?: string;
+  /**
+   * Original table this ``ruleId`` is bound to in the catalog. Each rule
+   * row in ``dq_rules_catalog`` lives under exactly one ``table_fqn``, so
+   * if the user adds extra tables to an existing draft we update the
+   * original row in place and create fresh rules for the additions.
+   */
+  originalTable?: string;
 }
 
 function newCheck(): CheckDraft {
@@ -109,7 +350,7 @@ function newCheck(): CheckDraft {
     fn: "",
     args: {},
     criticality: "warn",
-    weight: 3,
+    userMetadata: {},
     targetTables: [],
   };
 }
@@ -118,24 +359,77 @@ function checkToDict(c: CheckDraft): Record<string, unknown> {
   const args: Record<string, unknown> = {};
   const fnDef = CHECK_FUNCTIONS.find((f) => f.value === c.fn);
   const isKnownFn = !!fnDef;
-  const declaredArgs = new Set(fnDef?.args ?? []);
-  for (const [k, v] of Object.entries(c.args)) {
-    if (!v) continue;
-    if (k === "col_name" && isKnownFn && !declaredArgs.has("col_name")) continue;
+  const argDefByName = new Map((fnDef?.args ?? []).map((a) => [a.name, a] as const));
+
+  for (const [k, raw] of Object.entries(c.args)) {
+    const v = (raw ?? "").trim();
+    if (v === "") continue;
+
+    // Drop UI-only ``col_name`` for known functions that don't take it.
+    if (k === "col_name" && isKnownFn && !argDefByName.has("col_name")) continue;
+
+    // ``is_unique`` is special: the UI captures one or more columns under
+    // ``col_name`` (CSV) but DQX expects a ``columns`` list.
     if (c.fn === "is_unique" && k === "col_name") {
       args["columns"] = v.split(",").map((s) => s.trim()).filter(Boolean);
       continue;
     }
-    const key = UI_TO_ENGINE_ARG_MAP[k] ?? k;
-    if (key === "allowed" || key === "forbidden") {
-      args[key] = v.split(",").map((s) => s.trim()).filter(Boolean);
-    } else if (key === "limit" || key === "min_limit" || key === "max_limit") {
-      args[key] = Number(v) || v;
+
+    const argDef = argDefByName.get(k);
+    const engineKey = UI_TO_ENGINE_ARG_MAP[k] ?? k;
+
+    if (argDef) {
+      switch (argDef.type) {
+        case "list_csv":
+          args[engineKey] = v.split(",").map((s) => s.trim()).filter(Boolean);
+          break;
+        case "number": {
+          const num = Number(v);
+          args[engineKey] = Number.isFinite(num) ? num : v;
+          break;
+        }
+        case "boolean":
+          args[engineKey] = v.toLowerCase() === "true";
+          break;
+        default:
+          args[engineKey] = v;
+      }
     } else {
-      args[key] = v;
+      // Unknown / custom function — fall back to the legacy heuristics.
+      if (engineKey === "allowed" || engineKey === "forbidden") {
+        args[engineKey] = v.split(",").map((s) => s.trim()).filter(Boolean);
+      } else if (engineKey === "limit" || engineKey === "min_limit" || engineKey === "max_limit") {
+        args[engineKey] = Number(v) || v;
+      } else {
+        args[engineKey] = v;
+      }
     }
   }
-  return { criticality: c.criticality, weight: c.weight, check: { function: c.fn, arguments: args } };
+
+  // Drop boolean args that are equal to their declared default. Keeps
+  // YAML round-trips clean (we don't emit defaults that the user never
+  // touched).
+  if (fnDef) {
+    for (const a of fnDef.args) {
+      if (a.type !== "boolean" || a.defaultValue == null) continue;
+      const engineKey = UI_TO_ENGINE_ARG_MAP[a.name] ?? a.name;
+      if (engineKey in args) {
+        const defaultBool = a.defaultValue.toLowerCase() === "true";
+        if (args[engineKey] === defaultBool) {
+          delete args[engineKey];
+        }
+      }
+    }
+  }
+
+  const out: Record<string, unknown> = {
+    criticality: c.criticality,
+    check: { function: c.fn, arguments: args },
+  };
+  if (Object.keys(c.userMetadata).length > 0) {
+    out.user_metadata = { ...c.userMetadata };
+  }
+  return out;
 }
 
 function getCheckColumns(c: CheckDraft): string[] {
@@ -153,25 +447,38 @@ const UI_TO_ENGINE_ARG_MAP: Record<string, string> = { col_name: "column" };
 function aiCheckToDraft(raw: Record<string, unknown>): CheckDraft | null {
   // The AI may return {check: {function, arguments}, criticality} or {function, arguments, criticality}
   const checkObj = (raw.check as Record<string, unknown>) ?? raw;
-  const fn = String(checkObj.function ?? "");
-  if (!fn) return null;
+  const rawFn = String(checkObj.function ?? "");
+  if (!rawFn) return null;
+  // Map any pre-rename DQX names (``is_min``/``is_max``) to their
+  // current canonical equivalents so old saved rules can be edited.
+  const fn = LEGACY_FN_NAME_MAP[rawFn] ?? rawFn;
   const rawArgs = (checkObj.arguments as Record<string, unknown>) ?? {};
   const args: Record<string, string> = {};
   for (const [k, v] of Object.entries(rawArgs)) {
     const key = AI_ARG_KEY_MAP[k] ?? k;
     if (Array.isArray(v)) {
       args[key] = v.join(", ");
+    } else if (typeof v === "boolean") {
+      args[key] = v ? "true" : "false";
     } else if (v != null) {
       args[key] = String(v);
     }
   }
   const criticality = (raw.criticality as string) ?? (checkObj.criticality as string) ?? "warn";
+
+  // Legacy/AI rules may carry a top-level numeric ``weight``. Fold it into the
+  // labels map so all weight handling stays in one place.
+  const userMetadata = getUserMetadata(raw);
+  if (raw.weight != null && typeof raw.weight === "number" && !("weight" in userMetadata)) {
+    userMetadata.weight = String(raw.weight);
+  }
+
   return {
     id: crypto.randomUUID(),
     fn,
     args,
     criticality: criticality === "error" ? "error" : "warn",
-    weight: typeof raw.weight === "number" ? raw.weight : 3,
+    userMetadata,
     targetTables: [],
   };
 }
@@ -223,6 +530,9 @@ function UnifiedRulesPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [loadedFromTable, setLoadedFromTable] = useState(false);
 
+  const { data: labelDefsData } = useLabelDefinitions();
+  const labelDefinitions = labelDefsData?.definitions ?? [];
+
   const queryClient = useQueryClient();
   useEffect(() => {
     if (isTableFqn && initialTable) {
@@ -238,16 +548,27 @@ function UnifiedRulesPage() {
 
   useEffect(() => {
     if (!existingRulesResp?.data || loadedFromTable) return;
-    const entries = Array.isArray(existingRulesResp.data) ? existingRulesResp.data : [existingRulesResp.data];
+    const allEntries = Array.isArray(existingRulesResp.data) ? existingRulesResp.data : [existingRulesResp.data];
+    // Scope the editor to the same set the calling page surfaced. The
+    // backend ``getRules`` endpoint returns every rule (draft, pending,
+    // approved, rejected) for the table; without this filter the editor
+    // would show e.g. 2 checks while the Active page header only counts 1.
+    const entries =
+      fromPage === "active"
+        ? allEntries.filter((e) => e.status === "approved")
+        : fromPage === "drafts"
+          ? allEntries.filter((e) => e.status !== "approved")
+          : allEntries;
 
     if (isSingleRuleEdit) {
       const target = entries.find((e) => e.rule_id === editRuleId);
       if (target && target.checks?.length) {
-        const draft = savedCheckToDraft(target.checks[0] as Record<string, unknown>, initialTable!);
+        const draft = savedCheckToDraft(target.checks[0] as Record<string, unknown>, target.table_fqn);
         if (draft) {
           draft.ruleId = editRuleId;
+          draft.originalTable = target.table_fqn;
           setChecks([draft]);
-          toast.info(`Editing rule for ${initialTable!.split(".").pop()}`);
+          toast.info(`Editing rule for ${target.table_fqn.split(".").pop()}`);
         }
       }
     } else {
@@ -255,9 +576,12 @@ function UnifiedRulesPage() {
         const drafts: CheckDraft[] = [];
         for (const entry of entries) {
           for (const c of entry.checks ?? []) {
-            const draft = savedCheckToDraft(c as Record<string, unknown>, initialTable!);
+            const draft = savedCheckToDraft(c as Record<string, unknown>, entry.table_fqn);
             if (draft) {
-              if (entry.rule_id) draft.ruleId = entry.rule_id;
+              if (entry.rule_id) {
+                draft.ruleId = entry.rule_id;
+                draft.originalTable = entry.table_fqn;
+              }
               drafts.push(draft);
             }
           }
@@ -393,9 +717,18 @@ function UnifiedRulesPage() {
         if (!c.fn) return false;
         const def = CHECK_FUNCTIONS.find((f) => f.value === c.fn);
         if (def) {
-          return def.args.every((arg) => (c.args[arg] ?? "").trim() !== "");
+          // Required args must be populated.
+          if (!def.args.filter((a) => a.required).every((a) => (c.args[a.name] ?? "").trim() !== "")) {
+            return false;
+          }
+          // Cross-arg constraint (e.g. is_in_range needs at least one bound).
+          if (def.crossArgValidate && def.crossArgValidate(c.args) !== null) {
+            return false;
+          }
+          // Per-arg syntax must pass.
+          return def.args.every((a) => validateArg(a.name, c.args[a.name] ?? "", c.fn) === null);
         }
-        // Custom/unknown function: valid as long as all populated args are non-empty
+        // Custom/unknown function: valid as long as all populated args are non-empty.
         return Object.values(c.args).every((v) => (v ?? "").trim() !== "");
       }) &&
       totalTargetPairs > 0
@@ -405,6 +738,15 @@ function UnifiedRulesPage() {
   const validationMessage = useMemo(() => {
     if (checks.some((c) => c.fn === "")) return "Select a function for every check";
     if (totalTargetPairs === 0) return "Assign at least one target table to a check";
+    // Surface the first incomplete required arg so the user knows what's missing.
+    for (const c of checks) {
+      const def = CHECK_FUNCTIONS.find((f) => f.value === c.fn);
+      if (!def) continue;
+      const missing = def.args.find((a) => a.required && (c.args[a.name] ?? "").trim() === "");
+      if (missing) return `"${missing.label}" is required for ${def.label}`;
+      const crossErr = def.crossArgValidate?.(c.args);
+      if (crossErr) return crossErr;
+    }
     return null;
   }, [checks, totalTargetPairs]);
 
@@ -525,8 +867,19 @@ function UnifiedRulesPage() {
   const hasArgErrors = useMemo(() => {
     return checks.some((c) => {
       const fnDef = CHECK_FUNCTIONS.find((f) => f.value === c.fn);
-      const argKeys = fnDef?.args ?? Object.keys(c.args);
-      return argKeys.some((arg) => validateArg(arg, c.args[arg] ?? "", c.fn) !== null);
+      if (fnDef) {
+        // Per-arg syntax errors.
+        if (fnDef.args.some((a) => validateArg(a.name, c.args[a.name] ?? "", c.fn) !== null)) {
+          return true;
+        }
+        // Cross-arg constraints.
+        if (fnDef.crossArgValidate && fnDef.crossArgValidate(c.args) !== null) {
+          return true;
+        }
+        return false;
+      }
+      // Custom/unknown function — best-effort syntax check on every populated arg.
+      return Object.keys(c.args).some((arg) => validateArg(arg, c.args[arg] ?? "", c.fn) !== null);
     });
   }, [checks]);
 
@@ -538,20 +891,28 @@ function UnifiedRulesPage() {
     }
     setIsSaving(true);
     try {
-      // Separate existing rules (update) from new rules (create)
+      // A check is "existing" if it carries a ``ruleId`` from the catalog.
+      // Each catalog row is bound to one ``table_fqn``; if the user added
+      // tables to an existing draft, the original row is updated in place
+      // and each *additional* table becomes a fresh rule. Tables that are
+      // newly added but match no existing row (i.e. on a brand-new check)
+      // fall through to the create-new path below.
       const existingChecks = checks.filter((c) => c.ruleId && c.fn);
       const newChecks = checks.filter((c) => !c.ruleId && c.fn && c.targetTables.length > 0);
+      const additionalRuleSpecs: { check: CheckDraft; table: string }[] = [];
 
       let updatedCount = 0;
       let createdCount = 0;
       const failedMessages: string[] = [];
 
-      // 1. Update existing rules in-place
+      // 1. Update existing rules in-place — only their original table.
       for (const c of existingChecks) {
         const dict = checkToDict(c);
+        const orig = c.originalTable ?? c.targetTables[0];
+        const stillTargetsOriginal = c.targetTables.includes(orig);
         try {
           const resp = await saveRules({
-            table_fqn: c.targetTables[0],
+            table_fqn: orig,
             checks: [dict],
             rule_id: c.ruleId,
           } as SaveRulesIn);
@@ -571,10 +932,22 @@ function UnifiedRulesPage() {
           const detail = (e as { body?: { detail?: string } })?.body?.detail ?? String(e);
           failedMessages.push(`Update failed: ${detail}`);
         }
+        // Queue any *added* tables as fresh rules.
+        for (const t of c.targetTables) {
+          if (t === orig) continue;
+          additionalRuleSpecs.push({ check: c, table: t });
+        }
+        if (!stillTargetsOriginal) {
+          toast.warning(
+            `${orig.split(".").pop()}: original target was removed in the editor but the rule was kept. Delete it from Drafts if you no longer want it.`,
+            { duration: 7000 },
+          );
+        }
       }
 
-      // 2. Create new rules (if any)
-      if (newChecks.length > 0) {
+      // 2. Create new rules — both for brand-new checks and for additional
+      // tables tacked on to existing checks.
+      if (newChecks.length > 0 || additionalRuleSpecs.length > 0) {
         const tableCheckMap: Record<string, Record<string, unknown>[]> = {};
         for (const c of newChecks) {
           const dict = checkToDict(c);
@@ -582,6 +955,11 @@ function UnifiedRulesPage() {
             if (!tableCheckMap[fqn]) tableCheckMap[fqn] = [];
             tableCheckMap[fqn].push(dict);
           }
+        }
+        for (const spec of additionalRuleSpecs) {
+          const dict = checkToDict(spec.check);
+          if (!tableCheckMap[spec.table]) tableCheckMap[spec.table] = [];
+          tableCheckMap[spec.table].push(dict);
         }
 
         // Check for duplicates before saving new rules
@@ -745,23 +1123,37 @@ function UnifiedRulesPage() {
             </div>
           </div>
 
-          {/* Check cards */}
-          {checks.map((check, idx) => (
-            <CheckCard
-              key={check.id}
-              check={check}
-              index={idx}
-              onUpdate={updateCheck}
-              onRemove={removeCheck}
-              canRemove={checks.length > 1}
-              disabled={isBusy}
-              isDuplicate={dupCheckIds.has(check.id)}
-            />
-          ))}
-          <Button variant="outline" size="sm" onClick={addCheck} className="gap-1" disabled={isBusy}>
-            <Plus className="h-3 w-3" />
-            Add check
-          </Button>
+          {/* Two-column row: check editor on the left, column discovery
+              side panel on the right. On smaller viewports the panel
+              stacks above the checks so it stays visible. */}
+          <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_320px] gap-4 items-start">
+            <div className="space-y-5 min-w-0 order-2 xl:order-1">
+              {checks.map((check, idx) => (
+                <CheckCard
+                  key={check.id}
+                  check={check}
+                  index={idx}
+                  onUpdate={updateCheck}
+                  onRemove={removeCheck}
+                  canRemove={checks.length > 1}
+                  disabled={isBusy}
+                  isDuplicate={dupCheckIds.has(check.id)}
+                  labelDefinitions={labelDefinitions}
+                />
+              ))}
+              <Button variant="outline" size="sm" onClick={addCheck} className="gap-1" disabled={isBusy}>
+                <Plus className="h-3 w-3" />
+                Add check
+              </Button>
+            </div>
+            <div className="order-1 xl:order-2 min-w-0">
+              <ColumnDiscoveryPanel
+                variant="inline"
+                defaultCollapsed={false}
+                className="xl:sticky xl:top-4"
+              />
+            </div>
+          </div>
         </CardContent>
       </Card>
 
@@ -1040,9 +1432,10 @@ interface CheckCardProps {
   canRemove: boolean;
   disabled?: boolean;
   isDuplicate?: boolean;
+  labelDefinitions?: LabelDefinition[];
 }
 
-function CheckCard({ check, index, onUpdate, onRemove, canRemove, disabled, isDuplicate }: CheckCardProps) {
+function CheckCard({ check, index, onUpdate, onRemove, canRemove, disabled, isDuplicate, labelDefinitions }: CheckCardProps) {
   const fnDef = CHECK_FUNCTIONS.find((f) => f.value === check.fn);
   const argFields = fnDef?.args ?? [];
   const isUnknownFn = check.fn !== "" && !fnDef;
@@ -1130,7 +1523,26 @@ function CheckCard({ check, index, onUpdate, onRemove, canRemove, disabled, isDu
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1.5">
             <Label className="text-xs">Function</Label>
-            <Select value={check.fn} onValueChange={(fn) => onUpdate(check.id, { fn, args: { col_name: check.args["col_name"] ?? "" } })} disabled={disabled}>
+            <Select
+              value={check.fn}
+              onValueChange={(fn) => {
+                // When swapping functions, keep ``col_name`` only if the
+                // new function still takes a column, and pre-fill any
+                // boolean defaults so the dropdown doesn't render blank.
+                const def = CHECK_FUNCTIONS.find((f) => f.value === fn);
+                const next: Record<string, string> = {};
+                if (def?.args.some((a) => a.name === "col_name") && check.args["col_name"]) {
+                  next.col_name = check.args["col_name"];
+                }
+                for (const a of def?.args ?? []) {
+                  if (a.defaultValue != null && next[a.name] == null) {
+                    next[a.name] = a.defaultValue;
+                  }
+                }
+                onUpdate(check.id, { fn, args: next });
+              }}
+              disabled={disabled}
+            >
               <SelectTrigger className="h-8 text-xs">
                 <SelectValue placeholder="Select function" />
               </SelectTrigger>
@@ -1167,36 +1579,104 @@ function CheckCard({ check, index, onUpdate, onRemove, canRemove, disabled, isDu
         </div>
 
         {argFields.length > 0 && (
-          <div className="grid gap-2 sm:grid-cols-2">
-            {argFields.map((arg) => {
-              const val = check.args[arg] ?? "";
-              const isEmpty = val.trim() === "";
-              const validationErr = validateArg(arg, val, check.fn);
-              const hasError = !!validationErr;
+          <>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {argFields.map((argDef) => {
+                const val = check.args[argDef.name] ?? "";
+                const isEmpty = val.trim() === "";
+                const validationErr = validateArg(argDef.name, val, check.fn);
+                const hasError = !!validationErr;
+                const showRequiredHint = argDef.required && isEmpty;
+
+                if (argDef.type === "boolean") {
+                  // Boolean inputs render as a yes/no select. We always
+                  // show a value (defaulting to the declared default)
+                  // so the user can see the active state at a glance.
+                  const current = isEmpty ? (argDef.defaultValue ?? "false") : val;
+                  return (
+                    <div key={argDef.name} className="space-y-1">
+                      <Label className="text-[11px] text-muted-foreground">
+                        {argDef.label}
+                        {!argDef.required && <span className="ml-1 text-muted-foreground/60">(optional)</span>}
+                      </Label>
+                      <Select
+                        value={current}
+                        onValueChange={(v) =>
+                          onUpdate(check.id, { args: { ...check.args, [argDef.name]: v } })
+                        }
+                        disabled={disabled}
+                      >
+                        <SelectTrigger className="h-7 text-xs w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="true" className="text-xs">true</SelectItem>
+                          <SelectItem value="false" className="text-xs">false</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      {argDef.help && (
+                        <p className="text-[10px] text-muted-foreground/80">{argDef.help}</p>
+                      )}
+                    </div>
+                  );
+                }
+
+                return (
+                  <div key={argDef.name} className="space-y-1">
+                    <Label
+                      className={`text-[11px] ${
+                        hasError
+                          ? "text-red-500"
+                          : showRequiredHint
+                            ? "text-amber-500"
+                            : "text-muted-foreground"
+                      }`}
+                    >
+                      {argDef.label}
+                      {showRequiredHint && " (required)"}
+                      {!argDef.required && isEmpty && (
+                        <span className="ml-1 text-muted-foreground/60">(optional)</span>
+                      )}
+                    </Label>
+                    <Input
+                      className={`h-7 text-xs ${
+                        hasError
+                          ? "border-red-400 focus-visible:ring-red-400"
+                          : showRequiredHint
+                            ? "border-amber-400 focus-visible:ring-amber-400"
+                            : ""
+                      }`}
+                      placeholder={argDef.hint || argHint(argDef.name, check.fn)}
+                      value={val}
+                      onChange={(e) =>
+                        onUpdate(check.id, { args: { ...check.args, [argDef.name]: e.target.value } })
+                      }
+                      disabled={disabled}
+                    />
+                    {hasError && (
+                      <p className="text-[10px] text-red-500 flex items-center gap-1">
+                        <AlertCircle className="h-2.5 w-2.5 shrink-0" />
+                        {validationErr}
+                      </p>
+                    )}
+                    {!hasError && argDef.help && (
+                      <p className="text-[10px] text-muted-foreground/80">{argDef.help}</p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            {(() => {
+              const crossErr = fnDef?.crossArgValidate?.(check.args);
+              if (!crossErr) return null;
               return (
-                <div key={arg} className="space-y-1">
-                  <Label className={`text-[11px] ${hasError ? "text-red-500" : isEmpty ? "text-amber-500" : "text-muted-foreground"}`}>
-                    {argLabel(arg)}{isEmpty && " (required)"}
-                  </Label>
-                  <Input
-                    className={`h-7 text-xs ${hasError ? "border-red-400 focus-visible:ring-red-400" : isEmpty ? "border-amber-400 focus-visible:ring-amber-400" : ""}`}
-                    placeholder={argHint(arg, check.fn)}
-                    value={val}
-                    onChange={(e) =>
-                      onUpdate(check.id, { args: { ...check.args, [arg]: e.target.value } })
-                    }
-                    disabled={disabled}
-                  />
-                  {hasError && (
-                    <p className="text-[10px] text-red-500 flex items-center gap-1">
-                      <AlertCircle className="h-2.5 w-2.5 shrink-0" />
-                      {validationErr}
-                    </p>
-                  )}
-                </div>
+                <p className="text-[11px] text-red-500 flex items-center gap-1">
+                  <AlertCircle className="h-3 w-3 shrink-0" />
+                  {crossErr}
+                </p>
               );
-            })}
-          </div>
+            })()}
+          </>
         )}
         {isUnknownFn && Object.keys(check.args).length > 0 && (
           <div className="grid gap-2 sm:grid-cols-2">
@@ -1228,6 +1708,16 @@ function CheckCard({ check, index, onUpdate, onRemove, canRemove, disabled, isDu
             })}
           </div>
         )}
+
+        <div className="pt-1">
+          <LabelsEditor
+            value={check.userMetadata}
+            onChange={(next) => onUpdate(check.id, { userMetadata: next })}
+            disabled={disabled}
+            defaultOpen={Object.keys(check.userMetadata).length > 0}
+            definitions={labelDefinitions}
+          />
+        </div>
       </div>
 
       {/* Target tables section */}

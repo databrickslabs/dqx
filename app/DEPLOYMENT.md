@@ -1,11 +1,24 @@
-# Deployment (Databricks Asset Bundles)
+# Deployment (Declarative Automation Bundles)
 
-Production deployment uses the Databricks CLI (`databricks bundle deploy`). For local development, see [DEVELOPMENT.md](DEVELOPMENT.md).
+Production deployment uses [Declarative Automation Bundles](https://docs.databricks.com/aws/en/dev-tools/bundles/) (DABs, formerly known as Databricks Asset Bundles) via the Databricks CLI (`databricks bundle deploy`). For local development, see [DEVELOPMENT.md](DEVELOPMENT.md).
 
 ## Prerequisites
 
-- **Databricks CLI** installed and authenticated
-- **Databricks Apps** with user token passthrough enabled (see Step 2)
+Before starting, make sure you have all of the following — several steps require elevated permissions, so confirm access before you begin.
+
+**Tooling**
+- **Databricks CLI** installed and authenticated against your workspace
+- **`jq`** (used by the post-deploy grants script)
+- **`make`** (used by the one-command deploy target)
+
+**Access**
+- **Workspace admin** — required to create service principals, grant catalog permissions, and enable workspace-level features
+
+**Workspace configuration**
+- An **existing Unity Catalog catalog** where the app's schemas and volumes will be created — the bundle does not create the catalog itself
+- **Databricks Apps** feature enabled on the workspace
+- **User token passthrough** enabled for Databricks Apps (see [Step 2](#step-2-enable-user-token-passthrough))
+- **Serverless compute** enabled on the workspace (the task-runner job runs on serverless)
 
 ## Step 1: Create a Service Principal
 
@@ -15,8 +28,10 @@ The bundle requires a service principal to run the task-runner job. This is sepa
 1. Go to **Settings → Identity and Access → Service Principals**
 2. Click **Add service principal → Create new**
 3. Give it a name (e.g., `dqx-task-runner-sp`)
-4. Note the **Application ID**
-5. Assign the **`servicePrincipal.user`** role to the SP — this is required before it can be used as a `run_as` identity on jobs
+4. Note the **Application ID** — you'll use it in Step 3 as `dqx_service_principal_application_id`
+5. **Grant yourself (or the identity you'll deploy the bundle with) the `User` role on this new SP.** Open the SP you just created, go to the **Permissions** tab, click **Add permissions**, search for your user (or deploy-time principal), and assign the role **`User`** (equivalent to `servicePrincipal.user` in the SCIM API).
+
+   This lets your deploying identity configure jobs with `run_as: service_principal_name` pointing at this SP. Without it, `databricks bundle deploy` will fail with a permission error when it tries to set up the task-runner job.
 
 **Find an existing SP's Application ID:**
 ```bash
@@ -111,6 +126,63 @@ Access the app at:
 ```
 https://<your-workspace-url>/apps/databricks-labs-dqx-app
 ```
+
+## (Optional) Expand OAuth Scopes
+
+> **Most deployments don't need this step.** The OAuth scopes configured automatically by DABs (`sql`, `catalog.catalogs:read`, `catalog.schemas:read`, `catalog.tables:read`, `serving.serving-endpoints`) plus the identity scopes Databricks Apps grants implicitly are sufficient for all DQX Studio features on a standard workspace.
+>
+> Only follow this section if, after deploying, you see specific features returning `403` / permission errors in the app logs that look like missing OAuth scopes (for example, REST calls the baseline scopes do not cover). Expanding scopes requires **account admin** access.
+
+The scopes are managed at the **account** level, not the workspace. You need a CLI profile authenticated against the accounts host.
+
+**1. Log in at the account level:**
+
+```bash
+databricks auth login \
+  --host https://accounts.cloud.databricks.com \
+  --account-id <your-databricks-account-id> \
+  --profile <account-profile-name>
+```
+
+Replace `accounts.cloud.databricks.com` with the account host for your cloud (`accounts.azuredatabricks.net` for Azure, `accounts.gcp.databricks.com` for GCP).
+
+**2. Find the app's OAuth client ID:**
+
+```bash
+databricks account custom-app-integration list -p <account-profile-name>
+```
+
+Look for the integration whose name matches the app (`databricks-labs-dqx-app`). Copy its `integration_id` — this is the `<oauth2-app-client-id>` used in the next step.
+
+You can also find it in the workspace UI under **Apps → databricks-labs-dqx-app → User authorization**.
+
+**3. Update the OAuth scopes:**
+
+```bash
+databricks account custom-app-integration update '<oauth2-app-client-id>' \
+  -p <account-profile-name> \
+  --json '{
+    "scopes": [
+      "openid",
+      "profile",
+      "email",
+      "all-apis",
+      "offline_access",
+      "iam.current-user"
+    ]
+  }'
+```
+
+**4. Restart the app** so the new scopes take effect:
+
+```bash
+databricks apps stop  databricks-labs-dqx-app -p <your-profile>
+databricks apps start databricks-labs-dqx-app -p <your-profile>
+```
+
+After the app restarts, sign in again in the browser — you'll be prompted to re-consent to the expanded scopes.
+
+> **Why this isn't a default step:** Declarative Automation Bundles can only configure a baseline set of scopes. Broader scopes (`all-apis`, `iam.current-user`) are governed at the account level and can only be set by an account admin. In practice, the baseline is sufficient for the DQX Studio features in tree — this section exists as a fallback for workspaces where stricter OAuth-integration defaults require explicit scope grants.
 
 ## Redeploying After Code Changes
 
