@@ -165,17 +165,9 @@ This target:
 Always use `make` targets instead of running `uv` commands directly. The Makefile sets `UV_FROZEN=1` to protect the lock file — running `uv sync`, `uv lock`, or `uv add` directly bypasses this and may modify `uv.lock` with internal registry URLs. To update dependencies, use `make lock-dependencies` (core) or `make lock-app-dependencies` (app).
 </Admonition>
 
-### DQX App development
+### DQX Studio development
 
-<Admonition type="note" title="Naming: Studio vs. App">
-We use two names for the same thing depending on audience:
-- **DQX Studio** — the product name shown to end users (browser title, home page, sidebar header). This is what user-facing documentation, marketing, and in-app copy uses. See the [DQX Studio user guide](/docs/guide/dqx_studio).
-- **DQX App** — the engineering name used in the codebase: the `app/` folder, the Python package `databricks-labs-dqx-app`, the deployed app resource `databricks-labs-dqx-app`, and Unity Catalog schemas prefixed `dqx_app`. This section and the rest of the developer docs use "DQX App" because it refers to those concrete artifacts.
-
-Both names refer to the exact same application — only the audience differs.
-</Admonition>
-
-The DQX App (under `app/`) is a FastAPI backend + React frontend packaged as a single Python wheel and deployed as a [Databricks App](https://docs.databricks.com/en/dev-tools/databricks-apps/index.html). See [app/README.md](https://github.com/databrickslabs/dqx/blob/v0.13.0/app/README.md) for architecture and local development, and [DQX App deployment](#dqx-app-deployment) below for the end-to-end deployment guide.
+DQX Studio (under `app/`) is a FastAPI backend + React frontend packaged as a single Python wheel and deployed as a [Databricks App](https://docs.databricks.com/en/dev-tools/databricks-apps/index.html). See [app/README.md](https://github.com/databrickslabs/dqx/blob/v0.13.0/app/README.md) for architecture and local development, and [DQX Studio deployment](#dqx-studio-deployment) below for the end-to-end deployment guide.
 
 Install the app's JavaScript dependencies (using the committed `yarn.lock`):
 ```shell
@@ -215,10 +207,10 @@ If you don't have a profile yet, run `databricks auth login --host <workspace-ur
 <Admonition type="note" title="Profiler and dry-run features require deployment">
 The **profiler** and **dry-run** features rely on a Databricks Job (`dqx-app-task-runner`) that only exists after you deploy the app bundle to a workspace. For local UI and backend development (routes, components, auth wiring, config), you can skip this — `DQX_JOB_ID` is not required and the app will start without it. All other features will work locally.
 
-To exercise the profiler or dry-run flows, deploy the app once to a workspace (see [DQX App deployment](#dqx-app-deployment) below) and test those features from the deployed app in the workspace (not from your local dev server).
+To exercise the profiler or dry-run flows, deploy DQX Studio once to a workspace (see [DQX Studio deployment](#dqx-studio-deployment) below) and test those features from the deployed app in the workspace (not from your local dev server).
 </Admonition>
 
-The DQX App under `app/` has its own Python and JavaScript lockfiles (`app/uv.lock`, `app/yarn.lock`, `app/.build-constraints.txt`). To refresh them, use:
+DQX Studio under `app/` has its own Python and JavaScript lockfiles (`app/uv.lock`, `app/yarn.lock`, `app/.build-constraints.txt`). To refresh them, use:
 ```shell
 make lock-app-dependencies
 ```
@@ -227,9 +219,9 @@ make lock-app-dependencies
 Only `app/yarn.lock` is committed for JavaScript dependencies — `app/bun.lock` and `app/package-lock.json` are gitignored. Both pin absolute registry URLs into every entry, which breaks builds on runners that can only reach internal mirrors. Yarn v1 classic lockfiles are registry-agnostic once the `resolved` lines are stripped, which `make lock-app-dependencies` handles automatically. If you run `bun install` or `npm install` locally, do not commit the generated lockfiles.
 </Admonition>
 
-### DQX App deployment
+### DQX Studio deployment
 
-Deploying the app to a workspace is required when you want to:
+Deploying DQX Studio to a workspace is required when you want to:
 
 - exercise the profiler or dry-run flows end-to-end (these depend on the `dqx-app-task-runner` Databricks Job and a UC volume that only exist after deploy),
 - verify a change behaves correctly under the production identity model (service principal + on-behalf-of), or

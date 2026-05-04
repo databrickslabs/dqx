@@ -344,8 +344,8 @@ function LabelDefinitionsSettings() {
           setDrafts(resp.data.definitions.map(defToDraft));
           toast.success(
             definitions.length === 0
-              ? "Cleared label catalog."
-              : `Saved ${definitions.length} label definition${definitions.length === 1 ? "" : "s"}.`,
+              ? "Cleared rule labels."
+              : `Saved ${definitions.length} rule label${definitions.length === 1 ? "" : "s"}.`,
           );
         },
         onError: (err: unknown) => {
@@ -371,7 +371,7 @@ function LabelDefinitionsSettings() {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Tags className="h-5 w-5" />
-          Label Catalog
+          Rule Labels
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">

@@ -30,14 +30,39 @@ _SQL_CHECK_PREFIX = "__sql_check__/"
 
 _VALID_TRACKER_STATUSES = {"pending", "success", "partial_failure", "failed"}
 
+# Length of the hex suffix on ``tmp_view_*`` names. ``uuid4().hex`` is
+# always 32 lowercase hex chars; we slice to keep schema-qualified
+# names short. Centralised so the GC regex below, the creation paths
+# (:meth:`SchedulerService._create_view` /
+# :meth:`SchedulerService._create_view_from_sql`), and the unit test
+# that ties them together all read from the same constant.
+_TMP_VIEW_ID_LEN = 12
+
 # Strict gate for the orphan-view GC: anything we drop must match this
 # pattern AND live in the configured tmp schema. Belt-and-suspenders.
+#
+# IMPORTANT — keep this in sync with the generator. View names are
+# produced by :meth:`SchedulerService._generate_tmp_view_id` (which
+# returns ``uuid4().hex[:_TMP_VIEW_ID_LEN]``). If you change the
+# suffix length or charset there, this regex will silently start
+# excluding new views from GC. The range ``{8,32}`` intentionally
+# tolerates a small drift around ``_TMP_VIEW_ID_LEN`` (12) so an
+# accidental length change doesn't immediately break cleanup, but the
+# round-trip is enforced by ``test_regex_matches_generator_output``
+# in ``tests/test_scheduler_service.py``.
 _TMP_VIEW_NAME_RE = re.compile(r"^tmp_view_[a-f0-9]{8,32}$")
 
 # Weekly orphan-view GC cadence. Saturday is ``datetime.weekday() == 5``.
 _GC_WEEKDAY_SAT = 5
 _GC_HOUR_UTC = 1
-_GC_AGE_HOURS = 24
+# Minimum age before a tmp view is eligible for cleanup. Bumped from
+# 24h → 48h after review feedback: long-running validation jobs (large
+# tables, busy warehouses, retried runs) can keep a view "in use" well
+# past a single day, and the per-run ``finally`` cleanup already
+# handles the common case. 48h gives a generous safety margin so the
+# weekly GC almost never fights a still-active workload, at the cost
+# of orphans living one extra day before being reaped.
+_GC_AGE_HOURS = 48
 _GC_MAX_DROPS_PER_RUN = 500
 
 
@@ -521,7 +546,13 @@ class SchedulerService:
             logger.exception("View GC failed (non-fatal)")
 
     def _gc_orphan_views(self) -> None:
-        """Drop ``tmp_view_*`` views in the tmp schema older than 24h.
+        """Drop ``tmp_view_*`` views in the tmp schema older than ``_GC_AGE_HOURS``.
+
+        The age threshold (currently 48h) is intentionally generous —
+        long-running validation jobs on big tables can keep a view
+        "in use" for many hours and the per-run ``finally`` cleanup
+        already handles the common case, so we'd rather under-clean
+        than race a still-active workload.
 
         Cross-checks against ``status = 'RUNNING'`` rows in
         ``dq_validation_runs`` and ``dq_profiling_results`` so an
@@ -601,10 +632,23 @@ class SchedulerService:
     # View creation (SP credentials)
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _generate_tmp_view_id() -> str:
+        """Return a fresh hex suffix for a ``tmp_view_<id>`` name.
+
+        Single source of truth for the suffix shape. Centralised so the
+        GC regex (:data:`_TMP_VIEW_NAME_RE`) and the unit test
+        ``test_regex_matches_generator_output`` can both reason about
+        exactly what creation paths emit. If you change the slice
+        length or switch away from ``uuid4().hex``, update
+        :data:`_TMP_VIEW_ID_LEN` and the regex above as well.
+        """
+        return uuid4().hex[:_TMP_VIEW_ID_LEN]
+
     def _create_view(self, source_table_fqn: str) -> str:
         from databricks_labs_dqx_app.backend.sql_utils import quote_fqn
 
-        view_id = uuid4().hex[:12]
+        view_id = self._generate_tmp_view_id()
         view_name = f"{self._catalog}.{self._tmp_schema}.tmp_view_{view_id}"
         quoted_view = quote_fqn(view_name)
         quoted_source = quote_fqn(source_table_fqn)
@@ -626,7 +670,7 @@ class SchedulerService:
                 "The SQL query contains prohibited statements and cannot be used to create a view."
             )
 
-        view_id = uuid4().hex[:12]
+        view_id = self._generate_tmp_view_id()
         view_name = f"{self._catalog}.{self._tmp_schema}.tmp_view_{view_id}"
         quoted_view = quote_fqn(view_name)
         self._ensure_tmp_schema()

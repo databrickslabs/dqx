@@ -21,6 +21,8 @@ from databricks_labs_dqx_app.backend.services.scheduler_service import (
     _GC_AGE_HOURS,
     _GC_HOUR_UTC,
     _GC_WEEKDAY_SAT,
+    _TMP_VIEW_ID_LEN,
+    _TMP_VIEW_NAME_RE,
     SchedulerService,
 )
 
@@ -53,7 +55,10 @@ class TestNextSaturday01Utc:
         # Sanity-check the module-level constants drive the right schedule.
         assert _GC_WEEKDAY_SAT == 5  # Python's weekday: Mon=0..Sun=6
         assert _GC_HOUR_UTC == 1
-        assert _GC_AGE_HOURS == 24
+        # 48h gives long-running validation jobs plenty of headroom; if
+        # this is ever bumped down the per-run cleanup needs to be
+        # audited first.
+        assert _GC_AGE_HOURS == 48
 
     def test_friday_morning_returns_next_saturday_at_01(self):
         # Fri 2026-05-01 10:00 UTC → next Sat is 2026-05-02 01:00 UTC.
@@ -224,3 +229,64 @@ class TestMaybeGcOrphanViews:
         # Must not raise; just log and reschedule.
         await svc._maybe_gc_orphan_views(due + timedelta(minutes=1))
         assert svc._next_view_gc_at > due
+
+
+# ---------------------------------------------------------------------------
+# tmp_view_<id> generator <-> regex round-trip
+#
+# This test exists because the GC's ``_TMP_VIEW_NAME_RE`` is the only thing
+# standing between us and a runaway DROP VIEW: anything that doesn't match
+# the regex is silently skipped. If a future refactor of
+# ``_generate_tmp_view_id`` (or its callers ``_create_view`` /
+# ``_create_view_from_sql``) changes the suffix shape — e.g. to
+# ``uuid4().hex`` (32 chars), uppercase hex, base32, prefix change — the
+# regex would silently exclude every newly-created view from cleanup and
+# orphans would accumulate forever. We catch that here by feeding the
+# regex with names produced through the actual generator.
+# ---------------------------------------------------------------------------
+
+
+class TestTmpViewNameRegexMatchesGenerator:
+    def test_id_length_constant_is_within_regex_bounds(self):
+        # The regex tolerates a small drift around _TMP_VIEW_ID_LEN, but
+        # the configured length itself must be inside the band.
+        assert 8 <= _TMP_VIEW_ID_LEN <= 32
+
+    def test_regex_matches_generator_output(self):
+        # 1_000 samples is overkill for a 12-hex-char space (~10^14
+        # combinations) but it makes a sub-millisecond test that exercises
+        # every UUID-derived path. If the generator is ever changed to
+        # something that yields a non-hex char or a different length, at
+        # least one of these will trip the assertion.
+        for _ in range(1000):
+            view_id = SchedulerService._generate_tmp_view_id()
+            view_name = f"tmp_view_{view_id}"
+            assert _TMP_VIEW_NAME_RE.match(view_name), (
+                f"View name produced by _generate_tmp_view_id() does not match "
+                f"_TMP_VIEW_NAME_RE; one of them drifted: {view_name!r}"
+            )
+
+    def test_generator_emits_expected_shape(self):
+        # Belt-and-suspenders sanity check on the generator itself, so a
+        # later refactor that "still happens to match the regex" but
+        # broke an expected invariant (e.g. accidentally returning
+        # uppercase) is also caught.
+        view_id = SchedulerService._generate_tmp_view_id()
+        assert len(view_id) == _TMP_VIEW_ID_LEN
+        assert view_id == view_id.lower()
+        assert all(c in "0123456789abcdef" for c in view_id)
+
+    def test_regex_rejects_obvious_drift_examples(self):
+        # If the regex is ever loosened to match these, GC will start
+        # touching things it shouldn't. Lock the negative space too.
+        for bad in [
+            "tmp_view_DEADBEEF12",  # uppercase hex
+            "tmp_view_short",  # too short / non-hex
+            "tmp_view_zzzzzzzzzzzz",  # non-hex characters
+            "tmp_view_" + "a" * 33,  # one over the regex max
+            "tmp_view_" + "a" * 7,  # one under the regex min
+            "real_user_view_12345678",  # wrong prefix
+            "_tmp_view_12345678",  # leading underscore
+            "tmp_view_12345678 ",  # trailing whitespace
+        ]:
+            assert _TMP_VIEW_NAME_RE.match(bad) is None, f"Regex unexpectedly accepted: {bad!r}"

@@ -426,6 +426,79 @@ databricks labs uninstall dqx
 Databricks CLI will confirm a few options:
 - Whether you want to remove all DQX artifacts from the workspace or not. Defaults to 'no'.
 
+## DQX Studio installation
+
+[DQX Studio](/docs/guide/dqx_studio) is the no-code Databricks App that exposes DQX's profiling, rule authoring, approval workflow, scheduled runs, and results tracking through a browser. It is deployed to your Databricks workspace as a [Databricks App](https://docs.databricks.com/en/dev-tools/databricks-apps/index.html) using a [Declarative Automation Bundle](https://docs.databricks.com/aws/en/dev-tools/bundles/) (DAB, formerly known as Databricks Asset Bundle).
+
+### Prerequisites
+
+- **Databricks CLI** v0.241 or later, authenticated against your workspace (see [Authenticate Databricks CLI](#authenticate-databricks-cli)).
+- **Workspace admin** access — required to create the task-runner service principal and grant catalog permissions.
+- `jq` and `make` available locally (used by the deployment scripts).
+- **Databricks Apps** feature enabled on the workspace.
+- **User token passthrough** enabled for Databricks Apps — DQX Studio uses On-Behalf-Of (OBO) tokens to access Unity Catalog with the end user's identity.
+- **Serverless compute** enabled on the workspace — the `dqx-app-task-runner` job is serverless-only.
+- An **existing Unity Catalog catalog** where the studio's schemas and volumes will be created. The bundle does not create the catalog itself.
+
+### Install DQX Studio using a Declarative Automation Bundle
+
+1. Clone the DQX repository and change into the `app/` directory:
+   ```commandline
+   git clone https://github.com/databrickslabs/dqx.git
+   cd dqx/app
+   ```
+
+2. Create a workspace service principal to run the task-runner job (separate from the app's auto-created SP, which cannot be used outside the Apps framework). In the Databricks workspace UI go to **Settings → Identity and Access → Service Principals**, create a new SP (for example `dqx-task-runner-sp`), and on its **Permissions** tab grant your deploying identity the **`User`** role. Note the SP's **Application ID** — you'll reference it as `dqx_service_principal_application_id` in the bundle.
+
+3. Add a deploy target to `app/databricks.yml`:
+   ```yaml
+   targets:
+     dev:
+       workspace:
+         profile: <your-profile>
+       variables:
+         catalog_name: <your-catalog>
+         dqx_service_principal_application_id: "<your-sp-application-id>"
+       presets:
+         trigger_pause_status: PAUSED
+   ```
+
+4. Build, deploy, grant permissions, and start the studio in a single command:
+   ```commandline
+   make app-deploy PROFILE=<your-profile> TARGET=<your-target>
+   ```
+
+   This runs `make app-build`, `databricks bundle deploy`, `app/scripts/post_deploy_grants.sh`, and `databricks bundle run` in sequence.
+
+5. Open the deployed app from the **Apps** page in your Databricks workspace.
+
+For the full walkthrough — including step-by-step commands, manual `GRANT` statements, troubleshooting, and target-specific configuration — see the [DQX Studio deployment guide](https://github.com/databrickslabs/dqx/blob/v0.13.0/app/DEPLOYMENT.md).
+
+<Admonition type="note" title="First-run wheel upload">
+On its first start, DQX Studio runs database migrations and uploads its DQX wheel files to the Unity Catalog volume. If the task-runner job is triggered before the app has fully started at least once, it will fail to find its wheels. Wait for `Uploaded databricks_labs_dqx-<version>...` in the app logs before triggering any profiler or dry-run jobs.
+</Admonition>
+
+### Upgrade DQX Studio
+
+To upgrade DQX Studio, pull the latest changes from the DQX repository (or check out a specific tag), then redeploy with the same command:
+
+```commandline
+git pull
+make app-deploy PROFILE=<your-profile> TARGET=<your-target>
+```
+
+Database migrations run automatically on app startup and preserve existing rules, runs, schedules, and configuration.
+
+### Uninstall DQX Studio
+
+Destroy the bundle to remove the app, the task-runner job, and the SQL warehouse:
+
+```commandline
+cd app && databricks bundle destroy -p <your-profile> -t <your-target>
+```
+
+The Unity Catalog catalog and the studio's schemas (which contain historical rules and run results) are not removed by `bundle destroy` — drop them manually if you no longer need the data.
+
 ## Installing Dashboard
 
 DQX data quality dashboard can be used to monitor data quality across all tables monitored by DQX.

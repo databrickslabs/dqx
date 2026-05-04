@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Select,
@@ -49,6 +49,18 @@ interface ColumnDiscoveryPanelProps {
    * Defaults to copying the column name to the clipboard with a toast.
    */
   onColumnPick?: (column: ColumnOut, tableFqn: string) => void;
+  /**
+   * Fires when the user reaches a complete catalog.schema.table selection
+   * via the panel's own dropdowns. Lets the page sync the discovery
+   * choice into "Target tables" without forcing the user to pick the
+   * table twice.
+   *
+   * Crucially, this does *not* fire for the initial pre-selection coming
+   * from ``initialTableFqn`` — that's a load-time hint, not a user
+   * action, and we don't want to overwrite explicit target choices from
+   * an existing rule.
+   */
+  onTableSelect?: (tableFqn: string) => void;
   /** Persisted-collapsed state controlled externally (optional). */
   collapsed?: boolean;
   onCollapsedChange?: (collapsed: boolean) => void;
@@ -74,6 +86,7 @@ interface ColumnDiscoveryPanelProps {
 export function ColumnDiscoveryPanel({
   initialTableFqn,
   onColumnPick,
+  onTableSelect,
   collapsed: collapsedProp,
   onCollapsedChange,
   className,
@@ -92,6 +105,16 @@ export function ColumnDiscoveryPanel({
     else setInternalCollapsed(next);
   };
 
+  // Tracks whether the current ``catalog/schema/table`` came from a real
+  // user interaction (so we know it's safe to fire ``onTableSelect``).
+  // The initial pre-fill from ``initialTableFqn`` flips this to ``false``
+  // explicitly, so the page can pre-load a rule's existing target table
+  // without us echoing it back as a "user selected this table" signal.
+  const userInitiatedRef = useRef(false);
+  // Last FQN we forwarded to ``onTableSelect`` — guards against
+  // double-firing when React re-runs effects with stable dependencies.
+  const lastEmittedFqnRef = useRef<string>("");
+
   // Pre-fill from the initial FQN exactly once.
   useEffect(() => {
     if (!initialTableFqn) return;
@@ -100,9 +123,25 @@ export function ColumnDiscoveryPanel({
       setCatalog((prev) => prev || parts[0]);
       setSchema((prev) => prev || parts[1]);
       setTable((prev) => prev || parts[2]);
+      // Mark this assignment as system-driven so the FQN-emit effect
+      // below does NOT call ``onTableSelect`` for the pre-load.
+      userInitiatedRef.current = false;
+      lastEmittedFqnRef.current = initialTableFqn;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Whenever a complete FQN is reached AND the change was user-driven,
+  // forward the table to the page so it can sync "Target tables".
+  useEffect(() => {
+    if (!onTableSelect) return;
+    if (!userInitiatedRef.current) return;
+    if (!catalog || !schema || !table) return;
+    const fqn = `${catalog}.${schema}.${table}`;
+    if (fqn === lastEmittedFqnRef.current) return;
+    lastEmittedFqnRef.current = fqn;
+    onTableSelect(fqn);
+  }, [catalog, schema, table, onTableSelect]);
 
   const { data: catalogsResp, isLoading: catalogsLoading } = useListCatalogs();
   const { data: schemasResp, isLoading: schemasLoading } = useListSchemas(
@@ -216,6 +255,7 @@ export function ColumnDiscoveryPanel({
         <Select
           value={catalog}
           onValueChange={(v) => {
+            userInitiatedRef.current = true;
             setCatalog(v);
             setSchema("");
             setTable("");
@@ -239,6 +279,7 @@ export function ColumnDiscoveryPanel({
         <Select
           value={schema}
           onValueChange={(v) => {
+            userInitiatedRef.current = true;
             setSchema(v);
             setTable("");
           }}
@@ -262,7 +303,10 @@ export function ColumnDiscoveryPanel({
 
         <Select
           value={table}
-          onValueChange={setTable}
+          onValueChange={(v) => {
+            userInitiatedRef.current = true;
+            setTable(v);
+          }}
           disabled={!schema || tablesLoading}
         >
           <SelectTrigger className="h-8 text-xs w-full min-w-0">

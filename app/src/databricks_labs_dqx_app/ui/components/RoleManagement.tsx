@@ -33,7 +33,10 @@ import {
   Check,
   Search,
   Loader2,
+  Info,
 } from "lucide-react";
+import { isAxiosError } from "axios";
+import { toast } from "sonner";
 import {
   listRoleMappings,
   createRoleMapping,
@@ -43,6 +46,24 @@ import {
   getListRoleMappingsQueryKey,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
+
+/**
+ * Pull the server-supplied ``detail`` off a FastAPI error if we can,
+ * otherwise fall back to the raw error message. The role-mapping create
+ * endpoint returns 400 on ``ValueError`` (bad role name) and 500 on
+ * SQL/permission failures, both with a ``detail`` string the user
+ * actually needs to see — the previous "Failed to create mapping.
+ * Please try again." banner was hiding all of it.
+ */
+function extractRoleMappingError(err: unknown): string {
+  if (isAxiosError(err)) {
+    const detail = (err.response?.data as { detail?: unknown } | undefined)?.detail;
+    if (typeof detail === "string" && detail.trim()) return detail;
+    if (err.message) return err.message;
+  }
+  if (err instanceof Error && err.message) return err.message;
+  return "Failed to create role mapping. Check the backend logs for details.";
+}
 
 const GROUP_SEARCH_DEBOUNCE_MS = 250;
 // Server-side cap matches the FastAPI route's ``limit`` default. Going
@@ -256,16 +277,35 @@ function RoleMappingRow({
   );
 }
 
+/**
+ * Form state is owned by the parent so that:
+ *
+ *   1. The values aren't blown away on click (the mutation is fired
+ *      synchronously but resolves async — clearing on click means a
+ *      slow request "vanishes" the user's selections, leaving them
+ *      with no idea whether anything happened).
+ *   2. On error we leave the role/group selected so the user can fix
+ *      whatever the server complained about and retry without
+ *      re-picking from scratch.
+ *   3. The parent decides when to clear (only on a *confirmed* server
+ *      success) via the ``resetSignal`` prop, which the form watches
+ *      with ``useEffect``.
+ */
 function AddRoleMappingForm({
+  selectedRole,
+  setSelectedRole,
+  selectedGroup,
+  setSelectedGroup,
   onAdd,
   isAdding,
 }: {
+  selectedRole: string;
+  setSelectedRole: (role: string) => void;
+  selectedGroup: string;
+  setSelectedGroup: (group: string) => void;
   onAdd: (role: string, groupName: string) => void;
   isAdding: boolean;
 }) {
-  const [selectedRole, setSelectedRole] = useState<string>("");
-  const [selectedGroup, setSelectedGroup] = useState<string>("");
-
   const { data: rolesData } = useQuery({
     queryKey: ["availableRoles"],
     queryFn: () => listAvailableRoles(),
@@ -276,8 +316,6 @@ function AddRoleMappingForm({
   const handleAdd = () => {
     if (selectedRole && selectedGroup) {
       onAdd(selectedRole, selectedGroup);
-      setSelectedRole("");
-      setSelectedGroup("");
     }
   };
 
@@ -285,7 +323,7 @@ function AddRoleMappingForm({
     <div className="flex items-end gap-3 pt-4 border-t">
       <div className="flex-1 space-y-1">
         <label className="text-sm font-medium">Role</label>
-        <Select value={selectedRole} onValueChange={setSelectedRole}>
+        <Select value={selectedRole} onValueChange={setSelectedRole} disabled={isAdding}>
           <SelectTrigger>
             <SelectValue placeholder="Select role..." />
           </SelectTrigger>
@@ -314,8 +352,12 @@ function AddRoleMappingForm({
         disabled={!selectedRole || !selectedGroup || isAdding}
         className="shrink-0"
       >
-        <Plus className="h-4 w-4 mr-1" />
-        Add
+        {isAdding ? (
+          <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+        ) : (
+          <Plus className="h-4 w-4 mr-1" />
+        )}
+        {isAdding ? "Adding…" : "Add"}
       </Button>
     </div>
   );
@@ -324,6 +366,10 @@ function AddRoleMappingForm({
 export function RoleManagement() {
   const queryClient = useQueryClient();
   const [deletingKey, setDeletingKey] = useState<string | null>(null);
+  // Form values live up here so we can keep them across a slow/failed
+  // mutation. They're cleared in the mutation's ``onSuccess`` handler.
+  const [selectedRole, setSelectedRole] = useState<string>("");
+  const [selectedGroup, setSelectedGroup] = useState<string>("");
 
   const {
     data: mappingsData,
@@ -337,20 +383,47 @@ export function RoleManagement() {
   const createMutation = useMutation({
     mutationFn: ({ role, groupName }: { role: string; groupName: string }) =>
       createRoleMapping({ role, group_name: groupName }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: getListRoleMappingsQueryKey() });
+    onSuccess: async (_data, variables) => {
+      // Refetch (not just invalidate) so the new row is visible the
+      // moment the success toast fires. Without ``await``, the toast
+      // can race ahead of the network roundtrip and the user briefly
+      // sees the old list.
+      await queryClient.refetchQueries({ queryKey: getListRoleMappingsQueryKey() });
+      setSelectedRole("");
+      setSelectedGroup("");
+      const roleLabel = ROLE_LABELS[variables.role] ?? variables.role;
+      toast.success(`Mapping added: ${roleLabel} → ${variables.groupName}`, {
+        description:
+          "Stored in dq_role_mappings. Active sessions pick up the new role within ~1 minute (or on next page navigation).",
+        duration: 6000,
+      });
+    },
+    onError: (err) => {
+      toast.error("Failed to create role mapping", {
+        description: extractRoleMappingError(err),
+        duration: 8000,
+      });
     },
   });
 
   const deleteMutation = useMutation({
     mutationFn: ({ role, groupName }: { role: string; groupName: string }) =>
       deleteRoleMapping(role, groupName),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: getListRoleMappingsQueryKey() });
+    onSuccess: async (_data, variables) => {
+      await queryClient.refetchQueries({ queryKey: getListRoleMappingsQueryKey() });
       setDeletingKey(null);
+      toast.success(`Removed mapping: ${variables.role} → ${variables.groupName}`, {
+        description:
+          "Affected users may keep their previous role for up to ~1 minute until their session refreshes.",
+        duration: 6000,
+      });
     },
-    onError: () => {
+    onError: (err) => {
       setDeletingKey(null);
+      toast.error("Failed to delete role mapping", {
+        description: extractRoleMappingError(err),
+        duration: 8000,
+      });
     },
   });
 
@@ -418,6 +491,34 @@ export function RoleManagement() {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
+        {/*
+          Propagation-delay disclosure. The frontend caches each user's
+          resolved role in React Query with ``staleTime: 60_000`` (see
+          ``ui/lib/route-guards.ts``), so a user whose group was just
+          mapped — or unmapped — keeps their old role until the cache
+          revalidates: at most ~1 minute, or sooner if they navigate.
+          Surfacing this here so admins don't second-guess a successful
+          assignment and re-toggle the mapping.
+        */}
+        <div
+          className="flex items-start gap-2 rounded-md border border-border bg-muted/40 p-3 text-sm text-muted-foreground"
+          role="note"
+        >
+          <Info className="h-4 w-4 mt-0.5 shrink-0 text-foreground/70" />
+          <div>
+            <p className="text-foreground/90">
+              Role changes take up to <span className="font-medium">~1 minute</span> to
+              reach an active session.
+            </p>
+            <p className="text-xs mt-0.5">
+              Each user&apos;s resolved role is cached client-side for 60 seconds. After a
+              mapping is added or removed, the affected user keeps their previous role
+              until their session revalidates (which also happens immediately on any
+              page navigation). A hard refresh applies the new role straight away.
+            </p>
+          </div>
+        </div>
+
         {mappings.length === 0 ? (
           <div className="text-center py-6 text-muted-foreground">
             <Users className="h-8 w-8 mx-auto mb-2 opacity-50" />
@@ -443,16 +544,13 @@ export function RoleManagement() {
         )}
 
         <AddRoleMappingForm
+          selectedRole={selectedRole}
+          setSelectedRole={setSelectedRole}
+          selectedGroup={selectedGroup}
+          setSelectedGroup={setSelectedGroup}
           onAdd={handleAdd}
           isAdding={createMutation.isPending}
         />
-
-        {createMutation.isError && (
-          <div className="flex items-center gap-2 text-destructive text-sm">
-            <AlertCircle className="h-4 w-4" />
-            <span>Failed to create mapping. Please try again.</span>
-          </div>
-        )}
       </CardContent>
     </Card>
   );

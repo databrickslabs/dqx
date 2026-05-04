@@ -9,6 +9,8 @@ resolution-markers = [
 ]
 
 [options]
+exclude-newer = "2026-04-27T20:27:01.708704Z"
+exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
 databricks-sdk = false

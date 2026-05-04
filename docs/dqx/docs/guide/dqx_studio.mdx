@@ -13,7 +13,7 @@ It runs as a [Databricks App](https://docs.databricks.com/en/dev-tools/databrick
 
 <Admonition type="tip" title="When to use DQX Studio">
 DQX Studio is the recommended entry point for:
-- Data stewards and analysts who want to manage quality rules without code.
+- Data stewards and analysts who want to manage and run quality rules without code-level integration (see [post-factum monitoring](/docs/motivation#post-factum-monitoring)).
 - Teams that need an approval workflow before rules go live.
 - Any user who prefers to browse Unity Catalog and author checks through a UI.
 
@@ -26,7 +26,7 @@ Before opening DQX Studio, it helps to understand a few terms used across the UI
 
 | Term | Meaning |
 | ---- | ------- |
-| **Rule** | A single data quality check — a named condition evaluated against a column, a table, or a SQL expression spanning multiple tables. Rules have a severity (error or warning) and optional labels. |
+| **Rule** | A single data quality check — a named condition evaluated against a single or multiple tables and columns. Rules have a severity (error or warning) and optional labels. |
 | **Draft** | A rule that has been authored but not yet approved. Drafts are editable and do not run on schedules. |
 | **Active rule** | An approved rule. Only active rules are executed by runs and schedules. |
 | **Run** | A single execution of one or more active rules against their target tables. Runs produce pass/fail results and optional metrics. |
@@ -40,7 +40,7 @@ Your workspace administrator deploys DQX Studio and shares its URL with you. Onc
 If DQX Studio isn't available in your workspace yet, ask your admin to follow the [deployment guide](https://github.com/databrickslabs/dqx/blob/v0.13.0/app/DEPLOYMENT.md).
 
 <Admonition type="note" title="What you can see is what you can access">
-DQX Studio browses Unity Catalog using your own identity (on-behalf-of). You will only see catalogs, schemas, tables, and columns that you have been granted access to. Profiler and dry-run jobs read data through a temporary view bound to your permissions, so the studio can never read tables you cannot access yourself.
+DQX Studio browses Unity Catalog using your own identity (on-behalf-of). You will only see catalogs, schemas, tables, and columns that you have been granted access to. Profiling and dry-runs are also executed on your behalf, ensuring the studio can never read data from tables you don’t have permission to access.
 </Admonition>
 
 ## Roles and permissions
@@ -92,12 +92,12 @@ For a complete list of built-in checks and their arguments, see [Quality Checks 
 Use this flow when a check needs to compare data across multiple tables — for example, referential integrity ("every `order_id` must exist in `orders`"), reconciliation ("sum of `amount` in `payments` equals total in `invoices`"), or any custom SQL condition.
 
 1. Give the rule a name and description.
-2. Write a SQL expression that returns rows violating the check (or zero rows when everything is healthy).
+2. Write a SQL query that returns rows violating the check (or zero rows when everything is healthy).
 3. Set severity and labels.
 4. Save the rule as a draft.
 
 <Admonition type="tip" title="Cross-table SQL tips">
-- The SQL is evaluated by your workspace — it can reference any tables you have access to.
+- The SQL is executed on your behalf using your Databricks identity — it can reference any tables you have access to.
 - Keep checks focused: one rule per invariant is easier to triage when it fails.
 - Prefer fully qualified table names (`catalog.schema.table`) for clarity.
 </Admonition>
@@ -128,13 +128,13 @@ The accepted formats are the same as the programmatic storage formats — see [Q
 
 Drafts live on the **Drafts & Review** page. The workflow depends on your role:
 
-- **Authors** see their drafts and can edit, delete, or submit them for approval. They cannot approve their own drafts.
+- **Authors** see their drafts and can edit, delete, or submit them for approval. They cannot approve their own drafts unless they are admins.
 - **Approvers and admins** see all drafts across the workspace. They can approve or reject each one with an optional comment.
 
 Approved drafts disappear from this page and show up on **Active Rules**. Rejected drafts remain visible so the author can edit and resubmit.
 
 <Admonition type="note" title="Four-eyes principle">
-By design, an author cannot approve their own draft. This enforces a minimum of two people touching every rule before it becomes active — reducing accidental outages caused by a single contributor.
+By design, a non-admin author cannot approve their own draft. This enforces a minimum of two people touching every rule before it becomes active — reducing accidental outages caused by a single contributor. Admins are exempt and can approve drafts they authored themselves, since they already hold the highest level of trust in the workspace.
 </Admonition>
 
 ## Browsing active rules
@@ -146,15 +146,21 @@ The **Active Rules** page lists every approved rule grouped by target table (or 
 - **Download** one or more rules as YAML — useful for version control or sharing with another environment.
 - **Delete** a rule (admins and approvers only). Deleted rules are removed from all schedules.
 
-Rules are the library that runs and schedules draw from — any rule here is eligible to be executed.
-
 ## Running rules
 
-The **Run Rules** page (visible if you have the Runner privilege) lets you trigger runs manually.
+DQX Studio executes rules in two ways:
 
-1. Pick the rules you want to run — filter by table or labels to select a coherent set.
-2. Choose the target tables (if a rule applies to multiple) and any per-run parameters.
-3. Click **Run** to submit. DQX Studio creates a Databricks Job run and shows you a progress indicator.
+- **Manual runs** — you trigger a one-off run on demand.
+- **Scheduled runs** — DQX Studio triggers runs automatically on a cadence you configure.
+
+Both are managed from the **Run Rules** page, which is visible to users with the Runner privilege (admins are implicit runners).
+
+### Manual runs
+
+1. Open the **Run Rules** page.
+2. Pick the rules you want to run — filter by table or labels to select a coherent set.
+3. Choose the target tables (if a rule applies to multiple) and any per-run parameters.
+4. Click **Run** to submit. DQX Studio creates a Databricks Job run and shows you a progress indicator.
 
 You can leave the page while a run is in flight — it will continue in the background and surface in **Runs History** when it finishes.
 
@@ -162,11 +168,11 @@ You can leave the page while a run is in flight — it will continue in the back
 
 Each rule supports a **dry run** that evaluates the check against a small sample of the target table without persisting results. Use it while authoring to sanity-check that your rule behaves as expected.
 
-## Schedules
+### Scheduled runs
 
-Runners can put any set of active rules on a schedule so they execute automatically.
+Users with `Runner` privilege can put any set of active rules on a schedule so they execute automatically.
 
-1. From **Run Rules** (or the schedule management entry point), click **New schedule**.
+1. From **Run Rules**, click **New schedule**.
 2. Pick the rules and targets.
 3. Choose a cadence — hourly, daily at a specific time, weekly on selected days, or a custom cron expression.
 4. Save. DQX Studio now triggers runs automatically on that cadence.
@@ -177,7 +183,7 @@ Schedules survive restarts and deduplicate — if a scheduled run is still in fl
 All schedule times are interpreted in the timezone configured on the **Configuration** page. Ask your admin to set this to your team's primary timezone before creating schedules.
 </Admonition>
 
-### Pausing and editing schedules
+#### Pausing and editing schedules
 
 Any schedule can be paused (without losing its configuration) and resumed later. Editing a schedule immediately reschedules the next run — there is no need to delete and recreate.
 
@@ -193,16 +199,16 @@ For each run you can see:
 - Pass, warning, and error counts per rule.
 - A link to drill into individual row-level failures.
 
-Use this view to spot regressions, audit rule behaviour over time, and share results with stakeholders.
+Use this view to spot regressions, audit rule behaviour over time, and share results with stakeholders. For aggregated, cross-table monitoring of pass/fail trends and quality KPIs, complement Runs History with the [Quality Dashboard](/docs/guide/quality_dashboard).
 
 ## Configuration (admin only)
 
-The **Configuration** page is where admins manage workspace-level settings that affect all DQX Studio users.
+The **Configuration** page is where admins manage DQX Studio-level settings that affect all DQX Studio users.
 
 | Setting | What it controls |
 | ------- | ---------------- |
 | **Timezone** | The timezone used to interpret and display all schedule times and run timestamps. |
-| **Labels** | The catalog of labels users can attach to rules. Defining labels centrally keeps tagging consistent. |
+| **Labels** | Labels users can attach to rules. Defining labels centrally keeps tagging consistent. |
 | **Role mappings** | Which workspace groups map to which DQX roles (author, approver, runner, admin). |
 
 Changes take effect immediately for all users — no restart is required.

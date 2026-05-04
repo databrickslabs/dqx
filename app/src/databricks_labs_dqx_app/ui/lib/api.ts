@@ -169,6 +169,54 @@ export interface CheckDuplicatesOut {
 }
 
 /**
+ * A DQX check function as advertised by the backend to the UI.
+ */
+export interface CheckFunctionDef {
+  /** Function name as registered in CHECK_FUNC_REGISTRY */
+  name: string;
+  /** 'row' or 'dataset' */
+  rule_type: string;
+  /** UX grouping bucket (e.g. 'Null & Empty', 'Numeric & Comparable', 'Aggregates'). Used to group entries in the UI dropdown. */
+  category: string;
+  /** First line of the function docstring */
+  doc?: string;
+  params?: CheckFunctionParam[];
+}
+
+/**
+ * String-rendered default value (omitted when required)
+ */
+export type CheckFunctionParamDefault = string | null;
+
+/**
+ * A single parameter on a DQX check function as exposed to the UI.
+
+The shape is intentionally permissive: ``kind`` is a coarse,
+UI-friendly classification derived from ``inspect.signature`` while
+``annotation`` preserves the verbatim Python type hint for advanced
+consumers (e.g. validation tooling, AI prompts).
+ */
+export interface CheckFunctionParam {
+  /** Parameter name as defined on the DQX function */
+  name: string;
+  /** UI input kind: 'column', 'columns', 'boolean', 'number', 'list', or 'string'. */
+  kind: string;
+  /** True iff the parameter has no default */
+  required: boolean;
+  /** String-rendered default value (omitted when required) */
+  default?: CheckFunctionParamDefault;
+  /** Verbatim Python type annotation (best-effort string repr) */
+  annotation?: string;
+}
+
+/**
+ * Response wrapper for ``GET /api/v1/check-functions``.
+ */
+export interface CheckFunctionsOut {
+  functions?: CheckFunctionDef[];
+}
+
+/**
  * Per-check error/warning breakdown produced by ``DQMetricsObserver``.
  */
 export interface CheckMetricBreakdown {
@@ -9274,6 +9322,285 @@ export const useValidateChecks = <
 
   return useMutation(mutationOptions, queryClient);
 };
+
+/**
+ * Return every DQX check function the single-table editor should offer.
+
+The response is built by introspecting DQX's own registry, so adding
+a new ``@register_rule("row")`` to ``check_funcs.py`` is enough to
+surface it in the UI on the next backend deploy — no frontend change
+required.
+ * @summary List Check Functions
+ */
+export const listCheckFunctions = (
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<CheckFunctionsOut>> => {
+  return axios.default.get(`/api/v1/check-functions`, options);
+};
+
+export const getListCheckFunctionsQueryKey = () => {
+  return [`/api/v1/check-functions`] as const;
+};
+
+export const getListCheckFunctionsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listCheckFunctions>>,
+  TError = AxiosError<unknown>,
+>(options?: {
+  query?: Partial<
+    UseQueryOptions<
+      Awaited<ReturnType<typeof listCheckFunctions>>,
+      TError,
+      TData
+    >
+  >;
+  axios?: AxiosRequestConfig;
+}) => {
+  const { query: queryOptions, axios: axiosOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListCheckFunctionsQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listCheckFunctions>>
+  > = ({ signal }) => listCheckFunctions({ signal, ...axiosOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listCheckFunctions>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+};
+
+export type ListCheckFunctionsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listCheckFunctions>>
+>;
+export type ListCheckFunctionsQueryError = AxiosError<unknown>;
+
+export function useListCheckFunctions<
+  TData = Awaited<ReturnType<typeof listCheckFunctions>>,
+  TError = AxiosError<unknown>,
+>(
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listCheckFunctions>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listCheckFunctions>>,
+          TError,
+          Awaited<ReturnType<typeof listCheckFunctions>>
+        >,
+        "initialData"
+      >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useListCheckFunctions<
+  TData = Awaited<ReturnType<typeof listCheckFunctions>>,
+  TError = AxiosError<unknown>,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listCheckFunctions>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listCheckFunctions>>,
+          TError,
+          Awaited<ReturnType<typeof listCheckFunctions>>
+        >,
+        "initialData"
+      >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useListCheckFunctions<
+  TData = Awaited<ReturnType<typeof listCheckFunctions>>,
+  TError = AxiosError<unknown>,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listCheckFunctions>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+/**
+ * @summary List Check Functions
+ */
+
+export function useListCheckFunctions<
+  TData = Awaited<ReturnType<typeof listCheckFunctions>>,
+  TError = AxiosError<unknown>,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listCheckFunctions>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
+  const queryOptions = getListCheckFunctionsQueryOptions(options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
+
+export const getListCheckFunctionsSuspenseQueryOptions = <
+  TData = Awaited<ReturnType<typeof listCheckFunctions>>,
+  TError = AxiosError<unknown>,
+>(options?: {
+  query?: Partial<
+    UseSuspenseQueryOptions<
+      Awaited<ReturnType<typeof listCheckFunctions>>,
+      TError,
+      TData
+    >
+  >;
+  axios?: AxiosRequestConfig;
+}) => {
+  const { query: queryOptions, axios: axiosOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListCheckFunctionsQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listCheckFunctions>>
+  > = ({ signal }) => listCheckFunctions({ signal, ...axiosOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseSuspenseQueryOptions<
+    Awaited<ReturnType<typeof listCheckFunctions>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+};
+
+export type ListCheckFunctionsSuspenseQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listCheckFunctions>>
+>;
+export type ListCheckFunctionsSuspenseQueryError = AxiosError<unknown>;
+
+export function useListCheckFunctionsSuspense<
+  TData = Awaited<ReturnType<typeof listCheckFunctions>>,
+  TError = AxiosError<unknown>,
+>(
+  options: {
+    query: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof listCheckFunctions>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useListCheckFunctionsSuspense<
+  TData = Awaited<ReturnType<typeof listCheckFunctions>>,
+  TError = AxiosError<unknown>,
+>(
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof listCheckFunctions>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useListCheckFunctionsSuspense<
+  TData = Awaited<ReturnType<typeof listCheckFunctions>>,
+  TError = AxiosError<unknown>,
+>(
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof listCheckFunctions>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+/**
+ * @summary List Check Functions
+ */
+
+export function useListCheckFunctionsSuspense<
+  TData = Awaited<ReturnType<typeof listCheckFunctions>>,
+  TError = AxiosError<unknown>,
+>(
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof listCheckFunctions>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
+  const queryOptions = getListCheckFunctionsSuspenseQueryOptions(options);
+
+  const query = useSuspenseQuery(
+    queryOptions,
+    queryClient,
+  ) as UseSuspenseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
 
 /**
  * Return validation (dry-run) history filtered to user-accessible catalogs.

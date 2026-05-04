@@ -497,3 +497,53 @@ class ScheduleConfigHistoryOut(BaseModel):
     action: str
     changed_by: str | None = None
     changed_at: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# DQX check function registry models
+# ---------------------------------------------------------------------------
+
+
+class CheckFunctionParam(BaseModel):
+    """A single parameter on a DQX check function as exposed to the UI.
+
+    The shape is intentionally permissive: ``kind`` is a coarse,
+    UI-friendly classification derived from ``inspect.signature`` while
+    ``annotation`` preserves the verbatim Python type hint for advanced
+    consumers (e.g. validation tooling, AI prompts).
+    """
+
+    name: str = Field(description="Parameter name as defined on the DQX function")
+    kind: str = Field(
+        description=("UI input kind: 'column', 'columns', 'boolean', 'number', " "'list', or 'string'."),
+    )
+    required: bool = Field(description="True iff the parameter has no default")
+    default: str | None = Field(
+        default=None,
+        description="String-rendered default value (omitted when required)",
+    )
+    annotation: str = Field(
+        default="",
+        description="Verbatim Python type annotation (best-effort string repr)",
+    )
+
+
+class CheckFunctionDef(BaseModel):
+    """A DQX check function as advertised by the backend to the UI."""
+
+    name: str = Field(description="Function name as registered in CHECK_FUNC_REGISTRY")
+    rule_type: str = Field(description="'row' or 'dataset'")
+    category: str = Field(
+        description=(
+            "UX grouping bucket (e.g. 'Null & Empty', 'Numeric & Comparable', "
+            "'Aggregates'). Used to group entries in the UI dropdown."
+        ),
+    )
+    doc: str = Field(default="", description="First line of the function docstring")
+    params: list[CheckFunctionParam] = Field(default_factory=list)
+
+
+class CheckFunctionsOut(BaseModel):
+    """Response wrapper for ``GET /api/v1/check-functions``."""
+
+    functions: list[CheckFunctionDef] = Field(default_factory=list)

@@ -40,7 +40,14 @@ import {
   Play,
   SendHorizonal,
   Info,
+  Search,
+  Check,
 } from "lucide-react";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { toast } from "sonner";
 import {
   aiAssistedChecksGeneration,
@@ -50,6 +57,9 @@ import {
   useGetDryRunResults,
   useGetRules,
   getGetRulesQueryKey,
+  useListCheckFunctions,
+  type CheckFunctionDef as ApiCheckFunctionDef,
+  type CheckFunctionParam as ApiCheckFunctionParam,
   type DryRunResultsOut,
 } from "@/lib/api";
 import { useQueryClient } from "@tanstack/react-query";
@@ -117,108 +127,40 @@ interface CheckFunctionDef {
   value: string;
   label: string;
   args: CheckFunctionArg[];
+  /** Short docstring summary surfaced in the function picker. */
+  doc?: string;
+  /** UX category bucket from the backend (e.g. "Null & Empty"). */
+  category?: string;
+  /** ``"row"`` or ``"dataset"`` — informational only on the UI side. */
+  ruleType?: string;
   /** Cross-arg validation — runs after per-arg checks. Returns ``null``
    *  when the combined arg state is valid, otherwise an error message. */
   crossArgValidate?: (args: Record<string, string>) => string | null;
 }
 
-const CHECK_FUNCTIONS: CheckFunctionDef[] = [
-  {
-    value: "is_not_null",
-    label: "is_not_null",
-    args: [
-      { name: "col_name", label: "Column Name", type: "column", required: true, hint: "e.g. id" },
-    ],
-  },
-  {
-    value: "is_not_empty",
-    label: "is_not_empty",
-    args: [
-      { name: "col_name", label: "Column Name", type: "column", required: true, hint: "e.g. id" },
-      {
-        name: "trim_strings",
-        label: "Trim Strings",
-        type: "boolean",
-        required: false,
-        defaultValue: "false",
-        help: "When true, treat whitespace-only values as empty.",
-      },
-    ],
-  },
-  {
-    value: "is_not_null_and_not_empty",
-    label: "is_not_null_and_not_empty",
-    args: [
-      { name: "col_name", label: "Column Name", type: "column", required: true, hint: "e.g. id" },
-      {
-        name: "trim_strings",
-        label: "Trim Strings",
-        type: "boolean",
-        required: false,
-        defaultValue: "false",
-        help: "When true, treat whitespace-only values as empty.",
-      },
-    ],
-  },
-  {
-    value: "is_in_list",
-    label: "is_in_list",
-    args: [
-      { name: "col_name", label: "Column Name", type: "column", required: true },
-      { name: "allowed", label: "Allowed Values", type: "list_csv", required: true, hint: "comma-separated, e.g. A,B,C" },
-      {
-        name: "case_sensitive",
-        label: "Case Sensitive",
-        type: "boolean",
-        required: false,
-        defaultValue: "true",
-        help: "When false, the comparison is case-insensitive.",
-      },
-    ],
-  },
-  {
-    value: "is_not_in_list",
-    label: "is_not_in_list",
-    args: [
-      { name: "col_name", label: "Column Name", type: "column", required: true },
-      { name: "forbidden", label: "Not Allowed Values", type: "list_csv", required: true, hint: "comma-separated" },
-      {
-        name: "case_sensitive",
-        label: "Case Sensitive",
-        type: "boolean",
-        required: false,
-        defaultValue: "true",
-        help: "When false, the comparison is case-insensitive.",
-      },
-    ],
-  },
-  {
-    value: "is_not_less_than",
-    label: "is_not_less_than",
-    args: [
-      { name: "col_name", label: "Column Name", type: "column", required: true },
-      { name: "limit", label: "Limit", type: "number", required: true, hint: "minimum acceptable value" },
-    ],
-  },
-  {
-    value: "is_not_greater_than",
-    label: "is_not_greater_than",
-    args: [
-      { name: "col_name", label: "Column Name", type: "column", required: true },
-      { name: "limit", label: "Limit", type: "number", required: true, hint: "maximum acceptable value" },
-    ],
-  },
-  {
-    value: "is_in_range",
-    label: "is_in_range",
-    args: [
-      { name: "col_name", label: "Column Name", type: "column", required: true },
-      { name: "min_limit", label: "Min Limit", type: "number", required: false, hint: "min value" },
-      { name: "max_limit", label: "Max Limit", type: "number", required: false, hint: "max value" },
-    ],
-    // Each bound is individually optional in DQX (``min_limit=None,
-    // max_limit=None``) but a check with neither bound is meaningless,
-    // so we require at least one to be set.
+/**
+ * Per-function UX overrides that the backend can't infer from
+ * ``inspect.signature``. Anything purely cosmetic (friendly arg label,
+ * placeholder, helper text on a boolean) goes here, plus cross-argument
+ * validators that span multiple inputs.
+ *
+ * Keys not listed here fall back to the generic ``argLabel`` /
+ * ``argHint`` helpers so new DQX checks render with sensible defaults
+ * out of the box; we only add an entry when the default is wrong or
+ * confusing.
+ */
+type ArgOverride = Partial<Pick<CheckFunctionArg, "label" | "hint" | "help">>;
+interface CheckFunctionOverride {
+  /** Cross-argument validator (e.g. ``is_in_range`` requires at least one bound). */
+  crossArgValidate?: (args: Record<string, string>) => string | null;
+  /** Per-argument label/hint/help overrides keyed by *engine* parameter name. */
+  args?: Record<string, ArgOverride>;
+}
+
+const CHECK_FUNCTION_OVERRIDES: Record<string, CheckFunctionOverride> = {
+  // ``is_in_range`` — each bound is individually optional in DQX, but a
+  // check with neither bound is meaningless. Demand at least one.
+  is_in_range: {
     crossArgValidate: (args) => {
       const hasMin = (args.min_limit ?? "").trim() !== "";
       const hasMax = (args.max_limit ?? "").trim() !== "";
@@ -226,90 +168,164 @@ const CHECK_FUNCTIONS: CheckFunctionDef[] = [
       return null;
     },
   },
-  {
-    value: "is_valid_date",
-    label: "is_valid_date",
-    args: [
-      { name: "col_name", label: "Column Name", type: "column", required: true },
-      {
-        name: "date_format",
-        label: "Date Format",
-        type: "string",
-        required: false,
-        hint: "e.g. yyyy-MM-dd",
-        help: "Optional. Leave blank to use DQX's default ISO date parser.",
-      },
-    ],
+  is_not_in_range: {
+    crossArgValidate: (args) => {
+      const hasMin = (args.min_limit ?? "").trim() !== "";
+      const hasMax = (args.max_limit ?? "").trim() !== "";
+      if (!hasMin && !hasMax) return "Provide at least one of Min Limit or Max Limit.";
+      return null;
+    },
   },
-  {
-    value: "is_valid_timestamp",
-    label: "is_valid_timestamp",
-    args: [
-      { name: "col_name", label: "Column Name", type: "column", required: true },
-      {
-        name: "timestamp_format",
-        label: "Timestamp Format",
-        type: "string",
-        required: false,
-        hint: "e.g. yyyy-MM-dd HH:mm:ss",
-        help: "Optional. Leave blank to use DQX's default ISO timestamp parser.",
-      },
-    ],
-  },
-  {
-    value: "is_valid_regex",
-    label: "is_valid_regex",
-    args: [
-      { name: "col_name", label: "Column Name", type: "column", required: true },
-      { name: "regex", label: "Regex Pattern", type: "string", required: true, hint: "e.g. ^[A-Z]+$" },
-    ],
-  },
-  {
-    value: "is_unique",
-    label: "is_unique",
-    args: [
-      {
-        name: "col_name",
-        label: "Column Name(s)",
-        type: "column",
-        required: true,
-        hint: "comma-separated, e.g. id or col1, col2",
-      },
-      {
-        name: "nulls_distinct",
-        label: "Nulls Distinct",
-        type: "boolean",
-        required: false,
-        defaultValue: "true",
+  // ``is_unique`` accepts a list of columns. The UI captures them as a
+  // CSV under ``col_name``; surface that intent in the placeholder.
+  is_unique: {
+    args: {
+      columns: { label: "Column Name(s)", hint: "comma-separated, e.g. id or col1, col2" },
+      nulls_distinct: {
         help: "When true (default), NULL values are treated as distinct from each other.",
       },
-    ],
+    },
   },
-  {
-    value: "is_not_negative",
-    label: "is_not_negative",
-    args: [
-      { name: "col_name", label: "Column Name", type: "column", required: true },
-    ],
+  is_not_empty: {
+    args: { trim_strings: { help: "When true, treat whitespace-only values as empty." } },
   },
-  {
-    value: "sql_expression",
-    label: "sql_expression",
-    args: [
-      { name: "expression", label: "Expression", type: "string", required: true, hint: "SQL expression, e.g. col > 0" },
-      { name: "msg", label: "Error Message", type: "string", required: false, hint: "Optional error message override" },
-      { name: "name", label: "Check Name", type: "string", required: false, hint: "Optional custom name" },
-      {
-        name: "negate",
-        label: "Negate",
-        type: "boolean",
-        required: false,
-        defaultValue: "false",
-        help: "When true, the rule fails when the expression evaluates to true.",
-      },
-    ],
+  is_not_null_and_not_empty: {
+    args: { trim_strings: { help: "When true, treat whitespace-only values as empty." } },
   },
-];
+  is_empty: {
+    args: { trim_strings: { help: "When true, treat whitespace-only values as empty." } },
+  },
+  is_null_or_empty: {
+    args: { trim_strings: { help: "When true, treat whitespace-only values as empty." } },
+  },
+  is_in_list: {
+    args: {
+      case_sensitive: { help: "When false, the comparison is case-insensitive." },
+    },
+  },
+  is_not_in_list: {
+    args: {
+      case_sensitive: { help: "When false, the comparison is case-insensitive." },
+    },
+  },
+  is_valid_date: {
+    args: {
+      date_format: { help: "Optional. Leave blank to use DQX's default ISO date parser." },
+    },
+  },
+  is_valid_timestamp: {
+    args: {
+      timestamp_format: { help: "Optional. Leave blank to use DQX's default ISO timestamp parser." },
+    },
+  },
+  sql_expression: {
+    args: {
+      negate: { help: "When true, the rule fails when the expression evaluates to true." },
+      msg: { hint: "Optional error message override" },
+      name: { hint: "Optional custom name" },
+    },
+  },
+  regex_match: {
+    args: {
+      negate: { help: "When true, the rule fails when the value matches the pattern." },
+    },
+  },
+};
+
+/**
+ * Module-level mutable registry, populated from
+ * ``GET /api/v1/check-functions`` on first render via
+ * :func:`useCheckFunctionsRegistry`. Helpers like ``checkToDict`` read
+ * this directly because they're called from event handlers / memo
+ * callbacks, by which time the API response has resolved.
+ *
+ * The fallback empty array means a stale page (cache miss + slow
+ * network) renders an empty function dropdown, which is fine — the
+ * page already shows a loading shimmer until the rule list arrives.
+ */
+let CHECK_FUNCTIONS: CheckFunctionDef[] = [];
+
+/**
+ * Map an API ``CheckFunctionParam`` to the UI's local ``CheckFunctionArg``.
+ *
+ * The big rename is ``column`` / ``columns`` → ``col_name``: the rest of
+ * the editor (validators, AI loaders, save serialization) uses
+ * ``col_name`` as the canonical local key, so we collapse both column
+ * inputs to that name here. ``checkToDict`` knows to expand ``is_unique``
+ * back to a ``columns`` list at serialization time.
+ */
+function apiParamToArg(
+  param: ApiCheckFunctionParam,
+  overrides: Record<string, ArgOverride> | undefined,
+  fnName: string,
+): CheckFunctionArg {
+  const isColumnParam = param.kind === "column" || param.kind === "columns";
+  const localName = isColumnParam ? "col_name" : param.name;
+  const overrideKey = param.name; // overrides are keyed by engine name
+  const ov = overrides?.[overrideKey] ?? {};
+  // ``columns`` list-of-columns is rendered through the same column
+  // input but with a multi-column hint; honour any explicit override
+  // first, then fall back to the generic per-arg hint.
+  const defaultHint = argHint(localName, fnName) || (param.kind === "columns" ? "comma-separated, e.g. id or col1, col2" : undefined);
+  const type: ArgType =
+    param.kind === "boolean"
+      ? "boolean"
+      : param.kind === "number"
+      ? "number"
+      : param.kind === "list"
+      ? "list_csv"
+      : isColumnParam
+      ? "column"
+      : "string";
+  const arg: CheckFunctionArg = {
+    name: localName,
+    label: ov.label ?? argLabel(localName),
+    type,
+    required: param.required,
+  };
+  const hint = ov.hint ?? defaultHint;
+  if (hint) arg.hint = hint;
+  const help = ov.help;
+  if (help) arg.help = help;
+  if (param.default != null) arg.defaultValue = param.default;
+  return arg;
+}
+
+function apiToCheckFunctions(apiList: ApiCheckFunctionDef[]): CheckFunctionDef[] {
+  return apiList.map((api) => {
+    const overrides = CHECK_FUNCTION_OVERRIDES[api.name];
+    const args = (api.params ?? []).map((p) => apiParamToArg(p, overrides?.args, api.name));
+    return {
+      value: api.name,
+      label: api.name,
+      doc: api.doc ?? "",
+      category: api.category,
+      ruleType: api.rule_type,
+      args,
+      ...(overrides?.crossArgValidate
+        ? { crossArgValidate: overrides.crossArgValidate }
+        : {}),
+    };
+  });
+}
+
+/**
+ * React hook that fetches the registry, mirrors it into the module-level
+ * variable, and returns the live list. Components depend on the return
+ * value so they re-render when the registry arrives; module-level
+ * helpers read the mirrored variable directly.
+ */
+function useCheckFunctionsRegistry(): CheckFunctionDef[] {
+  const { data } = useListCheckFunctions();
+  const fns = useMemo(
+    () => apiToCheckFunctions(data?.data?.functions ?? []),
+    [data],
+  );
+  useEffect(() => {
+    CHECK_FUNCTIONS = fns;
+  }, [fns]);
+  return fns;
+}
 
 /**
  * Pre-DQX-rename function names that still appear in old saved rules and
@@ -531,6 +547,11 @@ function UnifiedRulesPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [loadedFromTable, setLoadedFromTable] = useState(false);
 
+  // Pull DQX's full check-function registry from the backend. The list
+  // re-renders the function picker; ``checkToDict`` and friends read the
+  // module-level mirror that ``useCheckFunctionsRegistry`` maintains.
+  const checkFunctions = useCheckFunctionsRegistry();
+
   const { data: labelDefsData } = useLabelDefinitions();
   const labelDefinitions = labelDefsData?.definitions ?? [];
 
@@ -662,6 +683,38 @@ function UnifiedRulesPage() {
     );
   }, []);
 
+  /**
+   * Sync the table picked in the Column Discovery panel into "Target
+   * tables" for any check that doesn't already have an explicit target.
+   *
+   * Only checks with empty ``targetTables`` are touched — once a user
+   * has deliberately picked targets via the per-check Catalog Browser
+   * we treat that as locked. This makes the discovery panel a fast
+   * shortcut for the common case (one table per draft) without
+   * silently overwriting existing selections when the user is just
+   * browsing schemas to compare columns.
+   */
+  const handleDiscoveryTableSelect = useCallback((fqn: string) => {
+    setChecks((prev) => {
+      const empties = prev.filter((c) => c.targetTables.length === 0);
+      if (empties.length === 0) {
+        // Every check already has a target — surface a hint so the user
+        // knows the discovery selection is intentional but not applied.
+        toast.info("All checks already have a target table.", {
+          description: `Use a check's "Target tables" panel to add ${fqn} explicitly.`,
+        });
+        return prev;
+      }
+      toast.success(`Targeted ${empties.length} check${empties.length === 1 ? "" : "s"} at ${fqn}`, {
+        description: "Checks with explicit targets were left unchanged.",
+        duration: 2500,
+      });
+      return prev.map((c) =>
+        c.targetTables.length === 0 ? { ...c, targetTables: [fqn] } : c,
+      );
+    });
+  }, []);
+
   const hasRefTable = aiReferenceTable.split(".").length === 3;
   const effectiveTable = hasRefTable ? aiReferenceTable : (isTableFqn ? initialTable : undefined);
 
@@ -716,7 +769,7 @@ function UnifiedRulesPage() {
       checks.length > 0 &&
       checks.every((c) => {
         if (!c.fn) return false;
-        const def = CHECK_FUNCTIONS.find((f) => f.value === c.fn);
+        const def = checkFunctions.find((f) => f.value === c.fn);
         if (def) {
           // Required args must be populated.
           if (!def.args.filter((a) => a.required).every((a) => (c.args[a.name] ?? "").trim() !== "")) {
@@ -734,14 +787,14 @@ function UnifiedRulesPage() {
       }) &&
       totalTargetPairs > 0
     );
-  }, [checks, totalTargetPairs]);
+  }, [checks, totalTargetPairs, checkFunctions]);
 
   const validationMessage = useMemo(() => {
     if (checks.some((c) => c.fn === "")) return "Select a function for every check";
     if (totalTargetPairs === 0) return "Assign at least one target table to a check";
     // Surface the first incomplete required arg so the user knows what's missing.
     for (const c of checks) {
-      const def = CHECK_FUNCTIONS.find((f) => f.value === c.fn);
+      const def = checkFunctions.find((f) => f.value === c.fn);
       if (!def) continue;
       const missing = def.args.find((a) => a.required && (c.args[a.name] ?? "").trim() === "");
       if (missing) return `"${missing.label}" is required for ${def.label}`;
@@ -749,7 +802,7 @@ function UnifiedRulesPage() {
       if (crossErr) return crossErr;
     }
     return null;
-  }, [checks, totalTargetPairs]);
+  }, [checks, totalTargetPairs, checkFunctions]);
 
   // ── Real-time duplicate detection ──────────────────────────────────
   const [dupCheckIds, setDupCheckIds] = useState<Set<string>>(new Set());
@@ -867,7 +920,7 @@ function UnifiedRulesPage() {
 
   const hasArgErrors = useMemo(() => {
     return checks.some((c) => {
-      const fnDef = CHECK_FUNCTIONS.find((f) => f.value === c.fn);
+      const fnDef = checkFunctions.find((f) => f.value === c.fn);
       if (fnDef) {
         // Per-arg syntax errors.
         if (fnDef.args.some((a) => validateArg(a.name, c.args[a.name] ?? "", c.fn) !== null)) {
@@ -882,7 +935,7 @@ function UnifiedRulesPage() {
       // Custom/unknown function — best-effort syntax check on every populated arg.
       return Object.keys(c.args).some((arg) => validateArg(arg, c.args[arg] ?? "", c.fn) !== null);
     });
-  }, [checks]);
+  }, [checks, checkFunctions]);
 
   // Save handlers
   const handleSave = async (andSubmit: boolean) => {
@@ -1140,6 +1193,7 @@ function UnifiedRulesPage() {
                   disabled={isBusy}
                   isDuplicate={dupCheckIds.has(check.id)}
                   labelDefinitions={labelDefinitions}
+                  checkFunctions={checkFunctions}
                 />
               ))}
               <Button variant="outline" size="sm" onClick={addCheck} className="gap-1" disabled={isBusy}>
@@ -1152,6 +1206,7 @@ function UnifiedRulesPage() {
                 variant="inline"
                 defaultCollapsed={false}
                 className="xl:sticky xl:top-4"
+                onTableSelect={handleDiscoveryTableSelect}
               />
             </div>
           </div>
@@ -1403,6 +1458,12 @@ function validateArg(arg: string, value: string, fn?: string): string | null {
   }
 }
 
+/**
+ * Friendly label for an argument input. Falls back to a humanized
+ * version of the snake_case arg name (``cidr_block`` → ``Cidr Block``)
+ * when we don't have an explicit label, so newly surfaced DQX arguments
+ * still render reasonably without requiring a UI change.
+ */
 function argLabel(arg: string): string {
   switch (arg) {
     case "col_name": return "Column Name";
@@ -1416,7 +1477,30 @@ function argLabel(arg: string): string {
     case "timestamp_format": return "Timestamp Format";
     case "expression": return "Expression";
     case "msg": return "Error Message";
-    default: return arg;
+    case "name": return "Check Name";
+    case "cidr_block": return "CIDR Block";
+    case "value": return "Value";
+    case "days": return "Days";
+    case "offset": return "Offset (seconds)";
+    case "max_age_minutes": return "Max Age (minutes)";
+    case "keys": return "Required Keys";
+    case "schema": return "Expected Schema";
+    case "dimension": return "Dimension";
+    case "trim_strings": return "Trim Strings";
+    case "case_sensitive": return "Case Sensitive";
+    case "nulls_distinct": return "Nulls Distinct";
+    case "negate": return "Negate";
+    case "require_all": return "Require All Keys";
+    case "abs_tolerance": return "Absolute Tolerance";
+    case "rel_tolerance": return "Relative Tolerance";
+    case "min_value": return "Min Value";
+    case "max_value": return "Max Value";
+    default:
+      return arg
+        .split("_")
+        .filter(Boolean)
+        .map((s) => s.charAt(0).toUpperCase() + s.slice(1))
+        .join(" ");
   }
 }
 
@@ -1436,7 +1520,14 @@ function argHint(arg: string, fn?: string): string {
     case "timestamp_format": return "e.g. yyyy-MM-dd HH:mm:ss";
     case "expression": return "SQL expression, e.g. col > 0";
     case "msg": return "Error message";
-    default: return arg;
+    case "cidr_block": return "e.g. 192.168.1.0/24";
+    case "value": return "comparison value";
+    case "days": return "number of days";
+    case "offset": return "seconds";
+    case "max_age_minutes": return "maximum age in minutes";
+    case "keys": return "comma-separated keys";
+    case "dimension": return "0, 1, or 2";
+    default: return "";
   }
 }
 
@@ -1453,10 +1544,11 @@ interface CheckCardProps {
   disabled?: boolean;
   isDuplicate?: boolean;
   labelDefinitions?: LabelDefinition[];
+  checkFunctions: CheckFunctionDef[];
 }
 
-function CheckCard({ check, index, onUpdate, onRemove, canRemove, disabled, isDuplicate, labelDefinitions }: CheckCardProps) {
-  const fnDef = CHECK_FUNCTIONS.find((f) => f.value === check.fn);
+function CheckCard({ check, index, onUpdate, onRemove, canRemove, disabled, isDuplicate, labelDefinitions, checkFunctions }: CheckCardProps) {
+  const fnDef = checkFunctions.find((f) => f.value === check.fn);
   const argFields = fnDef?.args ?? [];
   const isUnknownFn = check.fn !== "" && !fnDef;
   const columns = getCheckColumns(check);
@@ -1543,13 +1635,15 @@ function CheckCard({ check, index, onUpdate, onRemove, canRemove, disabled, isDu
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1.5">
             <Label className="text-xs">Function</Label>
-            <Select
+            <FunctionCombobox
               value={check.fn}
-              onValueChange={(fn) => {
+              functions={checkFunctions}
+              disabled={disabled}
+              onChange={(fn) => {
                 // When swapping functions, keep ``col_name`` only if the
                 // new function still takes a column, and pre-fill any
                 // boolean defaults so the dropdown doesn't render blank.
-                const def = CHECK_FUNCTIONS.find((f) => f.value === fn);
+                const def = checkFunctions.find((f) => f.value === fn);
                 const next: Record<string, string> = {};
                 if (def?.args.some((a) => a.name === "col_name") && check.args["col_name"]) {
                   next.col_name = check.args["col_name"];
@@ -1561,24 +1655,7 @@ function CheckCard({ check, index, onUpdate, onRemove, canRemove, disabled, isDu
                 }
                 onUpdate(check.id, { fn, args: next });
               }}
-              disabled={disabled}
-            >
-              <SelectTrigger className="h-8 text-xs">
-                <SelectValue placeholder="Select function" />
-              </SelectTrigger>
-              <SelectContent>
-                {CHECK_FUNCTIONS.map((f) => (
-                  <SelectItem key={f.value} value={f.value} className="text-xs">
-                    {f.label}
-                  </SelectItem>
-                ))}
-                {isUnknownFn && (
-                  <SelectItem value={check.fn} className="text-xs">
-                    {check.fn} (custom)
-                  </SelectItem>
-                )}
-              </SelectContent>
-            </Select>
+            />
           </div>
           <div className="space-y-1.5">
             <Label className="text-xs">Criticality</Label>
@@ -1810,3 +1887,146 @@ function CheckCard({ check, index, onUpdate, onRemove, canRemove, disabled, isDu
     </div>
   );
 }
+
+
+// ──────────────────────────────────────────────────────────────────────────────
+// FunctionCombobox — searchable, grouped function picker
+// ──────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Replacement for the previous ``<Select>`` with one ``<SelectItem>`` per
+ * function. Now that the registry can carry 30+ entries we need three
+ * affordances the native select doesn't give us:
+ *
+ *   1. Free-text search so users who already know the function name
+ *      (e.g. ``regex_match``) can land on it instantly.
+ *   2. Category grouping so the long list is visually scannable
+ *      (Null & Empty, Numeric & Comparable, Aggregates, …).
+ *   3. Inline doc snippets so users can pick the right check without
+ *      jumping out to DQX docs.
+ *
+ * Implementation is built on the same Popover + Input + Button primitives
+ * already used by ``RoleManagement.GroupCombobox``; we deliberately keep
+ * the dependency surface tiny so this works in offline-installed
+ * environments.
+ */
+interface FunctionComboboxProps {
+  value: string;
+  functions: CheckFunctionDef[];
+  onChange: (fn: string) => void;
+  disabled?: boolean;
+}
+
+function FunctionCombobox({ value, functions, onChange, disabled }: FunctionComboboxProps) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+
+  // Re-group on every change. The list is at most a few dozen entries
+  // so the cost is negligible and avoiding a memo keeps the component
+  // simpler to follow.
+  const grouped = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const matched = functions.filter((f) =>
+      q === "" ? true : f.value.toLowerCase().includes(q) || (f.doc ?? "").toLowerCase().includes(q),
+    );
+    const byCategory = new Map<string, CheckFunctionDef[]>();
+    for (const fn of matched) {
+      const cat = fn.category ?? "Other";
+      if (!byCategory.has(cat)) byCategory.set(cat, []);
+      byCategory.get(cat)!.push(fn);
+    }
+    // Stable category order: alphabetic, with "Other" pinned last so
+    // unrecognised categories don't sneak above the curated buckets.
+    return Array.from(byCategory.entries()).sort(([a], [b]) => {
+      if (a === "Other") return 1;
+      if (b === "Other") return -1;
+      return a.localeCompare(b);
+    });
+  }, [functions, query]);
+
+  const isUnknownFn = value !== "" && !functions.some((f) => f.value === value);
+  const displayValue = value === "" ? "Select function" : isUnknownFn ? `${value} (custom)` : value;
+
+  // Reset the search box every time the popover closes so a re-open
+  // shows the full list rather than a stale filtered slice.
+  useEffect(() => {
+    if (!open) setQuery("");
+  }, [open]);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          disabled={disabled}
+          className="h-8 w-full justify-between text-xs font-normal"
+        >
+          <span className={value === "" ? "text-muted-foreground" : ""}>{displayValue}</span>
+          <ChevronDown className="h-3 w-3 opacity-50 shrink-0" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent
+        className="p-0 w-[--radix-popover-trigger-width] min-w-[280px]"
+        align="start"
+      >
+        <div className="border-b p-2">
+          <div className="relative">
+            <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground" />
+            <Input
+              autoFocus
+              placeholder="Search functions..."
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              className="h-8 text-xs pl-7"
+            />
+          </div>
+        </div>
+        <div className="max-h-72 overflow-y-auto py-1">
+          {functions.length === 0 ? (
+            <div className="px-3 py-2 text-xs text-muted-foreground">Loading functions...</div>
+          ) : grouped.length === 0 ? (
+            <div className="px-3 py-2 text-xs text-muted-foreground">No matches</div>
+          ) : (
+            grouped.map(([category, fns]) => (
+              <div key={category}>
+                <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground bg-muted/40">
+                  {category}
+                </div>
+                {fns.map((fn) => {
+                  const selected = fn.value === value;
+                  return (
+                    <button
+                      key={fn.value}
+                      type="button"
+                      onClick={() => {
+                        onChange(fn.value);
+                        setOpen(false);
+                      }}
+                      className={`w-full text-left px-2 py-1.5 text-xs hover:bg-accent flex items-start gap-2 ${selected ? "bg-accent" : ""}`}
+                    >
+                      <Check
+                        className={`h-3 w-3 shrink-0 mt-0.5 ${selected ? "opacity-100" : "opacity-0"}`}
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="font-mono">{fn.value}</span>
+                        {fn.doc && (
+                          <span className="block text-[10px] text-muted-foreground truncate">
+                            {fn.doc}
+                          </span>
+                        )}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            ))
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+

@@ -223,7 +223,14 @@ function YamlImportCard({ onDone }: { onDone: () => void }) {
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+    const input = e.target;
+    const file = input.files?.[0];
+    // Reset the input's value so picking the *same* file again fires
+    // ``onChange``. Without this the browser treats "same path twice" as
+    // a no-op and the user's editor edits silently survive — i.e. the
+    // re-import does nothing. We do this before the early return so a
+    // cancelled file dialog still resets cleanly.
+    input.value = "";
     if (!file) return;
     const reader = new FileReader();
     reader.onload = (ev) => {
