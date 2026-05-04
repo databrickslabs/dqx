@@ -1560,9 +1560,7 @@ class TestMigrationRunner:
         # forward-compat if future migrations are appended.
         [0, len(MIGRATIONS)] + ([len(MIGRATIONS) // 2] if len(MIGRATIONS) >= 3 else []),
     )
-    def test_status_returns_all_migrations_with_applied_flag(
-        self, ws: WorkspaceClient, n_applied: int
-    ) -> None:
+    def test_status_returns_all_migrations_with_applied_flag(self, ws: WorkspaceClient, n_applied: int) -> None:
         """status should list every migration with correct applied/pending flags."""
         applied_rows = [[str(m.version), "2025-01-01T00:00:00"] for m in MIGRATIONS[:n_applied]]
         ws.statement_execution.execute_statement.side_effect = [  # type: ignore[attr-defined]

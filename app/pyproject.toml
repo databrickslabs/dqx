@@ -76,3 +76,18 @@ exclude = ["src/databricks_labs_dqx_app/ui"]
 line-length = 120
 target-version = "py311"
 
+[tool.basedpyright]
+# ``apx dev check`` runs basedpyright but only syncs the default + dev
+# dependency groups, not ``test``. That means pytest (and the rest of the
+# test toolchain) is missing from the env basedpyright sees, which blows
+# up every ``import pytest`` with reportMissingImports. The mock-heavy
+# scheduler service tests also produce noisy reportAttributeAccessIssue
+# errors against ``MethodType`` because we monkey-patch service methods
+# with ``MagicMock()`` instances — basedpyright can't follow that without
+# the test deps and ``spec`` annotations on every mock.
+#
+# Tests are already type-checked at collection time by ``make app-test``,
+# which uses the proper ``--group test`` env, so excluding them from the
+# static check here removes the false positives without losing real
+# coverage.
+exclude = ["tests", "**/.venv", "**/__pycache__", "src/databricks_labs_dqx_app/__dist__"]

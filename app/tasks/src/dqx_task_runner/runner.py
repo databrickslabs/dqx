@@ -20,7 +20,7 @@ import time
 import re
 from datetime import datetime, timezone, date
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 
 from databricks.sdk import WorkspaceClient
 from pyspark.sql import SparkSession
@@ -354,7 +354,15 @@ def _run_dryrun(
     engine = DQEngine(workspace_client=ws, spark=spark, observer=observer)
 
     df = _read_view_with_retry(spark, view_fqn).limit(sample_size)
-    valid_df, invalid_df, observation = engine.apply_checks_by_metadata_and_split(df, checks)
+    # ``apply_checks_by_metadata_and_split`` returns ``(valid, invalid)``
+    # when no observer is attached and ``(valid, invalid, observation)``
+    # when one is. We always construct the engine with ``observer=...``
+    # above, so the 3-tuple shape is guaranteed at runtime — the cast
+    # tells pyright to pick that branch of the union.
+    valid_df, invalid_df, observation = cast(
+        "tuple[Any, Any, Any]",
+        engine.apply_checks_by_metadata_and_split(df, checks),
+    )
 
     # Quarantine pass — also serves as the action that materialises the
     # observation. ``invalid_df.count()`` triggers metric collection.
@@ -905,7 +913,13 @@ def _run_scheduled(
     engine = DQEngine(workspace_client=ws, spark=spark, observer=observer)
 
     df = _read_view_with_retry(spark, view_fqn)
-    valid_df, invalid_df, observation = engine.apply_checks_by_metadata_and_split(df, checks)
+    # See narrowing rationale on the dryrun call site — DQX returns the
+    # 3-tuple shape iff the engine was constructed with an observer,
+    # which we always do here.
+    valid_df, invalid_df, observation = cast(
+        "tuple[Any, Any, Any]",
+        engine.apply_checks_by_metadata_and_split(df, checks),
+    )
 
     invalid_rows = invalid_df.count()  # triggers the observation
 
