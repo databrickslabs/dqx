@@ -437,7 +437,7 @@ Databricks CLI will confirm a few options:
 - `jq` and `make` available locally (used by the deployment scripts).
 - **Databricks Apps** feature enabled on the workspace.
 - **User token passthrough** enabled for Databricks Apps — DQX Studio uses On-Behalf-Of (OBO) tokens to access Unity Catalog with the end user's identity.
-- **Serverless compute** enabled on the workspace — the `dqx-app-task-runner` job is serverless-only.
+- **Serverless compute** enabled on the workspace — the `dqx-studio-task-runner` job is serverless-only.
 - An **existing Unity Catalog catalog** where the studio's schemas and volumes will be created. The bundle does not create the catalog itself.
 
 ### Install DQX Studio using a Declarative Automation Bundle
@@ -445,23 +445,31 @@ Databricks CLI will confirm a few options:
 1. Clone the DQX repository and change into the `app/` directory:
    ```commandline
    git clone https://github.com/databrickslabs/dqx.git
-   cd dqx/app
    ```
 
 2. Create a workspace service principal to run the task-runner job (separate from the app's auto-created SP, which cannot be used outside the Apps framework). In the Databricks workspace UI go to **Settings → Identity and Access → Service Principals**, create a new SP (for example `dqx-task-runner-sp`), and on its **Permissions** tab grant your deploying identity the **`User`** role. Note the SP's **Application ID** — you'll reference it as `dqx_service_principal_application_id` in the bundle.
 
-3. Add a deploy target to `app/databricks.yml`:
+3. Update the deploy target in `app/databricks.yml`. Only `catalog_name` and `dqx_service_principal_application_id` are required — every other variable has a sensible default that you can override per target if needed:
    ```yaml
    targets:
      dev:
        workspace:
          profile: <your-profile>
        variables:
+         # Required
          catalog_name: <your-catalog>
-         dqx_service_principal_application_id: "<your-sp-application-id>"
+         dqx_service_principal_application_id: <your-sp-application-id>
+
+         # Optional — uncomment and override defaults per target as needed
+         # admin_group: <your-admin-group>             # default: admins
+         # app_name: <your-app-name>                   # default: dqx-studio
+         # sql_warehouse_name: <your-warehouse-name>   # default: dqx-studio-sql-warehouse
+         # schema_name: <your-schema-name>             # default: dqx_app
        presets:
          trigger_pause_status: PAUSED
    ```
+
+   See the [DQX Studio deployment guide](https://github.com/databrickslabs/dqx/blob/v0.13.0/app/DEPLOYMENT.md#step-3-configure-databricksyml) for the full reference of each variable, including security implications of `admin_group` and when to override per target.
 
 4. Build, deploy, grant permissions, and start the studio in a single command:
    ```commandline

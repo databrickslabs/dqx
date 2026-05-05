@@ -1,4 +1,4 @@
-"""Shared pytest fixtures and config for the DQX app backend.
+"""Shared pytest fixtures and config for the DQX Studio backend.
 
 These tests are pure unit tests — no live Databricks workspace,
 no SQL warehouse. Anything that talks to a remote service is replaced

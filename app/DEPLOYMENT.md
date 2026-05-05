@@ -46,7 +46,7 @@ Contact your workspace admin or enable it via the workspace settings if not alre
 
 ## Step 3: Configure `databricks.yml`
 
-Add a deploy target with your catalog and service principal. In `app/databricks.yml`:
+Update a deploy target. The minimum required is a `catalog_name` and `dqx_service_principal_application_id`; everything else has a sensible default and can be overridden per target. In `app/databricks.yml`:
 
 ```yaml
 targets:
@@ -54,13 +54,33 @@ targets:
     workspace:
       profile: <your-profile>
     variables:
+      # Required
       catalog_name: <your-catalog>
-      dqx_service_principal_application_id: "<your-sp-application-id>"
+      dqx_service_principal_application_id: <your-sp-application-id>
+
+      # Optional — uncomment and override defaults per target as needed
+      # admin_group: <your-admin-group>
+      # app_name: <your-app-name>
+      # sql_warehouse_name: <your-sql-warehouse-name>
+      # schema_name: <your-schema-name>
     presets:
       trigger_pause_status: PAUSED
 ```
 
-The `catalog_name` must reference an **existing** Unity Catalog catalog — the bundle creates schemas and volumes inside it but does not create the catalog itself.
+### Variable reference
+
+All target-level variables, their defaults, and what they control:
+
+| Variable | Default | Required? | Purpose |
+|---|---|---|---|
+| `catalog_name` | `dqx` | **Yes** | Unity Catalog catalog where schemas and the wheels volume are created. **Must already exist** — the bundle does not create the catalog itself. |
+| `dqx_service_principal_application_id` | `00000000-…` | **Yes** | Application ID of the service principal that runs the task-runner job. Created in [Step 1](#step-1-create-a-service-principal). The placeholder default fails validation. |
+| `admin_group` | `admins` | No | Workspace group whose members get the in-app `ADMIN` role unconditionally (bootstrap admin path). The default `admins` is the built-in workspace admins group — every workspace admin becomes a DQX admin automatically. Override with a dedicated group (e.g. `dqx-admins-prod`) for narrower bootstrap access. Additional roles are assigned at runtime via the in-app Role Management UI. |
+| `app_name` | `dqx-studio` | No | Deployed Databricks App name. Override per target (e.g. `dqx-studio-dev`, `dqx-studio-prod`) when deploying multiple targets to the same workspace, or for personal sandboxes. |
+| `sql_warehouse_name` | `dqx-studio-sql-warehouse` | No | Deployed SQL warehouse name (the bundle creates an X-Small serverless warehouse for app queries). Override per target to avoid duplicates in shared workspaces. |
+| `schema_name` | `dqx_app` | No | Main schema inside the catalog — holds rules, run history, role mappings, and other app state. Override only if you need a non-default schema layout. |
+
+> **Note on duplicate names in Databricks:** SQL warehouses, jobs, and apps within the same workspace are tracked by ID, not by name, so technically duplicates are allowed. But operators browse the Jobs / Apps / Warehouses UI by name, so distinct names per target are strongly recommended when you deploy more than one target to the same workspace.
 
 ## Step 4: One-Command Deploy (recommended)
 
@@ -93,7 +113,7 @@ cd app && databricks bundle deploy -p <your-profile> -t <your-target>
 make app-grant-permissions PROFILE=<your-profile>
 
 # Start the app
-cd app && databricks bundle run databricks-labs-dqx-app -p <your-profile> -t <your-target>
+cd app && databricks bundle run dqx-studio -p <your-profile> -t <your-target>
 ```
 
 ### Manual grants (if the script doesn't work for your setup)
@@ -120,11 +140,11 @@ GRANT ALL PRIVILEGES ON VOLUME <catalog>.dqx_app.wheels TO `<job-sp-id>`;
 GRANT USE CATALOG ON CATALOG <catalog> TO `account users`;
 ```
 
-To grant app access to end users, go to **Apps → databricks-labs-dqx-app → Permissions** and assign `Can Use`.
+To grant app access to end users, go to **Apps → `<app-name>` → Permissions** and assign `Can Use`. Replace `<app-name>` with the value of `app_name` configured for your target (default `dqx-studio`).
 
 Access the app at:
 ```
-https://<your-workspace-url>/apps/databricks-labs-dqx-app
+https://<your-workspace-url>/apps/<app-name>
 ```
 
 ## (Optional) Expand OAuth Scopes
@@ -152,9 +172,9 @@ Replace `accounts.cloud.databricks.com` with the account host for your cloud (`a
 databricks account custom-app-integration list -p <account-profile-name>
 ```
 
-Look for the integration whose name matches the app (`databricks-labs-dqx-app`). Copy its `integration_id` — this is the `<oauth2-app-client-id>` used in the next step.
+Look for the integration whose name matches your deployed app (default `dqx-studio`, or whatever you set `app_name` to). Copy its `integration_id` — this is the `<oauth2-app-client-id>` used in the next step.
 
-You can also find it in the workspace UI under **Apps → databricks-labs-dqx-app → User authorization**.
+You can also find it in the workspace UI under **Apps → `<app-name>` → User authorization**.
 
 **3. Update the OAuth scopes:**
 
@@ -176,8 +196,8 @@ databricks account custom-app-integration update '<oauth2-app-client-id>' \
 **4. Restart the app** so the new scopes take effect:
 
 ```bash
-databricks apps stop  databricks-labs-dqx-app -p <your-profile>
-databricks apps start databricks-labs-dqx-app -p <your-profile>
+databricks apps stop  <app-name> -p <your-profile>
+databricks apps start <app-name> -p <your-profile>
 ```
 
 After the app restarts, sign in again in the browser — you'll be prompted to re-consent to the expanded scopes.
@@ -199,10 +219,12 @@ cd app && databricks bundle deploy -p <your-profile> -t <your-target>
 
 ## Monitor and Manage
 
+Replace `<app-name>` with the deployed app name (the value of `app_name` for your target — default `dqx-studio`):
+
 ```bash
-databricks apps get databricks-labs-dqx-app -p <your-profile>    # status
-databricks apps logs databricks-labs-dqx-app -p <your-profile>   # logs
-databricks apps stop databricks-labs-dqx-app -p <your-profile>   # stop
+databricks apps get <app-name> -p <your-profile>    # status
+databricks apps logs <app-name> -p <your-profile>   # logs
+databricks apps stop <app-name> -p <your-profile>   # stop
 ```
 
 ## Troubleshooting
@@ -221,6 +243,6 @@ databricks bundle deploy -p <your-profile> --force          # or force deploy
 **Job fails with "file not found" on wheel:**
 The task-runner job installs wheels from the UC volume. If the volume is empty the job fails. Start the app and wait for the wheel upload to complete:
 ```bash
-databricks apps logs databricks-labs-dqx-app -p <your-profile>
+databricks apps logs <app-name> -p <your-profile>
 # Look for: "Uploaded databricks_labs_dqx-<version>-py3-none-any.whl"
 ```

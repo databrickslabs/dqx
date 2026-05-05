@@ -1,4 +1,4 @@
-# DQX App
+# DQX Studio
 
 Web application for the DQX framework — a UI for authoring and managing data quality rules. Built with FastAPI (backend) and React (frontend), deployed as a Databricks App.
 

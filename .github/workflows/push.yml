@@ -154,3 +154,7 @@ jobs:
       - name: Run TypeScript and Python checks
         run: make app-check
         working-directory: .
+
+      - name: Run app backend tests
+        run: make app-test
+        working-directory: .

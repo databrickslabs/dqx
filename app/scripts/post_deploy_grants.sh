@@ -23,7 +23,6 @@ set -euo pipefail
 
 PROFILE=""
 TARGET=""
-APP_NAME="databricks-labs-dqx-app"
 
 usage() {
   echo "Usage: $0 -p <databricks-profile> [-t <bundle-target>]"
@@ -47,7 +46,27 @@ if [[ -n "$TARGET" ]]; then
   BUNDLE_FLAGS+=(-t "$TARGET")
 fi
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+BUNDLE_DIR="$(dirname "$SCRIPT_DIR")"
+cd "$BUNDLE_DIR"
+
+# Capture stderr so a validate failure produces a useful diagnostic
+# instead of an empty $BUNDLE_JSON and a confusing downstream error.
+BUNDLE_VALIDATE_STDERR=$(mktemp)
+trap 'rm -f "$BUNDLE_VALIDATE_STDERR"' EXIT
+if ! BUNDLE_JSON=$($CLI bundle validate "${BUNDLE_FLAGS[@]}" -o json 2>"$BUNDLE_VALIDATE_STDERR"); then
+  echo "ERROR: 'databricks bundle validate' failed:" >&2
+  cat "$BUNDLE_VALIDATE_STDERR" >&2
+  if [[ -z "$TARGET" ]]; then
+    echo "       Hint: re-run with -t <bundle-target> (the bundle defines multiple targets)." >&2
+  fi
+  exit 1
+fi
+
+APP_NAME=$(echo "$BUNDLE_JSON" | jq -r '.variables.app_name.value // .variables.app_name.default // "dqx-studio"')
+
 echo "==> Discovering app configuration..."
+echo "   App: $APP_NAME"
 
 APP_JSON=$($CLI apps get "$APP_NAME" -o json)
 
@@ -70,23 +89,6 @@ if [[ -z "$WH_ID" ]]; then
   exit 1
 fi
 echo "   Warehouse: $WH_ID"
-
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-BUNDLE_DIR="$(dirname "$SCRIPT_DIR")"
-cd "$BUNDLE_DIR"
-
-# Capture stderr so a validate failure produces a useful diagnostic
-# instead of an empty $BUNDLE_JSON and a confusing downstream error.
-BUNDLE_VALIDATE_STDERR=$(mktemp)
-trap 'rm -f "$BUNDLE_VALIDATE_STDERR"' EXIT
-if ! BUNDLE_JSON=$($CLI bundle validate "${BUNDLE_FLAGS[@]}" -o json 2>"$BUNDLE_VALIDATE_STDERR"); then
-  echo "ERROR: 'databricks bundle validate' failed:" >&2
-  cat "$BUNDLE_VALIDATE_STDERR" >&2
-  if [[ -z "$TARGET" ]]; then
-    echo "       Hint: re-run with -t <bundle-target> (the bundle defines multiple targets)." >&2
-  fi
-  exit 1
-fi
 
 CATALOG=$(echo "$BUNDLE_JSON" | jq -r '.variables.catalog_name.value // .variables.catalog_name.default // empty')
 SCHEMA=$(echo "$BUNDLE_JSON" | jq -r '.variables.schema_name.value // .variables.schema_name.default // "dqx_app"')

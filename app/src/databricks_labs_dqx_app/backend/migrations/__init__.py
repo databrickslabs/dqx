@@ -1,4 +1,4 @@
-"""Database migration runner for DQX App.
+"""Database migration runner for DQX Studio.
 
 Migrations are versioned DDL statements applied in order against the
 configured catalog/schema. The runner tracks every applied version in a
@@ -79,7 +79,7 @@ class Migration:
 MIGRATIONS: list[Migration] = [
     Migration(
         version=1,
-        description="Baseline schema — all DQX App tables at their final shape",
+        description="Baseline schema — all DQX Studio tables at their final shape",
         sql_template=(
             # Settings — single-row-per-key key/value store (workspace
             # config, label catalog, custom metrics, timezone, ...).
@@ -258,7 +258,7 @@ _META_TABLE = f"{_PLACEHOLDER}.dq_migrations"
 
 
 class MigrationRunner:
-    """Applies pending database migrations against the DQX App schema.
+    """Applies pending database migrations against the DQX Studio schema.
 
     All DDL is executed via the Databricks Statement Execution API using
     the app's service-principal credentials, *not* the OBO user token.

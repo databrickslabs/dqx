@@ -192,11 +192,15 @@ profile = "black"
 [tool.mypy]
 # ``app/*`` is a self-contained uv sub-project (``app/pyproject.toml``)
 # with its own venv, its own mypy config, and its own ``app/tests/``
-# suite. The library-level ``make fmt`` / ``make lint`` only cover the
-# DQX library itself, so we skip the whole subtree to avoid a
+# suite. Only mypy is opted out at the library level — to avoid a
 # "Duplicate module named 'tests'" collision between the library's own
 # ``tests/`` package and ``app/tests/`` (both ship ``__init__.py``).
-# Type-check the app via ``cd app && uv run mypy .`` instead.
+# Type-check the app via ``make app-check`` (runs ``apx dev check``)
+# instead. Black and ruff still traverse into ``app/`` from the root —
+# ruff picks up the app's own ``[tool.ruff]`` config automatically, and
+# black uses the same ``line-length = 120`` setting in both, so the
+# library-level ``make fmt`` / ``make lint`` formats and lints the app
+# alongside the library.
 exclude = ['venv', '.venv', 'demos/*', 'tests/e2e/*', 'app/*']
 
 [[tool.mypy.overrides]]

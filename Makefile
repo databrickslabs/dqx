@@ -132,7 +132,7 @@ app-deploy: app-build
 	app/scripts/post_deploy_grants.sh -p $(PROFILE) -t $(TARGET)
 	cd app && databricks bundle run $(APP_NAME) -p $(PROFILE) -t $(TARGET)
 
-APP_NAME ?= databricks-labs-dqx-app
+APP_NAME ?= dqx-studio
 
 # Regenerate app lockfiles (uv.lock, .build-constraints.txt) and
 # scrub private-proxy URLs so the committed files resolve against whatever
