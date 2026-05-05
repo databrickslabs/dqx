@@ -85,7 +85,7 @@ See the [Data Contract Quality Rules Generation Guide](/docs/guide/data_contract
 
 ### Installing DQX with company-hosted PyPI mirror
 
-Some enterprises block the public PyPI index and host a company-controlled PyPI mirror. To install DQX while using a company-hosted PyPI mirror for finding its dependencies, add all DQX dependencies to the company-hosted PyPI mirror (see "dependencies" in [`pyproject.toml`](https://github.com/databrickslabs/dqx/blob/v0.13.0/pyproject.toml)) and set the environment variable `PIP_INDEX_URL` to the company-hosted PyPI mirror URL while installing DQX:
+Some enterprises block the public PyPI index and host a company-controlled PyPI mirror. To install DQX while using a company-hosted PyPI mirror for finding its dependencies, add all DQX dependencies to the company-hosted PyPI mirror (see "dependencies" in [`pyproject.toml`](https://github.com/databrickslabs/dqx/blob/v0.14.0/pyproject.toml)) and set the environment variable `PIP_INDEX_URL` to the company-hosted PyPI mirror URL while installing DQX:
 
 ```commandline
 PIP_INDEX_URL="https://url-to-company-hosted-pypi.internal" pip install databricks-labs-dqx
@@ -383,7 +383,7 @@ resources:
 
 ### Installing DQX with company-hosted PyPI mirror
 
-Some enterprises block the public PyPI index and host a company-controlled PyPI mirror. To install DQX while using a company-hosted PyPI mirror for finding its dependencies, add all DQX dependencies to the company-hosted PyPI mirror (see "dependencies" in [`pyproject.toml`](https://github.com/databrickslabs/dqx/blob/v0.13.0/pyproject.toml)) and set the environment variable `PIP_INDEX_URL` to the company-hosted PyPI mirror URL while installing DQX:
+Some enterprises block the public PyPI index and host a company-controlled PyPI mirror. To install DQX while using a company-hosted PyPI mirror for finding its dependencies, add all DQX dependencies to the company-hosted PyPI mirror (see "dependencies" in [`pyproject.toml`](https://github.com/databrickslabs/dqx/blob/v0.14.0/pyproject.toml)) and set the environment variable `PIP_INDEX_URL` to the company-hosted PyPI mirror URL while installing DQX:
 
 ```commandline
 PIP_INDEX_URL="https://url-to-company-hosted-pypi.internal" databricks labs install dqx
@@ -469,7 +469,7 @@ Databricks CLI will confirm a few options:
          trigger_pause_status: PAUSED
    ```
 
-   See the [DQX Studio deployment guide](https://github.com/databrickslabs/dqx/blob/v0.13.0/app/DEPLOYMENT.md#step-3-configure-databricksyml) for the full reference of each variable, including security implications of `admin_group` and when to override per target.
+   See the [DQX Studio deployment guide](https://github.com/databrickslabs/dqx/blob/v0.14.0/app/DEPLOYMENT.md#step-3-configure-databricksyml) for the full reference of each variable, including security implications of `admin_group` and when to override per target.
 
 4. Build, deploy, grant permissions, and start the studio in a single command:
    ```commandline
@@ -480,7 +480,7 @@ Databricks CLI will confirm a few options:
 
 5. Open the deployed app from the **Apps** page in your Databricks workspace.
 
-For the full walkthrough — including step-by-step commands, manual `GRANT` statements, troubleshooting, and target-specific configuration — see the [DQX Studio deployment guide](https://github.com/databrickslabs/dqx/blob/v0.13.0/app/DEPLOYMENT.md).
+For the full walkthrough — including step-by-step commands, manual `GRANT` statements, troubleshooting, and target-specific configuration — see the [DQX Studio deployment guide](https://github.com/databrickslabs/dqx/blob/v0.14.0/app/DEPLOYMENT.md).
 
 <Admonition type="note" title="First-run wheel upload">
 On its first start, DQX Studio runs database migrations and uploads its DQX wheel files to the Unity Catalog volume. If the task-runner job is triggered before the app has fully started at least once, it will fail to find its wheels. Wait for `Uploaded databricks_labs_dqx-<version>...` in the app logs before triggering any profiler or dry-run jobs.
@@ -516,7 +516,7 @@ You have two options to set up the dashboard:
 
 ### Option 1: Import directly in the workspace
 
-You can import the dashboard directly from a file. The dashboard file (`DQX_Dashboard.lvdash.json`) is available in the [GitHub repository](https://github.com/databrickslabs/dqx/blob/v0.13.0/src/databricks/labs/dqx/dashboards/). To import it:
+You can import the dashboard directly from a file. The dashboard file (`DQX_Dashboard.lvdash.json`) is available in the [GitHub repository](https://github.com/databrickslabs/dqx/blob/v0.14.0/src/databricks/labs/dqx/dashboards/). To import it:
 1. Navigate to **Dashboards** in the Databricks UI
 2. Click **Import dashboard from file**
 3. Select the `.lvdash.json` file
