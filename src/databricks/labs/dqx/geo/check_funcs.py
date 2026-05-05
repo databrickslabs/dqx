@@ -941,22 +941,27 @@ def is_within_polygon_precise(
     https://docs.databricks.com/aws/en/sql/language-manual/data-types/geometry-type
 
     Args:
-         column: Column to check.
-         reference_polygon: Reference polygon literal value or column name to use for geofencing.
+         column: Column to check. Null values are skipped for validation.
+         reference_polygon: Reference polygon literal value or column name to use for geofencing. Literal string
+            or binary values are treated by default as WKT or WKB correspondingly. If literal string is provided,
+            then `reference_polygon_type` parameter must be specified.
          column_type: Geo spatial type convert the column to from original storage format (`STRING` or `BINARY`).
                       Valid values are `GEOGRAPHY`, `GEOMETRY` or None, which is treated as no convertion applied.
                       Optional configuration, if column type is either `GEOGRAPHY` or `GEOMETRY`, otherwise required.
+                      When None, the actual column type in Spark is not restricted or validated — the caller is
+                      responsible for ensuring the column already holds a valid spatial type.
         column_representation: Geo spatial format to use to convert original column from. Valid values are `WKT`, `WKB`,
             `EWKT`, `EWKB` or None, which is treated as no convertion applied. Optional configuration,
             if column is already one of aforementioned types. Optional configuration, if column type is either
             `GEOGRAPHY` or `GEOMETRY`, otherwise required.
         reference_polygon_type: Geo spatial type convert the reference polygon to from original storage format (`STRING` or `BINARY`).
                       Valid values are `GEOGRAPHY`, `GEOMETRY` or None, which is treated as no convertion applied.
-                      Optional configuration, if column type is either `GEOGRAPHY` or `GEOMETRY`, otherwise required.
+                      Optional configuration, if `reference_polygon` column is either `GEOGRAPHY` or `GEOMETRY`,
+                      otherwise required.
         reference_polygon_representation: Geo spatial format to use to convert original reference polygon from.
             Valid values are `WKT`, `WKB`, `EWKT`, `EWKB` or None, which is treated as no convertion applied.
             Optional configuration, if column is already one of aforementioned types. Optional configuration,
-            if column type is either `GEOGRAPHY` or `GEOMETRY`, otherwise required.
+            if `reference_polygon` column type is either `GEOGRAPHY` or `GEOMETRY`, otherwise required.
         topological_relationship: Defines a function to use for geofencing verification between target column and
             reference_polygon. Valid values are `CONTAINS` (maps to `st_contains`), `COVERS` (maps to `st_covers`),
             `WITHIN` (maps to `st_within`).
@@ -966,8 +971,19 @@ def is_within_polygon_precise(
     Note:
         This function requires Databricks runtime 17.1 or above.
 
+    Returns:
+        A tuple of:
+            - A Spark Column representing the condition for target geometry/geography being outside polygon.
+            - A closure that applies polygon relationship condition to the target column and adds the condition
+            column to the DataFrame.
     Raises:
-        InvalidParameterError: If the `column` is **NOT** either `GEOGRAPHY` or `GEOMETRY` type and `column_type`
+        InvalidParameterError: If the `column` is **NOT** either `GEOGRAPHY` or `GEOMETRY` type and BOTH `column_type`
         and `column_representation` are **NOT** provided.
+        InvalidParameterError: If exactly one of `column_type` and `column_representation` is provided while the
+        other is absent — both must be specified together or both omitted.
+        InvalidParameterError: If exactly one of `reference_polygon_type` and `reference_polygon_representation` is
+        provided while the other is absent — both must be specified together or both omitted.
+        InvalidParameterError: If an invalid value is supplied for `column_type`, `column_representation`,
+        `reference_polygon_type`, `reference_polygon_representation`, or `topological_relationship`.
     """
     pass
