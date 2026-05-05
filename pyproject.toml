@@ -215,6 +215,7 @@ cache_dir = ".venv/pytest-cache"
 filterwarnings = ["ignore::DeprecationWarning"]
 markers = [
     "anomaly: marks tests as anomaly detection tests",
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
 ]
 pythonpath = ["src", "app/src"]
 
@@ -883,6 +884,7 @@ redefining-builtins-modules = ["six.moves", "past.builtins", "future.builtins", 
 "tests/integration/test_app_backend.py" = "import-outside-toplevel"
 "src/databricks/labs/dqx/anomaly/anomaly_workflow.py" = "import-outside-toplevel"
 "src/databricks/labs/dqx/check_funcs.py" = "protected-access"
+"tests/unit/test_anomaly_llm_explainer.py" = "protected-access"
 
 # This plugin is used to generate correct links in README showed on PyPi
 [tool.hatch.metadata.hooks.fancy-pypi-readme]

@@ -243,15 +243,133 @@ def test_llm_model_config_defaults():
     assert config.model_name == "databricks/databricks-claude-sonnet-4-5"
     assert config.api_key == ""
     assert config.api_base == ""
+    assert config.executor == "ai_query"
+
+
+def test_llm_model_config_executor_driver_is_accepted():
+    config = LLMModelConfig(executor="driver")
+    assert config.executor == "driver"
+
+
+def test_llm_model_config_rejects_unknown_executor():
+    with pytest.raises(InvalidParameterError, match="executor must be 'ai_query' or 'driver'"):
+        LLMModelConfig(executor="cluster")
+
+
+def test_llm_model_config_max_retries_default():
+    assert LLMModelConfig().max_retries == 3
+
+
+def test_llm_model_config_max_retries_accepts_zero():
+    """0 disables retries entirely — useful for tests that want to surface failures fast."""
+    assert LLMModelConfig(max_retries=0).max_retries == 0
+
+
+def test_llm_model_config_rejects_negative_max_retries():
+    with pytest.raises(InvalidParameterError, match="max_retries must be a non-negative integer"):
+        LLMModelConfig(max_retries=-1)
+
+
+def test_llm_model_config_rejects_non_integer_max_retries():
+    with pytest.raises(InvalidParameterError, match="max_retries must be a non-negative integer"):
+        LLMModelConfig(max_retries=2.5)  # type: ignore[arg-type]
+
+
+def test_llm_model_config_rejects_bool_max_retries():
+    """``True``/``False`` are ints in Python but a clear typo in this context — reject explicitly."""
+    with pytest.raises(InvalidParameterError, match="max_retries must be a non-negative integer"):
+        LLMModelConfig(max_retries=True)  # type: ignore[arg-type]
 
 
 def test_llm_model_config_custom_values():
     config = LLMModelConfig(
-        model_name="custom-model", api_key="secret_scope/secret_key", api_base="https://api.example.com"
+        model_name="custom-model",
+        api_key="secret_scope/secret_key",
+        api_base="https://api.openai.com",
     )
     assert config.model_name == "custom-model"
     assert config.api_key == "secret_scope/secret_key"
-    assert config.api_base == "https://api.example.com"
+    assert config.api_base == "https://api.openai.com"
+    assert config.max_tokens == 1000
+    assert config.temperature == 0.0
+    assert config.timeout == 30.0
+    assert not config.api_base_allowed_hosts
+
+
+def test_llm_model_config_budget_overrides():
+    config = LLMModelConfig(max_tokens=500, temperature=0.7, timeout=15.0)
+    assert config.model_name == "databricks/databricks-claude-sonnet-4-5"
+    assert config.api_key == ""
+    assert config.api_base == ""
+    assert config.max_tokens == 500
+    assert config.temperature == 0.7
+    assert config.timeout == 15.0
+    assert not config.api_base_allowed_hosts
+
+
+def test_llm_model_config_accepts_secret_reference_for_api_base():
+    # Profiler Workflow stores secret_scope/secret_key in api_base; resolved later, not a URL.
+    config = LLMModelConfig(api_base="my_scope/my_key")
+    assert config.model_name == "databricks/databricks-claude-sonnet-4-5"
+    assert config.api_key == ""
+    assert config.api_base == "my_scope/my_key"
+    assert not config.api_base_allowed_hosts
+
+
+def test_llm_model_config_rejects_http_scheme():
+    with pytest.raises(InvalidParameterError, match="https"):
+        LLMModelConfig(api_base="http://api.openai.com")
+
+
+def test_llm_model_config_rejects_bare_host_without_scheme():
+    # Anything other than a strict 'scope/key' secret reference must include a scheme.
+    with pytest.raises(InvalidParameterError, match="https URL or a 'secret_scope/secret_key'"):
+        LLMModelConfig(api_base="attacker.com")
+
+
+def test_llm_model_config_rejects_disallowed_host():
+    with pytest.raises(InvalidParameterError, match="not in the allowed-hosts"):
+        LLMModelConfig(api_base="https://attacker.com")
+
+
+def test_llm_model_config_accepts_user_extended_allowlist():
+    config = LLMModelConfig(
+        api_base="https://gateway.corp.example/v1",
+        api_base_allowed_hosts=("gateway.corp.example",),
+    )
+    assert config.model_name == "databricks/databricks-claude-sonnet-4-5"
+    assert config.api_key == ""
+    assert config.api_base == "https://gateway.corp.example/v1"
+    assert config.api_base_allowed_hosts == ("gateway.corp.example",)
+
+
+def test_llm_model_config_rejects_subdomain_prefix_bypass():
+    # "attackeropenai.com" must not match ".openai.com" via naive endswith
+    with pytest.raises(InvalidParameterError, match="not in the allowed-hosts"):
+        LLMModelConfig(api_base="https://attackeropenai.com")
+
+
+def test_llm_model_config_rejects_empty_allowlist_entry():
+    # Empty entries must not act as a wildcard
+    with pytest.raises(InvalidParameterError, match="not in the allowed-hosts"):
+        LLMModelConfig(api_base="https://attacker.com", api_base_allowed_hosts=("",))
+
+
+def test_llm_model_config_ip_literal_requires_exact_match():
+    # 'attacker.10.0.0.1' must not match '10.0.0.1' allowlist entry
+    with pytest.raises(InvalidParameterError, match="not in the allowed-hosts"):
+        LLMModelConfig(api_base="https://attacker.10.0.0.1", api_base_allowed_hosts=("10.0.0.1",))
+
+
+def test_llm_model_config_ipv6_with_brackets():
+    config = LLMModelConfig(api_base="https://[::1]/v1", api_base_allowed_hosts=("[::1]",))
+    assert config.api_base == "https://[::1]/v1"
+    assert config.api_base_allowed_hosts == ("[::1]",)
+
+
+def test_llm_model_config_accepts_trailing_dot_fqdn():
+    config = LLMModelConfig(api_base="https://api.openai.com./v1")
+    assert config.api_base == "https://api.openai.com./v1"
 
 
 # Test LLMConfig
