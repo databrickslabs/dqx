@@ -21,6 +21,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 from databricks_labs_dqx_app.backend.logger import logger
 from databricks_labs_dqx_app.backend.models import (
+    BatchProfileRunFailure,
     BatchProfileRunIn,
     BatchProfileRunOut,
     ProfileResultsOut,
@@ -39,6 +40,51 @@ _PROFILER_TABLE = "dq_profiling_results"
 
 _ALL_ROLES = [UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTHOR, UserRole.VIEWER]
 _AUTHORS_AND_ABOVE = [UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTHOR]
+
+
+def _classify_table_error(exc: Exception, table_fqn: str) -> tuple[int, str, str]:
+    """Map a low-level SQL/Spark exception to ``(http_status, code, message)``.
+
+    The view-creation step runs as the *user* (OBO token), so the most
+    common failure mode is "you don't have ``USE SCHEMA`` / ``USE CATALOG``
+    / ``SELECT`` on the underlying table". When that happens the SDK
+    surfaces a long, multi-line error containing ``INSUFFICIENT_PERMISSIONS``
+    + ``SQLSTATE: 42501``. We pluck out the actionable piece (which schema,
+    which permission) and return a 403 so clients can render a clean
+    "permission denied" headline instead of a generic "server error".
+    """
+    raw = str(exc) or ""
+    upper = raw.upper()
+
+    # Permission failures — surfaced from Unity Catalog as
+    # ``[INSUFFICIENT_PERMISSIONS] Insufficient privileges: User does not
+    # have <PRIV> on <Schema|Catalog|Table> '<fqn>'. SQLSTATE: 42501``.
+    if "INSUFFICIENT_PERMISSIONS" in upper or "SQLSTATE: 42501" in upper or "PERMISSION_DENIED" in upper:
+        # Try to lift the actionable substring out of the surrounding
+        # SQL noise. Anything in the original message that mentions
+        # "User does not have ..." is what the user actually needs to
+        # see. We keep the table FQN as a prefix so the message reads
+        # well in a per-table failure list.
+        actionable = raw
+        marker = "Insufficient privileges:"
+        if marker in raw:
+            actionable = raw.split(marker, 1)[1].strip()
+            # Strip the trailing SQL fragment if present — clients don't
+            # need the verbatim ``CREATE OR REPLACE VIEW ...`` statement.
+            for cut in ("SQLSTATE:", "\nSQL:", "\nSQL ", "\n SQL"):
+                if cut in actionable:
+                    actionable = actionable.split(cut, 1)[0].strip().rstrip(".")
+                    break
+        return (
+            403,
+            "INSUFFICIENT_PERMISSIONS",
+            f"You don't have permission to read {table_fqn}: {actionable}".rstrip(),
+        )
+
+    if "TABLE_OR_VIEW_NOT_FOUND" in upper or "NOT_FOUND" in upper or "DOES NOT EXIST" in upper.replace("_", " "):
+        return (404, "TABLE_OR_VIEW_NOT_FOUND", f"Table {table_fqn} was not found or is not visible to you.")
+
+    return (500, "UNKNOWN", f"Failed to submit profile run for {table_fqn}: {raw}")
 
 
 @router.get(
@@ -130,8 +176,12 @@ def submit_profile_run(
     except HTTPException:
         raise
     except Exception as e:
+        # Classify so a missing ``USE SCHEMA`` is surfaced as 403 with a
+        # crisp "you don't have permission on <schema>" detail instead of
+        # a generic 500 burying the SQL error in stack-trace noise.
+        status_code, _code, message = _classify_table_error(e, body.table_fqn)
         logger.error("Failed to submit profile run for %s: %s", body.table_fqn, e, exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to submit profile run: {e}")
+        raise HTTPException(status_code=status_code, detail=message)
 
 
 @router.post(
@@ -156,7 +206,7 @@ def submit_batch_profile_run(
         requesting_user = user.user_name or "unknown"
 
         runs: list[ProfileRunOut] = []
-        errors: list[str] = []
+        failures: list[BatchProfileRunFailure] = []
 
         for table_fqn in body.table_fqns:
             try:
@@ -193,19 +243,36 @@ def submit_batch_profile_run(
                     job_run_id=job_run_id,
                 )
             except Exception as table_err:
+                # Classify the per-table failure so the response carries
+                # a stable error code (``INSUFFICIENT_PERMISSIONS`` etc.)
+                # alongside a friendly message. The UI uses these to show
+                # a clean per-table diagnostic instead of a generic toast.
+                _, code, message = _classify_table_error(table_err, table_fqn)
                 logger.error("Failed to submit profile run for %s: %s", table_fqn, table_err, exc_info=True)
-                errors.append(f"{table_fqn}: {table_err}")
+                failures.append(BatchProfileRunFailure(table_fqn=table_fqn, error=message, error_code=code))
 
-        if not runs and errors:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to submit any profile runs: {'; '.join(errors)}",
-            )
+        # Hard-fail only if *every* table failed. Even one success is
+        # worth a 2xx so the UI can navigate to the runs list — the per-
+        # table failures still come back in ``errors``.
+        if not runs and failures:
+            # All-or-nothing failure: pick the most informative status
+            # code. If every failure is an authz error, return 403 so
+            # the client can render "permission denied" semantics; if at
+            # least one is something else, fall back to 500.
+            distinct_codes = {f.error_code for f in failures}
+            if distinct_codes == {"INSUFFICIENT_PERMISSIONS"}:
+                http_status = 403
+            elif distinct_codes == {"TABLE_OR_VIEW_NOT_FOUND"}:
+                http_status = 404
+            else:
+                http_status = 500
+            joined = "; ".join(f"{f.table_fqn}: {f.error}" for f in failures)
+            raise HTTPException(status_code=http_status, detail=joined)
 
-        if errors:
-            logger.warning("Some tables failed in batch profile: %s", errors)
+        if failures:
+            logger.warning("Some tables failed in batch profile: %s", [f.model_dump() for f in failures])
 
-        return BatchProfileRunOut(runs=runs)
+        return BatchProfileRunOut(runs=runs, errors=failures)
     except HTTPException:
         raise
     except Exception as e:

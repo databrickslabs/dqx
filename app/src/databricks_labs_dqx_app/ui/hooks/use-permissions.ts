@@ -12,7 +12,8 @@ export type Permission =
   | "approve_rules"
   | "export_rules"
   | "configure_storage"
-  | "manage_roles";
+  | "manage_roles"
+  | "run_rules";
 
 export interface UsePermissionsResult {
   role: string;
@@ -27,10 +28,19 @@ export interface UsePermissionsResult {
   canExportRules: boolean;
   canConfigureStorage: boolean;
   canManageRoles: boolean;
+  /**
+   * Whether the user can see and use the "Run Rules" page. True for
+   * admins (implicit) and any user with an explicit RUNNER role mapping.
+   * Other primary roles (author, approver, viewer) do NOT grant this on
+   * their own — RUNNER is orthogonal/additive.
+   */
+  canRunRules: boolean;
   isAdmin: boolean;
   isRuleApprover: boolean;
   isRuleAuthor: boolean;
   isViewer: boolean;
+  /** True iff the orthogonal RUNNER role is held (admins always count). */
+  isRunner: boolean;
 }
 
 export function usePermissions(): UsePermissionsResult {
@@ -39,6 +49,11 @@ export function usePermissions(): UsePermissionsResult {
   return useMemo(() => {
     const role = data?.role ?? "viewer";
     const permissions = (data?.permissions ?? []) as Permission[];
+    const isAdmin = role === "admin";
+    // ``is_runner`` from the backend already includes the admin-implicit
+    // case, but we OR with ``isAdmin`` defensively in case the field is
+    // missing (older deployment, cached response, etc.).
+    const isRunner = (data?.is_runner ?? false) || isAdmin;
 
     const hasPermission = (permission: Permission): boolean =>
       permissions.includes(permission);
@@ -56,10 +71,15 @@ export function usePermissions(): UsePermissionsResult {
       canExportRules: hasPermission("export_rules"),
       canConfigureStorage: hasPermission("configure_storage"),
       canManageRoles: hasPermission("manage_roles"),
-      isAdmin: role === "admin",
+      // Prefer the explicit ``run_rules`` permission flag from the
+      // backend (which folds in admin + runner). Fall back to isRunner
+      // for resilience against older API responses.
+      canRunRules: hasPermission("run_rules") || isRunner,
+      isAdmin,
       isRuleApprover: role === "rule_approver",
       isRuleAuthor: role === "rule_author",
       isViewer: role === "viewer",
+      isRunner,
     };
   }, [data]);
 }

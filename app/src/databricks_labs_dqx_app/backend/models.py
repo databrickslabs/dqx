@@ -210,8 +210,39 @@ class BatchProfileRunIn(BaseModel):
     )
 
 
+class BatchProfileRunFailure(BaseModel):
+    """One per-table failure inside a partially-successful batch profile run.
+
+    The route still returns 2xx when at least one table submitted
+    successfully so the frontend can navigate to the runs list, but it
+    surfaces individual per-table failures here so the UI can show the
+    user *exactly* which tables failed and why (e.g. ``USE SCHEMA``
+    permission missing on a specific catalog/schema).
+    """
+
+    table_fqn: str = Field(description="Fully qualified name of the table that failed to submit")
+    error: str = Field(description="Human-readable error message (often the underlying SQL error)")
+    error_code: str | None = Field(
+        default=None,
+        description=(
+            "Stable identifier for known error classes — currently one of "
+            "``INSUFFICIENT_PERMISSIONS``, ``TABLE_OR_VIEW_NOT_FOUND``, or "
+            "``UNKNOWN``. The UI uses this to surface a friendlier headline."
+        ),
+    )
+
+
 class BatchProfileRunOut(BaseModel):
     runs: list[ProfileRunOut] = Field(description="One entry per table with run_id, job_run_id, view_fqn")
+    errors: list[BatchProfileRunFailure] = Field(
+        default_factory=list,
+        description=(
+            "Per-table failures encountered during batch submission. Empty "
+            "when every table submitted successfully. The route still returns "
+            "2xx as long as at least one table submitted; clients should always "
+            "check ``errors`` and surface them to the user."
+        ),
+    )
 
 
 class BatchRunFromCatalogIn(BaseModel):
@@ -312,7 +343,24 @@ class QuarantineListOut(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class CheckMetricBreakdown(BaseModel):
+    """Per-check error/warning breakdown produced by ``DQMetricsObserver``."""
+
+    check_name: str
+    error_count: int = 0
+    warning_count: int = 0
+
+
 class MetricSnapshotOut(BaseModel):
+    """One row in the validation trend chart for a given source table.
+
+    Pivoted from the long-format ``dq_metrics`` table by the metrics
+    route so existing UI components keep working unchanged. Some
+    fields (``error_row_count``, ``warning_row_count``, ``check_metrics``,
+    ``custom_metrics``) are new additions exposed by ``DQMetricsObserver``;
+    older snapshots predating the migration leave them ``None``.
+    """
+
     metric_id: str
     run_id: str
     source_table_fqn: str
@@ -320,8 +368,13 @@ class MetricSnapshotOut(BaseModel):
     total_rows: int | None = None
     valid_rows: int | None = None
     invalid_rows: int | None = None
+    error_row_count: int | None = None
+    warning_row_count: int | None = None
     pass_rate: float | None = None
     error_breakdown: list[dict[str, Any]] | None = None
+    check_metrics: list[CheckMetricBreakdown] | None = None
+    custom_metrics: dict[str, Any] | None = None
+    rule_set_fingerprint: str | None = None
     requesting_user: str | None = None
     created_at: str | None = None
 
@@ -365,6 +418,14 @@ class UserRoleOut(BaseModel):
     email: str
     role: str
     permissions: list[str] = Field(default_factory=list, description="List of permissions granted to this role")
+    is_runner: bool = Field(
+        default=False,
+        description=(
+            "Whether the user holds the orthogonal RUNNER role. Admins are "
+            "always runners. Other roles only become runners when their "
+            "group is explicitly mapped to RUNNER."
+        ),
+    )
 
 
 class InstallationSettings(BaseModel):
@@ -436,3 +497,53 @@ class ScheduleConfigHistoryOut(BaseModel):
     action: str
     changed_by: str | None = None
     changed_at: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# DQX check function registry models
+# ---------------------------------------------------------------------------
+
+
+class CheckFunctionParam(BaseModel):
+    """A single parameter on a DQX check function as exposed to the UI.
+
+    The shape is intentionally permissive: ``kind`` is a coarse,
+    UI-friendly classification derived from ``inspect.signature`` while
+    ``annotation`` preserves the verbatim Python type hint for advanced
+    consumers (e.g. validation tooling, AI prompts).
+    """
+
+    name: str = Field(description="Parameter name as defined on the DQX function")
+    kind: str = Field(
+        description=("UI input kind: 'column', 'columns', 'boolean', 'number', " "'list', or 'string'."),
+    )
+    required: bool = Field(description="True iff the parameter has no default")
+    default: str | None = Field(
+        default=None,
+        description="String-rendered default value (omitted when required)",
+    )
+    annotation: str = Field(
+        default="",
+        description="Verbatim Python type annotation (best-effort string repr)",
+    )
+
+
+class CheckFunctionDef(BaseModel):
+    """A DQX check function as advertised by the backend to the UI."""
+
+    name: str = Field(description="Function name as registered in CHECK_FUNC_REGISTRY")
+    rule_type: str = Field(description="'row' or 'dataset'")
+    category: str = Field(
+        description=(
+            "UX grouping bucket (e.g. 'Null & Empty', 'Numeric & Comparable', "
+            "'Aggregates'). Used to group entries in the UI dropdown."
+        ),
+    )
+    doc: str = Field(default="", description="First line of the function docstring")
+    params: list[CheckFunctionParam] = Field(default_factory=list)
+
+
+class CheckFunctionsOut(BaseModel):
+    """Response wrapper for ``GET /api/v1/check-functions``."""
+
+    functions: list[CheckFunctionDef] = Field(default_factory=list)

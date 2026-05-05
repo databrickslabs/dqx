@@ -1,7 +1,7 @@
 [project]
 name = "databricks-labs-dqx-task-runner"
 version = "0.1.0"
-description = "Serverless task runner for DQX App — executes profiler and dry-run jobs on Databricks compute"
+description = "Serverless task runner for DQX Studio — executes profiler and dry-run jobs on Databricks compute"
 requires-python = ">=3.11"
 dependencies = [
     "databricks-labs-dqx",
