@@ -69,6 +69,13 @@ class DQPattern(Enum):
 
     IPV4_ADDRESS = rf"^{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}$"
     IPV4_CIDR_BLOCK = rf"{IPV4_ADDRESS[:-1]}/{_IPV4_CIDR_SUFFIX}$"
+    # RFC 5321 pragmatic subset — no quoted local parts, bounded quantifiers (ReDoS-safe)
+    EMAIL_ADDRESS = (
+        r"^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+"
+        r"@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?"
+        r"(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*"
+        r"\.[a-zA-Z]{2,}$"
+    )
 
 
 def make_condition(condition: Column, message: Column | str, alias: str) -> Column:
@@ -969,6 +976,23 @@ def is_valid_ipv4_address(column: str | Column) -> Column:
         Column object for condition
     """
     return _matches_pattern(column, DQPattern.IPV4_ADDRESS)
+
+
+@register_rule("row")
+def is_valid_email(column: str | Column) -> Column:
+    """Checks whether the values in the input column are valid email addresses.
+
+    Validates against a pragmatic RFC 5321/5322 subset. Quoted local parts
+    (e.g. *"foo bar"@example.com*) and IP-literal domain forms are not supported.
+    Null values are treated as passing the check (no violation reported).
+
+    Args:
+        column: column to check; can be a string column name or a column expression
+
+    Returns:
+        Column object for condition
+    """
+    return _matches_pattern(column, DQPattern.EMAIL_ADDRESS)
 
 
 @register_rule("row")

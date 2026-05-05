@@ -31,6 +31,7 @@ from databricks.labs.dqx.check_funcs import (
     has_valid_json_schema,
     is_valid_timestamp,
     is_valid_ipv4_address,
+    is_valid_email,
     is_ipv4_address_in_cidr,
     is_valid_ipv6_address,
     is_ipv6_address_in_cidr,
@@ -1839,6 +1840,41 @@ def test_col_is_valid_ipv4_address(spark):
         ],
         checked_schema,
     )
+    assertDataFrameEqual(actual, expected)
+
+
+def test_col_is_valid_email(spark):
+    schema_email = "a: string"
+
+    test_df = spark.createDataFrame(
+        [
+            ["user@example.com"],
+            ["user.name+tag@sub.domain.org"],
+            ["user@localhost"],  # No TLD - should fail based on our regex
+            ["plainaddress"],
+            ["@missinglocal.com"],
+            ["missingdomain@"],
+            ["missing@tld"],
+            [None],
+        ],
+        schema_email,
+    )
+
+    actual = test_df.select(is_valid_email("a"))
+
+    checked_schema = "a_does_not_match_pattern_email_address: string"
+    checked_data = [
+        [None],
+        [None],
+        ["Value 'user@localhost' in Column 'a' does not match pattern 'EMAIL_ADDRESS'"],
+        ["Value 'plainaddress' in Column 'a' does not match pattern 'EMAIL_ADDRESS'"],
+        ["Value '@missinglocal.com' in Column 'a' does not match pattern 'EMAIL_ADDRESS'"],
+        ["Value 'missingdomain@' in Column 'a' does not match pattern 'EMAIL_ADDRESS'"],
+        ["Value 'missing@tld' in Column 'a' does not match pattern 'EMAIL_ADDRESS'"],
+        [None],
+    ]
+    expected = spark.createDataFrame(checked_data, checked_schema)
+
     assertDataFrameEqual(actual, expected)
 
 

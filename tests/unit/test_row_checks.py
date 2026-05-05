@@ -12,6 +12,7 @@ from databricks.labs.dqx.check_funcs import (
     is_aggr_not_greater_than,
     is_ipv4_address_in_cidr,
     is_ipv6_address_in_cidr,
+    is_valid_email,
     sql_expression,
 )
 from databricks.labs.dqx.pii.pii_detection_funcs import does_not_contain_pii
@@ -141,3 +142,16 @@ def test_sql_expression_complex_exists_negate_auto_name():
     expression = "EXISTS (SELECT 1 FROM cfg WHERE cfg.val = STATUS)"
     result = sql_expression(expression, negate=True)
     assert get_column_name_or_alias(result) == "exists_select_1_from_cfg_where_cfg_val_status"
+
+
+def test_is_valid_email_returns_column_with_correct_alias():
+    result = is_valid_email("email")
+    assert get_column_name_or_alias(result) == "email_does_not_match_pattern_email_address"
+
+
+def test_is_valid_email_with_column_expression():
+    import pyspark.sql.functions as F
+
+    col_expr = F.col("user_email")
+    result = is_valid_email(col_expr)
+    assert get_column_name_or_alias(result) == "user_email_does_not_match_pattern_email_address"
