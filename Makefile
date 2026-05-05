@@ -82,7 +82,7 @@ app-install:
 
 app-build:
 	cd app && \
-	  UV_BUILD_CONSTRAINT=$(CURDIR)/app/.build-constraints.txt \
+	  UV_BUILD_CONSTRAINT=.build-constraints.txt \
 	  UV_REQUIRE_HASHES=1 \
 	  $(UV_RUN) apx build && \
 	  uv build ../ --wheel --out-dir .build/ && \
