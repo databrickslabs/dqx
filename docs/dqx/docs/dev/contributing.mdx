@@ -117,7 +117,7 @@ In all cases, the full test suite is executed on code merged into `main` branch 
 
 This section provides a step-by-step guide for setting up your local environment and dependencies for efficient development.
 
-To start with, install the required python version on your computer (see `requires-python` field in [pyproject.toml](https://github.com/databrickslabs/dqx/blob/v0.13.0/pyproject.toml)).
+To start with, install the required python version on your computer (see `requires-python` field in [pyproject.toml](https://github.com/databrickslabs/dqx/blob/v0.14.0/pyproject.toml)).
 On MacOSX, run:
 ```
 # double check the required version in pyproject.toml
@@ -167,7 +167,7 @@ Always use `make` targets instead of running `uv` commands directly. The Makefil
 
 ### DQX App development
 
-The DQX App (under `app/`) is a FastAPI backend + React frontend packaged as a single Python wheel and deployed as a [Databricks App](https://docs.databricks.com/en/dev-tools/databricks-apps/index.html). See [app/README.md](https://github.com/databrickslabs/dqx/blob/v0.13.0/app/README.md) for architecture and local development, and [DQX App deployment](#dqx-app-deployment) below for the end-to-end deployment guide.
+The DQX App (under `app/`) is a FastAPI backend + React frontend packaged as a single Python wheel and deployed as a [Databricks App](https://docs.databricks.com/en/dev-tools/databricks-apps/index.html). See [app/README.md](https://github.com/databrickslabs/dqx/blob/v0.14.0/app/README.md) for architecture and local development, and [DQX App deployment](#dqx-app-deployment) below for the end-to-end deployment guide.
 
 Install the app's JavaScript dependencies (using the committed `yarn.lock`):
 ```shell
@@ -202,7 +202,7 @@ DATABRICKS_WAREHOUSE_ID=<your-warehouse-id>     # SQL Warehouses → connection 
 DQX_JOB_ID=<task-runner-job-id>                 # optional locally; required for profiler / dry-run
 ```
 
-If you don't have a profile yet, run `databricks auth login --host <workspace-url> -p <your-profile>` first. See the [Development Mode](https://github.com/databrickslabs/dqx/blob/v0.13.0/app/README.md#development-mode) section of the app README for more detail.
+If you don't have a profile yet, run `databricks auth login --host <workspace-url> -p <your-profile>` first. See the [Development Mode](https://github.com/databrickslabs/dqx/blob/v0.14.0/app/README.md#development-mode) section of the app README for more detail.
 
 <Admonition type="note" title="Profiler and dry-run features require deployment">
 The **profiler** and **dry-run** features rely on a Databricks Job (`dqx-app-task-runner`) that only exists after you deploy the app bundle to a workspace. For local UI and backend development (routes, components, auth wiring, config), you can skip this — `DQX_JOB_ID` is not required and the app will start without it. All other features will work locally.
@@ -227,7 +227,7 @@ Deploying the app to a workspace is required when you want to:
 - verify a change behaves correctly under the production identity model (service principal + on-behalf-of), or
 - run a review pass against a deployed app before merging.
 
-For the full step-by-step (service principal creation, asset-bundle deploy, schema/volume permission grants, app start, troubleshooting) follow [app/DEPLOYMENT.md](https://github.com/databrickslabs/dqx/blob/v0.13.0/app/DEPLOYMENT.md).
+For the full step-by-step (service principal creation, asset-bundle deploy, schema/volume permission grants, app start, troubleshooting) follow [app/DEPLOYMENT.md](https://github.com/databrickslabs/dqx/blob/v0.14.0/app/DEPLOYMENT.md).
 
 ### Running integration tests and code coverage
 
@@ -549,4 +549,4 @@ The following skills are provided to cover the main capabilities of DQX:
 - Keep each `SKILL.md` file short. The full file is loaded into context when a skill fires.
 - Link to existing documentation instead of duplicating content. The skill's job is to tell the assistant when and how to use an API.
 - Limit skills to use only public methods and APIs of DQX.
-- Update the [documentation](https://github.com/databrickslabs/dqx/blob/v0.13.0/docs/dqx/docs/guide/ai_tools_skills.mdx) if you change install paths, the marketplace manifest, or the public list of skills.
+- Update the [documentation](https://github.com/databrickslabs/dqx/blob/v0.14.0/docs/dqx/docs/guide/ai_tools_skills.mdx) if you change install paths, the marketplace manifest, or the public list of skills.
