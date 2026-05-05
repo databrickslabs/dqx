@@ -1,6 +1,7 @@
 from collections.abc import Callable
 import operator as py_operator
 import uuid
+from typing import Literal
 
 from pyspark.sql import Column, DataFrame
 import pyspark.sql.functions as F
@@ -918,3 +919,55 @@ def are_polygons_mutually_disjoint(
     )
 
     return condition, apply
+
+@register_rule("dataset")
+def is_within_polygon_precise(
+    column: str | Column,
+    reference_polygon: str | bytearray | Column,
+    column_type: Literal["GEOMETRY"] | Literal["GEOGRAPHY"] | None = None,
+    column_representation: Literal["WKT"] | Literal["WKB"] | Literal["EWKT"] | Literal["EWKB"] | None = None,
+    reference_polygon_type: Literal["GEOMETRY"] | Literal["GEOGRAPHY"] | None = None,
+    reference_polygon_representation: Literal["WKT"] | Literal["WKB"] | Literal["EWKT"] | Literal["EWKB"] | None = None,
+    topological_relationship: Literal["CONTAINS"] | Literal["COVERS"] | Literal["WITHIN"] = "WITHIN",
+):
+    """
+    Checks if the given column is precisely within a polygon. In other words, performs geofencing verification.
+    This checks leverages `ST_*` set of functions for spatial types conversion and manipulation, which allows
+    to achieve meter level prescription for the testing.
+
+    Please, see the following documentation for more details:
+    https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-st-geospatial-functions
+    https://docs.databricks.com/aws/en/sql/language-manual/data-types/geography-type
+    https://docs.databricks.com/aws/en/sql/language-manual/data-types/geometry-type
+
+    Args:
+         column: Column to check.
+         reference_polygon: Reference polygon literal value or column name to use for geofencing.
+         column_type: Geo spatial type convert the column to from original storage format (`STRING` or `BINARY`).
+                      Valid values are `GEOGRAPHY`, `GEOMETRY` or None, which is treated as no convertion applied.
+                      Optional configuration, if column type is either `GEOGRAPHY` or `GEOMETRY`, otherwise required.
+        column_representation: Geo spatial format to use to convert original column from. Valid values are `WKT`, `WKB`,
+            `EWKT`, `EWKB` or None, which is treated as no convertion applied. Optional configuration,
+            if column is already one of aforementioned types. Optional configuration, if column type is either
+            `GEOGRAPHY` or `GEOMETRY`, otherwise required.
+        reference_polygon_type: Geo spatial type convert the reference polygon to from original storage format (`STRING` or `BINARY`).
+                      Valid values are `GEOGRAPHY`, `GEOMETRY` or None, which is treated as no convertion applied.
+                      Optional configuration, if column type is either `GEOGRAPHY` or `GEOMETRY`, otherwise required.
+        reference_polygon_representation: Geo spatial format to use to convert original reference polygon from.
+            Valid values are `WKT`, `WKB`, `EWKT`, `EWKB` or None, which is treated as no convertion applied.
+            Optional configuration, if column is already one of aforementioned types. Optional configuration,
+            if column type is either `GEOGRAPHY` or `GEOMETRY`, otherwise required.
+        topological_relationship: Defines a function to use for geofencing verification between target column and
+            reference_polygon. Valid values are `CONTAINS` (maps to `st_contains`), `COVERS` (maps to `st_covers`),
+            `WITHIN` (maps to `st_within`).
+            Please, see the following documentation for more details:
+            https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-st-geospatial-functions#topological-relationships
+
+    Note:
+        This function requires Databricks runtime 17.1 or above.
+
+    Raises:
+        InvalidParameterError: If the `column` is **NOT** either `GEOGRAPHY` or `GEOMETRY` type and `column_type`
+        and `column_representation` are **NOT** provided.
+    """
+    pass
