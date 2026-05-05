@@ -36,7 +36,8 @@ import {
 } from "@/lib/api";
 import { deleteRuleById } from "@/lib/api-custom";
 import { usePermissions } from "@/hooks/use-permissions";
-import { parseFqn, formatUser } from "@/lib/format-utils";
+import { parseFqn, formatUser, getUserMetadata, labelToken } from "@/lib/format-utils";
+import { LabelFilter, LabelsBadges, labelsMatchFilter } from "@/components/Labels";
 import {
   AlertDialog,
   AlertDialogContent,
@@ -84,9 +85,30 @@ function ActiveRulesPage() {
 
   const { canCreateRules, canApproveRules, canExportRules } = usePermissions();
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  const [labelFilter, setLabelFilter] = useState<Set<string>>(new Set());
 
   const { data: rulesResp, isLoading, error, refetch } = useListRules({ status: "approved" });
   const allRules: RuleCatalogEntryOut[] = Array.isArray(rulesResp?.data) ? rulesResp.data : [];
+
+  // Collect every distinct ``key=value`` pair seen on an approved rule's
+  // checks. Used to populate the LabelFilter dropdown.
+  const availableLabels = useMemo(() => {
+    const seen = new Set<string>();
+    const out: { key: string; value: string }[] = [];
+    for (const rule of allRules) {
+      for (const check of rule.checks) {
+        const md = getUserMetadata(check as Record<string, unknown>);
+        for (const [key, value] of Object.entries(md)) {
+          const tok = labelToken(key, value);
+          if (!seen.has(tok)) {
+            seen.add(tok);
+            out.push({ key, value });
+          }
+        }
+      }
+    }
+    return out;
+  }, [allRules]);
 
   const { catalogs, schemasByCatalog, sources } = useMemo(() => {
     const catalogSet = new Set<string>();
@@ -131,9 +153,18 @@ function ActiveRulesPage() {
         if (schema !== schemaFilter) return false;
       }
       if (sourceFilter !== "all" && (rule.source ?? "ui") !== sourceFilter) return false;
+      // Match the label filter against the user_metadata of *any* check on
+      // the rule entry. ``labelFilter`` is a Set of ``key=value`` tokens; an
+      // empty set means "no label filter applied".
+      if (labelFilter.size > 0) {
+        const matched = rule.checks.some((c) =>
+          labelsMatchFilter(getUserMetadata(c as Record<string, unknown>), labelFilter),
+        );
+        if (!matched) return false;
+      }
       return true;
     });
-  }, [allRules, catalogFilter, schemaFilter, sourceFilter]);
+  }, [allRules, catalogFilter, schemaFilter, sourceFilter, labelFilter]);
 
   const availableSchemas = catalogFilter !== "all" ? schemasByCatalog[catalogFilter] || [] : [];
 
@@ -194,16 +225,50 @@ function ActiveRulesPage() {
   };
 
   const exportRulesAsYaml = (rules: RuleCatalogEntryOut[], filename: string) => {
+    // Project each saved check into a clean, deterministic shape so the
+    // exported YAML is stable, easy to diff, and *always* surfaces
+    // user_metadata (labels, including weight) when present. Building the
+    // dict explicitly also guards against any internal/UI-only fields
+    // (``_tableFqn``, etc.) leaking through, and against js-yaml dropping
+    // properties from objects with non-enumerable / inherited keys.
+    const projectCheck = (raw: Record<string, unknown>): Record<string, unknown> => {
+      const out: Record<string, unknown> = {};
+      if (typeof raw.name === "string" && raw.name) out.name = raw.name;
+      if (typeof raw.criticality === "string") out.criticality = raw.criticality;
+      // Fold any legacy top-level numeric ``weight`` into user_metadata so
+      // older rows still export with their weight visible as a label.
+      const labels = getUserMetadata(raw);
+      if (typeof raw.weight === "number" && !("weight" in labels)) {
+        labels.weight = String(raw.weight);
+      }
+      const checkObj = (raw.check as Record<string, unknown>) ?? null;
+      if (checkObj && typeof checkObj === "object") {
+        out.check = {
+          function: String(checkObj.function ?? ""),
+          arguments: (checkObj.arguments as Record<string, unknown>) ?? {},
+        };
+      }
+      if (Object.keys(labels).length > 0) {
+        // Plain object literal so js-yaml dumps it as a nested mapping.
+        out.user_metadata = { ...labels };
+      }
+      return out;
+    };
+
     const grouped = new Map<string, Record<string, unknown>[]>();
     for (const rule of rules) {
       const fqn = rule.table_fqn;
       if (!grouped.has(fqn)) grouped.set(fqn, []);
-      grouped.get(fqn)!.push(...rule.checks);
+      for (const c of rule.checks) {
+        grouped.get(fqn)!.push(projectCheck(c as Record<string, unknown>));
+      }
     }
 
     const sections: string[] = [];
     for (const [fqn, checks] of grouped) {
-      sections.push(`# ${fqn}\n${yaml.dump(checks, { lineWidth: -1 })}`);
+      sections.push(
+        `# ${fqn}\n${yaml.dump(checks, { lineWidth: -1, sortKeys: false, noRefs: true })}`,
+      );
     }
 
     const content = sections.join("\n");
@@ -311,12 +376,23 @@ function ActiveRulesPage() {
                 </SelectContent>
               </Select>
 
-              {(catalogFilter !== "all" || schemaFilter !== "all" || sourceFilter !== "all") && (
+              <LabelFilter
+                available={availableLabels}
+                selected={labelFilter}
+                onChange={setLabelFilter}
+              />
+
+              {(catalogFilter !== "all" || schemaFilter !== "all" || sourceFilter !== "all" || labelFilter.size > 0) && (
                 <Button
                   variant="ghost"
                   size="sm"
                   className="h-9 text-xs"
-                  onClick={() => { setCatalogFilter("all"); setSchemaFilter("all"); setSourceFilter("all"); }}
+                  onClick={() => {
+                    setCatalogFilter("all");
+                    setSchemaFilter("all");
+                    setSourceFilter("all");
+                    setLabelFilter(new Set());
+                  }}
                 >
                   Clear filters
                 </Button>
@@ -470,6 +546,7 @@ function ByTableView({ groups, expandedTables, onToggle, onNavigate, canDelete, 
                       <th className="text-left p-2 px-4 font-medium text-xs text-muted-foreground">Function</th>
                       <th className="text-left p-2 px-4 font-medium text-xs text-muted-foreground">Column(s)</th>
                       <th className="text-left p-2 px-4 font-medium text-xs text-muted-foreground">Criticality</th>
+                      <th className="text-left p-2 px-4 font-medium text-xs text-muted-foreground">Labels</th>
                       <th className="text-left p-2 px-4 font-medium text-xs text-muted-foreground">Source</th>
                       <th className="text-left p-2 px-4 font-medium text-xs text-muted-foreground">Created by</th>
                       {canDelete && (
@@ -485,6 +562,7 @@ function ByTableView({ groups, expandedTables, onToggle, onNavigate, canDelete, 
                       const fn = String(checkObj.function ?? "—");
                       const col = String(args.column ?? (Array.isArray(args.columns) ? args.columns.join(", ") : args.columns) ?? "—");
                       const criticality = String(check.criticality ?? "warn");
+                      const labels = getUserMetadata(check);
                       return (
                         <tr key={rule.rule_id ?? rule.table_fqn} className="border-t border-border/50 hover:bg-muted/20">
                           <td className="p-2 px-4 font-mono text-xs">{fn}</td>
@@ -496,6 +574,13 @@ function ByTableView({ groups, expandedTables, onToggle, onNavigate, canDelete, 
                             >
                               {criticality}
                             </Badge>
+                          </td>
+                          <td className="p-2 px-4">
+                            {Object.keys(labels).length === 0 ? (
+                              <span className="text-[10px] italic text-muted-foreground/60">—</span>
+                            ) : (
+                              <LabelsBadges labels={labels} max={3} size="sm" />
+                            )}
                           </td>
                           <td className="p-2 px-4">
                             <Badge
@@ -577,6 +662,7 @@ interface ParsedCheck {
   name: string | null;
   tableFqn: string;
   displayName: string;
+  labels: Record<string, string>;
 }
 
 function ByRuleView({ checks }: { checks: CheckWithMeta[] }) {
@@ -597,6 +683,7 @@ function ByRuleView({ checks }: { checks: CheckWithMeta[] }) {
           name: check.name ? String(check.name) : null,
           tableFqn: check._tableFqn,
           displayName: check._displayName,
+          labels: getUserMetadata(check as Record<string, unknown>),
         };
       })
       .filter((c): c is ParsedCheck => c !== null);
@@ -663,6 +750,7 @@ function ByRuleView({ checks }: { checks: CheckWithMeta[] }) {
                     <th className="text-left p-3 font-medium text-xs">Column(s)</th>
                     <th className="text-left p-3 font-medium text-xs">Criticality</th>
                     <th className="text-left p-3 font-medium text-xs">Name</th>
+                    <th className="text-left p-3 font-medium text-xs">Labels</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -680,6 +768,13 @@ function ByRuleView({ checks }: { checks: CheckWithMeta[] }) {
                       </td>
                       <td className="p-3 text-xs text-muted-foreground">
                         {item.name ?? <span className="italic text-muted-foreground/60">—</span>}
+                      </td>
+                      <td className="p-3">
+                        {Object.keys(item.labels).length === 0 ? (
+                          <span className="text-[10px] italic text-muted-foreground/60">—</span>
+                        ) : (
+                          <LabelsBadges labels={item.labels} max={3} size="sm" />
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -720,6 +815,7 @@ function SqlChecksView({ checks }: { checks: CheckWithMeta[] }) {
             <th className="text-left p-3 font-medium">Mode</th>
             <th className="text-left p-3 font-medium">Table</th>
             <th className="text-left p-3 font-medium">Criticality</th>
+            <th className="text-left p-3 font-medium">Labels</th>
           </tr>
         </thead>
         <tbody>
@@ -730,6 +826,7 @@ function SqlChecksView({ checks }: { checks: CheckWithMeta[] }) {
             const mergeColumns = args.merge_columns as string[] | undefined;
             const mode = mergeColumns && mergeColumns.length > 0 ? "Row-level" : "Dataset-level";
             const criticality = String(check.criticality ?? "warn");
+            const labels = getUserMetadata(check as Record<string, unknown>);
             return (
               <tr key={idx} className="border-b last:border-b-0 hover:bg-muted/30">
                 <td className="p-3 font-mono text-xs">{name}</td>
@@ -744,6 +841,13 @@ function SqlChecksView({ checks }: { checks: CheckWithMeta[] }) {
                   >
                     {criticality}
                   </Badge>
+                </td>
+                <td className="p-3">
+                  {Object.keys(labels).length === 0 ? (
+                    <span className="text-[10px] italic text-muted-foreground/60">—</span>
+                  ) : (
+                    <LabelsBadges labels={labels} max={3} size="sm" />
+                  )}
                 </td>
               </tr>
             );

@@ -2,7 +2,7 @@
 
 ## Overview
 
-FastAPI REST API serving as the DQX App backend. Deployed as a **Databricks App** with On-Behalf-Of (OBO) authentication. Serves both API endpoints (`/api/v1/*`) and the compiled React frontend as static files.
+FastAPI REST API serving as the DQX Studio backend. Deployed as a **Databricks App** with On-Behalf-Of (OBO) authentication. Serves both API endpoints (`/api/v1/*`) and the compiled React frontend as static files.
 
 ## Architecture
 

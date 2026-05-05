@@ -50,7 +50,8 @@ import { QueryErrorResetBoundary } from "@tanstack/react-query";
 import { ErrorBoundary } from "react-error-boundary";
 import { FadeIn } from "@/components/anim/FadeIn";
 import { ArrowDown, ArrowUp, ArrowUpDown, CircleStop, ShieldAlert } from "lucide-react";
-import { parseFqn, formatDateTime as formatDate } from "@/lib/format-utils";
+import { parseFqn, formatDateTime as formatDate, getUserMetadata, labelToken } from "@/lib/format-utils";
+import { LabelFilter, labelsMatchFilter } from "@/components/Labels";
 
 export const Route = createFileRoute("/_sidebar/runs-history")({
   component: RunsHistoryPage,
@@ -179,6 +180,7 @@ function RunHistoryContent() {
   const [runTypeFilter, setRunTypeFilter] = useState("all");
   const [invalidOnly, setInvalidOnly] = useState(false);
   const [myRunsOnly, setMyRunsOnly] = useState(false);
+  const [labelFilter, setLabelFilter] = useState<Set<string>>(new Set());
   const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
 
   const { data: runsResp, isLoading, error, refetch } = useListValidationRuns();
@@ -285,6 +287,15 @@ function RunHistoryContent() {
       if (runTypeFilter !== "all" && (run.run_type ?? "dryrun") !== runTypeFilter) return false;
       if (invalidOnly && !(run.invalid_rows != null && run.invalid_rows > 0)) return false;
       if (myRunsOnly && currentUserEmail && run.requesting_user !== currentUserEmail) return false;
+      if (labelFilter.size > 0) {
+        // Match the label filter against any check captured on the run; an
+        // empty checks list means we can't match → exclude under filter.
+        const checks = run.checks ?? [];
+        const matched = checks.some((c) =>
+          labelsMatchFilter(getUserMetadata(c as Record<string, unknown>), labelFilter),
+        );
+        if (!matched) return false;
+      }
       return true;
     });
 
@@ -319,7 +330,27 @@ function RunHistoryContent() {
       }
       return cmp * dir;
     });
-  }, [allRuns, catalogFilter, schemaFilter, tableFilter, tableSearch, statusFilter, runTypeFilter, invalidOnly, myRunsOnly, currentUserEmail, rSortKey, rSortDir]);
+  }, [allRuns, catalogFilter, schemaFilter, tableFilter, tableSearch, statusFilter, runTypeFilter, invalidOnly, myRunsOnly, currentUserEmail, rSortKey, rSortDir, labelFilter]);
+
+  // Distinct labels seen across all runs' checks. Drives the LabelFilter
+  // dropdown content for this page.
+  const availableLabels = useMemo(() => {
+    const seen = new Set<string>();
+    const out: { key: string; value: string }[] = [];
+    for (const run of allRuns) {
+      for (const check of run.checks ?? []) {
+        const md = getUserMetadata(check as Record<string, unknown>);
+        for (const [key, value] of Object.entries(md)) {
+          const tok = labelToken(key, value);
+          if (!seen.has(tok)) {
+            seen.add(tok);
+            out.push({ key, value });
+          }
+        }
+      }
+    }
+    return out;
+  }, [allRuns]);
 
   const availableSchemas = catalogFilter !== "all" ? schemasByCatalog[catalogFilter] || [] : [];
   const availableTables = (catalogFilter !== "all" && schemaFilter !== "all")
@@ -337,7 +368,7 @@ function RunHistoryContent() {
     setTableFilter("all");
   };
 
-  const hasActiveFilters = catalogFilter !== "all" || schemaFilter !== "all" || tableFilter !== "all" || tableSearch !== "" || statusFilter !== "all" || runTypeFilter !== "all" || invalidOnly || myRunsOnly;
+  const hasActiveFilters = catalogFilter !== "all" || schemaFilter !== "all" || tableFilter !== "all" || tableSearch !== "" || statusFilter !== "all" || runTypeFilter !== "all" || invalidOnly || myRunsOnly || labelFilter.size > 0;
 
   const PAGE_SIZE = 25;
   const [currentPage, setCurrentPage] = useState(1);
@@ -462,6 +493,12 @@ function RunHistoryContent() {
               My runs
             </Button>
 
+            <LabelFilter
+              available={availableLabels}
+              selected={labelFilter}
+              onChange={setLabelFilter}
+            />
+
             {hasActiveFilters && (
               <Button
                 variant="ghost"
@@ -476,6 +513,7 @@ function RunHistoryContent() {
                   setRunTypeFilter("all");
                   setInvalidOnly(false);
                   setMyRunsOnly(false);
+                  setLabelFilter(new Set());
                 }}
               >
                 Clear filters

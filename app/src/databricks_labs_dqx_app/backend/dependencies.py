@@ -296,6 +296,61 @@ def require_role(*roles: UserRole):
 CurrentUserRole = Annotated[UserRole, Depends(get_user_role)]
 
 
+# ---------------------------------------------------------------------------
+# Runner role — orthogonal to the primary-role hierarchy
+# ---------------------------------------------------------------------------
+
+
+async def get_user_runner_flag(
+    email: Annotated[str, Depends(get_user_email)],
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    role_svc: Annotated[RoleService, Depends(get_role_service)],
+) -> bool:
+    """Return True iff the caller holds the orthogonal RUNNER role.
+
+    Admins are implicit runners (handled inside ``has_runner_role``).
+    On transient failures we degrade to ``False`` rather than 5xx so a
+    SCIM hiccup doesn't break the whole UI; gated endpoints will then
+    return 403 with a clearer message until the upstream recovers.
+    """
+    try:
+        user = await asyncio.to_thread(obo_ws.current_user.me)
+        user_groups = [g.display for g in (user.groups or []) if g.display]
+        return role_svc.has_runner_role(user_groups, conf.admin_group)
+    except Exception as exc:
+        logger.warning(
+            f"Runner-flag resolution failed for {email}, falling back to False: {exc}",
+            exc_info=True,
+        )
+        return False
+
+
+CurrentUserRunner = Annotated[bool, Depends(get_user_runner_flag)]
+
+
+def require_runner():
+    """Dependency that rejects callers who can't see the Run Rules page.
+
+    Implements the user-facing rule: admins always pass; non-admins must
+    be members of a group mapped to ``UserRole.RUNNER``. Other roles
+    (author/approver/viewer) by themselves do **not** grant runner
+    access — they need an explicit RUNNER mapping.
+    """
+
+    async def _check(
+        role: Annotated[UserRole, Depends(get_user_role)],
+        is_runner: Annotated[bool, Depends(get_user_runner_flag)],
+    ) -> bool:
+        if role == UserRole.ADMIN or is_runner:
+            return True
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Requires the 'runner' role. Ask an admin to assign your group to the Runner role.",
+        )
+
+    return Depends(_check)
+
+
 async def get_user_catalog_names(
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
 ) -> frozenset[str]:
@@ -332,7 +387,10 @@ __all__ = [
     "get_comments_service",
     "get_schedule_config_service",
     "require_role",
+    "require_runner",
     "CurrentUserRole",
+    "CurrentUserRunner",
+    "get_user_runner_flag",
     "get_user_catalog_names",
     "rt",
 ]

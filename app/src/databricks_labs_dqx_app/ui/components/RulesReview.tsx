@@ -13,6 +13,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import yaml from "js-yaml";
+import { LabelsBadges } from "@/components/Labels";
+import { getUserMetadata } from "@/lib/format-utils";
 
 interface RulesReviewProps {
   checks: Record<string, unknown>[];
@@ -44,13 +46,6 @@ export function RulesReview({ checks, onChange }: RulesReviewProps) {
   const handleCriticalityChange = (index: number, value: string) => {
     const updated = [...checks];
     updated[index] = { ...updated[index], criticality: value };
-    onChange(updated);
-    setYamlText(yaml.dump(updated, { sortKeys: false }));
-  };
-
-  const handleWeightChange = (index: number, value: number) => {
-    const updated = [...checks];
-    updated[index] = { ...updated[index], weight: value };
     onChange(updated);
     setYamlText(yaml.dump(updated, { sortKeys: false }));
   };
@@ -101,7 +96,7 @@ export function RulesReview({ checks, onChange }: RulesReviewProps) {
                   <th className="text-left p-3 font-medium">Function</th>
                   <th className="text-left p-3 font-medium">Column(s)</th>
                   <th className="text-left p-3 font-medium">Criticality</th>
-                  <th className="text-left p-3 font-medium">Weight</th>
+                  <th className="text-left p-3 font-medium">Labels</th>
                   <th className="text-left p-3 font-medium">Parameters</th>
                   <th className="text-right p-3 font-medium"></th>
                 </tr>
@@ -121,7 +116,13 @@ export function RulesReview({ checks, onChange }: RulesReviewProps) {
                       : "-");
                   const criticality =
                     (check.criticality as string) ?? "error";
-                  const weight = (check.weight as number) ?? 3;
+                  // Surface labels from user_metadata. Fold any legacy
+                  // top-level numeric ``weight`` into the labels map so it
+                  // round-trips through the same UI as everything else.
+                  const labels = getUserMetadata(check);
+                  if (typeof check.weight === "number" && !("weight" in labels)) {
+                    labels.weight = String(check.weight);
+                  }
                   const otherArgs = Object.entries(args).filter(
                     ([k]) => k !== "column",
                   );
@@ -160,21 +161,13 @@ export function RulesReview({ checks, onChange }: RulesReviewProps) {
                         </Select>
                       </td>
                       <td className="p-3">
-                        <Select
-                          value={String(weight)}
-                          onValueChange={(val) => handleWeightChange(idx, Number(val))}
-                        >
-                          <SelectTrigger className="h-7 w-20 text-xs">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="1" className="text-xs">1 – Informational</SelectItem>
-                            <SelectItem value="2" className="text-xs">2 – Low</SelectItem>
-                            <SelectItem value="3" className="text-xs">3 – Medium</SelectItem>
-                            <SelectItem value="4" className="text-xs">4 – High</SelectItem>
-                            <SelectItem value="5" className="text-xs">5 – Critical</SelectItem>
-                          </SelectContent>
-                        </Select>
+                        {Object.keys(labels).length === 0 ? (
+                          <span className="text-xs italic text-muted-foreground/60">
+                            —
+                          </span>
+                        ) : (
+                          <LabelsBadges labels={labels} max={3} size="sm" />
+                        )}
                       </td>
                       <td className="p-3 text-xs text-muted-foreground">
                         {otherArgs.length > 0

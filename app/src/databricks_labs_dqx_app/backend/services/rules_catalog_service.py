@@ -72,6 +72,33 @@ class RulesCatalogService:
     # Public API
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _normalize_weight(checks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Fold any top-level numeric ``weight`` into ``user_metadata.weight``.
+
+        The app treats ``weight`` as a label living inside ``user_metadata``
+        (not as a separate native rule field). Older payloads — from imported
+        YAML, profiler output, or pre-migration UI builds — may still ship a
+        top-level ``weight`` key. Normalizing on save keeps the stored JSON
+        consistent regardless of source.
+        """
+        out: list[dict[str, Any]] = []
+        for raw in checks:
+            check = dict(raw)
+            if "weight" in check:
+                weight_val = check.pop("weight")
+                if isinstance(weight_val, (int, float)):
+                    md_raw = check.get("user_metadata") or {}
+                    md: dict[str, str] = {}
+                    if isinstance(md_raw, dict):
+                        for k, v in md_raw.items():
+                            if isinstance(k, str) and isinstance(v, str):
+                                md[k] = v
+                    md.setdefault("weight", str(weight_val))
+                    check["user_metadata"] = md
+            out.append(check)
+        return out
+
     def save(
         self,
         table_fqn: str,
@@ -88,6 +115,7 @@ class RulesCatalogService:
         from databricks_labs_dqx_app.backend.sql_utils import validate_fqn
 
         validate_fqn(table_fqn)
+        checks = self._normalize_weight(checks)
         self._validate_sql_checks(checks)
 
         duplicates = self.find_duplicates(table_fqn, checks)
@@ -140,6 +168,7 @@ class RulesCatalogService:
         user_email: str,
     ) -> RuleCatalogEntry:
         """Update the check definition for an existing rule, incrementing version and resetting to draft."""
+        checks = self._normalize_weight(checks)
         self._validate_sql_checks(checks)
         entry = self.get_by_rule_id(rule_id)
         if entry is None:

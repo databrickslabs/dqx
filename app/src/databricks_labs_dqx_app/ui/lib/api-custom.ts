@@ -813,3 +813,81 @@ export const useSaveTimezone = <
     ...mutationOptions,
   });
 };
+
+// ---------------------------------------------------------------------------
+// Label definitions (admin-managed catalog of label keys + allowed values).
+// The reserved key ``weight`` drives the weight selector on rule pages.
+// ---------------------------------------------------------------------------
+
+export interface LabelDefinition {
+  key: string;
+  description?: string | null;
+  values: string[];
+  allow_custom_values: boolean;
+}
+
+export interface LabelDefinitionsOut {
+  definitions: LabelDefinition[];
+}
+
+export interface LabelDefinitionsIn {
+  definitions: LabelDefinition[];
+}
+
+export const getLabelDefinitions = (
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<LabelDefinitionsOut>> =>
+  axios.default.get("/api/v1/config/label-definitions", options);
+
+export const getLabelDefinitionsQueryKey = () => ["label-definitions"] as const;
+
+export const useLabelDefinitions = <
+  TData = Awaited<ReturnType<typeof getLabelDefinitions>>["data"],
+  TError = AxiosError<unknown>,
+>(
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof getLabelDefinitions>>, TError, TData>>;
+    axios?: AxiosRequestConfig;
+  },
+): UseQueryResult<TData, TError> => {
+  const { query: queryOptions, axios: axiosOptions } = options ?? {};
+  return useQuery({
+    queryKey: queryOptions?.queryKey ?? getLabelDefinitionsQueryKey(),
+    queryFn: () => getLabelDefinitions(axiosOptions),
+    select: ((resp: Awaited<ReturnType<typeof getLabelDefinitions>>) => resp.data) as never,
+    staleTime: 5 * 60 * 1000,
+    ...queryOptions,
+  }) as UseQueryResult<TData, TError>;
+};
+
+export const saveLabelDefinitions = (
+  body: LabelDefinitionsIn,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<LabelDefinitionsOut>> =>
+  axios.default.put("/api/v1/config/label-definitions", body, options);
+
+export const useSaveLabelDefinitions = <
+  TError = AxiosError<unknown>,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof saveLabelDefinitions>>,
+      TError,
+      { data: LabelDefinitionsIn },
+      TContext
+    >;
+    axios?: AxiosRequestConfig;
+  },
+): UseMutationResult<
+  Awaited<ReturnType<typeof saveLabelDefinitions>>,
+  TError,
+  { data: LabelDefinitionsIn },
+  TContext
+> => {
+  const { mutation: mutationOptions, axios: axiosOptions } = options ?? {};
+  return useMutation({
+    mutationFn: ({ data }: { data: LabelDefinitionsIn }) => saveLabelDefinitions(data, axiosOptions),
+    ...mutationOptions,
+  });
+};
