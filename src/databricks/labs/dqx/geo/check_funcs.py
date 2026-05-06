@@ -8,6 +8,7 @@ import pyspark.sql.functions as F
 
 from databricks.labs.dqx.rule import register_rule
 from databricks.labs.dqx.check_funcs import make_condition, get_normalized_column_and_expr, get_limit_expr
+from databricks.labs.dqx.errors import InvalidParameterError
 
 POINT_TYPE = "ST_Point"
 LINESTRING_TYPE = "ST_LineString"
@@ -17,6 +18,26 @@ MULTILINESTRING_TYPE = "ST_MultiLineString"
 MULTIPOLYGON_TYPE = "ST_MultiPolygon"
 GEOMETRYCOLLECTION_TYPE = "ST_GeometryCollection"
 DEFAULT_SRID = 4326
+
+_GEO_SPATIAL_TYPES = frozenset({"GEOMETRY", "GEOGRAPHY"})
+_GEO_REPRESENTATIONS = frozenset({"WKT", "WKB", "EWKT", "EWKB"})
+_TOPOLOGICAL_RELATIONSHIPS = frozenset({"CONTAINS", "COVERS", "WITHIN"})
+
+# Maps geo spatial type to the safe try_* conversion SQL function that returns NULL on parse errors.
+# Both functions accept WKT, EWKT (with SRID prefix), WKB, and EWKB inputs.
+_CONVERSION_FUNCS: dict[str, str] = {
+    "GEOMETRY": "try_to_geometry",
+    "GEOGRAPHY": "try_to_geography",
+}
+
+# Maps topological relationship to its SQL expression template.
+# {col} = target geometry column, {ref} = reference polygon column.
+# Argument order differs: st_within(col, ref) vs st_contains/st_covers(ref, col).
+_TOPOLOGICAL_FUNCS: dict[str, str] = {
+    "WITHIN": "st_within({col}, {ref})",
+    "CONTAINS": "st_contains({ref}, {col})",
+    "COVERS": "st_covers({ref}, {col})",
+}
 
 
 @register_rule("row")
@@ -920,6 +941,7 @@ def are_polygons_mutually_disjoint(
 
     return condition, apply
 
+
 @register_rule("dataset")
 def is_within_polygon_precise(
     column: str | Column,
@@ -941,17 +963,17 @@ def is_within_polygon_precise(
     https://docs.databricks.com/aws/en/sql/language-manual/data-types/geometry-type
 
     Args:
-         column: Column to check. Null values are skipped for validation.
-         reference_polygon: Reference polygon literal value or column name to use for geofencing. Literal string
+        column: Column to check. Null values are skipped for validation.
+        reference_polygon: Reference polygon literal value or column name to use for geofencing. Literal string
             or binary values are treated by default as WKT or WKB correspondingly. If literal string is provided,
             then `reference_polygon_type` parameter must be specified.
-         column_type: Geo spatial type convert the column to from original storage format (`STRING` or `BINARY`).
-                      Valid values are `GEOGRAPHY`, `GEOMETRY` or None, which is treated as no convertion applied.
+        column_type: Geo spatial type convert the column to from original storage format (`STRING` or `BINARY`).
+                      Valid values are `GEOGRAPHY`, `GEOMETRY` or None, which is treated as no conversion applied.
                       Optional configuration, if column type is either `GEOGRAPHY` or `GEOMETRY`, otherwise required.
                       When None, the actual column type in Spark is not restricted or validated — the caller is
                       responsible for ensuring the column already holds a valid spatial type.
         column_representation: Geo spatial format to use to convert original column from. Valid values are `WKT`, `WKB`,
-            `EWKT`, `EWKB` or None, which is treated as no convertion applied. Optional configuration,
+            `EWKT`, `EWKB` or None, which is treated as no conversion applied. Optional configuration,
             if column is already one of aforementioned types. Optional configuration, if column type is either
             `GEOGRAPHY` or `GEOMETRY`, otherwise required.
         reference_polygon_type: Geo spatial type convert the reference polygon to from original storage format (`STRING` or `BINARY`).
@@ -986,4 +1008,88 @@ def is_within_polygon_precise(
         InvalidParameterError: If an invalid value is supplied for `column_type`, `column_representation`,
         `reference_polygon_type`, `reference_polygon_representation`, or `topological_relationship`.
     """
-    pass
+    if column_type is not None and column_type not in _GEO_SPATIAL_TYPES:
+        raise InvalidParameterError(f"'column_type' must be one of {sorted(_GEO_SPATIAL_TYPES)}, got '{column_type}'.")
+    if column_representation is not None and column_representation not in _GEO_REPRESENTATIONS:
+        raise InvalidParameterError(
+            f"'column_representation' must be one of {sorted(_GEO_REPRESENTATIONS)}, got '{column_representation}'."
+        )
+    if reference_polygon_type is not None and reference_polygon_type not in _GEO_SPATIAL_TYPES:
+        raise InvalidParameterError(
+            f"'reference_polygon_type' must be one of {sorted(_GEO_SPATIAL_TYPES)}, got '{reference_polygon_type}'."
+        )
+    if reference_polygon_representation is not None and reference_polygon_representation not in _GEO_REPRESENTATIONS:
+        raise InvalidParameterError(
+            f"'reference_polygon_representation' must be one of {sorted(_GEO_REPRESENTATIONS)}, got '{reference_polygon_representation}'."
+        )
+    if topological_relationship not in _TOPOLOGICAL_RELATIONSHIPS:
+        raise InvalidParameterError(
+            f"'topological_relationship' must be one of {sorted(_TOPOLOGICAL_RELATIONSHIPS)}, got '{topological_relationship}'."
+        )
+    if (column_type is None) != (column_representation is None):
+        raise InvalidParameterError("'column_type' and 'column_representation' must both be provided or both omitted.")
+    if (reference_polygon_type is None) != (reference_polygon_representation is None):
+        raise InvalidParameterError(
+            "'reference_polygon_type' and 'reference_polygon_representation' must both be provided or both omitted."
+        )
+
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+    unique_str = uuid.uuid4().hex
+    condition_col = f"__within_polygon_condition_{col_str_norm}_{unique_str}"
+
+    def apply(df: DataFrame) -> DataFrame:
+        """Check each row's geometry against the reference polygon.
+
+        Converts the target column and reference polygon to their spatial types (when
+        conversion parameters are provided) and evaluates the configured topological
+        relationship. Null values in the target column are skipped (condition left null).
+
+        Args:
+            df: Input DataFrame containing the geometry column to check.
+
+        Returns:
+            DataFrame with an additional boolean column indicating rows whose geometry
+            lies outside the reference polygon (True = violation, null = skipped).
+        """
+        col_spatial = f"__col_spatial_{col_str_norm}_{unique_str}"
+        ref_raw = f"__ref_raw_{col_str_norm}_{unique_str}"
+        ref_spatial = f"__ref_spatial_{col_str_norm}_{unique_str}"
+
+        # Convert the target column to a spatial type when type/representation are given;
+        # otherwise assume the column already holds a native spatial type.
+        if column_type is not None:
+            df = df.withColumn(col_spatial, F.expr(f"{_CONVERSION_FUNCS[column_type]}({col_expr_str})"))
+        else:
+            df = df.withColumn(col_spatial, col_expr)
+
+        # Build the reference polygon column (literal str/bytearray or an existing Column).
+        ref_col = reference_polygon if isinstance(reference_polygon, Column) else F.lit(reference_polygon)
+
+        if reference_polygon_type is not None:
+            df = df.withColumn(ref_raw, ref_col)
+            df = df.withColumn(ref_spatial, F.expr(f"{_CONVERSION_FUNCS[reference_polygon_type]}(`{ref_raw}`)"))
+            df = df.drop(ref_raw)
+        else:
+            df = df.withColumn(ref_spatial, ref_col)
+
+        polygon_check_condition = _TOPOLOGICAL_FUNCS[topological_relationship].format(
+            col=f"`{col_spatial}`", ref=f"`{ref_spatial}`"
+        )
+        polygon_check_condition_col = F.expr(polygon_check_condition)
+
+        condition_expr = F.when(col_expr.isNull(), F.lit(None)).otherwise(~polygon_check_condition_col)
+
+        return df.withColumn(condition_col, condition_expr).drop(col_spatial, ref_spatial)
+
+    condition = make_condition(
+        condition=F.col(condition_col),
+        message=F.concat_ws(
+            "",
+            F.lit("value `"),
+            col_expr.cast("string"),
+            F.lit(f"` in column `{col_expr_str}` is outside the reference polygon"),
+        ),
+        alias=f"{col_str_norm}_outside_reference_polygon",
+    )
+
+    return condition, apply

@@ -5,13 +5,13 @@ from databricks.labs.dqx.geo.check_funcs import is_within_polygon_precise
 
 _REFERENCE_POLYGON_WKT = "POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))"
 
-_VALID_KWARGS = dict(
-    column_type="GEOMETRY",
-    column_representation="WKT",
-    reference_polygon_type="GEOMETRY",
-    reference_polygon_representation="WKT",
-    topological_relationship="WITHIN",
-)
+_VALID_KWARGS = {
+    "column_type": "GEOMETRY",
+    "column_representation": "WKT",
+    "reference_polygon_type": "GEOMETRY",
+    "reference_polygon_representation": "WKT",
+    "topological_relationship": "WITHIN",
+}
 
 
 def test_is_within_polygon_precise_valid_params_does_not_raise():

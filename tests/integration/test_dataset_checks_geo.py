@@ -1,7 +1,8 @@
+import pytest
 from pyspark.testing.utils import assertDataFrameEqual
 from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.geo.check_funcs import are_polygons_mutually_disjoint
+from databricks.labs.dqx.geo.check_funcs import are_polygons_mutually_disjoint, is_within_polygon_precise
 
 
 def test_are_polygons_mutually_disjoint_pass(skip_if_runtime_not_geo_compatible, spark):
@@ -521,6 +522,299 @@ def test_are_polygons_mutually_disjoint_row_filter_with_duplicates(skip_if_runti
         [
             ["POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))", None],  # Single row after filter, no violations
             ["POLYGON((0.5 0.5, 1.5 0.5, 1.5 1.5, 0.5 1.5, 0.5 0.5))", None],  # Filtered out, not evaluated
+        ],
+        checked_schema,
+    )
+
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+@pytest.mark.parametrize(
+    "column_value,column_type,column_representation,reference_polygon_value,reference_polygon_type,reference_polygon_representation",
+    [
+        (
+            "POINT(4.90 52.37)",
+            "GEOMETRY",
+            "WKT",
+            "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
+            "GEOMETRY",
+            "WKT",
+        ),
+        (
+            "POINT(4.90 52.37)",
+            "GEOMETRY",
+            "WKT",
+            "SRID=4326;POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
+            "GEOMETRY",
+            "EWKT",
+        ),
+        (
+            "POINT(4.90 52.37)",
+            "GEOMETRY",
+            "WKT",
+            "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
+            "GEOGRAPHY",
+            "WKT",
+        ),
+        (
+            "POINT(4.90 52.37)",
+            "GEOMETRY",
+            "WKT",
+            "SRID=4326;POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
+            "GEOGRAPHY",
+            "EWKT",
+        ),
+        (
+            "SRID=4326;POINT(4.90 52.37)",
+            "GEOMETRY",
+            "EWKT",
+            "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
+            "GEOMETRY",
+            "WKT",
+        ),
+        (
+            "SRID=4326;POINT(4.90 52.37)",
+            "GEOMETRY",
+            "EWKT",
+            "SRID=4326;POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
+            "GEOMETRY",
+            "EWKT",
+        ),
+        (
+            "SRID=4326;POINT(4.90 52.37)",
+            "GEOMETRY",
+            "EWKT",
+            "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
+            "GEOGRAPHY",
+            "WKT",
+        ),
+        (
+            "SRID=4326;POINT(4.90 52.37)",
+            "GEOMETRY",
+            "EWKT",
+            "SRID=4326;POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
+            "GEOGRAPHY",
+            "EWKT",
+        ),
+        (
+            "POINT(4.90 52.37)",
+            "GEOGRAPHY",
+            "WKT",
+            "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
+            "GEOMETRY",
+            "WKT",
+        ),
+        (
+            "POINT(4.90 52.37)",
+            "GEOGRAPHY",
+            "WKT",
+            "SRID=4326;POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
+            "GEOMETRY",
+            "EWKT",
+        ),
+        (
+            "POINT(4.90 52.37)",
+            "GEOGRAPHY",
+            "WKT",
+            "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
+            "GEOGRAPHY",
+            "WKT",
+        ),
+        (
+            "POINT(4.90 52.37)",
+            "GEOGRAPHY",
+            "WKT",
+            "SRID=4326;POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
+            "GEOGRAPHY",
+            "EWKT",
+        ),
+        (
+            "SRID=4326;POINT(4.90 52.37)",
+            "GEOGRAPHY",
+            "WKT",
+            "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
+            "GEOMETRY",
+            "WKT",
+        ),
+        (
+            "SRID=4326;POINT(4.90 52.37)",
+            "GEOGRAPHY",
+            "WKT",
+            "SRID=4326;POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
+            "GEOMETRY",
+            "EWKT",
+        ),
+        (
+            "SRID=4326;POINT(4.90 52.37)",
+            "GEOGRAPHY",
+            "WKT",
+            "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
+            "GEOGRAPHY",
+            "WKT",
+        ),
+        (
+            "SRID=4326;POINT(4.90 52.37)",
+            "GEOGRAPHY",
+            "WKT",
+            "SRID=4326;POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
+            "GEOGRAPHY",
+            "EWKT",
+        ),
+    ],
+)
+def test_is_within_polygon_precise_inside(
+    column_value,
+    column_type,
+    column_representation,
+    reference_polygon_value,
+    reference_polygon_type,
+    reference_polygon_representation,
+    skip_if_runtime_not_geo_compatible,
+    spark,
+):
+    """Test for `is_within_polygon_precise` function when column point is inside a polygon."""
+    input_schema = "geom: string"
+    test_df = spark.createDataFrame([[column_value], [None]], input_schema)
+
+    # Filter to include only the first polygon (excludes the intersecting one)
+    condition, apply_method = is_within_polygon_precise(
+        "geom",
+        reference_polygon_value,
+        column_type,
+        column_representation,
+        reference_polygon_type,
+        reference_polygon_representation,
+        topological_relationship="WITHIN",
+    )
+
+    actual_apply_df = apply_method(df=test_df)
+    actual = actual_apply_df.select("geom", condition)
+
+    checked_schema = "geom: string, geom_not_mutually_disjoint: string"
+    expected = spark.createDataFrame(
+        [
+            [column_value, None],  # Single row after filter, no violations
+            [None, None],  # Evaluation skipped due to the null value
+        ],
+        checked_schema,
+    )
+
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+@pytest.mark.parametrize(
+    "column_value,column_type,column_representation,reference_polygon_value,reference_polygon_type,reference_polygon_representation",
+    [
+        (
+            "POINT(4.73 52.28)",
+            "GEOMETRY",
+            "WKT",
+            "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
+            "GEOMETRY",
+            "WKT",
+        ),
+        (
+            "POINT(4.73 52.28)",
+            "GEOGRAPHY",
+            "WKT",
+            "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
+            "GEOGRAPHY",
+            "WKT",
+        )
+    ],
+)
+def test_is_within_polygon_precise_edge(
+    column_value,
+    column_type,
+    column_representation,
+    reference_polygon_value,
+    reference_polygon_type,
+    reference_polygon_representation,
+    skip_if_runtime_not_geo_compatible,
+    spark,
+):
+    """Test for `is_within_polygon_precise` function when column point on an edge of polygon."""
+    input_schema = "geom: string"
+    test_df = spark.createDataFrame([[column_value], [None]], input_schema)
+
+    # Filter to include only the first polygon (excludes the intersecting one)
+    condition, apply_method = is_within_polygon_precise(
+        "geom",
+        reference_polygon_value,
+        column_type, # noqa
+        column_representation, # noqa
+        reference_polygon_type, # noqa
+        reference_polygon_representation, # noqa
+        topological_relationship="WITHIN",
+    )
+
+    actual_apply_df = apply_method(df=test_df)
+    actual = actual_apply_df.select("geom", condition)
+
+    checked_schema = "geom: string"
+    expected = spark.createDataFrame(
+        [
+            [column_value, None],  # Single row after filter, no violations
+            [None, None],  # Evaluation skipped due to the null value
+        ],
+        checked_schema,
+    )
+
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+@pytest.mark.parametrize(
+    "column_value,column_type,column_representation,reference_polygon_value,reference_polygon_type,reference_polygon_representation",
+    [
+        (
+            "POINT(4.48 51.92)",
+            "GEOMETRY",
+            "WKT",
+            "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
+            "GEOMETRY",
+            "WKT",
+        ),
+        (
+            "POINT(4.48 51.92)",
+            "GEOGRAPHY",
+            "WKT",
+            "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
+            "GEOGRAPHY",
+            "WKT",
+        )
+    ],
+)
+def test_is_within_polygon_precise_outside(
+    column_value,
+    column_type,
+    column_representation,
+    reference_polygon_value,
+    reference_polygon_type,
+    reference_polygon_representation,
+    skip_if_runtime_not_geo_compatible,
+    spark,
+):
+    """Test for `is_within_polygon_precise` function when column outside a polygon."""
+    input_schema = "geom: string"
+    test_df = spark.createDataFrame([[column_value], [None]], input_schema)
+
+    # Filter to include only the first polygon (excludes the intersecting one)
+    condition, apply_method = is_within_polygon_precise(
+        "geom",
+        reference_polygon_value,
+        column_type,  # noqa
+        column_representation,  # noqa
+        reference_polygon_type,  # noqa
+        reference_polygon_representation,  # noqa
+        topological_relationship="WITHIN",
+    )
+
+    actual_apply_df = apply_method(df=test_df)
+    actual = actual_apply_df.select("geom", condition)
+
+    checked_schema = "geom: string"
+    expected = spark.createDataFrame(
+        [
+            [column_value, None],  # Single row after filter, no violations
+            [None, None],  # Evaluation skipped due to the null value
         ],
         checked_schema,
     )
