@@ -139,7 +139,7 @@ class RoleService:
         logger.info(f"Deleted role mapping: {role} -> {group_name}")
 
     def resolve_role(self, user_groups: list[str], admin_group: str | None = None) -> UserRole:
-        """Determine user's highest role based on group membership.
+        """Determine user's highest *primary* role based on group membership.
 
         Args:
             user_groups: List of Databricks group names the user belongs to.
@@ -147,6 +147,13 @@ class RoleService:
 
         Returns:
             The highest priority role the user has, or VIEWER if no mappings match.
+
+        Note:
+            ``UserRole.RUNNER`` is **not** part of the primary-role hierarchy —
+            it's an additive role resolved separately by
+            :meth:`has_runner_role`. A user mapped only to RUNNER still has
+            ``VIEWER`` as their primary role; the runner privilege is
+            applied on top.
         """
         if admin_group and admin_group in user_groups:
             logger.debug(f"User in bootstrap admin group '{admin_group}', granting ADMIN")
@@ -172,13 +179,37 @@ class RoleService:
                     except ValueError:
                         logger.warning(f"Unknown role in mapping: {role_str}")
 
-        if not matched_roles:
-            logger.debug("User groups don't match any role mappings, defaulting to VIEWER")
-            return UserRole.VIEWER
-
+        # Walk the priority list (which excludes RUNNER) — this is what
+        # makes RUNNER orthogonal: it never up-ranks the primary role.
         for role in reversed(ROLE_PRIORITY):
             if role in matched_roles:
                 logger.debug(f"Resolved role: {role.value}")
                 return role
 
+        # Either there were no matches at all, or the only match was
+        # RUNNER (which is fine — primary role stays VIEWER, runner flag
+        # is applied separately).
+        logger.debug("No primary-role match (or runner-only); defaulting to VIEWER")
         return UserRole.VIEWER
+
+    def has_runner_role(self, user_groups: list[str], admin_group: str | None = None) -> bool:
+        """Return True if the user holds the orthogonal RUNNER role.
+
+        Resolution rules:
+        - Members of the bootstrap admin group are *always* runners (so
+          ADMINs never need an explicit RUNNER mapping).
+        - Otherwise, the user is a runner iff at least one of their groups
+          is mapped to ``UserRole.RUNNER`` in ``dq_role_mappings``.
+
+        This is intentionally separate from :meth:`resolve_role` so the
+        runner flag never bleeds into primary-role hierarchy comparisons.
+        """
+        if admin_group and admin_group in user_groups:
+            return True
+        mappings = self.list_mappings(use_cache=True)
+        if not mappings:
+            return False
+        runner_groups = {m.group_name for m in mappings if m.role == UserRole.RUNNER.value}
+        if not runner_groups:
+            return False
+        return any(g in runner_groups for g in user_groups)

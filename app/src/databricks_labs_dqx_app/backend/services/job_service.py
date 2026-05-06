@@ -92,8 +92,29 @@ class JobService:
         )
 
     def get_run_creator(self, job_run_id: int) -> str | None:
-        """Return the creator_user_name for a job run, or None if unavailable."""
+        """Return the requesting end-user for a job run, or None if unavailable.
+
+        All app-submitted jobs are run-as the service principal, so
+        ``run.creator_user_name`` is always the SP and can't be used for
+        ownership checks. The actual end user is propagated through the
+        ``requesting_user`` job parameter (set in :meth:`submit_run`); we
+        prefer that value, falling back to ``creator_user_name`` for
+        backwards compatibility with runs that predate parameter-based
+        attribution.
+        """
         run = self._ws.jobs.get_run(job_run_id)
+        # job_parameters surface as a list of JobParameter on the run; each
+        # entry exposes ``name`` and ``value``. We mirror the SDK shape
+        # defensively because both list-of-dataclass and dict shapes have
+        # appeared across SDK versions.
+        params = getattr(run, "job_parameters", None) or []
+        for param in params:
+            name = getattr(param, "name", None) if not isinstance(param, dict) else param.get("name")
+            if name != "requesting_user":
+                continue
+            value = getattr(param, "value", None) if not isinstance(param, dict) else param.get("value")
+            if value:
+                return value
         return run.creator_user_name
 
     def _record_running_placeholder(

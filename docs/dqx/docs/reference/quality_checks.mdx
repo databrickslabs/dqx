@@ -18,7 +18,7 @@ All rule types, including row-level and dataset-level rules, can be defined and 
 
 When you define checks **declaratively** (YAML, JSON, or list of dicts), check arguments must contain every required parameter of the check function, matching its Python signature (optional parameters may be omitted). If you use `for_each_column`, DQX merges `column` or `columns` into the arguments for each expansion. Use `DQEngine.validate_checks` to catch unknown keys, type mismatches, and missing required parameters before apply. See [Quality checks definition](/docs/guide/quality_checks_definition) for the declarative format and validation section.
 
-You can explore the implementation details of the check functions [here](https://github.com/databrickslabs/dqx/blob/v0.13.0/src/databricks/labs/dqx/check_funcs.py).
+You can explore the implementation details of the check functions [here](https://github.com/databrickslabs/dqx/blob/v0.14.0/src/databricks/labs/dqx/check_funcs.py).
 
 <Admonition type="tip" title="Variable Substitution">
 All declarative check definitions (YAML, JSON, or Delta tables) support **variable substitution** for string-based fields using the `{{ variable_name }}` syntax. This allows for dynamic parameterization of column names, thresholds, and filters at load time. See the [User Guide](/docs/guide/quality_checks_definition/#variable-substitution) for more details.
@@ -4287,7 +4287,7 @@ The built-in check supports several configurable parameters:
 DQX automatically installs the built-in entity recognition models at runtime if they are not already available.
 However, for better performance and to avoid potential out-of-memory issues, it is recommended to pre-install models using pip install.
 Any additional models used in a custom configuration must also be installed on your Databricks cluster.
-See the [Using DQX for PII Detection](https://github.com/databrickslabs/dqx/blob/v0.13.0/demos/dqx_demo_pii_detection.py) notebook for examples of custom model installation.
+See the [Using DQX for PII Detection](https://github.com/databrickslabs/dqx/blob/v0.14.0/demos/dqx_demo_pii_detection.py) notebook for examples of custom model installation.
 </Admonition>
 
 #### Using Built-in NLP Engine Configurations
