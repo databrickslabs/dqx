@@ -1,0 +1,3 @@
+# Contributing to DQX
+
+This section is for contributors to the DQX project. It contains information on how to contribute, including submitting issues, pulling requests, and contributing to the documentation.

@@ -1,0 +1,239 @@
+# Additional Configuration
+
+## Adding user metadata to the results of all checks[​](#adding-user-metadata-to-the-results-of-all-checks "Direct link to Adding user metadata to the results of all checks")
+
+You can provide user metadata to the results by specifying extra parameters when creating the engine. The custom key-value metadata will be included in every quality check result inside the `user_metadata` field.
+
+* Python
+* Workflows
+
+```python
+from databricks.sdk import WorkspaceClient
+from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.config import ExtraParams
+
+user_metadata = {"key1": "value1", "key2": "value2"}
+
+# use ExtraParams to configure one or more optional parameters
+extra_parameters = ExtraParams(user_metadata=user_metadata)
+
+ws = WorkspaceClient()
+dq_engine = DQEngine(ws, extra_params=extra_parameters)
+
+```
+
+You can set the following fields in the [configuration file](/dqx/docs/installation.md#configuration-file) to provide user metadata when using DQX workflows:
+
+```yaml
+extra_params:
+    user_metadata:
+        custom_metadata: custom_value
+
+```
+
+## Adding user metadata to the results of specific checks[​](#adding-user-metadata-to-the-results-of-specific-checks "Direct link to Adding user metadata to the results of specific checks")
+
+You can also provide user metadata for specific checks when defining those checks programmatically or via configuration. The custom key-value metadata will be included in every quality check result inside the `user_metadata` field.
+
+When the same properties are defined in both the engine and check-level user metadata, the check-level values will override the values set in the engine.
+
+* Python
+
+```python
+from databricks.labs.dqx.rule import DQRowRule
+from databricks.labs.dqx import check_funcs
+
+
+# define the checks programmatically using DQX classes with user metadata for an individual check
+checks = [
+  DQRowRule(  # check with user metadata
+    name="col_5_is_null_or_empty",
+    criticality="warn",
+    check_func=check_funcs.is_not_null_and_not_empty,
+    column="col5",
+    user_metadata={"key1": "value1", "key2": "value2"}
+  ),
+  ...
+]
+
+# define the checks using yaml with user metadata for an individual check
+checks = yaml.safe_load("""
+# check with user metadata
+- criticality: warn
+  check:
+    function: is_not_null_and_not_empty
+    arguments:
+      column: col5
+  user_metadata:
+    key1: value1
+    key2: value2
+""")
+
+```
+
+## Customizing result columns[​](#customizing-result-columns "Direct link to Customizing result columns")
+
+By default, DQX appends `_errors`, `_warnings`, and `_dq_info` (only if certain checks are used) result columns to the output DataFrame or Table to flag quality issues. You can customize the names of these result columns by specifying extra parameters when creating the engine.
+
+| Default Column | Purpose                                                                                    | Customization Key |
+| -------------- | ------------------------------------------------------------------------------------------ | ----------------- |
+| `_errors`      | Array of critical quality check failures                                                   | `errors`          |
+| `_warnings`    | Array of warning-level quality check issues                                                | `warnings`        |
+| `_dq_info`     | Structured metadata produced by certain dataset-level checks (e.g., row anomaly detection) | `info`            |
+
+* Python
+* Workflows
+
+```python
+from databricks.sdk import WorkspaceClient
+from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.config import ExtraParams
+
+custom_column_names = {
+  "errors": "dq_errors",
+  "warnings": "dq_warnings",
+  "info": "dq_info"  # used for some checks only, e.g. row anomaly detection
+}
+
+# use ExtraParams to configure one or more optional parameters
+extra_parameters = ExtraParams(result_column_names=custom_column_names)
+
+ws = WorkspaceClient()
+dq_engine = DQEngine(ws, extra_params=extra_parameters)
+
+```
+
+You can set the following fields in the [configuration file](/dqx/docs/installation.md#configuration-file) to customize the result columns when using DQX workflows:
+
+```yaml
+extra_params:
+  result_column_names:
+    errors: dq_errors
+    warnings: dq_warnings
+    info: dq_info
+
+```
+
+Info column usage
+
+The `_dq_info` reporting column is an **array of structs**: one element per dataset-level check that produces info (e.g. one per `has_no_row_anomalies`). Each element has a shared schema; for row anomaly detection the populated field is `anomaly`, with fields such as `score`, `severity_percentile`, `is_anomaly`, `threshold`, `model`, `contributions`, and `confidence_std`. For the full field list and types, see [Schema of the info column (\_dq\_info)](/dqx/docs/guide/row_anomaly_detection.md#schema-of-the-info-column-_dq_info) in the Row Anomaly Detection guide.
+
+## Suppressing skipped check entries[​](#suppressing-skipped-check-entries "Direct link to Suppressing skipped check entries")
+
+By default, when a check is skipped (e.g. because a referenced column or filter cannot be resolved in the input DataFrame), DQX records an entry in `_errors` or `_warnings` with `skipped=True` and a message describing why the check was skipped.
+
+You can suppress these entries entirely by setting `suppress_skipped=True` in `ExtraParams`. When enabled, skipped checks produce no entry in `_errors` or `_warnings`, so the row is not included in the bad DataFrame.
+
+* Python
+* Workflows
+
+```python
+from databricks.sdk import WorkspaceClient
+from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.config import ExtraParams
+
+# suppress entries for checks skipped due to missing columns or invalid filters
+extra_parameters = ExtraParams(suppress_skipped=True)
+
+ws = WorkspaceClient()
+dq_engine = DQEngine(ws, extra_params=extra_parameters)
+
+```
+
+You can set the following fields in the [configuration file](/dqx/docs/installation.md#configuration-file) to suppress skipped check entries when using DQX workflows:
+
+```yaml
+extra_params:
+    suppress_skipped: true
+
+```
+
+## Identifying skipped checks in results[​](#identifying-skipped-checks-in-results "Direct link to Identifying skipped checks in results")
+
+When a check is skipped and `suppress_skipped` is not enabled, the result struct includes a `skipped` boolean field set to `True`. This allows downstream consumers to distinguish skipped checks from actual data quality failures without parsing the message string.
+
+```python
+checked_df = dq_engine.apply_checks(df, checks)
+
+# filter to only skipped entries in _errors
+from pyspark.sql import functions as F
+
+skipped = checked_df.select(F.explode("_errors").alias("e")).filter(F.col("e.skipped") == True)
+
+```
+
+## Defining default variables for substitution[​](#defining-default-variables-for-substitution "Direct link to Defining default variables for substitution")
+
+DQX allows you to define engine-level defaults for variables used in declarative check definitions (YAML, JSON, or Delta tables). These defaults are automatically applied during `load_checks` and `save_checks` unless overridden by the per-call `variables` parameter.
+
+* Python
+
+```python
+from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.config import ExtraParams, FileChecksStorageConfig, TableChecksStorageConfig
+from databricks.sdk import WorkspaceClient
+
+# Initialize engine with default variables
+dq_engine = DQEngine(
+    WorkspaceClient(),
+    extra_params=ExtraParams(
+        variables={
+            "min_temp": 0,
+            "max_temp": 50,
+            "region": "GLOBAL"
+        }
+    )
+)
+
+# Load checks - uses 'min_temp' and 'max_temp' from defaults,
+# but overrides 'region' specifically for this call.
+resolved_checks = dq_engine.load_checks(
+    config=FileChecksStorageConfig(location="checks.yml"),
+    variables={"region": "EMEA"},
+)
+
+# Save checks - resolves variables before computing fingerprints and persisting.
+# Uses 'min_temp' and 'max_temp' from defaults, overrides 'region' for this call.
+dq_engine.save_checks(
+    checks=checks,
+    config=TableChecksStorageConfig(location="catalog.schema.checks_table"),
+    variables={"region": "EMEA"},
+)
+
+```
+
+Variable substitution in workflows
+
+Variable substitution is not currently supported in DQX installable workflows. Variables can be defined and stored as YAML in the configuration file but will not be applied during workflow execution.
+
+Variable substitution is only available when defining checks declaratively (as dictionaries or in files/tables). It is not supported when using DQX classes (e.g., `DQRowRule`) directly.
+
+## Overwriting run metadata[​](#overwriting-run-metadata "Direct link to Overwriting run metadata")
+
+By default, DQX automatically generates a unique `run_id` for each engine instance and uses the current timestamp as the `run_time`. You can manually overwrite these values using `ExtraParams` if you need to align DQX results with external systems or re-run checks for a specific historical point in time.
+
+* Python
+* Workflows
+
+```python
+from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.config import ExtraParams
+from databricks.sdk import WorkspaceClient
+
+extra_params = ExtraParams(
+    run_id_overwrite="custom-execution-id-123",
+    run_time_overwrite="2024-01-01T12:00:00Z"
+)
+
+dq_engine = DQEngine(WorkspaceClient(), extra_params=extra_params)
+
+```
+
+You can set the following fields in the [configuration file](/dqx/docs/installation.md#configuration-file) to overwrite the run metadata when using DQX workflows:
+
+```yaml
+extra_params:
+  run_id_overwrite: custom-execution-id-123
+  run_time_overwrite: 2024-01-01T12:00:00Z
+
+```

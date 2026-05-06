@@ -1,0 +1,64 @@
+# Quality Dashboard
+
+The data quality dashboard can be set up in two ways: you can import it directly in your workspace from the GitHub repository, or it will be automatically deployed when you install DQX using the Databricks CLI. For more details on the installation process, see the [Installation Guide](/dqx/docs/installation.md#installing-dashboard).
+
+The dashboard makes it easy to monitor and track data quality issues across all tables, with the flexibility to customize it to your specific needs.
+
+The dashboard is not scheduled to refresh automatically by default, minimizing concerns regarding associated cluster costs. When you open a dashboard, refresh it manually to view the latest data. However, as needed, you can configure the dashboard to [refresh periodically](https://docs.databricks.com/en/dashboards/index.html#schedules-and-subscriptions).
+
+![DQX Dashboard](/dqx/img/dashboard.png)
+
+## Dashboard Tabs[​](#dashboard-tabs "Direct link to Dashboard Tabs")
+
+The dashboard consists of three tabs, each designed for different monitoring scenarios:
+
+### 1. Data Quality Summary[​](#1-data-quality-summary "Direct link to 1. Data Quality Summary")
+
+The **Data Quality Summary** tab provides an overview of data quality metrics using the summary metrics table (if configured). This tab displays aggregated quality statistics across all monitored tables, giving you a high-level view of your data quality status. For information on how to configure summary metrics, see the [Summary Metrics Guide](/dqx/docs/guide/summary_metrics.md).
+
+### 2. Data Quality by Table (Time Series)[​](#2-data-quality-by-table-time-series "Direct link to 2. Data Quality by Table (Time Series)")
+
+The **Data Quality by Table (Time Series)** tab allows you to get detailed information at the check-level for individual tables within a specific time frame. This tab uses date or timestamp columns to filter and analyze data quality issues over time, enabling you to track quality trends and identify when issues occurred.
+
+### 3. Data Quality by Table (Full Snapshot)[​](#3-data-quality-by-table-full-snapshot "Direct link to 3. Data Quality by Table (Full Snapshot)")
+
+The **Data Quality by Table (Full Snapshot)** tab provides check-level information for individual tables using the entire table without time-based filtering. This tab is useful for comprehensive analysis of all data quality issues in a table, regardless of when they occurred.
+
+## Dashboard Configuration[​](#dashboard-configuration "Direct link to Dashboard Configuration")
+
+The **Invalid Data Table Name** parameter is automatically filtered to display only tables that have `_errors` or `_warnings` reporting columns. This ensures that only tables with data quality issues are shown in the dashboard, making it easier to focus on tables that require attention.
+
+If your tables use different column names for error and warning reporting, you can configure the reporting column names in the dashboard parameters. The default reporting column names are `_errors` and `_warnings`, but these can be customized if your tables use different naming conventions.
+
+Configuration without quarantining
+
+If quarantining was not used during data quality checking (i.e., there is only a single output table with warnings and errors, and no split between valid and invalid data), you need to provide the same table for both the **Curated Data Table Name** (good data) and **Invalid Data Table Name** (bad data) parameters in the dashboard.
+
+How to locate the dashboard:
+
+* CLI
+* Python
+
+You can locate the dashboard by using Databricks workspace UI directly or by using the following Databricks CLI command:
+
+```commandline
+databricks labs dqx open-dashboards
+
+```
+
+After executing the command:
+
+* Locate and click on a dashboard file in the workspace UI.
+* Open the dashboard and click `Refresh` to load the latest data.
+
+You can locate the dashboard using Databricks workspace UI directly or use the following code:
+
+```python
+from databricks.labs.dqx.contexts.workspace import WorkspaceContext
+
+ctx = WorkspaceContext(WorkspaceClient())
+dashboards_folder_link = f"{ctx.installation.workspace_link('')}dashboards/"
+print(f"Open a dashboard from the following folder and refresh it:")
+print(dashboards_folder_link)
+
+```

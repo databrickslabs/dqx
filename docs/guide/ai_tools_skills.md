@@ -1,0 +1,107 @@
+# AI Tools & Skills
+
+DQX ships [Agent Skills](https://agentskills.io/) that teach AI assistants how to use the library correctly. They're small, focused Markdown files with YAML frontmatter — the open format supported by [Databricks Genie Code](https://docs.databricks.com/aws/en/genie-code/skills), [Claude Code](https://docs.claude.com/en/docs/claude-code/plugins), and any other tool that follows the standard.
+
+The skills live in the [`skills/`](https://github.com/databrickslabs/dqx/tree/main/skills) directory of the DQX repo.
+
+## What's included[​](#whats-included "Direct link to What's included")
+
+| Skill                      | What it covers                                                                                       | Canonical docs                                                                                       |
+| -------------------------- | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `dqx-define-checks`        | Creating quality rules — `DQRowRule`, `DQDatasetRule`, `DQForEachColRule`, YAML / dict metadata form | [Quality Checks Definition](/dqx/docs/guide/quality_checks_definition.md)                            |
+| `dqx-apply-checks`         | Validating a DataFrame or table against a set of rules                                               | [Applying Quality Checks](/dqx/docs/guide/quality_checks_apply.md)                                   |
+| `dqx-end-to-end`           | Read → check → write in one call with `apply_checks_and_save_in_table`                               | [End-to-end apply](/dqx/docs/guide/quality_checks_apply.md#applying-checks-defined-with-dqx-classes) |
+| `dqx-profile-and-generate` | Profiling and generating rule candidates with `DQProfiler` / `DQGenerator`                           | [Data Profiling](/dqx/docs/guide/data_profiling.md)                                                  |
+| `dqx-storage`              | Loading / saving checks across file, workspace, volume, table, installation, and Lakebase backends   | [Loading and Storing Quality Checks](/dqx/docs/guide/quality_checks_storage.md)                      |
+
+Each skill is a folder containing a single `SKILL.md` with the standard `name` + `description` frontmatter. Tools auto-load skills based on the description; users can also invoke them explicitly (`@dqx-define-checks`, slash commands, etc.) depending on the tool.
+
+## Installing DQX skills[​](#installing-dqx-skills "Direct link to Installing DQX skills")
+
+* Databricks Genie Code
+* Claude Code
+* Other AI dev tools
+
+Clone the DQX repository in your workspace using a [Git folder](https://docs.databricks.com/aws/en/repos/git-operations-with-repos), then copy the `skills/` folder into a workspace-level or user-level skills directory:
+
+```bash
+# Option A — workspace-wide (all Genie Code users see these)
+databricks workspace import-dir skills /Workspace/.assistant/skills
+
+# Option B — current user only — substitute your workspace email below
+databricks workspace import-dir skills /Users/<your-email>/.assistant/skills
+
+```
+
+Genie Code picks up skills from these directories automatically. Use the following prompt with Agent mode to confirm:
+
+> *"List the DQX skills you can use."*
+
+The skill fires when its description matches your request. Use `@` to manually invoke a specific skill (e.g. `@dqx-define-checks add a uniqueness check on order_id`).
+
+See the [Databricks Genie Code Documentation](https://docs.databricks.com/aws/en/genie-code/skills) for more details.
+
+The DQX repo is a Claude Code plugin marketplace ([`.claude-plugin/marketplace.json`](https://github.com/databrickslabs/dqx/blob/v0.14.0/.claude-plugin/marketplace.json) at the repo root) containing the `dqx` plugin under [`skills/`](https://github.com/databrickslabs/dqx/tree/main/skills). Add the marketplace once, then install:
+
+```bash
+# Inside Claude Code
+/plugin marketplace add databrickslabs/dqx
+/plugin install dqx@databrickslabs-dqx
+
+```
+
+Or drop the folder into your personal skills directory for a one-off install:
+
+```bash
+cp -R skills/dqx-* ~/.claude/skills/
+
+```
+
+Each skill becomes available as `/dqx:dqx-define-checks` (plugin-installed) or as a normal skill (user-level). Claude auto-invokes on description match.
+
+See the [Claude Code Plugins documentation](https://docs.claude.com/en/docs/claude-code/plugins) for more details.
+
+Any tool that follows the [Agent Skills](https://agentskills.io/) open standard can install and load DQX skills. To install DQX skills with your tool:
+
+1. Copy the per-skill folder into the tool's configured skills directory.
+2. Make sure the path contains `SKILL.md` directly (not nested one level deeper).
+3. Restart the tool if it caches on startup.
+
+Flattening skill files
+
+If your tool expects a single flat skills file instead of a directory with multiple files, concatenate the files:
+
+```bash
+cat skills/dqx-*/SKILL.md > dqx-skills.md
+
+```
+
+## Using DQX skills[​](#using-dqx-skills "Direct link to Using DQX skills")
+
+After installing DQX skills, you can either let your tool use skills automatically or invoke them by name. Typical prompts:
+
+```text
+Add a DQX uniqueness check on (order_id, line_item_id) to my pipeline.
+Split my bronze table into valid and quarantine outputs using these rules: …
+Profile catalog.schema.orders and suggest quality checks.
+Load DQX checks from a Delta table and apply them to a streaming DataFrame.
+
+```
+
+Agents will load the relevant skill into context, follow its patterns, and link back to the canonical documentation for anything outside the skill's scope.
+
+## Extending DQX skills[​](#extending-dqx-skills "Direct link to Extending DQX skills")
+
+DQX's agent skills are scoped to DQX's public APIs. Follow these guidelines when extending them:
+
+* Skills should stay short; the full `SKILL.md` is loaded every time the skill fires, so every line costs tokens on every invocation.
+* Prefer linking to `/docs/...` over duplicating content; the skill's job is to tell the model **when** and **how** to use the API, not to reprint the reference.
+* Always import from `databricks.labs.dqx.*` — never guess module paths.
+* Point to the canonical documentation for any topic outside the skill's core responsibility.
+* Changes to the public DQX API should be reflected in the matching skill in the same PR. See [Contributing](/dqx/docs/dev/contributing.md) for the full workflow.
+
+## Source[​](#source "Direct link to Source")
+
+* Skills: [`skills/`](https://github.com/databrickslabs/dqx/tree/main/skills)
+* Plugin manifest (Claude Code / generic): [`skills/.claude-plugin/plugin.json`](https://github.com/databrickslabs/dqx/blob/v0.14.0/skills/.claude-plugin/plugin.json)
+* Marketplace manifest (Claude Code): [`.claude-plugin/marketplace.json`](https://github.com/databrickslabs/dqx/blob/v0.14.0/.claude-plugin/marketplace.json)

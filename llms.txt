@@ -1,0 +1,150 @@
+# DQX
+
+> Simplified Data Quality checking at Scale for PySpark Workloads on streaming and standard DataFrames.
+
+
+## Home
+
+> DQX homepage
+
+- [DQX - Data Quality Framework](/dqx/index.md)
+
+## User Guide
+
+> Complete guide for using DQX features
+
+- [User Guide](/dqx/docs/guide.md): This section provides a user guide.
+- [Additional Configuration](/dqx/docs/guide/additional_configuration.md): Adding user metadata to the results of all checks
+- [AI-Assisted Primary Key Detection](/dqx/docs/guide/ai_assisted_primary_key_detection.md): DQX provides AI-assisted primary key detection that automatically identifies primary key columns in your tables using Large Language Models (LLMs).
+- [AI-Assisted Quality Checks Generation](/dqx/docs/guide/ai_assisted_quality_checks_generation.md): DQX provides the capability to generate data quality rule candidates using AI/LLM assistance based on natural language descriptions of your data quality requirements. This feature leverages Large Language Models (LLMs) to automatically create appropriate data quality checks from business descriptions significantly reducing the time and effort required to define quality rules.
+- [AI Tools & Skills](/dqx/docs/guide/ai_tools_skills.md): DQX ships Agent Skills that teach AI assistants how to use the library correctly. They're small, focused Markdown files with YAML frontmatter — the open format supported by Databricks Genie Code, Claude Code, and any other tool that follows the standard.
+- [Best Practices in Production](/dqx/docs/guide/best_practices.md): This page provides practical guidance and best practices for using DQX in production, ensuring reliable, scalable, and maintainable data quality validation across your data pipelines and datasets.
+- [Data Contract Quality Rules Generation](/dqx/docs/guide/data_contract_quality_rules_generation.md): DQX enables the generation of data quality rules directly from data contracts that follow the Open Data Contract Standard (ODCS). This feature allows teams to implement federated governance strategies by defining data contracts for their Data Products and automatically deriving comprehensive quality checks from those contracts.
+- [Profiling and Quality Checks Generation](/dqx/docs/guide/data_profiling.md): Data profiling can be run to profile input data and generate quality rule candidates with summary statistics.
+- [DQX Studio (No-Code UI)](/dqx/docs/guide/dqx_studio.md): DQX Studio is the web application for authoring, reviewing, running, and monitoring data quality rules without writing code.
+- [Applying Quality Checks](/dqx/docs/guide/quality_checks_apply.md): You can apply quality checks to your data using the following approaches:
+- [Quality Checks Definition](/dqx/docs/guide/quality_checks_definition.md): Checks are the core of DQX, allowing you to define and apply data quality rules to your datasets.
+- [Loading and Storing Quality Checks](/dqx/docs/guide/quality_checks_storage.md): DQX provides flexible methods to load and save quality checks (rules) defined as metadata (a list of dictionaries) from different storage backends, making it easier to manage, share, and reuse checks across workflows and environments. For the checks table schema and relationships to other DQX tables, see Table Schemas and Relationships.
+- [Quality Dashboard](/dqx/docs/guide/quality_dashboard.md): The data quality dashboard can be set up in two ways: you can import it directly in your workspace from the GitHub repository, or it will be automatically deployed when you install DQX using the Databricks CLI. For more details on the installation process, see the Installation Guide.
+- [Row Anomaly Detection](/dqx/docs/guide/row_anomaly_detection.md): Use row anomaly detection to automatically find unusual rows in your data using ML (per‑record anomalies with explanations) without manually specifying thresholds so you can catch issues that rule-based checks miss. You provide recent good data; DQX trains a model and flags rows that don't fit typical patterns. No ML expertise required. Each flagged row includes an explainable breakdown of which columns drove the score, so you can see why it was flagged.
+- [Troubleshooting Row Anomaly Detection](/dqx/docs/guide/row_anomaly_detection/troubleshooting.md): This guide helps you resolve common issues when using DQX row anomaly detection.
+- [Summary Metrics](/dqx/docs/guide/summary_metrics.md): DQX provides comprehensive functionality to capture and store aggregate statistics about your data quality. This allows you to track data quality trends over time, monitor the health of your data pipelines, and gain insights into the overall quality of your datasets. For the metrics table schema and relationships to output, quarantine, and checks tables, see Table Schemas and Relationships.
+
+## Reference
+
+> API reference, CLI commands, and technical documentation
+
+- [Reference](/dqx/docs/reference.md): This section provides additional details and configuration of DQX.
+- [API Reference](/dqx/docs/reference/api.md): This section contains the API reference for the Databricks Labs DQX project.
+- [databricks.labs.dqx.anomaly.anomaly_engine](/dqx/docs/reference/api/anomaly/anomaly_engine.md): AnomalyEngine entrypoint for row anomaly detection.
+- [databricks.labs.dqx.anomaly.anomaly_workflow](/dqx/docs/reference/api/anomaly/anomaly_workflow.md): Workflow to train anomaly detection models on Databricks.
+- [databricks.labs.dqx.anomaly.check_funcs](/dqx/docs/reference/api/anomaly/check_funcs.md): Check functions for row anomaly detection.
+- [databricks.labs.dqx.anomaly.core](/dqx/docs/reference/api/anomaly/core.md): Core ML operations for row anomaly detection.
+- [databricks.labs.dqx.anomaly.drift](/dqx/docs/reference/api/anomaly/drift.md): Drift detection and warnings for row anomaly models.
+- [databricks.labs.dqx.anomaly.ensemble_scorer](/dqx/docs/reference/api/anomaly/ensemble_scorer.md): Ensemble anomaly scoring (distributed UDF and driver-local).
+- [databricks.labs.dqx.anomaly.ensemble_training](/dqx/docs/reference/api/anomaly/ensemble_training.md): Ensemble trainer for row anomaly detection models.
+- [databricks.labs.dqx.anomaly.explainability](/dqx/docs/reference/api/anomaly/explainability.md): SHAP-based explainability for row anomaly detection.
+- [databricks.labs.dqx.anomaly.feature_prep](/dqx/docs/reference/api/anomaly/feature_prep.md): Prepare feature metadata and apply feature engineering for anomaly scoring.
+- [databricks.labs.dqx.anomaly.mlflow_registry](/dqx/docs/reference/api/anomaly/mlflow_registry.md): Model registry abstraction for row anomaly detection.
+- [databricks.labs.dqx.anomaly.model_config](/dqx/docs/reference/api/anomaly/model_config.md): Model configuration and record structure for row anomaly detection.
+- [databricks.labs.dqx.anomaly.model_discovery](/dqx/docs/reference/api/anomaly/model_discovery.md): Discover model columns, segments, and quantile points from the anomaly registry.
+- [databricks.labs.dqx.anomaly.model_loader](/dqx/docs/reference/api/anomaly/model_loader.md): Load and validate sklearn anomaly models from MLflow.
+- [databricks.labs.dqx.anomaly.model_registry](/dqx/docs/reference/api/anomaly/model_registry.md): Model registry utilities for row anomaly detection.
+- [databricks.labs.dqx.anomaly.profiler](/dqx/docs/reference/api/anomaly/profiler.md): Auto-discovery logic for row anomaly detection.
+- [databricks.labs.dqx.anomaly.scoring_config](/dqx/docs/reference/api/anomaly/scoring_config.md): Scoring configuration and constants for row anomaly detection.
+- [databricks.labs.dqx.anomaly.scoring_orchestrator](/dqx/docs/reference/api/anomaly/scoring_orchestrator.md): Orchestrates anomaly scoring: route global vs segmented, run global model pipeline.
+- [databricks.labs.dqx.anomaly.scoring_run](/dqx/docs/reference/api/anomaly/scoring_run.md): Global and segmented anomaly model scoring.
+- [databricks.labs.dqx.anomaly.scoring_strategies](/dqx/docs/reference/api/anomaly/scoring_strategies.md): Scoring strategy interface and implementations for row anomaly models.
+- [databricks.labs.dqx.anomaly.scoring_utils](/dqx/docs/reference/api/anomaly/scoring_utils.md): Anomaly scoring helpers: DataFrame/schema builders, row filter, join, reserved column checks.
+- [databricks.labs.dqx.anomaly.segment_utils](/dqx/docs/reference/api/anomaly/segment_utils.md): Segment naming and filtering for row anomaly detection.
+- [databricks.labs.dqx.anomaly.single_model_scorer](/dqx/docs/reference/api/anomaly/single_model_scorer.md): Single-model anomaly scoring (distributed UDF and driver-local).
+- [databricks.labs.dqx.anomaly.training_service](/dqx/docs/reference/api/anomaly/training_service.md): Anomaly training service - Main orchestration layer.
+- [databricks.labs.dqx.anomaly.training_strategies](/dqx/docs/reference/api/anomaly/training_strategies.md): Training strategy pattern for row anomaly detection.
+- [databricks.labs.dqx.anomaly.transformers](/dqx/docs/reference/api/anomaly/transformers.md): Feature engineering for row anomaly detection.
+- [databricks.labs.dqx.anomaly.types](/dqx/docs/reference/api/anomaly/types.md): Type definitions for row anomaly detection module.
+- [databricks.labs.dqx.anomaly.validation](/dqx/docs/reference/api/anomaly/validation.md): Validation for anomaly detection: training inputs and model record compatibility.
+- [databricks.labs.dqx.base](/dqx/docs/reference/api/base.md): DQEngineBase Objects
+- [databricks.labs.dqx.check_funcs](/dqx/docs/reference/api/check_funcs.md): DQPattern Objects
+- [databricks.labs.dqx.checks_resolver](/dqx/docs/reference/api/checks_resolver.md): resolve\check\function
+- [databricks.labs.dqx.checks_serializer](/dqx/docs/reference/api/checks_serializer.md): ChecksNormalizer Objects
+- [databricks.labs.dqx.checks_storage](/dqx/docs/reference/api/checks_storage.md): DataFrameConverter Objects
+- [databricks.labs.dqx.checks_validator](/dqx/docs/reference/api/checks_validator.md): ChecksValidationStatus Objects
+- [databricks.labs.dqx.cli](/dqx/docs/reference/api/cli.md): open\remote\config
+- [databricks.labs.dqx.config](/dqx/docs/reference/api/config.md): InputConfig Objects
+- [databricks.labs.dqx.config_serializer](/dqx/docs/reference/api/config_serializer.md): ConfigSerializer Objects
+- [databricks.labs.dqx.contexts.cli_context](/dqx/docs/reference/api/contexts/cli_context.md): CliContext Objects
+- [databricks.labs.dqx.contexts.global_context](/dqx/docs/reference/api/contexts/global_context.md): GlobalContext Objects
+- [databricks.labs.dqx.contexts.workflow_context](/dqx/docs/reference/api/contexts/workflow_context.md): WorkflowContext Objects
+- [databricks.labs.dqx.contexts.workspace_context](/dqx/docs/reference/api/contexts/workspace_context.md): WorkspaceContext Objects
+- [databricks.labs.dqx.datacontract.contract_rules_generator](/dqx/docs/reference/api/datacontract/contract_rules_generator.md): Data Contract to DQX Rules Generator.
+- [databricks.labs.dqx.engine](/dqx/docs/reference/api/engine.md): DQEngineCore Objects
+- [databricks.labs.dqx.errors](/dqx/docs/reference/api/errors.md): DQXError Objects
+- [databricks.labs.dqx.executor](/dqx/docs/reference/api/executor.md): DQCheckResult Objects
+- [databricks.labs.dqx.geo.check_funcs](/dqx/docs/reference/api/geo/check_funcs.md): is\_latitude
+- [databricks.labs.dqx.installer.config_provider](/dqx/docs/reference/api/installer/config_provider.md): ConfigProvider Objects
+- [databricks.labs.dqx.installer.dashboard_installer](/dqx/docs/reference/api/installer/dashboard_installer.md): DashboardMetadata Objects
+- [databricks.labs.dqx.installer.install](/dqx/docs/reference/api/installer/install.md): WorkspaceInstaller Objects
+- [databricks.labs.dqx.installer.logs](/dqx/docs/reference/api/installer/logs.md): PartialLogRecord Objects
+- [databricks.labs.dqx.installer.version_checker](/dqx/docs/reference/api/installer/version_checker.md): VersionChecker Objects
+- [databricks.labs.dqx.installer.warehouse_installer](/dqx/docs/reference/api/installer/warehouse_installer.md): WarehouseInstaller Objects
+- [databricks.labs.dqx.installer.workflow_installer](/dqx/docs/reference/api/installer/workflow_installer.md): TEST\NIGHTLY\CI\RESOURCES\PURGE\_TIMEOUT
+- [databricks.labs.dqx.installer.workflow_task](/dqx/docs/reference/api/installer/workflow_task.md): Task Objects
+- [databricks.labs.dqx.io](/dqx/docs/reference/api/io.md): read\input\data
+- [databricks.labs.dqx.llm.llm_core](/dqx/docs/reference/api/llm/llm_core.md): LLMModelConfigurator Objects
+- [databricks.labs.dqx.llm.llm_engine](/dqx/docs/reference/api/llm/llm_engine.md): DQLLMEngine Objects
+- [databricks.labs.dqx.llm.llm_pk_detector](/dqx/docs/reference/api/llm/llm_pk_detector.md): Primary key detection using LLM analysis.
+- [databricks.labs.dqx.llm.llm_utils](/dqx/docs/reference/api/llm/llm_utils.md): get\check\function\_definitions
+- [databricks.labs.dqx.llm.optimizers](/dqx/docs/reference/api/llm/optimizers.md): DspyOptimizerConfig Objects
+- [databricks.labs.dqx.llm.validators](/dqx/docs/reference/api/llm/validators.md): LLMValidationScoreWeights Objects
+- [databricks.labs.dqx.manager](/dqx/docs/reference/api/manager.md): DQRuleManager Objects
+- [databricks.labs.dqx.metrics_listener](/dqx/docs/reference/api/metrics_listener.md): StreamingMetricsListener Objects
+- [databricks.labs.dqx.metrics_observer](/dqx/docs/reference/api/metrics_observer.md): DQMetricsObservation Objects
+- [databricks.labs.dqx.package_utils](/dqx/docs/reference/api/package_utils.md): missing\required\packages
+- [databricks.labs.dqx.pii.nlp_engine_config](/dqx/docs/reference/api/pii/nlp_engine_config.md): NLPEngineConfig Objects
+- [databricks.labs.dqx.pii.pii_detection_funcs](/dqx/docs/reference/api/pii/pii_detection_funcs.md): does\not\contain\_pii
+- [databricks.labs.dqx.profiler.profiler](/dqx/docs/reference/api/profiler.md): DQProfiler Objects
+- [databricks.labs.dqx.profiler.common](/dqx/docs/reference/api/profiler/common.md): val\to\str
+- [databricks.labs.dqx.profiler.dlt_generator](/dqx/docs/reference/api/profiler/dlt_generator.md): DQDltGenerator Objects
+- [databricks.labs.dqx.profiler.generator](/dqx/docs/reference/api/profiler/generator.md): DQGenerator Objects
+- [databricks.labs.dqx.profiler.profile](/dqx/docs/reference/api/profiler/profile.md): DQProfile Objects
+- [databricks.labs.dqx.profiler.profile_builder](/dqx/docs/reference/api/profiler/profile_builder.md): make\null\or\empty\profile
+- [databricks.labs.dqx.profiler.profiler_runner](/dqx/docs/reference/api/profiler/profiler_runner.md): ProfilerRunner Objects
+- [databricks.labs.dqx.profiler.profiler_workflow](/dqx/docs/reference/api/profiler/profiler_workflow.md): ProfilerWorkflow Objects
+- [databricks.labs.dqx.profiling_utils](/dqx/docs/reference/api/profiling_utils.md): Shared profiling utilities.
+- [databricks.labs.dqx.quality_checker.e2e_workflow](/dqx/docs/reference/api/quality_checker/e2e_workflow.md): EndToEndWorkflow Objects
+- [databricks.labs.dqx.quality_checker.quality_checker_runner](/dqx/docs/reference/api/quality_checker/quality_checker_runner.md): QualityCheckerRunner Objects
+- [databricks.labs.dqx.quality_checker.quality_checker_workflow](/dqx/docs/reference/api/quality_checker/quality_checker_workflow.md): DataQualityWorkflow Objects
+- [databricks.labs.dqx.reporting_columns](/dqx/docs/reference/api/reporting_columns.md): DefaultColumnNames Objects
+- [databricks.labs.dqx.rule](/dqx/docs/reference/api/rule.md): Criticality Objects
+- [databricks.labs.dqx.rule_fingerprint](/dqx/docs/reference/api/rule_fingerprint.md): Rule fingerprint functions for deterministic hashing of DQ rules and rule sets.
+- [databricks.labs.dqx.schema.dq_info_schema](/dqx/docs/reference/api/schema/dq_info_schema.md): Wide schema for dqinfo: one struct type with optional fields (anomaly, …).
+- [databricks.labs.dqx.table_manager](/dqx/docs/reference/api/table_manager.md): TableDataProvider Objects
+- [databricks.labs.dqx.telemetry](/dqx/docs/reference/api/telemetry.md): log\_telemetry
+- [databricks.labs.dqx.utils](/dqx/docs/reference/api/utils.md): VariableValue
+- [databricks.labs.dqx.workflows_runner](/dqx/docs/reference/api/workflows_runner.md): WorkflowsRunner Objects
+- [Performance Benchmarks Report](/dqx/docs/reference/benchmarks.md): Specification
+- [CLI Reference](/dqx/docs/reference/cli.md): This page summarizes the available DQX commands exposed via the Databricks CLI for DQX.
+- [DQX Engine](/dqx/docs/reference/engine.md): To perform data quality checking with DQX, you must create a DQEngine object.
+- [DQX Profiler](/dqx/docs/reference/profiler.md): To profile data and generate candidate data quality rules with DQX, you can use the DQProfiler, DQGenerator, and DQDltGenerator classes.
+- [Quality Checks](/dqx/docs/reference/quality_checks.md): This page provides a reference for the quality check functions available in DQX. Checks are the core of DQX, allowing you to define and apply data quality rules to your datasets.
+- [Table Schemas and Relationships](/dqx/docs/reference/table_schemas.md): This page provides a reference for the table structures and relationships (EDR diagrams) used by DQX when applying quality checks, storing checks, and recording summary metrics. It describes the relationships between tables and the schema of result columns.
+- [Testing Applications Using DQX](/dqx/docs/reference/testing.md): Standard testing with DQEngine
+
+## Development
+
+> Contributing and development documentation
+
+- [Contributing to DQX](/dqx/docs/dev.md): This section is for contributors to the DQX project. It contains information on how to contribute, including submitting issues, pulling requests, and contributing to the documentation.
+- [Contributing](/dqx/docs/dev/contributing.md): Guidelines for Working on Issues
+- [Authoring Documentation](/dqx/docs/dev/docs_authoring.md): This document provides guidelines for writing documentation for the DQX project.
+
+## Demos
+
+> Example implementations and demos
+
+- [Demos](/dqx/docs/demos.md): Import the following notebooks in the Databricks workspace to try DQX out:
+
+## Dqx
+
+- [Installation](/dqx/docs/installation.md): The framework can be installed on a Databricks workspace as a tool or used as a standalone library.
+- [Motivation](/dqx/docs/motivation.md): Current data quality frameworks often fall short of providing detailed explanations for specific row or column

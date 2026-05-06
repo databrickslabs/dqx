@@ -1,0 +1,106 @@
+# DQX Profiler
+
+To profile data and generate candidate data quality rules with DQX, you can use the `DQProfiler`, `DQGenerator`, and `DQDltGenerator` classes. The profiler analyzes datasets to generate summary statistics and data quality rule candidates automatically. These components require a Databricks [workspace client](https://docs.databricks.com/aws/en/dev-tools/sdk-python) for authentication and interaction with the Databricks workspace.
+
+When running the code on a Databricks workspace, the workspace client is automatically authenticated, whether DQX is used in a notebook, script, or job/workflow. You only need the following code to create the workspace client if you run DQX on Databricks workspace:
+
+* Python
+
+```python
+from databricks.sdk import WorkspaceClient
+from databricks.labs.dqx.profiler.profiler import DQProfiler
+from databricks.labs.dqx.profiler.generator import DQGenerator
+from databricks.labs.dqx.profiler.dlt_generator import DQDltGenerator
+
+ws = WorkspaceClient()
+profiler = DQProfiler(ws)
+generator = DQGenerator(ws)
+dlt_generator = DQDltGenerator(ws)
+
+```
+
+For external environments, such as CI servers or local machines, you can authenticate to Databricks using any method supported by the Databricks SDK. For detailed instructions, refer to the [default authentication flow](https://databricks-sdk-py.readthedocs.io/en/latest/authentication.html#default-authentication-flow).
+
+## Profiler methods[​](#profiler-methods "Direct link to Profiler methods")
+
+The `DQProfiler` class provides methods to analyze datasets and generate data quality profiles for each column:
+
+| Method                         | Description                                                                 | Arguments                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ------------------------------ | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `profile`                      | Profiles a DataFrame to generate summary statistics and data quality rules. | `df`: DataFrame to profile; `columns`: Optional list of column names to include (default: all columns); `options`: Optional dictionary of profiling options (merged with defaults).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `profile_table`                | Profiles a table to generate summary statistics and data quality rules.     | `table`: Fully-qualified table name to profile (e.g. 'catalog.schema.table'); `columns`: Optional list of column names to include (default: all columns); `options`: Optional dictionary of profiling options (merged with default options);                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `profile_tables_for_patterns`  | Profiles multiple tables in Unity Catalog with pattern matching.            | `patterns`: List of table names or filesystem-style wildcards (e.g. 'schema.\*') to include (if None, all tables are included); `exclude_matched`: Whether to exclude matched tables (default False); `columns`: Optional dictionary with table names as keys and lists of column names to include as values (default: all columns); `options`: Optional list of dictionaries with table names (or table wildcard patterns) as key and profiling options as values (merged with default options); `max_parallelism`: (optional) Maximum number of tables to check in parallel (defaults to the number of CPU cores); `exclude_patterns`: (optional) List of table names or filesystem-style wildcards (e.g. '\*\_dq\_output') to exclude, useful if wanting to exclude existing output or quarantine tables. |
+| `detect_primary_keys_with_llm` | Detects primary keys in the input table using LLM.                          | `input_config`: `InputConfig` object with the data location (e.g. a table) and options for reading the input data; `max_retries`: Maximum number of retries to find unique primary key combination.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+
+See usage example [here](/dqx/docs/guide/data_profiling.md).
+
+## Profiling Options[​](#profiling-options "Direct link to Profiling Options")
+
+The profiler supports extensive configuration options to customize behavior:
+
+| Option                      | Default Value | Description                                                                           |
+| --------------------------- | ------------- | ------------------------------------------------------------------------------------- |
+| `round`                     | `True`        | Round min/max values for cleaner rules                                                |
+| `max_in_count`              | `10`          | Generate `is_in` rule if distinct values < this count                                 |
+| `distinct_ratio`            | `0.05`        | Generate `is_in` rule if distinct values < 5% of total                                |
+| `max_null_ratio`            | `0.01`        | Generate `is_not_null` rule if null values < 1% of total                              |
+| `remove_outliers`           | `True`        | Enable outlier detection for min/max rules                                            |
+| `outlier_columns`           | `[]`          | Specific columns for outlier detection (empty = all numeric)                          |
+| `num_sigmas`                | `3`           | Number of standard deviations for outlier detection                                   |
+| `trim_strings`              | `True`        | Trim whitespace from strings before analysis                                          |
+| `max_empty_ratio`           | `0.01`        | Generate `is_not_null_or_empty` or `is_not_empty` rule if empty strings < 1% of total |
+| `sample_fraction`           | `0.3`         | Sample 30% of the data for profiling                                                  |
+| `sample_seed`               | `None`        | Seed for sampling (None = random)                                                     |
+| `limit`                     | `1000`        | Maximum number of records to analyze                                                  |
+| `filter`                    | `None`        | Filter for the input data as a string SQL expression                                  |
+| `llm_primary_key_detection` | `True`        | Detect primary keys for generation of `is_unique` rule                                |
+
+## DQProfile Structure[​](#dqprofile-structure "Direct link to DQProfile Structure")
+
+The `DQProfile` dataclass represents a single data quality rule candidate generated by the profiler:
+
+```python
+@dataclass(frozen=True)
+class DQProfile:
+    name: str                                   # Type of rule (e.g., "is_not_null", "min_max", "is_in")
+    column: str                                 # Column name the rule applies to
+    description: str | None = None              # Optional description of how the rule was generated
+    parameters: dict[str, Any] | None = None    # Optional parameters for the rule
+    filter: str | None = None                   # Optional filter to be applied to the data source
+
+```
+
+## DQProfile Types[​](#dqprofile-types "Direct link to DQProfile Types")
+
+Profiling data generates several types of `DQProfile` objects. Each profile can be used to generate a corresponding `DQRule` consisting of an input column, built-in DQX check function, and arguments inferred during profiling.
+
+| Profile Type             | DQX Check Function          | Supported Data Types                                                  | Profiled Values                                                                                                              | Notes                                                                                                                                                                                               |
+| ------------------------ | --------------------------- | --------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| is\_not\_null            | `is_not_null`               | All                                                                   |                                                                                                                              | Generated when `null_ratio <= max_null_ratio` for non-text columns, or when `null_ratio <= max_null_ratio` but `empty_ratio > max_empty_ratio` for text columns                                     |
+| is\_not\_null\_or\_empty | `is_not_null_and_not_empty` | `StringType`, `CharType`, or `VarcharType`                            | `trim_strings`: Whether to trim whitespace before checking for empty strings                                                 | Generated for text columns when both `null_ratio <= max_null_ratio` and `empty_ratio <= max_empty_ratio`                                                                                            |
+| is\_not\_empty           | `is_not_empty`              | `StringType`, `CharType`, or `VarcharType`                            | `trim_strings`: Whether to trim whitespace before checking for empty strings                                                 | Generated for text columns when `null_ratio > max_null_ratio` (nulls allowed) but `empty_ratio <= max_empty_ratio`                                                                                  |
+| is\_in                   | `is_in_list`                | `StringType`, `CharType`, `VarcharType`, `IntegerType`, or `LongType` | `in`: List of distinct values from the profiled data                                                                         | List of values checks are inferred based on the `max_in_count` and `distinct_ratio` in the profiler options                                                                                         |
+| min\_max                 | `is_in_range`               | `NumericType`, `DateType`, `TimestampType`, or `TimestampNTZType`     | `min`: Minimum value from the profiled data; `max`: Maximum value from the profiled data                                     | Values can be rounded by setting `"round": True` in the profiler options; Outlier values may be ignored based on the profiler options (e.g. `remove_outliers`, `num_sigmas`, and `outlier_columns`) |
+| is\_unique               | `is_unique`                 | All                                                                   | `reasoning`: Reason for inferring that a column is a primary key; `confidence`: Confidence score of the LLM-generated result | Requires installation of [LLM Extensions](/dqx/docs/installation.md#optional-dependencies); Set `llm_primary_key_detection: True` in the profiler options to enable primary key detection           |
+
+## DQGenerator methods[​](#dqgenerator-methods "Direct link to DQGenerator methods")
+
+The `DQGenerator` class converts profiling results into DQX quality rules:
+
+| Method                          | Description                                                                                                                                                                                                                                                                  | Arguments                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Supports local execution |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------ |
+| `generate_dq_rules`             | Generates a list of data quality rules from profiling results.                                                                                                                                                                                                               | `profiles`: List of DQProfile objects; `criticality`: Criticality for generated rules (default "error").                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | Yes                      |
+| `generate_dq_rules_ai_assisted` | Generates a list of data quality rules using Natural language description.                                                                                                                                                                                                   | `user_input`: Natural language description of data quality requirements; `input_config`: `InputConfig` object with the data location (e.g. a table) and options for reading the input data (if not provided, description provided by the user will be used to guess the table schema).                                                                                                                                                                                                                                                                                                                             | Yes                      |
+| `generate_rules_from_contract`  | Generates quality rules from ODCS data contract specification. Either `contract` or `contract_file` must be provided. When the contract defines a schema and `generate_schema_validation=True` (default), one dataset-level `has_valid_schema` rule per schema is generated. | `contract`: Pre-loaded DataContract object (or `None`); `contract_file`: Path to contract YAML file (or `None`); `contract_format`: Contract format (default "odcs"); `generate_predefined_rules`: Generate rules from contract fields (default `True`); `process_text_rules`: Process text expectations with LLM (default `True`); `generate_schema_validation`: Generate has\_valid\_schema rules from contract schema (default `True`); `strict_schema_validation`: Passed as strict to has\_valid\_schema (default `True`); `default_criticality`: Default criticality for predefined rules (default "error"). | Yes                      |
+
+## DQDltGenerator methods[​](#dqdltgenerator-methods "Direct link to DQDltGenerator methods")
+
+The `DQDltGenerator` class creates Delta Live Tables expectation statements from profiling results:
+
+| Method               | Description                                                 | Arguments                                                                                                                                                            | Supports local execution |
+| -------------------- | ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
+| `generate_dlt_rules` | Generates Delta Live Table rules in the specified language. | `rules`: List of DQProfile objects; `action`: Optional violation action ("drop", "fail", or None); `language`: Target language ("SQL", "Python", or "Python\_Dict"). | Yes                      |
+
+Complete Profiling Guide
+
+For comprehensive examples, advanced options, and best practices, see the [Data Profiling Guide](/dqx/docs/guide/data_profiling.md).

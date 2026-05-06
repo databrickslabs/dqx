@@ -1,0 +1,133 @@
+# CLI Reference
+
+This page summarizes the available DQX commands exposed via the Databricks CLI for DQX.
+
+All commands support Databricks CLI authentication flags (such as `--profile`).
+
+## Installation lifecycle[​](#installation-lifecycle "Direct link to Installation lifecycle")
+
+```bash
+# Install
+databricks labs install dqx
+
+# Upgrade
+databricks labs upgrade dqx
+
+# Uninstall
+databricks labs uninstall dqx
+
+```
+
+Where is DQX installed?
+
+By default, DQX is installed under the user's home folder (for example `/Users/<user>/.dqx`). Use the `DQX_FORCE_INSTALL` env var to force a global or user install. Provide a custom installation folder during installation to override the default location. See the installation guide for details. Set the `--install-folder` argument When running commands for a DQX installation with a custom installation folder.
+
+## Configuration helpers[​](#configuration-helpers "Direct link to Configuration helpers")
+
+```bash
+# Open the installation config in the workspace
+databricks labs dqx open-remote-config
+
+# Open the installation config in the workspace with a custom installation folder
+databricks labs dqx open-remote-config --install-folder "/Workspace/my_dqx_folder"
+
+# Open dashboards folder for the installation
+databricks labs dqx open-dashboards
+
+# Open dashboards folder for an installation with a custom installation folder
+databricks labs dqx open-dashboards --install-folder "/Workspace/my_dqx_folder"
+
+```
+
+## Workflows and logs[​](#workflows-and-logs "Direct link to Workflows and logs")
+
+```bash
+# List installed workflows with their latest run state
+databricks labs dqx workflows
+
+# List installed workflows with their latest run state with a custom installation folder
+databricks labs dqx workflows --install-folder "/Workspace/my_dqx_folder"
+
+# Show logs for the latest run of a workflow (profiler, quality-checker, e2e, anomaly-trainer)
+databricks labs dqx logs --workflow quality-checker
+
+# Show logs for the latest run of a workflow (profiler, quality-checker, e2e, anomaly-trainer) with a custom installation folder
+databricks labs dqx logs --workflow quality-checker --install-folder "/Workspace/my_dqx_folder"
+
+```
+
+## Running workflows[​](#running-workflows "Direct link to Running workflows")
+
+```bash
+# Run profiler for all run configs in the configuration file: profile data and generate quality check candidates
+databricks labs dqx profile --timeout-minutes 20
+
+# Run profiler for all run configs in the configuration file with a custom installation folder: profile data and generate quality check candidates
+databricks labs dqx profile --timeout-minutes 20 --install-folder "/Workspace/my_dqx_folder"
+
+# Run profiler for a single run config in the configuration file: profile data and generate quality check candidates
+databricks labs dqx profile --run-config default --timeout-minutes 20
+
+# Run profiler for all tables/views matching wildcard patterns. Conventions:
+# * Run config from configuration file is used as a template for all relevant fields except location
+# * Input table location is derived from the patterns
+# * For table-based checks location, checks are saved to the specified table
+# * For file-based checks location, file in the path is replaced with <input_table>.yml. In addition, if the location is specified as a relative path, it is prefixed with the installation folder
+# * Use exclude-patterns to exclude tables matching the wildcard patterns
+# * By default, output and quarantine tables are excluded based on suffixes
+# * Default for output table suffix is "_dq_output"
+# * Default for quarantine table suffix is "_dq_quarantine"
+databricks labs dqx profile --run-config "default" --patterns "main.product001.*;main.product002" --exclude-patterns "*_output;*_quarantine" --timeout-minutes 20
+
+# Run quality checker for all run configs in the configuration file: apply quality checks and write results and optionally quarantine
+databricks labs dqx apply-checks --timeout-minutes 20
+
+# Run quality checker for all run configs in the configuration file with a custom installation folder: apply quality checks and write results and optionally quarantine
+databricks labs dqx apply-checks --timeout-minutes 20 --install-folder "/Workspace/my_dqx_folder"
+
+# Run quality checker for a single run config in the configuration file: apply quality checks and write results and optionally quarantine
+databricks labs dqx apply-checks --run-config default --timeout-minutes 20
+
+# Run quality checker for tables/views matching wildcard patterns. Conventions are similar to the profiler.
+databricks labs dqx apply-checks --run-config "default" --patterns "main.product001.*;main.product002" --exclude-patterns "*_dq_output;*_dq_quarantine" --output-table-suffix "_output" --quarantine-table-suffix "_quarantine"
+
+# Run e2e (end-to-end) workflows for all run configs in the configuration file: profile data > generate quality checks > apply checks > write results and optionally quarantine
+databricks labs dqx e2e --timeout-minutes 20
+
+# Run e2e (end-to-end) workflows for all run configs in the configuration file with a custom installation folder: profile data > generate quality checks > apply checks > write results and optionally quarantine
+databricks labs dqx e2e --timeout-minutes 20 --install-folder "/Workspace/my_dqx_folder"
+
+# Run e2e (end-to-end) workflows for a single run config in the configuration file: profile data > generate quality checks > apply checks > write results and optionally quarantine
+databricks labs dqx e2e --run-config default --timeout-minutes 20
+
+# Run e2e (end-to-end) workflows for tables/views matching wildcard patterns. Conventions are similar to the profiler.
+databricks labs dqx e2e --run-config "default" --patterns "main.product001.*;main.product002" --exclude-patterns "*_dq_output;*_dq_quarantine" --output-table-suffix "_output" --quarantine-table-suffix "_quarantine"
+
+# Train anomaly detection model for all run configs in the configuration file
+databricks labs dqx train-anomaly --timeout-minutes 60
+
+# Train anomaly detection model for all run configs in the configuration file with a custom installation folder
+databricks labs dqx train-anomaly --timeout-minutes 60 --install-folder "/Workspace/my_dqx_folder"
+
+# Train anomaly detection model for a single run config in the configuration file
+databricks labs dqx train-anomaly --run-config default --timeout-minutes 60
+
+```
+
+## Validating checks[​](#validating-checks "Direct link to Validating checks")
+
+```bash
+# Validate checks stored in the installation (defined in `checks_location`) for all run configs in the configuration file:
+databricks labs dqx validate-checks
+
+# Validate checks stored in a custom installation folder (defined in `checks_location`) for all run configs in the configuration file:
+databricks labs dqx validate-checks --install-folder "/Workspace/my_dqx_folder"
+
+# Validate checks stored in the installation (defined in `checks_location`) for a single run config in the configuration file:
+databricks labs dqx validate-checks --run-config default
+
+```
+
+Timeouts
+
+For long-running workflows, pass `--timeout-minutes` to adjust the CLI wait time.

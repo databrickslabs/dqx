@@ -1,0 +1,600 @@
+# Contributing
+
+## Guidelines for Working on Issues[​](#guidelines-for-working-on-issues "Direct link to Guidelines for Working on Issues")
+
+DQX issues (tickets) are tracked on Github [here](https://github.com/databrickslabs/dqx/issues). You can view all open issues, including those actively being worked on and those available for contribution. Issues with an assigned username are already in progress, while unassigned ones are open for anyone to pick up.
+
+If you'd like to work on an issue, please either assign it to yourself or leave a comment to indicate that you’re taking it on. Before starting work, it's a good idea to discuss the issue in the comments, especially if you have questions, need clarification, or want to confirm the proposed approach.
+
+If you have a new idea, consider opening a new issue first to gather feedback and ensure alignment with the project’s goals. This helps avoid duplicated efforts and ensures contributions fit well with the roadmap. You can also start broader conversations or ask questions in [here](https://github.com/databrickslabs/dqx/discussions).
+
+## First Principles[​](#first-principles "Direct link to First Principles")
+
+Favoring standard libraries over external dependencies, especially in specific contexts like Databricks, is a best practice in software development.
+
+There are several reasons why this approach is encouraged:
+
+* Standard libraries are typically well-vetted, thoroughly tested, and maintained by the official maintainers of the programming language or platform. This ensures a higher level of stability and reliability.
+* External dependencies, especially lesser-known or unmaintained ones, can introduce bugs, security vulnerabilities, or compatibility issues that can be challenging to resolve. Adding external dependencies increases the complexity of your codebase.
+* Each dependency may have its own set of dependencies, potentially leading to a complex web of dependencies that can be difficult to manage. This complexity can lead to maintenance challenges, increased risk, and longer build times.
+* External dependencies can pose security risks. If a library or package has known security vulnerabilities and is widely used, it becomes an attractive target for attackers. Minimizing external dependencies reduces the potential attack surface and makes it easier to keep your code secure.
+* Relying on standard libraries enhances code portability. It ensures your code can run on different platforms and environments without being tightly coupled to specific external dependencies. This is particularly important in settings like Databricks, where you may need to run your code on different clusters or setups.
+* External dependencies may have their versioning schemes and compatibility issues. When using standard libraries, you have more control over versioning and can avoid conflicts between different dependencies in your project.
+* Fewer external dependencies mean faster build and deployment times. Downloading, installing, and managing external packages can slow down these processes, especially in large-scale projects or distributed computing environments like Databricks.
+* External dependencies can be abandoned or go unmaintained over time. This can lead to situations where your project relies on outdated or unsupported code. When you depend on standard libraries, you have confidence that the core functionality you rely on will continue to be maintained and improved.
+
+While minimizing external dependencies is essential, exceptions can be made case-by-case. There are situations where external dependencies are justified, such as when a well-established and actively maintained library provides significant benefits, like time savings, performance improvements, or specialized functionality unavailable in standard libraries.
+
+## First contribution[​](#first-contribution "Direct link to First contribution")
+
+If you're interested in contributing, please create a PR, contact us, or open an issue to discuss your ideas.
+
+Here are the example steps to submit your first contribution:
+
+1. Fork the [DQX](https://github.com/databrickslabs/dqx) repo. You can also create a branch if you are added as a writer to the repo.
+2. Clone the repo locally: `git clone <repository-url>`
+3. `git checkout main` (or `gcm` if you're using [ohmyzsh](https://ohmyz.sh/)).
+4. `git pull` (or `gl` if you're using [ohmyzsh](https://ohmyz.sh/)).
+5. `git checkout -b FEATURENAME` (or `gcb FEATURENAME` if you're using [ohmyzsh](https://ohmyz.sh/)).
+6. .. do the work and make sure [Definition of Done (DoD) items](#definition-of-done) are fulfilled.
+7. Setup your [local environment](#local-setup).
+8. `make fmt` (Note: If you have an issue with `make fmt`, ensure your IDE folder is ignored in .gitignore. Already added for .idea/ and .cursor/)
+9. `make lint`
+10. .. fix if any issues are reported
+11. `make test` (run unit tests), `make integration` (run integration tests), `make e2e` (run end-to-end tests) and optionally `make coverage` (generate coverage report). See below on how to setup the testing environment for integration tests.
+12. .. fix if any issues reported
+13. `git commit -S -a -m "message"`
+
+Make sure to enter a meaningful commit message title.
+
+Git Setup
+
+Please make sure the following items are set up correctly in your local git configuration, otherwise merging of the PR will be blocked:
+
+* You need to set your git email address to the primary email address associated with your GitHub account.
+
+* You need to sign commits with your GPG key (hence -S option). To set up GPG key in your Github account, follow [these instructions](https://docs.github.com/en/github/authenticating-to-github/managing-commit-signature-verification). You can configure Git to sign all commits with your GPG key by default: `git config --global commit.gpgsign true` You can do the same in your IDE if you use git integration functionalities.
+
+  If you have not signed your commits initially, you can sign and re-apply all of them as follows:
+
+  ```shell
+  git reset --soft $(git merge-base origin/main HEAD)  # point to the common ancestor of main and your branch
+  #git reset --soft HEAD~<how-many-commit-go-back>  # alternatively, specify how many commits to go back
+  git commit -S --reuse-message=ORIG_HEAD
+  git push --force-with-lease origin HEAD
+
+  ```
+
+13. `git push origin FEATURENAME`
+
+    To access the repository, you must use the HTTPS remote with a personal access token or SSH with an SSH key and passphrase that has been authorized for the `databrickslabs` organization.
+
+14. Go to GitHub UI and create PR. Alternatively, `gh pr create` (if you have [GitHub CLI](https://cli.github.com/) installed). Use a meaningful pull request title because it'll appear in the release notes. Use `Resolves #NUMBER` in pull request description to [automatically link it](https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/using-keywords-in-issues-and-pull-requests#linking-a-pull-request-to-an-issue) to an existing issue.
+
+15. Reviewers will be automatically assigned. Project maintainers will also add `Copilot` AI assistant as one of the reviewers to evaluate the code automatically.
+
+## Definition of Done[​](#definition-of-done "Direct link to Definition of Done")
+
+Please ensure the following DoDs are met before submitting your pull request:
+
+* [ ] **Code formatting** — Code is formatted consistently with the project style (`make fmt`).
+* [ ] **Linting & checks** — Code passes linting and static analysis (`make lint`).
+* [ ] **Testing** — Unit, integration, and e2e tests cover changes and all tests pass (`make test`, `make integration`, `make e2e`). Performance tests (`make perf`) run nightly and do not need to pass before submitting a PR. Follow the [test pyramid](https://martinfowler.com/articles/practical-test-pyramid.html) principles. Most changes should be covered with unit tests, supplemented by integration tests when necessary, and only rarely with end-to-end or performance tests.
+* [ ] **Docstrings** — Public functions, classes, and modules include [Google Style Python Docstrings](https://sphinxcontrib-napoleon.readthedocs.io/en/latest/example_google.html). Docstrings are clean and consistent ([guidance](#writing-docstrings)).
+* [ ] **Documentation** — If user-facing behavior changes, ensure docs are updated. See [docs authoring](/dqx/docs/dev/docs_authoring.md).
+* [ ] **Demos** — If applicable, update or create demos to showcase new features or changes.
+* [ ] **Commit signing** — Commits are GPG-signed (e.g., `git commit -S -a -m "your message"`).
+* [ ] **Pull request requirements** — PR is linked to an existing issue and includes a clear description of the changes.
+* [ ] **Backward compatibility** — Check that changes don't break existing APIs or document breaking changes clearly in the PR.
+* [ ] **Security considerations** — Sensitive data (keys, passwords, etc.) are not hardcoded or exposed.
+* [ ] **Performance considerations** — New code does not introduce obvious performance bottlenecks. Benchmarks added if performance is a concern.
+
+Alternatively, you may open a [Draft PR](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/proposing-changes-to-your-work-with-pull-requests/changing-the-stage-of-a-pull-request) if your work is not yet ready for submission. This is a good way to gather early feedback without needing to meet all Definition of Done (DoD) requirements.
+
+Special cases
+
+* Draft PRs — Integration and end-to-end (e2e) tests are not run automatically on Draft PRs. These tests will only execute once the PR is marked as "Ready for Review".
+
+* Forked PRs — The following applies for PRs opened from forks (external contributors scenario):
+
+  <!-- -->
+
+  * Project maintainers must approve Github workflows (e.g. formatting, unit testing) before they run. Project maintainers must also trigger integration and end-to-end (e2e) tests.
+  * You can also run the tests locally using [Databricks Free Edition](https://www.databricks.com/learn/free-edition) with the exception of Lakebase tests, which require a standard workspace. When using Databricks Free you can ignore the Lakebase tests.
+
+In all cases, the full test suite is executed on code merged into `main` branch as part of the nightly CI/CD pipeline.
+
+## Local Setup[​](#local-setup "Direct link to Local Setup")
+
+This section provides a step-by-step guide for setting up your local environment and dependencies for efficient development.
+
+To start with, install the required python version on your computer (see `requires-python` field in [pyproject.toml](https://github.com/databrickslabs/dqx/blob/v0.14.0/pyproject.toml)). On MacOSX, run:
+
+```text
+# double check the required version in pyproject.toml
+brew install python@3.12
+
+```
+
+Install [uv](https://docs.astral.sh/uv/), which is our package manager and build tool. On MacOSX, this is achieved using the following:
+
+```shell
+brew install uv
+
+```
+
+Clone the repo and run the following command in your project’s root directory to install development dependencies:
+
+```shell
+make dev
+
+```
+
+Before any commit, apply the consistent formatting of the code, as we want our codebase look consistent:
+
+```shell
+make fmt
+
+```
+
+Before every commit, run automated bug detector and unit tests to ensure that automated pull request checks pass before your code is reviewed by others:
+
+```shell
+make lint
+make test
+
+```
+
+### Managing dependencies[​](#managing-dependencies "Direct link to Managing dependencies")
+
+The project uses `uv.lock` to pin exact dependency versions. The Makefile enforces `UV_FROZEN=1` by default, which prevents `uv` from modifying the lock file during normal operations like `make dev`, `make fmt`, or `make test`.
+
+To add, remove, or upgrade dependencies, use the `lock-dependencies` target:
+
+```shell
+make lock-dependencies
+
+```
+
+This target:
+
+1. Runs `uv lock` to resolve dependencies.
+2. Regenerates `.build-constraints.txt` with pinned build tool hashes.
+3. Normalizes registry URLs in `uv.lock` to public PyPI.
+
+Important
+
+Always use `make` targets instead of running `uv` commands directly. The Makefile sets `UV_FROZEN=1` to protect the lock file — running `uv sync`, `uv lock`, or `uv add` directly bypasses this and may modify `uv.lock` with internal registry URLs. To update dependencies, use `make lock-dependencies` (core) or `make lock-app-dependencies` (app).
+
+### DQX Studio development[​](#dqx-studio-development "Direct link to DQX Studio development")
+
+The DQX Studio (under `app/`) is a FastAPI backend + React frontend packaged as a single Python wheel and deployed as a [Databricks App](https://docs.databricks.com/en/dev-tools/databricks-apps/index.html). See [app/README.md](https://github.com/databrickslabs/dqx/blob/v0.14.0/app/README.md) for architecture and local development, and [DQX Studio deployment](#dqx-studio-deployment) below for the end-to-end deployment guide.
+
+Install the app's JavaScript dependencies (using the committed `yarn.lock`):
+
+```shell
+make app-install
+
+```
+
+Build the app (compiles the React frontend, generates the OpenAPI schema, and packages the Python wheel):
+
+```shell
+make app-build
+
+```
+
+Run TypeScript and Python checks against the built app (matches the CI check):
+
+```shell
+make app-check
+
+```
+
+Run the app locally for development (starts backend, frontend, and OpenAPI watcher — access at <http://localhost:9001>):
+
+```shell
+make app-start-dev
+
+```
+
+Stop the local development servers:
+
+```shell
+make app-stop-dev
+
+```
+
+Before running `make app-start-dev`, configure authentication to a Databricks workspace by creating an `app/.env` file (gitignored) with your profile and warehouse:
+
+```shell
+# app/.env
+DATABRICKS_CONFIG_PROFILE=<your-profile>        # from ~/.databrickscfg
+DATABRICKS_WAREHOUSE_ID=<your-warehouse-id>     # SQL Warehouses → connection details
+DQX_JOB_ID=<task-runner-job-id>                 # optional locally; required for profiler / dry-run
+
+```
+
+If you don't have a profile yet, run `databricks auth login --host <workspace-url> -p <your-profile>` first. See the [Development Mode](https://github.com/databrickslabs/dqx/blob/v0.14.0/app/README.md#development-mode) section of the app README for more detail.
+
+Profiler and dry-run features require deployment
+
+The **profiler** and **dry-run** features rely on a Databricks Job (`dqx-app-task-runner`) that only exists after you deploy the app bundle to a workspace. For local UI and backend development (routes, components, auth wiring, config), you can skip this — `DQX_JOB_ID` is not required and the app will start without it. All other features will work locally.
+
+To exercise the profiler or dry-run flows, deploy DQX Studio once to a workspace (see [DQX Studio deployment](#dqx-studio-deployment) below) and test those features from the deployed app in the workspace (not from your local dev server).
+
+DQX Studio under `app/` has its own Python and JavaScript lockfiles (`app/uv.lock`, `app/yarn.lock`, `app/.build-constraints.txt`). To refresh them, use:
+
+```shell
+make lock-app-dependencies
+
+```
+
+Why only yarn.lock is committed
+
+Only `app/yarn.lock` is committed for JavaScript dependencies — `app/bun.lock` and `app/package-lock.json` are gitignored. Both pin absolute registry URLs into every entry, which breaks builds on runners that can only reach internal mirrors. Yarn v1 classic lockfiles are registry-agnostic once the `resolved` lines are stripped, which `make lock-app-dependencies` handles automatically. If you run `bun install` or `npm install` locally, do not commit the generated lockfiles.
+
+### DQX Studio deployment[​](#dqx-studio-deployment "Direct link to DQX Studio deployment")
+
+Deploying DQX Studio to a workspace is required when you want to:
+
+* exercise the profiler or dry-run flows end-to-end (these depend on the `dqx-app-task-runner` Databricks Job and a UC volume that only exist after deploy),
+* verify a change behaves correctly under the production identity model (service principal + on-behalf-of), or
+* run a review pass against a deployed app before merging.
+
+For the full step-by-step (service principal creation, asset-bundle deploy, schema/volume permission grants, app start, troubleshooting) follow [app/DEPLOYMENT.md](https://github.com/databrickslabs/dqx/blob/v0.14.0/app/DEPLOYMENT.md).
+
+### Running integration tests and code coverage[​](#running-integration-tests-and-code-coverage "Direct link to Running integration tests and code coverage")
+
+Integration tests and code coverage are run automatically when you create a Pull Request in Github (except forks). You can also trigger the tests from a local machine by configuring authentication to a Databricks workspace. We recommend to use [Databricks Free Edition](https://www.databricks.com/learn/free-edition) for testing, as it provides a free cluster. You can skip Lakebase tests as Lakebase is not available on Databricks Free.
+
+#### Using terminal[​](#using-terminal "Direct link to Using terminal")
+
+If you want to run the tests from your local machine in the terminal, you need to set up the following environment variables:
+
+```shell
+export DATABRICKS_HOST=<workspace-url>
+export DATABRICKS_CLUSTER_ID=<cluster-id>
+
+# Authenticate to Databricks using OAuth generated for a service principal (recommended)
+export DATABRICKS_CLIENT_ID=<oauth-client-id>
+export DATABRICKS_CLIENT_SECRET=<oauth-client-secret>
+
+# Specify Default Warehouse HTTP path for local testing of dbt demo 
+export TEST_DEFAULT_WAREHOUSE_HTTP_PATH=/sql/1.0/warehouses/<warehouse-id>
+
+# Optionally enable serverless compute to be used for the tests.
+# Note that we run integration tests on standard and serverless compute clusters as part of the CI/CD pipelines
+export DATABRICKS_SERVERLESS_COMPUTE_ID=auto
+
+```
+
+We recommend using [OAuth access token](https://docs.databricks.com/en/dev-tools/auth/oauth-m2m.html) generated for a service principal to authenticate with Databricks as presented above. Alternatively, you can authenticate using [PAT token](https://docs.databricks.com/en/dev-tools/auth/pat.html) by setting the `DATABRICKS_TOKEN` environment variable. However, we do not recommend this method, as it is less secure than OAuth.
+
+Run integration tests with the following command:
+
+```shell
+make integration
+
+```
+
+Run end-to-end tests with the following command:
+
+```shell
+make e2e
+
+```
+
+Note that if you made code changes in the e2e tests, you need to push the changes first to the PR branch before running the tests from local machine.
+
+(Optional) Calculate test coverage and display report in HTML:
+
+```shell
+make coverage
+
+```
+
+#### Using IDE[​](#using-ide "Direct link to Using IDE")
+
+If you want to run integration tests from your IDE, you must set `.env` or `~/.databricks/debug-env.json` file (see [instructions](https://github.com/databrickslabs/pytester?tab=readme-ov-file#debug_env_name-fixture)). The name of the debug environment that you must define is `ws` (see `debug_env_name` fixture in the `conftest.py`).
+
+**Minimal Configuration**
+
+Create the `~/.databricks/debug-env.json` with the following content, replacing the placeholders:
+
+```json
+{
+  "ws": {
+    "DATABRICKS_CLIENT_ID": "<oauth-client-id>",
+    "DATABRICKS_CLIENT_SECRET": "<oauth-client-secret>",
+    "DATABRICKS_HOST": "<workspace-url>",
+    "DATABRICKS_CLUSTER_ID": "<databricks-cluster-id>"
+  }
+}
+
+```
+
+You must provide an existing cluster that will auto-start for you as part of the tests.
+
+We recommend using [OAuth access token](https://docs.databricks.com/en/dev-tools/auth/oauth-m2m.html) generated for a service principal to authenticate with Databricks as presented above. Alternatively, you can authenticate using [PAT token](https://docs.databricks.com/en/dev-tools/auth/pat.html) by providing the `DATABRICKS_TOKEN` field. However, we do not recommend this method, as it is less secure than OAuth.
+
+**Running Tests on Serverless Compute**
+
+Integration tests are executed on both standard and serverless compute clusters as part of the CI/CD pipelines. To run integration tests on serverless compute, add the `DATABRICKS_SERVERLESS_COMPUTE_ID` field to your debug configuration:
+
+```json
+{
+  "ws": {
+    "DATABRICKS_CLIENT_ID": "<oauth-client-id>",
+    "DATABRICKS_CLIENT_SECRET": "<oauth-client-secret>",
+    "DATABRICKS_HOST": "<workspace-url>",
+    "DATABRICKS_CLUSTER_ID": "<databricks-cluster-id>",
+    "DATABRICKS_SERVERLESS_COMPUTE_ID": "auto"
+  }
+}
+
+```
+
+When `DATABRICKS_SERVERLESS_COMPUTE_ID` is set, the `DATABRICKS_CLUSTER_ID` is ignored, and tests run on serverless compute.
+
+## Manual testing of the framework[​](#manual-testing-of-the-framework "Direct link to Manual testing of the framework")
+
+We require that all changes must be covered by unit tests and integration tests. A pull request (PR) will be blocked if the proposed change negatively impacts the code coverage. However, manual testing may still be useful before creating or merging a PR, e.g. when wanting to test a new demo in the Databricks workspace.
+
+To test DQX from your feature branch, you can install it directly as follows:
+
+```commandline
+pip install git+https://github.com/databrickslabs/dqx.git@feature_branch_name
+
+```
+
+Replace `feature_branch_name` with the name of your branch.
+
+If you contribute from a fork, install it from the fork branch:
+
+```commandline
+pip install git+https://github.com/your-username/dqx.git@feature_branch_name
+
+```
+
+Alternatively, if you want to test before committing the changes, you can build the wheel package and upload it to the workspace manually:
+
+```commandline
+# Create wheel inside dist/databricks_labs_dqx-<version>-py3-none-any.whl
+make build
+
+# Upload the wheel to the workspace and run
+pip install /<workspace-path>/databricks_labs_dqx-<version>-py3-none-any.whl
+
+```
+
+## Manual testing of the CLI commands from the current codebase[​](#manual-testing-of-the-cli-commands-from-the-current-codebase "Direct link to Manual testing of the CLI commands from the current codebase")
+
+Once you clone the repo locally and install Databricks CLI you can run labs CLI commands from the root of the repository. Similar to other Databricks CLI commands, we can specify the Databricks profile to use with `--profile`.
+
+Build the project:
+
+```commandline
+make dev
+
+```
+
+Authenticate your current machine to your Databricks Workspace:
+
+```commandline
+databricks auth login --host <WORKSPACE_HOST>
+
+```
+
+Show info about the project:
+
+```commandline
+databricks labs show .
+
+```
+
+Install dqx:
+
+```commandline
+# use the current codebase
+databricks labs install .
+
+```
+
+You can use the uploaded wheel to install dqx inside a notebook:
+
+```commandline
+%pip install /Workspace/Users/<your_user>/.dqx/wheels/databricks_labs_dqx-<version>-py3-none-any.whl
+%restart_python
+
+```
+
+Show current installation username:
+
+```commandline
+databricks labs dqx me
+
+```
+
+Uninstall DQX:
+
+```commandline
+databricks labs uninstall dqx
+
+```
+
+## Manual testing of the CLI commands from a pre-release version[​](#manual-testing-of-the-cli-commands-from-a-pre-release-version "Direct link to Manual testing of the CLI commands from a pre-release version")
+
+In most cases, installing DQX directly from the current codebase is sufficient to test CLI commands. However, this approach may not be ideal in some cases because the CLI would use the current development virtual environment. When DQX is installed from a released version, it creates a fresh and isolated Python virtual environment locally and installs all the required packages, ensuring a clean setup. If you need to perform end-to-end testing of the CLI before an official release, follow the process outlined below.
+
+Usage tips
+
+This method is only available for GitHub accounts with write access to the repository. It is not available if you contribute from a fork.
+
+```commandline
+# create new tag
+git tag v0.1.12-alpha
+
+# push the tag
+git push origin v0.1.12-alpha
+
+# specify the tag (pre-release version)
+databricks labs install dqx@v0.1.12-alpha
+
+```
+
+Release
+
+The release pipeline only triggers when a valid semantic version is provided (e.g. v0.1.12). Pre-release versions (e.g. v0.1.12-alpha) do not trigger the release pipeline, allowing you to test changes safely before making an official release.
+
+## Performance testing[​](#performance-testing "Direct link to Performance testing")
+
+Performance tests run automatically as part of the **nightly** CI/CD pipeline on the `main` branch. They do not run on every Pull Request.
+
+All performance tests are located in the `tests/perf` folder. The tests use the [pytest-benchmark](https://pytest-benchmark.readthedocs.io/en/latest/) package. Performance tests should focus on the critical parts of the codebase where speed and efficiency matter most, such as the check functions.
+
+To run performance tests locally:
+
+```shell
+make perf
+
+```
+
+### Baseline Metrics[​](#baseline-metrics "Direct link to Baseline Metrics")
+
+Baseline performance results are stored in `tests/perf/.benchmarks/baseline.json`. These values are used to compare the performance of each new run against the baseline. The comparison allows 25% degradation before the test fails.
+
+The baseline file is managed automatically by the nightly workflow:
+
+* If `baseline.json` does not exist → it is created.
+* If a test is removed → it is also removed from `baseline.json`.
+* If a new test is added → it is added to `baseline.json`.
+* If the same tests are present → the existing baseline values are kept (not overwritten).
+
+### Reports[​](#reports "Direct link to Reports")
+
+Whenever the baseline is updated, the benchmark report in the documentation is regenerated automatically.
+
+### Updating Baseline and Reports[​](#updating-baseline-and-reports "Direct link to Updating Baseline and Reports")
+
+When the nightly workflow detects baseline changes, it automatically opens a PR with the updated baseline and benchmark report. These commits are not GPG-signed because your private key is not available to GitHub. Before merging, you must manually sign and re-apply the commits using your local GPG key:
+
+```shell
+git reset --soft $(git merge-base origin/main HEAD)  # point to the common ancestor of main and your branch
+#git reset --soft HEAD~<how-many-commit-go-back>  # alternatively, specify how many commits to go back
+git commit -S --reuse-message=ORIG_HEAD
+git push --force-with-lease origin HEAD
+
+```
+
+## Troubleshooting[​](#troubleshooting "Direct link to Troubleshooting")
+
+If you encounter any package dependency errors after `git pull`, run `make clean` followed by `make dev`.
+
+### Common fixes for `mypy` errors[​](#common-fixes-for-mypy-errors "Direct link to common-fixes-for-mypy-errors")
+
+See <https://mypy.readthedocs.io/en/stable/cheat_sheet_py3.html> for more details
+
+**..., expression has type "None", variable has a type "str"**
+
+* Add `assert ... is not None` if it's a body of a method. Example:
+
+```text
+# error: Argument 1 to "delete" of "DashboardWidgetsAPI" has incompatible type "str | None"; expected "str"
+self._ws.dashboard_widgets.delete(widget.id)
+
+```
+
+after
+
+```text
+assert widget.id is not None
+self._ws.dashboard_widgets.delete(widget.id)
+
+```
+
+* Add `... | None` if it's in the dataclass. Example: `cloud: str = None` -> `cloud: str | None = None`
+
+**..., has incompatible type "Path"; expected "str"**
+
+Add `.as_posix()` to convert Path to str
+
+**Argument 2 to "get" of "dict" has incompatible type "None"; expected ...**
+
+Add a valid default value for the dictionary return.
+
+Example:
+
+```python
+def viz_type(self) -> str:
+    return self.viz.get("type", None)
+
+```
+
+after:
+
+Example:
+
+```python
+def viz_type(self) -> str:
+    return self.viz.get("type", "UNKNOWN")
+
+```
+
+## Writing Docstrings[​](#writing-docstrings "Direct link to Writing Docstrings")
+
+Use [Google Style Python Docstrings](https://sphinxcontrib-napoleon.readthedocs.io/en/latest/example_google.html) format for the docstrings, so that they are rendered correctly in the API docs.
+
+Example:
+
+```python
+def method(self, arg1: str, arg2: int) -> str:
+    """
+    Short method description in Markdown format.
+
+    Very long method description in Markdown format. Referring to *arg1* and *arg2* in the narrative text.
+
+    Args:
+        arg1 (str): Argument 1 description.
+        arg2 (int): Argument 2 description.
+
+    Returns:
+        str: Return value description.
+    """
+    return "Hello, world!"
+
+```
+
+Special Cases
+
+* Avoid using backticks around object names in docstrings (e.g., \`arg1\`), as this can cause issues when rendering API documentation. Instead, use italics (e.g., \*arg1\*) to emphasize object names.
+* Double curly braces are not allowed in the description. Mask them with backslashes, e.g.: `{{`.
+* If you want to add a code example to a docstring, use triple backticks. The following shows the literal text that must appear inside the docstring:
+
+````text
+```python
+print("Hello, world!")
+```
+
+````
+
+## Updating AI Assistant Skills[​](#updating-ai-assistant-skills "Direct link to Updating AI Assistant Skills")
+
+DQX ships agent skills under [`skills/`](https://github.com/databrickslabs/dqx/tree/main/skills) that teach AI assistants (Databricks Genie Code, Claude Code, etc.) how to use the public DQX API. Changes to DQX's public APIs must be reflected in the matching skill.
+
+The following skills are provided to cover the main capabilities of DQX:
+
+| Skill                                      | When to update                                                                                                                        |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `skills/dqx-define-checks/SKILL.md`        | Adding / changing rule classes (`DQRowRule`, `DQDatasetRule`, `DQForEachColRule`), `check_funcs`, or the YAML / dict metadata schema. |
+| `skills/dqx-apply-checks/SKILL.md`         | Adding / changing any `DQEngine.apply_checks*` method or its result-column shape.                                                     |
+| `skills/dqx-end-to-end/SKILL.md`           | Changes to `apply_checks_and_save_in_table*`, `InputConfig` / `OutputConfig`, or `RunConfig`-based execution.                         |
+| `skills/dqx-profile-and-generate/SKILL.md` | Changes to `DQProfiler` / `DQGenerator` / `DQDltGenerator` or their options.                                                          |
+| `skills/dqx-storage/SKILL.md`              | Adding / changing any `*ChecksStorageConfig` or the `DQEngine.{load,save}_checks` API.                                                |
+
+### Guidelines for Updating Skills[​](#guidelines-for-updating-skills "Direct link to Guidelines for Updating Skills")
+
+* Keep each `SKILL.md` file short. The full file is loaded into context when a skill fires.
+* Link to existing documentation instead of duplicating content. The skill's job is to tell the assistant when and how to use an API.
+* Limit skills to use only public methods and APIs of DQX.
+* Update the [documentation](https://github.com/databrickslabs/dqx/blob/v0.14.0/docs/dqx/docs/guide/ai_tools_skills.mdx) if you change install paths, the marketplace manifest, or the public list of skills.

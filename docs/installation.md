@@ -1,0 +1,566 @@
+# Installation
+
+The framework can be installed on a Databricks workspace as a tool or used as a standalone library.
+
+## DQX installation as a Library[​](#dqx-installation-as-a-library "Direct link to DQX installation as a Library")
+
+### Prerequisites[​](#prerequisites "Direct link to Prerequisites")
+
+* [Databricks workspace](https://docs.databricks.com/en/getting-started/index.html).
+* Databricks cluster with Spark 3.5.0 or higher. It is recommended to use Databricks Runtime >= 15.4. See [instructions](https://docs.databricks.com/clusters/create.html).
+
+### Installing DQX in a cluster or notebook[​](#installing-dqx-in-a-cluster-or-notebook "Direct link to Installing DQX in a cluster or notebook")
+
+Install the library via `pip` in a cluster or notebook:
+
+```commandline
+pip install databricks-labs-dqx
+
+```
+
+As a best practice, you should always pin the version so that your code is not affected by future changes in the library:
+
+```commandline
+pip install databricks-labs-dqx==0.8.0
+
+```
+
+DQX also integrates seamlessly with [Declarative Automation Bundles](https://docs.databricks.com/aws/en/dev-tools/bundles/) (DABs, formerly Databricks Asset Bundles). You can add DQX as a [library dependency](https://docs.databricks.com/aws/en/dev-tools/bundles/library-dependencies#pypi-package) in your bundle configuration to install it on your cluster:
+
+```yaml
+resources:
+  jobs:
+    my_job:
+      # ...
+      tasks:
+        - task_key: my_task
+          # ...
+          libraries:
+            - pypi:
+                package: databricks-labs-dqx==0.8.0
+
+```
+
+Breaking changes between versions are listed in [Github Release Notes](https://github.com/databrickslabs/dqx/releases) under the `BREAKING CHANGES!` section.
+
+### Optional dependencies[​](#optional-dependencies "Direct link to Optional dependencies")
+
+DQX provides optional extras for specific features:
+
+#### AI-Assisted Quality Checks Generation[​](#ai-assisted-quality-checks-generation "Direct link to AI-Assisted Quality Checks Generation")
+
+To use AI-assisted rule generation with LLM support, install the `llm` extras:
+
+```commandline
+pip install 'databricks-labs-dqx[llm]'
+
+```
+
+This installs additional dependencies including DSPy for LLM integration. See the [AI-Assisted Generation Guide](/dqx/docs/guide/ai_assisted_quality_checks_generation.md) for more details.
+
+#### PII detection capabilities[​](#pii-detection-capabilities "Direct link to PII detection capabilities")
+
+To use built-in pii detection rules, install the `pii` extras:
+
+```commandline
+pip install 'databricks-labs-dqx[pii]'
+
+```
+
+This installs additional dependencies including Microsoft Presidio library.
+
+#### Data Contract Support[​](#data-contract-support "Direct link to Data Contract Support")
+
+To use data contract-based rule generation with ODCS (Open Data Contract Standard) support, install the `datacontract` extras:
+
+```commandline
+pip install 'databricks-labs-dqx[datacontract]'
+
+```
+
+This installs the `datacontract-cli` library for parsing and validating ODCS contracts.
+
+If your data contracts include text-based quality expectations (natural language rules), also install the `llm` extras:
+
+```commandline
+pip install 'databricks-labs-dqx[datacontract,llm]'
+
+```
+
+See the [Data Contract Quality Rules Generation Guide](/dqx/docs/guide/data_contract_quality_rules_generation.md) for more details.
+
+### Installing DQX with company-hosted PyPI mirror[​](#installing-dqx-with-company-hosted-pypi-mirror "Direct link to Installing DQX with company-hosted PyPI mirror")
+
+Some enterprises block the public PyPI index and host a company-controlled PyPI mirror. To install DQX while using a company-hosted PyPI mirror for finding its dependencies, add all DQX dependencies to the company-hosted PyPI mirror (see "dependencies" in [`pyproject.toml`](https://github.com/databrickslabs/dqx/blob/v0.14.0/pyproject.toml)) and set the environment variable `PIP_INDEX_URL` to the company-hosted PyPI mirror URL while installing DQX:
+
+```commandline
+PIP_INDEX_URL="https://url-to-company-hosted-pypi.internal" pip install databricks-labs-dqx
+
+```
+
+## DQX installation as a Tool in a Databricks Workspace[​](#dqx-installation-as-a-tool-in-a-databricks-workspace "Direct link to DQX installation as a Tool in a Databricks Workspace")
+
+If you install DQX via PyPI and use it purely as a library, you don’t need to pre-install DQX in the workspace. However, installing DQX in the workspace offers additional benefits such as profiling and quality checker workflows allowing for no-code quality checking, a pre-configured dashboard, and convenient configuration management.
+
+### Prerequisites[​](#prerequisites-1 "Direct link to Prerequisites")
+
+* Python 3.10 or later. See [instructions](https://www.python.org/downloads/).
+* [Databricks workspace](https://docs.databricks.com/en/getting-started/index.html).
+* Network access to your Databricks Workspace used for the installation process.
+* Databricks CLI v0.241 or later. See [instructions](https://docs.databricks.com/dev-tools/cli/databricks-cli.html).
+* On Windows, Build Tools for Visual Studio (see [Tool for Visual Studio](https://visualstudio.microsoft.com/downloads/)).
+
+### Authenticate Databricks CLI[​](#authenticate-databricks-cli "Direct link to Authenticate Databricks CLI")
+
+Once you install Databricks CLI, authenticate your current machine to your Databricks Workspace:
+
+```commandline
+databricks auth login --host <WORKSPACE_HOST>
+
+```
+
+To enable debug logs, simply add `--debug` flag to any command. More about authentication options [here](https://docs.databricks.com/en/dev-tools/cli/authentication.html).
+
+### Install DQX using Databricks CLI[​](#install-dqx-using-databricks-cli "Direct link to Install DQX using Databricks CLI")
+
+Install DQX in your Databricks workspace via Databricks CLI:
+
+```commandline
+databricks labs install dqx
+
+```
+
+As a best practice, you should always pin the version so that your code is not affected by future changes:
+
+```commandline
+databricks labs install dqx@v0.8.0
+
+```
+
+You'll be prompted to provide several configuration options. You can use standard Databricks CLI options like `--profile` for authentication.
+
+Breaking changes between versions are listed in [Github Release Notes](https://github.com/databrickslabs/dqx/releases) under the `BREAKING CHANGES!` section.
+
+Execution Environment
+
+* Make sure to have Databricks CLI v0.241 or later installed locally to avoid encountering the error: ModuleNotFoundError: No module named 'pyspark'.
+* You must have Python 3.10 or later to install DQX using the Databricks Labs CLI. The Databricks Labs CLI relies on the user's Python installation to create a virtual environment and install the required DQX packages. The packages (e.g. pyspark) don't have to be installed locally before running the CLI.
+* Running the Databricks CLI from within a Databricks workspace is not supported. The CLI is designed for use from a local machine or a separate compute environment, not directly inside Databricks.
+* The CLI supports the private PyPI package index. If you encounter SSL-related errors, you may need to install OpenSSL on your system or reinstall Python.
+
+Install a specific version of DQX in your Databricks workspace via Databricks CLI (e.g. version 0.8.0):
+
+```commandline
+databricks labs install dqx@v0.8.0
+
+```
+
+You'll be prompted to select a [configuration profile](https://docs.databricks.com/en/dev-tools/auth.html#databricks-client-unified-authentication) created by `databricks auth login` command, and other configuration options.
+
+The cli command will install the following components in the workspace installation folder:
+
+* A Python [wheel file](https://peps.python.org/pep-0427/) with the library packaged.
+* DQX configuration file (`config.yml`).
+* Profiling workflow for generating quality rule candidates (not scheduled by default eliminating cost concerns)
+* Quality checking workflow to apply quality rules to the data (not scheduled by default eliminating cost concerns)
+* End-to-end (e2e) workflow to profile input data, generate quality checks and apply them to the data (not scheduled by default eliminating cost concerns)
+* Quality dashboard for monitoring to display information about the data quality issues (not scheduled by default eliminating cost concerns)
+
+During the installation you will be prompted to select whether to use serverless clusters or not. It is recommended to use serverless clusters for the workflows, as it allows for automated cluster management and scaling. If serverless clusters are not used, a default cluster configuration will be used for the workflows. Alternatively, you can override the cluster configuration for each workflow in the `config.yml` file after the installation, to provide existing clusters to use.
+
+#### Installation Options[​](#installation-options "Direct link to Installation Options")
+
+DQX offers flexible installation options. By default, DQX is installed in the user home directory under `/Users/<user>/.dqx`. You can also install DQX in a global folder or any custom workspace folder.
+
+**Environment Variable Override:**
+
+You can force global or user installation using the 'DQX\_FORCE\_INSTALL' environment variable:
+
+* `DQX_FORCE_INSTALL=global databricks labs install dqx`: forces installation to `/Applications/dqx`
+* `DQX_FORCE_INSTALL=user databricks labs install dqx`: forces installation to `/Users/<user>/.dqx` (default behaviour)
+
+**Custom Workspace Folder:**
+
+If you provide a custom path during installation (e.g., `/Shared/dqx-team` or `/Users/shared-user/dqx-project`), DQX will be installed there. You will be prompted to optionally enter a workspace path when installing DQX.
+
+The custom folder installation is required when using [Group Assigned cluster](https://docs.databricks.com/aws/en/compute/group-access), as the concept of a user home directory does not exist in this setup.
+
+Complete Profiling Guide
+
+If a custom folder is provided during installation, the installation folder will take precedence over any environment variables (e.g. `DQX_FORCE_INSTALL`).
+
+#### Configuration file[​](#configuration-file "Direct link to Configuration file")
+
+DQX configuration file can contain multiple run configurations for different pipelines or projects, each defining specific input, output and quarantine locations, etc. The configuration file is created in the installation directory depending on installation options (see above):
+
+* User home (default): `/Users/<user>/.dqx/config.yml`
+* Global: `/Applications/dqx/config.yml` (when DQX\_FORCE\_INSTALL=global)
+* Custom folder: `<your-installation-folder>/config.yml` (when provided during installation)
+
+A "default" run configuration is created during the installation. When DQX is upgraded, the configuration is preserved. The configuration can be updated / extended manually by the user after the installation. Each run config defines configuration for one specific input and output location.
+
+Open the configuration file:
+
+```commandline
+databricks labs dqx open-remote-config
+
+```
+
+You can add additional run configurations (under `run_configs` field) or update the default run configuration after the installation by editing the `config.yml` file. See the example config below with all configuration options:
+
+```yaml
+log_level: INFO
+version: 1
+
+serverless_clusters: true           # <- whether to use serverless cluster for workflows or not (default is true)
+
+# Using serverless clusters is recommended as it allows for automated cluster management and scaling.
+# Below override clusters and spark conf is only applicable if `serverless_clusters` is set to `false`
+
+profiler_override_clusters:         # <- optional dictionary mapping job cluster names to existing cluster IDs
+  default: 0709-132523-cnhxf2p6     # <- existing cluster Id to use
+profiler_spark_conf:                # <- optional spark configuration to use for the profiler workflow
+  spark.sql.ansi.enabled: true      # <- example setting
+profiler_max_parallelism: 4         # <- max parallelism for profiling multiple tables
+
+quality_checker_override_clusters:  # <- optional dictionary mapping job cluster names to existing cluster IDs
+  default: 0709-132523-cnhxf2p6     # <- existing cluster Id to use
+quality_checker_spark_conf:         # <- optional spark configuration to use for the quality checker workflow
+  spark.sql.ansi.enabled: true      # <- example setting
+quality_checker_max_parallelism: 4  # <- max parallelism for quality checking multiple tables
+
+e2e_override_clusters:              # <- optional dictionary mapping job cluster names to existing cluster IDs
+  default: 0709-132523-cnhxf2p6     # <- existing cluster Id to use
+e2e_spark_conf:                     # <- optional spark configuration to use for the end to end workflow
+    spark.sql.ansi.enabled: true    # <- example setting
+
+anomaly_override_clusters:          # <- optional dictionary mapping job cluster names to existing cluster IDs (anomaly-trainer workflow)
+  default: 0709-132523-cnhxf2p6     # <- existing cluster Id to use
+anomaly_spark_conf:                 # <- optional spark configuration to use for the anomaly-trainer workflow
+  spark.sql.ansi.enabled: true      # <- example setting
+
+extra_params:                       # <- optional extra parameters to pass to the workflows
+    result_column_names:
+        errors: dq_errors           # <- default is "_errors"
+        warnings: dq_warnings       # <- default is "_warnings"
+    user_metadata:
+        custom_metadata: custom_value # <- optional user metadata to be added to the results
+
+llm_config:                         # <- configuration for the llm-assisted features
+  model:
+    model_name: "databricks/databricks-claude-sonnet-4-5"
+    api_key: xxx                    # <- optional API key for the model as secret in the format: secret_scope/secret_key. Not required by foundational models
+    api_base: xxx                   # <- optional API base for the model as secret in the format: secret_scope/secret_key. Not required by foundational models
+
+run_configs:                        # <- list of run configurations, each run config defines one specific input and output location
+
+- name: default                     # <- unique name of the run config (it can be any string), e.g. input table or job name (use "default" during installation)
+
+  input_config:                     # <- optional input data configuration
+    location: s3://iot-ingest/raw   # <- input location of the data (table or cloud path)
+    format: delta                   # <- format, required if cloud path provided
+    is_streaming: false             # <- whether the input data should be read using streaming (default is false)
+    schema: col1 int, col2 string   # <- schema of the input data (optional), applicable if reading csv and json files
+    options:                        # <- additional options for reading from the input location (optional)
+      versionAsOf: '0'
+
+  output_config:                    # <- output data configuration
+    location: main.iot.silver       # <- output location (table), used as input for the quality dashboard if quarantine location is not provided
+    format: delta                   # <- format of the output table
+    mode: append                    # <- write mode for the output table (append or overwrite)
+    options:                        # <- additional options for writing to the output table (optional)
+      mergeSchema: 'true'
+      #checkpointLocation: /Volumes/catalog1/schema1/checkpoint  # <- only applicable if input_config.is_streaming is enabled
+    trigger:                        # <- streaming trigger, only applicable if input_config.is_streaming is enabled
+      availableNow: true
+
+  quarantine_config:                     # <- optional quarantine data configuration, if specified, bad data is written to quarantine table
+    location: main.iot.silver_quarantine # <- quarantine location (table), used as input for quality dashboard
+    format: delta                        # <- format of the quarantine table (default: delta)
+    mode: append                         # <- write mode for the quarantine table (append or overwrite, default: append)
+    options:                             # <- additional options for writing to the quarantine table (optional)
+      mergeSchema: 'true'
+      #checkpointLocation: /Volumes/catalog1/schema1/checkpoint  # <- only applicable if input_config.is_streaming is enabled
+    trigger:                             # <- optional streaming trigger, only applicable if input_config.is_streaming is enabled
+      availableNow: true
+
+  metrics_config:                        # <-  optional summary metrics storage
+    format: delta
+    location: main.iot.dq_metrics
+    mode: append
+
+  checks_location: iot_checks.yml        # <- Quality rules (checks) can be stored in a table or defined in JSON or YAML files, located at absolute or relative path within the installation folder or volume file path.
+
+  anomaly_config:                          # <- optional row anomaly detection configuration (model training via workflow)
+    columns: [amount, quantity]            # <- optional, omit to use all supported columns
+    model_name: main.iot.orders_monitor    # <- required when using anomaly config, fully qualified
+    registry_table: main.iot.dqx_anomaly_models  # <- required when using anomaly config, fully qualified
+    # for the full parameter anomaly specification, see the Row Anomaly Detection documentation
+
+  # if wanting to store checks in lakebase table
+  # checks_location: dqx.config.checks                        # <- fully qualified Lakebase table for storing quality rules (checks)
+  # lakebase_instance_name: my-lakebase-instance              # <- the name of the lakebase instance to use for storing checks
+  # lakebase_client_id: 00000000-0000-0000-0000-000000000000  # <- optional service principal client ID to use to connect to Lakebase, if not provided, the caller identity, i.e., user@domain.com, is used
+  # lakebase_port: 5432                                       # <- optional port to connect to Lakebase, default is 5432
+
+  custom_check_functions:                               # <- optional mapping of custom check function name to Python file (module) containing check function definition
+    my_func: custom_checks/my_funcs.py                  # relative workspace path (installation folder prefix applied)
+    my_other: /Workspace/Shared/MyApp/my_funcs.py       # or absolute workspace path
+    email_mask: /Volumes/main/dqx_utils/custom/email.py # or UC volume path
+
+  reference_tables:                      # <- optional mapping of reference table names to reference table locations (e.g. required for foreign key check)
+    reference_table_1:                   # <- name of the reference table
+      input_config:                      # <- input data configuration for the reference table
+        format: delta
+        location: main.nytaxi.ref
+    reference_table_2:                   # <- another reference table
+      input_config:
+        format: delta
+        location: main.nytaxi.ref2       # <- location of the reference table, can be a table or path to files (cloud, volume or workspace path)
+
+  profiler_config:                            # <- profiler configuration
+    summary_stats_file: iot_summary_stats.yml # <- relative location within the installation folder of profiling summary stats
+    sample_fraction: 0.3                      # <- fraction of data to sample in the profiler (30%)
+    sample_seed: 30                           # <- optional seed for reproducible sampling
+    limit: 1000                               # <- limit the number of records to profile
+    filter: "maintenance_type = 'preventive'" # <- generate profile in a subset of your data source
+    criticality: error                        # <- default criticality for generated rules ('error' or 'warn')
+    llm_primary_key_detection: false          # <- whether to use llm-assisted pk detection to generate uniqueness check
+
+  checks_user_requirements: business rules description  # <- optional user input for AI-assisted rule generation; only supported if `serverless_clusters` is enabled
+
+  warehouse_id: your-warehouse-id             # <- warehouse id for refreshing dashboard
+
+- name: another_run_config                    # <- unique name of the run config
+  ...
+
+```
+
+Use the `—-run-config` parameter to specify a particular run configuration when executing DQX Labs CLI commands. If no configuration is provided, the "default" run configuration is used.
+
+#### Workflows[​](#workflows "Direct link to Workflows")
+
+Profiling workflow is intended as a one-time operation. It is not scheduled by default, ensuring no costs are incurred.
+
+List all installed workflows in the workspace and their latest run state:
+
+```commandline
+databricks labs dqx workflows
+
+```
+
+### Install DQX on Databricks cluster[​](#install-dqx-on-databricks-cluster "Direct link to Install DQX on Databricks cluster")
+
+You need to install the DQX package on a Databricks cluster to use it. You can install it either from PYPI or use a wheel file generated during the installation in the workspace.
+
+There are multiple ways to install libraries in a Databricks cluster (see [here](https://docs.databricks.com/en/libraries/index.html)). For example, you can install DQX directly from a notebook cell as follows:
+
+```python
+# Using PYPI package
+%pip install databricks-labs-dqx==0.8.0
+
+# Using wheel file, DQX installed for the current user:
+%pip install /Workspace/Users/<user-name>/.dqx/wheels/databricks_labs_dqx-*.whl
+
+# Using wheel file, DQX installed globally:
+%pip install /Applications/dqx/wheels/databricks_labs_dqx-*.whl
+
+```
+
+Restart the kernel after the package is installed in the notebook:
+
+```python
+# in a separate cell run:
+dbutils.library.restartPython()
+
+```
+
+DQX also integrates seamlessly with Declarative Automation Bundles (DABs). You can add DQX as a [library dependency](https://docs.databricks.com/aws/en/dev-tools/bundles/library-dependencies) in your bundle configuration (either by using PYPI package or a wheel file) to install it on your cluster:
+
+```yaml
+resources:
+  jobs:
+    my_job:
+      # ...
+      tasks:
+        - task_key: my_task
+          # ...
+          libraries:
+            # install from wheel file
+            - whl: /Workspace/Users/<user-name>/.dqx/wheels/databricks_labs_dqx-*.whl
+            # or install from pypi
+            #- pypi:
+            #    package: databricks-labs-dqx==0.8.0
+
+```
+
+### Installing DQX with company-hosted PyPI mirror[​](#installing-dqx-with-company-hosted-pypi-mirror-1 "Direct link to Installing DQX with company-hosted PyPI mirror")
+
+Some enterprises block the public PyPI index and host a company-controlled PyPI mirror. To install DQX while using a company-hosted PyPI mirror for finding its dependencies, add all DQX dependencies to the company-hosted PyPI mirror (see "dependencies" in [`pyproject.toml`](https://github.com/databrickslabs/dqx/blob/v0.14.0/pyproject.toml)) and set the environment variable `PIP_INDEX_URL` to the company-hosted PyPI mirror URL while installing DQX:
+
+```commandline
+PIP_INDEX_URL="https://url-to-company-hosted-pypi.internal" databricks labs install dqx
+
+```
+
+During DQX installation as a tool in the workspace reply *yes* to the question "Does the given workspace block Internet access"?
+
+If the installation host has no access to GitHub, then dqx installation will not be able to download the files locally and will fail. In order to address that, follow the steps below
+
+* install dqx on a host which has access to github using the instruction above
+* zip the installation from \~/.databricks/labs/dqx
+* copy the zip file to the target host and unzip Now the installation can be done in offline mode (ensure Databricks CLI is upgraded to version v0.244.0 or higher)
+
+```commandline
+PIP_INDEX_URL="https://url-to-company-hosted-pypi.internal" databricks labs install dqx --offline=true
+
+```
+
+### Upgrade DQX in the Databricks workspace[​](#upgrade-dqx-in-the-databricks-workspace "Direct link to Upgrade DQX in the Databricks workspace")
+
+Verify that DQX is installed:
+
+```commandline
+databricks labs installed
+
+```
+
+Upgrade DQX via Databricks CLI:
+
+```commandline
+databricks labs upgrade dqx
+
+```
+
+### Uninstall DQX from the Databricks workspace[​](#uninstall-dqx-from-the-databricks-workspace "Direct link to Uninstall DQX from the Databricks workspace")
+
+Uninstall DQX via Databricks CLI:
+
+```commandline
+databricks labs uninstall dqx
+
+```
+
+Databricks CLI will confirm a few options:
+
+* Whether you want to remove all DQX artifacts from the workspace or not. Defaults to 'no'.
+
+## DQX Studio installation[​](#dqx-studio-installation "Direct link to DQX Studio installation")
+
+[DQX Studio](/dqx/docs/guide/dqx_studio.md) is the no-code Databricks App that exposes DQX's profiling, rule authoring, approval workflow, scheduled runs, and results tracking through a browser. It is deployed to your Databricks workspace as a [Databricks App](https://docs.databricks.com/en/dev-tools/databricks-apps/index.html) using a [Declarative Automation Bundle](https://docs.databricks.com/aws/en/dev-tools/bundles/) (DAB, formerly known as Databricks Asset Bundle).
+
+### Prerequisites[​](#prerequisites-2 "Direct link to Prerequisites")
+
+* **Databricks CLI** v0.241 or later, authenticated against your workspace (see [Authenticate Databricks CLI](#authenticate-databricks-cli)).
+* **Workspace admin** access — required to create the task-runner service principal and grant catalog permissions.
+* `jq` and `make` available locally (used by the deployment scripts).
+* **Databricks Apps** feature enabled on the workspace.
+* **User token passthrough** enabled for Databricks Apps — DQX Studio uses On-Behalf-Of (OBO) tokens to access Unity Catalog with the end user's identity.
+* **Serverless compute** enabled on the workspace — the `dqx-studio-task-runner` job is serverless-only.
+* An **existing Unity Catalog catalog** where the studio's schemas and volumes will be created. The bundle does not create the catalog itself.
+
+### Install DQX Studio using a Declarative Automation Bundle[​](#install-dqx-studio-using-a-declarative-automation-bundle "Direct link to Install DQX Studio using a Declarative Automation Bundle")
+
+1. Clone the DQX repository and change into the `app/` directory:
+
+   ```commandline
+   git clone https://github.com/databrickslabs/dqx.git
+
+   ```
+
+2. Create a workspace service principal to run the task-runner job (separate from the app's auto-created SP, which cannot be used outside the Apps framework). In the Databricks workspace UI go to **Settings → Identity and Access → Service Principals**, create a new SP (for example `dqx-task-runner-sp`), and on its **Permissions** tab grant your deploying identity the **`User`** role. Note the SP's **Application ID** — you'll reference it as `dqx_service_principal_application_id` in the bundle.
+
+3. Update the deploy target in `app/databricks.yml`. Only `catalog_name` and `dqx_service_principal_application_id` are required — every other variable has a sensible default that you can override per target if needed:
+
+   ```yaml
+   targets:
+     dev:
+       workspace:
+         profile: <your-profile>
+       variables:
+         # Required
+         catalog_name: <your-catalog>
+         dqx_service_principal_application_id: <your-sp-application-id>
+
+         # Optional — uncomment and override defaults per target as needed
+         # admin_group: <your-admin-group>             # default: admins
+         # app_name: <your-app-name>                   # default: dqx-studio
+         # sql_warehouse_name: <your-warehouse-name>   # default: dqx-studio-sql-warehouse
+         # schema_name: <your-schema-name>             # default: dqx_app
+       presets:
+         trigger_pause_status: PAUSED
+
+   ```
+
+   See the [DQX Studio deployment guide](https://github.com/databrickslabs/dqx/blob/v0.14.0/app/DEPLOYMENT.md#step-3-configure-databricksyml) for the full reference of each variable, including security implications of `admin_group` and when to override per target.
+
+4. Build, deploy, grant permissions, and start the studio in a single command:
+
+   ```commandline
+   make app-deploy PROFILE=<your-profile> TARGET=<your-target>
+
+   ```
+
+   This runs `make app-build`, `databricks bundle deploy`, `app/scripts/post_deploy_grants.sh`, and `databricks bundle run` in sequence.
+
+5. Open the deployed app from the **Apps** page in your Databricks workspace.
+
+For the full walkthrough — including step-by-step commands, manual `GRANT` statements, troubleshooting, and target-specific configuration — see the [DQX Studio deployment guide](https://github.com/databrickslabs/dqx/blob/v0.14.0/app/DEPLOYMENT.md).
+
+First-run wheel upload
+
+On its first start, DQX Studio runs database migrations and uploads its DQX wheel files to the Unity Catalog volume. If the task-runner job is triggered before the app has fully started at least once, it will fail to find its wheels. Wait for `Uploaded databricks_labs_dqx-<version>...` in the app logs before triggering any profiler or dry-run jobs.
+
+### Upgrade DQX Studio[​](#upgrade-dqx-studio "Direct link to Upgrade DQX Studio")
+
+To upgrade DQX Studio, pull the latest changes from the DQX repository (or check out a specific tag), then redeploy with the same command:
+
+```commandline
+git pull
+make app-deploy PROFILE=<your-profile> TARGET=<your-target>
+
+```
+
+Database migrations run automatically on app startup and preserve existing rules, runs, schedules, and configuration.
+
+### Uninstall DQX Studio[​](#uninstall-dqx-studio "Direct link to Uninstall DQX Studio")
+
+Destroy the bundle to remove the app, the task-runner job, and the SQL warehouse:
+
+```commandline
+cd app && databricks bundle destroy -p <your-profile> -t <your-target>
+
+```
+
+The Unity Catalog catalog and the studio's schemas (which contain historical rules and run results) are not removed by `bundle destroy` — drop them manually if you no longer need the data.
+
+## Installing Dashboard[​](#installing-dashboard "Direct link to Installing Dashboard")
+
+DQX data quality dashboard can be used to monitor data quality across all tables monitored by DQX. The dashboard is not scheduled to refresh by default, ensuring no costs are incurred.
+
+You have two options to set up the dashboard:
+
+### Option 1: Import directly in the workspace[​](#option-1-import-directly-in-the-workspace "Direct link to Option 1: Import directly in the workspace")
+
+You can import the dashboard directly from a file. The dashboard file (`DQX_Dashboard.lvdash.json`) is available in the [GitHub repository](https://github.com/databrickslabs/dqx/blob/v0.14.0/src/databricks/labs/dqx/dashboards/). To import it:
+
+1. Navigate to **Dashboards** in the Databricks UI
+2. Click **Import dashboard from file**
+3. Select the `.lvdash.json` file
+4. Provide parameters and refresh the dashboard
+
+### Option 2: Use Databricks CLI[​](#option-2-use-databricks-cli "Direct link to Option 2: Use Databricks CLI")
+
+When you install DQX as a tool using the Databricks CLI (see [Install DQX using Databricks CLI](#install-dqx-using-databricks-cli)), the dashboard is automatically deployed to the installation directory.
+
+You can then open it using:
+
+```commandline
+databricks labs dqx open-dashboards
+
+```
+
+After executing the command:
+
+1. Locate and click on the dashboard file in the workspace UI
+2. Provide parameters and refresh the dashboard

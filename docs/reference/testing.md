@@ -1,0 +1,163 @@
+# Testing Applications Using DQX
+
+## Standard testing with DQEngine[​](#standard-testing-with-dqengine "Direct link to Standard testing with DQEngine")
+
+Testing applications that use DQEngine requires proper initialization of the Databricks workspace client. Detailed guidance on authentication for the workspace client is available [here](https://databricks-sdk-py.readthedocs.io/en/latest/authentication.html#default-authentication-flow).
+
+For testing, we recommend:
+
+* [pytester fixtures](https://github.com/databrickslabs/pytester) is used to set up Databricks remote Spark session and workspace client. For pytester to be able to authenticate to a workspace, you need to use [debug\_env\_name fixture](https://github.com/databrickslabs/pytester?tab=readme-ov-file#debug_env_name-fixture). We recommend using the `~/.databricks/debug-env.json` file to store different sets of environment variables (see more details below).
+* [PySpark testing utilities](https://spark.apache.org/docs/latest/api/python/reference/pyspark.testing.html) for asserting Spark DataFrames.
+
+These libraries are also used internally to test DQX.
+
+Below is an example test.
+
+* Python
+
+```python
+import pytest
+from pyspark.testing.utils import assertDataFrameEqual
+from databricks.labs.dqx.check_funcs import is_not_null_and_not_empty
+from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.rule import DQRowRule
+from databricks.labs.dqx.schema import dq_result_schema
+
+
+@pytest.fixture
+def debug_env_name():
+    return "ws"  # Specify the name of the target environment from ~/.databricks/debug-env.json
+
+
+def test_dq(ws, spark): # use ws and spark pytester fixtures to initialize workspace client and spark session
+    schema = "a: int, b: int, c: int"
+    expected_schema = schema + f", _errors: {dq_result_schema.simpleString()}, _warnings: {dq_result_schema.simpleString()}"
+    test_df = spark.createDataFrame([[1, 3, 3]], schema)
+
+    checks = [
+      DQRowRule(name="col_a_is_null_or_empty", criticality="warn", check_func=is_not_null_and_not_empty, column="a"),
+      DQRowRule(name="col_b_is_null_or_empty", criticality="error", check_func=is_not_null_and_not_empty, column="b"),
+    ]
+
+    dq_engine = DQEngine(ws)
+    df = dq_engine.apply_checks(test_df, checks)
+
+    expected_df = spark.createDataFrame([[1, 3, 3, None, None]], expected_schema)
+    assertDataFrameEqual(df, expected_df)
+
+```
+
+### Setting up Databricks Workspace Client authentication in an IDE[​](#setting-up-databricks-workspace-client-authentication-in-an-ide "Direct link to Setting up Databricks Workspace Client authentication in an IDE")
+
+If you want to run the tests from your IDE, you must setup `~/.databricks/debug-env.json` file (see [instructions](https://github.com/databrickslabs/pytester?tab=readme-ov-file#debug_env_name-fixture)). The name of the debug environment that you must define is `ws` (see `debug_env_name` fixture in the example above).
+
+#### Minimal Configuration[​](#minimal-configuration "Direct link to Minimal Configuration")
+
+Create the `~/.databricks/debug-env.json` with the following content, replacing the placeholders:
+
+```json
+{
+  "ws": {
+    "DATABRICKS_CLIENT_ID": "<oauth-client-id>",
+    "DATABRICKS_CLIENT_SECRET": "<oauth-client-secret>",
+    "DATABRICKS_HOST": "<workspace-url>",
+    "DATABRICKS_CLUSTER_ID": "<databricks-cluster-id>"
+  }
+}
+
+```
+
+You must provide an existing cluster. It will auto-start for you as part of the tests.
+
+We recommend using [OAuth access token](https://docs.databricks.com/en/dev-tools/auth/oauth-m2m.html) generated for a service principal to authenticate with Databricks as presented above. Alternatively, you can authenticate using [PAT token](https://docs.databricks.com/en/dev-tools/auth/pat.html) by providing the `DATABRICKS_TOKEN` field. However, we do not recommend this method, as it is less secure than OAuth.
+
+### Setting up Databricks Workspace Client authentication in a terminal[​](#setting-up-databricks-workspace-client-authentication-in-a-terminal "Direct link to Setting up Databricks Workspace Client authentication in a terminal")
+
+If you want to run the tests from your local machine in the terminal, you can setup the `~/.databricks/debug-env.json` file as described above or the following environment variables:
+
+```shell
+export DATABRICKS_HOST=<workspace-url>
+export DATABRICKS_CLUSTER_ID=<cluster-id>
+
+# Authenticate to Databricks using OAuth generated for a service principal (recommended)
+export DATABRICKS_CLIENT_ID=<oauth-client-id>
+export DATABRICKS_CLIENT_SECRET=<oauth-client-secret>
+
+# Specify Default Warehouse HTTP path for local testing of dbt demo 
+export TEST_DEFAULT_WAREHOUSE_HTTP_PATH=/sql/1.0/warehouses/<warehouse-id>
+
+# Optionally enable serverless compute to be used for the tests
+export DATABRICKS_SERVERLESS_COMPUTE_ID=auto
+
+```
+
+We recommend using [OAuth access token](https://docs.databricks.com/en/dev-tools/auth/oauth-m2m.html) generated for a service principal to authenticate with Databricks as presented above. Alternatively, you can authenticate using [PAT token](https://docs.databricks.com/en/dev-tools/auth/pat.html) by setting the `DATABRICKS_TOKEN` environment variable. However, we do not recommend this method, as it is less secure than OAuth.
+
+#### Running Tests on Serverless Compute[​](#running-tests-on-serverless-compute "Direct link to Running Tests on Serverless Compute")
+
+To run the integration tests on serverless compute, add the `DATABRICKS_SERVERLESS_COMPUTE_ID` field to your debug configuration:
+
+```json
+{
+  "ws": {
+    "DATABRICKS_CLIENT_ID": "<oauth-client-id>",
+    "DATABRICKS_CLIENT_SECRET": "<oauth-client-secret>",
+    "DATABRICKS_HOST": "<workspace-url>",
+    "DATABRICKS_CLUSTER_ID": "<databricks-cluster-id>",
+    "DATABRICKS_SERVERLESS_COMPUTE_ID": "auto"
+  }
+}
+
+```
+
+When `DATABRICKS_SERVERLESS_COMPUTE_ID` is set, the `DATABRICKS_CLUSTER_ID` is ignored, and tests run on serverless compute.
+
+### Local execution and testing with DQEngine[​](#local-execution-and-testing-with-dqengine "Direct link to Local execution and testing with DQEngine")
+
+If workspace-level access is unavailable in your environment, you can execute DQX locally without workspace connection by installing the latest `pyspark` package and mocking the workspace client:
+
+```text
+# user latest dqx version
+pip install databricks-labs-dqx pyspark==3.5.0
+
+# or use local build
+hatch build
+pip install dist/databricks_labs_dqx-0.9.2-py3-none-any.whl pyspark==3.5.6
+
+```
+
+Python requirements
+
+You need a python version that is compatible with the pyspark and databricks-connect version, e.g. Python 3.9, 3.10, 3.11, and 3.12 are compatible with PySpark 3.5, but Python 3.13 is not supported.
+
+Usage tips
+
+**This approach should be treated as experimental!** It does not offer the same level of testing as the standard approach, and it is only applicable to selected methods (see [here](/dqx/docs/reference/engine.md#dqx-engine-methods)). We strongly recommend following the standard execution procedure outlined above, which includes proper initialization of the workspace client.
+
+* Python
+
+```python
+from unittest.mock import MagicMock
+from databricks.sdk import WorkspaceClient
+from pyspark.sql import SparkSession
+from databricks.labs.dqx.check_funcs import is_not_null
+from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.rule import DQRowRule
+
+spark = SparkSession.builder.master("local[*]").getOrCreate() # create spark local session
+ws = MagicMock(spec=WorkspaceClient) # mock the workspace client
+
+schema = "a: int, b: int, c: int"
+test_df = spark.createDataFrame([[1, None, 3]], schema)
+
+checks = [
+  DQRowRule(name="col_a_is_null", criticality="warn", check_func=is_not_null, column="a"),
+  DQRowRule(name="col_b_is_null", criticality="error", check_func=is_not_null, column="b"),
+]
+
+dq_engine = DQEngine(spark=spark, workspace_client=ws)
+df = dq_engine.apply_checks(test_df, checks)
+
+df.show(truncate=False)
+
+```
