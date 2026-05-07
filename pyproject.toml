@@ -190,11 +190,22 @@ markdown = { header_level_by_type = { Method = 3, Function = 3, Class = 2, Modul
 profile = "black"
 
 [tool.mypy]
-exclude = ['venv', '.venv', 'demos/*', 'tests/e2e/*']
+# ``app/*`` is a self-contained uv sub-project (``app/pyproject.toml``)
+# with its own venv, its own mypy config, and its own ``app/tests/``
+# suite. Only mypy is opted out at the library level — to avoid a
+# "Duplicate module named 'tests'" collision between the library's own
+# ``tests/`` package and ``app/tests/`` (both ship ``__init__.py``).
+# Type-check the app via ``make app-check`` (runs ``apx dev check``)
+# instead. Black and ruff still traverse into ``app/`` from the root —
+# ruff picks up the app's own ``[tool.ruff]`` config automatically, and
+# black uses the same ``line-length = 120`` setting in both, so the
+# library-level ``make fmt`` / ``make lint`` formats and lints the app
+# alongside the library.
+exclude = ['venv', '.venv', 'demos/*', 'tests/e2e/*', 'app/*']
 
 [[tool.mypy.overrides]]
 # External packages without PEP 561 type stubs (unavoidable - these are third-party optional dependencies)
-module = ["google", "google.*", "pandas", "sklearn.*", "shap", "cloudpickle", "mlflow", "mlflow.*", "urllib3.*", "aiohttp.*"]
+module = ["google", "google.*", "pandas", "sklearn.*", "shap", "cloudpickle", "mlflow", "mlflow.*", "urllib3.*", "aiohttp.*", "openpyxl", "openpyxl.*"]
 ignore_missing_imports = true
 
 

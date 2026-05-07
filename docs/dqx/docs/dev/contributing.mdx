@@ -117,7 +117,7 @@ In all cases, the full test suite is executed on code merged into `main` branch 
 
 This section provides a step-by-step guide for setting up your local environment and dependencies for efficient development.
 
-To start with, install the required python version on your computer (see `requires-python` field in [pyproject.toml](https://github.com/databrickslabs/dqx/blob/v0.13.0/pyproject.toml)).
+To start with, install the required python version on your computer (see `requires-python` field in [pyproject.toml](https://github.com/databrickslabs/dqx/blob/v0.14.0/pyproject.toml)).
 On MacOSX, run:
 ```
 # double check the required version in pyproject.toml
@@ -162,8 +162,72 @@ This target:
 3. Normalizes registry URLs in `uv.lock` to public PyPI.
 
 <Admonition type="warning" title="Important">
-Always use `make` targets instead of running `uv` commands directly. The Makefile sets `UV_FROZEN=1` to protect the lock file — running `uv sync`, `uv lock`, or `uv add` directly bypasses this and may modify `uv.lock` with internal registry URLs. To update dependencies, use `make lock-dependencies`.
+Always use `make` targets instead of running `uv` commands directly. The Makefile sets `UV_FROZEN=1` to protect the lock file — running `uv sync`, `uv lock`, or `uv add` directly bypasses this and may modify `uv.lock` with internal registry URLs. To update dependencies, use `make lock-dependencies` (core) or `make lock-app-dependencies` (app).
 </Admonition>
+
+### DQX Studio development
+
+The DQX Studio (under `app/`) is a FastAPI backend + React frontend packaged as a single Python wheel and deployed as a [Databricks App](https://docs.databricks.com/en/dev-tools/databricks-apps/index.html). See [app/README.md](https://github.com/databrickslabs/dqx/blob/v0.14.0/app/README.md) for architecture and local development, and [DQX Studio deployment](#dqx-studio-deployment) below for the end-to-end deployment guide.
+
+Install the app's JavaScript dependencies (using the committed `yarn.lock`):
+```shell
+make app-install
+```
+
+Build the app (compiles the React frontend, generates the OpenAPI schema, and packages the Python wheel):
+```shell
+make app-build
+```
+
+Run TypeScript and Python checks against the built app (matches the CI check):
+```shell
+make app-check
+```
+
+Run the app locally for development (starts backend, frontend, and OpenAPI watcher — access at http://localhost:9001):
+```shell
+make app-start-dev
+```
+
+Stop the local development servers:
+```shell
+make app-stop-dev
+```
+
+Before running `make app-start-dev`, configure authentication to a Databricks workspace by creating an `app/.env` file (gitignored) with your profile and warehouse:
+```shell
+# app/.env
+DATABRICKS_CONFIG_PROFILE=<your-profile>        # from ~/.databrickscfg
+DATABRICKS_WAREHOUSE_ID=<your-warehouse-id>     # SQL Warehouses → connection details
+DQX_JOB_ID=<task-runner-job-id>                 # optional locally; required for profiler / dry-run
+```
+
+If you don't have a profile yet, run `databricks auth login --host <workspace-url> -p <your-profile>` first. See the [Development Mode](https://github.com/databrickslabs/dqx/blob/v0.14.0/app/README.md#development-mode) section of the app README for more detail.
+
+<Admonition type="note" title="Profiler and dry-run features require deployment">
+The **profiler** and **dry-run** features rely on a Databricks Job (`dqx-app-task-runner`) that only exists after you deploy the app bundle to a workspace. For local UI and backend development (routes, components, auth wiring, config), you can skip this — `DQX_JOB_ID` is not required and the app will start without it. All other features will work locally.
+
+To exercise the profiler or dry-run flows, deploy DQX Studio once to a workspace (see [DQX Studio deployment](#dqx-studio-deployment) below) and test those features from the deployed app in the workspace (not from your local dev server).
+</Admonition>
+
+DQX Studio under `app/` has its own Python and JavaScript lockfiles (`app/uv.lock`, `app/yarn.lock`, `app/.build-constraints.txt`). To refresh them, use:
+```shell
+make lock-app-dependencies
+```
+
+<Admonition type="note" title="Why only yarn.lock is committed">
+Only `app/yarn.lock` is committed for JavaScript dependencies — `app/bun.lock` and `app/package-lock.json` are gitignored. Both pin absolute registry URLs into every entry, which breaks builds on runners that can only reach internal mirrors. Yarn v1 classic lockfiles are registry-agnostic once the `resolved` lines are stripped, which `make lock-app-dependencies` handles automatically. If you run `bun install` or `npm install` locally, do not commit the generated lockfiles.
+</Admonition>
+
+### DQX Studio deployment
+
+Deploying DQX Studio to a workspace is required when you want to:
+
+- exercise the profiler or dry-run flows end-to-end (these depend on the `dqx-app-task-runner` Databricks Job and a UC volume that only exist after deploy),
+- verify a change behaves correctly under the production identity model (service principal + on-behalf-of), or
+- run a review pass against a deployed app before merging.
+
+For the full step-by-step (service principal creation, asset-bundle deploy, schema/volume permission grants, app start, troubleshooting) follow [app/DEPLOYMENT.md](https://github.com/databrickslabs/dqx/blob/v0.14.0/app/DEPLOYMENT.md).
 
 ### Running integration tests and code coverage
 
@@ -465,3 +529,24 @@ print("Hello, world!")
 ```
 ````
 </Admonition>
+
+## Updating AI Assistant Skills
+
+DQX ships agent skills under [`skills/`](https://github.com/databrickslabs/dqx/tree/main/skills) that teach AI assistants (Databricks Genie Code, Claude Code, etc.) how to use the public DQX API. Changes to DQX's public APIs must be reflected in the matching skill.
+
+The following skills are provided to cover the main capabilities of DQX:
+
+| Skill                                      | When to update                                                                                                                        |
+|--------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------|
+| `skills/dqx-define-checks/SKILL.md`        | Adding / changing rule classes (`DQRowRule`, `DQDatasetRule`, `DQForEachColRule`), `check_funcs`, or the YAML / dict metadata schema. |
+| `skills/dqx-apply-checks/SKILL.md`         | Adding / changing any `DQEngine.apply_checks*` method or its result-column shape.                                                     |
+| `skills/dqx-end-to-end/SKILL.md`           | Changes to `apply_checks_and_save_in_table*`, `InputConfig` / `OutputConfig`, or `RunConfig`-based execution.                         |
+| `skills/dqx-profile-and-generate/SKILL.md` | Changes to `DQProfiler` / `DQGenerator` / `DQDltGenerator` or their options.                                                          |
+| `skills/dqx-storage/SKILL.md`              | Adding / changing any `*ChecksStorageConfig` or the `DQEngine.{load,save}_checks` API.                                                |
+
+### Guidelines for Updating Skills
+
+- Keep each `SKILL.md` file short. The full file is loaded into context when a skill fires.
+- Link to existing documentation instead of duplicating content. The skill's job is to tell the assistant when and how to use an API.
+- Limit skills to use only public methods and APIs of DQX.
+- Update the [documentation](https://github.com/databrickslabs/dqx/blob/v0.14.0/docs/dqx/docs/guide/ai_tools_skills.mdx) if you change install paths, the marketplace manifest, or the public list of skills.

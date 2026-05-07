@@ -66,7 +66,7 @@ def test_profiler_runner_raise_error_when_profile_summary_stats_file_missing(ws,
 )
 def test_profiler_runner_applies_configured_criticality(
     ws, spark, installation_ctx, make_schema, make_table, configured_criticality, expected_criticality
-):
+) -> None:
     """ProfilerConfig.criticality controls the criticality of all rules the profiler generates.
 
     When `criticality` is not set, ProfilerConfig defaults to "error". When set to "warn",

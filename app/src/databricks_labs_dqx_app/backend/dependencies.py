@@ -1,213 +1,396 @@
-import os
-from contextlib import contextmanager
-from typing import Annotated
+from __future__ import annotations
 
-from databricks.connect import DatabricksSession
-from databricks.labs.dqx.config import LLMModelConfig
-from databricks.labs.dqx.config_serializer import ConfigSerializer
-from databricks.labs.dqx.profiler.generator import DQGenerator
-from databricks.labs.dqx.engine import DQEngine
+import asyncio
+import hashlib
+import os
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Annotated, Any
+
+if TYPE_CHECKING:
+    from .common.connectors.sql import SQLConnector
+
+from databricks.labs.dqx.checks_validator import ChecksValidationStatus
 from databricks.sdk import WorkspaceClient
 from fastapi import Depends, Header, HTTPException, status
-from pyspark.sql import SparkSession
 
+from .cache import app_cache
+from .common.authentication.sql import SQLAuthentication
+from .common.authorization import UserRole, get_user_email
+from .config import AppConfig, conf, get_sql_warehouse_path
 from .logger import logger
+from .migrations import MigrationRunner
+from .runtime import rt
+from .services.ai_rules_service import AiRulesService
+from .services.app_settings_service import AppSettingsService
+from .services.discovery import DiscoveryService
+from .services.job_service import JobService
+from .services.role_service import RoleService
+from .services.rules_catalog_service import RulesCatalogService
+from .services.comments_service import CommentsService
+from .services.schedule_config_service import ScheduleConfigService
+from .services.view_service import ViewService
+from .sql_executor import SqlExecutor
+
+_SP_TTL = 45 * 60  # 45 minutes
+_OBO_TTL = 45 * 60  # 45 minutes
 
 
-@contextmanager
-def _without_oauth_env_vars():
-    """
-    Temporarily remove OAuth environment variables to avoid conflicts with obo token auth.
-
-    Restores them after the context exits so other services can use them if needed.
-    """
-    oauth_vars = ["DATABRICKS_CLIENT_ID", "DATABRICKS_CLIENT_SECRET"]
-    saved_values = {}
-
-    # Save and temporarily remove OAuth env vars
-    for var in oauth_vars:
-        if var in os.environ:
-            saved_values[var] = os.environ[var]
-            del os.environ[var]
-            logger.debug(f"Temporarily removed {var} for OBO Spark authentication")
-
-    try:
-        yield
-    finally:
-        # Restore OAuth env vars for other services (DSPy/litellm)
-        for var, value in saved_values.items():
-            os.environ[var] = value
-            logger.debug(f"Restored {var} for LLM authentication")
+# ---------------------------------------------------------------------------
+# Service-principal WorkspaceClient — cached for 45 minutes
+# ---------------------------------------------------------------------------
 
 
-def get_obo_ws(
+@app_cache.cached("auth:sp", ttl=_SP_TTL)
+async def get_sp_ws() -> WorkspaceClient:
+    """Return the app's service-principal WorkspaceClient, cached for 45 min."""
+    return WorkspaceClient()
+
+
+# ---------------------------------------------------------------------------
+# OBO WorkspaceClient — cached per token hash for 45 minutes
+# ---------------------------------------------------------------------------
+
+
+@app_cache.cached("auth:obo:{token_hash}", ttl=_OBO_TTL)
+async def _create_obo_ws(token_hash: str, token: str) -> WorkspaceClient:  # noqa: ARG001
+    return WorkspaceClient(token=token, auth_type="pat")
+
+
+async def get_obo_ws(
     token: Annotated[str | None, Header(alias="X-Forwarded-Access-Token")] = None,
 ) -> WorkspaceClient:
-    """
-    Create a Databricks WorkspaceClient using On-Behalf-Of (OBO) authentication.
+    """Return a WorkspaceClient for the logged-in user (OBO), cached for 45 min.
 
-    When a Databricks App runs on the platform, the X-Forwarded-Access-Token header
-    is automatically injected with the logged-in user's access token. This function
-    extracts that token and creates a WorkspaceClient that performs all operations
-    with the user's identity and permissions.
-
-    This dependency allows FastAPI routes to:
-    - Access workspace resources (notebooks, clusters, jobs, etc.) as the user
-    - Respect user permissions (users only see what they have access to)
-    - Generate proper audit logs attributing actions to the correct user
-
-    Args:
-        token: User's access token from the X-Forwarded-Access-Token header.
-               Automatically provided by Databricks when the app runs on the platform.
-
-    Returns:
-        WorkspaceClient: Configured with the user's token for OBO operations.
-
-    Raises:
-        HTTPException: 401 Unauthorized if the X-Forwarded-Access-Token header is not present.
-
-    Example usage:
-        @router.get("/current-user")
-        def get_current_user(ws: Annotated[WorkspaceClient, Depends(get_obo_ws)]):
-            user = ws.current_user.me()
-            return {"user_name": user.user_name, "email": user.emails[0].value}
+    When a Databricks App runs on the platform, the X-Forwarded-Access-Token
+    header is automatically injected with the logged-in user's access token.
+    The token is hashed before use as a cache key so raw tokens are never
+    stored in the key space.
     """
     if not token:
-        logger.warning("OBO token is not provided in the header X-Forwarded-Access-Token for Spark session")
+        logger.warning("OBO token is not provided in the header X-Forwarded-Access-Token")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication required. Please refresh the page or contact your administrator.",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    return WorkspaceClient(token=token, auth_type="pat")  # set pat explicitly to avoid issues with SP client
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    return await _create_obo_ws(token_hash, token)
 
 
-def get_spark(
-    token: Annotated[str | None, Header(alias="X-Forwarded-Access-Token")] = None,
-) -> SparkSession:
-    """
-    Create a Databricks Spark Connect session with OBO authentication on serverless compute.
-
-    This follows the Databricks Apps pattern for using OBO tokens with serverless compute.
-    Works in both production (Databricks Apps) and local development environments.
-
-    Args:
-        token: User's access token from the X-Forwarded-Access-Token header.
-               Automatically provided by Databricks when the app runs on the platform.
-
-    Returns:
-        SparkSession: A Databricks Spark Connect session configured with OBO token.
-
-    Raises:
-        HTTPException: 401 Unauthorized if the X-Forwarded-Access-Token header is not present.
-    """
-    if not token:
-        logger.warning("OBO token is not provided in the header X-Forwarded-Access-Token for Spark session")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required. Please refresh the page or contact your administrator.",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    # Get Databricks host from environment
-    host = os.environ.get("DATABRICKS_HOST")
-    if not host:
-        logger.info("DATABRICKS_HOST not set, using default configuration for local development")
-        return DatabricksSession.builder.token(token).getOrCreate()
-
-    # Temporarily remove OAuth env vars to avoid multi-auth conflicts
-    with _without_oauth_env_vars():
-        logger.info(f"Creating Spark session with OBO token on serverless compute for host: {host}")
-        session = (
-            DatabricksSession.builder.host(host)
-            .token(token)  # Use the forwarded OBO access token
-            .serverless()
-            .getOrCreate()
-        )
-    return session
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 
-def get_config_serializer(
+def _get_warehouse_id() -> str:
+    return os.environ.get("DATABRICKS_WAREHOUSE_ID") or os.environ.get("DATABRICKS_SQL_WAREHOUSE_ID") or ""
+
+
+# ---------------------------------------------------------------------------
+# SqlExecutor factories
+# ---------------------------------------------------------------------------
+
+
+async def get_sp_sql_executor(
+    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
+) -> SqlExecutor:
+    """SqlExecutor using the app's service-principal credentials (main schema)."""
+    return SqlExecutor(
+        ws=sp_ws,
+        warehouse_id=_get_warehouse_id(),
+        catalog=conf.catalog,
+        schema=conf.schema_name,
+    )
+
+
+async def get_obo_sql_executor(
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
-) -> ConfigSerializer:
-    """Create a ConfigSerializer for loading/saving workspace configuration."""
-    return ConfigSerializer(obo_ws)
+) -> SqlExecutor:
+    """SqlExecutor using the caller's OBO credentials (tmp schema)."""
+    return SqlExecutor(
+        ws=obo_ws,
+        warehouse_id=_get_warehouse_id(),
+        catalog=conf.catalog,
+        schema=conf.tmp_schema_name,
+    )
 
 
-def get_engine(
-    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)], spark: Annotated[SparkSession, Depends(get_spark)]
-) -> DQEngine:
-    """
-    Create a DQEngine instance with OBO authentication and Spark session.
-
-    This dependency combines:
-    - WorkspaceClient with user's identity (via get_obo_ws)
-    - SparkSession for Spark operations (via get_spark)
-
-    The DQEngine can then execute data quality checks and operations
-    on behalf of the logged-in user.
-
-    Args:
-        obo_ws: WorkspaceClient with OBO authentication (injected by FastAPI).
-        spark: SparkSession for data operations (injected by FastAPI).
-
-    Returns:
-        DQEngine: Configured for data quality operations with user context.
-
-    Example usage:
-        @router.post("/run-quality-check")
-        def run_check(engine: Annotated[DQEngine, Depends(get_engine)]):
-            result = engine.run_checks(...)
-            return {"status": "success", "results": result}
-    """
-    return DQEngine(workspace_client=obo_ws, spark=spark)
+# ---------------------------------------------------------------------------
+# Service factories
+# ---------------------------------------------------------------------------
 
 
-def get_generator(
+async def get_migration_runner(
+    sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+) -> MigrationRunner:
+    """Create a MigrationRunner using app (SP) credentials."""
+    return MigrationRunner(sql=sql)
+
+
+async def get_app_settings_service(
+    sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+) -> AppSettingsService:
+    """Create an AppSettingsService using app (SP) credentials."""
+    return AppSettingsService(sql=sql)
+
+
+async def get_role_service(
+    sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+) -> RoleService:
+    """Create a RoleService using app (SP) credentials."""
+    return RoleService(sql=sql)
+
+
+async def get_ai_rules_service(
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
-    spark: Annotated[SparkSession, Depends(get_spark)],
+    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
+) -> AiRulesService:
+    """Create an AiRulesService with split authentication.
+
+    Schema lookups use the OBO client (user's UC permissions).
+    LLM calls use the SP client (service principal has the serving scope OBO tokens lack).
+    """
+    return AiRulesService(obo_ws=obo_ws, sp_ws=sp_ws)
+
+
+async def get_rules_catalog_service(
+    sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+) -> RulesCatalogService:
+    """Create a RulesCatalogService using app (SP) credentials."""
+    return RulesCatalogService(sql=sql)
+
+
+async def get_discovery_service(
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+) -> DiscoveryService:
+    """Create a DiscoveryService using the OBO-authenticated WorkspaceClient."""
+    me = await asyncio.to_thread(obo_ws.current_user.me)
+    user_id = me.user_name or me.id or "unknown"
+    return DiscoveryService(ws=obo_ws, user_id=user_id)
+
+
+async def get_view_service(
+    sql: Annotated[SqlExecutor, Depends(get_obo_sql_executor)],
+    sp_sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+) -> ViewService:
+    """Create a ViewService with split auth.
+
+    View creation uses the user's OBO token so that table permissions are
+    enforced.  Schema DDL uses the SP executor so that users don't need
+    catalog-level CREATE SCHEMA privileges.
+    """
+    return ViewService(sql=sql, sp_sql=sp_sql)
+
+
+async def get_comments_service(
+    sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+) -> CommentsService:
+    """Create a CommentsService using app (SP) credentials."""
+    return CommentsService(sql=sql)
+
+
+async def get_schedule_config_service(
+    sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+) -> ScheduleConfigService:
+    """Create a ScheduleConfigService using app (SP) credentials."""
+    return ScheduleConfigService(sql=sql)
+
+
+def get_conf() -> AppConfig:
+    """Return the app configuration singleton."""
+    return conf
+
+
+def get_check_validator() -> Callable[[list[Any]], ChecksValidationStatus]:
+    """Return DQEngine.validate_checks for injection into route handlers."""
+    from databricks.labs.dqx.engine import DQEngine
+
+    return DQEngine.validate_checks
+
+
+async def get_job_service(
+    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
+    sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+) -> JobService:
+    """Create a JobService using app (SP) credentials.
+
+    Job submission and polling run as the app's service principal.
+    """
+    return JobService(ws=sp_ws, job_id=conf.job_id, sql=sql)
+
+
+async def get_sql_connector(
     token: Annotated[str | None, Header(alias="X-Forwarded-Access-Token")] = None,
-) -> DQGenerator:
-    """
-    Create a DQGenerator instance with OBO authentication and Spark session.
+) -> "SQLConnector":
+    """Create a SQLConnector using the OBO token and configured SQL warehouse."""
+    from .common.connectors.sql import SQLConnector
 
-    This dependency provides an AI-assisted data quality rules generator that
-    can create checks from natural language descriptions on behalf of the
-    logged-in user. The Spark session is used for data profiling and analysis.
-
-    The LLM model is configured to use the OBO token for authentication, ensuring
-    that LLM API calls also run with the user's identity.
-
-    Args:
-        obo_ws: WorkspaceClient with OBO authentication (injected by FastAPI).
-        spark: SparkSession for data operations (injected by FastAPI).
-        token: User's OBO token for LLM authentication (injected by FastAPI).
-
-    Returns:
-        DQGenerator: Configured for AI-assisted rules generation with user context.
-
-    Example usage:
-        @router.post("/generate-checks")
-        def generate_checks(generator: Annotated[DQGenerator, Depends(get_generator)], user_input: str):
-            checks = generator.generate_dq_rules_ai_assisted(user_input=user_input)
-            return {"checks": checks}
-    """
-    if not token:
-        logger.warning("OBO token is not provided in the header X-Forwarded-Access-Token for Spark session")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required. Please refresh the page or contact your administrator.",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
+    auth = SQLAuthentication(bearer=token)
     host = os.environ.get("DATABRICKS_HOST", "")
-    if host:  # DBX App
-        llm_model_config = LLMModelConfig(
-            api_key=token,  # Configure LLM to use OBO token for authentication
+    if not host:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="DATABRICKS_HOST is not configured.",
         )
-    else:  # Local development
-        logger.info("DATABRICKS_HOST not set, using default configuration for LLM")
-        llm_model_config = LLMModelConfig()
+    http_path = get_sql_warehouse_path()
+    return SQLConnector(
+        access_token=auth.access_token,
+        server_hostname=host,
+        http_path=http_path,
+    )
 
-    return DQGenerator(workspace_client=obo_ws, spark=spark, llm_model_config=llm_model_config)
+
+# ---------------------------------------------------------------------------
+# Role-based authorization
+# ---------------------------------------------------------------------------
+
+
+async def get_user_role(
+    email: Annotated[str, Depends(get_user_email)],
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    role_svc: Annotated[RoleService, Depends(get_role_service)],
+) -> UserRole:
+    """Resolve the user's role based on Databricks group membership.
+
+    Resolution priority:
+    1. Bootstrap admin group from DQX_ADMIN_GROUP env var
+    2. Groups mapped to roles in dq_role_mappings table
+    3. Default to VIEWER if no mappings match
+
+    On transient failures (SCIM hiccup, role-mapping table unavailable) we
+    degrade gracefully to VIEWER instead of locking every user out with a 503.
+    Read-only endpoints stay reachable; privileged endpoints return 403 until
+    the upstream recovers, which is a clearer signal than service-unavailable.
+    """
+    try:
+        user = await asyncio.to_thread(obo_ws.current_user.me)
+        user_groups = [g.display for g in (user.groups or []) if g.display]
+        logger.debug(f"Resolving role for {email} with groups: {user_groups}")
+
+        role = role_svc.resolve_role(user_groups, conf.admin_group)
+        logger.debug(f"Resolved role for {email}: {role.value}")
+        return role
+    except Exception as e:
+        logger.warning(
+            f"Role resolution failed for {email}, falling back to VIEWER: {e}",
+            exc_info=True,
+        )
+        return UserRole.VIEWER
+
+
+def require_role(*roles: UserRole):
+    """Dependency factory that rejects requests from users without one of the listed roles."""
+
+    async def _check(role: Annotated[UserRole, Depends(get_user_role)]) -> UserRole:
+        if role not in roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Requires one of {[r.value for r in roles]}, but user has '{role.value}'.",
+            )
+        return role
+
+    return Depends(_check)
+
+
+CurrentUserRole = Annotated[UserRole, Depends(get_user_role)]
+
+
+# ---------------------------------------------------------------------------
+# Runner role — orthogonal to the primary-role hierarchy
+# ---------------------------------------------------------------------------
+
+
+async def get_user_runner_flag(
+    email: Annotated[str, Depends(get_user_email)],
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    role_svc: Annotated[RoleService, Depends(get_role_service)],
+) -> bool:
+    """Return True iff the caller holds the orthogonal RUNNER role.
+
+    Admins are implicit runners (handled inside ``has_runner_role``).
+    On transient failures we degrade to ``False`` rather than 5xx so a
+    SCIM hiccup doesn't break the whole UI; gated endpoints will then
+    return 403 with a clearer message until the upstream recovers.
+    """
+    try:
+        user = await asyncio.to_thread(obo_ws.current_user.me)
+        user_groups = [g.display for g in (user.groups or []) if g.display]
+        return role_svc.has_runner_role(user_groups, conf.admin_group)
+    except Exception as exc:
+        logger.warning(
+            f"Runner-flag resolution failed for {email}, falling back to False: {exc}",
+            exc_info=True,
+        )
+        return False
+
+
+CurrentUserRunner = Annotated[bool, Depends(get_user_runner_flag)]
+
+
+def require_runner():
+    """Dependency that rejects callers who can't see the Run Rules page.
+
+    Implements the user-facing rule: admins always pass; non-admins must
+    be members of a group mapped to ``UserRole.RUNNER``. Other roles
+    (author/approver/viewer) by themselves do **not** grant runner
+    access — they need an explicit RUNNER mapping.
+    """
+
+    async def _check(
+        role: Annotated[UserRole, Depends(get_user_role)],
+        is_runner: Annotated[bool, Depends(get_user_runner_flag)],
+    ) -> bool:
+        if role == UserRole.ADMIN or is_runner:
+            return True
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Requires the 'runner' role. Ask an admin to assign your group to the Runner role.",
+        )
+
+    return Depends(_check)
+
+
+async def get_user_catalog_names(
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+) -> frozenset[str]:
+    """Return the set of catalog names the current user can access (via OBO).
+
+    Intentionally **not** cached: this list drives authorization filtering on
+    list endpoints (rules, dry-run runs/results), so a stale entry could leak
+    rows for a catalog whose grant was just revoked. The underlying OBO
+    ``WorkspaceClient`` is already cached, so each call only re-issues the
+    UC ``catalogs.list`` request, not the full auth handshake.
+    """
+    catalogs = await asyncio.to_thread(lambda: list(obo_ws.catalogs.list()))
+    return frozenset(c.name for c in catalogs if c.name)
+
+
+# Re-export rt for any remaining usages during transition
+__all__ = [
+    "get_sp_ws",
+    "get_obo_ws",
+    "get_sp_sql_executor",
+    "get_obo_sql_executor",
+    "get_conf",
+    "get_check_validator",
+    "get_migration_runner",
+    "get_app_settings_service",
+    "get_role_service",
+    "get_ai_rules_service",
+    "get_rules_catalog_service",
+    "get_discovery_service",
+    "get_view_service",
+    "get_job_service",
+    "get_sql_connector",
+    "get_user_role",
+    "get_comments_service",
+    "get_schedule_config_service",
+    "require_role",
+    "require_runner",
+    "CurrentUserRole",
+    "CurrentUserRunner",
+    "get_user_runner_flag",
+    "get_user_catalog_names",
+    "rt",
+]

@@ -1,7 +1,7 @@
 import axios from "axios";
 
 /**
- * Configure axios defaults and interceptors for the DQX app.
+ * Configure axios defaults and interceptors for DQX Studio.
  * 
  * Note: Initial authentication is handled by AuthGuard component.
  * This configuration only provides error logging for debugging.

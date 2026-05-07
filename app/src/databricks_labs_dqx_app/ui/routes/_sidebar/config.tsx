@@ -1,429 +1,85 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
-import { Suspense, useState, useEffect } from "react";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { QueryErrorResetBoundary, useQueryClient } from "@tanstack/react-query";
 import { ErrorBoundary } from "react-error-boundary";
-import {
-  useConfigSuspense,
-  useGetSettingsSuspense,
-  useSaveSettings,
-  useSaveConfig,
-  WorkspaceConfigInput,
-} from "@/lib/api";
-import selector from "@/lib/selector";
+import { Button } from "@/components/ui/button";
+import { PageBreadcrumb } from "@/components/apx/PageBreadcrumb";
+import { AlertCircle, Globe, Loader2, Search, Tags, Plus, Trash2, X } from "lucide-react";
+import { FadeIn } from "@/components/anim/FadeIn";
+import { ShinyText } from "@/components/anim/ShinyText";
+import { RoleManagement } from "@/components/RoleManagement";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Separator } from "@/components/ui/separator";
 import { Input } from "@/components/ui/input";
-import { PageBreadcrumb } from "@/components/apx/PageBreadcrumb";
+import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
+import {
+  useTimezone,
+  useSaveTimezone,
+  getTimezoneQueryKey,
+  useLabelDefinitions,
+  useSaveLabelDefinitions,
+  getLabelDefinitionsQueryKey,
+  type LabelDefinition,
+} from "@/lib/api-custom";
+import type { AxiosError } from "axios";
+import { toast } from "sonner";
+import { useCurrentUserRoleSuspense } from "@/hooks/use-suspense-queries";
+import { usePermissions } from "@/hooks/use-permissions";
+import { Suspense, useMemo, useState, useRef, useEffect } from "react";
+import { Skeleton } from "@/components/ui/skeleton";
+import { cn } from "@/lib/utils";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { Label } from "@/components/ui/label";
-import {
-  AlertCircle,
-  Settings,
-  Database,
-  Server,
-  Activity,
-  Eye,
-  Code2,
-  Save,
-  RefreshCw,
-  ChevronRight,
-  Package,
-  UploadCloud,
-  LayoutDashboard,
-  Loader2,
-  FolderOpen,
-  Pencil,
-} from "lucide-react";
-import { toast } from "sonner";
-import yaml from "js-yaml";
-import { FadeIn } from "@/components/anim/FadeIn";
-import { ShinyText } from "@/components/anim/ShinyText";
+import { ChevronDown, Check } from "lucide-react";
 
 export const Route = createFileRoute("/_sidebar/config")({
   component: () => <ConfigPage />,
 });
 
-function ConfigLocationSettings({ onSettingsSaved }: { onSettingsSaved?: () => void }) {
-  const { data: settings } = useGetSettingsSuspense(selector());
-  const { mutate: save, isPending } = useSaveSettings();
-  const queryClient = useQueryClient();
-
-  const [isOpen, setIsOpen] = useState(false);
-  const [path, setPath] = useState(settings.install_folder);
-  const [isSaving, setIsSaving] = useState(false);
-
-  useEffect(() => {
-    if (isOpen) {
-      setPath(settings.install_folder);
-    }
-  }, [isOpen, settings.install_folder]);
-
-  const onSave = () => {
-    setIsSaving(true);
-    save(
-      { data: { install_folder: path } },
-      {
-        onSuccess: async () => {
-          setIsOpen(false);
-          try {
-            // Refetch settings first
-            await queryClient.refetchQueries({ queryKey: ["/api/settings"] });
-            
-            // Then refetch config from the new location
-            // This will update all active queries and trigger re-renders
-            await queryClient.refetchQueries({ queryKey: ["/api/config"] });
-            
-            toast.success("Configuration location updated");
-            
-            // Force complete remount of config components
-            if (onSettingsSaved) {
-              onSettingsSaved();
-            }
-          } catch (error) {
-            // If config doesn't exist yet in new location, that's okay
-            // The error boundaries will handle it gracefully
-            console.warn("Config refetch after settings save:", error);
-            toast.success("Configuration location updated");
-            
-            // Still trigger remount even on error
-            if (onSettingsSaved) {
-              onSettingsSaved();
-            }
-          } finally {
-            setIsSaving(false);
-          }
-        },
-        onError: (error) => {
-          setIsSaving(false);
-          const msg = (error as any).response?.data?.detail || error.message;
-          toast.error("Failed to save: " + msg);
-        },
-      },
-    );
-  };
-
-  return (
-    <>
-      <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-muted/50 border border-border/60">
-        <FolderOpen className="h-4 w-4 text-muted-foreground shrink-0" />
-        <span className="text-xs text-muted-foreground shrink-0">Config location:</span>
-        <code className="text-xs font-mono text-foreground truncate max-w-[400px]" title={settings.install_folder}>
-          {settings.install_folder}
-        </code>
-        <Popover open={isOpen} onOpenChange={setIsOpen}>
-          <PopoverTrigger asChild>
-            <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0 ml-1">
-              <Pencil className="h-3 w-3" />
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent className="w-[500px]" align="end">
-            <div className="grid gap-4">
-              <div className="space-y-2">
-                <h4 className="font-medium leading-none">
-                  DQX Installation Folder
-                </h4>
-                <p className="text-sm text-muted-foreground">
-                  Path to the config.yml file.
-                </p>
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="config-path">Path</Label>
-                <Input
-                  id="config-path"
-                  value={path}
-                  onChange={(e) => setPath(e.target.value)}
-                  className="h-8 font-mono text-[10px]"
-                />
-              </div>
-              <div className="flex justify-end">
-                <Button size="sm" onClick={onSave} disabled={isPending}>
-                  {isPending ? "Saving..." : "Save"}
-                </Button>
-              </div>
-            </div>
-          </PopoverContent>
-        </Popover>
-      </div>
-
-      {isSaving && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm">
-          <div className="flex flex-col items-center gap-4 p-8 rounded-lg bg-card border shadow-lg">
-            <Loader2 className="h-12 w-12 animate-spin text-primary" />
-            <div className="text-center space-y-2">
-              <div className="text-lg font-semibold">Saving Configuration</div>
-              <p className="text-sm text-muted-foreground">
-                Updating install folder and refreshing config...
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
-    </>
-  );
-}
-
-function GeneralSettingsData() {
-  const {
-    data: { config },
-  } = useConfigSuspense(undefined, selector());
-
-  return (
-    <div className="grid gap-4 md:grid-cols-3">
-      <div>
-        <p className="text-sm font-medium text-muted-foreground">Log Level</p>
-        <p className="text-lg font-mono">{config.log_level || "INFO"}</p>
-      </div>
-      <div>
-        <p className="text-sm font-medium text-muted-foreground">
-          Serverless Clusters
-        </p>
-        <div className="flex items-center gap-2">
-          <Badge variant={config.serverless_clusters ? "default" : "secondary"}>
-            {config.serverless_clusters ? "Enabled" : "Disabled"}
-          </Badge>
-        </div>
-      </div>
-      <div>
-        <p className="text-sm font-medium text-muted-foreground">
-          Upload Dependencies
-        </p>
-        <div className="flex items-center gap-2">
-          <Badge variant={config.upload_dependencies ? "default" : "secondary"}>
-            {config.upload_dependencies ? "Enabled" : "Disabled"}
-          </Badge>
-          {config.upload_dependencies && (
-            <UploadCloud className="h-4 w-4 text-blue-500" />
-          )}
-        </div>
-      </div>
-      <div>
-        <p className="text-sm font-medium text-muted-foreground">
-          Profiler Parallelism
-        </p>
-        <p className="text-lg">
-          {config.profiler_max_parallelism || "Default"}
-        </p>
-      </div>
-      <div>
-        <p className="text-sm font-medium text-muted-foreground">
-          Quality Checker Parallelism
-        </p>
-        <p className="text-lg">
-          {config.quality_checker_max_parallelism || "Default"}
-        </p>
-      </div>
-      {config.custom_metrics && config.custom_metrics.length > 0 && (
-        <div className="col-span-full">
-          <p className="text-sm font-medium text-muted-foreground mb-1">
-            Custom Metrics
-          </p>
-          <div className="flex flex-wrap gap-1">
-            {config.custom_metrics.map((metric) => (
-              <Badge
-                key={metric}
-                variant="outline"
-                className="font-mono text-xs"
-              >
-                {metric}
-              </Badge>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function RunConfigsData() {
-  const {
-    data: { config },
-  } = useConfigSuspense(undefined, selector());
-
-  if (!config.run_configs || config.run_configs.length === 0) {
-    return (
-      <p className="text-muted-foreground text-sm">
-        No run configurations defined.
-      </p>
-    );
+function getAllTimezones(): { value: string; label: string; offset: string }[] {
+  let zones: string[];
+  try {
+    zones = (Intl as unknown as { supportedValuesOf(k: string): string[] }).supportedValuesOf("timeZone");
+  } catch {
+    zones = [];
   }
+  if (!zones.includes("UTC")) zones = ["UTC", ...zones];
 
-  return (
-    <div className="space-y-4">
-      {config.run_configs.map((runConfig, index) => (
-        <Card
-          key={index}
-          className="bg-card/50 backdrop-blur-sm border-border/50 transition-all hover:border-primary/20 hover:shadow-sm"
-        >
-          <CardContent className="grid gap-2 p-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <h3 className="font-semibold text-lg">
-                  {runConfig.name || `Config ${index + 1}`}
-                </h3>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 gap-1.5 text-xs"
-                  asChild
-                >
-                  <Link to="/runs">
-                    <LayoutDashboard className="h-3.5 w-3.5" />
-                    Manage Run
-                    <ChevronRight className="h-3 w-3 opacity-50" />
-                  </Link>
-                </Button>
-              </div>
-              <div className="flex gap-2">
-                {runConfig.warehouse_id && (
-                  <Badge
-                    variant="outline"
-                    className="font-mono text-xs flex items-center gap-1 bg-background/50"
-                  >
-                    <Server className="h-3 w-3" />
-                    {runConfig.warehouse_id}
-                  </Badge>
-                )}
-                {runConfig.lakebase_instance_name && (
-                  <Badge
-                    variant="secondary"
-                    className="font-mono text-xs flex items-center gap-1"
-                  >
-                    <Database className="h-3 w-3" />
-                    {runConfig.lakebase_instance_name}
-                  </Badge>
-                )}
-              </div>
-            </div>
-
-            <Separator className="my-2 opacity-50" />
-
-            <div className="grid md:grid-cols-2 gap-4 text-sm">
-              <div className="space-y-1">
-                <span className="font-medium text-muted-foreground flex items-center gap-1">
-                  <Package className="h-3 w-3" /> Input
-                </span>
-                <div className="pl-4 border-l-2 border-primary/20">
-                  <p>
-                    Location:{" "}
-                    <span className="font-mono text-xs">
-                      {runConfig.input_config?.location}
-                    </span>
-                  </p>
-                  {runConfig.input_config?.format && (
-                    <p>Format: {runConfig.input_config.format}</p>
-                  )}
-                </div>
-              </div>
-
-              <div className="space-y-1">
-                <span className="font-medium text-muted-foreground flex items-center gap-1">
-                  <Database className="h-3 w-3" /> Output
-                </span>
-                <div className="pl-4 border-l-2 border-primary/20">
-                  <p>
-                    Location:{" "}
-                    <span className="font-mono text-xs">
-                      {runConfig.output_config?.location}
-                    </span>
-                  </p>
-                  {runConfig.output_config?.mode && (
-                    <p>Mode: {runConfig.output_config.mode}</p>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {runConfig.checks_location && (
-              <div className="text-sm mt-2 pt-2 border-t border-border/30">
-                <span className="font-medium text-muted-foreground">
-                  Checks Location:{" "}
-                </span>
-                <span className="font-mono text-xs bg-muted/50 px-1 py-0.5 rounded">
-                  {runConfig.checks_location}
-                </span>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      ))}
-    </div>
-  );
+  const now = new Date();
+  return zones.map((tz) => {
+    const short = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz,
+      timeZoneName: "short",
+    })
+      .formatToParts(now)
+      .find((p) => p.type === "timeZoneName")?.value ?? "";
+    const offset = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz,
+      timeZoneName: "longOffset",
+    })
+      .formatToParts(now)
+      .find((p) => p.type === "timeZoneName")?.value ?? "";
+    const city = tz.split("/").pop()?.replace(/_/g, " ") ?? tz;
+    return {
+      value: tz,
+      label: `${tz} (${short})`,
+      offset,
+      _city: city,
+      _region: tz.split("/")[0] ?? "",
+    };
+  });
 }
 
-function ClusterOverridesCard() {
-  const {
-    data: { config },
-  } = useConfigSuspense(undefined, selector());
-
-  if (
-    !config.profiler_override_clusters &&
-    !config.quality_checker_override_clusters &&
-    !config.e2e_override_clusters
-  ) {
-    return null;
-  }
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Server className="h-5 w-5" />
-          Cluster Overrides
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {config.profiler_override_clusters && (
-          <div>
-            <h4 className="font-medium mb-2">Profiler</h4>
-            <pre className="bg-muted p-2 rounded-md text-xs overflow-x-auto">
-              {JSON.stringify(config.profiler_override_clusters, null, 2)}
-            </pre>
-          </div>
-        )}
-        {config.quality_checker_override_clusters && (
-          <div>
-            <h4 className="font-medium mb-2">Quality Checker</h4>
-            <pre className="bg-muted p-2 rounded-md text-xs overflow-x-auto">
-              {JSON.stringify(
-                config.quality_checker_override_clusters,
-                null,
-                2,
-              )}
-            </pre>
-          </div>
-        )}
-        {config.e2e_override_clusters && (
-          <div>
-            <h4 className="font-medium mb-2">E2E Tests</h4>
-            <pre className="bg-muted p-2 rounded-md text-xs overflow-x-auto">
-              {JSON.stringify(config.e2e_override_clusters, null, 2)}
-            </pre>
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-function RunConfigCount() {
-  const {
-    data: { config },
-  } = useConfigSuspense(undefined, selector());
-  return <>({config.run_configs?.length || 0})</>;
-}
+const ALL_TIMEZONES = getAllTimezones();
 
 function SectionError({
   resetErrorBoundary,
@@ -442,279 +98,551 @@ function SectionError({
   );
 }
 
-function YamlConfigEditor() {
-  const { data: configOut } = useConfigSuspense(undefined, selector());
-  // Fetch settings as well to display the path
-  const { data: settings } = useGetSettingsSuspense(selector());
-
-  const { mutate: saveConfig, isPending } = useSaveConfig();
+function TimezoneSettings() {
+  const { data: tz, isLoading } = useTimezone();
+  const saveMutation = useSaveTimezone();
   const queryClient = useQueryClient();
-  const [yamlContent, setYamlContent] = useState("");
-  const [isModified, setIsModified] = useState(false);
+  const { data: role } = useCurrentUserRoleSuspense();
+  const isAdmin = role?.data?.role === "admin";
+
+  const currentTz = (tz as { timezone: string } | undefined)?.timezone ?? "UTC";
+
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (configOut?.config) {
-      try {
-        setYamlContent(yaml.dump(configOut.config));
-      } catch (e) {
-        console.error("Failed to convert config to YAML", e);
-        toast.error("Failed to load configuration");
-      }
+    if (open) setTimeout(() => inputRef.current?.focus(), 50);
+  }, [open]);
+
+  const filtered = useMemo(() => {
+    if (!search) return ALL_TIMEZONES;
+    const q = search.toLowerCase();
+    return ALL_TIMEZONES.filter(
+      (tz) =>
+        tz.value.toLowerCase().includes(q) ||
+        tz.label.toLowerCase().includes(q) ||
+        tz.offset.toLowerCase().includes(q),
+    );
+  }, [search]);
+
+  const handleSelect = (value: string) => {
+    setOpen(false);
+    setSearch("");
+    if (value === currentTz) return;
+    saveMutation.mutate(
+      { data: { timezone: value } },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getTimezoneQueryKey() });
+          toast.success(`Timezone updated to ${value}`);
+        },
+        onError: () => toast.error("Failed to save timezone"),
+      },
+    );
+  };
+
+  if (isLoading) return <Skeleton className="h-10 w-64" />;
+
+  const currentLabel = ALL_TIMEZONES.find((t) => t.value === currentTz)?.label ?? currentTz;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Globe className="h-5 w-5" />
+          Display Timezone
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="flex items-center gap-3">
+          <Popover open={open} onOpenChange={setOpen}>
+            <PopoverTrigger asChild>
+              <Button
+                variant="outline"
+                role="combobox"
+                aria-expanded={open}
+                className="w-96 justify-between font-normal"
+                disabled={!isAdmin || saveMutation.isPending}
+              >
+                <span className="truncate">{currentLabel}</span>
+                <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-96 p-0" align="start">
+              <div className="flex items-center border-b px-3 py-2">
+                <Search className="mr-2 h-4 w-4 shrink-0 opacity-50" />
+                <Input
+                  ref={inputRef}
+                  placeholder="Search timezones..."
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  className="h-8 border-0 p-0 shadow-none focus-visible:ring-0"
+                />
+              </div>
+              <div className="max-h-72 overflow-y-auto">
+                {filtered.length === 0 && (
+                  <p className="px-3 py-4 text-sm text-muted-foreground text-center">No timezone found.</p>
+                )}
+                {filtered.map((opt) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    className={cn(
+                      "flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent hover:text-accent-foreground cursor-pointer",
+                      opt.value === currentTz && "bg-accent/50 font-medium",
+                    )}
+                    onClick={() => handleSelect(opt.value)}
+                  >
+                    <Check className={cn("h-4 w-4 shrink-0", opt.value === currentTz ? "opacity-100 text-green-500" : "opacity-0")} />
+                    <span className="truncate">{opt.label}</span>
+                    <span className="ml-auto text-xs text-muted-foreground shrink-0">{opt.offset}</span>
+                  </button>
+                ))}
+              </div>
+            </PopoverContent>
+          </Popover>
+          {saveMutation.isPending && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+          {!isAdmin && (
+            <span className="text-xs text-muted-foreground">Only admins can change this setting</span>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Label Definitions — admin-managed catalog of label keys + allowed values.
+// Drives the constrained label picker on rule authoring pages, including the
+// reserved ``weight`` key (which controls the weight selector / row).
+// ─────────────────────────────────────────────────────────────────────────────
+
+const LABEL_KEY_RE = /^[A-Za-z][A-Za-z0-9_]*$/;
+const RESERVED_WEIGHT_KEY = "weight";
+
+interface DraftDefinition extends LabelDefinition {
+  draftId: string;
+  newValueDraft: string;
+}
+
+function defToDraft(d: LabelDefinition): DraftDefinition {
+  return {
+    draftId: crypto.randomUUID(),
+    key: d.key,
+    description: d.description ?? "",
+    values: [...d.values],
+    allow_custom_values: !!d.allow_custom_values,
+    newValueDraft: "",
+  };
+}
+
+function draftToDef(d: DraftDefinition): LabelDefinition {
+  return {
+    key: d.key.trim(),
+    description: (d.description ?? "").trim(),
+    values: d.values.map((v) => v.trim()).filter(Boolean),
+    allow_custom_values: d.allow_custom_values,
+  };
+}
+
+function LabelDefinitionsSettings() {
+  const { data, isLoading } = useLabelDefinitions();
+  const queryClient = useQueryClient();
+  const saveMutation = useSaveLabelDefinitions();
+
+  const [drafts, setDrafts] = useState<DraftDefinition[]>([]);
+  const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
+    if (data && !hydrated) {
+      setDrafts((data.definitions ?? []).map(defToDraft));
+      setHydrated(true);
     }
-    setIsModified(false);
-  }, [configOut]);
+  }, [data, hydrated]);
+
+  const isDirty = useMemo(() => {
+    if (!data) return false;
+    const a = data.definitions ?? [];
+    const b = drafts.map(draftToDef);
+    if (a.length !== b.length) return true;
+    return JSON.stringify(a) !== JSON.stringify(b);
+  }, [data, drafts]);
+
+  const validation = useMemo(() => {
+    const errors: string[] = [];
+    const seen = new Set<string>();
+    for (const d of drafts) {
+      const k = d.key.trim();
+      if (!k) {
+        errors.push("Every definition needs a key.");
+        continue;
+      }
+      if (!LABEL_KEY_RE.test(k)) {
+        errors.push(
+          `Key "${k}" must start with a letter and contain only letters, digits, and underscores.`,
+        );
+      }
+      if (seen.has(k)) errors.push(`Duplicate key "${k}".`);
+      seen.add(k);
+    }
+    return errors;
+  }, [drafts]);
+
+  const updateDraft = (draftId: string, patch: Partial<DraftDefinition>) => {
+    setDrafts((prev) => prev.map((d) => (d.draftId === draftId ? { ...d, ...patch } : d)));
+  };
+
+  const removeDraft = (draftId: string) =>
+    setDrafts((prev) => prev.filter((d) => d.draftId !== draftId));
+
+  const addDraft = (initialKey?: string) =>
+    setDrafts((prev) => [
+      ...prev,
+      {
+        draftId: crypto.randomUUID(),
+        key: initialKey ?? "",
+        description: "",
+        values: [],
+        allow_custom_values: false,
+        newValueDraft: "",
+      },
+    ]);
+
+  const addValue = (draftId: string) => {
+    const target = drafts.find((d) => d.draftId === draftId);
+    if (!target) return;
+    const v = target.newValueDraft.trim();
+    if (!v) return;
+    if (target.values.includes(v)) {
+      updateDraft(draftId, { newValueDraft: "" });
+      return;
+    }
+    updateDraft(draftId, {
+      values: [...target.values, v],
+      newValueDraft: "",
+    });
+  };
+
+  const removeValue = (draftId: string, value: string) => {
+    const target = drafts.find((d) => d.draftId === draftId);
+    if (!target) return;
+    updateDraft(draftId, { values: target.values.filter((v) => v !== value) });
+  };
 
   const handleSave = () => {
-    try {
-      const parsed = yaml.load(yamlContent) as WorkspaceConfigInput;
-      saveConfig(
-        { data: { config: parsed } },
-        {
-          onSuccess: async () => {
-            toast.success("Configuration saved successfully");
-            setIsModified(false);
-            // Refetch config queries to immediately update the display
-            await queryClient.refetchQueries({ queryKey: ["/api/config"] });
-          },
-          onError: (error) => {
-            console.error(error);
-            const msg = (error as any).response?.data?.detail || error.message;
-            toast.error("Failed to save configuration: " + msg);
-          },
-        },
-      );
-    } catch (e) {
-      console.error(e);
-      toast.error("Invalid YAML: " + (e as Error).message);
+    if (validation.length > 0) {
+      toast.error(validation[0]);
+      return;
     }
+    const definitions = drafts.map(draftToDef);
+    saveMutation.mutate(
+      { data: { definitions } },
+      {
+        onSuccess: (resp) => {
+          queryClient.invalidateQueries({ queryKey: getLabelDefinitionsQueryKey() });
+          setDrafts(resp.data.definitions.map(defToDraft));
+          toast.success(
+            definitions.length === 0
+              ? "Cleared rule labels."
+              : `Saved ${definitions.length} rule label${definitions.length === 1 ? "" : "s"}.`,
+          );
+        },
+        onError: (err: unknown) => {
+          const axErr = err as AxiosError<{ detail?: string }>;
+          toast.error(axErr?.response?.data?.detail ?? "Failed to save label definitions");
+        },
+      },
+    );
   };
 
   const handleReset = () => {
-    if (configOut?.config) {
-      setYamlContent(yaml.dump(configOut.config));
-      setIsModified(false);
-    }
+    setDrafts((data?.definitions ?? []).map(defToDraft));
   };
 
+  const hasWeightKey = drafts.some((d) => d.key.trim() === RESERVED_WEIGHT_KEY);
+
+  if (isLoading) {
+    return <Skeleton className="h-40 w-full" />;
+  }
+
   return (
-    <FadeIn duration={0.4}>
-      <Card className="flex flex-col h-[calc(100vh-12rem)] border-border/60 shadow-sm">
-        <CardHeader className="py-3 px-4 border-b flex flex-row justify-between items-center space-y-0 h-14 bg-muted/20">
-          <div className="flex flex-col gap-0.5">
-            <div className="flex items-center gap-2">
-              <Code2 className="h-4 w-4 text-muted-foreground" />
-              <CardTitle className="text-base">Config Editor</CardTitle>
-            </div>
-            <p className="text-[10px] font-mono text-muted-foreground pl-6">
-              {settings.install_folder}/config.yml
-            </p>
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Tags className="h-5 w-5" />
+          Rule Labels
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {drafts.length === 0 && (
+          <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
+            No label definitions yet.
           </div>
-          {isModified && (
-            <div className="flex gap-2">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleReset}
-                disabled={isPending}
-              >
-                <RefreshCw className="mr-2 h-3 w-3" /> Reset
-              </Button>
-              <Button size="sm" onClick={handleSave} disabled={isPending}>
-                <Save className="mr-2 h-3 w-3" /> Save Changes
-              </Button>
-            </div>
-          )}
-        </CardHeader>
-        <CardContent className="flex-1 p-0 relative">
-          <textarea
-            className="w-full h-full font-mono text-sm p-4 bg-muted/30 resize-none focus:outline-none border-0"
-            value={yamlContent}
-            onChange={(e) => {
-              setYamlContent(e.target.value);
-              setIsModified(true);
-            }}
-            spellCheck={false}
-            disabled={isPending}
+        )}
+        {drafts.map((d) => (
+          <DefinitionEditorCard
+            key={d.draftId}
+            draft={d}
+            onChange={(patch) => updateDraft(d.draftId, patch)}
+            onRemove={() => removeDraft(d.draftId)}
+            onAddValue={() => addValue(d.draftId)}
+            onRemoveValue={(v) => removeValue(d.draftId, v)}
           />
-        </CardContent>
-      </Card>
-    </FadeIn>
+        ))}
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => addDraft()} className="gap-1.5">
+            <Plus className="h-3.5 w-3.5" />
+            Add label definition
+          </Button>
+          {!hasWeightKey && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => addDraft(RESERVED_WEIGHT_KEY)}
+              className="gap-1.5 text-xs text-muted-foreground"
+              title="Add a weight label with values 1..5 quickly"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Add weight definition
+            </Button>
+          )}
+        </div>
+        {validation.length > 0 && (
+          <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 space-y-1">
+            {validation.map((msg, i) => (
+              <p key={i} className="text-xs text-destructive flex items-start gap-1.5">
+                <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                <span>{msg}</span>
+              </p>
+            ))}
+          </div>
+        )}
+        <div className="flex items-center gap-2 pt-2 border-t">
+          <Button
+            size="sm"
+            onClick={handleSave}
+            disabled={!isDirty || validation.length > 0 || saveMutation.isPending}
+          >
+            {saveMutation.isPending && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}
+            Save changes
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={handleReset}
+            disabled={!isDirty || saveMutation.isPending}
+          >
+            Reset
+          </Button>
+          {!isDirty && (data?.definitions?.length ?? 0) > 0 && (
+            <span className="text-xs text-muted-foreground">
+              {data?.definitions?.length} definition
+              {(data?.definitions?.length ?? 0) === 1 ? "" : "s"} active
+            </span>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+interface DefinitionEditorCardProps {
+  draft: DraftDefinition;
+  onChange: (patch: Partial<DraftDefinition>) => void;
+  onRemove: () => void;
+  onAddValue: () => void;
+  onRemoveValue: (value: string) => void;
+}
+
+function DefinitionEditorCard({
+  draft,
+  onChange,
+  onRemove,
+  onAddValue,
+  onRemoveValue,
+}: DefinitionEditorCardProps) {
+  const keyValid = !draft.key || LABEL_KEY_RE.test(draft.key.trim());
+  const isWeight = draft.key.trim() === RESERVED_WEIGHT_KEY;
+  return (
+    <div className={cn("rounded-md border p-3 space-y-3", isWeight ? "bg-blue-50/30 border-blue-200/60" : "bg-muted/20")}>
+      <div className="flex items-start gap-3">
+        <div className="grid grid-cols-[180px_1fr] gap-3 flex-1 items-start">
+          <div className="space-y-1">
+            <Label className="text-xs flex items-center gap-1.5">
+              Key
+              {isWeight && (
+                <Badge variant="secondary" className="h-4 px-1 text-[10px] font-normal">
+                  reserved
+                </Badge>
+              )}
+            </Label>
+            <Input
+              value={draft.key}
+              onChange={(e) => onChange({ key: e.target.value })}
+              placeholder="e.g. team"
+              className={cn("h-8 text-xs font-mono", !keyValid && "border-destructive")}
+            />
+            {!keyValid && (
+              <p className="text-[10px] text-destructive">
+                Letters, digits, underscore. Must start with a letter.
+              </p>
+            )}
+            {isWeight && (
+              <p className="text-[10px] text-blue-700">
+                Drives the weight picker on rule authoring pages.
+              </p>
+            )}
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">
+              Description <span className="text-muted-foreground">(optional)</span>
+            </Label>
+            <Textarea
+              value={draft.description ?? ""}
+              onChange={(e) => onChange({ description: e.target.value })}
+              placeholder={isWeight ? "Rule weight (1 = informational, 5 = critical)" : "What this label captures (e.g. Owning team)"}
+              className="text-xs min-h-[32px] py-1.5"
+              rows={1}
+            />
+          </div>
+        </div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 shrink-0 text-destructive hover:text-destructive"
+          onClick={onRemove}
+          aria-label="Remove definition"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+      <div className="space-y-1.5">
+        <div className="flex items-center justify-between">
+          <Label className="text-xs">
+            Allowed values{" "}
+            <span className="text-muted-foreground">
+              (leave empty for a boolean tag)
+            </span>
+          </Label>
+          <label className="flex items-center gap-1.5 text-xs cursor-pointer">
+            <Checkbox
+              checked={draft.allow_custom_values}
+              onCheckedChange={(c) => onChange({ allow_custom_values: c === true })}
+            />
+            <span>Allow custom values</span>
+          </label>
+        </div>
+        {draft.values.length > 0 ? (
+          <div className="flex flex-wrap gap-1.5">
+            {draft.values.map((v) => (
+              <Badge
+                key={v}
+                variant="secondary"
+                className="h-6 gap-1 pl-2 pr-1 text-xs font-normal"
+              >
+                <span className="font-mono">{v}</span>
+                <button
+                  type="button"
+                  className="ml-0.5 rounded-full hover:bg-foreground/10 p-0.5"
+                  onClick={() => onRemoveValue(v)}
+                  aria-label={`Remove value ${v}`}
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </Badge>
+            ))}
+          </div>
+        ) : (
+          <p className="text-[11px] italic text-muted-foreground">
+            No values — authors will toggle this label as a boolean tag (
+            <code>true</code>/<code>false</code>).
+          </p>
+        )}
+        <div className="flex items-center gap-1.5">
+          <Input
+            value={draft.newValueDraft}
+            onChange={(e) => onChange({ newValueDraft: e.target.value })}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                onAddValue();
+              }
+            }}
+            placeholder={isWeight ? "add weight value (e.g. 1)" : "add value… (press Enter)"}
+            className="h-7 text-xs flex-1 font-mono"
+          />
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-7 text-xs gap-1"
+            disabled={!draft.newValueDraft.trim()}
+            onClick={onAddValue}
+          >
+            <Plus className="h-3 w-3" />
+            Add
+          </Button>
+        </div>
+      </div>
+    </div>
   );
 }
 
 function ConfigPage() {
-  const [view, setView] = useState<"ui" | "yaml">("ui");
-  const [refreshKey, setRefreshKey] = useState(0);
+  const { isAdmin } = usePermissions();
+  const navigate = useNavigate();
 
-  // Force complete remount of config components after settings save
-  const forceRefresh = () => {
-    setRefreshKey(prev => prev + 1);
-  };
+  useEffect(() => {
+    if (!isAdmin) {
+      navigate({ to: "/rules/active", replace: true });
+    }
+  }, [isAdmin, navigate]);
+
+  if (!isAdmin) {
+    return null;
+  }
 
   return (
-    <div className="space-y-6 h-full flex flex-col">
-      <div className="space-y-3 shrink-0">
-        <div className="flex items-start justify-between">
-          <div className="space-y-2">
-            <PageBreadcrumb page="Configuration" />
-            <div>
-              <h1 className="text-2xl font-bold tracking-tight">
-                <ShinyText text="Configuration" speed={6} className="font-bold" />
-              </h1>
-              <p className="text-muted-foreground">
-                View your current workspace configuration.
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2 pt-6">
-            <div className="bg-muted rounded-lg p-1 flex items-center">
-              <Button
-                variant={view === "ui" ? "secondary" : "ghost"}
-                size="sm"
-                className="h-7 px-2 gap-2"
-                onClick={() => setView("ui")}
-              >
-                <Eye className="h-3.5 w-3.5" />
-              </Button>
-              <Button
-                variant={view === "yaml" ? "secondary" : "ghost"}
-                size="sm"
-                className="h-7 px-2 gap-2"
-                onClick={() => setView("yaml")}
-              >
-                <Code2 className="h-3.5 w-3.5" />
-              </Button>
-            </div>
-          </div>
+    <div className="space-y-6">
+      <div className="space-y-2">
+        <PageBreadcrumb page="Configuration" />
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">
+            <ShinyText text="Configuration" speed={6} className="font-bold" />
+          </h1>
+          <p className="text-muted-foreground">
+            Manage roles, permissions, and display settings for your workspace.
+          </p>
         </div>
-
-        <QueryErrorResetBoundary>
-          {({ reset }) => (
-            <ErrorBoundary
-              onReset={reset}
-              fallback={
-                <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-destructive/10 border border-destructive/20">
-                  <AlertCircle className="h-4 w-4 text-destructive" />
-                  <span className="text-xs text-destructive">Failed to load config location</span>
-                </div>
-              }
-            >
-              <Suspense
-                fallback={
-                  <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-muted/50 border border-border/60">
-                    <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                    <span className="text-xs text-muted-foreground">Loading config location...</span>
-                  </div>
-                }
-              >
-                <ConfigLocationSettings onSettingsSaved={forceRefresh} />
-              </Suspense>
-            </ErrorBoundary>
-          )}
-        </QueryErrorResetBoundary>
       </div>
 
-      <div className="flex-1 min-h-0" key={refreshKey}>
-        <QueryErrorResetBoundary>
-          {({ reset }) =>
-            view === "ui" ? (
-              <div className="space-y-6 pb-8">
-                {/* General Settings */}
-                <FadeIn delay={0.1}>
-                  <Card>
-                    <CardHeader>
-                      <CardTitle className="flex items-center gap-2">
-                        <Settings className="h-5 w-5" />
-                        General Settings
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <ErrorBoundary
-                        onReset={reset}
-                        fallbackRender={SectionError}
-                      >
-                        <Suspense
-                          fallback={
-                            <div className="grid gap-4 md:grid-cols-3">
-                              <Skeleton className="h-16" />
-                              <Skeleton className="h-16" />
-                              <Skeleton className="h-16" />
-                              <Skeleton className="h-16" />
-                              <Skeleton className="h-16" />
-                              <Skeleton className="h-16" />
-                            </div>
-                          }
-                        >
-                          <GeneralSettingsData />
-                        </Suspense>
-                      </ErrorBoundary>
-                    </CardContent>
-                  </Card>
-                </FadeIn>
-
-                {/* Run Configs */}
-                <FadeIn delay={0.2}>
-                  <Card className="border-0 shadow-none bg-transparent">
-                    <CardHeader className="px-0">
-                      <CardTitle className="flex items-center gap-2">
-                        <Activity className="h-5 w-5" />
-                        Run Configurations
-                        <ErrorBoundary onReset={reset} fallback={null}>
-                          <Suspense
-                            fallback={
-                              <Skeleton className="h-4 w-8 inline-block ml-2" />
-                            }
-                          >
-                            <span className="ml-1 text-sm font-normal text-muted-foreground">
-                              <RunConfigCount />
-                            </span>
-                          </Suspense>
-                        </ErrorBoundary>
-                      </CardTitle>
-                      <CardDescription>
-                        Defined run configurations
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent className="px-0">
-                      <ErrorBoundary
-                        onReset={reset}
-                        fallbackRender={SectionError}
-                      >
-                        <Suspense
-                          fallback={
-                            <div className="space-y-4">
-                              <Skeleton className="h-32 w-full" />
-                              <Skeleton className="h-32 w-full" />
-                            </div>
-                          }
-                        >
-                          <RunConfigsData />
-                        </Suspense>
-                      </ErrorBoundary>
-                    </CardContent>
-                  </Card>
-                </FadeIn>
-
-                {/* Cluster Overrides - Entire card is dynamic */}
-                <ErrorBoundary onReset={reset} fallback={null}>
-                  <Suspense fallback={null}>
-                    <FadeIn delay={0.3}>
-                      <ClusterOverridesCard />
-                    </FadeIn>
-                  </Suspense>
-                </ErrorBoundary>
-              </div>
-            ) : (
+      <QueryErrorResetBoundary>
+        {({ reset }) => (
+          <div className="space-y-6 pb-8">
+            <FadeIn delay={0.05}>
               <ErrorBoundary onReset={reset} fallbackRender={SectionError}>
-                <Suspense fallback={<Skeleton className="h-full w-full" />}>
-                  <YamlConfigEditor />
+                <Suspense fallback={<Skeleton className="h-40 w-full" />}>
+                  <TimezoneSettings />
                 </Suspense>
               </ErrorBoundary>
-            )
-          }
-        </QueryErrorResetBoundary>
-      </div>
+            </FadeIn>
+            <FadeIn delay={0.1}>
+              <ErrorBoundary onReset={reset} fallbackRender={SectionError}>
+                <Suspense fallback={<Skeleton className="h-40 w-full" />}>
+                  <LabelDefinitionsSettings />
+                </Suspense>
+              </ErrorBoundary>
+            </FadeIn>
+            <FadeIn delay={0.15}>
+              <ErrorBoundary onReset={reset} fallbackRender={SectionError}>
+                <RoleManagement />
+              </ErrorBoundary>
+            </FadeIn>
+          </div>
+        )}
+      </QueryErrorResetBoundary>
     </div>
   );
 }
