@@ -31,6 +31,7 @@ from databricks.labs.dqx.check_funcs import (
     has_valid_json_schema,
     is_valid_timestamp,
     is_valid_ipv4_address,
+    is_valid_email,
     is_ipv4_address_in_cidr,
     is_valid_ipv6_address,
     is_ipv6_address_in_cidr,
@@ -1839,6 +1840,108 @@ def test_col_is_valid_ipv4_address(spark):
         ],
         checked_schema,
     )
+    assertDataFrameEqual(actual, expected)
+
+
+def test_col_is_valid_email(spark):
+    schema_email = "a: string"
+    local_part_at_char_limit = "a" * 64  # 64 characters total
+    full_text_at_char_limit = "a" * 63 + "@" + "b." * 100 + "com"  # 268 characters total
+
+    test_df = spark.createDataFrame(
+        [
+            ["user@example.com"],
+            ["User.Name+tag@sub.domain.org"],
+            ["a@b.cd"],  # minimum valid
+            ["1234567890@numbers.io"],  # all-numeric local
+            ["mixed.case@MixedCase.Org"],  # case variations
+            [local_part_at_char_limit + "@b.com"],  # exactly at 64-character limit for local parts
+            [full_text_at_char_limit],  # exactly at 268-character limit for the full text
+            ['"a"@example.com'],
+            ['"a@b"@example.com'],  # "@" inside quoted local
+            ["user@[192.0.2.1]"],
+            ["user@[IPv6:2001:db8::1]"],
+            [".user@example.com"],  # leading "."
+            ["user.@example.com"],  # trailing "."
+            ["us..er@example.com"],  # consecutive "."
+            ["user@-example.com"],  # leading hyphen on label
+            ["user@example-.com"],  # trailing hyphen on label
+            ["user@.example.com"],  # empty subdomain label
+            ["user@example..com"],  # double "." in domain
+            ["user@example.c"],  # single character TLD
+            ["user@example.123"],  # numeric TLD
+            ["user@example"],  # no TLD
+            ["userexample.com"],  # no "@"
+            ["user@@example.com"],  # double "@"
+            ["user@"],  # missing domain
+            ["@example.com"],  # missing local part
+            ["plainaddress"],  # no "@" or "."
+            ["a" + local_part_at_char_limit + "@example.com"],  # local part more than 64 characters
+            ["a" + full_text_at_char_limit],  # full text more than 268 characters
+            ["user@[999.0.0.1]"],  # invalid IPv4 octet
+            ["user@[256.0.0.1]"],  # IPv4 octet over 255
+            ["user@[]"],  # empty IP literal
+            ["user@[192.0.2.1"],  # missing closing bracket
+            ["user@localhost"],  # no TLD
+            ["missing@tld"],  # no domain "."
+            [None],  # null - passes (no violation reported)
+        ],
+        schema_email,
+    )
+
+    actual = test_df.select(is_valid_email("a"))
+
+    def violation(value: str) -> str:
+        return f"Value '{value}' in Column 'a' does not match pattern 'EMAIL_ADDRESS'"
+
+    checked_schema = "a_does_not_match_pattern_email_address: string"
+    checked_data = [
+        # Valid (no violation reported)
+        [None],
+        [None],
+        [None],
+        [None],
+        [None],
+        [None],
+        [None],
+        [None],
+        [None],
+        [None],
+        [None],
+        # Invalid - dot-atom violations
+        [violation(".user@example.com")],
+        [violation("user.@example.com")],
+        [violation("us..er@example.com")],
+        # Invalid - LDH domain violations
+        [violation("user@-example.com")],
+        [violation("user@example-.com")],
+        [violation("user@.example.com")],
+        [violation("user@example..com")],
+        # Invalid - TLD constraints
+        [violation("user@example.c")],
+        [violation("user@example.123")],
+        [violation("user@example")],
+        # Invalid - structural
+        [violation("userexample.com")],
+        [violation("user@@example.com")],
+        [violation("user@")],
+        [violation("@example.com")],
+        [violation("plainaddress")],
+        # Invalid - length caps
+        [violation("a" + local_part_at_char_limit + "@example.com")],
+        [violation("a" + full_text_at_char_limit)],
+        # Invalid - IP-literal edge cases
+        [violation("user@[999.0.0.1]")],
+        [violation("user@[256.0.0.1]")],
+        [violation("user@[]")],
+        [violation("user@[192.0.2.1")],
+        # Pre-existing coverage retained
+        [violation("user@localhost")],
+        [violation("missing@tld")],
+        [None],
+    ]
+    expected = spark.createDataFrame(checked_data, checked_schema)
+
     assertDataFrameEqual(actual, expected)
 
 
