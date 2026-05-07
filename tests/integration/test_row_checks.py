@@ -1846,7 +1846,7 @@ def test_col_is_valid_ipv4_address(spark):
 def test_col_is_valid_email(spark):
     schema_email = "a: string"
     local_part_at_char_limit = "a" * 64  # 64 characters total
-    full_text_at_char_limit = "a" * 63 + "@" + "b." * 100 + "com"  # 268 characters total
+    full_text_at_char_limit = "a" * 64 + "@" + "b" * 186 + ".co"  # 254 characters total
 
     test_df = spark.createDataFrame(
         [
