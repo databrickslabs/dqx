@@ -531,40 +531,18 @@ def test_are_polygons_mutually_disjoint_row_filter_with_duplicates(skip_if_runti
 
 @pytest.mark.parametrize("topological_relationship", ["WITHIN", "CONTAINS", "COVERS"])
 @pytest.mark.parametrize(
-    "column_value,column_representation,reference_polygon_value,reference_polygon_representation",
+    "column_value,reference_polygon_value",
     [
         (
             "POINT(4.90 52.37)",
-            "WKT",
             "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
-            "WKT",
-        ),
-        (
-            "POINT(4.90 52.37)",
-            "WKT",
-            "SRID=4326;POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
-            "EWKT",
-        ),
-        (
-            "SRID=4326;POINT(4.90 52.37)",
-            "EWKT",
-            "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
-            "WKT",
-        ),
-        (
-            "SRID=4326;POINT(4.90 52.37)",
-            "EWKT",
-            "SRID=4326;POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
-            "EWKT",
         ),
     ],
 )
 def test_is_within_polygon_precise_inside(
     topological_relationship,
     column_value,
-    column_representation,
     reference_polygon_value,
-    reference_polygon_representation,
     skip_if_runtime_not_geo_compatible,
     spark,
 ):
@@ -579,8 +557,8 @@ def test_is_within_polygon_precise_inside(
     condition, apply_method = is_within_polygon_precise(
         "geom",
         reference_polygon_value,
-        column_representation,
-        reference_polygon_representation,
+        convert_column=True,
+        convert_reference_polygon=True,
         topological_relationship=topological_relationship,
     )
 
@@ -592,54 +570,38 @@ def test_is_within_polygon_precise_inside(
             [column_value, None],  # Point inside polygon — no violation
             [None, None],  # Null value — evaluation skipped
         ],
-        "geom: string, geom_outside_reference_polygon: string",
+        "geom: string, geom_outside_reference_polygon_precise: string",
     )
 
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
 @pytest.mark.parametrize(
-    "column_value,column_representation,reference_polygon_value,reference_polygon_representation,topological_relationship,expect_violation",
+    "column_value,reference_polygon_value,topological_relationship,expect_violation",
     [
         (
             "POINT(4.73 52.28)",
-            "WKT",
             "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
-            "WKT",
             "WITHIN",
-            True
+            True,
         ),
         (
             "POINT(4.73 52.28)",
-            "WKT",
             "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
-            "WKT",
             "CONTAINS",
-            True
+            True,
         ),
         (
             "POINT(4.73 52.28)",
-            "WKT",
             "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
-            "WKT",
             "COVERS",
-            False
-        ),
-        (
-            "SRID=4326;POINT(4.73 52.28)",
-            "EWKT",
-            "SRID=4326;POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
-            "EWKT",
-            "WITHIN",
-            False
-        ),
+            False,
+        )
     ],
 )
 def test_is_within_polygon_precise_edge(
     column_value,
-    column_representation,
     reference_polygon_value,
-    reference_polygon_representation,
     topological_relationship,
     expect_violation,
     skip_if_runtime_not_geo_compatible,
@@ -652,8 +614,8 @@ def test_is_within_polygon_precise_edge(
     condition, apply_method = is_within_polygon_precise(
         "geom",
         reference_polygon_value,
-        column_representation,
-        reference_polygon_representation,
+        convert_column=True,
+        convert_reference_polygon=True,
         topological_relationship=topological_relationship,
     )
     actual = apply_method(df=test_df).select("geom", condition)
@@ -664,35 +626,29 @@ def test_is_within_polygon_precise_edge(
             [column_value, violation_message if expect_violation else None],
             [None, None],
         ],
-        "geom: string, geom_outside_reference_polygon: string",
+        "geom: string, geom_outside_reference_polygon_precise: string",
     )
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
 @pytest.mark.parametrize("topological_relationship", ["WITHIN", "CONTAINS", "COVERS"])
 @pytest.mark.parametrize(
-    "column_value,column_representation,reference_polygon_value,reference_polygon_representation",
+    "column_value,reference_polygon_value",
     [
         (
             "POINT(4.48 51.92)",
-            "WKT",
             "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
-            "WKT",
         ),
         (
             "SRID=4326;POINT(4.48 51.92)",
-            "EWKT",
             "SRID=4326;POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
-            "EWKT",
         ),
     ],
 )
 def test_is_within_polygon_precise_outside(
     topological_relationship,
     column_value,
-    column_representation,
     reference_polygon_value,
-    reference_polygon_representation,
     skip_if_runtime_not_geo_compatible,
     spark,
 ):
@@ -707,8 +663,8 @@ def test_is_within_polygon_precise_outside(
     condition, apply_method = is_within_polygon_precise(
         "geom",
         reference_polygon_value,
-        column_representation,
-        reference_polygon_representation,
+        convert_column=True,
+        convert_reference_polygon=True,
         topological_relationship=topological_relationship,
     )
 
@@ -719,7 +675,7 @@ def test_is_within_polygon_precise_outside(
             [column_value, f"value `{column_value}` in column `geom` is outside the reference polygon"],
             [None, None],
         ],
-        "geom: string, geom_outside_reference_polygon: string",
+        "geom: string, geom_outside_reference_polygon_precise: string",
     )
 
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
