@@ -19,16 +19,8 @@ MULTIPOLYGON_TYPE = "ST_MultiPolygon"
 GEOMETRYCOLLECTION_TYPE = "ST_GeometryCollection"
 DEFAULT_SRID = 4326
 
-_GEO_SPATIAL_TYPES = frozenset({"GEOMETRY", "GEOGRAPHY"})
 _GEO_REPRESENTATIONS = frozenset({"WKT", "WKB", "EWKT", "EWKB"})
 _TOPOLOGICAL_RELATIONSHIPS = frozenset({"CONTAINS", "COVERS", "WITHIN"})
-
-# Maps geo spatial type to the safe try_* conversion SQL function that returns NULL on parse errors.
-# Both functions accept WKT, EWKT (with SRID prefix), WKB, and EWKB inputs.
-_CONVERSION_FUNCS: dict[str, str] = {
-    "GEOMETRY": "try_to_geometry",
-    "GEOGRAPHY": "try_to_geography",
-}
 
 # Maps topological relationship to its SQL expression template.
 # {col} = target geometry column, {ref} = reference polygon column.
@@ -946,47 +938,36 @@ def are_polygons_mutually_disjoint(
 def is_within_polygon_precise(
     column: str | Column,
     reference_polygon: str | bytearray | Column,
-    column_type: Literal["GEOMETRY"] | Literal["GEOGRAPHY"] | None = None,
     column_representation: Literal["WKT"] | Literal["WKB"] | Literal["EWKT"] | Literal["EWKB"] | None = None,
-    reference_polygon_type: Literal["GEOMETRY"] | Literal["GEOGRAPHY"] | None = None,
     reference_polygon_representation: Literal["WKT"] | Literal["WKB"] | Literal["EWKT"] | Literal["EWKB"] | None = None,
     topological_relationship: Literal["CONTAINS"] | Literal["COVERS"] | Literal["WITHIN"] = "WITHIN",
 ):
     """
     Checks if the given column is precisely within a polygon. In other words, performs geofencing verification.
-    This checks leverages `ST_*` set of functions for spatial types conversion and manipulation, which allows
-    to achieve meter level prescription for the testing.
+    This check leverages the `ST_*` family of spatial functions for geometry conversion and topological
+    evaluation, enabling meter-level precision.
+
+    Both the target column and the reference polygon are always handled as `GEOMETRY`, because the topological
+    relationship predicates (`st_within`, `st_contains`, `st_covers`) operate exclusively on that type.
+    Inputs are converted via `try_to_geometry` when a representation is provided, or used as-is when the
+    column already holds a native `GEOMETRY` value.
 
     Please, see the following documentation for more details:
     https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-st-geospatial-functions
-    https://docs.databricks.com/aws/en/sql/language-manual/data-types/geography-type
     https://docs.databricks.com/aws/en/sql/language-manual/data-types/geometry-type
 
     Args:
         column: Column to check. Null values are skipped for validation.
-        reference_polygon: Reference polygon literal value or column name to use for geofencing. Literal string
-            or binary values are treated by default as WKT or WKB correspondingly. If literal string is provided,
-            then `reference_polygon_type` parameter must be specified.
-        column_type: Geo spatial type convert the column to from original storage format (`STRING` or `BINARY`).
-                      Valid values are `GEOGRAPHY`, `GEOMETRY` or None, which is treated as no conversion applied.
-                      Optional configuration, if column type is either `GEOGRAPHY` or `GEOMETRY`, otherwise required.
-                      When None, the actual column type in Spark is not restricted or validated — the caller is
-                      responsible for ensuring the column already holds a valid spatial type.
-        column_representation: Geo spatial format to use to convert original column from. Valid values are `WKT`, `WKB`,
-            `EWKT`, `EWKB` or None, which is treated as no conversion applied. Optional configuration,
-            if column is already one of aforementioned types. Optional configuration, if column type is either
-            `GEOGRAPHY` or `GEOMETRY`, otherwise required.
-        reference_polygon_type: Geo spatial type convert the reference polygon to from original storage format (`STRING` or `BINARY`).
-                      Valid values are `GEOGRAPHY`, `GEOMETRY` or None, which is treated as no convertion applied.
-                      Optional configuration, if `reference_polygon` column is either `GEOGRAPHY` or `GEOMETRY`,
-                      otherwise required.
-        reference_polygon_representation: Geo spatial format to use to convert original reference polygon from.
-            Valid values are `WKT`, `WKB`, `EWKT`, `EWKB` or None, which is treated as no convertion applied.
-            Optional configuration, if column is already one of aforementioned types. Optional configuration,
-            if `reference_polygon` column type is either `GEOGRAPHY` or `GEOMETRY`, otherwise required.
-        topological_relationship: Defines a function to use for geofencing verification between target column and
-            reference_polygon. Valid values are `CONTAINS` (maps to `st_contains`), `COVERS` (maps to `st_covers`),
-            `WITHIN` (maps to `st_within`).
+        reference_polygon: Reference polygon as a literal value or a column name. When a literal or
+            raw-format column is provided, *column_representation* or *reference_polygon_representation*
+            must be specified accordingly so the value can be converted via `try_to_geometry`.
+        column_representation: Source format of the target column. Valid values are `WKT`, `WKB`, `EWKT`,
+            `EWKB` or None. When None the column is assumed to already hold a native `GEOMETRY` value.
+        reference_polygon_representation: Source format of the reference polygon. Valid values are `WKT`,
+            `WKB`, `EWKT`, `EWKB` or None. When None the reference polygon is assumed to already hold a
+            native `GEOMETRY` value.
+        topological_relationship: Spatial predicate used for geofencing. Valid values are `CONTAINS` (maps to
+            `st_contains`), `COVERS` (maps to `st_covers`), `WITHIN` (maps to `st_within`).
             Please, see the following documentation for more details:
             https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-st-geospatial-functions#topological-relationships
 
@@ -995,43 +976,24 @@ def is_within_polygon_precise(
 
     Returns:
         A tuple of:
-            - A Spark Column representing the condition for target geometry/geography being outside polygon.
-            - A closure that applies polygon relationship condition to the target column and adds the condition
-            column to the DataFrame.
+            - A Spark Column representing the condition for the target geometry being outside the polygon.
+            - A closure that evaluates the spatial predicate and adds the condition column to the DataFrame.
     Raises:
-        InvalidParameterError: If the `column` is **NOT** either `GEOGRAPHY` or `GEOMETRY` type and BOTH `column_type`
-        and `column_representation` are **NOT** provided.
-        InvalidParameterError: If exactly one of `column_type` and `column_representation` is provided while the
-        other is absent — both must be specified together or both omitted.
-        InvalidParameterError: If exactly one of `reference_polygon_type` and `reference_polygon_representation` is
-        provided while the other is absent — both must be specified together or both omitted.
-        InvalidParameterError: If an invalid value is supplied for `column_type`, `column_representation`,
-        `reference_polygon_type`, `reference_polygon_representation`, or `topological_relationship`.
+        InvalidParameterError: If an invalid value is supplied for *column_representation*,
+        *reference_polygon_representation*, or *topological_relationship*.
     """
-    if column_type is not None and column_type not in _GEO_SPATIAL_TYPES:
-        raise InvalidParameterError(f"'column_type' must be one of {sorted(_GEO_SPATIAL_TYPES)}, got '{column_type}'.")
-    if column_representation is not None and column_representation not in _GEO_REPRESENTATIONS:
-        raise InvalidParameterError(
-            f"'column_representation' must be one of {sorted(_GEO_REPRESENTATIONS)}, got '{column_representation}'."
-        )
-    if reference_polygon_type is not None and reference_polygon_type not in _GEO_SPATIAL_TYPES:
-        raise InvalidParameterError(
-            f"'reference_polygon_type' must be one of {sorted(_GEO_SPATIAL_TYPES)}, got '{reference_polygon_type}'."
-        )
-    if reference_polygon_representation is not None and reference_polygon_representation not in _GEO_REPRESENTATIONS:
-        raise InvalidParameterError(
-            f"'reference_polygon_representation' must be one of {sorted(_GEO_REPRESENTATIONS)}, got '{reference_polygon_representation}'."
-        )
-    if topological_relationship not in _TOPOLOGICAL_RELATIONSHIPS:
-        raise InvalidParameterError(
-            f"'topological_relationship' must be one of {sorted(_TOPOLOGICAL_RELATIONSHIPS)}, got '{topological_relationship}'."
-        )
-    if (column_type is None) != (column_representation is None):
-        raise InvalidParameterError("'column_type' and 'column_representation' must both be provided or both omitted.")
-    if (reference_polygon_type is None) != (reference_polygon_representation is None):
-        raise InvalidParameterError(
-            "'reference_polygon_type' and 'reference_polygon_representation' must both be provided or both omitted."
-        )
+    InvalidParameterError.require(
+        column_representation is None or column_representation in _GEO_REPRESENTATIONS,
+        f"'column_representation' must be one of {sorted(_GEO_REPRESENTATIONS)}, got '{column_representation}'.",
+    )
+    InvalidParameterError.require(
+        reference_polygon_representation is None or reference_polygon_representation in _GEO_REPRESENTATIONS,
+        f"'reference_polygon_representation' must be one of {sorted(_GEO_REPRESENTATIONS)}, got '{reference_polygon_representation}'.",
+    )
+    InvalidParameterError.require(
+        topological_relationship in _TOPOLOGICAL_RELATIONSHIPS,
+        f"'topological_relationship' must be one of {sorted(_TOPOLOGICAL_RELATIONSHIPS)}, got '{topological_relationship}'.",
+    )
 
     col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     unique_str = uuid.uuid4().hex
@@ -1055,19 +1017,19 @@ def is_within_polygon_precise(
         ref_raw = f"__ref_raw_{col_str_norm}_{unique_str}"
         ref_spatial = f"__ref_spatial_{col_str_norm}_{unique_str}"
 
-        # Convert the target column to a spatial type when type/representation are given;
-        # otherwise assume the column already holds a native spatial type.
-        if column_type is not None:
-            df = df.withColumn(col_spatial, F.expr(f"{_CONVERSION_FUNCS[column_type]}({col_expr_str})"))
+        # Convert to GEOMETRY when a source representation is given; otherwise assume the column
+        # already holds a native GEOMETRY value.
+        if column_representation is not None:
+            df = df.withColumn(col_spatial, F.expr(f"try_to_geometry({col_expr_str})"))
         else:
             df = df.withColumn(col_spatial, col_expr)
 
         # Build the reference polygon column (literal str/bytearray or an existing Column).
         ref_col = reference_polygon if isinstance(reference_polygon, Column) else F.lit(reference_polygon)
 
-        if reference_polygon_type is not None:
+        if reference_polygon_representation is not None:
             df = df.withColumn(ref_raw, ref_col)
-            df = df.withColumn(ref_spatial, F.expr(f"{_CONVERSION_FUNCS[reference_polygon_type]}(`{ref_raw}`)"))
+            df = df.withColumn(ref_spatial, F.expr(f"try_to_geometry(`{ref_raw}`)"))
             df = df.drop(ref_raw)
         else:
             df = df.withColumn(ref_spatial, ref_col)
@@ -1093,3 +1055,18 @@ def is_within_polygon_precise(
     )
 
     return condition, apply
+
+
+@register_rule("row")
+def is_within_polygon_approximate(
+    column: str | Column,
+    reference_polygon: str | Column,
+    resolution: int | Column,
+):
+    """
+    Checks if the given column is approximately within a polygon. In other words, performs geofencing verification.
+    This check leverages `H3_` family of functions which implement H3 based indexing, which might be less precise
+    for geo fetching in comparison to WSG coordinate
+
+    """
+    pass
