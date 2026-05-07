@@ -2,7 +2,11 @@ import pytest
 from pyspark.testing.utils import assertDataFrameEqual
 from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.geo.check_funcs import are_polygons_mutually_disjoint, is_within_polygon_precise
+from databricks.labs.dqx.geo.check_funcs import (
+    are_polygons_mutually_disjoint,
+    is_within_polygon_approximate,
+    is_within_polygon_precise,
+)
 
 
 def test_are_polygons_mutually_disjoint_pass(skip_if_runtime_not_geo_compatible, spark):
@@ -676,6 +680,75 @@ def test_is_within_polygon_precise_outside(
             [None, None],
         ],
         "geom: string, geom_outside_reference_polygon_precise: string",
+    )
+
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+@pytest.mark.parametrize(
+    "column_value,reference_polygon_value,resolution",
+    [
+        ("POINT(4.90 52.37)", "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))", 5),
+        ("POINT(4.90 52.37)", "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))", 7),
+    ],
+)
+def test_is_within_polygon_approximate_inside(
+    column_value,
+    reference_polygon_value,
+    resolution,
+    skip_if_runtime_not_geo_compatible,
+    spark,
+):
+    """Point strictly inside the polygon must not be flagged at any tested resolution."""
+    input_schema = "geom: string"
+    test_df = spark.createDataFrame([[column_value], [None]], input_schema)
+
+    condition, apply_method = is_within_polygon_approximate("geom", reference_polygon_value, resolution)
+
+    actual = apply_method(df=test_df).select("geom", condition)
+
+    expected = spark.createDataFrame(
+        [
+            [column_value, None],  # inside polygon — no violation
+            [None, None],  # null — evaluation skipped
+        ],
+        "geom: string, geom_outside_reference_polygon_approximate: string",
+    )
+
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+@pytest.mark.parametrize(
+    "column_value,reference_polygon_value,resolution",
+    [
+        ("POINT(4.48 51.92)", "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))", 5),  # south-west of polygon, resolution 5
+        ("POINT(4.48 51.92)", "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))", 7),  # same point, finer resolution
+    ],
+)
+def test_is_within_polygon_approximate_outside(
+    column_value,
+    reference_polygon_value,
+    resolution,
+    skip_if_runtime_not_geo_compatible,
+    spark,
+):
+    """Point strictly outside the polygon must always be flagged as a violation."""
+    input_schema = "geom: string"
+    test_df = spark.createDataFrame([[column_value], [None]], input_schema)
+
+    condition, apply_method = is_within_polygon_approximate("geom", reference_polygon_value, resolution)
+
+    actual = apply_method(df=test_df).select("geom", condition)
+
+    expected = spark.createDataFrame(
+        [
+            [
+                column_value,
+                f"value `{column_value}` in column `geom` is approximately outside the reference polygon",
+            ],
+            [None, None],  # null — evaluation skipped
+        ],
+        "geom: string, geom_outside_reference_polygon_approximate: string",
     )
 
     assertDataFrameEqual(actual, expected, checkRowOrder=False)

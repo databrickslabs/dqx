@@ -1088,7 +1088,7 @@ def is_within_polygon_approximate(
 
     col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     unique_str = uuid.uuid4().hex
-    condition_col = f"_is_within_polygon_approximate_{col_str_norm}_{unique_str}"
+    condition_col = f"__is_within_polygon_approximate_{col_str_norm}_{unique_str}"
 
     def apply(df: DataFrame) -> DataFrame:
         ref_col = reference_polygon if isinstance(reference_polygon, Column) else F.lit(reference_polygon)
@@ -1097,15 +1097,14 @@ def is_within_polygon_approximate(
         ref_raw = f"__ref_raw_{col_str_norm}_{unique_str}"
         ref_h3_array = f"__ref_h3_array_{col_str_norm}_{unique_str}"
 
-        col_h3_expr = F.expr(f"h3_pointash3({col_str_norm}, {resolution})")
-
         df = df.withColumn(ref_raw, ref_col)
-        df = df.withColumn(ref_h3_array, F.expr(f"h3_coverash3({ref_raw}, {resolution})"))
+        df = df.withColumn(ref_h3_array, F.expr(f"h3_coverash3(`{ref_raw}`, {resolution})"))
         df = df.drop(ref_raw)
-        df = df.withColumn(col_h3, col_h3_expr)
+        df = df.withColumn(col_h3, F.expr(f"h3_pointash3({col_expr_str}, {resolution})"))
 
-        condition = F.expr(f"array_contains({ref_h3_array}, {col_h3})")
-        pass
+        is_inside = F.array_contains(F.col(ref_h3_array), F.col(col_h3))
+        condition_expr = F.when(col_expr.isNull(), F.lit(None)).otherwise(~is_inside)
+        return df.withColumn(condition_col, condition_expr).drop(col_h3, ref_h3_array)
 
     condition = make_condition(
         condition=F.col(condition_col),
