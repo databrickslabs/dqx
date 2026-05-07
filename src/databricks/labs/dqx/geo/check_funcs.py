@@ -1,12 +1,14 @@
 from collections.abc import Callable
 import operator as py_operator
 import uuid
+from typing import Literal
 
 from pyspark.sql import Column, DataFrame
 import pyspark.sql.functions as F
 
 from databricks.labs.dqx.rule import register_rule
 from databricks.labs.dqx.check_funcs import make_condition, get_normalized_column_and_expr, get_limit_expr
+from databricks.labs.dqx.errors import InvalidParameterError
 
 POINT_TYPE = "ST_Point"
 LINESTRING_TYPE = "ST_LineString"
@@ -16,6 +18,17 @@ MULTILINESTRING_TYPE = "ST_MultiLineString"
 MULTIPOLYGON_TYPE = "ST_MultiPolygon"
 GEOMETRYCOLLECTION_TYPE = "ST_GeometryCollection"
 DEFAULT_SRID = 4326
+
+_TOPOLOGICAL_RELATIONSHIPS = frozenset({"CONTAINS", "COVERS", "WITHIN"})
+
+# Maps topological relationship to its SQL expression template.
+# {col} = target geometry column, {ref} = reference polygon column.
+# Argument order differs: st_within(col, ref) vs st_contains/st_covers(ref, col).
+_TOPOLOGICAL_FUNCS: dict[str, str] = {
+    "WITHIN": "st_within({col}, {ref})",
+    "CONTAINS": "st_contains({ref}, {col})",
+    "COVERS": "st_covers({ref}, {col})",
+}
 
 
 @register_rule("row")
@@ -915,6 +928,192 @@ def are_polygons_mutually_disjoint(
             F.lit(f"` in column `{col_expr_str}` intersects with at least one other polygon"),
         ),
         alias=f"{col_str_norm}_not_mutually_disjoint",
+    )
+
+    return condition, apply
+
+
+@register_rule("dataset")
+def is_within_polygon_precise(
+    column: str | Column,
+    reference_polygon: str | bytearray | Column,
+    convert_column: bool = False,
+    convert_reference_polygon: bool = False,
+    topological_relationship: Literal["CONTAINS"] | Literal["COVERS"] | Literal["WITHIN"] = "WITHIN",
+):
+    """
+    Checks if the given column is precisely within a polygon. In other words, performs geofencing verification.
+    This check leverages the `ST_*` family of spatial functions for geometry conversion and topological
+    evaluation, enabling meter-level precision.
+
+    Both the target column and the reference polygon are always handled as `GEOMETRY`, because the topological
+    relationship predicates (`st_within`, `st_contains`, `st_covers`) operate exclusively on that type.
+    When conversion is requested (*convert_column* or *convert_reference_polygon* set to True),
+    *try_to_geometry* is applied to parse the value from any supported format (WKT, WKB, EWKT, EWKB).
+    See https://docs.databricks.com/aws/en/sql/language-manual/functions/try_to_geometry for details.
+    When conversion is not requested, the input is assumed to already hold a native `GEOMETRY` value.
+
+    See the following documentation for more details:
+    https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-st-geospatial-functions
+    https://docs.databricks.com/aws/en/sql/language-manual/data-types/geometry-type
+
+    Args:
+        column: Column to check. Null values are skipped for validation.
+        reference_polygon: Reference polygon as a literal value or a column name.
+        convert_column: When True, *try_to_geometry* is applied to convert the column values to GEOMETRY.
+            When False (default), the column is assumed to already hold a native GEOMETRY value.
+            See https://docs.databricks.com/aws/en/sql/language-manual/functions/try_to_geometry for details.
+        convert_reference_polygon: When True, *try_to_geometry* is applied to convert the reference polygon
+            to GEOMETRY. When False (default), the reference polygon is assumed to already hold a native
+            GEOMETRY value.
+            See https://docs.databricks.com/aws/en/sql/language-manual/functions/try_to_geometry for details.
+        topological_relationship: Spatial predicate used for geofencing. Valid values are `CONTAINS` (maps to
+            `st_contains`), `COVERS` (maps to `st_covers`), `WITHIN` (maps to `st_within`).
+            See the following documentation for more details:
+            https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-st-geospatial-functions#topological-relationships
+
+    Note:
+        This function requires Databricks runtime 17.1 or above.
+
+    Returns:
+        A tuple of:
+            - A Spark Column representing the condition for the target geometry being outside the polygon.
+            - A closure that evaluates the spatial predicate and adds the condition column to the DataFrame.
+    Raises:
+        InvalidParameterError: If an invalid value is supplied for *topological_relationship*.
+    """
+    InvalidParameterError.require(
+        topological_relationship in _TOPOLOGICAL_RELATIONSHIPS,
+        f"'topological_relationship' must be one of {sorted(_TOPOLOGICAL_RELATIONSHIPS)}, got '{topological_relationship}'.",
+    )
+
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+    unique_str = uuid.uuid4().hex
+    condition_col = f"__is_within_polygon_precise_{col_str_norm}_{unique_str}"
+
+    def apply(df: DataFrame) -> DataFrame:
+        """Check each row's geometry against the reference polygon.
+
+        Converts the target column and reference polygon to their spatial types (when
+        conversion parameters are provided) and evaluates the configured topological
+        relationship. Null values in the target column are skipped (condition left null).
+
+        Args:
+            df: Input DataFrame containing the geometry column to check.
+
+        Returns:
+            DataFrame with an additional boolean column indicating rows whose geometry
+            lies outside the reference polygon (True = violation, null = skipped).
+        """
+        col_spatial = f"__col_spatial_{col_str_norm}_{unique_str}"
+        ref_raw = f"__ref_raw_{col_str_norm}_{unique_str}"
+        ref_spatial = f"__ref_spatial_{col_str_norm}_{unique_str}"
+
+        # Convert to GEOMETRY via try_to_geometry when requested; otherwise assume the column
+        # already holds a native GEOMETRY value.
+        if convert_column:
+            df = df.withColumn(col_spatial, F.expr(f"try_to_geometry({col_expr_str})"))
+        else:
+            df = df.withColumn(col_spatial, col_expr)
+
+        # Build the reference polygon column (literal str/bytearray or an existing Column).
+        ref_col = reference_polygon if isinstance(reference_polygon, Column) else F.lit(reference_polygon)
+
+        if convert_reference_polygon:
+            df = df.withColumn(ref_raw, ref_col)
+            df = df.withColumn(ref_spatial, F.expr(f"try_to_geometry(`{ref_raw}`)"))
+            df = df.drop(ref_raw)
+        else:
+            df = df.withColumn(ref_spatial, ref_col)
+
+        polygon_check_condition = _TOPOLOGICAL_FUNCS[topological_relationship].format(
+            col=f"`{col_spatial}`", ref=f"`{ref_spatial}`"
+        )
+        polygon_check_condition_col = F.expr(polygon_check_condition)
+
+        condition_expr = F.when(col_expr.isNull(), F.lit(None)).otherwise(~polygon_check_condition_col)
+
+        return df.withColumn(condition_col, condition_expr).drop(col_spatial, ref_spatial)
+
+    condition = make_condition(
+        condition=F.col(condition_col),
+        message=F.concat_ws(
+            "",
+            F.lit("value `"),
+            col_expr.cast("string"),
+            F.lit(f"` in column `{col_expr_str}` is outside the reference polygon"),
+        ),
+        alias=f"{col_str_norm}_outside_reference_polygon_precise",
+    )
+
+    return condition, apply
+
+
+@register_rule("row")
+def is_within_polygon_approximate(
+    column: str | Column,
+    reference_polygon: str | Column,
+    resolution: int | Column,
+):
+    """
+    Checks if the values in the given column are approximately within a polygon, performing geofencing
+    verification using H3 cell indexing. This check leverages the H3 family of functions, which implement
+    H3-based indexing. It may be less precise near polygon boundaries compared to *is_within_polygon_precise*.
+
+    The function converts each column value (such as a WKT point string) into an H3 cell ID using the
+    `h3_pointash3` function at the given resolution. Similarly, the reference polygon is converted into an
+    array of H3 cell IDs using `h3_coverash3` at the given resolution. It then checks whether the point's
+    H3 cell ID is contained in the array of H3 cell IDs for the reference polygon.
+
+    See the following documentation for more details:
+    https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-h3-geospatial-functions
+
+    Args:
+        column: Column to check. Null values are skipped for validation.
+        reference_polygon: Reference polygon as a literal value or a column name.
+        resolution: H3 resolution value as a literal integer (0–15) or a column name.
+
+    Returns:
+        A tuple of:
+            - A Spark Column representing the condition for the target geometry being outside the polygon.
+            - A closure that evaluates the spatial predicate and adds the condition column to the DataFrame.
+    Raises:
+        InvalidParameterError: If the *resolution* literal value is outside the 0–15 range.
+    """
+    InvalidParameterError.require(
+        (isinstance(resolution, Column)) | (isinstance(resolution, int) and 0 <= resolution <= 15),
+        "'resolution' must be between 0 and 15.",
+    )
+
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+    unique_str = uuid.uuid4().hex
+    condition_col = f"__is_within_polygon_approximate_{col_str_norm}_{unique_str}"
+
+    def apply(df: DataFrame) -> DataFrame:
+        ref_col = reference_polygon if isinstance(reference_polygon, Column) else F.lit(reference_polygon)
+
+        col_h3 = f"__col_h3_{col_str_norm}_{unique_str}"
+        ref_raw = f"__ref_raw_{col_str_norm}_{unique_str}"
+        ref_h3_array = f"__ref_h3_array_{col_str_norm}_{unique_str}"
+
+        df = df.withColumn(ref_raw, ref_col)
+        df = df.withColumn(ref_h3_array, F.expr(f"h3_coverash3(`{ref_raw}`, {resolution})"))
+        df = df.drop(ref_raw)
+        df = df.withColumn(col_h3, F.expr(f"h3_pointash3({col_expr_str}, {resolution})"))
+
+        is_inside = F.array_contains(F.col(ref_h3_array), F.col(col_h3))
+        condition_expr = F.when(col_expr.isNull(), F.lit(None)).otherwise(~is_inside)
+        return df.withColumn(condition_col, condition_expr).drop(col_h3, ref_h3_array)
+
+    condition = make_condition(
+        condition=F.col(condition_col),
+        message=F.concat_ws(
+            "",
+            F.lit("value `"),
+            col_expr.cast("string"),
+            F.lit(f"` in column `{col_expr_str}` is approximately outside the reference polygon"),
+        ),
+        alias=f"{col_str_norm}_outside_reference_polygon_approximate",
     )
 
     return condition, apply

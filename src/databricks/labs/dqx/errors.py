@@ -13,6 +13,12 @@ class InvalidConfigError(DQXError):
 class InvalidParameterError(ParameterError):
     """Raised when a parameter is invalid (malformed, wrong type, not supported, ambiguous, or incompatible with other inputs)."""
 
+    @classmethod
+    def require(cls, condition: bool, error: str) -> None:
+        """Raise this error type if condition is False."""
+        if not condition:
+            raise cls(error)
+
 
 class MissingParameterError(ParameterError):
     """Raised when a required parameter is missing, i.e when the user fails to provide a required parameter (None/absent)."""
