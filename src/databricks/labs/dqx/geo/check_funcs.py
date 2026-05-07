@@ -953,7 +953,7 @@ def is_within_polygon_precise(
     See https://docs.databricks.com/aws/en/sql/language-manual/functions/try_to_geometry for details.
     When conversion is not requested, the input is assumed to already hold a native `GEOMETRY` value.
 
-    Please, see the following documentation for more details:
+    See the following documentation for more details:
     https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-st-geospatial-functions
     https://docs.databricks.com/aws/en/sql/language-manual/data-types/geometry-type
 
@@ -969,7 +969,7 @@ def is_within_polygon_precise(
             See https://docs.databricks.com/aws/en/sql/language-manual/functions/try_to_geometry for details.
         topological_relationship: Spatial predicate used for geofencing. Valid values are `CONTAINS` (maps to
             `st_contains`), `COVERS` (maps to `st_covers`), `WITHIN` (maps to `st_within`).
-            Please, see the following documentation for more details:
+            See the following documentation for more details:
             https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-st-geospatial-functions#topological-relationships
 
     Note:
@@ -1056,30 +1056,29 @@ def is_within_polygon_approximate(
     resolution: int | Column,
 ):
     """
-    Checks if the given column is approximately within a polygon. In other words, performs geofencing verification.
-    This check leverages `H3_` family of functions which implement H3 based indexing, which might be less precise
-    for geo fetching in comparison to WSG coordinate.
+    Checks if the values in the given column are approximately within a polygon, performing geofencing
+    verification using H3 cell indexing. This check leverages the H3 family of functions, which implement
+    H3-based indexing. It may be less precise near polygon boundaries compared to *is_within_polygon_precise*.
 
-    The function converts given column GEOGRAPHY value (such as WKT) into H3 cell ID using `h3_pointash3` function
-    with given resolution. Similarly, reference polygon is converted into array of H3 cell ID's using `h3_coverash3`
-    function with given resolution. At the end, it checks whether the point H3 cell ID is contained within the
-    array of H3 cell ID's from reference polygon.
+    The function converts each column value (such as a WKT point string) into an H3 cell ID using the
+    `h3_pointash3` function at the given resolution. Similarly, the reference polygon is converted into an
+    array of H3 cell IDs using `h3_coverash3` at the given resolution. It then checks whether the point's
+    H3 cell ID is contained in the array of H3 cell IDs for the reference polygon.
 
-    Please, see the following documentation for more details:
+    See the following documentation for more details:
     https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-h3-geospatial-functions
-
 
     Args:
         column: Column to check. Null values are skipped for validation.
         reference_polygon: Reference polygon as a literal value or a column name.
-        resolution: H3 resolution value as a literal value or a column name.
+        resolution: H3 resolution value as a literal integer (0–15) or a column name.
 
     Returns:
         A tuple of:
             - A Spark Column representing the condition for the target geometry being outside the polygon.
             - A closure that evaluates the spatial predicate and adds the condition column to the DataFrame.
     Raises:
-        InvalidParameterError: If *resolution* literal value is outside 0-15 boundaries.
+        InvalidParameterError: If the *resolution* literal value is outside the 0–15 range.
     """
     InvalidParameterError.require(
         (isinstance(resolution, Column)) | (isinstance(resolution, int) and 0 <= resolution <= 15),
