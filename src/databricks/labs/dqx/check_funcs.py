@@ -29,6 +29,12 @@ _IPV4_CIDR_SUFFIX = r"(3[0-2]|[12]?\d)"
 IPV4_MAX_OCTET_COUNT = 4
 IPV4_BIT_LENGTH = 32
 
+# Email helpers (RFC 5322 §3.2.3, §3.2.4 + RFC 5321 §4.1.3, §4.5.3.1).
+_EMAIL_ATEXT = r"[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]"
+_EMAIL_DOMAIN_LABEL = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+_EMAIL_QTEXT = r"[\x21\x23-\x5B\x5D-\x7E]"  # printable ASCII except '"' (0x22) and '\' (0x5C)
+_EMAIL_QPAIR = r"\\[\x09\x20-\x7E]"  # quoted-pair: '\' + VCHAR or WSP
+
 # Curated aggregate functions for data quality checks
 # These are univariate (single-column) aggregate functions suitable for DQ monitoring
 # Maps function names to human-readable display names for error messages
@@ -69,12 +75,23 @@ class DQPattern(Enum):
 
     IPV4_ADDRESS = rf"^{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}$"
     IPV4_CIDR_BLOCK = rf"{IPV4_ADDRESS[:-1]}/{_IPV4_CIDR_SUFFIX}$"
-    # RFC 5321 pragmatic subset — no quoted local parts, bounded quantifiers (ReDoS-safe)
+    # RFC 5322 pragmatic subset: dot-atom or quoted-string local part, dot-atom or
+    # IP-literal domain, with RFC 5321 length caps (local ≤ 64, total ≤ 254).
+    # Excludes CFWS, obsolete grammar, and SMTPUTF8/IDN. ReDoS-safe.
     EMAIL_ADDRESS = (
-        r"^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+"
-        r"@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?"
-        r"(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*"
-        r"\.[a-zA-Z]{2,}$"
+        rf"^(?=.{{1,254}}$)"
+        # Local part: dot-atom (with 64-char cap) or quoted-string
+        rf"(?:"
+        rf"(?=[^@]{{1,64}}@){_EMAIL_ATEXT}+(?:\.{_EMAIL_ATEXT}+)*"
+        rf'|"(?:{_EMAIL_QTEXT}|{_EMAIL_QPAIR})*"'
+        rf")"
+        rf"@"
+        # Domain: LDH hostname with alphabetic TLD, or IP-literal
+        rf"(?:"
+        rf"(?:{_EMAIL_DOMAIN_LABEL}\.)+[A-Za-z]{{2,63}}"
+        rf"|\[(?:{_IPV4_OCTET}(?:\.{_IPV4_OCTET}){{3}}|IPv6:[A-Fa-f0-9:]+)\]"
+        rf")"
+        rf"$"
     )
 
 
@@ -982,8 +999,23 @@ def is_valid_ipv4_address(column: str | Column) -> Column:
 def is_valid_email(column: str | Column) -> Column:
     """Checks whether the values in the input column are valid email addresses.
 
-    Validates against a pragmatic RFC 5321/5322 subset. Quoted local parts
-    (e.g. *"foo bar"@example.com*) and IP-literal domain forms are not supported.
+    Validates against a pragmatic RFC 5322 subset:
+
+    * Local part: dot-atom (RFC 5322 §3.2.3) or quoted-string (§3.2.4).
+    * Domain: dot-atom hostname with LDH labels (RFC 1035 §2.3.4) and an
+      alphabetic TLD, or an IP-literal (RFC 5321 §4.1.3) — bracketed IPv4
+      with octet validation, or *[IPv6:...]* matched syntactically only
+      (callers requiring semantic IPv6 validation should re-check via
+      *ipaddress.IPv6Address*).
+    * Length caps per RFC 5321 §4.5.3.1: local-part max 64 octets, total
+      address max 254 octets.
+
+    Comments and folding whitespace (CFWS), obsolete grammar
+    (*obs-local-part*, *obs-domain*, *obs-qtext*, *obs-qp*), and
+    internationalized addresses (RFC 6531 / SMTPUTF8) are not supported;
+    a separate check would be needed for each. Numeric and single-character
+    TLDs are rejected (ICANN policy + practical interoperability).
+
     Null values are treated as passing the check (no violation reported).
 
     Args:

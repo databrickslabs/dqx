@@ -12,7 +12,6 @@ from databricks.labs.dqx.check_funcs import (
     is_aggr_not_greater_than,
     is_ipv4_address_in_cidr,
     is_ipv6_address_in_cidr,
-    is_valid_email,
     sql_expression,
 )
 from databricks.labs.dqx.pii.pii_detection_funcs import does_not_contain_pii
