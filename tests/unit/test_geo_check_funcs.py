@@ -37,6 +37,7 @@ def test_is_within_polygon_precise_invalid_topological_relationship_raises(inval
             **{**_VALID_KWARGS, "topological_relationship": invalid_value},
         )
 
+
 def test_is_within_polygon_approximate_resolution_invalid():
     """Raises InvalidParameterError for any topological_relationship value outside {CONTAINS, COVERS, WITHIN}."""
     with pytest.raises(InvalidParameterError):

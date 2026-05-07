@@ -600,7 +600,7 @@ def test_is_within_polygon_precise_inside(
             "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
             "COVERS",
             False,
-        )
+        ),
     ],
 )
 def test_is_within_polygon_precise_edge(
@@ -721,8 +721,16 @@ def test_is_within_polygon_approximate_inside(
 @pytest.mark.parametrize(
     "column_value,reference_polygon_value,resolution",
     [
-        ("POINT(4.48 51.92)", "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))", 5),  # south-west of polygon, resolution 5
-        ("POINT(4.48 51.92)", "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))", 7),  # same point, finer resolution
+        (
+            "POINT(4.48 51.92)",
+            "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
+            5,
+        ),  # south-west of polygon, resolution 5
+        (
+            "POINT(4.48 51.92)",
+            "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
+            7,
+        ),  # same point, finer resolution
     ],
 )
 def test_is_within_polygon_approximate_outside(

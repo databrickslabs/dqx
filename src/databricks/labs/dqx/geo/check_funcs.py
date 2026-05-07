@@ -1082,8 +1082,8 @@ def is_within_polygon_approximate(
         InvalidParameterError: If *resolution* literal value is outside 0-15 boundaries.
     """
     InvalidParameterError.require(
-        (type(resolution) == Column) | (type(resolution) == int and resolution >= 0 and resolution <= 15),
-        f"'resolution' must be between 0 and 15.",
+        (isinstance(resolution, Column)) | (isinstance(resolution, int) and 0 <= resolution <= 15),
+        "'resolution' must be between 0 and 15.",
     )
 
     col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
