@@ -1066,7 +1066,27 @@ def is_within_polygon_approximate(
     """
     Checks if the given column is approximately within a polygon. In other words, performs geofencing verification.
     This check leverages `H3_` family of functions which implement H3 based indexing, which might be less precise
-    for geo fetching in comparison to WSG coordinate
+    for geo fetching in comparison to WSG coordinate.
 
+    The function converts given column GEOGRAPHY value (such as WKT) into H3 cell ID using `h3_pointash3` function
+    with given resolution. Similarly, reference polygon is converted into array of H3 cell ID's using `h3_coverash3`
+    function with given resolution. At the end, it checks whether the point H3 cell ID is contained within the
+    array of H3 cell ID's from reference polygon.
+
+    Please, see the following documentation for more details:
+    https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-h3-geospatial-functions
+
+
+    Args:
+        column: Column to check. Null values are skipped for validation.
+        reference_polygon: Reference polygon as a literal value or a column name.
+        resolution: H3 resolution value as a literal value or a column name.
+
+    Returns:
+        A tuple of:
+            - A Spark Column representing the condition for the target geometry being outside the polygon.
+            - A closure that evaluates the spatial predicate and adds the condition column to the DataFrame.
+    Raises:
+        InvalidParameterError: If *resolution* literal value is outside 0-15 boundaries.
     """
     pass

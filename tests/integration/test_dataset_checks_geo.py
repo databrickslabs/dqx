@@ -529,6 +529,7 @@ def test_are_polygons_mutually_disjoint_row_filter_with_duplicates(skip_if_runti
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
+@pytest.mark.parametrize("topological_relationship", ["WITHIN", "CONTAINS", "COVERS"])
 @pytest.mark.parametrize(
     "column_value,column_representation,reference_polygon_value,reference_polygon_representation",
     [
@@ -559,6 +560,7 @@ def test_are_polygons_mutually_disjoint_row_filter_with_duplicates(skip_if_runti
     ],
 )
 def test_is_within_polygon_precise_inside(
+    topological_relationship,
     column_value,
     column_representation,
     reference_polygon_value,
@@ -566,7 +568,11 @@ def test_is_within_polygon_precise_inside(
     skip_if_runtime_not_geo_compatible,
     spark,
 ):
-    """Test for `is_within_polygon_precise` function when column point is inside a polygon."""
+    """Test for `is_within_polygon_precise` function when column point is strictly inside a polygon.
+
+    A point strictly inside (not on the boundary) must never be flagged, regardless of which
+    topological predicate is used — WITHIN, CONTAINS, and COVERS all pass for interior points.
+    """
     input_schema = "geom: string"
     test_df = spark.createDataFrame([[column_value], [None]], input_schema)
 
@@ -575,7 +581,7 @@ def test_is_within_polygon_precise_inside(
         reference_polygon_value,
         column_representation,
         reference_polygon_representation,
-        topological_relationship="WITHIN",
+        topological_relationship=topological_relationship,
     )
 
     actual_apply_df = apply_method(df=test_df)
@@ -593,19 +599,39 @@ def test_is_within_polygon_precise_inside(
 
 
 @pytest.mark.parametrize(
-    "column_value,column_representation,reference_polygon_value,reference_polygon_representation",
+    "column_value,column_representation,reference_polygon_value,reference_polygon_representation,topological_relationship,expect_violation",
     [
         (
             "POINT(4.73 52.28)",
             "WKT",
             "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
             "WKT",
+            "WITHIN",
+            True
+        ),
+        (
+            "POINT(4.73 52.28)",
+            "WKT",
+            "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
+            "WKT",
+            "CONTAINS",
+            True
+        ),
+        (
+            "POINT(4.73 52.28)",
+            "WKT",
+            "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
+            "WKT",
+            "COVERS",
+            False
         ),
         (
             "SRID=4326;POINT(4.73 52.28)",
             "EWKT",
             "SRID=4326;POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
             "EWKT",
+            "WITHIN",
+            False
         ),
     ],
 )
@@ -614,31 +640,36 @@ def test_is_within_polygon_precise_edge(
     column_representation,
     reference_polygon_value,
     reference_polygon_representation,
+    topological_relationship,
+    expect_violation,
     skip_if_runtime_not_geo_compatible,
     spark,
 ):
-    """Boundary point is flagged with WITHIN (boundary excluded) and passes with COVERS (boundary included)."""
+    """Boundary point: COVERS passes (boundary included), WITHIN and CONTAINS fail (boundary excluded)."""
     input_schema = "geom: string"
     test_df = spark.createDataFrame([[column_value], [None]], input_schema)
 
-    condition_within, apply_within = is_within_polygon_precise(
+    condition, apply_method = is_within_polygon_precise(
         "geom",
         reference_polygon_value,
         column_representation,
         reference_polygon_representation,
-        topological_relationship="WITHIN",
+        topological_relationship=topological_relationship,
     )
-    actual_within = apply_within(df=test_df).select("geom", condition_within)
-    expected_within = spark.createDataFrame(
+    actual = apply_method(df=test_df).select("geom", condition)
+
+    violation_message = f"value `{column_value}` in column `geom` is outside the reference polygon"
+    expected = spark.createDataFrame(
         [
-            [column_value, f"value `{column_value}` in column `geom` is outside the reference polygon"],
+            [column_value, violation_message if expect_violation else None],
             [None, None],
         ],
         "geom: string, geom_outside_reference_polygon: string",
     )
-    assertDataFrameEqual(actual_within, expected_within, checkRowOrder=False)
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
+@pytest.mark.parametrize("topological_relationship", ["WITHIN", "CONTAINS", "COVERS"])
 @pytest.mark.parametrize(
     "column_value,column_representation,reference_polygon_value,reference_polygon_representation",
     [
@@ -657,6 +688,7 @@ def test_is_within_polygon_precise_edge(
     ],
 )
 def test_is_within_polygon_precise_outside(
+    topological_relationship,
     column_value,
     column_representation,
     reference_polygon_value,
@@ -664,7 +696,11 @@ def test_is_within_polygon_precise_outside(
     skip_if_runtime_not_geo_compatible,
     spark,
 ):
-    """Test for `is_within_polygon_precise` function when column outside a polygon."""
+    """Test for `is_within_polygon_precise` function when column point is outside a polygon.
+
+    A point strictly outside must always be flagged as a violation, regardless of which
+    topological predicate is used — WITHIN, CONTAINS, and COVERS all fail for exterior points.
+    """
     input_schema = "geom: string"
     test_df = spark.createDataFrame([[column_value], [None]], input_schema)
 
@@ -673,7 +709,7 @@ def test_is_within_polygon_precise_outside(
         reference_polygon_value,
         column_representation,
         reference_polygon_representation,
-        topological_relationship="WITHIN",
+        topological_relationship=topological_relationship,
     )
 
     actual = apply_method(df=test_df).select("geom", condition)
