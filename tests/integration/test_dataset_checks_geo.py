@@ -536,10 +536,20 @@ def test_are_polygons_mutually_disjoint_row_filter_with_duplicates(skip_if_runti
 @pytest.mark.parametrize(
     "column_value,reference_polygon_value,topological_relationship,expect_violation",
     [
-        ("POINT(4.90 52.37)", "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))", "CONTAINS",   False),
-        ("POINT(4.90 52.37)", "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))", "COVERS",     False),
-        ("POINT(4.90 52.37)", "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))", "INTERSECTS", False),
-        ("POINT(4.90 52.37)", "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))", "TOUCHES",    True),
+        (
+            "POINT(4.90 52.37)",
+            "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
+            "CONTAINS",
+            False,
+        ),
+        ("POINT(4.90 52.37)", "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))", "COVERS", False),
+        (
+            "POINT(4.90 52.37)",
+            "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
+            "INTERSECTS",
+            False,
+        ),
+        ("POINT(4.90 52.37)", "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))", "TOUCHES", True),
     ],
 )
 def test_is_within_polygon_precise_inside(

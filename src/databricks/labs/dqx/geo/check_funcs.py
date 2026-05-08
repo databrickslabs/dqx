@@ -22,11 +22,11 @@ DEFAULT_SRID = 4326
 _TOPOLOGICAL_RELATIONSHIPS = frozenset({"CONTAINS", "COVERS", "INTERSECTS", "TOUCHES", "WITHIN"})
 
 _TOPOLOGICAL_FUNCS: dict[str, str] = {
-    "WITHIN":     "st_within",
-    "CONTAINS":   "st_contains",
-    "COVERS":     "st_covers",
+    "WITHIN": "st_within",
+    "CONTAINS": "st_contains",
+    "COVERS": "st_covers",
     "INTERSECTS": "st_intersects",
-    "TOUCHES":    "st_touches",
+    "TOUCHES": "st_touches",
 }
 
 
@@ -938,7 +938,9 @@ def is_within_polygon_precise(
     reference_polygon: str | bytearray | Column,
     convert_column: bool = False,
     convert_reference_polygon: bool = False,
-    topological_relationship: Literal["CONTAINS"] | Literal["COVERS"] | Literal["INTERSECTS"] | Literal["TOUCHES"] | Literal["WITHIN"] = "WITHIN",
+    topological_relationship: (
+        Literal["CONTAINS"] | Literal["COVERS"] | Literal["INTERSECTS"] | Literal["TOUCHES"] | Literal["WITHIN"]
+    ) = "WITHIN",
 ) -> Column:
     """
     Checks if the given column is precisely within a polygon. In other words, performs geofencing verification.
