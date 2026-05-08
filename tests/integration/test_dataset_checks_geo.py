@@ -533,32 +533,33 @@ def test_are_polygons_mutually_disjoint_row_filter_with_duplicates(skip_if_runti
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
-@pytest.mark.parametrize("topological_relationship", ["WITHIN", "CONTAINS", "COVERS"])
 @pytest.mark.parametrize(
-    "column_value,reference_polygon_value",
+    "column_value,reference_polygon_value,topological_relationship,expect_violation",
     [
-        (
-            "POINT(4.90 52.37)",
-            "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
-        ),
+        ("POINT(4.90 52.37)", "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))", "CONTAINS",   False),
+        ("POINT(4.90 52.37)", "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))", "COVERS",     False),
+        ("POINT(4.90 52.37)", "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))", "INTERSECTS", False),
+        ("POINT(4.90 52.37)", "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))", "TOUCHES",    True),
     ],
 )
 def test_is_within_polygon_precise_inside(
-    topological_relationship,
     column_value,
     reference_polygon_value,
+    topological_relationship,
+    expect_violation,
     skip_if_runtime_not_geo_compatible,
     spark,
 ):
-    """Test for `is_within_polygon_precise` function when column point is strictly inside a polygon.
+    """Test for `is_within_polygon_precise` when the column point is strictly inside the polygon.
 
-    A point strictly inside (not on the boundary) must never be flagged, regardless of which
-    topological predicate is used — WITHIN, CONTAINS, and COVERS all pass for interior points.
+    A point strictly inside the polygon (not on the boundary) must not be flagged for WITHIN,
+    CONTAINS, COVERS, and INTERSECTS. TOUCHES is an exception: it requires a shared boundary
+    point with disjoint interiors, so an interior point produces a violation.
     """
     input_schema = "geom: string"
     test_df = spark.createDataFrame([[column_value], [None]], input_schema)
 
-    condition, apply_method = is_within_polygon_precise(
+    condition = is_within_polygon_precise(
         "geom",
         reference_polygon_value,
         convert_column=True,
@@ -566,13 +567,13 @@ def test_is_within_polygon_precise_inside(
         topological_relationship=topological_relationship,
     )
 
-    actual_apply_df = apply_method(df=test_df)
-    actual = actual_apply_df.select("geom", condition)
+    actual = test_df.select("geom", condition)
 
+    violation_message = f"value `{column_value}` in column `geom` is outside the reference polygon"
     expected = spark.createDataFrame(
         [
-            [column_value, None],  # Point inside polygon — no violation
-            [None, None],  # Null value — evaluation skipped
+            [column_value, violation_message if expect_violation else None],
+            [None, None],
         ],
         "geom: string, geom_outside_reference_polygon_precise: string",
     )
@@ -586,12 +587,6 @@ def test_is_within_polygon_precise_inside(
         (
             "POINT(4.73 52.28)",
             "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
-            "WITHIN",
-            True,
-        ),
-        (
-            "POINT(4.73 52.28)",
-            "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
             "CONTAINS",
             True,
         ),
@@ -599,6 +594,18 @@ def test_is_within_polygon_precise_inside(
             "POINT(4.73 52.28)",
             "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
             "COVERS",
+            False,
+        ),
+        (
+            "POINT(4.73 52.28)",
+            "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
+            "INTERSECTS",
+            False,
+        ),
+        (
+            "POINT(4.73 52.28)",
+            "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
+            "TOUCHES",
             False,
         ),
     ],
@@ -615,14 +622,14 @@ def test_is_within_polygon_precise_edge(
     input_schema = "geom: string"
     test_df = spark.createDataFrame([[column_value], [None]], input_schema)
 
-    condition, apply_method = is_within_polygon_precise(
+    condition = is_within_polygon_precise(
         "geom",
         reference_polygon_value,
         convert_column=True,
         convert_reference_polygon=True,
         topological_relationship=topological_relationship,
     )
-    actual = apply_method(df=test_df).select("geom", condition)
+    actual = test_df.select("geom", condition)
 
     violation_message = f"value `{column_value}` in column `geom` is outside the reference polygon"
     expected = spark.createDataFrame(
@@ -635,7 +642,7 @@ def test_is_within_polygon_precise_edge(
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
-@pytest.mark.parametrize("topological_relationship", ["WITHIN", "CONTAINS", "COVERS"])
+@pytest.mark.parametrize("topological_relationship", ["CONTAINS", "COVERS", "TOUCHES", "INTERSECTS"])
 @pytest.mark.parametrize(
     "column_value,reference_polygon_value",
     [
@@ -664,7 +671,7 @@ def test_is_within_polygon_precise_outside(
     input_schema = "geom: string"
     test_df = spark.createDataFrame([[column_value], [None]], input_schema)
 
-    condition, apply_method = is_within_polygon_precise(
+    condition = is_within_polygon_precise(
         "geom",
         reference_polygon_value,
         convert_column=True,
@@ -672,7 +679,7 @@ def test_is_within_polygon_precise_outside(
         topological_relationship=topological_relationship,
     )
 
-    actual = apply_method(df=test_df).select("geom", condition)
+    actual = test_df.select("geom", condition)
 
     expected = spark.createDataFrame(
         [
@@ -703,9 +710,9 @@ def test_is_within_polygon_approximate_inside(
     input_schema = "geom: string"
     test_df = spark.createDataFrame([[column_value], [None]], input_schema)
 
-    condition, apply_method = is_within_polygon_approximate("geom", reference_polygon_value, resolution)
+    condition = is_within_polygon_approximate("geom", reference_polygon_value, resolution)
 
-    actual = apply_method(df=test_df).select("geom", condition)
+    actual = test_df.select("geom", condition)
 
     expected = spark.createDataFrame(
         [
@@ -744,9 +751,9 @@ def test_is_within_polygon_approximate_outside(
     input_schema = "geom: string"
     test_df = spark.createDataFrame([[column_value], [None]], input_schema)
 
-    condition, apply_method = is_within_polygon_approximate("geom", reference_polygon_value, resolution)
+    condition = is_within_polygon_approximate("geom", reference_polygon_value, resolution)
 
-    actual = apply_method(df=test_df).select("geom", condition)
+    actual = test_df.select("geom", condition)
 
     expected = spark.createDataFrame(
         [

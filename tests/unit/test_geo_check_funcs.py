@@ -27,7 +27,7 @@ def test_is_within_polygon_precise_no_conversion_does_not_raise():
     )
 
 
-@pytest.mark.parametrize("invalid_value", ["INTERSECTS", "DISJOINT", "TOUCHES", "OVERLAPS", "within", ""])
+@pytest.mark.parametrize("invalid_value", ["DISJOINT", "OVERLAPS", "within", ""])
 def test_is_within_polygon_precise_invalid_topological_relationship_raises(invalid_value):
     """Raises InvalidParameterError for any topological_relationship value outside {CONTAINS, COVERS, WITHIN}."""
     with pytest.raises(InvalidParameterError):
