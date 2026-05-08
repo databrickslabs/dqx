@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
 import { Loader2 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { currentUser } from "@/lib/api";
 
 interface AuthGuardProps {
@@ -16,6 +17,7 @@ interface AuthGuardProps {
  * with the backend OpenAPI spec.
  */
 export function AuthGuard({ children }: AuthGuardProps) {
+  const { t } = useTranslation();
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -36,7 +38,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
 
         if (retryCount < 15) {
           const delay = Math.min(1000 * Math.pow(1.3, retryCount), 3000);
-          
+
           timeoutId = setTimeout(() => {
             if (!cancelled) {
               setRetryCount((prev) => prev + 1);
@@ -45,14 +47,17 @@ export function AuthGuard({ children }: AuthGuardProps) {
         } else {
           const errorMessage = axios.isAxiosError(err)
             ? err.response?.status === 401
-              ? "Authentication timeout. The authentication flow did not complete."
-              : `Server error (${err.response?.status}): ${err.response?.statusText || err.message}`
+              ? t("auth.timeoutMessage")
+              : t("auth.serverErrorMessage", {
+                  status: err.response?.status ?? "",
+                  statusText: err.response?.statusText || err.message,
+                })
             : err instanceof Error
             ? err.message
-            : "Unknown connection error";
-          
+            : t("auth.unknownError");
+
           setError(
-            `${errorMessage}\n\nPlease refresh the page or contact your administrator if the problem persists.`
+            `${errorMessage}${t("auth.errorSuffix")}`
           );
         }
       }
@@ -80,7 +85,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
         clearTimeout(timeoutId);
       }
     };
-  }, [retryCount, isAuthReady, error]);
+  }, [retryCount, isAuthReady, error, t]);
 
   // Show error state
   if (error) {
@@ -88,14 +93,14 @@ export function AuthGuard({ children }: AuthGuardProps) {
       <div className="flex items-center justify-center min-h-screen bg-background">
         <div className="text-center space-y-4 p-8 max-w-md">
           <div className="text-destructive text-lg font-semibold">
-            Authentication Error
+            {t("auth.errorTitle")}
           </div>
           <p className="text-muted-foreground">{error}</p>
           <button
             onClick={() => window.location.reload()}
             className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90"
           >
-            Refresh Page
+            {t("auth.refreshPage")}
           </button>
         </div>
       </div>
@@ -108,9 +113,9 @@ export function AuthGuard({ children }: AuthGuardProps) {
       <div className="flex items-center justify-center min-h-screen bg-background">
         <div className="text-center space-y-4">
           <Loader2 className="h-12 w-12 animate-spin text-primary mx-auto" />
-          <div className="text-lg font-medium">Initializing DQX Studio...</div>
+          <div className="text-lg font-medium">{t("auth.loadingMessage")}</div>
           <p className="text-sm text-muted-foreground">
-            Setting up your workspace connection
+            {t("auth.loadingDescription")}
           </p>
         </div>
       </div>
