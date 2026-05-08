@@ -19,15 +19,17 @@ MULTIPOLYGON_TYPE = "ST_MultiPolygon"
 GEOMETRYCOLLECTION_TYPE = "ST_GeometryCollection"
 DEFAULT_SRID = 4326
 
-_TOPOLOGICAL_RELATIONSHIPS = frozenset({"CONTAINS", "COVERS", "INTERSECTS", "TOUCHES", "WITHIN"})
+_PRECISE_TOPOLOGICAL_RELATIONSHIPS = frozenset({"CONTAINS", "COVERS", "INTERSECTS", "TOUCHES", "WITHIN"})
 
-_TOPOLOGICAL_FUNCS: dict[str, str] = {
+_PRECISE_TOPOLOGICAL_FUNCS: dict[str, str] = {
     "WITHIN": "st_within",
     "CONTAINS": "st_contains",
     "COVERS": "st_covers",
     "INTERSECTS": "st_intersects",
     "TOUCHES": "st_touches",
 }
+
+_APPROXIMATE_TOPOLOGICAL_RELATIONSHIPS = frozenset({"COVERS", "INTERSECTS"})
 
 
 @register_rule("row")
@@ -933,23 +935,23 @@ def are_polygons_mutually_disjoint(
 
 
 @register_rule("row")
-def is_within_polygon_precise(
+def has_topological_relationship_precise(
     column: str | Column,
-    reference_polygon: str | bytearray | Column,
+    reference_geometry: str | bytearray | Column,
     convert_column: bool = False,
-    convert_reference_polygon: bool = False,
+    convert_reference_geometry: bool = False,
     topological_relationship: (
         Literal["CONTAINS"] | Literal["COVERS"] | Literal["INTERSECTS"] | Literal["TOUCHES"] | Literal["WITHIN"]
-    ) = "WITHIN",
+    ) = "CONTAINS",
 ) -> Column:
     """
-    Checks if the given column is precisely within a polygon. In other words, performs geofencing verification.
+    Checks if the given column has a defined topological relationship with a reference geometry.
     This check leverages the `ST_*` family of spatial functions for geometry conversion and topological
     evaluation, enabling meter-level precision.
 
-    Both the target column and the reference polygon are always handled as `GEOMETRY`, because the topological
+    Both the target column and the reference geometry are always handled as `GEOMETRY`, because the topological
     relationship predicates operate exclusively on that type.
-    When conversion is requested (*convert_column* or *convert_reference_polygon* set to True),
+    When conversion is requested (*convert_column* or *convert_reference_geometry* set to True),
     *try_to_geometry* is applied to parse the value from any supported format (WKT, WKB, EWKT, EWKB).
     See https://docs.databricks.com/aws/en/sql/language-manual/functions/try_to_geometry for details.
     When conversion is not requested, the input is assumed to already hold a native `GEOMETRY` value.
@@ -960,16 +962,17 @@ def is_within_polygon_precise(
 
     Args:
         column: Column to check. Null values are skipped for validation.
-        reference_polygon: Reference polygon as a literal value or a column name.
+        reference_geometry: Reference geometry as a literal value or a column name.
         convert_column: When True, *try_to_geometry* is applied to convert the column values to GEOMETRY.
             When False (default), the column is assumed to already hold a native GEOMETRY value.
             See https://docs.databricks.com/aws/en/sql/language-manual/functions/try_to_geometry for details.
-        convert_reference_polygon: When True, *try_to_geometry* is applied to convert the reference polygon
-            to GEOMETRY. When False (default), the reference polygon is assumed to already hold a native
+        convert_reference_geometry: When True, *try_to_geometry* is applied to convert the reference geometry
+            to GEOMETRY. When False (default), the reference geometry is assumed to already hold a native
             GEOMETRY value.
             See https://docs.databricks.com/aws/en/sql/language-manual/functions/try_to_geometry for details.
-        topological_relationship: Spatial predicate used for geofencing. Each value maps to its ST function
-            called as `func(col, ref)`: `CONTAINS` (`st_contains`), `COVERS` (`st_covers`),
+        topological_relationship: Spatial predicate defining the required relationship between the column
+            geometry and the reference geometry. Each value maps to its ST function called as
+            `func(col, ref)`: `CONTAINS` (`st_contains`), `COVERS` (`st_covers`),
             `INTERSECTS` (`st_intersects`), `TOUCHES` (`st_touches`), `WITHIN` (`st_within`).
             See the following documentation for more details:
             https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-st-geospatial-functions#topological-relationships
@@ -978,22 +981,23 @@ def is_within_polygon_precise(
         This function requires Databricks runtime 17.1 or above.
 
     Returns:
-        Column object indicating whether the values in the input column are outside the reference polygon.
+        Column object indicating whether the values in the input column do not satisfy the topological
+        relationship with the reference geometry.
     Raises:
         InvalidParameterError: If an invalid value is supplied for *topological_relationship*.
     """
-    if topological_relationship not in _TOPOLOGICAL_RELATIONSHIPS:
+    if topological_relationship not in _PRECISE_TOPOLOGICAL_RELATIONSHIPS:
         raise InvalidParameterError(
-            f"'topological_relationship' must be one of {sorted(_TOPOLOGICAL_RELATIONSHIPS)}, got '{topological_relationship}'."
+            f"'topological_relationship' must be one of {sorted(_PRECISE_TOPOLOGICAL_RELATIONSHIPS)}, got '{topological_relationship}'."
         )
 
     col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
 
     col_geom = F.call_function("try_to_geometry", col_expr) if convert_column else col_expr
-    ref_col = reference_polygon if isinstance(reference_polygon, Column) else F.lit(reference_polygon)
-    ref_geom = F.call_function("try_to_geometry", ref_col) if convert_reference_polygon else ref_col
+    ref_col = reference_geometry if isinstance(reference_geometry, Column) else F.lit(reference_geometry)
+    ref_geom = F.call_function("try_to_geometry", ref_col) if convert_reference_geometry else ref_col
 
-    is_inside = F.call_function(_TOPOLOGICAL_FUNCS[topological_relationship], ref_geom, col_geom)
+    is_inside = F.call_function(_PRECISE_TOPOLOGICAL_FUNCS[topological_relationship], ref_geom, col_geom)
 
     condition = F.when(col_expr.isNull(), F.lit(None)).otherwise(~is_inside)
 
@@ -1003,51 +1007,87 @@ def is_within_polygon_precise(
             "",
             F.lit("value `"),
             col_expr.cast("string"),
-            F.lit(f"` in column `{col_expr_str}` is outside the reference polygon"),
+            F.lit(f"` in column `{col_expr_str}` is outside the reference geometry"),
         ),
-        f"{col_str_norm}_outside_reference_polygon_precise",
+        f"{col_str_norm}_outside_reference_geometry",
     )
 
 
 @register_rule("row")
-def is_within_polygon_approximate(
+def has_topological_relationship_approximate(
     column: str | Column,
-    reference_polygon: str | Column,
+    reference_geometry: str | Column,
     resolution: int | Column,
+    topological_relationship: Literal["COVERS"] | Literal["INTERSECTS"] = "COVERS",
 ) -> Column:
     """
-    Checks if the values in the given column are approximately within a polygon, performing geofencing
-    verification using H3 cell indexing. This check leverages the H3 family of functions, which implement
-    H3-based indexing. It may be less precise near polygon boundaries compared to *is_within_polygon_precise*.
+    Approximate counterpart to *has_topological_relationship_precise* that uses H3 cell indexing instead
+    of `ST_*` spatial functions. Because the H3 index represents geometries as discrete hexagonal cells
+    rather than exact shapes, it cannot evaluate topological predicates with the same semantics as
+    `ST_*` functions. Instead, the supported relationships are approximated using set operations on
+    H3 cell arrays:
 
-    The function converts each column value (such as a WKT point string) into an H3 cell ID using the
-    `h3_pointash3` function at the given resolution. Similarly, the reference polygon is converted into an
-    array of H3 cell IDs using `h3_coverash3` at the given resolution. It then checks whether the point's
-    H3 cell ID is contained in the array of H3 cell IDs for the reference polygon.
+    - `COVERS`: checks whether all hexagons that cover the column geometry also exist in the set of
+      hexagons that cover the reference geometry. This is close to `st_covers` behaviour, but operates
+      on hexagonal approximations of the shapes rather than their exact boundaries.
+    - `INTERSECTS`: checks whether at least one hexagon is shared between the column geometry and the
+      reference geometry, approximating `st_intersects`.
+
+    Edge membership is not supported by the H3 API — there is no way to distinguish which cell IDs lie
+    on the boundary of a geometry and which lie in its interior. As a result, boundary behaviour differs
+    from `ST_*` predicates and geometries near the boundary may be misclassified. Higher resolution
+    reduces this error at the cost of more cells.
+
+    Both geometries are decomposed into H3 cell arrays using
+    `coalesce(h3_try_coverash3(expr, resolution), array(h3_pointash3(expr, resolution)))`, which handles
+    both polygon and point inputs.
 
     See the following documentation for more details:
     https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-h3-geospatial-functions
 
     Args:
         column: Column to check. Null values are skipped for validation.
-        reference_polygon: Reference polygon as a literal value or a column name.
+        reference_geometry: Reference geometry as a literal WKT string or a column name.
         resolution: H3 resolution value as a literal integer (0–15) or a column name.
+            Higher values give finer precision at the cost of more cells.
+        topological_relationship: Spatial predicate to approximate. `COVERS` (default) requires all
+            H3 cells of the column geometry to be present in the reference geometry's H3 cells.
+            `INTERSECTS` requires at least one shared H3 cell between the two geometries.
 
     Returns:
-        Column object indicating whether the values in the input column are approximately outside the reference polygon.
+        Column object indicating whether the values in the input column do not satisfy the topological
+        relationship with the reference geometry approximately.
     Raises:
         InvalidParameterError: If the *resolution* literal value is outside the 0–15 range.
+        InvalidParameterError: If an invalid value is supplied for *topological_relationship*.
     """
     if not (isinstance(resolution, Column) or (isinstance(resolution, int) and 0 <= resolution <= 15)):
         raise InvalidParameterError("'resolution' must be between 0 and 15.")
+    if topological_relationship not in _APPROXIMATE_TOPOLOGICAL_RELATIONSHIPS:
+        raise InvalidParameterError(
+            f"'topological_relationship' must be one of {sorted(_APPROXIMATE_TOPOLOGICAL_RELATIONSHIPS)}, got '{topological_relationship}'."
+        )
 
     col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
-    ref_col = reference_polygon if isinstance(reference_polygon, Column) else F.lit(reference_polygon)
+    ref_col = reference_geometry if isinstance(reference_geometry, Column) else F.lit(reference_geometry)
     resolution_col = resolution if isinstance(resolution, Column) else F.lit(resolution)
 
-    ref_h3_array = F.call_function("h3_coverash3", ref_col, resolution_col)
-    point_h3 = F.call_function("h3_pointash3", col_expr, resolution_col)
-    is_inside = F.array_contains(ref_h3_array, point_h3)
+    col_h3_array = F.coalesce(
+        F.call_function("h3_try_coverash3", col_expr, resolution_col),
+        F.array(F.call_function("h3_pointash3", col_expr, resolution_col)),
+    )
+    ref_h3_array = F.coalesce(
+        F.call_function("h3_try_coverash3", ref_col, resolution_col),
+        F.array(F.call_function("h3_pointash3", ref_col, resolution_col)),
+    )
+    intersection_size = F.size(F.array_intersect(col_h3_array, ref_h3_array))
+
+    match topological_relationship:
+        case "INTERSECTS":
+            is_inside = intersection_size > 0
+        case "COVERS":
+            is_inside = intersection_size == F.size(col_h3_array)
+
     condition = F.when(col_expr.isNull(), F.lit(None)).otherwise(~is_inside)
 
     return make_condition(
@@ -1056,7 +1096,7 @@ def is_within_polygon_approximate(
             "",
             F.lit("value `"),
             col_expr.cast("string"),
-            F.lit(f"` in column `{col_expr_str}` is approximately outside the reference polygon"),
+            F.lit(f"` in column `{col_expr_str}` is approximately outside the reference geometry"),
         ),
-        f"{col_str_norm}_outside_reference_polygon_approximate",
+        f"{col_str_norm}_outside_reference_geometry_approximate",
     )

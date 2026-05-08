@@ -1821,8 +1821,8 @@ You can also define your own custom dataset-level checks (see [Creating custom c
 | `has_no_outliers`                  | Checks whether the values in the input column contain any outliers. This function implements a median absolute deviation (MAD) algorithm to find outliers.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | `column`: column of type numeric to check (can be a string column name or a column expression);                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `has_no_row_anomalies`             | Flags rows that are anomalous according to a trained ML model. The model learns "normal" patterns from your training data; at check time each row is scored (severity percentile 0–100) and optionally enriched with SHAP contributions. Requires a model trained with the anomaly engine first. See [Row Anomaly Detection](#row-anomaly-detection) below for training, full parameters, and usage.                                                                                                                                                                                                                                                                                                | `model_name`: fully qualified model name (e.g. catalog.schema.model_name); `registry_table`: fully qualified registry table (e.g. catalog.schema.model_registry); `threshold`: (optional) severity percentile threshold (default 95); `drift_threshold`: (optional) warn when score distribution drifts from training (None = off); `enable_contributions`: (optional) add SHAP per-feature contributions to `_dq_info` (default False); `enable_confidence_std`: (optional) add ensemble score std to `_dq_info` (default False). See [Row Anomaly Detection](/docs/reference/quality_checks#row-anomaly-detection) section for full parameter details.                                                                                                                                                                                                                                                     |
 | `are_polygons_mutually_disjoint`   | Checks whether the polygons in a geometry column are mutually disjoint. Polygons sharing an edge or boundary are considered intersecting. Nulls and invalid geometries are excluded from the check. Requires Databricks runtime 17.1 or above.                                                                                                                                                                                                                                                                                                                                                                                                                                                      | `column`: column to check (can be a string column name or a column expression), must contain polygon or multipolygon geometries                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `is_within_polygon_precise`        | Checks if each geometry in the column is within a reference polygon (geofencing). Uses the `ST_*` family of spatial functions for meter-level precision. When a convert flag is set to `True`, `try_to_geometry` is applied to parse the input from any supported format (WKT, WKB, EWKB) — see the [try_to_geometry](https://docs.databricks.com/aws/en/sql/language-manual/functions/try_to_geometry) documentation for details. Null values are skipped. Requires Databricks runtime 17.1 or above.                                                                                                                                                                                                                                                                                                                                                                                               | `column`: column to check (can be a string column name or a column expression); `reference_polygon`: reference polygon as a literal WKT/WKB/EWKT/EWKB string or a column name; `convert_column`: when `True`, applies `try_to_geometry` to convert the column values to GEOMETRY (default `False`); `convert_reference_polygon`: when `True`, applies `try_to_geometry` to convert the reference polygon to GEOMETRY (default `False`); `topological_relationship`: spatial predicate — `WITHIN` (default), `CONTAINS`, or `COVERS`                                                                                                                                                                                                                                                                                                                                                                          |
-| `is_within_polygon_approximate`    | Checks if each point in the column is approximately within a reference polygon using H3 cell indexing. Converts the point to an H3 cell ID via `h3_pointash3` and the polygon to a set of H3 cell IDs via `h3_coverash3`, then checks containment. Less precise than `is_within_polygon_precise` near polygon boundaries, but faster for large datasets. Null values are skipped. Requires Databricks runtime 17.1 or above.                                                                                                                                                                                                                                                                                                                                                                          | `column`: column to check containing WKT point values (can be a string column name or a column expression); `reference_polygon`: reference polygon as a WKT string or a column name; `resolution`: H3 resolution (integer 0–15 or a column); higher values give finer precision at the cost of more cells                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `has_topological_relationship_precise`     | Checks if each geometry in the column has a defined topological relationship with a reference geometry. Uses the `ST_*` family of spatial functions for meter-level precision. When a convert flag is set to `True`, `try_to_geometry` is applied to parse the input from any supported format (WKT, WKB, EWKB) — see the [try_to_geometry](https://docs.databricks.com/aws/en/sql/language-manual/functions/try_to_geometry) documentation for details. Null values are skipped. Requires Databricks runtime 17.1 or above.                                                                                                                                                                                                                                                                                                                                                                               | `column`: column to check (can be a string column name or a column expression); `reference_geometry`: reference geometry as a literal WKT/WKB/EWKT/EWKB string or a column name; `convert_column`: when `True`, applies `try_to_geometry` to convert the column values to GEOMETRY (default `False`); `convert_reference_geometry`: when `True`, applies `try_to_geometry` to convert the reference geometry to GEOMETRY (default `False`); `topological_relationship`: spatial predicate defining the required relationship between the column geometry and the reference geometry — `CONTAINS` (default), `COVERS`, `INTERSECTS`, `TOUCHES`, or `WITHIN`                                                                                                                                                                                                                                                     |
+| `has_topological_relationship_approximate` | Approximate counterpart to `has_topological_relationship_precise` that uses H3 cell indexing instead of `ST_*` spatial functions. Because the H3 index represents geometries as discrete hexagons rather than exact shapes, topological relationships are approximated via set operations on H3 cell arrays: `CONTAINS` checks whether all hexagons of the column geometry exist in the reference geometry's hexagons (close to `st_contains`); `INTERSECTS` checks whether at least one hexagon is shared (close to `st_intersects`). Edge membership is not supported — geometries near boundaries may be misclassified. Faster than `has_topological_relationship_precise` for large datasets. Null values are skipped. Requires Databricks runtime 17.1 or above. | `column`: column to check (can be a string column name or a column expression); `reference_geometry`: reference geometry as a WKT string or a column name; `resolution`: H3 resolution (integer 0–15 or a column); higher values give finer precision at the cost of more cells; `topological_relationship`: spatial predicate to approximate — `CONTAINS` (default) or `INTERSECTS`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 
 <Admonition type="tip" title="Row filter">
 Most dataset-level check functions take `row_filter` as argument. This parameter is auto-injected from the top-level `filter`.
@@ -2304,27 +2304,28 @@ Complex data types are supported as well.
     arguments:
       column: geom
 
-# is_within_polygon_precise check (geo, requires runtime 17.1+)
-# column contains WKT strings; try_to_geometry is applied to both column and reference polygon
+# has_topological_relationship_precise check (geo, requires runtime 17.1+)
+# column contains WKT strings; try_to_geometry is applied to both column and reference geometry
 - criticality: error
   check:
-    function: is_within_polygon_precise
+    function: has_topological_relationship_precise
     arguments:
       column: location
-      reference_polygon: "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))"
+      reference_geometry: "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))"
       convert_column: true
-      convert_reference_polygon: true
+      convert_reference_geometry: true
       topological_relationship: WITHIN
 
-# is_within_polygon_approximate check (geo, requires runtime 17.1+)
-# column contains WKT point strings; H3 resolution 7 (~5 km² cells)
+# has_topological_relationship_approximate check (geo, requires runtime 17.1+)
+# column contains WKT strings (points or polygons); H3 resolution 7 (~5 km² cells)
 - criticality: error
   check:
-    function: is_within_polygon_approximate
+    function: has_topological_relationship_approximate
     arguments:
       column: location
-      reference_polygon: "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))"
+      reference_geometry: "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))"
       resolution: 7
+      topological_relationship: CONTAINS
 ```
 
 **Providing Reference DataFrames programmatically**
@@ -2799,29 +2800,30 @@ checks = [
       column="geom" # or as expr: F.col("geom")
     ),
 
-    # is_within_polygon_precise check (geo, requires runtime 17.1+)
-    # column and reference polygon contain WKT strings; try_to_geometry is applied to both
+    # has_topological_relationship_precise check (geo, requires runtime 17.1+)
+    # column and reference geometry contain WKT strings; try_to_geometry is applied to both
     DQDatasetRule(
       criticality="error",
-      check_func=geo_check_funcs.is_within_polygon_precise,
+      check_func=geo_check_funcs.has_topological_relationship_precise,
       column="location", # or as expr: F.col("location")
       check_func_kwargs={
-        "reference_polygon": "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
+        "reference_geometry": "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
         "convert_column": True,
-        "convert_reference_polygon": True,
+        "convert_reference_geometry": True,
         "topological_relationship": "WITHIN",
       }
     ),
 
-    # is_within_polygon_approximate check (geo, requires runtime 17.1+)
-    # column contains WKT point strings; H3 resolution 7 (~5 km² cells)
+    # has_topological_relationship_approximate check (geo, requires runtime 17.1+)
+    # column contains WKT strings (points or polygons); H3 resolution 7 (~5 km² cells)
     DQDatasetRule(
       criticality="error",
-      check_func=geo_check_funcs.is_within_polygon_approximate,
+      check_func=geo_check_funcs.has_topological_relationship_approximate,
       column="location", # or as expr: F.col("location")
       check_func_kwargs={
-        "reference_polygon": "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
+        "reference_geometry": "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
         "resolution": 7,
+        "topological_relationship": "CONTAINS",
       }
     ),
 
