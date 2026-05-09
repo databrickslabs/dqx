@@ -6183,7 +6183,8 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
     schema = (
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
         "col7: map<string, int>, col8: struct<field1: int>, col10: int, col11: string, "
-        "col_ipv4: string, col_ipv6: string, col_json_str: string, col_json_str2: string"
+        "col_ipv4: string, col_ipv6: string, col_json_str: string, col_json_str2: string, "
+        "col_email: string"
     )
     test_df = spark.createDataFrame(
         [
@@ -6202,6 +6203,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 "2001:0db8:85a3:08d3:0000:0000:0000:0001",
                 '{"key1": "1"}',
                 '{"a" : 1, "b": 2}',
+                "user@example.com",
             ],
             [
                 "val2",
@@ -6218,6 +6220,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 "2001:0db8:85a3:08d3:0000:0000:0000:1",
                 '{"key1": "1", "key2": "2"}',
                 '{ "a" : 1, "b": 1000,  "c": {"1": 8}}',
+                '"quoted_user"@example.co.uk',
             ],
             [
                 "val3",
@@ -6234,6 +6237,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 "2001:0db8:85a3:08d3:0000::2",
                 '{"key1": "[1, 2, 3]"}',
                 '{ "a" : 1, "b": 1023455,  "c": null }',
+                "user@[12.96.144.202]",
             ],
         ],
         schema,
@@ -6262,6 +6266,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 "2001:0db8:85a3:08d3:0000:0000:0000:0001",
                 '{"key1": "1"}',
                 '{"a" : 1, "b": 2}',
+                "user@example.com",
                 None,
                 None,
             ],
@@ -6280,6 +6285,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 "2001:0db8:85a3:08d3:0000:0000:0000:1",
                 '{"key1": "1", "key2": "2"}',
                 '{ "a" : 1, "b": 1000,  "c": {"1": 8}}',
+                '"quoted_user"@example.co.uk',
                 None,
                 None,
             ],
@@ -6298,6 +6304,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 "2001:0db8:85a3:08d3:0000::2",
                 '{"key1": "[1, 2, 3]"}',
                 '{ "a" : 1, "b": 1023455,  "c": null }',
+                "user@[12.96.144.202]",
                 None,
                 None,
             ],

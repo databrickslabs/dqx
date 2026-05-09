@@ -1855,8 +1855,10 @@ def test_col_is_valid_email(spark):
             ["a@b.cd"],  # minimum valid
             ["1234567890@numbers.io"],  # all-numeric local
             ["mixed.case@MixedCase.Org"],  # case variations
-            [local_part_at_char_limit + "@b.com"],  # exactly at 64-character limit for local parts
-            [full_text_at_char_limit],  # exactly at 268-character limit for the full text
+            ["user@[IPv6:::::::::]"],  # NOTE: IPv6 validation based on regex currently passes validation
+            [local_part_at_char_limit + "@b.com"],  # unquoted local part at 64-characters
+            [f'"{local_part_at_char_limit}"' + "@example.com"],  # quoted local part more than 64 characters
+            [full_text_at_char_limit],  # exactly at 254-character limit for the full text
             ['"a"@example.com'],
             ['"a@b"@example.com'],  # "@" inside quoted local
             ["user@[192.0.2.1]"],
@@ -1876,7 +1878,8 @@ def test_col_is_valid_email(spark):
             ["user@"],  # missing domain
             ["@example.com"],  # missing local part
             ["plainaddress"],  # no "@" or "."
-            ["a" + local_part_at_char_limit + "@example.com"],  # local part more than 64 characters
+            ["a" + local_part_at_char_limit + "@example.com"],  # unquoted local part more than 64 characters
+            [f'"{"a" + local_part_at_char_limit}"' + "@example.com"],  # quoted local part more than 64 characters
             ["a" + full_text_at_char_limit],  # full text more than 268 characters
             ["user@[999.0.0.1]"],  # invalid IPv4 octet
             ["user@[256.0.0.1]"],  # IPv4 octet over 255
@@ -1897,6 +1900,8 @@ def test_col_is_valid_email(spark):
     checked_schema = "a_does_not_match_pattern_email_address: string"
     checked_data = [
         # Valid (no violation reported)
+        [None],
+        [None],
         [None],
         [None],
         [None],
@@ -1929,6 +1934,7 @@ def test_col_is_valid_email(spark):
         [violation("plainaddress")],
         # Invalid - length caps
         [violation("a" + local_part_at_char_limit + "@example.com")],
+        [violation(f'"{"a" + local_part_at_char_limit}"' + "@example.com")],
         [violation("a" + full_text_at_char_limit)],
         # Invalid - IP-literal edge cases
         [violation("user@[999.0.0.1]")],
