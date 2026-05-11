@@ -1376,7 +1376,7 @@ dev = [
     { name = "pytest-xdist", specifier = "~=3.5.0" },
     { name = "ruff", specifier = "~=0.3.4" },
     { name = "types-pyyaml", specifier = "~=6.0.3" },
-    { name = "types-requests", specifier = "~=2.31.0" },
+    { name = "types-requests", specifier = ">=2.31,<2.34" },
 ]
 docs = [{ name = "pydoc-markdown", specifier = ">=4.8.2,<5.0" }]
 lint = [
@@ -1388,7 +1388,7 @@ lint = [
     { name = "pylint-pytest", specifier = "==2.0.0a1" },
     { name = "ruff", specifier = "~=0.3.4" },
     { name = "types-pyyaml", specifier = "~=6.0.3" },
-    { name = "types-requests", specifier = "~=2.31.0" },
+    { name = "types-requests", specifier = ">=2.31,<2.34" },
 ]
 test = [
     { name = "coverage", extras = ["toml"], specifier = "~=7.4.4" },
@@ -6716,14 +6716,14 @@ wheels = [
 
 [[package]]
 name = "types-requests"
-version = "2.31.0.20240406"
+version = "2.33.0.20260503"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "urllib3" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/b4/40/66afbb030f4a800c08a9312a0653a7aec06ce0bd633d83215eb0f83c0f46/types-requests-2.31.0.20240406.tar.gz", hash = "sha256:4428df33c5503945c74b3f42e82b181e86ec7b724620419a2966e2de604ce1a1", size = 17134, upload-time = "2024-04-06T02:13:39.267Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a1/b8/57e94268c0d82ac3eaa2fc35aa8ca7bbc2542f726b67dcf90b0b00a3b14d/types_requests-2.33.0.20260503.tar.gz", hash = "sha256:9721b2d9dbee7131f2fb39f20f0ebb1999c18cef4b512c9a7932f3722de7c5f4", size = 23931, upload-time = "2026-05-03T05:20:08.882Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/8b/ea/91b718b8c0b88e4f61cdd61357cc4a1f8767b32be691fb388299003a3ae3/types_requests-2.31.0.20240406-py3-none-any.whl", hash = "sha256:6216cdac377c6b9a040ac1c0404f7284bd13199c0e1bb235f4324627e8898cf5", size = 15347, upload-time = "2024-04-06T02:13:37.412Z" },
+    { url = "https://files.pythonhosted.org/packages/c3/82/959113a6351f3ca046cd0a8cd2cee071d7ea47473560557a01eeae9a6fe2/types_requests-2.33.0.20260503-py3-none-any.whl", hash = "sha256:02aaa7e3577a13471715bb1bddb693cc985ea514f754b503bf033e6a09a3e528", size = 20736, upload-time = "2026-05-03T05:20:07.858Z" },
 ]
 
 [[package]]
