@@ -29,9 +29,9 @@ Operations that must respect the logged-in user's permissions use the `X-Forward
 Operations the app owns and manages run as the app's own service principal:
 
 - **Job submission** for profiler and dry-run tasks
-- **Rules catalog CRUD** (reading and writing the rules Delta table)
-- **Schema migrations** (creating and evolving Delta tables)
-- **App settings** (reading and writing settings from the Delta table)
+- **Rules catalog CRUD** (reading and writing rules — Lakebase Postgres by default, Delta in fallback mode)
+- **Schema migrations** (creating and evolving both Delta and Lakebase tables)
+- **App settings** (reading and writing settings — Lakebase Postgres by default)
 - **Wheel upload** — on startup the app uploads DQX wheels to the UC volume and patches the task-runner job environment
 
 This ensures:
@@ -73,31 +73,44 @@ On every cold start the FastAPI lifespan (`backend/app.py`) hashes the locally b
 - **`/api/v1/*`** — FastAPI handles all API requests
 - **`/*`** — FastAPI serves the compiled React SPA; TanStack Router handles client-side navigation
 
-### Internal Storage
+### Internal Storage (Hybrid Backend)
 
-The app uses a dedicated catalog (selected at install time) with two schemas plus a wheels volume:
+The app uses a **hybrid storage architecture**: high-volume append/analytical tables stay on Delta in Unity Catalog, while OLTP tables (rules catalog, app settings, RBAC, comments, schedule configs) live in **Lakebase Postgres** for sub-millisecond reads (see [DEPLOYMENT.md → Lakebase backend](DEPLOYMENT.md#lakebase-backend)).
+
+All stateful resources — schemas, wheels volume, Lakebase instance, and Lakebase logical Postgres database — are declared as bundle resources in `databricks.yml` with `lifecycle.prevent_destroy: true`. The bundle creates them on first deploy; `databricks bundle destroy` is blocked from dropping them. For workspaces where these resources were created out-of-band, run `make app-bind` once per target to adopt them into bundle management before the first deploy (see [DEPLOYMENT.md → Migrating an existing workspace](DEPLOYMENT.md#migrating-an-existing-workspace)).
 
 ```
-{catalog}
- ├── dqx_app                          ← main schema (SP-managed via MigrationRunner)
- │   ├── dq_app_settings              ← key/value app configuration
- │   ├── dq_quality_rules             ← active/approved rules
- │   ├── dq_quality_rules_history     ← rule change audit log
- │   ├── dq_role_mappings             ← role → workspace group mappings (RBAC)
- │   ├── dq_comments                  ← comment threads on rules/runs
- │   ├── dq_profiling_results         ← profiler runs (suggestions in generated_rules_json)
- │   ├── dq_validation_runs           ← dryrun + scheduled run lifecycle (1 row/run)
- │   ├── dq_quarantine_records        ← invalid rows captured by runs
- │   ├── dq_metrics                   ← long-format observability events (N rows/run,
- │   │                                   matches DQX OBSERVATION_TABLE_SCHEMA so
- │   │                                   AI/BI dashboards target the spec directly)
- │   ├── dq_schedule_configs          ← per-schedule config (cron/interval, target rules)
- │   ├── dq_schedule_configs_history  ← schedule change audit log
- │   ├── dq_schedule_runs             ← scheduler last/next run state
- │   └── dq_migrations                ← migration version tracker
- ├── dqx_app_tmp                      ← temp views created via OBO for profiler/dryrun jobs
+{catalog} (Unity Catalog)
+ ├── dqx_studio                       ← main schema (provisioned out-of-band; tables managed by MigrationRunner)
+ │   ├── dq_profiling_results         (Delta, always) profiler runs (suggestions in generated_rules_json)
+ │   ├── dq_validation_runs           (Delta, always) dryrun + scheduled run lifecycle (1 row/run)
+ │   ├── dq_quarantine_records        (Delta, always) invalid rows captured by runs
+ │   ├── dq_metrics                   (Delta, always) long-format observability events
+ │   │                                  (matches DQX OBSERVATION_TABLE_SCHEMA so AI/BI
+ │   │                                  dashboards target the spec directly)
+ │   ├── dq_app_settings              (OLTP*) key/value app configuration
+ │   ├── dq_quality_rules             (OLTP*) active/approved rules
+ │   ├── dq_quality_rules_history     (OLTP*) rule change audit log
+ │   ├── dq_role_mappings             (OLTP*) role → workspace group mappings (RBAC)
+ │   ├── dq_comments                  (OLTP*) comment threads on rules/runs
+ │   ├── dq_schedule_configs          (OLTP*) per-schedule config (cron/interval, target rules)
+ │   ├── dq_schedule_configs_history  (OLTP*) schedule change audit log
+ │   ├── dq_schedule_runs             (OLTP*) scheduler last/next run state
+ │   └── dq_migrations                ← Delta migration version tracker
+ ├── dqx_studio_tmp                   ← temp views created via OBO for profiler/dryrun jobs
  └── wheels (UC volume)               ← DQX + task-runner wheels uploaded at app startup
+
+Lakebase (Postgres) — when enabled (default):
+ dqx-studio-lakebase (database_instance)
+ └── dqx_studio (database)
+     └── public (schema)               ← provisioned by PgMigrationRunner on first start
+         ├── dq_app_settings, dq_role_mappings, dq_quality_rules,
+         ├── dq_quality_rules_history, dq_comments, dq_schedule_configs,
+         ├── dq_schedule_configs_history, dq_schedule_runs
+         └── dq_migrations              ← Lakebase migration version tracker
 ```
+
+`(OLTP*)` = lives in **Lakebase Postgres** when `lakebase_instance_name` is set in `databricks.yml`, otherwise in **Delta** (the `v2: Delta OLTP fallback` migration). The split is invisible to service code: `SqlExecutor` (Delta) and `PgExecutor` (Lakebase) share an identical public surface — `execute`, `query`, `query_dicts`, `upsert`, plus the dialect helpers `q(identifier)`, `json_literal_expr(json_str)`, and `ts_text(col)` that emit dialect-correct SQL fragments.
 
 ### Role-Based Access Control
 

@@ -13,7 +13,13 @@ logger = logging.getLogger(__name__)
 
 
 class RuleCatalogEntry:
-    """Represents a single rule (individual check) in the rules catalog."""
+    """Represents a single rule (one check) in the rules catalog.
+
+    Note: ``checks`` is preserved as a one-element list for API/DTO
+    compatibility with existing routes and frontend types. The underlying
+    Delta column ``check`` is a VARIANT object holding the bare check —
+    the array wrapper is purely an in-memory representation.
+    """
 
     def __init__(
         self,
@@ -44,8 +50,9 @@ class RulesCatalogService:
     """Manages the rules catalog in a Delta table using app (SP) credentials.
 
     Each row represents a single rule (one check) identified by ``rule_id``.
-    Multiple rules can target the same ``table_fqn``.  For execution the caller
-    aggregates all approved rules for a table into a single checks array.
+    The persisted ``check`` column is a VARIANT holding the bare check object
+    (no array wrapper); ``RuleCatalogEntry.checks`` exposes a one-element list
+    so existing callers don't have to change.
     """
 
     VALID_STATUSES = {"draft", "pending_approval", "approved", "rejected"}
@@ -57,16 +64,57 @@ class RulesCatalogService:
         "rejected": {"draft"},
     }
 
-    _SELECT_COLS = (
-        "table_fqn, checks, version, status, created_by, "
-        "CAST(created_at AS STRING), updated_by, CAST(updated_at AS STRING), "
-        "COALESCE(source, 'ui'), COALESCE(rule_id, '')"
-    )
-
     def __init__(self, sql: SqlExecutor) -> None:
         self._sql = sql
-        self._table = f"{sql.catalog}.{sql.schema}.dq_quality_rules"
-        self._history_table = f"{sql.catalog}.{sql.schema}.dq_quality_rules_history"
+        self._table = self._qualify(sql, "dq_quality_rules")
+        self._history_table = self._qualify(sql, "dq_quality_rules_history")
+        # ``check`` is a SQL reserved word in both Delta and Postgres,
+        # so quote it via the executor so we get backticks on Delta and
+        # double-quotes on Postgres.
+        self._check_col = sql.q("check")
+        self._select_cols = self._build_select_cols()
+
+    @staticmethod
+    def _qualify(sql: SqlExecutor, table: str) -> str:
+        """Return the fully-qualified table path for either backend.
+
+        Delta: ``catalog.schema.table``. Postgres: ``schema.table``
+        (Postgres only has a single database per connection so we drop
+        the catalog component there). The Postgres executor exposes
+        the database via :attr:`PgExecutor.database` if a future
+        cross-database join is ever needed.
+        """
+        if getattr(sql, "dialect", "delta") == "postgres":
+            return f"{sql.schema}.{table}"
+        return f"{sql.catalog}.{sql.schema}.{table}"
+
+    def _build_select_cols(self) -> str:
+        """Build the column projection used by every SELECT.
+
+        The projection deliberately differs per dialect:
+
+        - **Delta** wraps ``check`` in ``to_json`` so the JSON_ARRAY
+          response format returns a string we can ``json.loads``, and
+          casts timestamps to STRING for the same reason.
+        - **Postgres** doesn't need either: :class:`PgExecutor` runs
+          values through :func:`_to_text` on the way out, which JSON-
+          stringifies JSONB columns and ISO-formats timestamps for
+          free.
+
+        The column *order* is identical so :meth:`_row_to_entry`
+        doesn't have to branch on dialect.
+        """
+        check = self._check_col
+        if getattr(self._sql, "dialect", "delta") == "postgres":
+            return (
+                f"table_fqn, {check} AS check_json, version, status, created_by, "
+                f"created_at, updated_by, updated_at, source, rule_id"
+            )
+        return (
+            f"table_fqn, to_json({check}) AS check_json, version, status, created_by, "
+            f"CAST(created_at AS STRING), updated_by, CAST(updated_at AS STRING), "
+            f"source, rule_id"
+        )
 
     # ------------------------------------------------------------------
     # Public API
@@ -126,24 +174,36 @@ class RulesCatalogService:
         if duplicates:
             logger.info("Skipped %d duplicate check(s) for table %s", len(duplicates), table_fqn)
 
-        now = datetime.now(timezone.utc).isoformat()
         e_table = escape_sql_string(table_fqn)
         e_source = escape_sql_string(source)
         e_user = escape_sql_string(user_email)
 
         created: list[RuleCatalogEntry] = []
+        check_col = self._check_col
         for check in non_dup_checks:
             rule_id = uuid4().hex[:16]
-            single_check_json = json.dumps([check])
-            e_checks = escape_sql_string(single_check_json)
+            check_json = json.dumps(check)
+            check_expr = self._sql.json_literal_expr(check_json)
             sql = (
                 f"INSERT INTO {self._table} "
-                "(table_fqn, checks, version, status, source, created_by, created_at, updated_by, updated_at, rule_id) "
-                f"VALUES ('{e_table}', '{e_checks}', 1, 'draft', '{e_source}', "
-                f"'{e_user}', '{now}', '{e_user}', '{now}', '{rule_id}')"
+                f"(rule_id, table_fqn, {check_col}, version, status, source, "
+                f"created_by, created_at, updated_by, updated_at) "
+                f"VALUES ('{rule_id}', '{e_table}', {check_expr}, 1, 'draft', '{e_source}', "
+                f"'{e_user}', now(), '{e_user}', now())"
             )
             self._sql.execute(sql)
-            self._record_history(table_fqn, single_check_json, 1, source, user_email, now, "save", rule_id)
+            self._record_history(
+                table_fqn=table_fqn,
+                check_json=check_json,
+                version=1,
+                source=source,
+                user_email=user_email,
+                action="save",
+                rule_id=rule_id,
+                prev_status=None,
+                new_status="draft",
+            )
+            now = datetime.now(timezone.utc).isoformat()
             created.append(
                 RuleCatalogEntry(
                     table_fqn=table_fqn,
@@ -173,25 +233,37 @@ class RulesCatalogService:
         entry = self.get_by_rule_id(rule_id)
         if entry is None:
             raise RuntimeError(f"Rule not found: {rule_id}")
+        if not checks:
+            raise ValueError("update_rule requires exactly one check; got none")
 
-        checks_json = json.dumps(checks)
-        now = datetime.now(timezone.utc).isoformat()
-        e_checks = escape_sql_string(checks_json)
+        # update_rule is one-rule-at-a-time at the table layer; collapse to a
+        # single check object for the VARIANT/JSONB column.
+        check = checks[0]
+        check_json = json.dumps(check)
+        check_expr = self._sql.json_literal_expr(check_json)
         e_user = escape_sql_string(user_email)
         e_rule_id = escape_sql_string(rule_id)
 
         sql = (
             f"UPDATE {self._table} SET "
-            f"  checks = '{e_checks}', "
-            "  version = version + 1, "
-            "  status = 'draft', "
+            f"  {self._check_col} = {check_expr}, "
+            f"  version = version + 1, "
+            f"  status = 'draft', "
             f"  updated_by = '{e_user}', "
-            f"  updated_at = '{now}' "
+            f"  updated_at = now() "
             f"WHERE rule_id = '{e_rule_id}'"
         )
         self._sql.execute(sql)
         self._record_history(
-            entry.table_fqn, checks_json, entry.version + 1, entry.source, user_email, now, "update", rule_id
+            table_fqn=entry.table_fqn,
+            check_json=check_json,
+            version=entry.version + 1,
+            source=entry.source,
+            user_email=user_email,
+            action="update",
+            rule_id=rule_id,
+            prev_status=entry.status,
+            new_status="draft",
         )
         logger.info("Updated rule %s (table %s)", rule_id, entry.table_fqn)
         return self.get_by_rule_id(rule_id) or entry
@@ -228,7 +300,7 @@ class RulesCatalogService:
     def get_by_rule_id(self, rule_id: str) -> RuleCatalogEntry | None:
         """Get a single rule by its rule_id."""
         e_rule_id = escape_sql_string(rule_id)
-        sql = f"SELECT {self._SELECT_COLS} FROM {self._table} WHERE rule_id = '{e_rule_id}'"  # noqa: S608
+        sql = f"SELECT {self._select_cols} FROM {self._table} WHERE rule_id = '{e_rule_id}'"  # noqa: S608
         rows = self._sql.query(sql)
         if not rows:
             return None
@@ -237,7 +309,7 @@ class RulesCatalogService:
     def list_rules_for_table(self, table_fqn: str, status: str | None = None) -> list[RuleCatalogEntry]:
         """List all individual rules for a given table, optionally filtered by status."""
         e_table = escape_sql_string(table_fqn)
-        sql = f"SELECT {self._SELECT_COLS} FROM {self._table} WHERE table_fqn = '{e_table}'"  # noqa: S608
+        sql = f"SELECT {self._select_cols} FROM {self._table} WHERE table_fqn = '{e_table}'"  # noqa: S608
         if status:
             e_status = escape_sql_string(status)
             sql += f" AND status = '{e_status}'"
@@ -247,7 +319,7 @@ class RulesCatalogService:
 
     def list_rules(self, status: str | None = None) -> list[RuleCatalogEntry]:
         """List all individual rules, optionally filtered by status."""
-        sql = f"SELECT {self._SELECT_COLS} FROM {self._table}"
+        sql = f"SELECT {self._select_cols} FROM {self._table}"
         if status:
             e_status = escape_sql_string(status)
             sql += f" WHERE status = '{e_status}'"
@@ -332,11 +404,24 @@ class RulesCatalogService:
         e_rule_id = escape_sql_string(rule_id)
         sql = f"DELETE FROM {self._table} WHERE rule_id = '{e_rule_id}'"
         self._sql.execute(sql)
-        now = datetime.now(timezone.utc).isoformat()
         table_fqn = entry.table_fqn if entry else "unknown"
         version = entry.version if entry else 0
         source = entry.source if entry else "ui"
-        self._record_history(table_fqn, None, version, source, user_email, now, "delete", rule_id)
+        # Preserve the post-state ``check`` payload in history so audit
+        # readers can reconstruct what was deleted without walking back to
+        # the prior save row.
+        check_json = json.dumps(entry.checks[0]) if entry and entry.checks else None
+        self._record_history(
+            table_fqn=table_fqn,
+            check_json=check_json,
+            version=version,
+            source=source,
+            user_email=user_email,
+            action="delete",
+            rule_id=rule_id,
+            prev_status=entry.status if entry else None,
+            new_status=None,
+        )
         logger.info("Deleted rule %s (table %s, by %s)", rule_id, table_fqn, user_email)
 
     def delete_by_table(self, table_fqn: str, user_email: str) -> None:
@@ -344,8 +429,17 @@ class RulesCatalogService:
         e_table = escape_sql_string(table_fqn)
         sql = f"DELETE FROM {self._table} WHERE table_fqn = '{e_table}'"
         self._sql.execute(sql)
-        now = datetime.now(timezone.utc).isoformat()
-        self._record_history(table_fqn, None, 0, "ui", user_email, now, "delete_all")
+        self._record_history(
+            table_fqn=table_fqn,
+            check_json=None,
+            version=0,
+            source="ui",
+            user_email=user_email,
+            action="delete_all",
+            rule_id=None,
+            prev_status=None,
+            new_status=None,
+        )
         logger.info("Deleted all rules for table %s (by %s)", table_fqn, user_email)
 
     def set_status(
@@ -378,7 +472,6 @@ class RulesCatalogService:
                 f"but current is v{entry.version}. Another user may have modified the rule."
             )
 
-        now = datetime.now(timezone.utc).isoformat()
         e_status = escape_sql_string(status)
         e_user = escape_sql_string(user_email)
         e_rule_id = escape_sql_string(rule_id)
@@ -387,12 +480,24 @@ class RulesCatalogService:
             f"UPDATE {self._table} SET "
             f"  status = '{e_status}', "
             f"  updated_by = '{e_user}', "
-            f"  updated_at = '{now}' "
+            f"  updated_at = now() "
             f"WHERE rule_id = '{e_rule_id}' AND version = {entry.version}"
         )
         self._sql.execute(sql)
+        # Always include the post-state ``check`` payload + explicit
+        # prev/new status pair so dashboards reconstructing the trail
+        # don't have to walk back to the prior save row.
+        check_json = json.dumps(entry.checks[0]) if entry.checks else None
         self._record_history(
-            entry.table_fqn, None, entry.version, entry.source, user_email, now, f"status:{status}", rule_id
+            table_fqn=entry.table_fqn,
+            check_json=check_json,
+            version=entry.version,
+            source=entry.source,
+            user_email=user_email,
+            action=f"status:{status}",
+            rule_id=rule_id,
+            prev_status=entry.status,
+            new_status=status,
         )
         logger.info("Updated status for rule %s to %s (by %s)", rule_id, status, user_email)
 
@@ -435,21 +540,14 @@ class RulesCatalogService:
     def backfill_rule_ids(self) -> int:
         """Assign a rule_id to every row that currently has NULL or empty rule_id.
 
-        Returns the number of rows updated.
+        Retained as a no-op safety net: in the current baseline ``rule_id``
+        is ``NOT NULL`` with a PK constraint, so this should always return 0.
+        Kept so legacy upgrade paths that ran the pre-baseline migrations
+        can still call it without an AttributeError.
         """
         count_sql = f"SELECT COUNT(*) FROM {self._table} WHERE rule_id IS NULL OR rule_id = ''"
         rows = self._sql.query(count_sql)
         total = int(rows[0][0]) if rows and rows[0] else 0
-        if total == 0:
-            return 0
-
-        sql = (
-            f"UPDATE {self._table} "
-            "SET rule_id = SUBSTRING(MD5(CONCAT(table_fqn, checks, CAST(RAND() AS STRING))), 1, 16) "
-            "WHERE rule_id IS NULL OR rule_id = ''"
-        )
-        self._sql.execute(sql)
-        logger.info("Backfilled rule_id for %d rule(s)", total)
         return total
 
     # ------------------------------------------------------------------
@@ -491,8 +589,27 @@ class RulesCatalogService:
                 )
 
     def _row_to_entry(self, row: list[str]) -> RuleCatalogEntry:
-        """Convert a query result row to a RuleCatalogEntry."""
-        checks = json.loads(row[1], strict=False) if row[1] else []
+        """Convert a query result row to a RuleCatalogEntry.
+
+        Row layout (see :meth:`_build_select_cols`):
+        ``[table_fqn, check_json, version, status, created_by, created_at,
+        updated_by, updated_at, source, rule_id]``.
+
+        ``check_json`` is the JSON rendering of the VARIANT/JSONB
+        column (via Delta's ``to_json`` or PgExecutor's automatic
+        text coercion).  We wrap it in a one-element list so the
+        in-memory ``checks`` shape keeps existing callers (route DTOs,
+        scheduler) unchanged.
+        """
+        check_json = row[1]
+        if check_json:
+            try:
+                parsed = json.loads(check_json, strict=False)
+            except json.JSONDecodeError:
+                parsed = None
+            checks = [parsed] if isinstance(parsed, dict) else []
+        else:
+            checks = []
         return RuleCatalogEntry(
             table_fqn=row[0],
             checks=checks,
@@ -508,28 +625,44 @@ class RulesCatalogService:
 
     def _record_history(
         self,
+        *,
         table_fqn: str,
-        checks_json: str | None,
+        check_json: str | None,
         version: int,
         source: str,
         user_email: str,
-        timestamp: str,
         action: str,
-        rule_id: str | None = None,
+        rule_id: str | None,
+        prev_status: str | None,
+        new_status: str | None,
     ) -> None:
-        """Insert an audit row into the history table (best-effort)."""
+        """Insert an audit row into the history table (best-effort).
+
+        Always carries the post-state ``check`` payload (when one exists)
+        and an explicit ``prev_status``/``new_status`` pair so callers
+        querying the audit trail don't have to walk backwards through the
+        log to reconstruct what changed.
+
+        ``check`` is a SQL reserved word so the column name is quoted
+        via the executor's :meth:`q` helper (backticks for Delta,
+        double quotes for Postgres).
+        """
         try:
             e_table = escape_sql_string(table_fqn)
-            e_checks = escape_sql_string(checks_json or "")
             e_source = escape_sql_string(source)
             e_action = escape_sql_string(action)
             e_user = escape_sql_string(user_email)
-            e_rule_id = escape_sql_string(rule_id or "")
+            rule_id_sql = f"'{escape_sql_string(rule_id)}'" if rule_id else "NULL"
+            check_sql = self._sql.json_literal_expr(check_json) if check_json else "NULL"
+            prev_sql = f"'{escape_sql_string(prev_status)}'" if prev_status else "NULL"
+            new_sql = f"'{escape_sql_string(new_status)}'" if new_status else "NULL"
+
             sql = (
                 f"INSERT INTO {self._history_table} "
-                "(table_fqn, checks, version, source, action, changed_by, changed_at, rule_id) VALUES "
-                f"('{e_table}', '{e_checks}', {version}, '{e_source}', '{e_action}', "
-                f"'{e_user}', '{timestamp}', '{e_rule_id}')"
+                f"(rule_id, table_fqn, {self._check_col}, version, source, action, "
+                f"prev_status, new_status, changed_by, changed_at) VALUES "
+                f"({rule_id_sql}, '{e_table}', {check_sql}, {version}, '{e_source}', "
+                f"'{e_action}', {prev_sql}, {new_sql}, '{e_user}', now())"
             )
             self._sql.execute(sql)
         except Exception:

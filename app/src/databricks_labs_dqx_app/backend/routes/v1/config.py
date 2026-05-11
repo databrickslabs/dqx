@@ -4,7 +4,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from databricks_labs_dqx_app.backend.common.authorization import UserRole
+from databricks_labs_dqx_app.backend.common.authorization import UserRole, get_user_email
 from databricks_labs_dqx_app.backend.dependencies import get_app_settings_service, require_role
 from databricks_labs_dqx_app.backend.logger import logger
 from pydantic import BaseModel, Field
@@ -19,6 +19,17 @@ from databricks_labs_dqx_app.backend.services.app_settings_service import AppSet
 
 _TZ_SETTING_KEY = "display_timezone"
 _TZ_DEFAULT = "UTC"
+
+# Defaults for the retention sweep — kept in sync with
+# ``backend.services.scheduler_service``. Imported lazily inside the
+# route to avoid pulling the scheduler module into the import graph
+# of routes that have no scheduler dependency.
+_RETENTION_DAYS_DEFAULT = 90
+_QUARANTINE_RETENTION_DAYS_DEFAULT = 30
+_RETENTION_DAYS_MIN = 7
+# Generous upper bound — anything past ~3 years is almost certainly a
+# typo, and lets the UI render a meaningful slider/input range.
+_RETENTION_DAYS_MAX = 3650
 
 _LABEL_DEFS_SETTING_KEY = "label_definitions"
 # Keys must be safe for YAML round-tripping and stable as DataFrame columns:
@@ -101,10 +112,11 @@ def get_config(
 def save_config(
     body: ConfigIn,
     svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    email: Annotated[str, Depends(get_user_email)],
 ) -> ConfigOut:
     """Save workspace config to application state (admin only)."""
     try:
-        svc.save_config(body.config)
+        svc.save_config(body.config, user_email=email)
         _notify_scheduler()
         config = svc.get_config()
         return ConfigOut(config=config)
@@ -140,6 +152,7 @@ def get_run_config(
 def save_run_config(
     body: RunConfigIn,
     svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    email: Annotated[str, Depends(get_user_email)],
 ) -> RunConfigOut:
     """Save a run config — creates or updates by name (admin only)."""
     config = svc.get_config()
@@ -153,7 +166,7 @@ def save_run_config(
     if not updated:
         config.run_configs.append(body.config)
 
-    svc.save_config(config)
+    svc.save_config(config, user_email=email)
     _notify_scheduler()
     return RunConfigOut(config=body.config)
 
@@ -167,6 +180,7 @@ def save_run_config(
 def delete_run_config(
     name: str,
     svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    email: Annotated[str, Depends(get_user_email)],
 ) -> ConfigOut:
     """Delete a run config by name (admin only)."""
     config = svc.get_config()
@@ -176,7 +190,7 @@ def delete_run_config(
     if len(config.run_configs) == original_count:
         raise HTTPException(status_code=404, detail=f"Run config '{name}' not found")
 
-    svc.save_config(config)
+    svc.save_config(config, user_email=email)
     _notify_scheduler()
     return ConfigOut(config=config)
 
@@ -203,10 +217,117 @@ def get_timezone(
 def save_timezone(
     body: TimezoneIn,
     svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    email: Annotated[str, Depends(get_user_email)],
 ) -> TimezoneOut:
     """Set the display timezone (admin only)."""
-    svc.save_setting(_TZ_SETTING_KEY, body.timezone)
+    svc.save_setting(_TZ_SETTING_KEY, body.timezone, user_email=email)
     return TimezoneOut(timezone=body.timezone)
+
+
+# ---------------------------------------------------------------------------
+# Retention — global vs. quarantine-specific DELETE windows surfaced for the
+# admin UI. The scheduler reads the same keys directly from
+# ``dq_app_settings`` (see ``SchedulerService._resolve_retention_days`` /
+# ``_resolve_quarantine_retention_days``); these endpoints are the
+# read/write surface and the only place we centralise validation.
+# ---------------------------------------------------------------------------
+
+
+class RetentionSettingsOut(BaseModel):
+    """Effective retention settings + the defaults the scheduler falls back to.
+
+    ``retention_days`` / ``quarantine_retention_days`` reflect the
+    *current effective values* — the persisted setting if one exists,
+    otherwise the compiled-in default. The ``*_default`` and ``*_min``
+    fields let the UI render hints and validation without duplicating
+    the constants on the frontend.
+    """
+
+    retention_days: int
+    quarantine_retention_days: int
+    retention_days_default: int = _RETENTION_DAYS_DEFAULT
+    quarantine_retention_days_default: int = _QUARANTINE_RETENTION_DAYS_DEFAULT
+    retention_days_min: int = _RETENTION_DAYS_MIN
+    retention_days_max: int = _RETENTION_DAYS_MAX
+    retention_days_set: bool
+    quarantine_retention_days_set: bool
+
+
+class RetentionSettingsIn(BaseModel):
+    """Update payload — either field omitted means *leave unchanged*."""
+
+    retention_days: int | None = None
+    quarantine_retention_days: int | None = None
+
+
+def _validate_retention_days(value: int, *, field: str) -> int:
+    if value < _RETENTION_DAYS_MIN:
+        raise HTTPException(
+            status_code=400,
+            detail=(f"{field} must be at least {_RETENTION_DAYS_MIN} days " "to protect against accidental data loss."),
+        )
+    if value > _RETENTION_DAYS_MAX:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{field} must be at most {_RETENTION_DAYS_MAX} days.",
+        )
+    return value
+
+
+@router.get(
+    "/retention",
+    response_model=RetentionSettingsOut,
+    operation_id="getRetentionSettings",
+    dependencies=[require_role(UserRole.ADMIN)],
+)
+def get_retention_settings(
+    svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+) -> RetentionSettingsOut:
+    """Return the current retention windows + defaults (admin only)."""
+    rd = svc.get_retention_days()
+    qd = svc.get_quarantine_retention_days()
+    return RetentionSettingsOut(
+        retention_days=rd if rd is not None else _RETENTION_DAYS_DEFAULT,
+        quarantine_retention_days=qd if qd is not None else _QUARANTINE_RETENTION_DAYS_DEFAULT,
+        retention_days_set=rd is not None,
+        quarantine_retention_days_set=qd is not None,
+    )
+
+
+@router.put(
+    "/retention",
+    response_model=RetentionSettingsOut,
+    operation_id="saveRetentionSettings",
+    dependencies=[require_role(UserRole.ADMIN)],
+)
+def save_retention_settings(
+    body: RetentionSettingsIn,
+    svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    email: Annotated[str, Depends(get_user_email)],
+) -> RetentionSettingsOut:
+    """Update one or both retention windows (admin only).
+
+    Either field may be omitted to leave the existing value unchanged.
+    Both values are validated against the safety floor and ceiling
+    before being persisted.
+    """
+    if body.retention_days is None and body.quarantine_retention_days is None:
+        raise HTTPException(
+            status_code=400,
+            detail="At least one of retention_days or quarantine_retention_days must be provided.",
+        )
+
+    if body.retention_days is not None:
+        validated = _validate_retention_days(body.retention_days, field="retention_days")
+        svc.save_retention_days(validated, user_email=email)
+        logger.info("Saved global retention_days=%d", validated)
+
+    if body.quarantine_retention_days is not None:
+        validated_q = _validate_retention_days(body.quarantine_retention_days, field="quarantine_retention_days")
+        svc.save_quarantine_retention_days(validated_q, user_email=email)
+        logger.info("Saved quarantine_retention_days=%d", validated_q)
+
+    return get_retention_settings(svc)
 
 
 # ---------------------------------------------------------------------------
@@ -265,6 +386,7 @@ def get_label_definitions(
 def save_label_definitions(
     body: LabelDefinitionsIn,
     svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    email: Annotated[str, Depends(get_user_email)],
 ) -> LabelDefinitionsOut:
     """Replace the full set of label definitions (admin only).
 
@@ -306,7 +428,7 @@ def save_label_definitions(
             )
         )
 
-    svc.save_setting(_LABEL_DEFS_SETTING_KEY, json.dumps([d.model_dump() for d in cleaned]))
+    svc.save_setting(_LABEL_DEFS_SETTING_KEY, json.dumps([d.model_dump() for d in cleaned]), user_email=email)
     logger.info("Saved %d label definition(s)", len(cleaned))
     return LabelDefinitionsOut(definitions=cleaned)
 
@@ -386,6 +508,7 @@ def get_custom_metrics(
 def save_custom_metrics(
     body: CustomMetricsIn,
     svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    email: Annotated[str, Depends(get_user_email)],
 ) -> CustomMetricsOut:
     """Replace the global custom-metrics list (admin only).
 
@@ -400,6 +523,6 @@ def save_custom_metrics(
             continue
         seen.add(expr)
         cleaned.append(expr)
-    saved = svc.save_custom_metrics(cleaned)
+    saved = svc.save_custom_metrics(cleaned, user_email=email)
     logger.info("Saved %d custom metric expression(s)", len(saved))
     return CustomMetricsOut(metrics=saved)

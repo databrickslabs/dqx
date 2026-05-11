@@ -67,17 +67,22 @@ class TestAppSettingsCustomMetrics:
         s, sql = svc
         result = s.save_custom_metrics(["  sum(x) as total  ", None, "", "count(*) as n"])
         assert result == ["sum(x) as total", "count(*) as n"]
-        # ``save_setting`` performs a MERGE — confirm the JSON payload
-        # matches what we expect.
-        assert sql.execute.called
-        sql_arg = sql.execute.call_args.args[0]
-        assert "sum(x) as total" in sql_arg
-        assert "count(*) as n" in sql_arg
+        # ``save_setting`` now goes through SqlExecutor.upsert(); the
+        # JSON payload lands on the value-cols dict.
+        assert sql.upsert.called
+        kwargs = sql.upsert.call_args.kwargs
+        # Either positional (table, key_cols, value_cols) or keyword form.
+        if "value_cols" in kwargs:
+            payload = kwargs["value_cols"]["setting_value"]
+        else:
+            payload = sql.upsert.call_args.args[2]["setting_value"]
+        assert "sum(x) as total" in payload
+        assert "count(*) as n" in payload
 
     def test_save_empty_list_writes_empty_json(self, svc):
         s, sql = svc
         assert s.save_custom_metrics([]) == []
-        assert sql.execute.called
+        assert sql.upsert.called
 
 
 # ---------------------------------------------------------------------------
@@ -155,8 +160,13 @@ class TestSchedulerLoadCustomMetrics:
 
         # __init__ wires SqlExecutor for itself; we bypass it and inject
         # the minimal attributes ``_load_custom_metrics`` actually touches.
+        # The OLTP executor (``_oltp_sql``) handles ``dq_app_settings``;
+        # for legacy mode it's the same instance as ``_sql`` so existing
+        # tests that only set ``_sql`` keep working when both names point
+        # at the same mock.
         svc = SchedulerService.__new__(SchedulerService)
         svc._sql = MagicMock()
+        svc._oltp_sql = svc._sql
         svc._settings_table = "dqx.public.dq_app_settings"
         return svc
 

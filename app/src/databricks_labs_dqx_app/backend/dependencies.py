@@ -4,7 +4,7 @@ import asyncio
 import hashlib
 import os
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any, cast
 
 if TYPE_CHECKING:
     from .common.connectors.sql import SQLConnector
@@ -30,6 +30,43 @@ from .services.comments_service import CommentsService
 from .services.schedule_config_service import ScheduleConfigService
 from .services.view_service import ViewService
 from .sql_executor import SqlExecutor
+
+if TYPE_CHECKING:
+    from .pg_executor import PgExecutor
+
+# Type alias used by every OLTP-touching service: either the legacy
+# Delta-backed :class:`SqlExecutor` or, when Lakebase is enabled, the
+# :class:`PgExecutor`.  The two classes share the public surface
+# (``execute``, ``query``, ``query_dicts``, ``upsert``, ``q``,
+# ``json_literal_expr``, ``ts_text``, ``dialect``) so service code can
+# stay backend-agnostic.
+OltpExecutor = "SqlExecutor | PgExecutor"
+
+# Process-wide OLTP executor (Lakebase Postgres). Constructed once at
+# app startup by ``app.lifespan`` and re-used across all requests so
+# the psycopg connection pool isn't rebuilt per call.  ``None`` means
+# Lakebase is not configured and the legacy Delta executor handles
+# OLTP traffic instead.  Lower-cased to keep basedpyright from
+# flagging it as an immutable module-level constant.
+_pg_executor: "SqlExecutor | PgExecutor | None" = None
+
+
+def set_oltp_executor(executor: "SqlExecutor | PgExecutor | None") -> None:
+    """Register (or clear) the process-wide OLTP executor.
+
+    Called from :func:`backend.app.lifespan` after the connection pool
+    is open.  Keeping this in module state (rather than passing it
+    through every request) lets the FastAPI ``Depends`` graph stay
+    request-local while still sharing the pool.
+    """
+    global _pg_executor
+    _pg_executor = executor
+
+
+def get_oltp_executor() -> "SqlExecutor | PgExecutor | None":
+    """Return the registered OLTP executor or ``None`` if Lakebase is off."""
+    return _pg_executor
+
 
 _SP_TTL = 45 * 60  # 45 minutes
 _OBO_TTL = 45 * 60  # 45 minutes
@@ -116,6 +153,32 @@ async def get_obo_sql_executor(
     )
 
 
+async def get_sp_oltp_executor(
+    sp_sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+) -> SqlExecutor:
+    """Return the executor that owns the OLTP tables.
+
+    When Lakebase is configured the lifespan handler registers a
+    :class:`backend.pg_executor.PgExecutor` via :func:`set_oltp_executor`
+    and we hand it back to every OLTP service.  Otherwise we fall back
+    to the legacy Delta executor (``get_sp_sql_executor``) so existing
+    deployments keep working with no code changes on their side.
+
+    The return type is annotated as :class:`SqlExecutor` so every
+    downstream service can keep its existing ``sql: SqlExecutor``
+    parameter.  :class:`PgExecutor` deliberately mirrors the public
+    surface (``execute``, ``query``, ``query_dicts``, ``upsert``,
+    ``q``, ``json_literal_expr``, ``ts_text``, ``dialect``) so the
+    cast is safe at the call sites we exercise — services only touch
+    that surface.  See ``sql_executor.py`` and ``pg_executor.py`` for
+    the parity contract.
+    """
+    pg = get_oltp_executor()
+    if pg is None:
+        return sp_sql
+    return cast(SqlExecutor, pg)
+
+
 # ---------------------------------------------------------------------------
 # Service factories
 # ---------------------------------------------------------------------------
@@ -124,21 +187,26 @@ async def get_obo_sql_executor(
 async def get_migration_runner(
     sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
 ) -> MigrationRunner:
-    """Create a MigrationRunner using app (SP) credentials."""
+    """Create the Delta MigrationRunner using app (SP) credentials.
+
+    The Postgres :class:`PgMigrationRunner` is constructed separately
+    in :func:`backend.app.lifespan` because it needs the running
+    :class:`PgExecutor`, not a SQL warehouse executor.
+    """
     return MigrationRunner(sql=sql)
 
 
 async def get_app_settings_service(
-    sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+    sql: Annotated[SqlExecutor, Depends(get_sp_oltp_executor)],
 ) -> AppSettingsService:
-    """Create an AppSettingsService using app (SP) credentials."""
+    """Create an AppSettingsService routed at the OLTP executor."""
     return AppSettingsService(sql=sql)
 
 
 async def get_role_service(
-    sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+    sql: Annotated[SqlExecutor, Depends(get_sp_oltp_executor)],
 ) -> RoleService:
-    """Create a RoleService using app (SP) credentials."""
+    """Create a RoleService routed at the OLTP executor."""
     return RoleService(sql=sql)
 
 
@@ -155,9 +223,9 @@ async def get_ai_rules_service(
 
 
 async def get_rules_catalog_service(
-    sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+    sql: Annotated[SqlExecutor, Depends(get_sp_oltp_executor)],
 ) -> RulesCatalogService:
-    """Create a RulesCatalogService using app (SP) credentials."""
+    """Create a RulesCatalogService routed at the OLTP executor."""
     return RulesCatalogService(sql=sql)
 
 
@@ -184,16 +252,16 @@ async def get_view_service(
 
 
 async def get_comments_service(
-    sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+    sql: Annotated[SqlExecutor, Depends(get_sp_oltp_executor)],
 ) -> CommentsService:
-    """Create a CommentsService using app (SP) credentials."""
+    """Create a CommentsService routed at the OLTP executor."""
     return CommentsService(sql=sql)
 
 
 async def get_schedule_config_service(
-    sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+    sql: Annotated[SqlExecutor, Depends(get_sp_oltp_executor)],
 ) -> ScheduleConfigService:
-    """Create a ScheduleConfigService using app (SP) credentials."""
+    """Create a ScheduleConfigService routed at the OLTP executor."""
     return ScheduleConfigService(sql=sql)
 
 
@@ -372,6 +440,9 @@ __all__ = [
     "get_obo_ws",
     "get_sp_sql_executor",
     "get_obo_sql_executor",
+    "get_sp_oltp_executor",
+    "get_oltp_executor",
+    "set_oltp_executor",
     "get_conf",
     "get_check_validator",
     "get_migration_runner",

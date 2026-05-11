@@ -35,13 +35,18 @@ class ScheduleConfigService:
 
     def __init__(self, sql: SqlExecutor) -> None:
         self._sql = sql
-        self._table = f"{sql.catalog}.{sql.schema}.dq_schedule_configs"
-        self._history_table = f"{sql.catalog}.{sql.schema}.dq_schedule_configs_history"
+        if getattr(sql, "dialect", "delta") == "postgres":
+            self._table = f"{sql.schema}.dq_schedule_configs"
+            self._history_table = f"{sql.schema}.dq_schedule_configs_history"
+        else:
+            self._table = f"{sql.catalog}.{sql.schema}.dq_schedule_configs"
+            self._history_table = f"{sql.catalog}.{sql.schema}.dq_schedule_configs_history"
 
     def list_schedules(self) -> list[ScheduleConfigEntry]:
+        ts = self._sql.ts_text
         sql = (
             f"SELECT schedule_name, config_json, version, created_by, "
-            f"CAST(created_at AS STRING), updated_by, CAST(updated_at AS STRING) "
+            f"{ts('created_at')}, updated_by, {ts('updated_at')} "
             f"FROM {self._table} ORDER BY schedule_name"
         )
         rows = self._sql.query(sql)
@@ -50,9 +55,10 @@ class ScheduleConfigService:
     def get(self, name: str) -> ScheduleConfigEntry | None:
         validate_schedule_name(name)
         escaped = escape_sql_string(name)
+        ts = self._sql.ts_text
         sql = (
             f"SELECT schedule_name, config_json, version, created_by, "
-            f"CAST(created_at AS STRING), updated_by, CAST(updated_at AS STRING) "
+            f"{ts('created_at')}, updated_by, {ts('updated_at')} "
             f"FROM {self._table} WHERE schedule_name = '{escaped}'"
         )
         rows = self._sql.query(sql)
@@ -66,33 +72,58 @@ class ScheduleConfigService:
         config: dict[str, Any],
         user_email: str,
     ) -> ScheduleConfigEntry:
+        """Upsert a schedule config row, incrementing ``version`` on update.
+
+        Uses an explicit MERGE rather than ``SqlExecutor.upsert`` because:
+        1. ``version`` increments rather than being clobbered, and
+        2. ``created_*`` is preserved on update; only ``updated_*`` changes.
+        """
         validate_schedule_name(name)
         config_json = json.dumps(config)
-        now = datetime.now(timezone.utc).isoformat()
 
         escaped_name = escape_sql_string(name)
         escaped_json = escape_sql_string(config_json)
         escaped_user = escape_sql_string(user_email)
 
-        sql = (
-            f"MERGE INTO {self._table} AS target "
-            f"USING (SELECT '{escaped_name}' AS schedule_name) AS source "
-            "ON target.schedule_name = source.schedule_name "
-            "WHEN MATCHED THEN UPDATE SET "
-            f"  config_json = '{escaped_json}', "
-            "  version = target.version + 1, "
-            f"  updated_by = '{escaped_user}', "
-            f"  updated_at = '{now}' "
-            "WHEN NOT MATCHED THEN INSERT "
-            "(schedule_name, config_json, version, created_by, created_at, updated_by, updated_at) "
-            f"VALUES ('{escaped_name}', '{escaped_json}', 1, '{escaped_user}', '{now}', '{escaped_user}', '{now}')"
-        )
+        if getattr(self._sql, "dialect", "delta") == "postgres":
+            # On conflict we reference the existing row via the
+            # unqualified base table name (Postgres' convention for
+            # ON CONFLICT DO UPDATE), versus EXCLUDED.* which would
+            # surface the proposed-row values.
+            base = self._table.split(".")[-1]
+            sql = (
+                f"INSERT INTO {self._table} "
+                "(schedule_name, config_json, version, created_by, created_at, updated_by, updated_at) "
+                f"VALUES ('{escaped_name}', '{escaped_json}', 1, '{escaped_user}', now(), "
+                f"'{escaped_user}', now()) "
+                "ON CONFLICT (schedule_name) DO UPDATE SET "
+                f"  config_json = '{escaped_json}', "
+                f"  version = {base}.version + 1, "
+                f"  updated_by = '{escaped_user}', "
+                "  updated_at = now()"
+            )
+        else:
+            sql = (
+                f"MERGE INTO {self._table} AS target "
+                f"USING (SELECT '{escaped_name}' AS schedule_name) AS source "
+                "ON target.schedule_name = source.schedule_name "
+                "WHEN MATCHED THEN UPDATE SET "
+                f"  config_json = '{escaped_json}', "
+                "  version = target.version + 1, "
+                f"  updated_by = '{escaped_user}', "
+                "  updated_at = now() "
+                "WHEN NOT MATCHED THEN INSERT "
+                "(schedule_name, config_json, version, created_by, created_at, updated_by, updated_at) "
+                f"VALUES ('{escaped_name}', '{escaped_json}', 1, '{escaped_user}', now(), "
+                f"'{escaped_user}', now())"
+            )
         self._sql.execute(sql)
         self._record_history(name, config_json, user_email, "save")
         logger.info("Saved schedule config: %s (user=%s)", name, user_email)
 
         entry = self.get(name)
         if entry is None:
+            now = datetime.now(timezone.utc).isoformat()
             return ScheduleConfigEntry(
                 schedule_name=name,
                 config=config,
@@ -125,7 +156,7 @@ class ScheduleConfigService:
         escaped = escape_sql_string(name)
         sql = (
             f"SELECT schedule_name, config_json, version, action, changed_by, "
-            f"CAST(changed_at AS STRING) "
+            f"{self._sql.ts_text('changed_at')} "
             f"FROM {self._history_table} "
             f"WHERE schedule_name = '{escaped}' "
             "ORDER BY changed_at DESC"
@@ -162,7 +193,6 @@ class ScheduleConfigService:
         version: int = 0,
     ) -> None:
         try:
-            now = datetime.now(timezone.utc).isoformat()
             escaped_name = escape_sql_string(name)
             escaped_json = escape_sql_string(config_json)
             escaped_user = escape_sql_string(user_email)
@@ -171,7 +201,7 @@ class ScheduleConfigService:
                 f"INSERT INTO {self._history_table} "
                 "(schedule_name, config_json, version, action, changed_by, changed_at) "
                 f"VALUES ('{escaped_name}', '{escaped_json}', {version}, '{escaped_action}', "
-                f"'{escaped_user}', '{now}')"
+                f"'{escaped_user}', now())"
             )
             self._sql.execute(sql)
         except Exception:
