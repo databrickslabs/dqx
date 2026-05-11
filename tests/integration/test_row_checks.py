@@ -1846,7 +1846,8 @@ def test_col_is_valid_ipv4_address(spark):
 def test_col_is_valid_email(spark):
     schema_email = "a: string"
     local_part_at_char_limit = "a" * 64  # 64 characters total
-    full_text_at_char_limit = "a" * 64 + "@" + "b" * 186 + ".co"  # 254 characters total
+    quoted_local_at_char_limit = '"' + "a" * 62 + '"'  # 64 characters including the surrounding quotes
+    full_text_at_char_limit = "a" * 64 + "@" + "b" * 63 + "." + "b" * 63 + "." + "b" * 58 + ".co"  # 254 chars total
 
     test_df = spark.createDataFrame(
         [
@@ -1857,7 +1858,7 @@ def test_col_is_valid_email(spark):
             ["mixed.case@MixedCase.Org"],  # case variations
             ["user@[IPv6:::::::::]"],  # NOTE: IPv6 validation based on regex currently passes validation
             [local_part_at_char_limit + "@b.com"],  # unquoted local part at 64-characters
-            [f'"{local_part_at_char_limit}"' + "@example.com"],  # quoted local part more than 64 characters
+            [quoted_local_at_char_limit + "@example.com"],  # quoted local part at 64-characters (incl. quotes)
             [full_text_at_char_limit],  # exactly at 254-character limit for the full text
             ['"a"@example.com'],
             ['"a@b"@example.com'],  # "@" inside quoted local
