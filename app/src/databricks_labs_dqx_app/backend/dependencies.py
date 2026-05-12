@@ -4,7 +4,7 @@ import asyncio
 import hashlib
 import os
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Annotated, Any, cast
+from typing import TYPE_CHECKING, Annotated, Any, Union, cast
 
 if TYPE_CHECKING:
     from .common.connectors.sql import SQLConnector
@@ -34,24 +34,21 @@ from .sql_executor import SqlExecutor
 if TYPE_CHECKING:
     from .pg_executor import PgExecutor
 
-# Type alias used by every OLTP-touching service: either the legacy
-# Delta-backed :class:`SqlExecutor` or, when Lakebase is enabled, the
-# :class:`PgExecutor`.  The two classes share the public surface
+# Union of the two executors that share the OLTP service surface
 # (``execute``, ``query``, ``query_dicts``, ``upsert``, ``q``,
-# ``json_literal_expr``, ``ts_text``, ``dialect``) so service code can
-# stay backend-agnostic.
-OltpExecutor = "SqlExecutor | PgExecutor"
+# ``json_literal_expr``, ``ts_text``, ``dialect``). String forward refs
+# because ``PgExecutor`` is TYPE_CHECKING-only to avoid importing psycopg
+# at module load when Lakebase isn't configured.
+OltpExecutor = Union["SqlExecutor", "PgExecutor"]
 
-# Process-wide OLTP executor (Lakebase Postgres). Constructed once at
-# app startup by ``app.lifespan`` and re-used across all requests so
-# the psycopg connection pool isn't rebuilt per call.  ``None`` means
-# Lakebase is not configured and the legacy Delta executor handles
-# OLTP traffic instead.  Lower-cased to keep basedpyright from
-# flagging it as an immutable module-level constant.
-_pg_executor: "SqlExecutor | PgExecutor | None" = None
+# Process-wide OLTP executor. Constructed once at app startup by
+# ``app.lifespan`` and reused across all requests so the psycopg pool
+# isn't rebuilt per call. ``None`` means Lakebase is not configured and
+# the legacy Delta executor handles OLTP traffic instead.
+_pg_executor: OltpExecutor | None = None
 
 
-def set_oltp_executor(executor: "SqlExecutor | PgExecutor | None") -> None:
+def set_oltp_executor(executor: OltpExecutor | None) -> None:
     """Register (or clear) the process-wide OLTP executor.
 
     Called from :func:`backend.app.lifespan` after the connection pool
@@ -63,7 +60,7 @@ def set_oltp_executor(executor: "SqlExecutor | PgExecutor | None") -> None:
     _pg_executor = executor
 
 
-def get_oltp_executor() -> "SqlExecutor | PgExecutor | None":
+def get_oltp_executor() -> OltpExecutor | None:
     """Return the registered OLTP executor or ``None`` if Lakebase is off."""
     return _pg_executor
 
