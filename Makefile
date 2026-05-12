@@ -149,12 +149,21 @@ app-bind:
 # the existing resources and fail.
 #
 # Usage: make app-deploy PROFILE=my-profile TARGET=dev
+#        make app-deploy PROFILE=my-profile TARGET=dev \
+#                        BUNDLE_VARS='--var=lakebase_instance_name=<fresh-name>'
+#
+# BUNDLE_VARS forwards arbitrary ``--var key=value`` arguments to
+# ``bundle deploy`` and ``bundle run``. The common use case is
+# overriding ``lakebase_instance_name`` when the original name is
+# locked by Lakebase's ~7-day soft-delete retention after a manual
+# delete (the deploy errors out with "Instance name is not unique"
+# otherwise). Per-deploy CLI overrides keep ``databricks.yml`` clean.
 app-deploy: app-build
 	@test -n "$(PROFILE)" || (echo "Usage: make app-deploy PROFILE=<databricks-profile> TARGET=<bundle-target>"; exit 1)
 	@test -n "$(TARGET)" || (echo "Usage: make app-deploy PROFILE=<databricks-profile> TARGET=<bundle-target>"; exit 1)
-	cd app && databricks bundle deploy -p $(PROFILE) -t $(TARGET)
+	cd app && databricks bundle deploy -p $(PROFILE) -t $(TARGET) $(BUNDLE_VARS)
 	app/scripts/post_deploy_grants.sh -p $(PROFILE) -t $(TARGET)
-	cd app && databricks bundle run $(APP_NAME) -p $(PROFILE) -t $(TARGET)
+	cd app && databricks bundle run $(APP_NAME) -p $(PROFILE) -t $(TARGET) $(BUNDLE_VARS)
 
 APP_NAME ?= dqx-studio
 

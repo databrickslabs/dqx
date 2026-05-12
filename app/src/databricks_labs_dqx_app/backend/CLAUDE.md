@@ -242,7 +242,7 @@ to their native syntax.
 
 ### Bundle / DAB conventions
 
-All stateful resources are declared in `databricks.yml` with
+Stateful resources declared in `databricks.yml` with
 `lifecycle.prevent_destroy: true` (Databricks CLI 0.268+):
 
 * `resources.schemas.main_schema` — `dqx_studio` schema
@@ -250,25 +250,38 @@ All stateful resources are declared in `databricks.yml` with
 * `resources.volumes.wheels` — wheels volume
 * `resources.database_instances.lakebase` — Lakebase Postgres instance
   (autoscaling by default per [Lakebase Autoscaling](https://docs.databricks.com/aws/en/oltp/upgrade-to-autoscaling))
-* `resources.database_catalogs.lakebase_db` — logical Postgres database
-  via `create_database_if_not_exists: true`, plus a surrounding Unity
-  Catalog catalog (informational only; the app connects to Postgres
-  directly via psycopg)
 
-The app→database binding stays in `resources.apps.dqx-studio.resources`,
-referencing the bundle resources so DABs orders the deploy correctly
-(instance + logical DB created before the app binds to them).
+The app connects to the always-present `databricks_postgres` admin
+database on the Lakebase instance — that's the default value of
+`lakebase_database_name` and the value the app→database binding
+wires up. On first start, the app creates its own `dqx_studio`
+Postgres schema inside `databricks_postgres` and runs migrations
+against it. Multiple apps can therefore share the same
+`databricks_postgres` on one Lakebase instance safely; each gets its
+own schema namespace.
+
+The bundle deliberately does NOT use `database_catalogs`. That DAB
+resource is the only way to *create* a custom logical Postgres
+database, but it also creates a Unity Catalog catalog as a side
+effect and therefore requires `CREATE CATALOG` on the metastore — a
+permission most app deployers don't hold. Connecting to the
+pre-existing `databricks_postgres` instead keeps the bundle fully
+declarative with no out-of-band bootstrap step and no metastore-level
+permissions assumed.
 
 `prevent_destroy` blocks `databricks bundle destroy` and any deploy
-that would force-replace the resource — the alternative is silent data
-loss. To intentionally tear something down: remove the flag, run
-`databricks bundle deployment unbind <key>`, then destroy.
+that would force-replace a bundle-managed resource — the alternative
+is silent data loss. To intentionally tear one down: remove the flag,
+run `databricks bundle deployment unbind <key>`, then destroy. The
+app's `dqx_studio` Postgres schema lives below the resource layer
+DABs models, so `prevent_destroy` doesn't apply to it directly; the
+instance-level guard is what protects it.
 
-For workspaces where the resources were provisioned out-of-band before
-this layout existed (e.g. by the legacy bootstrap script), one-time
-binding is required: `make app-bind PROFILE=... TARGET=...`. After bind,
-`bundle deploy` adopts the existing resources instead of trying to
-CREATE them.
+For workspaces where the schemas, volume, or Lakebase instance were
+provisioned out-of-band (e.g. by the legacy bootstrap script),
+one-time binding is required: `make app-bind PROFILE=... TARGET=...`.
+After bind, `bundle deploy` adopts the existing resources instead of
+trying to CREATE them.
 
 Privileges on UC objects for the auto-created app SP are still applied
 by `scripts/post_deploy_grants.sh` after each deploy — the app SP's

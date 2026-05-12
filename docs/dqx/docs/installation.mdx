@@ -519,7 +519,7 @@ Database migrations run automatically on app startup and preserve existing rules
 
 ### Uninstall DQX Studio
 
-`databricks bundle destroy` removes the app, the task-runner job, and the SQL warehouse, but is **blocked** from dropping the stateful resources (schemas, volume, Lakebase instance, Lakebase logical DB) by their `prevent_destroy` flag. To fully uninstall, you have to opt-in to the destroy:
+`databricks bundle destroy` removes the app, the task-runner job, and the SQL warehouse, but is **blocked** from dropping the bundle-managed stateful resources (schemas, volume, Lakebase instance) by their `prevent_destroy` flag. The DQX `dqx_studio` Postgres schema inside `databricks_postgres` lives below the resource layer DABs models and is therefore unaffected by `bundle destroy` — drop it manually if you want a fully clean wipe. To fully uninstall:
 
 1. Edit `app/databricks.yml` and remove `lifecycle.prevent_destroy: true` from each of the stateful resources you want to drop.
 2. Unbind the resources so the bundle no longer tracks them, then destroy:
@@ -528,17 +528,22 @@ Database migrations run automatically on app startup and preserve existing rules
    databricks bundle deployment unbind main_schema -t <your-target>
    databricks bundle deployment unbind tmp_schema  -t <your-target>
    databricks bundle deployment unbind wheels      -t <your-target>
-   databricks bundle deployment unbind lakebase_db -t <your-target>
    databricks bundle deployment unbind lakebase    -t <your-target>
    databricks bundle destroy -p <your-profile> -t <your-target>
    ```
-3. Drop the now-unbound resources manually if desired:
+3. Drop the now-unbound UC resources manually if desired:
    ```sql
    DROP VOLUME IF EXISTS <catalog>.dqx_studio.wheels;
    DROP SCHEMA IF EXISTS <catalog>.dqx_studio CASCADE;
    DROP SCHEMA IF EXISTS <catalog>.dqx_studio_tmp CASCADE;
    ```
+4. Drop the DQX Postgres schema and the Lakebase instance if desired:
    ```bash
+   # DQX schema inside ``databricks_postgres`` (connect to the
+   # Lakebase instance with psql via ``databricks_postgres``):
+   #   DROP SCHEMA IF EXISTS dqx_studio CASCADE;
+
+   # Lakebase instance:
    databricks database delete-database-instance dqx-studio-lakebase -p <your-profile>
    ```
 

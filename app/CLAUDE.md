@@ -86,17 +86,18 @@ Lakebase database (when enabled, default = `dqx-studio-lakebase`):
 
 ## Bundle conventions
 
-All stateful resources are declared in `databricks.yml`:
+Stateful resources declared in `databricks.yml`:
 
 - `resources.schemas.main_schema` — `dqx_studio` schema
 - `resources.schemas.tmp_schema` — `dqx_studio_tmp` schema
 - `resources.volumes.wheels` — wheels volume
 - `resources.database_instances.lakebase` — Lakebase Postgres instance (autoscaling)
-- `resources.database_catalogs.lakebase_db` — logical Postgres database (via `create_database_if_not_exists: true`) and a surrounding UC catalog (informational; the app connects directly via psycopg)
 
-Every one of them carries `lifecycle.prevent_destroy: true` (Databricks CLI 0.268+), which blocks `databricks bundle destroy` and any deploy that would force-replace the resource. To intentionally tear something down: drop the flag, `databricks bundle deployment unbind <key> -t <target>`, then destroy.
+Each carries `lifecycle.prevent_destroy: true` (Databricks CLI 0.268+), which blocks `databricks bundle destroy` and any deploy that would force-replace the resource. To intentionally tear something down: drop the flag, `databricks bundle deployment unbind <key> -t <target>`, then destroy.
 
-For workspaces where these resources already exist (e.g. created out-of-band before this layout existed), run `make app-bind PROFILE=... TARGET=...` once per target to adopt them — otherwise `databricks bundle deploy` errors out with "already exists" / "Instance name is not unique".
+The app connects to the always-present `databricks_postgres` admin database on the Lakebase instance (set as the default `lakebase_database_name`) and creates its own `dqx_studio` Postgres schema there on first start. No DAB resource is needed to provision a per-app logical database; the bundle stays fully declarative. We deliberately do not use `database_catalogs` because it also creates a Unity Catalog catalog and therefore requires `CREATE CATALOG` on the metastore — a permission most app deployers don't hold.
+
+For workspaces where the schemas / volume / Lakebase instance already exist (e.g. created out-of-band before this layout existed), run `make app-bind PROFILE=... TARGET=...` once per target to adopt them — otherwise `databricks bundle deploy` errors out with "already exists" / "Instance name is not unique".
 
 Privileges on UC objects for the auto-created app SP are still reapplied with `scripts/post_deploy_grants.sh` after each deploy, because the app SP's UUID isn't known at bundle-write time.
 

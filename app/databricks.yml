@@ -38,25 +38,33 @@ variables:
   # dq_quarantine_records) stay in Delta — those are written by the
   # Spark task runner and consumed by AI/BI dashboards.
   #
-  # The Lakebase instance and its logical Postgres database are
-  # declared as bundle resources below with
+  # The Lakebase instance is declared as a bundle resource below with
   # ``lifecycle.prevent_destroy: true``. New Lakebase instances are
   # autoscaling by default (see
   # https://docs.databricks.com/aws/en/oltp/upgrade-to-autoscaling).
+  #
+  # Connection target: ``databricks_postgres`` — the always-present
+  # admin database every Lakebase instance ships with. We don't create
+  # a per-app logical Postgres database because the only DAB resource
+  # that creates one (``database_catalogs``) also creates a Unity
+  # Catalog catalog and therefore requires ``CREATE CATALOG`` on the
+  # metastore — a permission most app deployers don't hold. Using
+  # ``databricks_postgres`` keeps the bundle fully declarative with no
+  # external bootstrap steps, and we still get per-app isolation via a
+  # dedicated Postgres schema (``DQX_LAKEBASE_SCHEMA_NAME`` in the app
+  # config, defaults to ``dqx_studio``).
   lakebase_instance_name:
     description: "Name of the Lakebase Postgres instance for OLTP state."
     default: "dqx-studio-lakebase"
   lakebase_database_name:
-    description: "Logical Postgres database the app connects to inside the Lakebase instance."
-    default: "dqx_studio"
-  lakebase_uc_catalog_name:
     description: >
-      UC catalog created by the database_catalogs resource. ``database_catalogs``
-      surfaces the Lakebase Postgres database in Unity Catalog (so it's queryable
-      via UC SQL) and is the only DAB resource that can create the logical
-      Postgres database — that's why we use it. The app itself connects to
-      Postgres directly via psycopg, so this UC catalog is informational only.
-    default: "dqx_studio_lakebase"
+      Logical Postgres database the app connects to inside the Lakebase
+      instance. Defaults to ``databricks_postgres`` (always present, no
+      creation required). All DQX tables live inside a dedicated
+      ``dqx_studio`` schema within this database for isolation, so
+      multiple apps can safely share ``databricks_postgres`` on the
+      same Lakebase instance.
+    default: "databricks_postgres"
   lakebase_capacity:
     description: "Lakebase compute capacity (CU_1, CU_2, CU_4, CU_8)"
     default: "CU_1"
@@ -88,10 +96,12 @@ variables:
           value: "${var.admin_group}"
         - name: "DQX_WHEELS_VOLUME"
           value: "/Volumes/${var.catalog_name}/${var.schema_name}/${var.wheels_volume_name}"
-        # Lakebase wiring. The instance and logical Postgres database
-        # are declared as bundle resources further down (with
-        # ``lifecycle.prevent_destroy: true`` so ``bundle destroy``
-        # cannot drop them).
+        # Lakebase wiring. The instance is declared as a bundle
+        # resource further down (with ``lifecycle.prevent_destroy: true``
+        # so ``bundle destroy`` cannot drop it). The logical database
+        # defaults to the always-present ``databricks_postgres``; the
+        # app creates its ``dqx_studio`` Postgres schema inside it on
+        # first connection.
         - name: "DQX_LAKEBASE_INSTANCE_NAME"
           value: "${var.lakebase_instance_name}"
         - name: "DQX_LAKEBASE_DATABASE_NAME"
@@ -163,13 +173,17 @@ resources:
             permission: "CAN_MANAGE"
         # Lakebase Postgres for OLTP state (rules catalog, app
         # settings, RBAC, comments, schedule configs, scheduler
-        # bookkeeping). The instance + logical Postgres database are
-        # declared as bundle resources below; this entry binds the app
-        # to them so DABs sets up CAN_CONNECT_AND_CREATE automatically.
+        # bookkeeping). The instance is declared as a bundle resource
+        # below; the database defaults to the always-present
+        # ``databricks_postgres`` admin DB. This entry binds the app
+        # to the (instance, database) pair so DABs configures
+        # ``CAN_CONNECT_AND_CREATE`` automatically — that lets the app
+        # SP create its ``dqx_studio`` schema inside the bound DB on
+        # first connection.
         - name: "dqx-lakebase"
           description: "Lakebase Postgres backend for app OLTP state"
           database:
-            database_name: ${resources.database_catalogs.lakebase_db.database_name}
+            database_name: ${var.lakebase_database_name}
             instance_name: ${resources.database_instances.lakebase.name}
             permission: "CAN_CONNECT_AND_CREATE"
 
@@ -232,19 +246,6 @@ resources:
     lakebase:
       name: ${var.lakebase_instance_name}
       capacity: ${var.lakebase_capacity}
-      lifecycle:
-        prevent_destroy: true
-
-  database_catalogs:
-    # Creates the logical Postgres database AND a Unity Catalog catalog
-    # that surfaces it for ad-hoc UC SQL queries. The app itself
-    # connects to Postgres directly via psycopg; the UC catalog is
-    # informational and not on the request path.
-    lakebase_db:
-      database_instance_name: ${resources.database_instances.lakebase.name}
-      name: ${var.lakebase_uc_catalog_name}
-      database_name: ${var.lakebase_database_name}
-      create_database_if_not_exists: true
       lifecycle:
         prevent_destroy: true
 
@@ -321,7 +322,6 @@ targets:
   #     # wheels_volume_name: <your-volume-name>
   #     # lakebase_instance_name: <your-lakebase-instance>
   #     # lakebase_database_name: <your-lakebase-db>
-  #     # lakebase_uc_catalog_name: <your-uc-catalog-for-lakebase>
   #     # lakebase_capacity: CU_1 | CU_2 | CU_4 | CU_8
   #   presets:
   #     trigger_pause_status: PAUSED
