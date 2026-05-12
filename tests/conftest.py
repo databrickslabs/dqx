@@ -107,10 +107,10 @@ def _retry_sdk_auth_flakes(monkeypatch):
     immediately.
     """
 
-    def _wrap(method_name: str):
+    def _wrap(method_name: str) -> None:
         original = getattr(Config, method_name)
 
-        def retrying(self, *args, **kwargs):
+        def retrying(self: Any, *args: Any, **kwargs: Any) -> Any:
             last_exc: BaseException | None = None
             for attempt in range(5):
                 try:
