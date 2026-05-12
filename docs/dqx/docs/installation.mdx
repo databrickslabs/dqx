@@ -476,7 +476,7 @@ Databricks CLI will confirm a few options:
          trigger_pause_status: PAUSED
    ```
 
-   See the [DQX Studio deployment guide](https://github.com/databrickslabs/dqx/blob/v0.13.0/app/DEPLOYMENT.md#step-4-configure-databricksyml) for the full reference of each variable, including security implications of `admin_group` and when to override per target.
+   See the [DQX Studio deployment guide](https://github.com/databrickslabs/dqx/blob/v0.14.0/app/DEPLOYMENT.md#step-4-configure-databricksyml) for the full reference of each variable, including security implications of `admin_group` and when to override per target.
 
 4. (One-time, only on a workspace whose schemas / volume / Lakebase instance were created out-of-band before adopting this layout) adopt them into bundle management:
    ```commandline
@@ -496,7 +496,7 @@ Databricks CLI will confirm a few options:
 The studio's schemas (`dqx_studio`, `dqx_studio_tmp`), wheels volume, Lakebase Postgres instance, and the logical Postgres database inside it are all declared as bundle resources with `lifecycle.prevent_destroy: true` (Databricks CLI 0.268+). `databricks bundle destroy` is blocked from dropping them, so production data survives accidental destroy/replace operations. To intentionally tear something down, remove the flag, `databricks bundle deployment unbind <key>`, then destroy manually.
 </Admonition>
 
-For the full walkthrough — including step-by-step commands, manual `GRANT` statements, troubleshooting, target-specific configuration, and the bind workflow for adopting existing resources — see the [DQX Studio deployment guide](https://github.com/databrickslabs/dqx/blob/v0.13.0/app/DEPLOYMENT.md).
+For the full walkthrough — including step-by-step commands, manual `GRANT` statements, troubleshooting, target-specific configuration, and the bind workflow for adopting existing resources — see the [DQX Studio deployment guide](https://github.com/databrickslabs/dqx/blob/v0.14.0/app/DEPLOYMENT.md).
 
 <Admonition type="note" title="Hybrid storage backend">
 DQX Studio splits its data across two physical backends: high-volume append-mostly tables (`dq_validation_runs`, `dq_profiling_results`, `dq_quarantine_records`, `dq_metrics`) live in **Delta Lake** because they're written by Spark; transactional tables (rules catalog, app settings, RBAC, comments, schedule configs) live in **Lakebase Postgres** for fast row-level reads/writes from the FastAPI request handlers.

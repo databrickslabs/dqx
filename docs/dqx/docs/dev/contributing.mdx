@@ -203,9 +203,9 @@ DQX_JOB_ID=<task-runner-job-id>                 # optional locally; required for
 DQX_LAKEBASE_INSTANCE_NAME=                     # optional locally; empty = OLTP tables run on Delta
 ```
 
-Leave `DQX_LAKEBASE_INSTANCE_NAME` empty for most local dev — the app falls back to Delta for the OLTP tables (rules catalog, app settings, RBAC, comments, schedules) so you don't need a Lakebase instance to iterate. To exercise the Lakebase path locally, deploy the bundle once and point the variable at the resulting instance. See [app/DEVELOPMENT.md](https://github.com/databrickslabs/dqx/blob/v0.13.0/app/DEVELOPMENT.md) for the full set of `DQX_LAKEBASE_*` variables.
+Leave `DQX_LAKEBASE_INSTANCE_NAME` empty for most local dev — the app falls back to Delta for the OLTP tables (rules catalog, app settings, RBAC, comments, schedules) so you don't need a Lakebase instance to iterate. To exercise the Lakebase path locally, deploy the bundle once and point the variable at the resulting instance. See [app/DEVELOPMENT.md](https://github.com/databrickslabs/dqx/blob/v0.14.0/app/DEVELOPMENT.md) for the full set of `DQX_LAKEBASE_*` variables.
 
-If you don't have a profile yet, run `databricks auth login --host <workspace-url> -p <your-profile>` first. See the [Development Mode](https://github.com/databrickslabs/dqx/blob/v0.13.0/app/README.md#development-mode) section of the app README for more detail.
+If you don't have a profile yet, run `databricks auth login --host <workspace-url> -p <your-profile>` first. See the [Development Mode](https://github.com/databrickslabs/dqx/blob/v0.14.0/app/README.md#development-mode) section of the app README for more detail.
 
 <Admonition type="note" title="Profiler and dry-run features require deployment">
 The **profiler** and **dry-run** features rely on a Databricks Job (`dqx-app-task-runner`) that only exists after you deploy the app bundle to a workspace. For local UI and backend development (routes, components, auth wiring, config), you can skip this — `DQX_JOB_ID` is not required and the app will start without it. All other features will work locally.
@@ -230,7 +230,7 @@ Deploying DQX Studio to a workspace is required when you want to:
 - verify a change behaves correctly under the production identity model (service principal + on-behalf-of), or
 - run a review pass against a deployed app before merging.
 
-For the full step-by-step (service principal creation, one-time storage bootstrap, asset-bundle deploy, Lakebase opt-out, post-deploy grants, app start, troubleshooting) follow [app/DEPLOYMENT.md](https://github.com/databrickslabs/dqx/blob/v0.13.0/app/DEPLOYMENT.md).
+For the full step-by-step (service principal creation, one-time storage bootstrap, asset-bundle deploy, Lakebase opt-out, post-deploy grants, app start, troubleshooting) follow [app/DEPLOYMENT.md](https://github.com/databrickslabs/dqx/blob/v0.14.0/app/DEPLOYMENT.md).
 
 ### Running integration tests and code coverage
 
