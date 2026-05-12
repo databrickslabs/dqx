@@ -117,7 +117,7 @@ In all cases, the full test suite is executed on code merged into `main` branch 
 
 This section provides a step-by-step guide for setting up your local environment and dependencies for efficient development.
 
-To start with, install the required python version on your computer (see `requires-python` field in [pyproject.toml](https://github.com/databrickslabs/dqx/blob/v0.13.0/pyproject.toml)).
+To start with, install the required python version on your computer (see `requires-python` field in [pyproject.toml](https://github.com/databrickslabs/dqx/blob/v0.14.0/pyproject.toml)).
 On MacOSX, run:
 ```
 # double check the required version in pyproject.toml
@@ -167,7 +167,7 @@ Always use `make` targets instead of running `uv` commands directly. The Makefil
 
 ### DQX Studio development
 
-DQX Studio (under `app/`) is a FastAPI backend + React frontend packaged as a single Python wheel and deployed as a [Databricks App](https://docs.databricks.com/en/dev-tools/databricks-apps/index.html). See [app/README.md](https://github.com/databrickslabs/dqx/blob/v0.13.0/app/README.md) for architecture and local development, and [DQX Studio deployment](#dqx-studio-deployment) below for the end-to-end deployment guide.
+The DQX Studio (under `app/`) is a FastAPI backend + React frontend packaged as a single Python wheel and deployed as a [Databricks App](https://docs.databricks.com/en/dev-tools/databricks-apps/index.html). See [app/README.md](https://github.com/databrickslabs/dqx/blob/v0.14.0/app/README.md) for architecture and local development, and [DQX Studio deployment](#dqx-studio-deployment) below for the end-to-end deployment guide.
 
 Install the app's JavaScript dependencies (using the committed `yarn.lock`):
 ```shell
@@ -552,4 +552,4 @@ The following skills are provided to cover the main capabilities of DQX:
 - Keep each `SKILL.md` file short. The full file is loaded into context when a skill fires.
 - Link to existing documentation instead of duplicating content. The skill's job is to tell the assistant when and how to use an API.
 - Limit skills to use only public methods and APIs of DQX.
-- Update the [documentation](https://github.com/databrickslabs/dqx/blob/v0.13.0/docs/dqx/docs/guide/ai_tools_skills.mdx) if you change install paths, the marketplace manifest, or the public list of skills.
+- Update the [documentation](https://github.com/databrickslabs/dqx/blob/v0.14.0/docs/dqx/docs/guide/ai_tools_skills.mdx) if you change install paths, the marketplace manifest, or the public list of skills.
