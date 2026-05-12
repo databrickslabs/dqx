@@ -107,8 +107,15 @@ def api_client(ws, test_app_folder, monkeypatch, make_schema):
     warehouse_id = os.environ.get("DATABRICKS_WAREHOUSE_ID", "")
     test_schema = make_schema(catalog_name=TEST_CATALOG)
     _sql = SqlExecutor(ws=ws, warehouse_id=warehouse_id, catalog=TEST_CATALOG, schema=test_schema.name)
+
+    # Create the OLTP fallback tables (dq_app_settings, dq_quality_rules, ...)
+    # in the test schema. ``AppSettingsService.ensure_table()`` is a no-op
+    # since the Lakebase refactor — DDL now lives in MigrationRunner.
+    from databricks_labs_dqx_app.backend.migrations import MigrationRunner
+
+    MigrationRunner(_sql).run_all(include_oltp_fallback=True)
+
     _settings_svc = AppSettingsService(sql=_sql)
-    _settings_svc.ensure_table()
 
     async def override_get_app_settings_service() -> AppSettingsService:
         return _settings_svc
