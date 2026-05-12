@@ -25,10 +25,7 @@ class AppSettingsService:
 
     def __init__(self, sql: SqlExecutor) -> None:
         self._sql = sql
-        if getattr(sql, "dialect", "delta") == "postgres":
-            self._table = f"{sql.schema}.dq_app_settings"
-        else:
-            self._table = f"{sql.catalog}.{sql.schema}.dq_app_settings"
+        self._table = sql.fqn("dq_app_settings")
 
     # ------------------------------------------------------------------
     # Public API

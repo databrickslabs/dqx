@@ -44,8 +44,17 @@ while getopts "p:t:" opt; do
     *) usage ;;
   esac
 done
+shift $((OPTIND - 1))
 
 [[ -z "$PROFILE" || -z "$TARGET" ]] && usage
+
+# Everything after a ``--`` separator is forwarded to every bundle
+# subcommand as extra ``--var key=value`` overrides. Threading them
+# into ``bundle validate`` matters: that call is what produces the
+# JSON we parse below to learn which instance/schema name to bind to.
+# Without forwarding, a deploy-time override would bind the wrong
+# resource and the next deploy would still see a state-vs-config drift.
+EXTRA_VARS=("$@")
 
 CLI="databricks -p $PROFILE"
 BUNDLE_FLAGS=(-t "$TARGET")
@@ -61,7 +70,7 @@ cd "$BUNDLE_DIR"
 # ---------------------------------------------------------------------------
 BUNDLE_VALIDATE_STDERR=$(mktemp)
 trap 'rm -f "$BUNDLE_VALIDATE_STDERR"' EXIT
-if ! BUNDLE_JSON=$($CLI bundle validate "${BUNDLE_FLAGS[@]}" -o json 2>"$BUNDLE_VALIDATE_STDERR"); then
+if ! BUNDLE_JSON=$($CLI bundle validate "${BUNDLE_FLAGS[@]}" "${EXTRA_VARS[@]}" -o json 2>"$BUNDLE_VALIDATE_STDERR"); then
   echo "ERROR: 'databricks bundle validate' failed:" >&2
   cat "$BUNDLE_VALIDATE_STDERR" >&2
   exit 1
@@ -93,12 +102,39 @@ echo ""
 # "apply bundle resource updates to the existing remote resource on the
 # next deploy" — which is exactly what we want, so auto-approving is
 # safe.
+#
+# Bind is idempotent on the CLI side: re-binding an already-bound
+# resource exits 0. Any non-zero exit from ``bundle deployment bind``
+# therefore signals a genuine problem (the resource doesn't exist, the
+# principal lacks permission, the target points at the wrong workspace,
+# …) rather than a benign "already bound" state. We surface it loudly
+# instead of warning-and-continuing so the user sees the real cause
+# now, not a confusing "resource already exists" failure inside the
+# next ``bundle deploy``.
 bind() {
   local key="$1"
   local id="$2"
   echo "   binding ${key} -> ${id}"
-  if ! $CLI bundle deployment bind "$key" "$id" --auto-approve "${BUNDLE_FLAGS[@]}"; then
-    echo "   WARNING: bind for ${key} failed. It may already be bound, or the remote resource may not exist yet." >&2
+  if ! $CLI bundle deployment bind "$key" "$id" --auto-approve "${BUNDLE_FLAGS[@]}" "${EXTRA_VARS[@]}"; then
+    echo "" >&2
+    echo "ERROR: failed to bind ${key} -> ${id}" >&2
+    echo "" >&2
+    echo "Common causes:" >&2
+    echo "  - The remote resource does not exist yet. This script adopts" >&2
+    echo "    pre-existing resources; on a fresh workspace, skip it and" >&2
+    echo "    run 'make app-deploy' directly — the bundle creates the" >&2
+    echo "    resources for you." >&2
+    echo "  - The current principal (profile=${PROFILE}) lacks permission" >&2
+    echo "    to read or bind the resource." >&2
+    echo "  - The bundle target (${TARGET}) points at a different" >&2
+    echo "    workspace than the one where the resource was created." >&2
+    echo "" >&2
+    echo "Re-run after fixing the underlying cause, or run this single" >&2
+    echo "bind manually if you're certain the resource exists and is" >&2
+    echo "accessible:" >&2
+    echo "  databricks -p ${PROFILE} bundle deployment bind \\" >&2
+    echo "      ${key} ${id} --auto-approve -t ${TARGET}" >&2
+    exit 1
   fi
 }
 

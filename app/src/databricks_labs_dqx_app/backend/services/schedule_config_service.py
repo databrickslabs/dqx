@@ -35,12 +35,8 @@ class ScheduleConfigService:
 
     def __init__(self, sql: SqlExecutor) -> None:
         self._sql = sql
-        if getattr(sql, "dialect", "delta") == "postgres":
-            self._table = f"{sql.schema}.dq_schedule_configs"
-            self._history_table = f"{sql.schema}.dq_schedule_configs_history"
-        else:
-            self._table = f"{sql.catalog}.{sql.schema}.dq_schedule_configs"
-            self._history_table = f"{sql.catalog}.{sql.schema}.dq_schedule_configs_history"
+        self._table = sql.fqn("dq_schedule_configs")
+        self._history_table = sql.fqn("dq_schedule_configs_history")
 
     def list_schedules(self) -> list[ScheduleConfigEntry]:
         ts = self._sql.ts_text

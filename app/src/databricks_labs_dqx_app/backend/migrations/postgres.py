@@ -35,8 +35,9 @@ COLUMN IF NOT EXISTS`` natively so re-running is safe out of the box.
 from __future__ import annotations
 
 import logging
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +62,10 @@ class _Executor(Protocol):
 
     def execute(self, sql: str, *, timeout_seconds: int = 120) -> None: ...
     def query(self, sql: str, *, timeout_seconds: int = 120) -> list[list[str]]: ...
+
+    # Yields a psycopg Connection. Typed loosely so this Protocol stays
+    # free of a psycopg dependency.
+    def connection(self) -> AbstractContextManager[Any]: ...
 
 
 @dataclass(frozen=True)
@@ -274,21 +279,35 @@ class PgMigrationRunner:
         return {int(row[0]) for row in rows}
 
     def _apply(self, migration: PgMigration) -> None:
-        formatted = migration.sql.format(schema=self._schema)
-        # Postgres supports compound statements per ``execute`` call,
-        # but breaking on ``;`` keeps the error trace pinned to the
-        # specific DDL statement that failed — much easier to debug.
-        for stmt in formatted.split(";"):
-            stmt = stmt.strip()
-            if stmt:
-                self._exec.execute(stmt)
+        """Apply *migration* atomically.
 
-        # ANSI-escape the description rather than parameterising the
-        # INSERT — the executor surface intentionally doesn't expose
-        # parameter binding to keep parity with SqlExecutor.
+        Postgres DDL is transactional (CREATE TABLE / INDEX inside
+        BEGIN/COMMIT all roll back together on error — modulo
+        ``CREATE INDEX CONCURRENTLY`` which we don't use). We run every
+        DDL statement in the migration **and** the ``dq_migrations``
+        INSERT inside a single transaction so a half-applied migration
+        can never end up with committed DDL but no version row. If any
+        statement fails the whole migration rolls back and the next run
+        retries cleanly from the beginning.
+
+        Statements are still split on ``;`` and executed one at a time
+        through a single cursor so an error message pinpoints the exact
+        failing DDL rather than a position inside a multi-kilobyte
+        compound string.
+        """
+        formatted = migration.sql.format(schema=self._schema)
         escaped_desc = migration.description.replace("'", "''")
-        self._exec.execute(
-            f"INSERT INTO {self._meta_table} (version, description, applied_at) "
-            f"VALUES ({migration.version}, '{escaped_desc}', CURRENT_TIMESTAMP)"
-        )
+        with self._exec.connection() as conn:
+            with conn.cursor() as cur:
+                for stmt in formatted.split(";"):
+                    stmt = stmt.strip()
+                    if stmt:
+                        cur.execute(stmt)
+                # Same transaction: either the whole migration lands
+                # *and* its version row is recorded, or nothing does.
+                cur.execute(
+                    f"INSERT INTO {self._meta_table} (version, description, applied_at) "
+                    f"VALUES ({migration.version}, '{escaped_desc}', CURRENT_TIMESTAMP)"
+                )
+            conn.commit()
         logger.info("Postgres migration v%d applied", migration.version)

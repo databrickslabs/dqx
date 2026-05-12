@@ -98,6 +98,20 @@ class SqlExecutor:
     # Dialect helpers — kept identical-named on every executor so callers
     # can hand-write portable SQL without an "if dialect" branch.
     # ------------------------------------------------------------------
+    def fqn(self, table: str) -> str:
+        """Return the fully-qualified path for *table* on this backend.
+
+        Delta uses three-part names (``catalog.schema.table``) because
+        Unity Catalog organises tables under a catalog. Postgres has
+        only one catalog per connection so :class:`PgExecutor.fqn` drops
+        the catalog component and returns ``schema.table``. Services
+        that just need an addressable table identifier should call this
+        instead of inlining ``f"{sql.catalog}.{sql.schema}.{table}"`` —
+        the dialect branch lives here once instead of being repeated at
+        every call site.
+        """
+        return f"{self._catalog}.{self._schema}.{table}"
+
     def q(self, identifier: str) -> str:
         """Quote an identifier for this dialect.
 

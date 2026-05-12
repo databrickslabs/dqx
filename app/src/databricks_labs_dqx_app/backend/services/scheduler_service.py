@@ -153,10 +153,10 @@ class SchedulerService:
         self._force_recalc = False
         # Both backend layouts qualify the table differently — let the
         # OLTP executor's catalog/schema decide.
-        self._table = self._qualify_oltp("dq_schedule_runs")
-        self._configs_table = self._qualify_oltp("dq_schedule_configs")
-        self._settings_table = self._qualify_oltp("dq_app_settings")
-        self._rules_table = self._qualify_oltp("dq_quality_rules")
+        self._table = self._oltp_sql.fqn("dq_schedule_runs")
+        self._configs_table = self._oltp_sql.fqn("dq_schedule_configs")
+        self._settings_table = self._oltp_sql.fqn("dq_app_settings")
+        self._rules_table = self._oltp_sql.fqn("dq_quality_rules")
 
         # Orphan-tmp-view GC: fires every Saturday at 01:00 UTC. Held in
         # process memory rather than persisted — a missed Saturday (e.g.
@@ -169,12 +169,6 @@ class SchedulerService:
         # (default 24h). Held in process memory like the view GC; a
         # missed sweep is harmless since the next one catches up.
         self._next_retention_at: datetime = datetime.now(timezone.utc) + timedelta(hours=_RETENTION_INTERVAL_HOURS)
-
-    def _qualify_oltp(self, table: str) -> str:
-        """Fully-qualify *table* for whichever backend the OLTP executor uses."""
-        if getattr(self._oltp_sql, "dialect", "delta") == "postgres":
-            return f"{self._oltp_sql.schema}.{table}"
-        return f"{self._oltp_sql.catalog}.{self._oltp_sql.schema}.{table}"
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -917,7 +911,7 @@ class SchedulerService:
         # backticks/double-quotes follow the dialect.
         is_postgres = getattr(self._oltp_sql, "dialect", "delta") == "postgres"
         for table_name, time_col in _OLTP_RETENTION_TABLES:
-            table = self._qualify_oltp(table_name)
+            table = self._oltp_sql.fqn(table_name)
             if is_postgres:
                 interval = f"INTERVAL '{days} days'"
             else:

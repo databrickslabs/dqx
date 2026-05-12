@@ -66,27 +66,13 @@ class RulesCatalogService:
 
     def __init__(self, sql: SqlExecutor) -> None:
         self._sql = sql
-        self._table = self._qualify(sql, "dq_quality_rules")
-        self._history_table = self._qualify(sql, "dq_quality_rules_history")
+        self._table = sql.fqn("dq_quality_rules")
+        self._history_table = sql.fqn("dq_quality_rules_history")
         # ``check`` is a SQL reserved word in both Delta and Postgres,
         # so quote it via the executor so we get backticks on Delta and
         # double-quotes on Postgres.
         self._check_col = sql.q("check")
         self._select_cols = self._build_select_cols()
-
-    @staticmethod
-    def _qualify(sql: SqlExecutor, table: str) -> str:
-        """Return the fully-qualified table path for either backend.
-
-        Delta: ``catalog.schema.table``. Postgres: ``schema.table``
-        (Postgres only has a single database per connection so we drop
-        the catalog component there). The Postgres executor exposes
-        the database via :attr:`PgExecutor.database` if a future
-        cross-database join is ever needed.
-        """
-        if getattr(sql, "dialect", "delta") == "postgres":
-            return f"{sql.schema}.{table}"
-        return f"{sql.catalog}.{sql.schema}.{table}"
 
     def _build_select_cols(self) -> str:
         """Build the column projection used by every SELECT.

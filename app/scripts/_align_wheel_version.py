@@ -102,9 +102,18 @@ def align(wheel_path: Path) -> None:
         stem = old_dist_info.name[: -len(".dist-info")]
         existing_prefix = stem.rsplit("-", 1)[0]
         new_dist_info = tmp / f"{existing_prefix}-{filename_version}.dist-info"
-        if new_dist_info.exists():
-            shutil.rmtree(new_dist_info)
-        old_dist_info.rename(new_dist_info)
+        # Skip the rename when the dist-info dir is already correctly
+        # named (e.g. apx didn't inject a build tag on this rebuild so
+        # the filename version matches what's already inside the
+        # wheel). Without this guard, the ``rmtree`` below would delete
+        # the source directory — both paths point at the same dir — and
+        # the subsequent ``rename`` would crash with FileNotFoundError.
+        # The METADATA/RECORD rewrites further down are themselves
+        # idempotent, so we still run them to repair any drift.
+        if new_dist_info != old_dist_info:
+            if new_dist_info.exists():
+                shutil.rmtree(new_dist_info)
+            old_dist_info.rename(new_dist_info)
 
         metadata = new_dist_info / "METADATA"
         if not metadata.exists():

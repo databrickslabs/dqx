@@ -31,11 +31,14 @@ import logging
 import threading
 import time
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
 from databricks.sdk import WorkspaceClient
+from psycopg import Connection
 from psycopg_pool import ConnectionPool
 
 from databricks_labs_dqx_app.backend.sql_executor import RawSql, _render_value
@@ -239,6 +242,15 @@ class PgExecutor:
     def database(self) -> str:
         return self._database
 
+    def fqn(self, table: str) -> str:
+        """Return the schema-qualified path for *table*.
+
+        Postgres only has one catalog per connection so we return
+        ``schema.table``; :meth:`SqlExecutor.fqn` returns three parts.
+        See :meth:`SqlExecutor.fqn` for the parity contract.
+        """
+        return f"{self._schema}.{table}"
+
     def q(self, identifier: str) -> str:
         """Quote a Postgres identifier (ANSI double quotes, doubled internal ``"``)."""
         return '"' + identifier.replace('"', '""') + '"'
@@ -258,8 +270,23 @@ class PgExecutor:
         """
         return col
 
+    @contextmanager
+    def connection(self) -> Iterator[Connection]:
+        """Yield a pooled connection for multi-statement transactional work.
+
+        Use this when several statements MUST be atomic — e.g. DDL + a
+        bookkeeping INSERT that record their joint application. The
+        caller is responsible for ``conn.commit()``; if the ``with``
+        block exits without committing (exception or otherwise) the
+        connection is rolled back and returned to the pool by psycopg-
+        pool. Single one-shot statements should keep using
+        :meth:`execute`, which commits per call.
+        """
+        with self._pool.connection() as conn:
+            yield conn
+
     def execute(self, sql: str, *, timeout_seconds: int = 120) -> None:  # noqa: ARG002 - parity with SqlExecutor
-        """Run a non-result-returning statement."""
+        """Run a single non-result-returning statement and commit it."""
         with self._pool.connection() as conn:
             with conn.cursor() as cur:
                 # psycopg accepts ``str`` at runtime (``Query`` is a

@@ -218,8 +218,9 @@ class TestRunRetentionUsesQuarantineCutoff:
         svc._settings_table = "dqx.public.dq_app_settings"
         svc._catalog = "dqx"
         svc._schema = "public"
-        # ``_qualify_oltp`` is invoked for the OLTP DELETE loop.
-        svc._qualify_oltp = lambda t: f"dqx.public.{t}"  # type: ignore[method-assign]
+        # OLTP DELETE loop calls ``self._oltp_sql.fqn(table)`` to build
+        # each fully-qualified path; stub the executor's helper directly.
+        svc._oltp_sql.fqn = lambda t: f"dqx.public.{t}"
         return svc
 
     def test_quarantine_table_uses_its_own_default(self, scheduler):

@@ -32,10 +32,7 @@ class CommentsService:
 
     def __init__(self, sql: SqlExecutor) -> None:
         self._sql = sql
-        if getattr(sql, "dialect", "delta") == "postgres":
-            self._table = f"{sql.schema}.dq_comments"
-        else:
-            self._table = f"{sql.catalog}.{sql.schema}.dq_comments"
+        self._table = sql.fqn("dq_comments")
 
     def add_comment(self, entity_type: str, entity_id: str, user_email: str, comment: str) -> Comment:
         from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, validate_entity_type

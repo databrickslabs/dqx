@@ -41,10 +41,7 @@ class RoleService:
 
     def __init__(self, sql: SqlExecutor) -> None:
         self._sql = sql
-        if getattr(sql, "dialect", "delta") == "postgres":
-            self._table = f"{sql.schema}.dq_role_mappings"
-        else:
-            self._table = f"{sql.catalog}.{sql.schema}.dq_role_mappings"
+        self._table = sql.fqn("dq_role_mappings")
         self._mappings_cache: list[RoleMapping] | None = None
         self._mappings_cache_expires: float = 0.0
 

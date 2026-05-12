@@ -136,10 +136,18 @@ app-grant-permissions:
 # creates the resources directly.
 #
 # Usage: make app-bind PROFILE=my-profile TARGET=dev
+#        make app-bind PROFILE=my-profile TARGET=dev \
+#                      BUNDLE_VARS='--var=lakebase_instance_name=<fresh-name>'
+#
+# BUNDLE_VARS forwards arbitrary ``--var key=value`` arguments through
+# to the bundle CLI. Use the same override here as you intend to pass
+# to ``make app-deploy`` — the bind step reads the resolved bundle
+# variables to know which instance/schema name to bind to, so an
+# override applied only at deploy time would bind the wrong resource.
 app-bind:
 	@test -n "$(PROFILE)" || (echo "Usage: make app-bind PROFILE=<databricks-profile> TARGET=<bundle-target>"; exit 1)
 	@test -n "$(TARGET)" || (echo "Usage: make app-bind PROFILE=<databricks-profile> TARGET=<bundle-target>"; exit 1)
-	app/scripts/bind_resources.sh -p $(PROFILE) -t $(TARGET)
+	app/scripts/bind_resources.sh -p $(PROFILE) -t $(TARGET) $(if $(BUNDLE_VARS),-- $(BUNDLE_VARS))
 
 # Full deploy: build, bundle deploy (creates storage on fresh
 # workspaces, updates managed resources otherwise), grant permissions
