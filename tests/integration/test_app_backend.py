@@ -5,7 +5,7 @@ import os
 import pytest
 from fastapi.testclient import TestClient
 
-from databricks_labs_dqx_app.backend.common.authorization import UserRole
+from databricks_labs_dqx_app.backend.common.authorization import UserRole, get_user_email
 from databricks_labs_dqx_app.backend.dependencies import get_obo_ws, get_user_role, get_app_settings_service
 from databricks_labs_dqx_app.backend.models import InstallationSettings
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
@@ -120,9 +120,17 @@ def api_client(ws, test_app_folder, monkeypatch, make_schema):
     async def override_get_app_settings_service() -> AppSettingsService:
         return _settings_svc
 
+    # The production proxy injects ``X-Forwarded-Email``; ``TestClient`` does
+    # not, so without this override every write endpoint returns 401.
+    test_user_email = ws.current_user.me().user_name or "test@example.com"
+
+    def override_get_user_email() -> str:
+        return test_user_email
+
     app.dependency_overrides[get_obo_ws] = override_get_obo_ws
     app.dependency_overrides[get_user_role] = override_get_user_role
     app.dependency_overrides[get_app_settings_service] = override_get_app_settings_service
+    app.dependency_overrides[get_user_email] = override_get_user_email
 
     client = TestClient(app)
     yield client
