@@ -188,3 +188,23 @@
     arguments:
       column: polygon_geom
       value: 2
+
+# has_topological_relationship_approximate check
+- criticality: error
+  check:
+    function: has_topological_relationship_approximate
+    arguments:
+      column: point_geom
+      reference_geometry: "POLYGON((0 0, 5 0, 5 5, 0 5, 0 0))"
+      resolution: 5
+
+# has_topological_relationship_precise check
+- criticality: error
+  check:
+    function: has_topological_relationship_precise
+    arguments:
+      column: point_geom
+      reference_geometry: "POLYGON((0 0, 5 0, 5 5, 0 5, 0 0))"
+      convert_column: true
+      convert_reference_geometry: true
+

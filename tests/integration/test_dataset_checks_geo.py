@@ -562,7 +562,7 @@ def test_has_topological_relationship_precise_inside(
 ):
     """Test for `has_topological_relationship_precise` when the column point is strictly inside the geometry.
 
-    A point strictly inside the geometry (not on the boundary) must not be flagged for WITHIN,
+    A point strictly inside the geometry (not on the boundary) must not be flagged for
     CONTAINS, COVERS, and INTERSECTS. TOUCHES is an exception: it requires a shared boundary
     point with disjoint interiors, so an interior point produces a violation.
     """
@@ -583,6 +583,39 @@ def test_has_topological_relationship_precise_inside(
     expected = spark.createDataFrame(
         [
             [column_value, violation_message if expect_violation else None],
+            [None, None],
+        ],
+        "geom: string, geom_outside_reference_geometry: string",
+    )
+
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_has_topological_relationship_precise_inside_within(
+    skip_if_runtime_not_geo_compatible,
+    spark,
+):
+    """Test for `has_topological_relationship_precise` when the column point is strictly inside the geometry.
+    A point strictly inside the geometry (not on the boundary) must not be flagged for WITHIN.
+    """
+    input_schema = "geom: string"
+    value = "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))"
+    reference = "POINT(4.90 52.37)"
+
+    test_df = spark.createDataFrame([[value], [None]], input_schema)
+
+    condition = has_topological_relationship_precise(
+        "geom",
+        reference,
+        convert_column=True,
+        convert_reference_geometry=True,
+        topological_relationship="WITHIN",
+    )
+
+    actual = test_df.select("geom", condition)
+
+    expected = spark.createDataFrame(
+        [
             [None, None],
         ],
         "geom: string, geom_outside_reference_geometry: string",
@@ -628,7 +661,7 @@ def test_has_topological_relationship_precise_edge(
     skip_if_runtime_not_geo_compatible,
     spark,
 ):
-    """Boundary point: COVERS passes (boundary included), WITHIN and CONTAINS fail (boundary excluded)."""
+    """Test for `has_topological_relationship_precise` when the column point is on edge of the geometry."""
     input_schema = "geom: string"
     test_df = spark.createDataFrame([[column_value], [None]], input_schema)
 
@@ -641,7 +674,7 @@ def test_has_topological_relationship_precise_edge(
     )
     actual = test_df.select("geom", condition)
 
-    violation_message = f"value `{column_value}` in column `geom` is outside the reference geometry"
+    violation_message = f"value `{column_value}` in column `geom` has no relationship with the reference geometry"
     expected = spark.createDataFrame(
         [
             [column_value, violation_message if expect_violation else None],
@@ -649,6 +682,39 @@ def test_has_topological_relationship_precise_edge(
         ],
         "geom: string, geom_outside_reference_geometry: string",
     )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_has_topological_relationship_precise_edge_within(
+    skip_if_runtime_not_geo_compatible,
+    spark,
+):
+    """Test for `has_topological_relationship_precise` when the column point is on edge of the geometry.
+    A point must not be flagged for WITHIN.
+    """
+    input_schema = "geom: string"
+    value = "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))"
+    reference = "POINT(4.73 52.28)"
+
+    test_df = spark.createDataFrame([[value], [None]], input_schema)
+
+    condition = has_topological_relationship_precise(
+        "geom",
+        reference,
+        convert_column=True,
+        convert_reference_geometry=True,
+        topological_relationship="WITHIN",
+    )
+
+    actual = test_df.select("geom", condition)
+
+    expected = spark.createDataFrame(
+        [
+            [None, f"value `{value}` in column `geom` is outside the reference geometry"],
+        ],
+        "geom: string, geom_outside_reference_geometry: string",
+    )
+
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
@@ -674,9 +740,8 @@ def test_has_topological_relationship_precise_outside(
     spark,
 ):
     """Test for `has_topological_relationship_precise` function when column point is outside the reference geometry.
-
     A point strictly outside must always be flagged as a violation, regardless of which
-    topological predicate is used — WITHIN, CONTAINS, and COVERS all fail for exterior points.
+    topological predicate is used (except WITHIN).
     """
     input_schema = "geom: string"
     test_df = spark.createDataFrame([[column_value], [None]], input_schema)
@@ -693,8 +758,41 @@ def test_has_topological_relationship_precise_outside(
 
     expected = spark.createDataFrame(
         [
-            [column_value, f"value `{column_value}` in column `geom` is outside the reference geometry"],
+            [column_value, f"value `{column_value}` in column `geom` has no relationship with the reference geometry"],
             [None, None],
+        ],
+        "geom: string, geom_outside_reference_geometry: string",
+    )
+
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_has_topological_relationship_precise_outside_within(
+    skip_if_runtime_not_geo_compatible,
+    spark,
+):
+    """Test for `has_topological_relationship_precise` when the column point is strictly outside the geometry.
+    A point strictly inside the geometry (not on the boundary) must be flagged for WITHIN.
+    """
+    input_schema = "geom: string"
+    value = "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))"
+    reference = "POINT(4.73 52.28)"
+
+    test_df = spark.createDataFrame([[value], [None]], input_schema)
+
+    condition = has_topological_relationship_precise(
+        "geom",
+        reference,
+        convert_column=True,
+        convert_reference_geometry=True,
+        topological_relationship="WITHIN",
+    )
+
+    actual = test_df.select("geom", condition)
+
+    expected = spark.createDataFrame(
+        [
+            [None, f"value `{value}` in column `geom` has no relationship with the reference geometry"],
         ],
         "geom: string, geom_outside_reference_geometry: string",
     )
@@ -780,6 +878,57 @@ def test_has_topological_relationship_approximate_outside(
                 f"value `{column_value}` in column `geom` is approximately outside the reference geometry",
             ],
             [None, None],  # null — evaluation skipped
+        ],
+        "geom: string, geom_outside_reference_geometry_approximate: string",
+    )
+
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_has_topological_relationship_precise_approximate_comparison(
+    skip_if_runtime_not_geo_compatible,
+    spark,
+):
+    """Test to cover a case when `has_topological_relationship_precise` finds an error but
+    `has_topological_relationship_approximate` does not. Point distance from the polygon nearly 10K.
+    """
+    column_value = "POINT(5.20 52.35)"
+    reference_geometry_value = "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))"
+    resolution = 7
+
+    input_schema = "geom: string"
+    test_df = spark.createDataFrame([[column_value], [None]], input_schema)
+
+    condition = has_topological_relationship_precise(
+        "geom", reference_geometry_value, topological_relationship="COVERS"
+    )
+
+    actual = test_df.select("geom", condition)
+
+    expected = spark.createDataFrame(
+        [
+            [
+                column_value,
+                f"value `{column_value}` in column `geom` is approximately outside the reference geometry",
+            ],
+        ],
+        "geom: string, geom_outside_reference_geometry_approximate: string",
+    )
+
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+    condition = has_topological_relationship_approximate(
+        "geom", reference_geometry_value, resolution, topological_relationship="COVERS"
+    )
+
+    actual = test_df.select("geom", condition)
+
+    expected = spark.createDataFrame(
+        [
+            [
+                column_value,
+                None,
+            ],
         ],
         "geom: string, geom_outside_reference_geometry_approximate: string",
     )

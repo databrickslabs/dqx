@@ -937,12 +937,10 @@ def are_polygons_mutually_disjoint(
 @register_rule("row")
 def has_topological_relationship_precise(
     column: str | Column,
-    reference_geometry: str | bytearray | Column,
+    reference_geometry: str | bytes | Column,
     convert_column: bool = False,
     convert_reference_geometry: bool = False,
-    topological_relationship: (
-        Literal["CONTAINS"] | Literal["COVERS"] | Literal["INTERSECTS"] | Literal["TOUCHES"] | Literal["WITHIN"]
-    ) = "CONTAINS",
+    topological_relationship: Literal["CONTAINS", "COVERS", "INTERSECTS", "TOUCHES", "WITHIN"] = "CONTAINS",
 ) -> Column:
     """
     Checks if the given column has a defined topological relationship with a reference geometry.
@@ -997,17 +995,17 @@ def has_topological_relationship_precise(
     ref_col = reference_geometry if isinstance(reference_geometry, Column) else F.lit(reference_geometry)
     ref_geom = F.call_function("try_to_geometry", ref_col) if convert_reference_geometry else ref_col
 
-    is_inside = F.call_function(_PRECISE_TOPOLOGICAL_FUNCS[topological_relationship], ref_geom, col_geom)
-
-    condition = F.when(col_expr.isNull(), F.lit(None)).otherwise(~is_inside)
+    has_relationship = F.call_function(_PRECISE_TOPOLOGICAL_FUNCS[topological_relationship], ref_geom, col_geom)
+    condition = F.when(col_expr.isNull(), F.lit(None)).otherwise(~has_relationship)
+    text_value_col = F.call_function("st_astext", col_expr) if not convert_column else col_expr.cast("string")
 
     return make_condition(
         condition,
         F.concat_ws(
             "",
             F.lit("value `"),
-            col_expr.cast("string"),
-            F.lit(f"` in column `{col_expr_str}` is outside the reference geometry"),
+            text_value_col,
+            F.lit(f"` in column `{col_expr_str}` has no relationship with the reference geometry"),
         ),
         f"{col_str_norm}_outside_reference_geometry",
     )
