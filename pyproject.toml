@@ -64,7 +64,7 @@ pii = [
     # The models cannot be delcared as dependency here buecase PyPI does not support URL-based dependencies which would prevent releases.
 ]
 llm = [
-    "dspy~=3.1.3",
+    "dspy>=3.1.3,<3.3.0",
     "litellm>=1.64.0,<=1.82.6",  # pin dspy transitive dependency
     "databricks-langchain>=0.1.0,<1.0",
     "langchain-core>=0.1.0,<1.0",
