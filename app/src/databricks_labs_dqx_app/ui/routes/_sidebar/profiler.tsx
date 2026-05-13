@@ -52,6 +52,7 @@ import {
   User,
 } from "lucide-react";
 import { toast } from "sonner";
+import { isAxiosError } from "axios";
 import { CatalogBrowser } from "@/components/CatalogBrowser";
 import { useJobPolling } from "@/hooks/use-job-polling";
 import {
@@ -196,6 +197,45 @@ function parseTableFqn(fqn: string): { catalog: string; schema: string; table: s
   const parts = fqn.split(".");
   if (parts.length !== 3) return null;
   return { catalog: parts[0], schema: parts[1], table: parts[2] };
+}
+
+/**
+ * Extract a human-readable error message from a profiler API failure.
+ *
+ * The backend now classifies the most common failure modes (missing
+ * Unity Catalog grants, table not found, etc.) and returns them as
+ * proper HTTP status codes with a friendly ``detail`` string in the
+ * response body. We pull that string out so it can replace the generic
+ * "Failed to submit profiling job" toast — the user needs to know
+ * *exactly* which permission they're missing on which schema, not just
+ * that something failed.
+ *
+ * Falls back through a few defaults when the response isn't shaped the
+ * way we expect (network error, non-axios error, missing detail field,
+ * ...).
+ */
+function extractProfilerError(err: unknown): string {
+  const axErr = err as {
+    response?: {
+      data?: { detail?: unknown };
+      status?: number;
+      statusText?: string;
+    };
+    message?: string;
+  };
+  const detail = axErr?.response?.data?.detail;
+  if (typeof detail === "string" && detail.trim()) return detail;
+  if (Array.isArray(detail) && detail.length > 0) {
+    // FastAPI validation errors come back as a list of objects with a
+    // ``msg`` field. Surface the first one rather than ``[object Object]``.
+    const first = detail[0] as { msg?: unknown };
+    if (typeof first?.msg === "string") return first.msg;
+  }
+  if (axErr?.response?.status) {
+    return `Server error (HTTP ${axErr.response.status}${axErr.response.statusText ? " " + axErr.response.statusText : ""})`;
+  }
+  if (typeof axErr?.message === "string" && axErr.message) return axErr.message;
+  return "Failed to submit profiling job";
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -593,8 +633,21 @@ function ProfilerPage() {
         submittedAt: Date.now(),
       });
       toast.info("Profiling job submitted — waiting for results...");
-    } catch {
-      toast.error("Failed to submit profiling job");
+    } catch (err) {
+      // Surface the backend's detail message to the user instead of a
+      // generic "Failed to submit". The most common cause is a missing
+      // ``USE SCHEMA`` / ``SELECT`` grant on the source table, which
+      // the backend now classifies as 403 with a crisp human-readable
+      // explanation in ``response.data.detail``.
+      const detail = extractProfilerError(err);
+      const isPermission =
+        isAxiosError(err) && err.response?.status === 403;
+      toast.error(detail, {
+        description: isPermission
+          ? "Ask your workspace admin to grant the required Unity Catalog permissions, then try again."
+          : undefined,
+        duration: isPermission ? 12_000 : 8_000,
+      });
     }
   };
 
@@ -614,11 +667,19 @@ function ProfilerPage() {
           profile_options: buildProfileOptions(),
         },
       });
+      // Map successful submissions back to the *originally selected*
+      // tables. The backend preserves order for the ``runs`` array but
+      // skips failed tables, so we walk both lists together to align
+      // each run with its source table FQN.
+      const succeededTables = selectedTables.filter(
+        (fqn) =>
+          !(resp.data.errors ?? []).some((e) => e.table_fqn === fqn),
+      );
       const newRuns: ActiveBatchRun[] = resp.data.runs.map((run, i) => ({
         runId: run.run_id,
         jobRunId: run.job_run_id,
         viewFqn: run.view_fqn,
-        tableFqn: selectedTables[i],
+        tableFqn: succeededTables[i] ?? selectedTables[i] ?? "",
         state: "running",
       }));
       setBatchRuns(newRuns);
@@ -632,9 +693,43 @@ function ProfilerPage() {
           submittedAt: Date.now(),
         }),
       );
-      toast.info(`${newRuns.length} profiling jobs submitted`);
-    } catch {
-      toast.error("Failed to submit batch profiling jobs");
+      const failures = resp.data.errors ?? [];
+      if (newRuns.length > 0) {
+        toast.info(`${newRuns.length} profiling jobs submitted`);
+      }
+      // Surface every per-table failure as its own toast so the user
+      // can see *which* tables failed and *why* (e.g. missing USE
+      // SCHEMA on a specific catalog/schema). Capped at 3 toasts to
+      // avoid flooding the screen — anything beyond gets summarised.
+      if (failures.length > 0) {
+        const previewCount = Math.min(failures.length, 3);
+        for (const f of failures.slice(0, previewCount)) {
+          const tableShort = f.table_fqn.split(".").pop() || f.table_fqn;
+          toast.error(`${tableShort}: ${f.error}`, {
+            description:
+              f.error_code === "INSUFFICIENT_PERMISSIONS"
+                ? "Ask your workspace admin to grant the required Unity Catalog permissions on this table."
+                : undefined,
+            duration: 12_000,
+          });
+        }
+        if (failures.length > previewCount) {
+          toast.error(
+            `… and ${failures.length - previewCount} more table(s) failed to submit`,
+            { duration: 8_000 },
+          );
+        }
+      }
+    } catch (err) {
+      const detail = extractProfilerError(err);
+      const isPermission =
+        isAxiosError(err) && err.response?.status === 403;
+      toast.error(detail, {
+        description: isPermission
+          ? "Ask your workspace admin to grant the required Unity Catalog permissions on the selected tables, then try again."
+          : undefined,
+        duration: isPermission ? 12_000 : 8_000,
+      });
     }
   };
 
@@ -1491,11 +1586,27 @@ function ProfileResults({
         if (k === "trim_strings") continue;
         args[k] = v;
       }
-      return {
+      // Fold the profiler-suggested weight into user_metadata so the rule
+      // round-trips through the same labels-only model used by the rest of
+      // the app. ``weight=3`` is omitted (it's the implicit default).
+      const userMetadata: Record<string, string> = {};
+      const existingMd = rule.user_metadata;
+      if (existingMd && typeof existingMd === "object") {
+        for (const [k, v] of Object.entries(existingMd as Record<string, unknown>)) {
+          if (typeof v === "string") userMetadata[k] = v;
+        }
+      }
+      if (typeof rule.weight === "number" && rule.weight !== 3 && !("weight" in userMetadata)) {
+        userMetadata.weight = String(rule.weight);
+      }
+      const out: Record<string, unknown> = {
         criticality: String(rule.criticality ?? "warn"),
-        weight: typeof rule.weight === "number" ? rule.weight : 3,
         check: { function: fn, arguments: args },
       };
+      if (Object.keys(userMetadata).length > 0) {
+        out.user_metadata = userMetadata;
+      }
+      return out;
     });
     try {
       await saveRules.mutateAsync({ data: { table_fqn: tableFqn, checks: normalizedRules } });

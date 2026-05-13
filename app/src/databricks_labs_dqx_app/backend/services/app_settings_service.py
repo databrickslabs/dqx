@@ -104,3 +104,31 @@ class AppSettingsService:
         )
         self._sql.execute(sql)
         logger.info("Saved setting: %s", key)
+
+    # ------------------------------------------------------------------
+    # Custom metrics — global SQL-expression list passed to DQMetricsObserver.
+    # Stored as a JSON array of strings under ``custom_metrics_v1``. Each
+    # entry must be of the form ``<aggregate_expression> as <alias>`` and
+    # be safe per ``is_sql_query_safe``.
+    # ------------------------------------------------------------------
+
+    def get_custom_metrics(self) -> list[str]:
+        """Return the configured global custom-metric SQL expressions, or [] if unset."""
+        raw = self.get_setting("custom_metrics_v1")
+        if not raw:
+            return []
+        try:
+            parsed = json.loads(raw)
+        except (TypeError, json.JSONDecodeError):
+            logger.warning("custom_metrics_v1 setting is not valid JSON; ignoring")
+            return []
+        if not isinstance(parsed, list):
+            logger.warning("custom_metrics_v1 setting is not a list; ignoring")
+            return []
+        return [s for s in parsed if isinstance(s, str) and s.strip()]
+
+    def save_custom_metrics(self, expressions: list[str]) -> list[str]:
+        """Persist the global custom-metric list. Returns the cleaned list."""
+        cleaned = [s.strip() for s in expressions if isinstance(s, str) and s.strip()]
+        self.save_setting("custom_metrics_v1", json.dumps(cleaned))
+        return cleaned

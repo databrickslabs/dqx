@@ -23,7 +23,7 @@ class SqlExecutor:
     """Thin wrapper around the Databricks Statement Execution API.
 
     Provides ``execute``, ``query``, ``query_dicts``, and
-    ``execute_no_schema`` covering all usage patterns in the DQX App
+    ``execute_no_schema`` covering all usage patterns in the DQX Studio
     backend.
     """
 
