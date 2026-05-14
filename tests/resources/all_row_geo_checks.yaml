@@ -189,22 +189,73 @@
       column: polygon_geom
       value: 2
 
-# has_topological_relationship_approximate check
+# is_geo_contains check (precise: reference polygon contains point)
 - criticality: error
   check:
-    function: has_topological_relationship_approximate
+    function: is_geo_contains
+    arguments:
+      column: point_geom
+      reference_geometry: "POLYGON((0 0, 5 0, 5 5, 0 5, 0 0))"
+      convert_column: true
+      convert_reference_geometry: true
+
+# is_geo_covers check (approximate: reference polygon covers point via H3)
+- criticality: error
+  check:
+    function: is_geo_covers
     arguments:
       column: point_geom
       reference_geometry: "POLYGON((0 0, 5 0, 5 5, 0 5, 0 0))"
       resolution: 5
 
-# has_topological_relationship_precise check
+# is_geo_covers check (precise: reference polygon covers point)
 - criticality: error
   check:
-    function: has_topological_relationship_precise
+    function: is_geo_covers
     arguments:
       column: point_geom
       reference_geometry: "POLYGON((0 0, 5 0, 5 5, 0 5, 0 0))"
+      precise: true
+      convert_column: true
+      convert_reference_geometry: true
+
+# is_geo_intersects check (approximate: point and reference polygon share H3 cells)
+- criticality: error
+  check:
+    function: is_geo_intersects
+    arguments:
+      column: point_geom
+      reference_geometry: "POLYGON((0 0, 5 0, 5 5, 0 5, 0 0))"
+      resolution: 5
+
+# is_geo_intersects check (precise: point intersects reference polygon)
+- criticality: error
+  check:
+    function: is_geo_intersects
+    arguments:
+      column: point_geom
+      reference_geometry: "POLYGON((0 0, 5 0, 5 5, 0 5, 0 0))"
+      precise: true
+      convert_column: true
+      convert_reference_geometry: true
+
+# is_geo_touches check (precise: point on boundary of reference polygon)
+- criticality: error
+  check:
+    function: is_geo_touches
+    arguments:
+      column: point_geom
+      reference_geometry: "POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))"
+      convert_column: true
+      convert_reference_geometry: true
+
+# is_geo_within check (precise: reference point is within column polygon)
+- criticality: error
+  check:
+    function: is_geo_within
+    arguments:
+      column: polygon_geom
+      reference_geometry: "POINT(2 2)"
       convert_column: true
       convert_reference_geometry: true
 

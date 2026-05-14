@@ -2091,3 +2091,58 @@ def test_benchmark_has_no_aggr_outliers(benchmark, ws, generated_df):
     checked = dq_engine.apply_checks(generated_df, checks)
     actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
+
+
+def test_benchmark_is_geo_covers_precise(benchmark, ws, generated_df):
+    """Benchmark is_geo_covers check on.
+
+    Uses col6 (timestamp spanning 1900–2025 at 1-second intervals) bucketed by day,
+    averaging col2 per day. With 100M rows and ~45k day-buckets the rolling-window
+    aggregation exercises both the groupBy/Window path and the broadcast join back to
+    every row in df.
+    """
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQDatasetRule(
+            criticality="warn",
+            check_func=geo_check_funcs.is_geo_covers,
+            column="col_geo_point",
+            check_func_kwargs={
+                "reference_geometry": "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
+                "precise": True,
+                "convert_column": True,
+                "convert_reference_geometry": True,
+            },
+        )
+    ]
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+def test_benchmark_is_geo_covers_approximate(benchmark, ws, generated_df):
+    """Benchmark is_geo_covers check on.
+
+    Uses col6 (timestamp spanning 1900–2025 at 1-second intervals) bucketed by day,
+    averaging col2 per day. With 100M rows and ~45k day-buckets the rolling-window
+    aggregation exercises both the groupBy/Window path and the broadcast join back to
+    every row in df.
+    """
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQDatasetRule(
+            criticality="warn",
+            check_func=geo_check_funcs.is_geo_covers,
+            column="col_geo_point",
+            check_func_kwargs={
+                "reference_geometry": "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
+                "resolution": 7,
+                "precise": False,
+                "convert_column": True,
+                "convert_reference_geometry": True,
+            },
+        )
+    ]
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS

@@ -2,62 +2,99 @@ import pytest
 
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.geo.check_funcs import (
-    has_topological_relationship_precise,
-    has_topological_relationship_approximate,
+    is_geo_contains,
+    is_geo_covers,
+    is_geo_intersects,
+    is_geo_touches,
+    is_geo_within,
 )
 
 _REFERENCE_GEOMETRY_WKT = "POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))"
 
-_VALID_KWARGS = {
-    "convert_column": True,
-    "convert_reference_geometry": True,
-    "topological_relationship": "WITHIN",
-}
+
+def test_is_geo_contains_does_not_raise():
+    is_geo_contains("location", _REFERENCE_GEOMETRY_WKT)
 
 
-def test_has_topological_relationship_precise_valid_params_does_not_raise():
-    """A fully specified call with all valid params must not raise at call time."""
-    has_topological_relationship_precise("location", _REFERENCE_GEOMETRY_WKT, **_VALID_KWARGS)
+def test_is_geo_contains_with_conversion_does_not_raise():
+    is_geo_contains("location", _REFERENCE_GEOMETRY_WKT, convert_column=True, convert_reference_geometry=True)
 
 
-def test_has_topological_relationship_precise_no_conversion_does_not_raise():
-    """Both convert flags as False (column already holds native GEOMETRY) must not raise."""
-    has_topological_relationship_precise(
-        "location",
-        _REFERENCE_GEOMETRY_WKT,
-        convert_column=False,
-        convert_reference_geometry=False,
+def test_is_geo_touches_does_not_raise():
+    is_geo_touches("location", _REFERENCE_GEOMETRY_WKT)
+
+
+def test_is_geo_touches_with_conversion_does_not_raise():
+    is_geo_touches("location", _REFERENCE_GEOMETRY_WKT, convert_column=True, convert_reference_geometry=True)
+
+
+def test_is_geo_within_does_not_raise():
+    is_geo_within("location", _REFERENCE_GEOMETRY_WKT)
+
+
+def test_is_geo_within_with_conversion_does_not_raise():
+    is_geo_within("location", _REFERENCE_GEOMETRY_WKT, convert_column=True, convert_reference_geometry=True)
+
+
+def test_is_geo_covers_precise_does_not_raise():
+    is_geo_covers("location", _REFERENCE_GEOMETRY_WKT, precise=True)
+
+
+def test_is_geo_covers_precise_with_conversion_does_not_raise():
+    is_geo_covers(
+        "location", _REFERENCE_GEOMETRY_WKT, precise=True, convert_column=True, convert_reference_geometry=True
     )
 
 
-@pytest.mark.parametrize("invalid_value", ["DISJOINT", "OVERLAPS", "within", ""])
-def test_has_topological_relationship_precise_invalid_topological_relationship_raises(invalid_value):
-    """Raises InvalidParameterError for any topological_relationship value outside {CONTAINS, COVERS, WITHIN}."""
+def test_is_geo_covers_approximate_with_resolution_does_not_raise():
+    is_geo_covers("location", _REFERENCE_GEOMETRY_WKT, precise=False, resolution=7)
+
+
+def test_is_geo_covers_approximate_missing_resolution_raises():
+    """Raises InvalidParameterError when precise=False and resolution is not provided."""
     with pytest.raises(InvalidParameterError):
-        has_topological_relationship_precise(
-            "location",
-            _REFERENCE_GEOMETRY_WKT,
-            **{**_VALID_KWARGS, "topological_relationship": invalid_value},
-        )
+        is_geo_covers("location", _REFERENCE_GEOMETRY_WKT, precise=False)
 
 
-def test_has_topological_relationship_approximate_resolution_invalid():
-    """Raises InvalidParameterError when resolution is outside the 0–15 range."""
+def test_is_geo_covers_approximate_invalid_resolution_raises():
+    """Raises InvalidParameterError when resolution is outside 0–15."""
     with pytest.raises(InvalidParameterError):
-        has_topological_relationship_approximate(
-            "location",
-            _REFERENCE_GEOMETRY_WKT,
-            resolution=-1,
-        )
+        is_geo_covers("location", _REFERENCE_GEOMETRY_WKT, precise=False, resolution=16)
 
 
-@pytest.mark.parametrize("invalid_value", ["WITHIN", "TOUCHES", "intersects", ""])
-def test_has_topological_relationship_approximate_invalid_topological_relationship_raises(invalid_value):
-    """Raises InvalidParameterError for any topological_relationship value outside {CONTAINS, INTERSECTS}."""
+def test_is_geo_covers_approximate_bytes_reference_raises():
+    """Raises InvalidParameterError when bytes reference geometry is used in approximate mode."""
     with pytest.raises(InvalidParameterError):
-        has_topological_relationship_approximate(
-            "location",
-            _REFERENCE_GEOMETRY_WKT,
-            resolution=7,
-            topological_relationship=invalid_value,
-        )
+        is_geo_covers("location", b"\x00\x01", precise=False, resolution=5)
+
+
+def test_is_geo_intersects_precise_does_not_raise():
+    is_geo_intersects("location", _REFERENCE_GEOMETRY_WKT, precise=True)
+
+
+def test_is_geo_intersects_precise_with_conversion_does_not_raise():
+    is_geo_intersects(
+        "location", _REFERENCE_GEOMETRY_WKT, precise=True, convert_column=True, convert_reference_geometry=True
+    )
+
+
+def test_is_geo_intersects_approximate_with_resolution_does_not_raise():
+    is_geo_intersects("location", _REFERENCE_GEOMETRY_WKT, precise=False, resolution=5)
+
+
+def test_is_geo_intersects_approximate_missing_resolution_raises():
+    """Raises InvalidParameterError when precise=False and resolution is not provided."""
+    with pytest.raises(InvalidParameterError):
+        is_geo_intersects("location", _REFERENCE_GEOMETRY_WKT, precise=False)
+
+
+def test_is_geo_intersects_approximate_invalid_resolution_raises():
+    """Raises InvalidParameterError when resolution is outside 0–15."""
+    with pytest.raises(InvalidParameterError):
+        is_geo_intersects("location", _REFERENCE_GEOMETRY_WKT, precise=False, resolution=-1)
+
+
+def test_is_geo_intersects_approximate_bytes_reference_raises():
+    """Raises InvalidParameterError when bytes reference geometry is used in approximate mode."""
+    with pytest.raises(InvalidParameterError):
+        is_geo_intersects("location", b"\x00\x01", precise=False, resolution=5)

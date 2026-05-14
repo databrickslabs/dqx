@@ -1,12 +1,33 @@
-import pytest
 from pyspark.testing.utils import assertDataFrameEqual
 from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.geo.check_funcs import (
     are_polygons_mutually_disjoint,
-    has_topological_relationship_precise,
-    has_topological_relationship_approximate,
+    is_geo_contains,
+    is_geo_covers,
+    is_geo_intersects,
+    is_geo_touches,
+    is_geo_within,
 )
+
+_POINT_INSIDE = "POINT(4.90 52.37)"
+_POINT_EDGE = "POINT(4.73 52.28)"
+_POINT_OUTSIDE = "POINT(4.48 51.92)"
+_EWKT_POINT_OUTSIDE = "SRID=4326;POINT(4.48 51.92)"
+_REF_POLYGON = "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))"
+_EWKT_REF_POLYGON = "SRID=4326;POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))"
+_OVERLAPPING_POLYGON = "POLYGON((4.95 52.25, 5.30 52.25, 5.30 52.40, 4.95 52.40, 4.95 52.25))"
+_GEO_SCHEMA = "geom: string"
+_PRECISE_SCHEMA = "geom: string, geom_outside_reference_geometry: string"
+_APPROXIMATE_SCHEMA = "geom: string, geom_outside_reference_geometry_approximate: string"
+
+
+def _precise_violation(value: str) -> str:
+    return f"value `{value}` in column `geom` has no relationship with the reference geometry"
+
+
+def _approximate_violation(value: str) -> str:
+    return f"value `{value}` in column `geom` is approximately outside the reference geometry"
 
 
 def test_are_polygons_mutually_disjoint_pass(skip_if_runtime_not_geo_compatible, spark):
@@ -533,449 +554,366 @@ def test_are_polygons_mutually_disjoint_row_filter_with_duplicates(skip_if_runti
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
-@pytest.mark.parametrize(
-    "column_value,reference_geometry_value,topological_relationship,expect_violation",
-    [
-        (
-            "POINT(4.90 52.37)",
-            "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
-            "CONTAINS",
-            False,
-        ),
-        ("POINT(4.90 52.37)", "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))", "COVERS", False),
-        (
-            "POINT(4.90 52.37)",
-            "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
-            "INTERSECTS",
-            False,
-        ),
-        ("POINT(4.90 52.37)", "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))", "TOUCHES", True),
-    ],
-)
-def test_has_topological_relationship_precise_inside(
-    column_value,
-    reference_geometry_value,
-    topological_relationship,
-    expect_violation,
-    skip_if_runtime_not_geo_compatible,
-    spark,
-):
-    """Test for `has_topological_relationship_precise` when the column point is strictly inside the geometry.
+def test_is_geo_contains_interior_point_no_violation(skip_if_runtime_not_geo_compatible, spark):
+    """Interior point is fully contained — no violation."""
+    test_df = spark.createDataFrame([[_POINT_INSIDE], [None]], _GEO_SCHEMA)
+    condition = is_geo_contains("geom", _REF_POLYGON, convert_column=True, convert_reference_geometry=True)
+    actual = test_df.select("geom", condition)
+    expected = spark.createDataFrame([[_POINT_INSIDE, None], [None, None]], _PRECISE_SCHEMA)
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
-    A point strictly inside the geometry (not on the boundary) must not be flagged for
-    CONTAINS, COVERS, and INTERSECTS. TOUCHES is an exception: it requires a shared boundary
-    point with disjoint interiors, so an interior point produces a violation.
+
+def test_is_geo_contains_boundary_point_violation(skip_if_runtime_not_geo_compatible, spark):
+    """Boundary point is not contained (st_contains excludes boundary) — violation."""
+    test_df = spark.createDataFrame([[_POINT_EDGE], [None]], _GEO_SCHEMA)
+    condition = is_geo_contains("geom", _REF_POLYGON, convert_column=True, convert_reference_geometry=True)
+    actual = test_df.select("geom", condition)
+    expected = spark.createDataFrame([[_POINT_EDGE, _precise_violation(_POINT_EDGE)], [None, None]], _PRECISE_SCHEMA)
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_geo_contains_exterior_point_wkt_violation(skip_if_runtime_not_geo_compatible, spark):
+    """Exterior point is not contained — violation (WKT input)."""
+    test_df = spark.createDataFrame([[_POINT_OUTSIDE], [None]], _GEO_SCHEMA)
+    condition = is_geo_contains("geom", _REF_POLYGON, convert_column=True, convert_reference_geometry=True)
+    actual = test_df.select("geom", condition)
+    expected = spark.createDataFrame(
+        [[_POINT_OUTSIDE, _precise_violation(_POINT_OUTSIDE)], [None, None]], _PRECISE_SCHEMA
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_geo_contains_exterior_point_ewkt_violation(skip_if_runtime_not_geo_compatible, spark):
+    """Exterior point is not contained — violation (EWKT input with SRID)."""
+    test_df = spark.createDataFrame([[_EWKT_POINT_OUTSIDE], [None]], _GEO_SCHEMA)
+    condition = is_geo_contains("geom", _EWKT_REF_POLYGON, convert_column=True, convert_reference_geometry=True)
+    actual = test_df.select("geom", condition)
+    expected = spark.createDataFrame(
+        [[_EWKT_POINT_OUTSIDE, _precise_violation(_EWKT_POINT_OUTSIDE)], [None, None]], _PRECISE_SCHEMA
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_geo_covers_precise_interior_point_no_violation(skip_if_runtime_not_geo_compatible, spark):
+    """Interior point is covered — no violation."""
+    test_df = spark.createDataFrame([[_POINT_INSIDE], [None]], _GEO_SCHEMA)
+    condition = is_geo_covers("geom", _REF_POLYGON, precise=True, convert_column=True, convert_reference_geometry=True)
+    actual = test_df.select("geom", condition)
+    expected = spark.createDataFrame([[_POINT_INSIDE, None], [None, None]], _PRECISE_SCHEMA)
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_geo_covers_precise_boundary_point_no_violation(skip_if_runtime_not_geo_compatible, spark):
+    """Boundary point is covered (st_covers includes boundary, unlike st_contains) — no violation."""
+    test_df = spark.createDataFrame([[_POINT_EDGE], [None]], _GEO_SCHEMA)
+    condition = is_geo_covers("geom", _REF_POLYGON, precise=True, convert_column=True, convert_reference_geometry=True)
+    actual = test_df.select("geom", condition)
+    expected = spark.createDataFrame([[_POINT_EDGE, None], [None, None]], _PRECISE_SCHEMA)
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_geo_covers_precise_exterior_point_wkt_violation(skip_if_runtime_not_geo_compatible, spark):
+    """Exterior point is not covered — violation (WKT input)."""
+    test_df = spark.createDataFrame([[_POINT_OUTSIDE], [None]], _GEO_SCHEMA)
+    condition = is_geo_covers("geom", _REF_POLYGON, precise=True, convert_column=True, convert_reference_geometry=True)
+    actual = test_df.select("geom", condition)
+    expected = spark.createDataFrame(
+        [[_POINT_OUTSIDE, _precise_violation(_POINT_OUTSIDE)], [None, None]], _PRECISE_SCHEMA
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_geo_covers_precise_exterior_point_ewkt_violation(skip_if_runtime_not_geo_compatible, spark):
+    """Exterior point is not covered — violation (EWKT input with SRID)."""
+    test_df = spark.createDataFrame([[_EWKT_POINT_OUTSIDE], [None]], _GEO_SCHEMA)
+    condition = is_geo_covers(
+        "geom", _EWKT_REF_POLYGON, precise=True, convert_column=True, convert_reference_geometry=True
+    )
+    actual = test_df.select("geom", condition)
+    expected = spark.createDataFrame(
+        [[_EWKT_POINT_OUTSIDE, _precise_violation(_EWKT_POINT_OUTSIDE)], [None, None]], _PRECISE_SCHEMA
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_geo_covers_approximate_interior_point_resolution_5_no_violation(skip_if_runtime_not_geo_compatible, spark):
+    """Interior point covered by H3 cells at resolution 5 — no violation."""
+    test_df = spark.createDataFrame([[_POINT_INSIDE], [None]], _GEO_SCHEMA)
+    condition = is_geo_covers("geom", _REF_POLYGON, resolution=5)
+    actual = test_df.select("geom", condition)
+    expected = spark.createDataFrame([[_POINT_INSIDE, None], [None, None]], _APPROXIMATE_SCHEMA)
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_geo_covers_approximate_interior_point_resolution_7_no_violation(skip_if_runtime_not_geo_compatible, spark):
+    """Interior point covered by H3 cells at resolution 7 — no violation."""
+    test_df = spark.createDataFrame([[_POINT_INSIDE], [None]], _GEO_SCHEMA)
+    condition = is_geo_covers("geom", _REF_POLYGON, resolution=7)
+    actual = test_df.select("geom", condition)
+    expected = spark.createDataFrame([[_POINT_INSIDE, None], [None, None]], _APPROXIMATE_SCHEMA)
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_geo_covers_approximate_exterior_point_resolution_5_violation(skip_if_runtime_not_geo_compatible, spark):
+    """Exterior point not covered by H3 cells at resolution 5 — violation."""
+    test_df = spark.createDataFrame([[_POINT_OUTSIDE], [None]], _GEO_SCHEMA)
+    condition = is_geo_covers("geom", _REF_POLYGON, resolution=5)
+    actual = test_df.select("geom", condition)
+    expected = spark.createDataFrame(
+        [[_POINT_OUTSIDE, _approximate_violation(_POINT_OUTSIDE)], [None, None]], _APPROXIMATE_SCHEMA
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_geo_covers_approximate_exterior_point_resolution_7_violation(skip_if_runtime_not_geo_compatible, spark):
+    """Exterior point not covered by H3 cells at resolution 7 — violation."""
+    test_df = spark.createDataFrame([[_POINT_OUTSIDE], [None]], _GEO_SCHEMA)
+    condition = is_geo_covers("geom", _REF_POLYGON, resolution=7)
+    actual = test_df.select("geom", condition)
+    expected = spark.createDataFrame(
+        [[_POINT_OUTSIDE, _approximate_violation(_POINT_OUTSIDE)], [None, None]], _APPROXIMATE_SCHEMA
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_geo_covers_approximate_overlapping_polygon_resolution_5_violation(
+    skip_if_runtime_not_geo_compatible, spark
+):
+    """Overlapping polygon extends beyond reference — not all H3 cells covered at resolution 5 — violation."""
+    test_df = spark.createDataFrame([[_OVERLAPPING_POLYGON], [None]], _GEO_SCHEMA)
+    condition = is_geo_covers("geom", _REF_POLYGON, resolution=5)
+    actual = test_df.select("geom", condition)
+    expected = spark.createDataFrame(
+        [[_OVERLAPPING_POLYGON, _approximate_violation(_OVERLAPPING_POLYGON)], [None, None]], _APPROXIMATE_SCHEMA
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_geo_covers_approximate_overlapping_polygon_resolution_7_violation(
+    skip_if_runtime_not_geo_compatible, spark
+):
+    """Overlapping polygon extends beyond reference — not all H3 cells covered at resolution 7 — violation."""
+    test_df = spark.createDataFrame([[_OVERLAPPING_POLYGON], [None]], _GEO_SCHEMA)
+    condition = is_geo_covers("geom", _REF_POLYGON, resolution=7)
+    actual = test_df.select("geom", condition)
+    expected = spark.createDataFrame(
+        [[_OVERLAPPING_POLYGON, _approximate_violation(_OVERLAPPING_POLYGON)], [None, None]], _APPROXIMATE_SCHEMA
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_geo_covers_precise_flags_near_boundary_point_approximate_does_not(
+    skip_if_runtime_not_geo_compatible, spark
+):
+    """Point just outside the polygon boundary (~10 km east): precise flags it, approximate at resolution 7 does not.
+
+    This demonstrates that H3 cell boundaries differ from exact geometry boundaries — a point outside
+    the polygon may still share H3 cells with it at coarser resolutions.
     """
-    input_schema = "geom: string"
-    test_df = spark.createDataFrame([[column_value], [None]], input_schema)
+    point = "POINT(5.20 52.35)"
+    test_df = spark.createDataFrame([[point], [None]], _GEO_SCHEMA)
 
-    condition = has_topological_relationship_precise(
-        "geom",
-        reference_geometry_value,
-        convert_column=True,
-        convert_reference_geometry=True,
-        topological_relationship=topological_relationship,
+    precise_condition = is_geo_covers(
+        "geom", _REF_POLYGON, precise=True, convert_column=True, convert_reference_geometry=True
     )
+    actual_precise = test_df.select("geom", precise_condition)
+    expected_precise = spark.createDataFrame([[point, _precise_violation(point)], [None, None]], _PRECISE_SCHEMA)
+    assertDataFrameEqual(actual_precise, expected_precise, checkRowOrder=False)
 
+    approximate_condition = is_geo_covers("geom", _REF_POLYGON, resolution=7)
+    actual_approximate = test_df.select("geom", approximate_condition)
+    expected_approximate = spark.createDataFrame([[point, None], [None, None]], _APPROXIMATE_SCHEMA)
+    assertDataFrameEqual(actual_approximate, expected_approximate, checkRowOrder=False)
+
+
+def test_is_geo_intersects_precise_interior_point_no_violation(skip_if_runtime_not_geo_compatible, spark):
+    """Interior point intersects the polygon — no violation."""
+    test_df = spark.createDataFrame([[_POINT_INSIDE], [None]], _GEO_SCHEMA)
+    condition = is_geo_intersects(
+        "geom", _REF_POLYGON, precise=True, convert_column=True, convert_reference_geometry=True
+    )
     actual = test_df.select("geom", condition)
-
-    violation_message = f"value `{column_value}` in column `geom` is outside the reference geometry"
-    expected = spark.createDataFrame(
-        [
-            [column_value, violation_message if expect_violation else None],
-            [None, None],
-        ],
-        "geom: string, geom_outside_reference_geometry: string",
-    )
-
+    expected = spark.createDataFrame([[_POINT_INSIDE, None], [None, None]], _PRECISE_SCHEMA)
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
-def test_has_topological_relationship_precise_inside_within(
-    skip_if_runtime_not_geo_compatible,
-    spark,
+def test_is_geo_intersects_precise_boundary_point_no_violation(skip_if_runtime_not_geo_compatible, spark):
+    """Boundary point intersects the polygon (shared boundary point counts) — no violation."""
+    test_df = spark.createDataFrame([[_POINT_EDGE], [None]], _GEO_SCHEMA)
+    condition = is_geo_intersects(
+        "geom", _REF_POLYGON, precise=True, convert_column=True, convert_reference_geometry=True
+    )
+    actual = test_df.select("geom", condition)
+    expected = spark.createDataFrame([[_POINT_EDGE, None], [None, None]], _PRECISE_SCHEMA)
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_geo_intersects_precise_exterior_point_wkt_violation(skip_if_runtime_not_geo_compatible, spark):
+    """Exterior point does not intersect the polygon — violation (WKT input)."""
+    test_df = spark.createDataFrame([[_POINT_OUTSIDE], [None]], _GEO_SCHEMA)
+    condition = is_geo_intersects(
+        "geom", _REF_POLYGON, precise=True, convert_column=True, convert_reference_geometry=True
+    )
+    actual = test_df.select("geom", condition)
+    expected = spark.createDataFrame(
+        [[_POINT_OUTSIDE, _precise_violation(_POINT_OUTSIDE)], [None, None]], _PRECISE_SCHEMA
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_geo_intersects_precise_exterior_point_ewkt_violation(skip_if_runtime_not_geo_compatible, spark):
+    """Exterior point does not intersect the polygon — violation (EWKT input with SRID)."""
+    test_df = spark.createDataFrame([[_EWKT_POINT_OUTSIDE], [None]], _GEO_SCHEMA)
+    condition = is_geo_intersects(
+        "geom", _EWKT_REF_POLYGON, precise=True, convert_column=True, convert_reference_geometry=True
+    )
+    actual = test_df.select("geom", condition)
+    expected = spark.createDataFrame(
+        [[_EWKT_POINT_OUTSIDE, _precise_violation(_EWKT_POINT_OUTSIDE)], [None, None]], _PRECISE_SCHEMA
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_geo_intersects_approximate_interior_point_resolution_5_no_violation(
+    skip_if_runtime_not_geo_compatible, spark
 ):
-    """Test for `has_topological_relationship_precise` when the column point is strictly inside the geometry.
-    A point strictly inside the geometry (not on the boundary) must not be flagged for WITHIN.
-    """
-    input_schema = "geom: string"
-    value = "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))"
-    reference = "POINT(4.90 52.37)"
-
-    test_df = spark.createDataFrame([[value], [None]], input_schema)
-
-    condition = has_topological_relationship_precise(
-        "geom",
-        reference,
-        convert_column=True,
-        convert_reference_geometry=True,
-        topological_relationship="WITHIN",
-    )
-
+    """Interior point shares H3 cells with the polygon at resolution 5 — no violation."""
+    test_df = spark.createDataFrame([[_POINT_INSIDE], [None]], _GEO_SCHEMA)
+    condition = is_geo_intersects("geom", _REF_POLYGON, resolution=5)
     actual = test_df.select("geom", condition)
-
-    expected = spark.createDataFrame(
-        [
-            [None, None],
-        ],
-        "geom: string, geom_outside_reference_geometry: string",
-    )
-
+    expected = spark.createDataFrame([[_POINT_INSIDE, None], [None, None]], _APPROXIMATE_SCHEMA)
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
-@pytest.mark.parametrize(
-    "column_value,reference_geometry_value,topological_relationship,expect_violation",
-    [
-        (
-            "POINT(4.73 52.28)",
-            "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
-            "CONTAINS",
-            True,
-        ),
-        (
-            "POINT(4.73 52.28)",
-            "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
-            "COVERS",
-            False,
-        ),
-        (
-            "POINT(4.73 52.28)",
-            "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
-            "INTERSECTS",
-            False,
-        ),
-        (
-            "POINT(4.73 52.28)",
-            "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
-            "TOUCHES",
-            False,
-        ),
-    ],
-)
-def test_has_topological_relationship_precise_edge(
-    column_value,
-    reference_geometry_value,
-    topological_relationship,
-    expect_violation,
-    skip_if_runtime_not_geo_compatible,
-    spark,
+def test_is_geo_intersects_approximate_interior_point_resolution_7_no_violation(
+    skip_if_runtime_not_geo_compatible, spark
 ):
-    """Test for `has_topological_relationship_precise` when the column point is on edge of the geometry."""
-    input_schema = "geom: string"
-    test_df = spark.createDataFrame([[column_value], [None]], input_schema)
-
-    condition = has_topological_relationship_precise(
-        "geom",
-        reference_geometry_value,
-        convert_column=True,
-        convert_reference_geometry=True,
-        topological_relationship=topological_relationship,
-    )
+    """Interior point shares H3 cells with the polygon at resolution 7 — no violation."""
+    test_df = spark.createDataFrame([[_POINT_INSIDE], [None]], _GEO_SCHEMA)
+    condition = is_geo_intersects("geom", _REF_POLYGON, resolution=7)
     actual = test_df.select("geom", condition)
+    expected = spark.createDataFrame([[_POINT_INSIDE, None], [None, None]], _APPROXIMATE_SCHEMA)
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
-    violation_message = f"value `{column_value}` in column `geom` has no relationship with the reference geometry"
+
+def test_is_geo_intersects_approximate_exterior_point_resolution_5_violation(skip_if_runtime_not_geo_compatible, spark):
+    """Exterior point shares no H3 cells with the polygon at resolution 5 — violation."""
+    test_df = spark.createDataFrame([[_POINT_OUTSIDE], [None]], _GEO_SCHEMA)
+    condition = is_geo_intersects("geom", _REF_POLYGON, resolution=5)
+    actual = test_df.select("geom", condition)
     expected = spark.createDataFrame(
-        [
-            [column_value, violation_message if expect_violation else None],
-            [None, None],
-        ],
-        "geom: string, geom_outside_reference_geometry: string",
+        [[_POINT_OUTSIDE, _approximate_violation(_POINT_OUTSIDE)], [None, None]], _APPROXIMATE_SCHEMA
     )
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
-def test_has_topological_relationship_precise_edge_within(
-    skip_if_runtime_not_geo_compatible,
-    spark,
+def test_is_geo_intersects_approximate_exterior_point_resolution_7_violation(skip_if_runtime_not_geo_compatible, spark):
+    """Exterior point shares no H3 cells with the polygon at resolution 7 — violation."""
+    test_df = spark.createDataFrame([[_POINT_OUTSIDE], [None]], _GEO_SCHEMA)
+    condition = is_geo_intersects("geom", _REF_POLYGON, resolution=7)
+    actual = test_df.select("geom", condition)
+    expected = spark.createDataFrame(
+        [[_POINT_OUTSIDE, _approximate_violation(_POINT_OUTSIDE)], [None, None]], _APPROXIMATE_SCHEMA
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_geo_intersects_approximate_overlapping_polygon_resolution_5_no_violation(
+    skip_if_runtime_not_geo_compatible, spark
 ):
-    """Test for `has_topological_relationship_precise` when the column point is on edge of the geometry.
-    A point must not be flagged for WITHIN.
-    """
-    input_schema = "geom: string"
-    value = "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))"
-    reference = "POINT(4.73 52.28)"
-
-    test_df = spark.createDataFrame([[value], [None]], input_schema)
-
-    condition = has_topological_relationship_precise(
-        "geom",
-        reference,
-        convert_column=True,
-        convert_reference_geometry=True,
-        topological_relationship="WITHIN",
-    )
-
+    """Partially overlapping polygon shares at least one H3 cell at resolution 5 — no violation."""
+    test_df = spark.createDataFrame([[_OVERLAPPING_POLYGON], [None]], _GEO_SCHEMA)
+    condition = is_geo_intersects("geom", _REF_POLYGON, resolution=5)
     actual = test_df.select("geom", condition)
-
-    expected = spark.createDataFrame(
-        [
-            [None, f"value `{value}` in column `geom` is outside the reference geometry"],
-        ],
-        "geom: string, geom_outside_reference_geometry: string",
-    )
-
+    expected = spark.createDataFrame([[_OVERLAPPING_POLYGON, None], [None, None]], _APPROXIMATE_SCHEMA)
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
-@pytest.mark.parametrize("topological_relationship", ["CONTAINS", "COVERS", "TOUCHES", "INTERSECTS"])
-@pytest.mark.parametrize(
-    "column_value,reference_geometry_value",
-    [
-        (
-            "POINT(4.48 51.92)",
-            "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
-        ),
-        (
-            "SRID=4326;POINT(4.48 51.92)",
-            "SRID=4326;POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
-        ),
-    ],
-)
-def test_has_topological_relationship_precise_outside(
-    topological_relationship,
-    column_value,
-    reference_geometry_value,
-    skip_if_runtime_not_geo_compatible,
-    spark,
+def test_is_geo_intersects_approximate_overlapping_polygon_resolution_7_no_violation(
+    skip_if_runtime_not_geo_compatible, spark
 ):
-    """Test for `has_topological_relationship_precise` function when column point is outside the reference geometry.
-    A point strictly outside must always be flagged as a violation, regardless of which
-    topological predicate is used (except WITHIN).
-    """
-    input_schema = "geom: string"
-    test_df = spark.createDataFrame([[column_value], [None]], input_schema)
-
-    condition = has_topological_relationship_precise(
-        "geom",
-        reference_geometry_value,
-        convert_column=True,
-        convert_reference_geometry=True,
-        topological_relationship=topological_relationship,
-    )
-
+    """Partially overlapping polygon shares at least one H3 cell at resolution 7 — no violation."""
+    test_df = spark.createDataFrame([[_OVERLAPPING_POLYGON], [None]], _GEO_SCHEMA)
+    condition = is_geo_intersects("geom", _REF_POLYGON, resolution=7)
     actual = test_df.select("geom", condition)
-
-    expected = spark.createDataFrame(
-        [
-            [column_value, f"value `{column_value}` in column `geom` has no relationship with the reference geometry"],
-            [None, None],
-        ],
-        "geom: string, geom_outside_reference_geometry: string",
-    )
-
+    expected = spark.createDataFrame([[_OVERLAPPING_POLYGON, None], [None, None]], _APPROXIMATE_SCHEMA)
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
-def test_has_topological_relationship_precise_outside_within(
-    skip_if_runtime_not_geo_compatible,
-    spark,
-):
-    """Test for `has_topological_relationship_precise` when the column point is strictly outside the geometry.
-    A point strictly inside the geometry (not on the boundary) must be flagged for WITHIN.
-    """
-    input_schema = "geom: string"
-    value = "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))"
-    reference = "POINT(4.73 52.28)"
-
-    test_df = spark.createDataFrame([[value], [None]], input_schema)
-
-    condition = has_topological_relationship_precise(
-        "geom",
-        reference,
-        convert_column=True,
-        convert_reference_geometry=True,
-        topological_relationship="WITHIN",
-    )
-
+def test_is_geo_touches_interior_point_violation(skip_if_runtime_not_geo_compatible, spark):
+    """Interior point does not touch the polygon (touches requires shared boundary, not interior) — violation."""
+    test_df = spark.createDataFrame([[_POINT_INSIDE], [None]], _GEO_SCHEMA)
+    condition = is_geo_touches("geom", _REF_POLYGON, convert_column=True, convert_reference_geometry=True)
     actual = test_df.select("geom", condition)
-
     expected = spark.createDataFrame(
-        [
-            [None, f"value `{value}` in column `geom` has no relationship with the reference geometry"],
-        ],
-        "geom: string, geom_outside_reference_geometry: string",
+        [[_POINT_INSIDE, _precise_violation(_POINT_INSIDE)], [None, None]], _PRECISE_SCHEMA
     )
-
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
-@pytest.mark.parametrize("topological_relationship", ["COVERS", "INTERSECTS"])
-@pytest.mark.parametrize(
-    "column_value,reference_geometry_value,resolution",
-    [
-        ("POINT(4.90 52.37)", "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))", 5),
-        ("POINT(4.90 52.37)", "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))", 7),
-    ],
-)
-def test_has_topological_relationship_approximate_inside(
-    topological_relationship,
-    column_value,
-    reference_geometry_value,
-    resolution,
-    skip_if_runtime_not_geo_compatible,
-    spark,
-):
-    """Point strictly inside the geometry must not be flagged for either predicate at any tested resolution."""
-    input_schema = "geom: string"
-    test_df = spark.createDataFrame([[column_value], [None]], input_schema)
-
-    condition = has_topological_relationship_approximate(
-        "geom", reference_geometry_value, resolution, topological_relationship=topological_relationship
-    )
-
+def test_is_geo_touches_boundary_point_no_violation(skip_if_runtime_not_geo_compatible, spark):
+    """Boundary point touches the polygon (shared boundary, disjoint interiors) — no violation."""
+    test_df = spark.createDataFrame([[_POINT_EDGE], [None]], _GEO_SCHEMA)
+    condition = is_geo_touches("geom", _REF_POLYGON, convert_column=True, convert_reference_geometry=True)
     actual = test_df.select("geom", condition)
-
-    expected = spark.createDataFrame(
-        [
-            [column_value, None],  # inside geometry — no violation
-            [None, None],  # null — evaluation skipped
-        ],
-        "geom: string, geom_outside_reference_geometry_approximate: string",
-    )
-
+    expected = spark.createDataFrame([[_POINT_EDGE, None], [None, None]], _PRECISE_SCHEMA)
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
-@pytest.mark.parametrize("topological_relationship", ["COVERS", "INTERSECTS"])
-@pytest.mark.parametrize(
-    "column_value,reference_geometry_value,resolution",
-    [
-        (
-            "POINT(4.48 51.92)",
-            "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
-            5,
-        ),  # south-west of geometry, resolution 5
-        (
-            "POINT(4.48 51.92)",
-            "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
-            7,
-        ),  # same point, finer resolution
-    ],
-)
-def test_has_topological_relationship_approximate_outside(
-    topological_relationship,
-    column_value,
-    reference_geometry_value,
-    resolution,
-    skip_if_runtime_not_geo_compatible,
-    spark,
-):
-    """Point strictly outside the geometry must always be flagged as a violation for both predicates."""
-    input_schema = "geom: string"
-    test_df = spark.createDataFrame([[column_value], [None]], input_schema)
-
-    condition = has_topological_relationship_approximate(
-        "geom", reference_geometry_value, resolution, topological_relationship=topological_relationship
-    )
-
+def test_is_geo_touches_exterior_point_wkt_violation(skip_if_runtime_not_geo_compatible, spark):
+    """Exterior point does not touch the polygon — violation (WKT input)."""
+    test_df = spark.createDataFrame([[_POINT_OUTSIDE], [None]], _GEO_SCHEMA)
+    condition = is_geo_touches("geom", _REF_POLYGON, convert_column=True, convert_reference_geometry=True)
     actual = test_df.select("geom", condition)
-
     expected = spark.createDataFrame(
-        [
-            [
-                column_value,
-                f"value `{column_value}` in column `geom` is approximately outside the reference geometry",
-            ],
-            [None, None],  # null — evaluation skipped
-        ],
-        "geom: string, geom_outside_reference_geometry_approximate: string",
+        [[_POINT_OUTSIDE, _precise_violation(_POINT_OUTSIDE)], [None, None]], _PRECISE_SCHEMA
     )
-
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
-def test_has_topological_relationship_precise_approximate_comparison(
-    skip_if_runtime_not_geo_compatible,
-    spark,
-):
-    """Test to cover a case when `has_topological_relationship_precise` finds an error but
-    `has_topological_relationship_approximate` does not. Point distance from the polygon nearly 10K.
-    """
-    column_value = "POINT(5.20 52.35)"
-    reference_geometry_value = "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))"
-    resolution = 7
-
-    input_schema = "geom: string"
-    test_df = spark.createDataFrame([[column_value], [None]], input_schema)
-
-    condition = has_topological_relationship_precise(
-        "geom", reference_geometry_value, topological_relationship="COVERS"
-    )
-
+def test_is_geo_touches_exterior_point_ewkt_violation(skip_if_runtime_not_geo_compatible, spark):
+    """Exterior point does not touch the polygon — violation (EWKT input with SRID)."""
+    test_df = spark.createDataFrame([[_EWKT_POINT_OUTSIDE], [None]], _GEO_SCHEMA)
+    condition = is_geo_touches("geom", _EWKT_REF_POLYGON, convert_column=True, convert_reference_geometry=True)
     actual = test_df.select("geom", condition)
-
     expected = spark.createDataFrame(
-        [
-            [
-                column_value,
-                f"value `{column_value}` in column `geom` is approximately outside the reference geometry",
-            ],
-        ],
-        "geom: string, geom_outside_reference_geometry_approximate: string",
+        [[_EWKT_POINT_OUTSIDE, _precise_violation(_EWKT_POINT_OUTSIDE)], [None, None]], _PRECISE_SCHEMA
     )
-
-    assertDataFrameEqual(actual, expected, checkRowOrder=False)
-
-    condition = has_topological_relationship_approximate(
-        "geom", reference_geometry_value, resolution, topological_relationship="COVERS"
-    )
-
-    actual = test_df.select("geom", condition)
-
-    expected = spark.createDataFrame(
-        [
-            [
-                column_value,
-                None,
-            ],
-        ],
-        "geom: string, geom_outside_reference_geometry_approximate: string",
-    )
-
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
-@pytest.mark.parametrize("resolution", [5, 7])
-def test_has_topological_relationship_approximate_intersect(
-    resolution,
-    skip_if_runtime_not_geo_compatible,
-    spark,
-):
-    """Two partially overlapping polygons: INTERSECTS must not flag, COVERS must flag because the column
-    polygon extends outside the reference polygon and therefore not all its H3 cells are covered."""
-    column_geom = "POLYGON((4.95 52.25, 5.30 52.25, 5.30 52.40, 4.95 52.40, 4.95 52.25))"
-    reference_geom = "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))"
+def test_is_geo_within_interior_reference_no_violation(skip_if_runtime_not_geo_compatible, spark):
+    """Reference point is inside the column polygon — st_within(reference, column) is true — no violation."""
+    column_polygon = _REF_POLYGON
+    reference_point = _POINT_INSIDE
+    test_df = spark.createDataFrame([[column_polygon], [None]], _GEO_SCHEMA)
+    condition = is_geo_within("geom", reference_point, convert_column=True, convert_reference_geometry=True)
+    actual = test_df.select("geom", condition)
+    expected = spark.createDataFrame([[column_polygon, None], [None, None]], _PRECISE_SCHEMA)
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
-    input_schema = "geom: string"
-    test_df = spark.createDataFrame([[column_geom], [None]], input_schema)
 
-    condition_intersects = has_topological_relationship_approximate(
-        "geom", reference_geom, resolution, topological_relationship="INTERSECTS"
+def test_is_geo_within_boundary_reference_violation(skip_if_runtime_not_geo_compatible, spark):
+    """Reference point is on the polygon boundary — st_within excludes boundary — violation."""
+    column_polygon = _REF_POLYGON
+    reference_point = _POINT_EDGE
+    test_df = spark.createDataFrame([[column_polygon], [None]], _GEO_SCHEMA)
+    condition = is_geo_within("geom", reference_point, convert_column=True, convert_reference_geometry=True)
+    actual = test_df.select("geom", condition)
+    expected = spark.createDataFrame(
+        [[column_polygon, _precise_violation(column_polygon)], [None, None]], _PRECISE_SCHEMA
     )
-    condition_covers = has_topological_relationship_approximate(
-        "geom", reference_geom, resolution, topological_relationship="COVERS"
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_geo_within_exterior_reference_violation(skip_if_runtime_not_geo_compatible, spark):
+    """Reference point is outside the column polygon — st_within is false — violation."""
+    column_polygon = _REF_POLYGON
+    reference_point = _POINT_OUTSIDE
+    test_df = spark.createDataFrame([[column_polygon], [None]], _GEO_SCHEMA)
+    condition = is_geo_within("geom", reference_point, convert_column=True, convert_reference_geometry=True)
+    actual = test_df.select("geom", condition)
+    expected = spark.createDataFrame(
+        [[column_polygon, _precise_violation(column_polygon)], [None, None]], _PRECISE_SCHEMA
     )
-
-    actual_intersects = test_df.select("geom", condition_intersects)
-    actual_covers = test_df.select("geom", condition_covers)
-
-    violation_message = f"value `{column_geom}` in column `geom` is approximately outside the reference geometry"
-
-    expected_intersects = spark.createDataFrame(
-        [
-            [column_geom, None],  # intersects — no violation
-            [None, None],
-        ],
-        "geom: string, geom_outside_reference_geometry_approximate: string",
-    )
-    expected_covers = spark.createDataFrame(
-        [
-            [column_geom, violation_message],  # not fully covered — violation
-            [None, None],
-        ],
-        "geom: string, geom_outside_reference_geometry_approximate: string",
-    )
-
-    assertDataFrameEqual(actual_intersects, expected_intersects, checkRowOrder=False)
-    assertDataFrameEqual(actual_covers, expected_covers, checkRowOrder=False)
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
