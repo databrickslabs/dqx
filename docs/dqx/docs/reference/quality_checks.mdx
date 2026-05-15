@@ -2318,7 +2318,7 @@ Complex data types are supported as well.
       convert_column: true
       convert_reference_geometry: true
 
-# is_geo_covers check — approximate mode (geo, requires runtime 17.1+)
+# is_geo_covers check — approximate mode
 # H3 resolution 7 (~5 km² cells); default when precise=false
 - criticality: error
   check:
@@ -2327,6 +2327,8 @@ Complex data types are supported as well.
       column: location
       reference_geometry: "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))"
       resolution: 7
+      convert_column: true
+      convert_reference_geometry: true
 
 # is_geo_covers check — precise mode (geo, requires runtime 17.1+)
 # uses st_covers; includes boundary points unlike st_contains
@@ -2340,7 +2342,7 @@ Complex data types are supported as well.
       convert_column: true
       convert_reference_geometry: true
 
-# is_geo_intersects check — approximate mode (geo, requires runtime 17.1+)
+# is_geo_intersects check — approximate mode
 # at least one shared H3 cell between location and the reference polygon
 - criticality: error
   check:
@@ -2349,6 +2351,8 @@ Complex data types are supported as well.
       column: location
       reference_geometry: "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))"
       resolution: 7
+      convert_column: true
+      convert_reference_geometry: true
 
 # is_geo_intersects check — precise mode (geo, requires runtime 17.1+)
 # uses st_intersects for exact computation
@@ -2857,7 +2861,7 @@ checks = [
       column="geom" # or as expr: F.col("geom")
     ),
 
-    # is_geo_contains check (geo, precise, requires runtime 17.1+)
+    # is_geo_contains check (geo, precise only, requires runtime 17.1+)
     # reference polygon must contain each location point (uses st_contains)
     DQDatasetRule(
       criticality="error",
@@ -2870,7 +2874,7 @@ checks = [
       }
     ),
 
-    # is_geo_covers check — approximate mode (geo, requires runtime 17.1+)
+    # is_geo_covers check — approximate mode,
     # H3 resolution 7 (~5 km² cells); default when precise=False
     DQDatasetRule(
       criticality="error",
