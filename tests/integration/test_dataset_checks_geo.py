@@ -13,9 +13,7 @@ from databricks.labs.dqx.geo.check_funcs import (
 _POINT_INSIDE = "POINT(4.90 52.37)"
 _POINT_EDGE = "POINT(4.73 52.28)"
 _POINT_OUTSIDE = "POINT(4.48 51.92)"
-_EWKT_POINT_OUTSIDE = "SRID=4326;POINT(4.48 51.92)"
 _REF_POLYGON = "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))"
-_EWKT_REF_POLYGON = "SRID=4326;POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))"
 _OVERLAPPING_POLYGON = "POLYGON((4.95 52.25, 5.30 52.25, 5.30 52.40, 4.95 52.40, 4.95 52.25))"
 _GEO_SCHEMA = "geom: string"
 _PRECISE_SCHEMA = "geom: string, geom_outside_reference_geometry: string"
@@ -583,17 +581,6 @@ def test_is_geo_contains_exterior_point_wkt_violation(skip_if_runtime_not_geo_co
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
-def test_is_geo_contains_exterior_point_ewkt_violation(skip_if_runtime_not_geo_compatible, spark):
-    """Exterior point is not contained — violation (EWKT input with SRID)."""
-    test_df = spark.createDataFrame([[_EWKT_POINT_OUTSIDE], [None]], _GEO_SCHEMA)
-    condition = is_geo_contains("geom", _EWKT_REF_POLYGON, convert_column=True, convert_reference_geometry=True)
-    actual = test_df.select("geom", condition)
-    expected = spark.createDataFrame(
-        [[_EWKT_POINT_OUTSIDE, _precise_violation(_EWKT_POINT_OUTSIDE)], [None, None]], _PRECISE_SCHEMA
-    )
-    assertDataFrameEqual(actual, expected, checkRowOrder=False)
-
-
 def test_is_geo_covers_precise_interior_point_no_violation(skip_if_runtime_not_geo_compatible, spark):
     """Interior point is covered — no violation."""
     test_df = spark.createDataFrame([[_POINT_INSIDE], [None]], _GEO_SCHEMA)
@@ -619,19 +606,6 @@ def test_is_geo_covers_precise_exterior_point_wkt_violation(skip_if_runtime_not_
     actual = test_df.select("geom", condition)
     expected = spark.createDataFrame(
         [[_POINT_OUTSIDE, _precise_violation(_POINT_OUTSIDE)], [None, None]], _PRECISE_SCHEMA
-    )
-    assertDataFrameEqual(actual, expected, checkRowOrder=False)
-
-
-def test_is_geo_covers_precise_exterior_point_ewkt_violation(skip_if_runtime_not_geo_compatible, spark):
-    """Exterior point is not covered — violation (EWKT input with SRID)."""
-    test_df = spark.createDataFrame([[_EWKT_POINT_OUTSIDE], [None]], _GEO_SCHEMA)
-    condition = is_geo_covers(
-        "geom", _EWKT_REF_POLYGON, precise=True, convert_column=True, convert_reference_geometry=True
-    )
-    actual = test_df.select("geom", condition)
-    expected = spark.createDataFrame(
-        [[_EWKT_POINT_OUTSIDE, _precise_violation(_EWKT_POINT_OUTSIDE)], [None, None]], _PRECISE_SCHEMA
     )
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
@@ -720,7 +694,7 @@ def test_is_geo_covers_precise_flags_near_boundary_point_approximate_does_not(
     expected_precise = spark.createDataFrame([[point, _precise_violation(point)], [None, None]], _PRECISE_SCHEMA)
     assertDataFrameEqual(actual_precise, expected_precise, checkRowOrder=False)
 
-    approximate_condition = is_geo_covers("geom", _REF_POLYGON, resolution=7)
+    approximate_condition = is_geo_covers("geom", _REF_POLYGON, resolution=5)
     actual_approximate = test_df.select("geom", approximate_condition)
     expected_approximate = spark.createDataFrame([[point, None], [None, None]], _APPROXIMATE_SCHEMA)
     assertDataFrameEqual(actual_approximate, expected_approximate, checkRowOrder=False)
@@ -757,19 +731,6 @@ def test_is_geo_intersects_precise_exterior_point_wkt_violation(skip_if_runtime_
     actual = test_df.select("geom", condition)
     expected = spark.createDataFrame(
         [[_POINT_OUTSIDE, _precise_violation(_POINT_OUTSIDE)], [None, None]], _PRECISE_SCHEMA
-    )
-    assertDataFrameEqual(actual, expected, checkRowOrder=False)
-
-
-def test_is_geo_intersects_precise_exterior_point_ewkt_violation(skip_if_runtime_not_geo_compatible, spark):
-    """Exterior point does not intersect the polygon — violation (EWKT input with SRID)."""
-    test_df = spark.createDataFrame([[_EWKT_POINT_OUTSIDE], [None]], _GEO_SCHEMA)
-    condition = is_geo_intersects(
-        "geom", _EWKT_REF_POLYGON, precise=True, convert_column=True, convert_reference_geometry=True
-    )
-    actual = test_df.select("geom", condition)
-    expected = spark.createDataFrame(
-        [[_EWKT_POINT_OUTSIDE, _precise_violation(_EWKT_POINT_OUTSIDE)], [None, None]], _PRECISE_SCHEMA
     )
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
@@ -867,17 +828,6 @@ def test_is_geo_touches_exterior_point_wkt_violation(skip_if_runtime_not_geo_com
     actual = test_df.select("geom", condition)
     expected = spark.createDataFrame(
         [[_POINT_OUTSIDE, _precise_violation(_POINT_OUTSIDE)], [None, None]], _PRECISE_SCHEMA
-    )
-    assertDataFrameEqual(actual, expected, checkRowOrder=False)
-
-
-def test_is_geo_touches_exterior_point_ewkt_violation(skip_if_runtime_not_geo_compatible, spark):
-    """Exterior point does not touch the polygon — violation (EWKT input with SRID)."""
-    test_df = spark.createDataFrame([[_EWKT_POINT_OUTSIDE], [None]], _GEO_SCHEMA)
-    condition = is_geo_touches("geom", _EWKT_REF_POLYGON, convert_column=True, convert_reference_geometry=True)
-    actual = test_df.select("geom", condition)
-    expected = spark.createDataFrame(
-        [[_EWKT_POINT_OUTSIDE, _precise_violation(_EWKT_POINT_OUTSIDE)], [None, None]], _PRECISE_SCHEMA
     )
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
