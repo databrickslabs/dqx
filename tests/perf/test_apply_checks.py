@@ -2103,7 +2103,7 @@ def test_benchmark_is_geo_covers_precise(benchmark, ws, generated_df):
     """
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     checks = [
-        DQDatasetRule(
+        DQRowRule(
             criticality="warn",
             check_func=geo_check_funcs.is_geo_covers,
             column="col_geo_point",
@@ -2130,7 +2130,7 @@ def test_benchmark_is_geo_covers_approximate(benchmark, ws, generated_df):
     """
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     checks = [
-        DQDatasetRule(
+        DQRowRule(
             criticality="warn",
             check_func=geo_check_funcs.is_geo_covers,
             column="col_geo_point",
