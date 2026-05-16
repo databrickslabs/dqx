@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import uuid4
@@ -28,6 +29,41 @@ logger = get_logger("scheduler")
 _SQL_CHECK_PREFIX = "__sql_check__/"
 
 _VALID_TRACKER_STATUSES = {"pending", "success", "partial_failure", "failed"}
+
+# Length of the hex suffix on ``tmp_view_*`` names. ``uuid4().hex`` is
+# always 32 lowercase hex chars; we slice to keep schema-qualified
+# names short. Centralised so the GC regex below, the creation paths
+# (:meth:`SchedulerService._create_view` /
+# :meth:`SchedulerService._create_view_from_sql`), and the unit test
+# that ties them together all read from the same constant.
+_TMP_VIEW_ID_LEN = 12
+
+# Strict gate for the orphan-view GC: anything we drop must match this
+# pattern AND live in the configured tmp schema. Belt-and-suspenders.
+#
+# IMPORTANT — keep this in sync with the generator. View names are
+# produced by :meth:`SchedulerService._generate_tmp_view_id` (which
+# returns ``uuid4().hex[:_TMP_VIEW_ID_LEN]``). If you change the
+# suffix length or charset there, this regex will silently start
+# excluding new views from GC. The range ``{8,32}`` intentionally
+# tolerates a small drift around ``_TMP_VIEW_ID_LEN`` (12) so an
+# accidental length change doesn't immediately break cleanup, but the
+# round-trip is enforced by ``test_regex_matches_generator_output``
+# in ``tests/test_scheduler_service.py``.
+_TMP_VIEW_NAME_RE = re.compile(r"^tmp_view_[a-f0-9]{8,32}$")
+
+# Weekly orphan-view GC cadence. Saturday is ``datetime.weekday() == 5``.
+_GC_WEEKDAY_SAT = 5
+_GC_HOUR_UTC = 1
+# Minimum age before a tmp view is eligible for cleanup. Bumped from
+# 24h → 48h after review feedback: long-running validation jobs (large
+# tables, busy warehouses, retried runs) can keep a view "in use" well
+# past a single day, and the per-run ``finally`` cleanup already
+# handles the common case. 48h gives a generous safety margin so the
+# weekly GC almost never fights a still-active workload, at the cost
+# of orphans living one extra day before being reaped.
+_GC_AGE_HOURS = 48
+_GC_MAX_DROPS_PER_RUN = 500
 
 
 class SchedulerService:
@@ -56,6 +92,13 @@ class SchedulerService:
         self._configs_table = f"{catalog}.{schema}.dq_schedule_configs"
         self._settings_table = f"{catalog}.{schema}.dq_app_settings"
         self._rules_table = f"{catalog}.{schema}.dq_quality_rules"
+
+        # Orphan-tmp-view GC: fires every Saturday at 01:00 UTC. Held in
+        # process memory rather than persisted — a missed Saturday (e.g.
+        # the app was redeploying at exactly 01:00 UTC) is fine because
+        # the per-run ``finally`` cleanup already handles 99% of cases
+        # and orphans only accumulate slowly.
+        self._next_view_gc_at: datetime = self._next_saturday_01_utc(datetime.now(timezone.utc))
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -96,6 +139,7 @@ class SchedulerService:
                 recalc = self._force_recalc
                 self._force_recalc = False
                 await self._tick(recalc=recalc)
+                await self._maybe_gc_orphan_views(datetime.now(timezone.utc))
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -312,6 +356,10 @@ class SchedulerService:
         sample_size = cfg.get("sample_size") or 0
         errors: list[str] = []
 
+        # Fetch custom metrics once per schedule tick — they apply
+        # globally to every dq_metrics row produced by this trigger.
+        custom_metrics = self._load_custom_metrics()
+
         for i, table_fqn in enumerate(table_fqns):
             try:
                 entry = self._get_approved_rule(table_fqn)
@@ -334,6 +382,9 @@ class SchedulerService:
                     "source_table_fqn": table_fqn,
                     "is_sql_check": is_sql_check,
                 }
+
+                if custom_metrics:
+                    config["custom_metrics"] = custom_metrics
 
                 if sql_query is not None:
                     config["sql_query"] = sql_query
@@ -422,6 +473,31 @@ class SchedulerService:
             return None
         return {"table_fqn": rows[0][0], "checks": merged_checks}
 
+    def _load_custom_metrics(self) -> list[str]:
+        """Fetch admin-configured custom metric SQL expressions.
+
+        We deliberately query the settings table directly rather than
+        instantiating ``AppSettingsService`` — the scheduler runs on the
+        app's SP credentials and we want to keep this hot path tight.
+        Failures are swallowed so a missing/blank setting never blocks a
+        scheduled run.
+        """
+        try:
+            from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
+
+            key = escape_sql_string("custom_metrics_v1")
+            sql = f"SELECT setting_value FROM {self._settings_table} WHERE setting_key = '{key}'"  # noqa: S608
+            rows = self._sql.query(sql)
+            if not rows or rows[0][0] is None:
+                return []
+            parsed = json.loads(rows[0][0])
+            if not isinstance(parsed, list):
+                return []
+            return [s for s in parsed if isinstance(s, str) and s.strip()]
+        except Exception:
+            logger.exception("Failed to load custom_metrics_v1; continuing with empty list")
+            return []
+
     @staticmethod
     def _extract_sql_query(checks: list[dict[str, Any]]) -> str | None:
         for check in checks:
@@ -431,13 +507,148 @@ class SchedulerService:
         return None
 
     # ------------------------------------------------------------------
+    # Orphan tmp-view GC (weekly, Saturday 01:00 UTC)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _next_saturday_01_utc(now: datetime) -> datetime:
+        """Return the next datetime > now landing on Saturday at 01:00:00 UTC."""
+        target = now.replace(hour=_GC_HOUR_UTC, minute=0, second=0, microsecond=0)
+        days_ahead = (_GC_WEEKDAY_SAT - target.weekday()) % 7
+        target = target + timedelta(days=days_ahead)
+        if target <= now:
+            target = target + timedelta(days=7)
+        return target
+
+    async def _maybe_gc_orphan_views(self, now: datetime) -> None:
+        """Run the weekly GC if we've crossed the next-fire boundary.
+
+        The check is cheap (one comparison per scheduler tick) and the
+        actual work runs in a thread so it never blocks the loop.
+        Failures are logged but not fatal — the next Saturday will try
+        again.
+        """
+        if now < self._next_view_gc_at:
+            return
+
+        scheduled_for = self._next_view_gc_at
+        # Advance the timer first so a slow GC pass can't double-fire if
+        # the loop completes before it returns.
+        self._next_view_gc_at = self._next_saturday_01_utc(now)
+        logger.info(
+            "View GC: triggering weekly cleanup (was due at %s); next run scheduled for %s",
+            scheduled_for.isoformat(),
+            self._next_view_gc_at.isoformat(),
+        )
+        try:
+            await asyncio.to_thread(self._gc_orphan_views)
+        except Exception:
+            logger.exception("View GC failed (non-fatal)")
+
+    def _gc_orphan_views(self) -> None:
+        """Drop ``tmp_view_*`` views in the tmp schema older than ``_GC_AGE_HOURS``.
+
+        The age threshold (currently 48h) is intentionally generous —
+        long-running validation jobs on big tables can keep a view
+        "in use" for many hours and the per-run ``finally`` cleanup
+        already handles the common case, so we'd rather under-clean
+        than race a still-active workload.
+
+        Cross-checks against ``status = 'RUNNING'`` rows in
+        ``dq_validation_runs`` and ``dq_profiling_results`` so an
+        in-flight (but slow) run is never killed. All operations are
+        idempotent; failures on individual views are logged and
+        skipped.
+        """
+        from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, quote_fqn
+
+        list_sql = (
+            f"SELECT table_name "
+            f"FROM `{self._catalog}`.information_schema.views "
+            f"WHERE table_schema = '{escape_sql_string(self._tmp_schema)}' "
+            f"  AND table_name LIKE 'tmp\\_view\\_%' ESCAPE '\\\\' "
+            f"  AND created_at < current_timestamp() - INTERVAL {_GC_AGE_HOURS} HOUR "
+            f"ORDER BY created_at ASC "
+            f"LIMIT {_GC_MAX_DROPS_PER_RUN}"
+        )
+        try:
+            rows = self._tmp_sql.query(list_sql)
+        except Exception as exc:
+            logger.warning("View GC: failed to list candidates: %s", exc)
+            return
+
+        candidates: list[str] = []
+        for row in rows:
+            name = row[0] if row else None
+            if isinstance(name, str) and _TMP_VIEW_NAME_RE.match(name):
+                candidates.append(name)
+
+        if not candidates:
+            logger.info(
+                "View GC: no orphan tmp views older than %dh in %s.%s",
+                _GC_AGE_HOURS,
+                self._catalog,
+                self._tmp_schema,
+            )
+            return
+
+        in_use_sql = (
+            f"SELECT view_fqn FROM `{self._catalog}`.`{self._schema}`.dq_validation_runs WHERE status = 'RUNNING' "
+            f"UNION ALL "
+            f"SELECT view_fqn FROM `{self._catalog}`.`{self._schema}`.dq_profiling_results WHERE status = 'RUNNING'"
+        )
+        in_use: set[str] = set()
+        try:
+            for row in self._sql.query(in_use_sql):
+                fqn = row[0] if row else None
+                if isinstance(fqn, str) and fqn:
+                    in_use.add(fqn.rsplit(".", 1)[-1].strip("`"))
+        except Exception as exc:
+            logger.warning("View GC: could not read RUNNING rows (%s) - proceeding with age threshold only", exc)
+
+        targets = [n for n in candidates if n not in in_use]
+        skipped = len(candidates) - len(targets)
+
+        dropped = 0
+        failed = 0
+        for name in targets:
+            view_fqn = f"{self._catalog}.{self._tmp_schema}.{name}"
+            try:
+                self._tmp_sql.execute(f"DROP VIEW IF EXISTS {quote_fqn(view_fqn)}")
+                dropped += 1
+            except Exception as exc:
+                logger.warning("View GC: failed to drop %s: %s", view_fqn, exc)
+                failed += 1
+
+        logger.info(
+            "View GC complete: candidates=%d dropped=%d failed=%d skipped=%d",
+            len(candidates),
+            dropped,
+            failed,
+            skipped,
+        )
+
+    # ------------------------------------------------------------------
     # View creation (SP credentials)
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _generate_tmp_view_id() -> str:
+        """Return a fresh hex suffix for a ``tmp_view_<id>`` name.
+
+        Single source of truth for the suffix shape. Centralised so the
+        GC regex (:data:`_TMP_VIEW_NAME_RE`) and the unit test
+        ``test_regex_matches_generator_output`` can both reason about
+        exactly what creation paths emit. If you change the slice
+        length or switch away from ``uuid4().hex``, update
+        :data:`_TMP_VIEW_ID_LEN` and the regex above as well.
+        """
+        return uuid4().hex[:_TMP_VIEW_ID_LEN]
 
     def _create_view(self, source_table_fqn: str) -> str:
         from databricks_labs_dqx_app.backend.sql_utils import quote_fqn
 
-        view_id = uuid4().hex[:12]
+        view_id = self._generate_tmp_view_id()
         view_name = f"{self._catalog}.{self._tmp_schema}.tmp_view_{view_id}"
         quoted_view = quote_fqn(view_name)
         quoted_source = quote_fqn(source_table_fqn)
@@ -459,7 +670,7 @@ class SchedulerService:
                 "The SQL query contains prohibited statements and cannot be used to create a view."
             )
 
-        view_id = uuid4().hex[:12]
+        view_id = self._generate_tmp_view_id()
         view_name = f"{self._catalog}.{self._tmp_schema}.tmp_view_{view_id}"
         quoted_view = quote_fqn(view_name)
         self._ensure_tmp_schema()

@@ -1,13 +1,13 @@
 bundle:
-  name: "databricks-labs-dqx-app"
+  name: "dqx-studio"
 
 
 variables:
   catalog_name:
-    description: "Name of the catalog for DQX app storage"
+    description: "Name of the catalog for DQX Studio storage"
     default: "dqx"
   schema_name:
-    description: "Name of the schema for DQX app storage"
+    description: "Name of the schema for DQX Studio storage"
     default: "dqx_app"
   tmp_schema_name:
     description: "Name of the schema for temporary views and intermediate processing"
@@ -15,6 +15,12 @@ variables:
   admin_group:
     description: "Databricks workspace group name for bootstrap Admin access"
     default: "admins"
+  app_name:
+    description: "Name of the deployed Databricks App (must be unique per workspace)"
+    default: "dqx-studio"
+  sql_warehouse_name:
+    description: "Name of the deployed SQL warehouse for DQX Studio queries (must be unique per workspace)"
+    default: "dqx-studio-sql-warehouse"
   wheels_volume_name:
     description: "Name of the UC volume for storing DQX wheel files"
     default: "wheels"
@@ -23,7 +29,7 @@ variables:
     default: "00000000-0000-0000-0000-000000000000"
   app_config:
     type: complex
-    description: "Configuration for dqx app"
+    description: "Configuration for DQX Studio"
     default:
       # Multiple workers improve HTTP throughput. The in-process SchedulerService
       # is guarded by a file lock so only one worker runs the scheduler loop.
@@ -66,9 +72,9 @@ artifacts:
 
 resources:
   apps:
-    databricks-labs-dqx-app:
-      name: "databricks-labs-dqx-app"
-      description: "Databricks DQX App for Data Quality Monitoring"
+    dqx-studio:
+      name: ${var.app_name}
+      description: "Databricks DQX Studio for Data Quality Monitoring"
       source_code_path: ".build"
       config: ${var.app_config}
 
@@ -93,7 +99,7 @@ resources:
 
       resources:
         - name: "dqx-sql-warehouse"
-          description: "SQL Warehouse for DQX app queries"
+          description: "SQL Warehouse for DQX Studio queries"
           sql_warehouse:
             id: ${resources.sql_warehouses.dqx_sql_warehouse.id}
             permission: "CAN_USE"
@@ -109,7 +115,7 @@ resources:
 
   sql_warehouses:
     dqx_sql_warehouse:
-      name: dqx-sql-warehouse
+      name: ${var.sql_warehouse_name}
       cluster_size: "X-Small"
       enable_serverless_compute: true
       max_num_clusters: 1
@@ -126,7 +132,7 @@ resources:
       name: ${var.wheels_volume_name}
       volume_type: MANAGED
       grants:
-        - principal: ${resources.apps.databricks-labs-dqx-app.id}
+        - principal: ${resources.apps.dqx-studio.id}
           privileges:
             - ALL_PRIVILEGES
         - principal: ${var.dqx_service_principal_application_id}
@@ -138,7 +144,7 @@ resources:
       catalog_name: ${var.catalog_name}
       name: ${var.schema_name}
       grants:
-        - principal: ${resources.apps.databricks-labs-dqx-app.id}
+        - principal: ${resources.apps.dqx-studio.id}
           privileges:
             - ALL_PRIVILEGES
         - principal: ${var.dqx_service_principal_application_id}
@@ -149,7 +155,7 @@ resources:
       catalog_name: ${var.catalog_name}
       name: ${var.tmp_schema_name}
       grants:
-        - principal: ${resources.apps.databricks-labs-dqx-app.id}
+        - principal: ${resources.apps.dqx-studio.id}
           privileges:
             - ALL_PRIVILEGES
             - MANAGE
@@ -166,7 +172,7 @@ resources:
 
   jobs:
     dqx_task_runner:
-      name: "dqx-app-task-runner"
+      name: "dqx-studio-task-runner"
       max_concurrent_runs: 10
       tags:
         app: "dqx"
@@ -221,7 +227,14 @@ targets:
     workspace:
       profile: <your-profile>
     variables:
-      catalog_name: <your-catalog-name>
-      dqx_service_principal_application_id: <your-service-principal-application-id>
+      # Required
+      catalog_name: <your-catalog>
+      dqx_service_principal_application_id: <your-sp-application-id>
+
+      # Optional — uncomment and override defaults per target as needed
+      # admin_group: <your-admin-group>
+      # app_name: <your-app-name>
+      # sql_warehouse_name: <your-sql-warehouse-name>
+      # schema_name: <your-schema-name>
     presets:
       trigger_pause_status: PAUSED

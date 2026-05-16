@@ -12,9 +12,19 @@ class UserRole(str, Enum):
     RULE_APPROVER = "rule_approver"
     RULE_AUTHOR = "rule_author"
     VIEWER = "viewer"
+    # ``RUNNER`` is an *orthogonal* (additive) role rather than a hierarchy
+    # rank. A user's primary role (the one that gates rule authoring,
+    # approving, etc.) is still resolved from the priority list below; the
+    # runner role is resolved independently and only governs the "Run
+    # Rules" page (manual execution + schedule list view). Admins are
+    # implicit runners without needing an explicit mapping.
+    RUNNER = "runner"
 
 
-# Role hierarchy for resolution (higher index = higher priority)
+# Role hierarchy for primary-role resolution (higher index = higher
+# priority). RUNNER is intentionally *not* on this list — assigning RUNNER
+# alone leaves the user's primary role at VIEWER, but unlocks the Run
+# Rules page via the separate ``run_rules`` permission below.
 ROLE_PRIORITY: list[UserRole] = [
     UserRole.VIEWER,
     UserRole.RULE_AUTHOR,
@@ -34,6 +44,9 @@ PERMISSIONS: dict[UserRole, list[str]] = {
         "export_rules",
         "configure_storage",
         "manage_roles",
+        # Admins implicitly inherit the runner permission so they never
+        # need an explicit RUNNER group assignment.
+        "run_rules",
     ],
     UserRole.RULE_APPROVER: [
         "view_rules",
@@ -54,6 +67,12 @@ PERMISSIONS: dict[UserRole, list[str]] = {
     ],
     UserRole.VIEWER: [
         "view_rules",
+    ],
+    # RUNNER carries only ``run_rules`` — nothing else. The orthogonal
+    # nature is what the user requested: assigning RUNNER must not silently
+    # promote a viewer/author into an approver or vice-versa.
+    UserRole.RUNNER: [
+        "run_rules",
     ],
 }
 
