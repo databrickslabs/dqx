@@ -2091,3 +2091,29 @@ def test_benchmark_has_no_aggr_outliers(benchmark, ws, generated_df):
     checked = dq_engine.apply_checks(generated_df, checks)
     actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
+
+
+@pytest.mark.parametrize(
+    "column",
+    [
+        "col1_ipv4_standard",
+        "col2_ipv4_with_leading_zeros",
+        "col3_ipv4_partial",
+        "col4_ipv4_mixed",
+    ],
+)
+@pytest.mark.benchmark(group="test_benchmark_is_valid_email_address")
+def test_benchmark_is_valid_email_address(benchmark, ws, generated_email_df, column):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            name=f"{column}_is_valid_email_address",
+            criticality="warn",
+            check_func=check_funcs.is_valid_email_address,
+            column=column,
+        ),
+    ]
+    benchmark.group += f" {column}"
+    checked = dq_engine.apply_checks(generated_email_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
