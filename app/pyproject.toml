@@ -12,6 +12,11 @@ dependencies = [
     "databricks-sdk~=0.73",
     "databricks-sql-connector[pyarrow]==4.2.5",
     "openpyxl>=3.1",
+    # Lakebase (Postgres) backend for OLTP state. ``binary`` ships a
+    # pre-built libpq so we don't need a system Postgres install at
+    # runtime; ``pool`` adds the threaded ConnectionPool used by
+    # PgExecutor.  Both are optional features of the same package.
+    "psycopg[binary,pool]>=3.2",
 ]
 
 [dependency-groups]

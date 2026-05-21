@@ -27,8 +27,8 @@ class AppConfig(BaseSettings):
     app_name: str = Field(default=app_name)
     api_prefix: str = Field(default="/api")
     catalog: str = Field(default="dqx")
-    schema_name: str = Field(default="dqx_app", validation_alias="DQX_SCHEMA")
-    tmp_schema_name: str = Field(default="dqx_app_tmp", validation_alias="DQX_TMP_SCHEMA")
+    schema_name: str = Field(default="dqx_studio", validation_alias="DQX_SCHEMA")
+    tmp_schema_name: str = Field(default="dqx_studio_tmp", validation_alias="DQX_TMP_SCHEMA")
     job_id: str = Field(default="", validation_alias="DQX_JOB_ID")
     wheels_volume: str = Field(default="", validation_alias="DQX_WHEELS_VOLUME")
     llm_endpoint: str = Field(default="databricks-claude-sonnet-4-5", validation_alias="DQX_LLM_ENDPOINT")
@@ -42,9 +42,56 @@ class AppConfig(BaseSettings):
     dryrun_max_sample_size: int = Field(default=10_000)
     dryrun_default_sample_size: int = Field(default=1_000)
 
+    # ------------------------------------------------------------------
+    # Lakebase (Postgres) backend
+    # ------------------------------------------------------------------
+    # When ``lakebase_instance_name`` is set the OLTP-style tables
+    # (rules catalog, app settings, RBAC, comments, schedule configs,
+    # scheduler bookkeeping) are routed to a Lakebase Postgres instance
+    # instead of Delta. Bulk/append-only tables (validation runs,
+    # profiling results, metrics, quarantine records) always stay in
+    # Delta because they are written by the Spark task runner.
+    #
+    # Leaving these empty keeps the legacy "everything on Delta"
+    # behaviour, so existing deployments continue to work without
+    # changes.  See ``app/databricks.yml`` for the deploy-time toggle.
+    lakebase_instance_name: str = Field(
+        default="",
+        validation_alias="DQX_LAKEBASE_INSTANCE_NAME",
+        description="Lakebase instance name. Empty disables Lakebase routing.",
+    )
+    lakebase_database_name: str = Field(
+        default="dqx_studio",
+        validation_alias="DQX_LAKEBASE_DATABASE_NAME",
+        description="Database within the Lakebase instance the app connects to.",
+    )
+    lakebase_schema_name: str = Field(
+        default="dqx_studio",
+        validation_alias="DQX_LAKEBASE_SCHEMA",
+        description="Postgres schema for app tables. Created at startup if missing.",
+    )
+    lakebase_pool_min_size: int = Field(default=1, validation_alias="DQX_LAKEBASE_POOL_MIN_SIZE")
+    lakebase_pool_max_size: int = Field(default=10, validation_alias="DQX_LAKEBASE_POOL_MAX_SIZE")
+    # Lakebase OAuth tokens currently expire after one hour; refresh
+    # well before that so in-flight queries never see a 401.
+    lakebase_token_refresh_minutes: int = Field(
+        default=50,
+        validation_alias="DQX_LAKEBASE_TOKEN_REFRESH_MINUTES",
+    )
+
     @property
     def static_assets_path(self) -> Path:
         return Path(str(resources.files(app_slug))).joinpath("__dist__")
+
+    @property
+    def lakebase_enabled(self) -> bool:
+        """``True`` when the deployment was provisioned with Lakebase.
+
+        Falls back to ``False`` (legacy UC-only mode) when the
+        instance name is empty so existing tests and dev setups keep
+        working with no Postgres dependency.
+        """
+        return bool(self.lakebase_instance_name.strip())
 
 
 conf = AppConfig()

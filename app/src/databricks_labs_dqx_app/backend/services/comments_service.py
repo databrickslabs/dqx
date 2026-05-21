@@ -32,7 +32,7 @@ class CommentsService:
 
     def __init__(self, sql: SqlExecutor) -> None:
         self._sql = sql
-        self._table = f"{sql.catalog}.{sql.schema}.dq_comments"
+        self._table = sql.fqn("dq_comments")
 
     def add_comment(self, entity_type: str, entity_id: str, user_email: str, comment: str) -> Comment:
         from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, validate_entity_type
@@ -40,7 +40,6 @@ class CommentsService:
         validate_entity_type(entity_type, self.VALID_ENTITY_TYPES)
 
         comment_id = uuid4().hex[:16]
-        now = datetime.now(timezone.utc).isoformat()
         e_comment = escape_sql_string(comment)
         e_email = escape_sql_string(user_email)
         e_entity_id = escape_sql_string(entity_id)
@@ -49,7 +48,7 @@ class CommentsService:
         sql = (
             f"INSERT INTO {self._table} (comment_id, entity_type, entity_id, user_email, comment, created_at) "
             f"VALUES ('{comment_id}', '{e_type}', '{e_entity_id}', "
-            f"'{e_email}', '{e_comment}', '{now}')"
+            f"'{e_email}', '{e_comment}', now())"
         )
         self._sql.execute(sql)
         logger.info("Added comment %s on %s/%s by %s", comment_id, entity_type, entity_id, user_email)
@@ -60,7 +59,7 @@ class CommentsService:
             entity_id=entity_id,
             user_email=user_email,
             comment=comment,
-            created_at=now,
+            created_at=datetime.now(timezone.utc).isoformat(),
         )
 
     def list_comments(self, entity_type: str, entity_id: str) -> list[Comment]:
@@ -71,7 +70,7 @@ class CommentsService:
         e_entity_id = escape_sql_string(entity_id)
         sql = (
             f"SELECT comment_id, entity_type, entity_id, user_email, comment, "
-            f"CAST(created_at AS STRING) "
+            f"{self._sql.ts_text('created_at')} "
             f"FROM {self._table} "
             f"WHERE entity_type = '{e_type}' AND entity_id = '{e_entity_id}' "
             f"ORDER BY created_at ASC LIMIT 200"

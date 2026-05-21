@@ -123,14 +123,55 @@ app-grant-permissions:
 	@test -n "$(PROFILE)" || (echo "Usage: make app-grant-permissions PROFILE=<databricks-profile> [TARGET=<bundle-target>]"; exit 1)
 	app/scripts/post_deploy_grants.sh -p $(PROFILE) $(if $(TARGET),-t $(TARGET))
 
-# Full deploy: build, bundle deploy, grant permissions, and start the app.
+# Adopt pre-existing storage resources into bundle management.
+#
+# Use ONCE per target on workspaces where the schemas / volume /
+# Lakebase instance / Lakebase logical database already exist (e.g.
+# from a previous bootstrap-script deploy, or from manual creation).
+# Without binding, ``databricks bundle deploy`` would try to CREATE
+# them and fail with "already exists" / "Instance name is not unique".
+#
+# Bind is idempotent at the CLI level — re-binding the same resource
+# is a no-op. Skip this target on fresh workspaces; ``bundle deploy``
+# creates the resources directly.
+#
+# Usage: make app-bind PROFILE=my-profile TARGET=dev
+#        make app-bind PROFILE=my-profile TARGET=dev \
+#                      BUNDLE_VARS='--var=lakebase_instance_name=<fresh-name>'
+#
+# BUNDLE_VARS forwards arbitrary ``--var key=value`` arguments through
+# to the bundle CLI. Use the same override here as you intend to pass
+# to ``make app-deploy`` — the bind step reads the resolved bundle
+# variables to know which instance/schema name to bind to, so an
+# override applied only at deploy time would bind the wrong resource.
+app-bind:
+	@test -n "$(PROFILE)" || (echo "Usage: make app-bind PROFILE=<databricks-profile> TARGET=<bundle-target>"; exit 1)
+	@test -n "$(TARGET)" || (echo "Usage: make app-bind PROFILE=<databricks-profile> TARGET=<bundle-target>"; exit 1)
+	app/scripts/bind_resources.sh -p $(PROFILE) -t $(TARGET) $(if $(BUNDLE_VARS),-- $(BUNDLE_VARS))
+
+# Full deploy: build, bundle deploy (creates storage on fresh
+# workspaces, updates managed resources otherwise), grant permissions
+# to the app SP, and start the app. Run ``make app-bind`` once before
+# the FIRST deploy on a workspace where the storage was previously
+# provisioned out-of-band — otherwise the bundle will try to CREATE
+# the existing resources and fail.
+#
 # Usage: make app-deploy PROFILE=my-profile TARGET=dev
+#        make app-deploy PROFILE=my-profile TARGET=dev \
+#                        BUNDLE_VARS='--var=lakebase_instance_name=<fresh-name>'
+#
+# BUNDLE_VARS forwards arbitrary ``--var key=value`` arguments to
+# ``bundle deploy`` and ``bundle run``. The common use case is
+# overriding ``lakebase_instance_name`` when the original name is
+# locked by Lakebase's ~7-day soft-delete retention after a manual
+# delete (the deploy errors out with "Instance name is not unique"
+# otherwise). Per-deploy CLI overrides keep ``databricks.yml`` clean.
 app-deploy: app-build
 	@test -n "$(PROFILE)" || (echo "Usage: make app-deploy PROFILE=<databricks-profile> TARGET=<bundle-target>"; exit 1)
 	@test -n "$(TARGET)" || (echo "Usage: make app-deploy PROFILE=<databricks-profile> TARGET=<bundle-target>"; exit 1)
-	cd app && databricks bundle deploy -p $(PROFILE) -t $(TARGET)
+	cd app && databricks bundle deploy -p $(PROFILE) -t $(TARGET) $(BUNDLE_VARS)
 	app/scripts/post_deploy_grants.sh -p $(PROFILE) -t $(TARGET)
-	cd app && databricks bundle run $(APP_NAME) -p $(PROFILE) -t $(TARGET)
+	cd app && databricks bundle run $(APP_NAME) -p $(PROFILE) -t $(TARGET) $(BUNDLE_VARS)
 
 APP_NAME ?= dqx-studio
 
@@ -166,4 +207,4 @@ lock-dependencies:
 	perl -pi -e 's|registry = "https://[^"]*"|registry = "https://pypi.org/simple"|g' uv.lock
 
 .DEFAULT: all
-.PHONY: all clean dev lint fmt test integration e2e perf anomaly coverage combine-coverage docs-build docs-serve-dev docs-install docs-serve docs-clean app-install app-build app-start-dev app-stop-dev app-check app-test app-grant-permissions app-deploy fork-sync build lock-dependencies lock-app-dependencies
+.PHONY: all clean dev lint fmt test integration e2e perf anomaly coverage combine-coverage docs-build docs-serve-dev docs-install docs-serve docs-clean app-install app-build app-start-dev app-stop-dev app-check app-test app-grant-permissions app-bind app-deploy fork-sync build lock-dependencies lock-app-dependencies

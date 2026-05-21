@@ -40,13 +40,29 @@ Create a file at `app/.env` (git-ignored) with the variables below, filling in y
 DATABRICKS_CONFIG_PROFILE=<your-profile>    # matches a profile in ~/.databrickscfg
 DATABRICKS_WAREHOUSE_ID=<your-warehouse-id>
 DQX_CATALOG=dqx                             # Unity Catalog catalog name
-DQX_SCHEMA=dqx_app                          # schema inside the catalog
+DQX_SCHEMA=dqx_studio                       # schema inside the catalog
 DQX_JOB_ID=<task-runner-job-id>             # required for profiler/dry-run
-DQX_WHEELS_VOLUME=/Volumes/dqx/dqx_app/wheels  # UC volume path; auto-set by DABs in production
+DQX_WHEELS_VOLUME=/Volumes/dqx/dqx_studio/wheels  # UC volume path; auto-set by DABs in production
 DQX_ADMIN_GROUP=admins                      # workspace group granted bootstrap Admin access
+
+# Lakebase (optional — leave DQX_LAKEBASE_INSTANCE_NAME empty to run OLTP tables on Delta locally)
+DQX_LAKEBASE_INSTANCE_NAME=                 # e.g. dqx-studio-lakebase; empty = Delta-only mode
+DQX_LAKEBASE_DATABASE_NAME=dqx_studio       # database within the Lakebase instance
+DQX_LAKEBASE_SCHEMA=public                  # Postgres schema (default: public)
+DQX_LAKEBASE_POOL_MIN_SIZE=1                # psycopg connection pool floor
+DQX_LAKEBASE_POOL_MAX_SIZE=10               # psycopg connection pool ceiling
+DQX_LAKEBASE_TOKEN_REFRESH_MINUTES=50       # OAuth token refresh cadence (token expires at 60)
 ```
 
-`DQX_JOB_ID` and `DQX_WHEELS_VOLUME` are injected automatically when deployed via DABs. For local dev, set them manually if you want profiler and dry-run to work.
+`DQX_JOB_ID`, `DQX_WHEELS_VOLUME`, `DQX_LAKEBASE_INSTANCE_NAME`, and `DQX_LAKEBASE_DATABASE_NAME` are injected automatically when deployed via DABs. For local dev, set them manually only if you want to exercise the corresponding feature locally:
+
+| Want to test... | Set... |
+|---|---|
+| Profiler / dry-run | `DQX_JOB_ID` (and the wheel volume must exist) |
+| Lakebase OLTP path | `DQX_LAKEBASE_INSTANCE_NAME` (empty = falls back to Delta — fine for most local dev) |
+| Wheel sync | `DQX_WHEELS_VOLUME` |
+
+> **Lakebase locally:** The same OAuth token-refresh logic that runs in production also runs locally. The app authenticates as your CLI user (via `databricks-sdk` default auth chain), so your CLI principal must have `CAN_CONNECT_AND_CREATE` on the Lakebase database. Easiest path: run the bundle once against your dev workspace so the bundle's `database` resource binds the permissions, then point `DQX_LAKEBASE_INSTANCE_NAME` at the deployed instance.
 
 ## 2. Install Dependencies
 
@@ -139,7 +155,7 @@ The profiler creates a temporary view using your OBO token and submits a Databri
 
 If the wheel upload fails locally with a `403`, grant your user write access:
 ```bash
-databricks volumes grant <catalog>.dqx_app.wheels WRITE_VOLUME --user <your-email> -p <your-profile>
+databricks volumes grant <catalog>.dqx_studio.wheels WRITE_VOLUME --user <your-email> -p <your-profile>
 ```
 
 ## Troubleshooting

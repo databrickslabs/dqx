@@ -10,9 +10,10 @@ from fastapi import FastAPI
 
 from ._scheduler_registry import get_scheduler, set_scheduler
 from .config import conf
-from .dependencies import get_sp_ws
+from .dependencies import get_sp_ws, set_oltp_executor
 from .logger import logger
 from .migrations import MigrationRunner
+from .migrations.postgres import PgMigrationRunner
 from .routes import api_router
 from .services.scheduler_service import SchedulerService
 from .services.view_service import mark_tmp_schema_ready
@@ -173,12 +174,65 @@ async def lifespan(app: FastAPI):
     sp_ws = await get_sp_ws()
     wh_id = os.environ.get("DATABRICKS_WAREHOUSE_ID") or os.environ.get("DATABRICKS_SQL_WAREHOUSE_ID") or ""
     sp_sql = SqlExecutor(ws=sp_ws, warehouse_id=wh_id, catalog=conf.catalog, schema=conf.schema_name)
-    runner = MigrationRunner(sql=sp_sql)
-    applied = runner.run_all()
-    if applied:
-        logger.info("Applied %d database migration(s)", applied)
+
+    # ------------------------------------------------------------------
+    # Lakebase (optional) — open the pool, run Postgres migrations, and
+    # register the executor as the OLTP backend used by service DI.
+    #
+    # The block is entirely best-effort: if Lakebase is configured but
+    # the instance is misconfigured/down, we log loudly and fall back
+    # to UC-only mode so the app still serves. This matches how the
+    # rest of startup degrades (volume sync, scheduler) — partial
+    # functionality beats a hard crash loop.
+    # ------------------------------------------------------------------
+    pg_executor = None
+    if conf.lakebase_enabled:
+        try:
+            from .pg_executor import build_pg_executor
+
+            pg_executor = await asyncio.to_thread(
+                build_pg_executor,
+                sp_ws,
+                instance_name=conf.lakebase_instance_name,
+                database=conf.lakebase_database_name,
+                schema=conf.lakebase_schema_name,
+                token_refresh_minutes=conf.lakebase_token_refresh_minutes,
+                pool_min_size=conf.lakebase_pool_min_size,
+                pool_max_size=conf.lakebase_pool_max_size,
+            )
+            pg_runner = PgMigrationRunner(pg_executor)
+            pg_applied = await asyncio.to_thread(pg_runner.run_all)
+            if pg_applied:
+                logger.info("Applied %d Lakebase migration(s)", pg_applied)
+            else:
+                logger.info("Lakebase schema is up to date")
+            set_oltp_executor(pg_executor)
+            logger.info(
+                "Lakebase OLTP routing enabled (instance=%s, database=%s, schema=%s)",
+                conf.lakebase_instance_name,
+                conf.lakebase_database_name,
+                conf.lakebase_schema_name,
+            )
+        except Exception:
+            logger.exception(
+                "Lakebase initialisation failed — falling back to Delta for OLTP tables. "
+                "Verify the database_instance is provisioned and the app SP has CAN_CONNECT_AND_CREATE."
+            )
+            pg_executor = None
+            set_oltp_executor(None)
     else:
-        logger.info("Database schema is up to date")
+        logger.info("Lakebase not configured (DQX_LAKEBASE_INSTANCE_NAME is empty). " "OLTP tables will live on Delta.")
+        set_oltp_executor(None)
+
+    # Delta migrations always run, but the OLTP fallback DDL is
+    # skipped when Lakebase owns those tables — the same data model
+    # is created in Postgres above.
+    runner = MigrationRunner(sql=sp_sql)
+    applied = runner.run_all(include_oltp_fallback=pg_executor is None)
+    if applied:
+        logger.info("Applied %d Delta migration(s)", applied)
+    else:
+        logger.info("Delta schema is up to date")
 
     # Best-effort below — the app can recover from these failing.
 
@@ -234,6 +288,7 @@ async def lifespan(app: FastAPI):
                 schema=conf.schema_name,
                 tmp_schema=conf.tmp_schema_name,
                 job_id=conf.job_id,
+                oltp_sql=pg_executor,
             )
             set_scheduler(_scheduler)
             _scheduler.start()
@@ -251,6 +306,16 @@ async def lifespan(app: FastAPI):
     if sched is not None:
         await sched.stop()
         set_scheduler(None)
+
+    # Close the Lakebase pool last so any in-flight writes from
+    # ``sched.stop()`` finish first.
+    if pg_executor is not None:
+        try:
+            await asyncio.to_thread(pg_executor.close)
+            logger.info("Lakebase connection pool closed")
+        except Exception:  # noqa: BLE001
+            logger.warning("Error closing Lakebase pool", exc_info=True)
+        set_oltp_executor(None)
 
 
 app = FastAPI(title=f"{conf.app_name}", lifespan=lifespan)
