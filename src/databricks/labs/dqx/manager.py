@@ -151,9 +151,11 @@ class DQRuleManager:
         # or use literal run time if explicitly overridden
         run_time_expr = F.current_timestamp() if self.run_time_overwrite is None else F.lit(self.run_time_overwrite)
 
+        message_col = self._build_message_col(condition)
+
         return F.struct(
             F.lit(self.check.name).alias("name"),
-            condition.alias("message"),
+            message_col.alias("message"),
             self.check.columns_as_string_expr.alias("columns"),
             F.lit(self.check.filter or None).cast("string").alias("filter"),
             F.lit(self.check.check_func.__name__).alias("function"),
@@ -166,6 +168,28 @@ class DQRuleManager:
             F.lit(self.rule_set_fingerprint).alias("rule_set_fingerprint"),
             F.lit(skipped or None).alias("skipped"),
         ).cast(dq_result_item_schema)
+
+    def _build_message_col(self, condition: Column) -> Column:
+        """
+        Builds the message column, using the default message or the user-supplied
+        ``message_expr`` from the rule definition. The expression is evaluated as-is — DQX
+        does not substitute placeholders. Accepts either a Spark SQL expression string or a
+        Spark Column.
+
+        Args:
+            condition: Default DQX condition message returned by evaluating the DQX check function
+
+        Returns:
+            The custom DQX condition message if ``message_expr`` is set on the rule, otherwise the
+            default DQX condition message.
+        """
+        if self.check.message_expr is None:
+            return condition
+
+        custom_message = (
+            self.check.message_expr if isinstance(self.check.message_expr, Column) else F.expr(self.check.message_expr)
+        )
+        return F.when(condition.isNotNull(), custom_message).otherwise(F.lit(None).cast("string"))
 
     def _get_invalid_cols_message(self) -> str:
         """
