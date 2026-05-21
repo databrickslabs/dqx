@@ -113,7 +113,6 @@ def test_all_segments_skipped_raises_invalid_parameter_error(
     make_schema,
     make_random,
     anomaly_engine,
-    caplog,
 ):
     schema = make_schema(catalog_name=TEST_CATALOG)
     suffix = make_random(8).lower()
