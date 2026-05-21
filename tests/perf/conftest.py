@@ -285,3 +285,28 @@ def generated_timestamp_df(request, spark):
     for col in col_names:
         data_gen = data_gen.withColumn(col, "timestamp", begin=begin, end=end, interval=interval, **opts)
     return col_names, data_gen.build(), n_rows
+
+
+@pytest.fixture
+def generated_email_df(spark):
+    email_schema_str = (
+        "col1_email_standard: string, "
+        "col2_email_with_quoted_local_part: string, "
+        "col3_email_with_ip_domain: string, "
+        "col4_email_with_multi_part_domain: string"
+    )
+    schema = _parse_datatype_string(email_schema_str)
+
+    email_templates = {
+        "col1_email_standard": r"kkkkkkkkkkkk@kkkkkkkk.org",
+        "col2_email_with_quoted_local_part": r"\"kkkkkkkkkkkk\"@kkkkkkkk.org",
+        "col3_email_with_ip_domain": r"kkkkkkkkkkkk@\[\n.\n.\n.\n\]",
+        "col4_email_with_multi_part_domain": r"kkkkkkkkkkkk@kkkk.kkkk.com",
+    }
+
+    _, gen = make_data_gen(spark, n_rows=DEFAULT_ROWS, n_columns=len(email_templates), partitions=DEFAULT_PARTITIONS)
+    gen = gen.withSchema(schema)
+    for col, template in email_templates.items():
+        gen = gen.withColumnSpec(col, template=template)
+
+    return gen.build()
