@@ -320,6 +320,63 @@ def test_apply_checks_by_metadata_and_save_in_single_table_with_quarantine(ws, s
     assert_df_equality(actual_quarantine_df, expected_quarantine_df, ignore_nullable=True)
 
 
+def test_apply_checks_by_metadata_and_save_in_table_quarantine_only(ws, spark, make_schema, make_random):
+    catalog_name = TEST_CATALOG
+    schema = make_schema(catalog_name=catalog_name)
+    input_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+    quarantine_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+
+    test_schema = "a: int, b: int, c: string"
+    test_df = spark.createDataFrame([[1, 2, "valid"], [None, 3, "invalid"], [4, 5, "good"]], test_schema)
+    test_df.write.format("delta").mode("overwrite").saveAsTable(input_table)
+
+    checks = [
+        {
+            "name": "a_is_null",
+            "criticality": "error",
+            "check": {"function": "is_not_null", "arguments": {"column": "a"}},
+        },
+    ]
+
+    # Apply checks with only a quarantine table configured (no output_config for valid records)
+    engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
+    engine.apply_checks_by_metadata_and_save_in_table(
+        checks=checks,
+        input_config=InputConfig(location=input_table),
+        quarantine_config=OutputConfig(
+            location=quarantine_table, mode="overwrite", options={"overwriteSchema": "true"}
+        ),
+    )
+
+    actual_quarantine_df = spark.table(quarantine_table)
+    quarantine_schema = test_schema + REPORTING_COLUMNS
+    expected_quarantine_df = spark.createDataFrame(
+        [
+            [
+                None,
+                3,
+                "invalid",
+                [
+                    {
+                        "name": "a_is_null",
+                        "message": "Column 'a' value is null",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "is_not_null",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    }
+                ],
+                None,
+            ]
+        ],
+        schema=quarantine_schema,
+    )
+
+    assert_df_equality(actual_quarantine_df, expected_quarantine_df, ignore_nullable=True)
+
+
 def test_apply_checks_and_save_in_table_with_options(ws, spark, make_schema, make_random):
     catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)

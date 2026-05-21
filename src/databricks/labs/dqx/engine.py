@@ -698,7 +698,7 @@ class DQEngine(DQEngineBase):
     def apply_checks_and_save_in_table(
         self,
         input_config: InputConfig,
-        output_config: OutputConfig,
+        output_config: OutputConfig | None = None,
         checks: list[DQRule] | None = None,
         quarantine_config: OutputConfig | None = None,
         metrics_config: OutputConfig | None = None,
@@ -710,7 +710,7 @@ class DQEngine(DQEngineBase):
         Apply data quality checks to input data and save results.
 
         If *quarantine_config* is provided, split the data into valid and invalid records:
-        - valid records are written using *output_config*.
+        - valid records are written using *output_config* (skipped when *output_config* is not provided).
         - invalid records are written using *quarantine_config*.
 
         If *quarantine_config* is not provided, write all rows (including result columns) using *output_config*.
@@ -720,7 +720,8 @@ class DQEngine(DQEngineBase):
 
         Args:
             input_config: Input configuration (e.g., table/view or file location and read options).
-            output_config: Output configuration (e.g., table name, mode, and write options).
+            output_config: Output configuration (e.g., table name, mode, and write options). Optional only when
+                *quarantine_config* is provided, in which case valid records are not written.
             checks: Optional list of *DQRule* checks to apply. If not provided, checks_location must be provided.
             quarantine_config: Optional configuration for writing invalid records.
             metrics_config: Optional configuration for writing summary metrics.
@@ -734,6 +735,9 @@ class DQEngine(DQEngineBase):
 
         if checks is None and checks_location is None:
             raise InvalidParameterError("Either 'checks_location' or 'checks' must be provided")
+
+        if output_config is None and quarantine_config is None:
+            raise InvalidParameterError("Either 'output_config' or 'quarantine_config' must be provided")
 
         if checks is None and checks_location:
             storage_handler, storage_config = self._checks_handler_factory.create_for_location(
@@ -755,7 +759,8 @@ class DQEngine(DQEngineBase):
                 good_df, bad_df, batch_observation = check_result
             else:
                 good_df, bad_df = check_result
-            output_streaming_query = save_dataframe_as_table(good_df, output_config)
+            if output_config is not None:
+                output_streaming_query = save_dataframe_as_table(good_df, output_config)
             quarantine_streaming_query = save_dataframe_as_table(bad_df, quarantine_config)
             target_streaming_query = quarantine_streaming_query
         else:
@@ -764,6 +769,7 @@ class DQEngine(DQEngineBase):
                 checked_df, batch_observation = check_result
             else:
                 checked_df = check_result
+            assert output_config is not None  # guaranteed: required when quarantine_config is not provided
             output_streaming_query = save_dataframe_as_table(checked_df, output_config)
             target_streaming_query = output_streaming_query
 
@@ -802,7 +808,7 @@ class DQEngine(DQEngineBase):
     def apply_checks_by_metadata_and_save_in_table(
         self,
         input_config: InputConfig,
-        output_config: OutputConfig,
+        output_config: OutputConfig | None = None,
         checks: list[dict] | None = None,
         quarantine_config: OutputConfig | None = None,
         metrics_config: OutputConfig | None = None,
@@ -815,14 +821,15 @@ class DQEngine(DQEngineBase):
         Apply metadata-defined data quality checks to input data and save results.
 
         If *quarantine_config* is provided, split the data into valid and invalid records:
-        - valid records are written using *output_config*;
+        - valid records are written using *output_config* (skipped when *output_config* is not provided);
         - invalid records are written using *quarantine_config*.
 
         If *quarantine_config* is not provided, write all rows (including result columns) using *output_config*.
 
         Args:
             input_config: Input configuration (e.g., table/view or file location and read options).
-            output_config: Output configuration (e.g., table name, mode, and write options).
+            output_config: Output configuration (e.g., table name, mode, and write options). Optional only when
+                *quarantine_config* is provided, in which case valid records are not written.
             checks: Optional list of dicts containing checks to apply. If not provided, checks_location must be provided.
                 Each check dictionary must contain the following:
                 - *check* - A check definition including check function and arguments to use.
@@ -843,6 +850,9 @@ class DQEngine(DQEngineBase):
 
         if checks is None and checks_location is None:
             raise InvalidParameterError("Either 'checks_location' or 'checks' must be provided")
+
+        if output_config is None and quarantine_config is None:
+            raise InvalidParameterError("Either 'output_config' or 'quarantine_config' must be provided")
 
         if checks is None and checks_location:
             storage_handler, storage_config = self._checks_handler_factory.create_for_location(
@@ -865,7 +875,8 @@ class DQEngine(DQEngineBase):
                 good_df, bad_df, batch_observation = check_result
             else:
                 good_df, bad_df = check_result
-            output_streaming_query = save_dataframe_as_table(good_df, output_config)
+            if output_config is not None:
+                output_streaming_query = save_dataframe_as_table(good_df, output_config)
             quarantine_streaming_query = save_dataframe_as_table(bad_df, quarantine_config)
             target_streaming_query = quarantine_streaming_query
         else:
@@ -876,6 +887,7 @@ class DQEngine(DQEngineBase):
                 checked_df, batch_observation = check_result
             else:
                 checked_df = check_result
+            assert output_config is not None  # guaranteed: required when quarantine_config is not provided
             output_streaming_query = save_dataframe_as_table(checked_df, output_config)
             target_streaming_query = output_streaming_query
 

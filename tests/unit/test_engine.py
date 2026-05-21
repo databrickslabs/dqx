@@ -240,3 +240,23 @@ def test_apply_checks_and_save_in_table_empty_checks_does_not_load_from_location
         )
 
     mock_factory.create_for_location.assert_not_called()
+
+
+def test_apply_checks_and_save_in_table_raises_when_no_output_and_no_quarantine(mock_workspace_client, mock_spark):
+    engine = DQEngine(mock_workspace_client, mock_spark)
+    with pytest.raises(InvalidParameterError, match="Either 'output_config' or 'quarantine_config' must be provided"):
+        engine.apply_checks_and_save_in_table(
+            input_config=InputConfig(location="catalog.schema.input"),
+            checks=[],
+        )
+
+
+def test_apply_checks_by_metadata_and_save_in_table_raises_when_no_output_and_no_quarantine(
+    mock_workspace_client, mock_spark
+):
+    engine = DQEngine(mock_workspace_client, mock_spark)
+    with pytest.raises(InvalidParameterError, match="Either 'output_config' or 'quarantine_config' must be provided"):
+        engine.apply_checks_by_metadata_and_save_in_table(
+            input_config=InputConfig(location="catalog.schema.input"),
+            checks=[],
+        )
