@@ -3,9 +3,6 @@ import LanguageDetector from "i18next-browser-languagedetector";
 import { initReactI18next } from "react-i18next";
 
 import en from "./locales/en.json";
-import ptBR from "./locales/pt-BR.json";
-import it from "./locales/it.json";
-import es from "./locales/es.json";
 
 export const SUPPORTED_LANGUAGES = [
   { code: "en", label: "English", nativeLabel: "English" },
@@ -18,15 +15,26 @@ export type LanguageCode = (typeof SUPPORTED_LANGUAGES)[number]["code"];
 
 export const LANGUAGE_STORAGE_KEY = "dqx.language";
 
-i18n
+const localeLoaders: Record<string, () => Promise<{ default: Record<string, unknown> }>> = {
+  "pt-BR": () => import("./locales/pt-BR.json"),
+  it: () => import("./locales/it.json"),
+  es: () => import("./locales/es.json"),
+};
+
+export async function ensureLocaleLoaded(lng: string): Promise<void> {
+  if (lng === "en" || i18n.hasResourceBundle(lng, "translation")) return;
+  const loader = localeLoaders[lng];
+  if (!loader) return;
+  const mod = await loader();
+  i18n.addResourceBundle(lng, "translation", mod.default);
+}
+
+export const i18nReady = i18n
   .use(LanguageDetector)
   .use(initReactI18next)
   .init({
     resources: {
       en: { translation: en },
-      "pt-BR": { translation: ptBR },
-      it: { translation: it },
-      es: { translation: es },
     },
     fallbackLng: "en",
     supportedLngs: SUPPORTED_LANGUAGES.map((l) => l.code),
@@ -40,12 +48,20 @@ i18n
       caches: ["localStorage"],
     },
   })
-  .then(() => {
-    document.documentElement.lang = i18n.resolvedLanguage ?? "en";
+  .then(async () => {
+    const requested = i18n.language;
+    if (requested && requested !== "en") {
+      await ensureLocaleLoaded(requested);
+      if (i18n.resolvedLanguage !== requested) {
+        await i18n.changeLanguage(requested);
+      }
+    }
+    document.documentElement.lang = i18n.resolvedLanguage ?? requested ?? "en";
   });
 
 i18n.on("languageChanged", (lng) => {
   document.documentElement.lang = lng;
+  void ensureLocaleLoaded(lng);
 });
 
 export default i18n;

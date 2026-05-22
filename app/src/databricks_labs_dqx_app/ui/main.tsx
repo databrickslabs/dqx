@@ -2,7 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
 import "@/styles/globals.css";
-import "@/lib/i18n";
+import { i18nReady } from "@/lib/i18n";
 import { routeTree } from "@/types/routeTree.gen";
 
 import { RouterProvider, createRouter } from "@tanstack/react-router";
@@ -56,13 +56,15 @@ const rootElement = document.getElementById("root")!;
 
 if (!rootElement.innerHTML) {
   const root = createRoot(rootElement);
-  root.render(
-    <StrictMode>
-      <AuthGuard>
-        <QueryClientProvider client={queryClient}>
-          <RouterProvider router={router} />
-        </QueryClientProvider>
-      </AuthGuard>
-    </StrictMode>,
-  );
+  void i18nReady.then(() => {
+    root.render(
+      <StrictMode>
+        <AuthGuard>
+          <QueryClientProvider client={queryClient}>
+            <RouterProvider router={router} />
+          </QueryClientProvider>
+        </AuthGuard>
+      </StrictMode>,
+    );
+  });
 }

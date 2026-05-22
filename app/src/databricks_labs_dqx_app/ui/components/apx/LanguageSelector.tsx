@@ -8,7 +8,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
-import { SUPPORTED_LANGUAGES } from "@/lib/i18n";
+import { SUPPORTED_LANGUAGES, ensureLocaleLoaded } from "@/lib/i18n";
 
 interface LanguageSelectorProps {
   className?: string;
@@ -27,7 +27,7 @@ export default function LanguageSelector({
     "en";
 
   const handleChange = (value: string) => {
-    void i18n.changeLanguage(value);
+    void ensureLocaleLoaded(value).then(() => i18n.changeLanguage(value));
   };
 
   return (
