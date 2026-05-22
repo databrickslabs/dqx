@@ -39,6 +39,13 @@ i18n
       lookupLocalStorage: LANGUAGE_STORAGE_KEY,
       caches: ["localStorage"],
     },
+  })
+  .then(() => {
+    document.documentElement.lang = i18n.resolvedLanguage ?? "en";
   });
+
+i18n.on("languageChanged", (lng) => {
+  document.documentElement.lang = lng;
+});
 
 export default i18n;
