@@ -27,7 +27,6 @@ export default function LanguageSelector({
 
   const handleChange = (value: string) => {
     void i18n.changeLanguage(value);
-    document.documentElement.lang = value;
   };
 
   return (
