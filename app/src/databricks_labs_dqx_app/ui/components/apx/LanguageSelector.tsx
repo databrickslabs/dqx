@@ -20,9 +20,10 @@ export default function LanguageSelector({
   hideLabel = false,
 }: LanguageSelectorProps) {
   const { t, i18n } = useTranslation();
+  const primaryTag = i18n.resolvedLanguage?.split("-")[0];
   const current =
     SUPPORTED_LANGUAGES.find((l) => l.code === i18n.resolvedLanguage)?.code ??
-    SUPPORTED_LANGUAGES.find((l) => i18n.resolvedLanguage?.startsWith(l.code))?.code ??
+    SUPPORTED_LANGUAGES.find((l) => l.code.split("-")[0] === primaryTag)?.code ??
     "en";
 
   const handleChange = (value: string) => {
