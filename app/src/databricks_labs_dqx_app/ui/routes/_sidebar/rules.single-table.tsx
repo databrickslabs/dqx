@@ -1315,18 +1315,18 @@ function UnifiedRulesPage() {
                 <>
                   <AlertCircle className="h-4 w-4 text-red-500" />
                   <span className="text-red-600">
-                    {t("rulesSingleTable.duplicateChecksExist", { count: dupCheckIds.size, tablesPlural: allTargetTables.length !== 1 ? "s" : "" })}
+                    {t("rulesSingleTable.duplicateChecksExist", {
+                      count: dupCheckIds.size,
+                      tables: t("rulesSingleTable.selectedTable", { count: allTargetTables.length }),
+                    })}
                   </span>
                 </>
               ) : (
                 <span>
                   {t("rulesSingleTable.summary", {
-                    checks: checks.filter((c) => c.fn !== "").length,
-                    checksPlural: checks.filter((c) => c.fn !== "").length !== 1 ? "s" : "",
-                    rules: totalTargetPairs,
-                    rulesPlural: totalTargetPairs !== 1 ? "s" : "",
-                    tables: allTargetTables.length,
-                    tablesPlural: allTargetTables.length !== 1 ? "s" : "",
+                    checks: t("rulesSingleTable.summaryChecks", { count: checks.filter((c) => c.fn !== "").length }),
+                    rules: t("rulesSingleTable.summaryRules", { count: totalTargetPairs }),
+                    tables: t("rulesSingleTable.summaryTables", { count: allTargetTables.length }),
                   })}
                   {dupChecking && <Loader2 className="inline h-3 w-3 animate-spin ml-2" />}
                 </span>
