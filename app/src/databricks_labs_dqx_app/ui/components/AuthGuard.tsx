@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import axios from "axios";
 import { Loader2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -18,9 +18,14 @@ interface AuthGuardProps {
  */
 export function AuthGuard({ children }: AuthGuardProps) {
   const { t } = useTranslation();
+  const tRef = useRef(t);
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    tRef.current = t;
+  }, [t]);
 
   useEffect(() => {
     let cancelled = false;
@@ -47,17 +52,17 @@ export function AuthGuard({ children }: AuthGuardProps) {
         } else {
           const errorMessage = axios.isAxiosError(err)
             ? err.response?.status === 401
-              ? t("auth.timeoutMessage")
-              : t("auth.serverErrorMessage", {
+              ? tRef.current("auth.timeoutMessage")
+              : tRef.current("auth.serverErrorMessage", {
                   status: err.response?.status ?? "",
                   statusText: err.response?.statusText || err.message,
                 })
             : err instanceof Error
             ? err.message
-            : t("auth.unknownError");
+            : tRef.current("auth.unknownError");
 
           setError(
-            `${errorMessage}${t("auth.errorSuffix")}`
+            `${errorMessage}${tRef.current("auth.errorSuffix")}`
           );
         }
       }
@@ -85,7 +90,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
         clearTimeout(timeoutId);
       }
     };
-  }, [retryCount, isAuthReady, error, t]);
+  }, [retryCount, isAuthReady, error]);
 
   // Show error state
   if (error) {
