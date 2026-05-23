@@ -239,9 +239,17 @@ errors_df = (
 
 checks_df = spark.table("catalog.schema.checks_table")
 result_df = (
-    errors_df
-    .join(checks_df, on=["rule_fingerprint", "rule_set_fingerprint"])
-    .select("name", "message", "columns", "check.function", "check.arguments", "filter", "criticality")
+    errors_df.alias("e")
+    .join(checks_df.alias("c"), on=["rule_fingerprint", "rule_set_fingerprint"])
+    .select(
+        F.col("e.name").alias("error_name"),
+        F.col("e.message"),
+        F.col("e.columns"),
+        F.col("c.check.function"),
+        F.col("c.check.arguments"),
+        F.col("c.filter"),
+        F.col("c.criticality"),
+    )
 )
 ```
 
@@ -383,7 +391,11 @@ errors_df = (
 checks_df = spark.table("catalog.schema.checks_table")
 failed_checks_df = (
     errors_df
-    .select("name", "rule_fingerprint", "rule_set_fingerprint")
+    .select(
+        F.col("name").alias("error_name"),
+        "rule_fingerprint",
+        "rule_set_fingerprint",
+    )
     .distinct()
     .join(checks_df, on=["rule_fingerprint", "rule_set_fingerprint"], how="left")
 )
