@@ -155,6 +155,9 @@ warnings_df = (
     .select(F.expr("result.*"))
     .filter(F.col("run_id") == run_id)
 )
+
+display(errors_df)
+display(warnings_df)
 ```
 
 ## 3. Row Details
@@ -202,6 +205,8 @@ run_ids_df = error_run_ids.union(warning_run_ids).distinct()
 
 summary_df = spark.table("catalog.schema.summary_metrics")
 result_df = summary_df.join(run_ids_df, on="run_id")
+
+display(result_df)
 ```
 
 ### To Checks Table
@@ -251,6 +256,8 @@ result_df = (
         F.col("c.criticality"),
     )
 )
+
+display(result_df)
 ```
 
 ## 4. Summary to Checks Table
@@ -294,6 +301,8 @@ checks_df = (
     spark.table("catalog.schema.checks_table")
     .filter(F.col("rule_set_fingerprint") == run_info["rule_set_fingerprint"])
 )
+
+display(checks_df)
 ```
 
 <Admonition type="tip" title="Loading checks with DQX">
@@ -353,6 +362,8 @@ failed_checks_df = (
     .select("cm.*")
     .filter((F.col("error_count") > 0) | (F.col("warning_count") > 0))
 )
+
+display(failed_checks_df)
 ```
 
 If you also need the full check definition (function, arguments, filter), join to the checks table:
@@ -399,6 +410,8 @@ failed_checks_df = (
     .distinct()
     .join(checks_df, on=["rule_fingerprint", "rule_set_fingerprint"], how="left")
 )
+
+display(failed_checks_df)
 ```
 
 ## 6. Which Rules Were Applied in a Run
@@ -436,6 +449,8 @@ rules_df = (
     .select("name", "criticality", "check.function", "check.arguments", "filter")
     .orderBy("name")
 )
+
+display(rules_df)
 ```
 
 ## 7. Run Tracking Over Time
@@ -471,7 +486,9 @@ import pyspark.sql.functions as F
 summary_df = spark.table("catalog.schema.summary_metrics")
 
 trend_df = (
-    summary_df
+    summary_df.filter(
+        F.col("metric_name").isin("input_row_count", "valid_row_count", "error_row_count", "warning_row_count")
+    )
     .groupBy("run_id", "run_time", "input_location")
     .pivot("metric_name")
     .agg(F.first(F.col("metric_value").cast("double")))
@@ -481,6 +498,8 @@ trend_df = (
     )
     .orderBy(F.col("run_time").desc())
 )
+
+display(trend_df)
 ```
 
 <Admonition type="tip" title="Alerting on trends">
