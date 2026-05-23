@@ -194,7 +194,11 @@ validated_df, observation = dq_engine.apply_checks_by_metadata(new_users_df, che
 
 # Setup the output table configuration
 output_table_name = f"{demo_catalog_name}.{demo_schema_name}.output_table"
+quarantine_table_name = f"{demo_catalog_name}.{demo_schema_name}.quarantine_table"
+
 output_config = OutputConfig(location=output_table_name, mode="overwrite")
+quarantine_config = OutputConfig(location=quarantine_table_name, mode="overwrite")
+
 
 metrics_table_name = f"{demo_catalog_name}.{demo_schema_name}.metrics_table"
 metrics_config = OutputConfig(location=metrics_table_name, mode="overwrite")
@@ -203,12 +207,8 @@ metrics_config = OutputConfig(location=metrics_table_name, mode="overwrite")
 
 # Option 1: Use save metrics method
 validated_df.count()  # Trigger an action to populate metrics (e.g. count, save to a table)
-dq_engine.save_summary_metrics(observed_metrics=observation.get, metrics_config=metrics_config, output_config=output_config)
+dq_engine.save_summary_metrics(observed_metrics=observation.get, metrics_config=metrics_config, output_config=output_config, quarantine_config=quarantine_config)
 # for streaming use a listener (see dqx docs): spark.streams.addListener(get_streaming_metrics_listener(...))
-
-# COMMAND ----------
-
-display(spark.table(metrics_table_name))
 
 # COMMAND ----------
 
@@ -216,6 +216,7 @@ display(spark.table(metrics_table_name))
 dq_engine.save_results_in_table(
   output_df=validated_df,
   output_config=output_config,
+  quarantine_config=quarantine_config,
   observation=observation,
   metrics_config=metrics_config
 )
@@ -223,6 +224,7 @@ dq_engine.save_results_in_table(
 # COMMAND ----------
 
 display(spark.table(output_table_name))
+display(spark.table(quarantine_table_name))
 display(spark.table(metrics_table_name))
 
 # COMMAND ----------
@@ -233,6 +235,31 @@ display(spark.table(metrics_table_name))
 # MAGIC You can generate quality metrics when running end-to-end validation when using DQX methods such as `apply_checks_and_save_in_table`, `apply_checks_by_metadata_and_save_in_table`, `apply_checks_and_save_in_tables` and `apply_checks_and_save_in_tables_for_patterns`. Pass information about your quality metrics table using the `metrics_config`.
 # MAGIC
 # MAGIC ***NOTE:** Saving metrics to a table requires using a classic compute cluster in [Dedicated Access Mode](https://docs.databricks.com/aws/en/compute/configure#access-modes) due to Spark Connect limitations. This limitation will be lifted in the future.*
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT
+# MAGIC   run_id,
+# MAGIC   run_time,
+# MAGIC   output_location,
+# MAGIC   quarantine_location,
+# MAGIC   rule_set_fingerprint
+# MAGIC FROM main.default.metrics_table
+# MAGIC ORDER BY run_time DESC
+# MAGIC LIMIT 1;
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT sm.*
+# MAGIC FROM main.default.metrics_table sm
+# MAGIC INNER JOIN (
+# MAGIC   SELECT DISTINCT e.run_id
+# MAGIC   FROM main.default.quarantine_table t
+# MAGIC   LATERAL VIEW explode(t._errors) AS e
+# MAGIC ) runs ON sm.run_id = runs.run_id
+# MAGIC ORDER BY sm.run_time DESC;
 
 # COMMAND ----------
 
@@ -261,6 +288,9 @@ input_config = InputConfig(location=input_table_name)
 output_table_name = f"{demo_catalog_name}.{demo_schema_name}.output_table"
 output_config = OutputConfig(location=output_table_name, mode="overwrite")
 
+quarantine_table_name = f"{demo_catalog_name}.{demo_schema_name}.quarantine_table"
+quarantine_config = OutputConfig(location=quarantine_table_name, mode="overwrite")
+
 metrics_table_name = f"{demo_catalog_name}.{demo_schema_name}.metrics_table"
 metrics_config = OutputConfig(location=metrics_table_name, mode="overwrite")
 
@@ -271,12 +301,14 @@ dq_engine.apply_checks_by_metadata_and_save_in_table(
   checks=checks_from_yaml,  # or provide checks_location and run_config_name to auto-load from checks storage
   input_config=input_config,
   output_config=output_config,
+  quarantine_config=quarantine_config,
   metrics_config=metrics_config
 )
 
 # COMMAND ----------
 
 display(spark.table(output_table_name))
+display(spark.table(quarantine_table_name))
 display(spark.table(metrics_table_name))
 
 # COMMAND ----------
@@ -293,10 +325,10 @@ import pyspark.sql.functions as F
 # fetch any metrics row as an example
 metrics_row = spark.table(metrics_table_name).collect()[0]
 run_id = metrics_row["run_id"]
-output_table_name = metrics_row["output_location"]
+quarantine_table_name = metrics_row["quarantine_location"]
 
 # retrieve detailed results
-output_df = spark.table(output_table_name)
+output_df = spark.table(quarantine_table_name)
 
 # extract errors
 results_df = output_df.select(
@@ -313,3 +345,31 @@ display(results_df)
 # You can fetch detailed quality results using the run_id from summary metrics
 filtered_results_df = results_df.filter(F.col("run_id") == run_id)  # filter, or join
 display(filtered_results_df)
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC -- Step 1: get a run_id. Adjust the filter or ordering to select a different run.
+# MAGIC SELECT
+# MAGIC   run_id,
+# MAGIC   run_time,
+# MAGIC   output_location,
+# MAGIC   quarantine_location,
+# MAGIC   rule_set_fingerprint
+# MAGIC FROM main.default.summary_metrics
+# MAGIC ORDER BY run_time DESC
+# MAGIC LIMIT 1;
+# MAGIC
+# MAGIC
+# MAGIC
+# MAGIC -- Step 2: replace <run_id> with a value from the query above.
+# MAGIC SELECT t.*, e.*
+# MAGIC FROM main.default.quarantine_table t
+# MAGIC LATERAL VIEW OUTER explode(t._errors) AS e
+# MAGIC WHERE e.run_id = '<run_id>';
+# MAGIC
+# MAGIC -- Use the same pattern with _warnings to inspect warning-level issues.
+# MAGIC SELECT t.*, w.*
+# MAGIC FROM main.default.quarantine_table t
+# MAGIC LATERAL VIEW OUTER explode(t._warnings) AS w
+# MAGIC WHERE w.run_id = '<run_id>';
