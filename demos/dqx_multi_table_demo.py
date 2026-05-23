@@ -32,6 +32,7 @@ from databricks.labs.dqx.config import InputConfig, OutputConfig, RunConfig
 from databricks.labs.dqx.config import TableChecksStorageConfig
 from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
+from databricks.labs.dqx.metrics_observer import DQMetricsObserver
 
 # Default configuration values
 default_catalog = "main"
@@ -48,18 +49,22 @@ demo_schema_name = dbutils.widgets.get("demo_schema")
 print(f"Using catalog: {demo_catalog_name}")
 print(f"Using schema: {demo_schema_name}")
 
+
+
+dq_observer = DQMetricsObserver()
+
 # Initialize the DQX engine
 ws = WorkspaceClient()
-dq_engine = DQEngine(ws, spark)
+dq_engine = DQEngine(WorkspaceClient(), spark=spark, observer=dq_observer)
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ## Checking multiple tables by providing specific configuration (run configs)
+# MAGIC # Create a sample users table
 
 # COMMAND ----------
 
-# Create a sample users table
 users_data = [
     [1, "john@email.com", "John Doe", "2023-01-01"],
     [2, "invalid-email", "Jane Smith", "2023-02-01"],
@@ -118,11 +123,29 @@ order_checks = yaml.safe_load("""
           limit: 0
     """)
 
+
+# COMMAND ----------
+
 # Save checks in a table
 checks_table = f"{demo_catalog_name}.{demo_schema_name}.checks"
 dq_engine.save_checks(user_checks, config=TableChecksStorageConfig(location=checks_table, run_config_name=users_table, mode="overwrite"))
 dq_engine.save_checks(order_checks, config=TableChecksStorageConfig(location=checks_table, run_config_name=orders_table, mode="overwrite"))
 display(spark.table(f"{demo_catalog_name}.{demo_schema_name}.checks"))
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT *
+# MAGIC FROM main.default.users
+# MAGIC LIMIT 10
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT *
+# MAGIC FROM main.default.users_orders
+
+# COMMAND ----------
 
 # Define run configs
 run_configs = [
@@ -158,6 +181,52 @@ dq_engine.apply_checks_and_save_in_tables(run_configs=run_configs)
 display(spark.table(f"{demo_catalog_name}.{demo_schema_name}.users_checked"))
 display(spark.table(f"{demo_catalog_name}.{demo_schema_name}.users_quarantine"))
 display(spark.table(f"{demo_catalog_name}.{demo_schema_name}.users_orders_checked"))
+
+# COMMAND ----------
+
+s = dq_engine.load_checks(config=TableChecksStorageConfig(location=checks_table, run_config_name=orders_table))
+print(s)
+
+# from databricks.labs.dqx.checks_storage import TableChecksStorageHandler
+
+# print(TableChecksStorageHandler(ws=ws, spark=spark).load(TableChecksStorageConfig(location=checks_table, run_config_name=users_table)))
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC -- Get the run_id from summary metrics.
+# MAGIC -- Adjust the filter or ordering to select a different run.
+# MAGIC SELECT
+# MAGIC   run_id,
+# MAGIC   run_time,
+# MAGIC   input_location,
+# MAGIC   output_location,
+# MAGIC   quarantine_location,
+# MAGIC   checks_location,
+# MAGIC   rule_set_fingerprint
+# MAGIC FROM catalog.schema.summary_metrics
+# MAGIC WHERE output_location = 'catalog.schema.output_table'
+# MAGIC ORDER BY run_time DESC
+# MAGIC LIMIT 1;
+
+# COMMAND ----------
+
+from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.metrics_observer import DQMetricsObserver
+from databricks.sdk import WorkspaceClient
+
+# Create the engine with the optional observer
+dq_observer = DQMetricsObserver()
+
+# Option 1: apply quality checks, provide a single result DataFrame, and return a metrics observation
+
+input_df = spark.table(users_table)
+valid_and_invalid_df, metrics_observation = dq_engine.apply_checks(input_df, checks)
+valid_and_invalid_df.count()  # Trigger an action to populate metrics (e.g. count, save to a table), otherwise accessing them will result in a stall
+print(metrics_observation.get)
+# save the metrics to a table
+dq_engine.save_summary_metrics(observed_metrics=metrics_observation.get, metrics_config=OutputConfig(location="catalog.schema.metrics"))
+
 
 # COMMAND ----------
 
