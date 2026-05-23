@@ -1,5 +1,12 @@
 # DQX Server-Driven UI (SDUI) Design Document
 
+> **Status: PROPOSED — not implemented.** As of this revision the app does
+> not ship `react-jsonschema-form`, `@rjsf/shadcn`, a `ui_schema.py`
+> module, or a `/api/schema/{config_type}` route. Config forms are still
+> built as bespoke React components against hand-written Pydantic models
+> in `backend/models.py`. Treat this file as a design proposal, not a
+> description of current behaviour.
+
 ## Overview
 
 Migrate DQX configuration classes (`RunConfig`, `WorkspaceConfig`) from dataclasses to Pydantic models with **typed UI metadata**. The backend defines form rendering via strongly-typed Python, and the frontend renders forms dynamically using [react-jsonschema-form](https://rjsf-team.github.io/react-jsonschema-form/) with [`@rjsf/shadcn`](https://github.com/rjsf-team/react-jsonschema-form/tree/main/packages/shadcn).

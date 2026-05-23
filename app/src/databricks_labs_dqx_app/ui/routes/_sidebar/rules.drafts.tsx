@@ -1,5 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { parseFqn, formatDateShort as formatDate } from "@/lib/format-utils";
+import { parseFqn, formatDateShort as formatDate, getUserMetadata, labelToken } from "@/lib/format-utils";
+import { LabelFilter, LabelsBadges, labelsMatchFilter } from "@/components/Labels";
 
 const SQL_CHECK_PREFIX = "__sql_check__/";
 const CROSS_TABLE_CATALOG = "Cross-table rules";
@@ -161,16 +162,26 @@ function statusBadge(status: string) {
 }
 
 function getCheckDetails(rule: RuleCatalogEntryOut): {
-  fn: string; args: Record<string, unknown>; criticality: string; weight: number;
+  fn: string;
+  args: Record<string, unknown>;
+  criticality: string;
+  /** Labels stored in the check's ``user_metadata`` (includes ``weight``). */
+  labels: Record<string, string>;
 } {
   const check = rule.checks?.[0] as Record<string, unknown> | undefined;
-  if (!check) return { fn: "—", args: {}, criticality: "—", weight: 0 };
+  if (!check) return { fn: "—", args: {}, criticality: "—", labels: {} };
   const checkObj = (check.check as Record<string, unknown>) ?? check;
+  // Surface labels from user_metadata; fold any legacy top-level numeric
+  // weight into the labels map so existing drafts render consistently.
+  const labels = getUserMetadata(check);
+  if (typeof check.weight === "number" && !("weight" in labels)) {
+    labels.weight = String(check.weight);
+  }
   return {
     fn: String(checkObj.function ?? "—"),
     args: (checkObj.arguments as Record<string, unknown>) ?? {},
     criticality: String(check.criticality ?? checkObj.criticality ?? "—"),
-    weight: typeof check.weight === "number" ? check.weight : 0,
+    labels,
   };
 }
 
@@ -208,6 +219,7 @@ function DraftsPage() {
   const [catalogFilter, setCatalogFilter] = useState("all");
   const [schemaFilter, setSchemaFilter] = useState("all");
   const [mySubmissionsOnly, setMySubmissionsOnly] = useState(false);
+  const [labelFilter, setLabelFilter] = useState<Set<string>>(new Set());
   const [sort, setSort] = useState<{ key: SortKey; dir: SortDir }>({ key: "modified", dir: "desc" });
   const sortKey = sort.key;
   const sortDir = sort.dir;
@@ -230,6 +242,18 @@ function DraftsPage() {
   const { canCreateRules, canEditRules, canSubmitRules, canApproveRules } = usePermissions();
   const { data: currentUser } = useCurrentUserSuspense(selector<UserType>());
   const currentUserEmail = currentUser?.user_name ?? "";
+
+  // Authors can only act on rules they themselves drafted; approvers and
+  // admins (canApproveRules) can act on anyone's rule. Mirrors the backend
+  // ownership check enforced by ``_ensure_owner_or_privileged``.
+  const isOwnRule = useCallback(
+    (rule: RuleCatalogEntryOut) => {
+      if (canApproveRules) return true;
+      if (!currentUserEmail) return false;
+      return (rule.created_by ?? "").toLowerCase() === currentUserEmail.toLowerCase();
+    },
+    [canApproveRules, currentUserEmail],
+  );
 
   const { data: rulesResp, isLoading, error } = useListRules(
     statusFilter === "all" ? {} : { status: statusFilter },
@@ -330,6 +354,12 @@ function DraftsPage() {
         const submitter = rule.updated_by ?? rule.created_by ?? "";
         if (submitter !== currentUserEmail) return false;
       }
+      if (labelFilter.size > 0) {
+        const matched = rule.checks.some((c) =>
+          labelsMatchFilter(getUserMetadata(c as Record<string, unknown>), labelFilter),
+        );
+        if (!matched) return false;
+      }
       return true;
     });
 
@@ -363,7 +393,27 @@ function DraftsPage() {
       }
       return cmp * dir;
     });
-  }, [allRules, catalogFilter, schemaFilter, mySubmissionsOnly, currentUserEmail, sortKey, sortDir]);
+  }, [allRules, catalogFilter, schemaFilter, mySubmissionsOnly, currentUserEmail, sortKey, sortDir, labelFilter]);
+
+  // Distinct labels seen across all draft rules — used to populate the
+  // LabelFilter dropdown.
+  const availableLabels = useMemo(() => {
+    const seen = new Set<string>();
+    const out: { key: string; value: string }[] = [];
+    for (const rule of allRules) {
+      for (const check of rule.checks) {
+        const md = getUserMetadata(check as Record<string, unknown>);
+        for (const [key, value] of Object.entries(md)) {
+          const tok = labelToken(key, value);
+          if (!seen.has(tok)) {
+            seen.add(tok);
+            out.push({ key, value });
+          }
+        }
+      }
+    }
+    return out;
+  }, [allRules]);
 
   const availableSchemas = catalogFilter !== "all" ? schemasByCatalog[catalogFilter] || [] : [];
 
@@ -425,9 +475,12 @@ function DraftsPage() {
       return next;
     });
 
+  // Authors can only bulk-act on rules they themselves drafted; approvers
+  // and admins (canApproveRules → isOwnRule returns true for everyone) get
+  // the previous behaviour. Mirrors the per-row gate further down.
   const selectableRules = useMemo(
-    () => rules.filter((r) => r.rule_id),
-    [rules],
+    () => rules.filter((r) => r.rule_id && isOwnRule(r)),
+    [rules, isOwnRule],
   );
 
   const toggleSelectAll = () => {
@@ -450,27 +503,50 @@ function DraftsPage() {
       errorMsg: string,
     ) => {
       if (bulkBusy || selectedRules.length === 0) return;
+      // Defense in depth: even if state somehow contains rules the user
+      // doesn't own (manual selectedIds tampering, stale data after a
+      // role change, etc.), refuse to act on them. The backend would 403
+      // anyway, but filtering here gives a clear, actionable message and
+      // avoids partial successes that confuse the operator.
+      const ownRules = selectedRules.filter((r) => isOwnRule(r));
+      const skippedNotOwned = selectedRules.length - ownRules.length;
+      if (ownRules.length === 0) {
+        toast.error(
+          `Cannot ${errorMsg.toLowerCase()}: you can only act on rules you authored.`,
+          { duration: 6000 },
+        );
+        setSelectedIds(new Set());
+        return;
+      }
+
       setBulkBusy(true);
       let ok = 0;
       let fail = 0;
-      for (const rule of selectedRules) {
+      let lastDetail = "";
+      for (const rule of ownRules) {
         try {
           await action(rule.rule_id!);
           ok++;
-        } catch {
+        } catch (err) {
           fail++;
+          const detail = (err as { body?: { detail?: string } })?.body?.detail ?? "";
+          if (detail) lastDetail = detail;
         }
       }
       setBulkBusy(false);
       setSelectedIds(new Set());
       invalidateRules();
+      const skippedSuffix = skippedNotOwned > 0
+        ? ` — ${skippedNotOwned} rule${skippedNotOwned !== 1 ? "s" : ""} skipped (not authored by you)`
+        : "";
       if (fail === 0) {
-        toast.success(`${successMsg} (${ok} rule${ok !== 1 ? "s" : ""})`);
+        toast.success(`${successMsg} (${ok} rule${ok !== 1 ? "s" : ""})${skippedSuffix}`);
       } else {
-        toast.warning(`${ok} succeeded, ${fail} failed — ${errorMsg}`);
+        const reason = lastDetail ? ` — ${lastDetail}` : "";
+        toast.warning(`${ok} succeeded, ${fail} failed${reason}${skippedSuffix}`);
       }
     },
-    [bulkBusy, selectedRules, invalidateRules],
+    [bulkBusy, selectedRules, invalidateRules, isOwnRule],
   );
 
   const [bulkApproveOpen, setBulkApproveOpen] = useState(false);
@@ -501,28 +577,41 @@ function DraftsPage() {
   };
   const [bulkSubmitOpen, setBulkSubmitOpen] = useState(false);
   const bulkSubmitEligible = useMemo(
-    () => selectedRules.filter((r) => r.status === "draft" && r.rule_id && !duplicateInfo.has(r.rule_id)),
-    [selectedRules, duplicateInfo],
+    () =>
+      selectedRules.filter(
+        // Authors can only submit rules they authored. Filter at the
+        // memoised eligible-list so the confirm dialog count and the
+        // post-action toast both reflect this.
+        (r) => r.status === "draft" && r.rule_id && !duplicateInfo.has(r.rule_id) && isOwnRule(r),
+      ),
+    [selectedRules, duplicateInfo, isOwnRule],
   );
   const handleBulkSubmit = useCallback(() => {
     if (bulkSubmitEligible.length === 0) {
-      toast.warning(`All ${selectedRules.length} selected rule(s) are duplicates and cannot be submitted`);
+      toast.warning(
+        `All ${selectedRules.length} selected rule(s) are ineligible (duplicate or not authored by you)`,
+      );
       return;
     }
     setBulkSubmitOpen(true);
   }, [bulkSubmitEligible, selectedRules]);
   const confirmBulkSubmit = useCallback(async () => {
     setBulkSubmitOpen(false);
-    const skipped = selectedRules.length - bulkSubmitEligible.length;
+    const skippedNotOwned = selectedRules.filter((r) => !isOwnRule(r)).length;
+    const skippedDuplicate =
+      selectedRules.length - bulkSubmitEligible.length - skippedNotOwned;
     setBulkBusy(true);
     let ok = 0;
     let fail = 0;
+    let lastDetail = "";
     for (const rule of bulkSubmitEligible) {
       try {
         await submitRuleForApproval(rule.rule_id!);
         ok++;
-      } catch {
+      } catch (err) {
         fail++;
+        const detail = (err as { body?: { detail?: string } })?.body?.detail ?? "";
+        if (detail) lastDetail = detail;
       }
     }
     setBulkBusy(false);
@@ -530,11 +619,12 @@ function DraftsPage() {
     invalidateRules();
     const parts: string[] = [];
     if (ok > 0) parts.push(`${ok} submitted`);
-    if (fail > 0) parts.push(`${fail} failed`);
-    if (skipped > 0) parts.push(`${skipped} skipped (duplicate)`);
+    if (fail > 0) parts.push(`${fail} failed${lastDetail ? ` (${lastDetail})` : ""}`);
+    if (skippedDuplicate > 0) parts.push(`${skippedDuplicate} skipped (duplicate)`);
+    if (skippedNotOwned > 0) parts.push(`${skippedNotOwned} skipped (not authored by you)`);
     if (fail === 0) toast.success(parts.join(", "));
     else toast.warning(parts.join(", "));
-  }, [selectedRules, bulkSubmitEligible, invalidateRules]);
+  }, [selectedRules, bulkSubmitEligible, invalidateRules, isOwnRule]);
 
   const ruleKey = (rule: RuleCatalogEntryOut) => rule.rule_id ?? rule.table_fqn;
 
@@ -673,7 +763,13 @@ function DraftsPage() {
                 My submissions
               </Button>
 
-              {(catalogFilter !== "all" || schemaFilter !== "all" || statusFilter !== "all" || mySubmissionsOnly) && (
+              <LabelFilter
+                available={availableLabels}
+                selected={labelFilter}
+                onChange={setLabelFilter}
+              />
+
+              {(catalogFilter !== "all" || schemaFilter !== "all" || statusFilter !== "all" || mySubmissionsOnly || labelFilter.size > 0) && (
                 <Button
                   variant="ghost"
                   size="sm"
@@ -683,6 +779,7 @@ function DraftsPage() {
                     setSchemaFilter("all");
                     setStatusFilter("all");
                     setMySubmissionsOnly(false);
+                    setLabelFilter(new Set());
                   }}
                 >
                   Clear filters
@@ -780,6 +877,7 @@ function DraftsPage() {
                       <th className="text-left p-3 font-medium whitespace-nowrap">
                         <SortableHeader label="Check" sortKey="check" active={sortKey === "check"} direction={sortDir} onSort={handleSort} />
                       </th>
+                      <th className="text-left p-3 font-medium whitespace-nowrap">Labels</th>
                       <th className="text-left p-3 font-medium whitespace-nowrap">
                         <SortableHeader label="Status" sortKey="status" active={sortKey === "status"} direction={sortDir} onSort={handleSort} />
                       </th>
@@ -807,7 +905,7 @@ function DraftsPage() {
                         onClick={() => toggleExpand(key)}
                       >
                         <td className="p-3 w-10" onClick={(e) => e.stopPropagation()}>
-                          {rule.rule_id && (
+                          {rule.rule_id && isOwnRule(rule) && (
                             <Checkbox
                               checked={selectedIds.has(rule.rule_id)}
                               onCheckedChange={() => toggleSelect(rule.rule_id!)}
@@ -838,6 +936,13 @@ function DraftsPage() {
                             )}
                           </span>
                         </td>
+                        <td className="p-3">
+                          {Object.keys(details.labels).length === 0 ? (
+                            <span className="text-[10px] italic text-muted-foreground/60">—</span>
+                          ) : (
+                            <LabelsBadges labels={details.labels} max={3} size="sm" />
+                          )}
+                        </td>
                         <td className="p-3">{statusBadge(rule.status)}</td>
                         <td className="p-3 text-xs text-muted-foreground whitespace-nowrap" title={rule.updated_by ?? rule.created_by ?? ""}>
                           {rule.updated_by ?? rule.created_by ?? "—"}
@@ -865,7 +970,7 @@ function DraftsPage() {
                                 </Tooltip>
                               </TooltipProvider>
                             )}
-                            {rule.status === "draft" && canSubmitRules && rule.rule_id && (
+                            {rule.status === "draft" && canSubmitRules && rule.rule_id && isOwnRule(rule) && (
                               <TooltipProvider>
                                 <Tooltip>
                                   <TooltipTrigger asChild>
@@ -942,7 +1047,60 @@ function DraftsPage() {
                                 {busy ? "..." : "Unreject"}
                               </Button>
                             )}
-                            {canEditRules && rule.rule_id && (
+                            {(rule.status === "draft" || rule.status === "rejected") &&
+                              canEditRules &&
+                              rule.rule_id &&
+                              isOwnRule(rule) && (
+                                <TooltipProvider>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        disabled={busy}
+                                        onClick={() =>
+                                          rule.table_fqn.startsWith(SQL_CHECK_PREFIX)
+                                            ? navigate({
+                                                to: "/rules/create-sql",
+                                                search: { edit: rule.table_fqn, from: "drafts" },
+                                              })
+                                            : navigate({
+                                                to: "/rules/single-table",
+                                                search: { table: rule.table_fqn, rule_id: rule.rule_id!, from: "drafts" },
+                                              })
+                                        }
+                                        className="h-7 text-xs"
+                                      >
+                                        <FileEdit className="h-3 w-3" />
+                                      </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent>Edit this rule</TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
+                              )}
+                            {rule.status === "pending_approval" &&
+                              canEditRules &&
+                              rule.rule_id &&
+                              isOwnRule(rule) && (
+                                <TooltipProvider>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <span>
+                                        <Button
+                                          size="sm"
+                                          variant="ghost"
+                                          disabled
+                                          className="h-7 text-xs opacity-40"
+                                        >
+                                          <FileEdit className="h-3 w-3" />
+                                        </Button>
+                                      </span>
+                                    </TooltipTrigger>
+                                    <TooltipContent>Revoke this submission first to edit</TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
+                              )}
+                            {canEditRules && rule.rule_id && isOwnRule(rule) && (
                               <Button
                                 size="sm"
                                 variant="ghost"
@@ -958,7 +1116,7 @@ function DraftsPage() {
                       </tr>
                       {isExpanded && (
                         <tr className="bg-muted/20">
-                          <td colSpan={7} className="p-0">
+                          <td colSpan={8} className="p-0">
                             <div className="px-6 py-4 space-y-3 border-l-4 border-primary/20">
                               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs">
                                 <div>
@@ -990,7 +1148,7 @@ function DraftsPage() {
                                 </div>
                               )}
                               <div className="flex items-center gap-2 pt-1">
-                                {(rule.status === "draft" || rule.status === "rejected") && canEditRules && rule.rule_id && (
+                                {(rule.status === "draft" || rule.status === "rejected") && canEditRules && rule.rule_id && isOwnRule(rule) && (
                                   <Button
                                     size="sm"
                                     variant="outline"
@@ -1004,6 +1162,11 @@ function DraftsPage() {
                                     <ExternalLink className="h-3 w-3" />
                                     Edit rule
                                   </Button>
+                                )}
+                                {!isOwnRule(rule) && (
+                                  <span className="text-[11px] text-muted-foreground italic">
+                                    Authored by {rule.created_by ?? "another user"} — only the author or an approver can edit, submit, or delete.
+                                  </span>
                                 )}
                               </div>
                             </div>

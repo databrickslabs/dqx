@@ -34,7 +34,8 @@ databricks auth login --host https://your-workspace.cloud.databricks.com
 
 **Option B — `.env` file (useful when working with multiple profiles):**
 
-Copy `.env.example` to `.env` in the `app/` directory and fill in your values:
+Create a file at `app/.env` (git-ignored) with the variables below, filling in your own values:
+
 ```bash
 DATABRICKS_CONFIG_PROFILE=<your-profile>    # matches a profile in ~/.databrickscfg
 DATABRICKS_WAREHOUSE_ID=<your-warehouse-id>

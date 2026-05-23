@@ -400,7 +400,7 @@ def _retry_mlflow_auth_flakes(monkeypatch):
     """
     original_http_request = mlflow_rest_utils.http_request
 
-    def retrying_http_request(*args, **kwargs):
+    def retrying_http_request(*args: Any, **kwargs: Any) -> Any:
         last_exc: RestException | None = None
         for attempt in range(5):
             try:

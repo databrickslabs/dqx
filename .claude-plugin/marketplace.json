@@ -1,0 +1,15 @@
+{
+  "name": "databrickslabs-dqx",
+  "owner": {
+    "name": "Databricks Labs",
+    "email": "labs@databricks.com",
+    "url": "https://databrickslabs.github.io/"
+  },
+  "plugins": [
+    {
+      "name": "dqx",
+      "source": "./skills",
+      "description": "DQX by Databricks Labs — AI assistant skills for defining, applying, storing, and profiling data quality rules in PySpark."
+    }
+  ]
+}

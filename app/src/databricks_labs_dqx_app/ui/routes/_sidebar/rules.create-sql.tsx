@@ -44,7 +44,9 @@ import {
   useGetDryRunResults,
   type DryRunResultsOut,
 } from "@/lib/api";
-import { checkDuplicates, type CheckDuplicatesIn, cancelDryRun, getDryRunStatusCustom } from "@/lib/api-custom";
+import { checkDuplicates, type CheckDuplicatesIn, cancelDryRun, getDryRunStatusCustom, useLabelDefinitions } from "@/lib/api-custom";
+import { LabelsEditor } from "@/components/Labels";
+import { getUserMetadata } from "@/lib/format-utils";
 import { useJobPolling } from "@/hooks/use-job-polling";
 import { DryRunResults } from "@/components/DryRunResults";
 import {
@@ -120,8 +122,16 @@ interface SqlCheckDraft {
   name: string;
   query: string;
   criticality: "warn" | "error";
-  weight: number;
+  /**
+   * Free-form labels, including the reserved ``weight`` key. All authoring,
+   * editing, and round-trip happens through ``user_metadata`` — there is no
+   * separate native ``weight`` field on the rule.
+   */
+  userMetadata: Record<string, string>;
   targetTable: string;
+  // When set, a save should ``update_rule(rule_id, ...)`` instead of creating
+  // a new entry. Populated when the page loads in edit mode.
+  ruleId?: string;
 }
 
 function newSqlCheck(): SqlCheckDraft {
@@ -130,9 +140,26 @@ function newSqlCheck(): SqlCheckDraft {
     name: "",
     query: "",
     criticality: "warn",
-    weight: 3,
+    userMetadata: {},
     targetTable: "",
   };
+}
+
+/**
+ * Build the payload sent to the backend for a single SQL check. Used by the
+ * dry-run, duplicate-check, and save call sites so the encoding stays
+ * consistent (and so we don't reintroduce a top-level ``weight`` field).
+ */
+function buildSqlCheckPayload(c: SqlCheckDraft): Record<string, unknown> {
+  const out: Record<string, unknown> = {
+    name: c.name.trim(),
+    criticality: c.criticality,
+    check: { function: "sql_query", arguments: { query: c.query.trim() } },
+  };
+  if (Object.keys(c.userMetadata).length > 0) {
+    out.user_metadata = { ...c.userMetadata };
+  }
+  return out;
 }
 
 function CreateSqlCheckPage() {
@@ -150,6 +177,9 @@ function CreateSqlCheckPage() {
   const [checks, setChecks] = useState<SqlCheckDraft[]>([newSqlCheck()]);
   const [initialized, setInitialized] = useState(false);
   const saveMutation = useSaveRules();
+
+  const { data: labelDefsData } = useLabelDefinitions();
+  const labelDefinitions = labelDefsData?.definitions ?? [];
 
   const { data: existingRule } = useGetRules(editFqn ?? "", {
     query: { enabled: !!editFqn },
@@ -170,13 +200,30 @@ function CreateSqlCheckPage() {
     const loaded: SqlCheckDraft[] = allChecks.map((c: Record<string, unknown>) => {
       const check = (c.check ?? {}) as Record<string, unknown>;
       const args = (check.arguments ?? {}) as Record<string, unknown>;
+
+      // Pull labels from the saved rule. Fold any legacy top-level ``weight``
+      // into the labels map so existing rules round-trip cleanly into the new
+      // labels-only model.
+      const userMetadata = getUserMetadata(c as Record<string, unknown>);
+      if (c.weight != null && typeof c.weight === "number" && !("weight" in userMetadata)) {
+        userMetadata.weight = String(c.weight);
+      }
+
+      // Match each draft up with its saved rule_id so a save becomes an update
+      // rather than a new-row insert.
+      const matchedEntry = entries.find((e) =>
+        Array.isArray(e.checks) && e.checks.some((ec) => (ec as Record<string, unknown>).name === c.name),
+      );
+      const ruleId = matchedEntry?.rule_id;
+
       return {
         id: crypto.randomUUID(),
         name: (c.name as string) ?? "",
         query: (args.query as string) ?? "",
         criticality: ((c.criticality as string) === "error" ? "error" : "warn") as "warn" | "error",
-        weight: Number(c.weight ?? 3),
+        userMetadata,
         targetTable: isAssignedToTable ? tableFqn : "",
+        ruleId: typeof ruleId === "string" && ruleId.length > 0 ? ruleId : undefined,
       };
     });
     if (loaded.length > 0) {
@@ -204,12 +251,7 @@ function CreateSqlCheckPage() {
       const dups = new Set<string>();
       for (const check of eligible) {
         const tableFqn = resolveTableFqn(check);
-        const payload = [{
-          name: check.name.trim(),
-          criticality: check.criticality,
-          weight: check.weight,
-          check: { function: "sql_query", arguments: { query: check.query.trim() } },
-        }];
+        const payload = [buildSqlCheckPayload(check)];
         try {
           const body: CheckDuplicatesIn = {
             table_fqn: tableFqn,
@@ -260,12 +302,16 @@ function CreateSqlCheckPage() {
         const args = (checkObj.arguments as Record<string, unknown>) ?? {};
         const query = String(args.query ?? "");
         if (!query) continue;
+        const aiMetadata = getUserMetadata(raw as Record<string, unknown>);
+        if (raw.weight != null && typeof raw.weight === "number" && !("weight" in aiMetadata)) {
+          aiMetadata.weight = String(raw.weight);
+        }
         drafts.push({
           id: crypto.randomUUID(),
           name: String(raw.name ?? args.name ?? ""),
           query,
           criticality: (raw.criticality as string) === "error" ? "error" : "warn",
-          weight: 3,
+          userMetadata: aiMetadata,
           targetTable: "",
         });
       }
@@ -374,12 +420,7 @@ function CreateSqlCheckPage() {
 
     const checkName = check.name.trim() || `dryrun_${Date.now()}`;
     const tableFqn = resolveTableFqn({ ...check, name: checkName });
-    const checksPayload = [{
-      name: checkName,
-      criticality: check.criticality,
-      weight: check.weight,
-      check: { function: "sql_query", arguments: { query: check.query.trim() } },
-    }];
+    const checksPayload = [buildSqlCheckPayload({ ...check, name: checkName })];
     try {
       const resp = await submitDryRunMutation.mutateAsync({
         data: { table_fqn: tableFqn, checks: checksPayload, sample_size: 1000, skip_history: true },
@@ -442,19 +483,13 @@ function CreateSqlCheckPage() {
 
     for (const check of checks) {
       const tableFqn = resolveTableFqn(check);
-      const checkPayload = [
-        {
-          name: check.name.trim(),
-          criticality: check.criticality,
-          weight: check.weight,
-          check: {
-            function: "sql_query",
-            arguments: {
-              query: check.query.trim(),
-            },
-          },
-        },
-      ];
+      const payloadEntry = buildSqlCheckPayload(check);
+      // Carry rule_id when present so the backend updates the existing row
+      // instead of creating a new one (avoids duplicate-name errors on edit).
+      if (check.ruleId) {
+        payloadEntry.rule_id = check.ruleId;
+      }
+      const checkPayload = [payloadEntry];
       try {
         await saveMutation.mutateAsync({
           data: { table_fqn: tableFqn, checks: checkPayload },
@@ -661,6 +696,13 @@ function CreateSqlCheckPage() {
                   </p>
                 )}
               </div>
+
+              <LabelsEditor
+                value={check.userMetadata}
+                onChange={(next) => updateCheck(check.id, { userMetadata: next })}
+                defaultOpen={Object.keys(check.userMetadata).length > 0}
+                definitions={labelDefinitions}
+              />
 
               {dryRunCheckId === check.id && (isDryRunning || dryRunResult || dryRunError) && (
                 <div className="space-y-3">
