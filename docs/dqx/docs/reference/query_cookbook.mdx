@@ -213,6 +213,10 @@ display(result_df)
 
 **Goal**: From a failing row, get the full check definition (function, arguments, filter) that produced the failure.
 
+<Admonition type="note" title="for_each_column rules">
+Rules defined with `for_each_column` are stored as a single row in the checks table but expand into one error entry per column at runtime, each with its own `rule_fingerprint`. These per-column fingerprints do not match the parent row in the checks table, so those errors will not appear in the join results below. To inspect the originating rule for those errors, match on `rule_set_fingerprint` and `check.function` instead.
+</Admonition>
+
 #### SQL
 
 ```sql
@@ -369,6 +373,10 @@ display(failed_checks_df)
 If you also need the full check definition (function, arguments, filter), join to the checks table:
 
 ### With Check Definitions
+
+<Admonition type="note" title="for_each_column rules">
+Rules defined with `for_each_column` produce per-column errors with fingerprints that do not match the parent row in the checks table. Those rows will join with `null` check columns. See the same note in [Recipe 3](#3-row-details) for details.
+</Admonition>
 
 #### SQL
 
