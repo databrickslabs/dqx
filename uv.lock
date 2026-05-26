@@ -1357,7 +1357,7 @@ dev = [
     { name = "databricks-labs-pytester", specifier = "~=0.7.4" },
     { name = "dbldatagen", specifier = "~=0.4.0" },
     { name = "dbt-core", specifier = "~=1.11.6" },
-    { name = "dbt-databricks", specifier = "~=1.11.6" },
+    { name = "dbt-databricks", specifier = ">=1.11.6,<1.13.0" },
     { name = "fastapi", specifier = ">=0.119.0,<1.0" },
     { name = "jmespath", specifier = "~=1.0.1" },
     { name = "mypy", specifier = "~=1.9.0" },
@@ -1396,7 +1396,7 @@ test = [
     { name = "databricks-labs-pytester", specifier = "~=0.7.4" },
     { name = "dbldatagen", specifier = "~=0.4.0" },
     { name = "dbt-core", specifier = "~=1.11.6" },
-    { name = "dbt-databricks", specifier = "~=1.11.6" },
+    { name = "dbt-databricks", specifier = ">=1.11.6,<1.13.0" },
     { name = "fastapi", specifier = ">=0.119.0,<1.0" },
     { name = "jmespath", specifier = "~=1.0.1" },
     { name = "pip", specifier = "~=26.0" },
@@ -1666,7 +1666,7 @@ wheels = [
 
 [[package]]
 name = "dbt-databricks"
-version = "1.11.6"
+version = "1.12.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
@@ -1679,9 +1679,9 @@ dependencies = [
     { name = "keyring" },
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/36/60/0e37deb8ccbb32a6a2644edae9add0e359982a1c2c3db80c630709cee8fb/dbt_databricks-1.11.6.tar.gz", hash = "sha256:50a33064b4512c7a9906061c2510c7f6f29cc21044ac3f1d68dd39f235d18892", size = 94630, upload-time = "2026-03-11T09:26:48.785Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/24/3d/e5a5596db41532d906579a7fd15cc67659ba32b3936ec3964b818d70b5e9/dbt_databricks-1.12.0.tar.gz", hash = "sha256:e08ec867632ff119d47764063bef6c3d9ebc9d1a5078e6e23192403165b0f94e", size = 110995, upload-time = "2026-05-18T08:49:50.11Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d0/c7/cf5454707d4cf07b76de17425ded6e9ac27a7af2918ffef8db652a9a9d94/dbt_databricks-1.11.6-py3-none-any.whl", hash = "sha256:b35ffce84115da97dc796f5450ba9b1011a3fe6902f99e797b2234bc06035c5c", size = 146364, upload-time = "2026-03-11T09:26:46.816Z" },
+    { url = "https://files.pythonhosted.org/packages/ec/c8/c4de236e694e2a7ea22ad9cb732e665a110661cf18ba28bd11eaae4533e9/dbt_databricks-1.12.0-py3-none-any.whl", hash = "sha256:b025ea40d6ed259a070dae2ffe7f88daa48c4458c25f3ff7e5bc25dd251c1666", size = 166729, upload-time = "2026-05-18T08:49:48.205Z" },
 ]
 
 [[package]]
