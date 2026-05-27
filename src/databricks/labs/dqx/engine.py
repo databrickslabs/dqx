@@ -53,7 +53,7 @@ from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.errors import InvalidCheckError, InvalidConfigError, InvalidParameterError
 from databricks.labs.dqx.utils import list_tables, safe_strip_file_from_path, resolve_variables, VariableValue
 from databricks.labs.dqx.io import is_one_time_trigger
-
+from .semantic_validator import SemanticValidator
 logger = logging.getLogger(__name__)
 
 
@@ -298,18 +298,16 @@ class DQEngineCore(DQEngineCoreBase):
     ) -> ChecksValidationStatus:
         """
         Validate checks defined as metadata to ensure they conform to the expected structure and types.
-
-        This method validates the presence of required keys, the existence and callability of functions,
-        and the types of arguments passed to those functions.
-
-        Args:
-            checks: List of checks to apply to the DataFrame. Each check should be a dictionary.
-            custom_check_functions: Optional dictionary with custom check functions (e.g., *globals()* of the calling module).
-            validate_custom_check_functions: If True, validate custom check functions.
-
-        Returns:
-            ChecksValidationStatus indicating the validation result.
         """
+        # --- Issue #1169: Semantic Validation Patch ---
+        for check in checks:
+            if isinstance(check, dict):
+                # Dig into the dictionary to find if there is an SQL expression
+                expr = check.get("kwargs", {}).get("expression") or check.get("expression")
+                if expr:
+                    SemanticValidator.validate_sql_expression(expr)
+        # ----------------------------------------------
+
         return ChecksValidator.validate_checks(checks, custom_check_functions, validate_custom_check_functions)
 
     def get_invalid(self, df: DataFrame) -> DataFrame:
