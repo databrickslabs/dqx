@@ -517,6 +517,21 @@ Rule of thumb: `count ≈ min(limit, sample_fraction × total_rows)`.
 | `count_non_null`  | Number of non-null entries within the profiled rows                     |                                                                     |
 | `count_null`      | Number of null entries within the profiled rows                         | `count_non_null + count_null = count`                               |
 
+## Data Drift Detection
+
+When profiling data continuously over time, it is critical to detect **Data Drift**—shifts in the statistical distribution of your data that can silently degrade machine learning models or downstream analytics.
+
+The DQX Profiler helps you identify potential data drift by comparing current data profiles against historical baselines. 
+
+### Identifying Drift
+
+When running the profiler on new datasets, monitor the following summary metrics for significant deviations from your baseline:
+* **Numeric Columns:** Shifts in `mean`, `stddev`, or the `min`/`max` boundaries.
+* **Categorical Columns:** Changes in the `distinct_count` or the appearance of new top-frequency values.
+* **Completeness:** Sudden drops in the `completeness` percentage (indicating an influx of NULL values).
+
+By saving your profile results periodically, you can build a historical ledger to trigger alerts when these key statistical markers drift beyond acceptable thresholds.
+
 ## Performance considerations
 
 When profiling large datasets, use sampling and limits for best performance.
