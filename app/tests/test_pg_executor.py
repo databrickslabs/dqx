@@ -66,9 +66,24 @@ def _make_pg_executor(
     """Build a method-callable :class:`PgExecutor` without running ``__init__``.
 
     Skips the real ``ConnectionPool`` open, the bootstrap
-    ``_generate_token`` call, and the refresher-thread spawn. The
-    returned instance has the minimum attribute surface every method
-    under test reads:
+    ``_generate_token`` call, and the refresher-thread spawn.
+
+    *Why ``__new__`` here, unlike* ``conftest.make_scheduler`` *which uses
+    the real constructor?* ``SchedulerService.__init__`` is pure
+    attribute assignment, so injecting dependencies through the real
+    constructor is straightforward. ``PgExecutor.__init__``, in
+    contrast, performs three unavoidable side effects: it calls
+    ``_generate_token`` (a network round-trip to the SDK), opens a
+    real ``ConnectionPool`` (a TCP connect to Postgres), and starts a
+    daemon thread. A unit test cannot perform any of these. Adding
+    constructor kwargs to gate each side effect would expose
+    test-only seams in production code — worse than the localised
+    ``__new__`` here, which is contained to this single test helper.
+    The ``_make_pg_executor`` factory makes the asymmetry explicit
+    and keeps the boundary in test code.
+
+    The returned instance has the minimum attribute surface every
+    method under test reads:
 
     - ``_ws`` / ``_instance_name`` — used by the refresh loop and by
       :func:`build_pg_executor` smoke tests.
@@ -179,10 +194,14 @@ class TestToText:
     def test_bool_false_renders_lowercase(self) -> None:
         assert _to_text(False) == "false"
 
-    def test_decimal_renders_as_str_no_scientific(self) -> None:
-        # Reviewer-flagged: services calling json.loads on the round-trip
-        # would die if we shortened Decimal("0.0000001") to "1e-7".
-        assert _to_text(Decimal("0.0000001")) == "1E-7"  # noqa: SIM222 - documenting Decimal's repr
+    def test_decimal_uses_decimal_str_repr(self) -> None:
+        # Documents that ``_to_text`` delegates to ``Decimal.__str__``
+        # rather than reformatting. Downstream consumers (Postgres
+        # NUMERIC round-trip, CSV export) parse scientific notation
+        # fine, so the "1E-7" form is acceptable — the assertion below
+        # pins the actual behaviour so a future change to plain
+        # notation is a conscious decision, not an accidental drift.
+        assert _to_text(Decimal("0.0000001")) == "1E-7"
         assert _to_text(Decimal("123.456")) == "123.456"
 
     @pytest.mark.parametrize(

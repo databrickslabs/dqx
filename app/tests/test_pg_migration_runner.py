@@ -334,8 +334,23 @@ class TestApplyAtomicity:
 
         exec_mock = _make_executor(applied_versions=())
         cur = _cursor_of(exec_mock)
-        # Pass: t1 → succeed, t2 → succeed, t3 → boom. INSERT never reached.
-        cur.execute.side_effect = [None, None, RuntimeError("boom"), None, None]
+
+        # Fail the third CREATE TABLE deterministically by matching on
+        # SQL content rather than a positional ``side_effect`` list.
+        # Positional lists couple to how the runner batches/splits
+        # statements — if that ever changes the failure index drifts
+        # and the test passes for the wrong reason. Matching on the
+        # actual SQL keeps the failing statement pinned to ``t3``
+        # regardless of upstream batching.
+        def _execute_side_effect(sql: str, *_args: object, **_kwargs: object) -> None:
+            # The schema placeholder is rendered via ``q()`` (ANSI-quoted)
+            # so the final SQL is e.g. ``CREATE TABLE "public".t3 ...``.
+            # Match on the unique trailing ``t3 (`` token, which is
+            # stable regardless of how the runner quotes the schema.
+            if "t3 (id int)" in sql:
+                raise RuntimeError("boom")
+
+        cur.execute.side_effect = _execute_side_effect
 
         runner = PgMigrationRunner(exec_mock, migrations=[fake_migration])
         with pytest.raises(RuntimeError, match="boom"):

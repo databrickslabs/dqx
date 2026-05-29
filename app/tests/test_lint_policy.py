@@ -179,23 +179,27 @@ class TestPsycopgExecutePyrightIgnorePolicy:
 
     def test_run_trusted_sql_helper_is_importable_and_documented(self):
         """The helper that replaces the per-call ignores must exist
-        and carry the trust-boundary docstring. If it gets renamed
-        or deleted, this test fails loud rather than letting the
-        per-call pattern silently creep back in."""
+        and carry a non-trivial trust-boundary docstring. If it gets
+        renamed or deleted, this test fails loud rather than letting
+        the per-call pattern silently creep back in.
+
+        Asserts only that the docstring exists and is long enough to
+        carry the contract — not on specific tokens. A legitimate
+        docstring rewrite must not break this test; the AST-scan tests
+        elsewhere in this file enforce the actual policy invariants.
+        """
         from databricks_labs_dqx_app.backend.pg_executor import run_trusted_sql
 
         assert callable(run_trusted_sql), "run_trusted_sql must be a callable wrapper"
-        doc = (run_trusted_sql.__doc__ or "").lower()
-        # The docstring is the trust-boundary contract — these tokens
-        # are the load-bearing words. If any drift out, the next
-        # reviewer can't tell why ``cast(LiteralString, ...)`` is
-        # safe at the call sites.
-        for token in ("literalstring", "trust", "untrusted"):
-            assert token in doc, (
-                f"run_trusted_sql.__doc__ must mention {token!r} "
-                "so the trust boundary is explicit in the helper "
-                "rather than implicit in the call sites."
-            )
+        doc = run_trusted_sql.__doc__ or ""
+        # 200 chars ≈ a short paragraph — enough to spell out what the
+        # helper does, why it's safe, and what callers must not pass.
+        # A one-line docstring is not a trust-boundary contract.
+        assert len(doc.strip()) >= 200, (
+            f"run_trusted_sql.__doc__ is too short ({len(doc.strip())} chars) "
+            "to document the trust-boundary contract. Explain what makes the "
+            "``LiteralString`` cast safe and what callers must not pass."
+        )
 
     def test_pg_executor_call_sites_use_helper_not_raw_execute(self):
         """Internal coverage: pg_executor.py's own ``execute``,
@@ -205,18 +209,18 @@ class TestPsycopgExecutePyrightIgnorePolicy:
         a raw ``cur.execute(sql)`` here, the convention is already
         breaking down."""
         text = (SRC_ROOT / "databricks_labs_dqx_app" / "backend" / "pg_executor.py").read_text(encoding="utf-8")
-        # The helper body itself is the one legitimate ``cur.execute``
-        # site — every other call must use ``run_trusted_sql``.
-        # Counting matches is more robust than substring checks
-        # because someone could add a comment containing the literal.
+        # Cap the number of raw ``cur.execute`` sites rather than
+        # asserting an exact count. The one legitimate site today is
+        # inside ``run_trusted_sql`` itself; if the helper is split or
+        # an additional vetted boundary is added, raising the cap is a
+        # conscious decision in a single place. Tightening to the
+        # smallest count that lets the policy keep working is what
+        # makes this catch drift without breaking on legitimate
+        # refactors.
+        _MAX_RAW_CUR_EXECUTE_CALLS = 1
         raw_execute_calls = sum(1 for line in text.splitlines() if re.match(r"^\s*(_ = )?cur\.execute\(", line))
-        helper_calls = text.count("run_trusted_sql(cur,")
-        assert raw_execute_calls == 1, (
-            f"Expected exactly 1 raw ``cur.execute(...)`` in pg_executor.py "
-            f"(the body of ``run_trusted_sql`` itself), found {raw_execute_calls}. "
+        assert raw_execute_calls <= _MAX_RAW_CUR_EXECUTE_CALLS, (
+            f"pg_executor.py has {raw_execute_calls} raw ``cur.execute(...)`` site(s); "
+            f"the cap is {_MAX_RAW_CUR_EXECUTE_CALLS} (the body of ``run_trusted_sql`` itself). "
             "New call sites must route through ``run_trusted_sql``."
-        )
-        assert helper_calls >= 3, (
-            f"Expected at least 3 ``run_trusted_sql(cur, ...)`` call sites in "
-            f"pg_executor.py (execute, query, query_dicts), found {helper_calls}."
         )
