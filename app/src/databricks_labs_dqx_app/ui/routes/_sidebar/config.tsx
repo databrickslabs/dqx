@@ -3,7 +3,7 @@ import { QueryErrorResetBoundary, useQueryClient } from "@tanstack/react-query";
 import { ErrorBoundary } from "react-error-boundary";
 import { Button } from "@/components/ui/button";
 import { PageBreadcrumb } from "@/components/apx/PageBreadcrumb";
-import { AlertCircle, Globe, Loader2, Search, Tags, Plus, Trash2, X } from "lucide-react";
+import { AlertCircle, Clock, Globe, Loader2, Search, Tags, Plus, Trash2, X } from "lucide-react";
 import { FadeIn } from "@/components/anim/FadeIn";
 import { ShinyText } from "@/components/anim/ShinyText";
 import { RoleManagement } from "@/components/RoleManagement";
@@ -25,7 +25,11 @@ import {
   useLabelDefinitions,
   useSaveLabelDefinitions,
   getLabelDefinitionsQueryKey,
+  useRetentionSettings,
+  useSaveRetentionSettings,
+  getRetentionSettingsQueryKey,
   type LabelDefinition,
+  type RetentionSettingsOut,
 } from "@/lib/api-custom";
 import type { AxiosError } from "axios";
 import { toast } from "sonner";
@@ -590,6 +594,217 @@ function DefinitionEditorCard({
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Retention Settings — admin-controlled DELETE windows for the daily sweep.
+// Two knobs: a global retention applied to dq_validation_runs, dq_metrics,
+// dq_profiling_results + the OLTP history tables; and a tighter
+// quarantine-specific retention applied only to dq_quarantine_records (which
+// holds full source row payloads + errors/warnings). The split exists so PII
+// can age out faster than trend tables that the dashboards look back on.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function RetentionSettings() {
+  const { data, isLoading } = useRetentionSettings();
+  const queryClient = useQueryClient();
+  const saveMutation = useSaveRetentionSettings();
+  const { data: role } = useCurrentUserRoleSuspense();
+  const isAdmin = role?.data?.role === "admin";
+
+  const settings = data as RetentionSettingsOut | undefined;
+  const [global, setGlobal] = useState<string>("");
+  const [quarantine, setQuarantine] = useState<string>("");
+  const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
+    if (settings && !hydrated) {
+      setGlobal(String(settings.retention_days));
+      setQuarantine(String(settings.quarantine_retention_days));
+      setHydrated(true);
+    }
+  }, [settings, hydrated]);
+
+  const min = settings?.retention_days_min ?? 7;
+  const max = settings?.retention_days_max ?? 3650;
+
+  const parsedGlobal = Number.parseInt(global, 10);
+  const parsedQuarantine = Number.parseInt(quarantine, 10);
+
+  const validation = useMemo(() => {
+    const errors: string[] = [];
+    const check = (label: string, value: number) => {
+      if (Number.isNaN(value)) {
+        errors.push(`${label} must be a whole number of days.`);
+        return;
+      }
+      if (value < min) errors.push(`${label} must be at least ${min} days.`);
+      if (value > max) errors.push(`${label} must be at most ${max} days.`);
+    };
+    check("Global retention", parsedGlobal);
+    check("Quarantine retention", parsedQuarantine);
+    return errors;
+  }, [parsedGlobal, parsedQuarantine, min, max]);
+
+  const isDirty = useMemo(() => {
+    if (!settings) return false;
+    return (
+      parsedGlobal !== settings.retention_days ||
+      parsedQuarantine !== settings.quarantine_retention_days
+    );
+  }, [settings, parsedGlobal, parsedQuarantine]);
+
+  const handleSave = () => {
+    if (!settings || validation.length > 0) return;
+    const payload: { retention_days?: number; quarantine_retention_days?: number } = {};
+    if (parsedGlobal !== settings.retention_days) payload.retention_days = parsedGlobal;
+    if (parsedQuarantine !== settings.quarantine_retention_days) {
+      payload.quarantine_retention_days = parsedQuarantine;
+    }
+    saveMutation.mutate(
+      { data: payload },
+      {
+        onSuccess: (resp) => {
+          queryClient.invalidateQueries({ queryKey: getRetentionSettingsQueryKey() });
+          setGlobal(String(resp.data.retention_days));
+          setQuarantine(String(resp.data.quarantine_retention_days));
+          toast.success("Retention settings saved.");
+        },
+        onError: (err: unknown) => {
+          const axErr = err as AxiosError<{ detail?: string }>;
+          toast.error(axErr?.response?.data?.detail ?? "Failed to save retention settings.");
+        },
+      },
+    );
+  };
+
+  const handleReset = () => {
+    if (!settings) return;
+    setGlobal(String(settings.retention_days));
+    setQuarantine(String(settings.quarantine_retention_days));
+  };
+
+  const resetToDefaults = () => {
+    if (!settings) return;
+    setGlobal(String(settings.retention_days_default));
+    setQuarantine(String(settings.quarantine_retention_days_default));
+  };
+
+  if (isLoading || !settings) return <Skeleton className="h-40 w-full" />;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Clock className="h-5 w-5" />
+          Data Retention
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          The scheduler runs a daily DELETE pass against the analytical tables.
+          <strong className="text-foreground"> Quarantine</strong> holds the full source
+          row payload (errors, warnings, and the row itself) so its window is kept
+          tighter than the trend tables by default. Both values are floored at{" "}
+          <code>{min}</code> days to protect against accidental data loss.
+        </p>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="retention-global" className="text-xs">
+              Global retention (days)
+            </Label>
+            <Input
+              id="retention-global"
+              type="number"
+              min={min}
+              max={max}
+              step={1}
+              value={global}
+              disabled={!isAdmin || saveMutation.isPending}
+              onChange={(e) => setGlobal(e.target.value)}
+              className="h-8"
+            />
+            <p className="text-[11px] text-muted-foreground">
+              Applies to <code>dq_validation_runs</code>, <code>dq_profiling_results</code>,{" "}
+              <code>dq_metrics</code>, and the OLTP history tables.
+              <br />
+              Default: <code>{settings.retention_days_default}</code> days
+              {!settings.retention_days_set && " (not yet customised)"}
+            </p>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="retention-quarantine" className="text-xs">
+              Quarantine retention (days)
+            </Label>
+            <Input
+              id="retention-quarantine"
+              type="number"
+              min={min}
+              max={max}
+              step={1}
+              value={quarantine}
+              disabled={!isAdmin || saveMutation.isPending}
+              onChange={(e) => setQuarantine(e.target.value)}
+              className="h-8"
+            />
+            <p className="text-[11px] text-muted-foreground">
+              Applies only to <code>dq_quarantine_records</code> (the table that
+              stores per-row failures, including the source row payload).
+              <br />
+              Default: <code>{settings.quarantine_retention_days_default}</code> days
+              {!settings.quarantine_retention_days_set && " (not yet customised)"}
+            </p>
+          </div>
+        </div>
+
+        {validation.length > 0 && (
+          <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 space-y-1">
+            {validation.map((msg, i) => (
+              <p key={i} className="text-xs text-destructive flex items-start gap-1.5">
+                <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                <span>{msg}</span>
+              </p>
+            ))}
+          </div>
+        )}
+
+        <div className="flex items-center gap-2 pt-2 border-t">
+          <Button
+            size="sm"
+            onClick={handleSave}
+            disabled={!isAdmin || !isDirty || validation.length > 0 || saveMutation.isPending}
+          >
+            {saveMutation.isPending && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}
+            Save changes
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={handleReset}
+            disabled={!isAdmin || !isDirty || saveMutation.isPending}
+          >
+            Reset
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={resetToDefaults}
+            disabled={!isAdmin || saveMutation.isPending}
+            title="Restore both fields to the system defaults (does not save until you click Save changes)"
+          >
+            Restore defaults
+          </Button>
+          {!isAdmin && (
+            <span className="text-xs text-muted-foreground">
+              Only admins can change retention.
+            </span>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function ConfigPage() {
   const { isAdmin } = usePermissions();
   const navigate = useNavigate();
@@ -636,6 +851,13 @@ function ConfigPage() {
               </ErrorBoundary>
             </FadeIn>
             <FadeIn delay={0.15}>
+              <ErrorBoundary onReset={reset} fallbackRender={SectionError}>
+                <Suspense fallback={<Skeleton className="h-40 w-full" />}>
+                  <RetentionSettings />
+                </Suspense>
+              </ErrorBoundary>
+            </FadeIn>
+            <FadeIn delay={0.2}>
               <ErrorBoundary onReset={reset} fallbackRender={SectionError}>
                 <RoleManagement />
               </ErrorBoundary>

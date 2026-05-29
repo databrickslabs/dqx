@@ -309,6 +309,10 @@ export type DryRunResultsOutValidRows = number | null;
 
 export type DryRunResultsOutInvalidRows = number | null;
 
+export type DryRunResultsOutErrorRows = number | null;
+
+export type DryRunResultsOutWarningRows = number | null;
+
 export type DryRunResultsOutErrorSummaryItem = { [key: string]: unknown };
 
 export type DryRunResultsOutSampleInvalidItem = { [key: string]: unknown };
@@ -319,6 +323,8 @@ export interface DryRunResultsOut {
   total_rows?: DryRunResultsOutTotalRows;
   valid_rows?: DryRunResultsOutValidRows;
   invalid_rows?: DryRunResultsOutInvalidRows;
+  error_rows?: DryRunResultsOutErrorRows;
+  warning_rows?: DryRunResultsOutWarningRows;
   error_summary?: DryRunResultsOutErrorSummaryItem[];
   sample_invalid?: DryRunResultsOutSampleInvalidItem[];
 }
@@ -689,6 +695,8 @@ export type QuarantineRecordOutRowData = QuarantineRecordOutRowDataAnyOf | null;
 
 export type QuarantineRecordOutErrors = unknown[] | null;
 
+export type QuarantineRecordOutWarnings = unknown[] | null;
+
 export type QuarantineRecordOutCreatedAt = string | null;
 
 export interface QuarantineRecordOut {
@@ -698,7 +706,40 @@ export interface QuarantineRecordOut {
   requesting_user?: QuarantineRecordOutRequestingUser;
   row_data?: QuarantineRecordOutRowData;
   errors?: QuarantineRecordOutErrors;
+  warnings?: QuarantineRecordOutWarnings;
   created_at?: QuarantineRecordOutCreatedAt;
+}
+
+export type RetentionSettingsInRetentionDays = number | null;
+
+export type RetentionSettingsInQuarantineRetentionDays = number | null;
+
+/**
+ * Update payload — either field omitted means *leave unchanged*.
+ */
+export interface RetentionSettingsIn {
+  retention_days?: RetentionSettingsInRetentionDays;
+  quarantine_retention_days?: RetentionSettingsInQuarantineRetentionDays;
+}
+
+/**
+ * Effective retention settings + the defaults the scheduler falls back to.
+
+``retention_days`` / ``quarantine_retention_days`` reflect the
+*current effective values* — the persisted setting if one exists,
+otherwise the compiled-in default. The ``*_default`` and ``*_min``
+fields let the UI render hints and validation without duplicating
+the constants on the frontend.
+ */
+export interface RetentionSettingsOut {
+  retention_days: number;
+  quarantine_retention_days: number;
+  retention_days_default?: number;
+  quarantine_retention_days_default?: number;
+  retention_days_min?: number;
+  retention_days_max?: number;
+  retention_days_set: boolean;
+  quarantine_retention_days_set: boolean;
 }
 
 export type RoleMappingOutCreatedBy = string | null;
@@ -1026,6 +1067,10 @@ export type ValidationRunSummaryOutValidRows = number | null;
 
 export type ValidationRunSummaryOutInvalidRows = number | null;
 
+export type ValidationRunSummaryOutErrorRows = number | null;
+
+export type ValidationRunSummaryOutWarningRows = number | null;
+
 export type ValidationRunSummaryOutCreatedAt = string | null;
 
 export type ValidationRunSummaryOutErrorMessage = string | null;
@@ -1044,6 +1089,8 @@ export interface ValidationRunSummaryOut {
   run_type?: ValidationRunSummaryOutRunType;
   valid_rows?: ValidationRunSummaryOutValidRows;
   invalid_rows?: ValidationRunSummaryOutInvalidRows;
+  error_rows?: ValidationRunSummaryOutErrorRows;
+  warning_rows?: ValidationRunSummaryOutWarningRows;
   created_at?: ValidationRunSummaryOutCreatedAt;
   error_message?: ValidationRunSummaryOutErrorMessage;
   checks?: ValidationRunSummaryOutChecksItem[];
@@ -3169,6 +3216,373 @@ export const useSaveTimezone = <
   TContext
 > => {
   const mutationOptions = getSaveTimezoneMutationOptions(options);
+
+  return useMutation(mutationOptions, queryClient);
+};
+
+/**
+ * Return the current retention windows + defaults (admin only).
+ * @summary Get Retention Settings
+ */
+export const getRetentionSettings = (
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<RetentionSettingsOut>> => {
+  return axios.default.get(`/api/v1/config/retention`, options);
+};
+
+export const getGetRetentionSettingsQueryKey = () => {
+  return [`/api/v1/config/retention`] as const;
+};
+
+export const getGetRetentionSettingsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getRetentionSettings>>,
+  TError = AxiosError<HTTPValidationError>,
+>(options?: {
+  query?: Partial<
+    UseQueryOptions<
+      Awaited<ReturnType<typeof getRetentionSettings>>,
+      TError,
+      TData
+    >
+  >;
+  axios?: AxiosRequestConfig;
+}) => {
+  const { query: queryOptions, axios: axiosOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetRetentionSettingsQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getRetentionSettings>>
+  > = ({ signal }) => getRetentionSettings({ signal, ...axiosOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getRetentionSettings>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+};
+
+export type GetRetentionSettingsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getRetentionSettings>>
+>;
+export type GetRetentionSettingsQueryError = AxiosError<HTTPValidationError>;
+
+export function useGetRetentionSettings<
+  TData = Awaited<ReturnType<typeof getRetentionSettings>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getRetentionSettings>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getRetentionSettings>>,
+          TError,
+          Awaited<ReturnType<typeof getRetentionSettings>>
+        >,
+        "initialData"
+      >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useGetRetentionSettings<
+  TData = Awaited<ReturnType<typeof getRetentionSettings>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getRetentionSettings>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getRetentionSettings>>,
+          TError,
+          Awaited<ReturnType<typeof getRetentionSettings>>
+        >,
+        "initialData"
+      >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useGetRetentionSettings<
+  TData = Awaited<ReturnType<typeof getRetentionSettings>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getRetentionSettings>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+/**
+ * @summary Get Retention Settings
+ */
+
+export function useGetRetentionSettings<
+  TData = Awaited<ReturnType<typeof getRetentionSettings>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getRetentionSettings>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
+  const queryOptions = getGetRetentionSettingsQueryOptions(options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
+
+export const getGetRetentionSettingsSuspenseQueryOptions = <
+  TData = Awaited<ReturnType<typeof getRetentionSettings>>,
+  TError = AxiosError<HTTPValidationError>,
+>(options?: {
+  query?: Partial<
+    UseSuspenseQueryOptions<
+      Awaited<ReturnType<typeof getRetentionSettings>>,
+      TError,
+      TData
+    >
+  >;
+  axios?: AxiosRequestConfig;
+}) => {
+  const { query: queryOptions, axios: axiosOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetRetentionSettingsQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getRetentionSettings>>
+  > = ({ signal }) => getRetentionSettings({ signal, ...axiosOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseSuspenseQueryOptions<
+    Awaited<ReturnType<typeof getRetentionSettings>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+};
+
+export type GetRetentionSettingsSuspenseQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getRetentionSettings>>
+>;
+export type GetRetentionSettingsSuspenseQueryError =
+  AxiosError<HTTPValidationError>;
+
+export function useGetRetentionSettingsSuspense<
+  TData = Awaited<ReturnType<typeof getRetentionSettings>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  options: {
+    query: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getRetentionSettings>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useGetRetentionSettingsSuspense<
+  TData = Awaited<ReturnType<typeof getRetentionSettings>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getRetentionSettings>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useGetRetentionSettingsSuspense<
+  TData = Awaited<ReturnType<typeof getRetentionSettings>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getRetentionSettings>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+/**
+ * @summary Get Retention Settings
+ */
+
+export function useGetRetentionSettingsSuspense<
+  TData = Awaited<ReturnType<typeof getRetentionSettings>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getRetentionSettings>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
+  const queryOptions = getGetRetentionSettingsSuspenseQueryOptions(options);
+
+  const query = useSuspenseQuery(
+    queryOptions,
+    queryClient,
+  ) as UseSuspenseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
+
+/**
+ * Update one or both retention windows (admin only).
+
+Either field may be omitted to leave the existing value unchanged.
+Both values are validated against the safety floor and ceiling
+before being persisted.
+ * @summary Save Retention Settings
+ */
+export const saveRetentionSettings = (
+  retentionSettingsIn: RetentionSettingsIn,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<RetentionSettingsOut>> => {
+  return axios.default.put(
+    `/api/v1/config/retention`,
+    retentionSettingsIn,
+    options,
+  );
+};
+
+export const getSaveRetentionSettingsMutationOptions = <
+  TError = AxiosError<HTTPValidationError>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof saveRetentionSettings>>,
+    TError,
+    { data: RetentionSettingsIn },
+    TContext
+  >;
+  axios?: AxiosRequestConfig;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof saveRetentionSettings>>,
+  TError,
+  { data: RetentionSettingsIn },
+  TContext
+> => {
+  const mutationKey = ["saveRetentionSettings"];
+  const { mutation: mutationOptions, axios: axiosOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, axios: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof saveRetentionSettings>>,
+    { data: RetentionSettingsIn }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return saveRetentionSettings(data, axiosOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type SaveRetentionSettingsMutationResult = NonNullable<
+  Awaited<ReturnType<typeof saveRetentionSettings>>
+>;
+export type SaveRetentionSettingsMutationBody = RetentionSettingsIn;
+export type SaveRetentionSettingsMutationError =
+  AxiosError<HTTPValidationError>;
+
+/**
+ * @summary Save Retention Settings
+ */
+export const useSaveRetentionSettings = <
+  TError = AxiosError<HTTPValidationError>,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof saveRetentionSettings>>,
+      TError,
+      { data: RetentionSettingsIn },
+      TContext
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof saveRetentionSettings>>,
+  TError,
+  { data: RetentionSettingsIn },
+  TContext
+> => {
+  const mutationOptions = getSaveRetentionSettingsMutationOptions(options);
 
   return useMutation(mutationOptions, queryClient);
 };

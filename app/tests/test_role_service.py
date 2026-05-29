@@ -164,3 +164,74 @@ class TestMappingsCache:
         sql_executor_mock.query.return_value = []
         role_service.list_mappings(use_cache=True)
         sql_executor_mock.query.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# create_mapping — dialect-agnostic upsert via the executor Protocol
+# ---------------------------------------------------------------------------
+
+
+class TestCreateMappingDelegatesToProtocol:
+    """``create_mapping`` must NOT branch on ``self._sql.dialect``.
+
+    The pre-refactor code hand-built two SQL strings (MERGE for Delta,
+    INSERT ... ON CONFLICT for Postgres). The Protocol-based design
+    delegates that choice to :meth:`OltpExecutorProtocol.upsert_with_audit`
+    so adding a new backend (e.g. SQLite for local dev) only requires
+    implementing the Protocol — not touching every service.
+
+    These tests lock down the contract from the service side:
+
+    1. ``create_mapping`` calls ``upsert_with_audit`` exactly once.
+    2. It never calls ``execute`` directly with a hand-built SQL string
+       (a regression would mean the dialect branch came back).
+    3. The kwargs forwarded to the Protocol carry the right audit
+       semantics: ``preserve_created=True`` and no ``increment_on_update``
+       (role mappings don't have a version column).
+    4. ``created_*`` and ``updated_*`` are passed as ``RawSql("now()")``
+       so the executor renders the dialect-correct timestamp function.
+    """
+
+    def test_calls_upsert_with_audit_once_with_correct_audit_kwargs(self, role_service, sql_executor_mock):
+        from databricks_labs_dqx_app.backend.sql_executor import RawSql
+
+        role_service.create_mapping(
+            role=UserRole.RULE_AUTHOR.value,
+            group_name="writers",
+            user_email="alice@example.com",
+        )
+
+        # The service MUST funnel everything through the Protocol's
+        # upsert_with_audit. Going around it (e.g. via .execute()) would
+        # mean the dialect branch came back.
+        sql_executor_mock.upsert_with_audit.assert_called_once()
+        sql_executor_mock.execute.assert_not_called()
+
+        call = sql_executor_mock.upsert_with_audit.call_args
+        # Audit semantics: preserve created_* on UPDATE; no version column.
+        assert call.kwargs.get("preserve_created") is True
+        assert call.kwargs.get("increment_on_update") is None
+
+        # Keys are the natural identity of the row.
+        assert call.kwargs["key_cols"] == {
+            "role": UserRole.RULE_AUTHOR.value,
+            "group_name": "writers",
+        }
+
+        # Audit cols carry the actor + dialect-portable "now" sentinel.
+        value_cols = call.kwargs["value_cols"]
+        assert value_cols["created_by"] == "alice@example.com"
+        assert value_cols["updated_by"] == "alice@example.com"
+        # Timestamps go through RawSql so the executor renders the
+        # right function call per dialect (now() on both, but the
+        # plumbing must be Protocol-mediated, not stringified).
+        assert isinstance(value_cols["created_at"], RawSql)
+        assert isinstance(value_cols["updated_at"], RawSql)
+
+    def test_invalid_role_short_circuits_before_touching_executor(self, role_service, sql_executor_mock):
+        # Validation runs before the executor — a bad role must not
+        # leak a partial write attempt.
+        with pytest.raises(ValueError, match="Invalid role"):
+            role_service.create_mapping(role="not-a-real-role", group_name="g", user_email="u@x")
+        sql_executor_mock.upsert_with_audit.assert_not_called()
+        sql_executor_mock.execute.assert_not_called()

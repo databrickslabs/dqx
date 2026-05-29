@@ -109,6 +109,10 @@ async def list_validation_runs(
                     total_rows=int(v) if (v := row.get("total_rows")) else None,
                     valid_rows=int(v) if (v := row.get("valid_rows")) else None,
                     invalid_rows=int(v) if (v := row.get("invalid_rows")) else None,
+                    # ``is not None`` (vs the truthiness pattern above) so the UI
+                    # can distinguish "0 errors / warnings" from pre-migration NULLs.
+                    error_rows=int(v) if (v := row.get("error_rows")) is not None else None,
+                    warning_rows=int(v) if (v := row.get("warning_rows")) is not None else None,
                     created_at=row.get("created_at"),
                     run_type=row.get("run_type"),
                     error_message=row.get("error_message"),
@@ -511,6 +515,8 @@ def get_dry_run_results(
             total_rows=int(v) if (v := row.get("total_rows")) else None,
             valid_rows=int(v) if (v := row.get("valid_rows")) else None,
             invalid_rows=int(v) if (v := row.get("invalid_rows")) else None,
+            error_rows=int(v) if (v := row.get("error_rows")) is not None else None,
+            warning_rows=int(v) if (v := row.get("warning_rows")) is not None else None,
             error_summary=json.loads(error_summary_json),
             sample_invalid=json.loads(sample_invalid_json),
         )
