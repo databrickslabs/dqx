@@ -405,7 +405,7 @@ export function DryRunResults({ result }: DryRunResultsProps) {
             {quarantineLoading ? (
               <div className="p-6 text-center text-sm text-muted-foreground">Loading quarantine data...</div>
             ) : rows.length === 0 ? (
-              <div className="p-6 text-center text-sm text-muted-foreground">No invalid rows to display</div>
+              <div className="p-6 text-center text-sm text-muted-foreground">No failed rows to display</div>
             ) : (
               <table className="w-full text-xs">
                 <thead className="sticky top-0 bg-muted/80 backdrop-blur-sm">

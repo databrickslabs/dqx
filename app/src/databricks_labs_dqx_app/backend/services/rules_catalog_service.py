@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
+from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
 logger = logging.getLogger(__name__)
@@ -64,7 +64,7 @@ class RulesCatalogService:
         "rejected": {"draft"},
     }
 
-    def __init__(self, sql: SqlExecutor) -> None:
+    def __init__(self, sql: OltpExecutorProtocol) -> None:
         self._sql = sql
         self._table = sql.fqn("dq_quality_rules")
         self._history_table = sql.fqn("dq_quality_rules_history")
@@ -77,29 +77,26 @@ class RulesCatalogService:
     def _build_select_cols(self) -> str:
         """Build the column projection used by every SELECT.
 
-        The projection deliberately differs per dialect:
+        Delegates dialect-specific rendering to the executor:
 
-        - **Delta** wraps ``check`` in ``to_json`` so the JSON_ARRAY
-          response format returns a string we can ``json.loads``, and
-          casts timestamps to STRING for the same reason.
-        - **Postgres** doesn't need either: :class:`PgExecutor` runs
-          values through :func:`_to_text` on the way out, which JSON-
-          stringifies JSONB columns and ISO-formats timestamps for
-          free.
+        - :meth:`OltpExecutorProtocol.select_json_text` renders the
+          VARIANT/JSONB ``check`` column as JSON text — ``to_json(col)``
+          on Delta, the bare column on Postgres (where
+          :func:`backend.pg_executor._to_text` ISO-encodes JSONB cells
+          on the way out).
+        - :meth:`OltpExecutorProtocol.ts_text` handles the timestamp
+          column projection the same way — ``CAST(... AS STRING)`` on
+          Delta, verbatim on Postgres.
 
-        The column *order* is identical so :meth:`_row_to_entry`
-        doesn't have to branch on dialect.
+        The column *order* is identical regardless of dialect so
+        :meth:`_row_to_entry` doesn't have to branch.
         """
-        check = self._check_col
-        if getattr(self._sql, "dialect", "delta") == "postgres":
-            return (
-                f"table_fqn, {check} AS check_json, version, status, created_by, "
-                f"created_at, updated_by, updated_at, source, rule_id"
-            )
+        check_text = self._sql.select_json_text(self._check_col)
+        created_at = self._sql.ts_text("created_at")
+        updated_at = self._sql.ts_text("updated_at")
         return (
-            f"table_fqn, to_json({check}) AS check_json, version, status, created_by, "
-            f"CAST(created_at AS STRING), updated_by, CAST(updated_at AS STRING), "
-            f"source, rule_id"
+            f"table_fqn, {check_text} AS check_json, version, status, created_by, "
+            f"{created_at}, updated_by, {updated_at}, source, rule_id"
         )
 
     # ------------------------------------------------------------------

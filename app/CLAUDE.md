@@ -38,11 +38,13 @@ RBAC is enforced — routes use `require_role(*roles)` from `backend/dependencie
 
 App uses a **hybrid backend** — analytical/append tables in Delta, OLTP
 tables in Lakebase Postgres. Both backends are managed by their own
-migration runner in `backend/migrations/`. Schemas, volume, Lakebase
-instance, and Lakebase logical Postgres database are all declared as
-bundle resources in `databricks.yml` with `lifecycle.prevent_destroy:
-true`, so `databricks bundle destroy` cannot drop them — see "Bundle
-conventions" below.
+migration runner in `backend/migrations/`. Schemas, volume, and Lakebase
+instance are declared as bundle resources in `databricks.yml` with
+`lifecycle.prevent_destroy: true`, so `databricks bundle destroy` cannot
+drop them — see "Bundle conventions" below. The app's `dqx_studio`
+Postgres schema (inside the `databricks_postgres` admin database on the
+Lakebase instance) is created at startup, not provisioned by the bundle,
+but is protected transitively by the instance-level guard.
 
 ```
 {user_catalog}

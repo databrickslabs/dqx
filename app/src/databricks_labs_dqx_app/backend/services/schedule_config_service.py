@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
+from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, validate_schedule_name
 
 logger = logging.getLogger(__name__)
@@ -33,7 +33,7 @@ class ScheduleConfigEntry:
 class ScheduleConfigService:
     """CRUD for per-schedule configuration rows in ``dq_schedule_configs``."""
 
-    def __init__(self, sql: SqlExecutor) -> None:
+    def __init__(self, sql: OltpExecutorProtocol) -> None:
         self._sql = sql
         self._table = sql.fqn("dq_schedule_configs")
         self._history_table = sql.fqn("dq_schedule_configs_history")
@@ -70,50 +70,34 @@ class ScheduleConfigService:
     ) -> ScheduleConfigEntry:
         """Upsert a schedule config row, incrementing ``version`` on update.
 
-        Uses an explicit MERGE rather than ``SqlExecutor.upsert`` because:
-        1. ``version`` increments rather than being clobbered, and
-        2. ``created_*`` is preserved on update; only ``updated_*`` changes.
+        Dialect-agnostic via :meth:`OltpExecutorProtocol.upsert_with_audit`:
+
+        - ``preserve_created=True`` keeps the original ``created_*``
+          on UPDATE,
+        - ``increment_on_update="version"`` rewrites the version
+          column's UPDATE branch to ``existing + 1`` using the
+          dialect-appropriate self-reference (``target.version + 1``
+          on Delta MERGE, bare ``"version" + 1`` on Postgres
+          ON CONFLICT).
         """
         validate_schedule_name(name)
         config_json = json.dumps(config)
 
-        escaped_name = escape_sql_string(name)
-        escaped_json = escape_sql_string(config_json)
-        escaped_user = escape_sql_string(user_email)
-
-        if getattr(self._sql, "dialect", "delta") == "postgres":
-            # On conflict we reference the existing row via the
-            # unqualified base table name (Postgres' convention for
-            # ON CONFLICT DO UPDATE), versus EXCLUDED.* which would
-            # surface the proposed-row values.
-            base = self._table.split(".")[-1]
-            sql = (
-                f"INSERT INTO {self._table} "
-                "(schedule_name, config_json, version, created_by, created_at, updated_by, updated_at) "
-                f"VALUES ('{escaped_name}', '{escaped_json}', 1, '{escaped_user}', now(), "
-                f"'{escaped_user}', now()) "
-                "ON CONFLICT (schedule_name) DO UPDATE SET "
-                f"  config_json = '{escaped_json}', "
-                f"  version = {base}.version + 1, "
-                f"  updated_by = '{escaped_user}', "
-                "  updated_at = now()"
-            )
-        else:
-            sql = (
-                f"MERGE INTO {self._table} AS target "
-                f"USING (SELECT '{escaped_name}' AS schedule_name) AS source "
-                "ON target.schedule_name = source.schedule_name "
-                "WHEN MATCHED THEN UPDATE SET "
-                f"  config_json = '{escaped_json}', "
-                "  version = target.version + 1, "
-                f"  updated_by = '{escaped_user}', "
-                "  updated_at = now() "
-                "WHEN NOT MATCHED THEN INSERT "
-                "(schedule_name, config_json, version, created_by, created_at, updated_by, updated_at) "
-                f"VALUES ('{escaped_name}', '{escaped_json}', 1, '{escaped_user}', now(), "
-                f"'{escaped_user}', now())"
-            )
-        self._sql.execute(sql)
+        now = RawSql("now()")
+        self._sql.upsert_with_audit(
+            table=self._table,
+            key_cols={"schedule_name": name},
+            value_cols={
+                "config_json": config_json,
+                "version": 1,  # initial INSERT value; UPDATE branch increments via increment_on_update
+                "created_by": user_email,
+                "created_at": now,
+                "updated_by": user_email,
+                "updated_at": now,
+            },
+            preserve_created=True,
+            increment_on_update="version",
+        )
         self._record_history(name, config_json, user_email, "save")
         logger.info("Saved schedule config: %s (user=%s)", name, user_email)
 

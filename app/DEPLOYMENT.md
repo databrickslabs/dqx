@@ -155,7 +155,7 @@ make app-deploy PROFILE=<your-profile> TARGET=<your-target>
 3. `app/scripts/post_deploy_grants.sh` — discovers both service principals and executes the `GRANT` statements on the catalog, schemas, and volume (the auto-created app SP's UUID isn't known at bundle-write time, which is why grants live in a post-deploy script). Lakebase grants are handled by the bundle's `database` resource binding.
 4. `databricks bundle run` — starts the app.
 
-> **First start**: The app runs both Delta and Lakebase database migrations on startup, and uploads DQX wheels to the UC volume. If the task-runner job runs before the app has started at least once, it will fail to find its wheels. Wait for `"Uploaded databricks_labs_dqx-<version>..."` in the logs before triggering runs. If Lakebase is enabled, also wait for `"Lakebase OLTP routing enabled"` before opening the UI — the app falls back to UC-only mode if Lakebase init fails (logged as `"Lakebase initialisation failed — falling back to Delta for OLTP tables"`).
+> **First start**: The app runs both Delta and Lakebase database migrations on startup, and uploads DQX wheels to the UC volume. If the task-runner job runs before the app has started at least once, it will fail to find its wheels. Wait for `"Uploaded databricks_labs_dqx-<version>..."` in the logs before triggering runs. If Lakebase is enabled, also wait for `"Lakebase OLTP routing enabled"` before opening the UI — when Lakebase is configured and init fails, the app refuses to start (logged as `"Lakebase initialisation failed ... Refusing to start"`) and the Apps platform will restart the container. Silent fallback to Delta is intentionally disallowed because it would split OLTP writes across two physical stores and orphan prior Lakebase data on every flap. To intentionally run on Delta only, unset `DQX_LAKEBASE_INSTANCE_NAME`.
 
 ### Step-by-step alternative
 
@@ -333,12 +333,17 @@ The schemas didn't deploy, or the bundle is pointing at a different catalog than
 make app-deploy PROFILE=<your-profile> TARGET=<your-target>
 ```
 
-**App logs `"Lakebase initialisation failed — falling back to Delta for OLTP tables"`:**
-The app has degraded to UC-only mode. Confirm the Lakebase instance exists and is `AVAILABLE`:
-```bash
-databricks database list-database-instances -p <your-profile>
-```
-If the instance is missing, re-run `databricks bundle deploy`. If it's there but the app SP doesn't have `CAN_CONNECT_AND_CREATE`, check the bundle's `database` resource block under `resources.apps.dqx-studio.resources` and redeploy.
+**App logs `"Lakebase initialisation failed ... Refusing to start"` and the container restart-loops:**
+The app deliberately refuses to start when Lakebase is configured (`DQX_LAKEBASE_INSTANCE_NAME` non-empty) and init fails — silently falling back to Delta would split OLTP writes across two physical stores and orphan prior Lakebase data. Diagnose with the steps below; the Apps platform will pick up the next successful start automatically.
+
+1. Confirm the Lakebase instance exists and is `AVAILABLE`:
+   ```bash
+   databricks database list-database-instances -p <your-profile>
+   ```
+   If the instance is missing, re-run `databricks bundle deploy`. If the instance is there but the state is `STARTING` / `UPDATING`, wait for it to reach `AVAILABLE` and the next restart will succeed.
+2. Confirm the app SP has `CAN_CONNECT_AND_CREATE` on the bound logical database. Check the bundle's `database` resource block under `resources.apps.dqx-studio.resources` (it should bind `database_name: ${var.lakebase_database_name}`) and redeploy.
+3. Confirm OAuth token issuance is healthy — Lakebase tokens currently expire after one hour; a misconfigured OAuth integration or revoked SP credential will surface here.
+4. If you intentionally want to run on Delta only (no Lakebase), redeploy with `DQX_LAKEBASE_INSTANCE_NAME=""` (or remove the override from your target in `databricks.yml`). The app will start in legacy UC-only mode and OLTP tables will live on Delta.
 
 **`databricks bundle deploy` fails with `"already exists"` / `"Instance name is not unique"` on the first deploy of a target:**
 The schemas, volume, or Lakebase instance were created out-of-band before this version of the bundle (e.g. by the older bootstrap script). Run the bind step once per target to adopt them into bundle management:

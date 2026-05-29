@@ -28,23 +28,58 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import random
 import threading
-import time
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal
-from typing import Any
+from typing import Any, LiteralString, cast
 
 from databricks.sdk import WorkspaceClient
-from psycopg import Connection
+from psycopg import Connection, Cursor
 from psycopg_pool import ConnectionPool
 
 from databricks_labs_dqx_app.backend.sql_executor import RawSql, _render_value
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
 logger = logging.getLogger(__name__)
+
+
+def run_trusted_sql(cur: Cursor[Any], sql: str) -> None:
+    """Execute a backend-composed SQL string against a psycopg cursor.
+
+    psycopg's stubs (PEP 675) require :meth:`Cursor.execute`'s
+    ``query`` argument to be a :class:`typing.LiteralString` — a
+    string the type-checker can statically prove is not a runtime
+    concatenation of untrusted input. That's a deliberate type-level
+    defence against SQL injection; passing a plain ``str`` makes
+    basedpyright raise ``reportCallIssue`` + ``reportArgumentType``.
+
+    Our backend never executes SQL that flows from a request body or
+    a user form. Every string reaching this helper is built from one
+    of:
+
+    * Validated identifiers (catalog / schema / table names verified
+      by :func:`backend.sql_utils.validate_fqn` and quoted via
+      :meth:`PgExecutor.q` / :func:`backend.sql_utils.quote_fqn`).
+    * Properly escaped value literals rendered by
+      :func:`sql_executor._render_value` / :func:`escape_sql_string`.
+    * Hand-written DDL / migration strings vendored alongside the
+      code that consumes them.
+
+    Casting to ``LiteralString`` in this *one* place concentrates
+    that trust boundary into a single auditable wrapper instead of
+    sprinkling ``# pyright: ignore[reportCallIssue,
+    reportArgumentType]`` at every call site (which AGENTS.md rule
+    #6 explicitly prohibits). The cast is the contract: if a future
+    change ever pipes untrusted SQL through here, the fix is to
+    parameterise the query (``cur.execute(sql, params)``) at the
+    call site — NOT to widen the trust granted by this helper.
+    """
+    _ = cur.execute(cast(LiteralString, sql))
 
 
 class _TokenHolder:
@@ -153,6 +188,9 @@ class PgExecutor:
         host: str,
         port: int = 5432,
         token_refresh_minutes: int = 50,
+        token_refresh_retry_seconds: int = 10,
+        token_refresh_retry_jitter: float = 0.3,
+        token_refresh_max_failures: int = 12,
         pool_min_size: int = 1,
         pool_max_size: int = 10,
     ) -> None:
@@ -164,10 +202,26 @@ class PgExecutor:
         self._host = host
         self._port = port
         self._token_refresh_seconds = max(60, token_refresh_minutes * 60)
+        # Retry tuning: clamp to sensible floors so a mis-configured
+        # env var can't degenerate into a busy-loop or an unbounded
+        # failure window. ``retry_seconds`` floors at 1s (anything
+        # below that is effectively a tight loop against the SDK);
+        # ``jitter`` clamps to ``[0, 1]`` so the spread can't go
+        # negative or larger than ±100%; ``max_failures`` floors at
+        # 1 so we always escalate on at least one failure rather than
+        # spinning forever.
+        self._token_refresh_retry_seconds = max(1, int(token_refresh_retry_seconds))
+        self._token_refresh_retry_jitter = max(0.0, min(1.0, float(token_refresh_retry_jitter)))
+        self._token_refresh_max_failures = max(1, int(token_refresh_max_failures))
 
         # Bootstrap the first token before the pool starts so the very
-        # first connection has valid credentials.
+        # first connection has valid credentials. The bootstrap mint
+        # counts as a successful refresh — the metric / counter start
+        # in the "healthy" state, not a transient "never refreshed"
+        # one that would confuse a health endpoint at t=0.
         self._token_holder = _TokenHolder(_generate_token(ws, instance_name))
+        self._last_successful_refresh_at: datetime | None = datetime.now(timezone.utc)
+        self._consecutive_refresh_failures: int = 0
 
         # ``kwargs`` is the dict the pool hands to ``Connection.connect``
         # every time it opens a new physical connection.  Mutating
@@ -242,6 +296,42 @@ class PgExecutor:
     def database(self) -> str:
         return self._database
 
+    # ------------------------------------------------------------------
+    # Token-refresh observability
+    # ------------------------------------------------------------------
+    # These two properties surface the refresh daemon's state so
+    # operators can wire a health endpoint / metric exporter to it
+    # WITHOUT poking at private attributes. The refresh loop updates
+    # them under no extra lock — they are coarse-grained gauges, not
+    # transactional state, so a single torn read at the boundary is
+    # harmless (worst case: a health check sees a stale value for
+    # one scrape interval and corrects on the next).
+
+    @property
+    def last_successful_refresh_at(self) -> datetime | None:
+        """Wall-clock time of the last successful token refresh, UTC.
+
+        Set to ``datetime.now(UTC)`` in :meth:`__init__` because the
+        bootstrap token mint IS a successful refresh from the pool's
+        perspective. Operators monitoring this metric should alert
+        if ``now() - last_successful_refresh_at`` exceeds
+        ``token_refresh_minutes`` by a meaningful margin (e.g. 2x)
+        — that is the leading indicator of the silent-pool-drain
+        failure mode this metric exists to prevent.
+        """
+        return self._last_successful_refresh_at
+
+    @property
+    def consecutive_refresh_failures(self) -> int:
+        """Failed-refresh streak since the last success.
+
+        Reset to 0 on every successful refresh. Reaching
+        ``token_refresh_max_failures`` triggers the escalation path
+        in :meth:`_token_refresh_loop` (process exit so the
+        supervisor restarts the worker).
+        """
+        return self._consecutive_refresh_failures
+
     def fqn(self, table: str) -> str:
         """Return the schema-qualified path for *table*.
 
@@ -281,19 +371,69 @@ class PgExecutor:
         connection is rolled back and returned to the pool by psycopg-
         pool. Single one-shot statements should keep using
         :meth:`execute`, which commits per call.
+
+        **Statement timeouts are the caller's responsibility here.**
+        Unlike :meth:`execute` / :meth:`query` / :meth:`query_dicts`,
+        this method does NOT auto-emit ``SET LOCAL statement_timeout``
+        because callers in this branch are running multi-statement
+        units of work — e.g. the migration runner applying a series
+        of DDLs whose appropriate timeout depends on the work being
+        done (a 30s app query vs. a 10-minute index rebuild). Callers
+        that want a guard should issue ``SET LOCAL statement_timeout
+        = <ms>`` themselves inside the transaction (routed through
+        :func:`run_trusted_sql` for the LiteralString cast).
         """
         with self._pool.connection() as conn:
             yield conn
 
-    def execute(self, sql: str, *, timeout_seconds: int = 120) -> None:  # noqa: ARG002 - parity with SqlExecutor
-        """Run a single non-result-returning statement and commit it."""
+    @staticmethod
+    def _apply_statement_timeout(cur: Cursor[Any], timeout_seconds: int) -> None:
+        """Cap the next statement on ``cur`` at ``timeout_seconds`` via
+        Postgres' ``statement_timeout`` GUC.
+
+        Without this, a misbehaving query (accidental cross join, missing
+        predicate, a server-side function that hangs on a lock) would pin
+        the pool connection forever and eventually starve the pool —
+        every subsequent caller would block on ``ConnectionPool.getconn``
+        instead of failing fast. The legacy :class:`SqlExecutor` got this
+        for free via warehouse-side polling deadlines; Postgres needs us
+        to opt in explicitly per statement.
+
+        Why ``SET LOCAL`` rather than ``SET``:
+            ``SET LOCAL`` scopes the GUC to the current transaction and
+            is reset on COMMIT / ROLLBACK. Pool connections are reused
+            across callers, so a plain ``SET`` would silently leak the
+            most recent caller's timeout into the next caller's
+            statements — a 1-second timeout set by a healthcheck would
+            kill a 60-second migration on the next checkout. ``SET
+            LOCAL`` is the only correct primitive for a pooled
+            executor.
+
+        psycopg3 starts an implicit transaction on the first statement
+        issued through a cursor (autocommit defaults to ``False``), so
+        firing this helper as the first ``cur.execute`` call BEFORE
+        the user SQL puts both statements in the same transaction and
+        the ``LOCAL`` scope covers the user SQL correctly.
+
+        The ``timeout_seconds * 1000`` is built from Python ``int``
+        arithmetic — no user input flows in — which is why
+        :func:`run_trusted_sql` can safely cast it to
+        :class:`LiteralString`.
+        """
+        ms = max(1, int(timeout_seconds) * 1000)
+        run_trusted_sql(cur, f"SET LOCAL statement_timeout = {ms}")
+
+    def execute(self, sql: str, *, timeout_seconds: int = 120) -> None:
+        """Run a single non-result-returning statement and commit it.
+
+        ``timeout_seconds`` is enforced via
+        :meth:`_apply_statement_timeout` — a runaway query gets
+        cancelled rather than pinning a pool connection forever.
+        """
         with self._pool.connection() as conn:
             with conn.cursor() as cur:
-                # psycopg accepts ``str`` at runtime (``Query`` is a
-                # union of bytes/str/Composable/SQL); the published
-                # stubs only declare the ``Template`` overload so we
-                # silence basedpyright here.
-                cur.execute(sql)  # pyright: ignore[reportCallIssue, reportArgumentType]
+                self._apply_statement_timeout(cur, timeout_seconds)
+                run_trusted_sql(cur, sql)
             conn.commit()
 
     def execute_no_schema(self, sql: str) -> None:
@@ -304,7 +444,7 @@ class PgExecutor:
         """
         self.execute(sql)
 
-    def query(self, sql: str, *, timeout_seconds: int = 120) -> list[list[str]]:  # noqa: ARG002
+    def query(self, sql: str, *, timeout_seconds: int = 120) -> list[list[str]]:
         """Run a query and return rows as lists of strings (Delta-compatible).
 
         The return type is annotated as ``list[list[str]]`` to mirror
@@ -313,18 +453,27 @@ class PgExecutor:
         the Statement Execution API).  Services already handle both
         — e.g. ``int(row[0]) if row[0] else 0`` — so we keep the
         Optional shape rather than coercing NULL to ``""``.
+
+        ``timeout_seconds`` is enforced via
+        :meth:`_apply_statement_timeout`.
         """
         with self._pool.connection() as conn:
             with conn.cursor() as cur:
-                cur.execute(sql)  # pyright: ignore[reportCallIssue, reportArgumentType]
+                self._apply_statement_timeout(cur, timeout_seconds)
+                run_trusted_sql(cur, sql)
                 rows = cur.fetchall()
         return [[_to_text(cell) for cell in row] for row in rows]  # pyright: ignore[reportReturnType]
 
-    def query_dicts(self, sql: str, *, timeout_seconds: int = 120) -> list[dict[str, str | None]]:  # noqa: ARG002
-        """Run a query and return rows as ``{column: stringified value}`` dicts."""
+    def query_dicts(self, sql: str, *, timeout_seconds: int = 120) -> list[dict[str, str | None]]:
+        """Run a query and return rows as ``{column: stringified value}`` dicts.
+
+        ``timeout_seconds`` is enforced via
+        :meth:`_apply_statement_timeout`.
+        """
         with self._pool.connection() as conn:
             with conn.cursor() as cur:
-                cur.execute(sql)  # pyright: ignore[reportCallIssue, reportArgumentType]
+                self._apply_statement_timeout(cur, timeout_seconds)
+                run_trusted_sql(cur, sql)
                 rows = cur.fetchall()
                 cols = [d.name for d in (cur.description or [])]
         return [{col: _to_text(cell) for col, cell in zip(cols, row)} for row in rows]
@@ -366,6 +515,70 @@ class PgExecutor:
         sql = f"INSERT INTO {table} ({', '.join(quoted_cols)}) " f"VALUES ({', '.join(all_vals)}) " f"{conflict_clause}"
         self.execute(sql, timeout_seconds=timeout_seconds)
 
+    def upsert_with_audit(
+        self,
+        table: str,
+        key_cols: dict[str, Any],
+        value_cols: dict[str, Any],
+        *,
+        preserve_created: bool = True,
+        increment_on_update: str | None = None,
+        timeout_seconds: int = 120,
+    ) -> None:
+        """Postgres ``INSERT ... ON CONFLICT ... DO UPDATE`` with audit semantics.
+
+        See :meth:`backend.sql_executor.OltpExecutorProtocol.upsert_with_audit`
+        for the contract. The increment self-reference uses the bare
+        column form (``"col" + 1``) which Postgres resolves against
+        the existing row inside DO UPDATE — no table prefix needed.
+        """
+        if not key_cols:
+            raise ValueError("upsert_with_audit requires at least one key column")
+        if increment_on_update is not None and increment_on_update not in value_cols:
+            raise ValueError(
+                f"increment_on_update={increment_on_update!r} must be present in value_cols "
+                "with its initial INSERT value (e.g. {'version': 1})"
+            )
+
+        all_cols = list(key_cols.keys()) + list(value_cols.keys())
+        all_vals = [_pg_render_value(v) for v in list(key_cols.values()) + list(value_cols.values())]
+        quoted_cols = [self.q(c) for c in all_cols]
+        quoted_keys = [self.q(c) for c in key_cols]
+
+        # DO UPDATE SET excludes created_* columns when preserve_created;
+        # the increment column (if any) gets the bare-column
+        # self-reference form Postgres resolves inside ON CONFLICT DO
+        # UPDATE — no table prefix needed.
+        update_pairs: list[str] = []
+        for col, val in value_cols.items():
+            if preserve_created and col.startswith("created_"):
+                continue
+            qcol = self.q(col)
+            if col == increment_on_update:
+                # Bare column reference resolves to the existing row.
+                update_pairs.append(f"{qcol} = {qcol} + 1")
+            else:
+                update_pairs.append(f"{qcol} = {_pg_render_value(val)}")
+
+        if update_pairs:
+            conflict_clause = f"ON CONFLICT ({', '.join(quoted_keys)}) DO UPDATE SET {', '.join(update_pairs)}"
+        else:
+            # All value_cols were created_* — INSERT-only with
+            # existence semantics. Rare but valid (e.g. a pure
+            # "create-if-missing" audit row).
+            conflict_clause = f"ON CONFLICT ({', '.join(quoted_keys)}) DO NOTHING"
+
+        sql = f"INSERT INTO {table} ({', '.join(quoted_cols)}) " f"VALUES ({', '.join(all_vals)}) " f"{conflict_clause}"
+        self.execute(sql, timeout_seconds=timeout_seconds)
+
+    def select_json_text(self, col: str) -> str:
+        """Postgres JSONB cells are coerced to text by :func:`_to_text` already."""
+        return col
+
+    def interval_days_expr(self, days: int) -> str:
+        """Postgres interval literal — single-quoted, lowercase ``days`` (plural)."""
+        return f"INTERVAL '{int(days)} days'"
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
@@ -374,23 +587,109 @@ class PgExecutor:
         self._stop.set()
         try:
             self._pool.close()
-        except Exception:  # noqa: BLE001 - best-effort shutdown
+        except Exception:
+            # Best-effort lifespan teardown. close() can fail for a wide
+            # variety of reasons (pool-worker shutdown timing, libpq
+            # socket close errors, in-flight queries that the pool
+            # decides to abort) and the resilience contract here is
+            # "this MUST NOT propagate" — we're already tearing the pool
+            # down, and a raise would leak Postgres connections on every
+            # restart flap and could hang the worker. Logged for
+            # observability; ruff BLE001 is intentionally not enforced
+            # here per the policy block in ``pyproject.toml``.
             logger.warning("Error closing Lakebase pool", exc_info=True)
+
+    def _next_wait_seconds(self) -> float:
+        """Pick the next sleep duration before the refresh loop wakes.
+
+        Two modes:
+
+        * **Healthy** (``consecutive_refresh_failures == 0``): wait the
+          full scheduled interval (``token_refresh_seconds``) so we
+          don't burn SDK quota on a working token.
+        * **Failing** (counter > 0): wait the *retry* interval, jittered
+          by ±``token_refresh_retry_jitter`` so multiple workers
+          recovering from the same transient SDK blip don't thunder-
+          herd against the credential endpoint on the same second.
+
+        Why the distinction matters: the pool's ``max_lifetime`` is
+        the same as ``token_refresh_seconds`` (50 min by default), so
+        retrying only at the scheduled cadence after a failure would
+        give the pool a 50-60 minute window to drain silently before
+        the next refresh attempt. Retrying at 10s on failure keeps
+        us responsive to transient failures and gives the escalation
+        path (``max_failures``) a sane budget to fire inside.
+        """
+        if self._consecutive_refresh_failures == 0:
+            return float(self._token_refresh_seconds)
+        spread = self._token_refresh_retry_seconds * self._token_refresh_retry_jitter
+        # Lower bound is 0 in principle but never below 0.1s; without
+        # the floor a jitter-of-1.0 + retry-of-1s could degenerate
+        # into a busy-loop on the few microseconds either side of 0.
+        return max(
+            0.1,
+            random.uniform(  # noqa: S311 — jitter, not crypto
+                self._token_refresh_retry_seconds - spread,
+                self._token_refresh_retry_seconds + spread,
+            ),
+        )
+
+    def _escalate_refresh_failure(self) -> None:
+        """Last-resort hand-off to the process supervisor.
+
+        Called when ``consecutive_refresh_failures`` reaches
+        ``token_refresh_max_failures``. The default budget (12 ×
+        ~10s ≈ 2 minutes) leaves the pool with comfortable headroom
+        before ``max_lifetime`` would otherwise start expiring
+        connections, so escalating loudly here is strictly better
+        than continuing to retry silently while the pool drains.
+
+        We log CRITICAL with full context and then exit the process
+        via :func:`os._exit` (not ``sys.exit``: that raises
+        :class:`SystemExit`, which a daemon thread swallows without
+        affecting the main process). The supervisor — uvicorn in
+        local dev, the Databricks Apps runtime in production — will
+        restart the worker and the new process will mint a fresh
+        token at startup, recovering automatically once the
+        underlying SDK / network / OAuth issue clears.
+        """
+        logger.critical(
+            "Lakebase token refresh failed %d times in a row; exiting so the "
+            "supervisor restarts the worker (instance=%s, last_success=%s). "
+            "Continuing would silently drain the pool when ``max_lifetime`` "
+            "starts recycling connections without a valid replacement token.",
+            self._consecutive_refresh_failures,
+            self._instance_name,
+            self._last_successful_refresh_at.isoformat() if self._last_successful_refresh_at else None,
+        )
+        # ``os._exit`` skips atexit / signal handlers so it cannot
+        # deadlock on a shutdown path that itself depends on a
+        # working Lakebase pool. The supervisor sees a non-zero exit
+        # and restarts us — that's the contract.
+        os._exit(1)  # noqa: PLW1514 - deliberate hard-exit; see docstring
 
     def _token_refresh_loop(self) -> None:
         """Background thread that rotates the Lakebase OAuth token.
 
-        Runs every ``token_refresh_minutes`` and updates both the
-        shared :class:`_TokenHolder` and the pool's ``kwargs`` dict so
-        the very next physical connect uses the fresh credential.
-        Existing connections keep working until ``max_lifetime``
-        recycles them — Postgres only validates the password during
-        the SCRAM handshake, not on every query.
+        Updates both the shared :class:`_TokenHolder` and the pool's
+        ``kwargs`` dict so the very next physical connect uses the
+        fresh credential. Existing connections keep working until
+        ``max_lifetime`` recycles them — Postgres only validates the
+        password during the SCRAM handshake, not on every query.
+
+        Sleep cadence is dynamic — see :meth:`_next_wait_seconds`:
+        after a success we wait the full scheduled interval; after a
+        failure we wait the short retry interval (jittered) so we
+        recover from transient failures inside the pool's
+        ``max_lifetime`` window rather than letting the pool drain.
+
+        After ``token_refresh_max_failures`` consecutive failures we
+        hand off to :meth:`_escalate_refresh_failure` instead of
+        continuing to retry — losing the refresh loop is a process-
+        level health event, not a transient warning.
         """
         while not self._stop.is_set():
-            # Wait first so we don't immediately re-issue a token after
-            # init.
-            if self._stop.wait(self._token_refresh_seconds):
+            if self._stop.wait(self._next_wait_seconds()):
                 return
             try:
                 fresh = _generate_token(self._ws, self._instance_name)
@@ -399,15 +698,34 @@ class PgExecutor:
                 # is the supported way to inject rotating credentials
                 # (psycopg-pool re-reads ``kwargs`` on every connect).
                 self._connect_kwargs["password"] = fresh
+                self._last_successful_refresh_at = datetime.now(timezone.utc)
+                self._consecutive_refresh_failures = 0
                 logger.info("Lakebase OAuth token refreshed")
-            except Exception:  # noqa: BLE001
-                # Don't crash the app on a transient SDK failure — the
-                # next iteration retries and existing connections keep
-                # working until the previous token expires.
-                logger.warning("Failed to refresh Lakebase token; will retry", exc_info=True)
-                # Back off a bit so we don't tight-loop on persistent
-                # failures.
-                time.sleep(60)
+            except Exception:
+                # Background-thread resilience: this daemon MUST NOT die.
+                # Token issuance can fail for SDK reasons (Databricks API
+                # rate limit, transient OAuth blip), network reasons
+                # (DNS, transient connectivity), or workspace-side reasons
+                # (the SP's permissions getting briefly invalidated mid-
+                # rotate). If any of those killed the loop, the pool's
+                # tokens would silently expire and every subsequent
+                # connect would fail with confusing SCRAM errors. The
+                # broad catch is the resilience contract — narrowing to
+                # (DatabricksError, requests.RequestException, OSError)
+                # cannot enumerate every plausible failure mode, and the
+                # cost of missing one is a silently-dead refresher. Ruff
+                # BLE001 is intentionally not enforced here per the
+                # policy block in ``pyproject.toml``.
+                self._consecutive_refresh_failures += 1
+                logger.warning(
+                    "Failed to refresh Lakebase token (attempt %d/%d); will retry",
+                    self._consecutive_refresh_failures,
+                    self._token_refresh_max_failures,
+                    exc_info=True,
+                )
+                if self._consecutive_refresh_failures >= self._token_refresh_max_failures:
+                    self._escalate_refresh_failure()
+                    return  # only reached if _escalate is patched in tests
 
 
 # ---------------------------------------------------------------------------
@@ -422,6 +740,9 @@ def build_pg_executor(
     database: str,
     schema: str,
     token_refresh_minutes: int = 50,
+    token_refresh_retry_seconds: int = 10,
+    token_refresh_retry_jitter: float = 0.3,
+    token_refresh_max_failures: int = 12,
     pool_min_size: int = 1,
     pool_max_size: int = 10,
 ) -> PgExecutor:
@@ -429,7 +750,10 @@ def build_pg_executor(
 
     Resolves the instance's read/write DNS endpoint and the calling
     identity's username (service principal in production, real user
-    locally) before opening the pool.
+    locally) before opening the pool. The token-refresh tuning
+    kwargs are passed straight through to :class:`PgExecutor` — see
+    its :meth:`__init__` and :meth:`_token_refresh_loop` for the
+    full back-off / escalation contract.
     """
     instance = ws.database.get_database_instance(name=instance_name)
     host = instance.read_write_dns
@@ -451,6 +775,9 @@ def build_pg_executor(
         username=username,
         host=host,
         token_refresh_minutes=token_refresh_minutes,
+        token_refresh_retry_seconds=token_refresh_retry_seconds,
+        token_refresh_retry_jitter=token_refresh_retry_jitter,
+        token_refresh_max_failures=token_refresh_max_failures,
         pool_min_size=pool_min_size,
         pool_max_size=pool_max_size,
     )

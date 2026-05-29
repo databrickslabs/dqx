@@ -488,12 +488,12 @@ Databricks CLI will confirm a few options:
    make app-deploy PROFILE=<your-profile> TARGET=<your-target>
    ```
 
-   This runs `make app-build`, `databricks bundle deploy` (provisions the schemas, wheels volume, Lakebase Postgres instance, logical Postgres database, SQL warehouse, task-runner job, and Databricks App in dependency order; all stateful resources carry `lifecycle.prevent_destroy: true`), `app/scripts/post_deploy_grants.sh`, and `databricks bundle run` in sequence.
+   This runs `make app-build`, `databricks bundle deploy` (provisions the schemas, wheels volume, Lakebase Postgres instance, SQL warehouse, task-runner job, and Databricks App in dependency order; the stateful resources — schemas, volume, and instance — carry `lifecycle.prevent_destroy: true`), `app/scripts/post_deploy_grants.sh`, and `databricks bundle run` in sequence. The app connects to the always-present `databricks_postgres` admin database on the instance and creates its own `dqx_studio` Postgres schema there on first start; no logical-database provisioning step is needed.
 
 6. Open the deployed app from the **Apps** page in your Databricks workspace.
 
 <Admonition type="note" title="Stateful storage is destroy-protected">
-The studio's schemas (`dqx_studio`, `dqx_studio_tmp`), wheels volume, Lakebase Postgres instance, and the logical Postgres database inside it are all declared as bundle resources with `lifecycle.prevent_destroy: true` (Databricks CLI 0.268+). `databricks bundle destroy` is blocked from dropping them, so production data survives accidental destroy/replace operations. To intentionally tear something down, remove the flag, `databricks bundle deployment unbind <key>`, then destroy manually.
+The studio's schemas (`dqx_studio`, `dqx_studio_tmp`), wheels volume, and Lakebase Postgres instance are declared as bundle resources with `lifecycle.prevent_destroy: true` (Databricks CLI 0.268+). `databricks bundle destroy` is blocked from dropping them, so production data survives accidental destroy/replace operations. The app's `dqx_studio` Postgres schema (inside the `databricks_postgres` admin database on the Lakebase instance) is created at startup and is not itself a bundle resource, but it is protected transitively by the instance-level guard — as long as the instance survives, the schema and its tables survive. To intentionally tear something down, remove the flag, `databricks bundle deployment unbind <key>`, then destroy manually.
 </Admonition>
 
 For the full walkthrough — including step-by-step commands, manual `GRANT` statements, troubleshooting, target-specific configuration, and the bind workflow for adopting existing resources — see the [DQX Studio deployment guide](https://github.com/databrickslabs/dqx/blob/v0.14.0/app/DEPLOYMENT.md).
@@ -503,7 +503,7 @@ DQX Studio splits its data across two physical backends: high-volume append-most
 </Admonition>
 
 <Admonition type="note" title="First-run wheel upload">
-On its first start, DQX Studio runs database migrations (Delta and, if enabled, Lakebase) and uploads its DQX wheel files to the Unity Catalog volume. If the task-runner job is triggered before the app has fully started at least once, it will fail to find its wheels. Wait for `Uploaded databricks_labs_dqx-<version>...` in the app logs before triggering any profiler or dry-run jobs. If Lakebase is enabled, also wait for `Lakebase OLTP routing enabled` before opening the UI — the app falls back to UC-only mode if Lakebase init fails.
+On its first start, DQX Studio runs database migrations (Delta and, if enabled, Lakebase) and uploads its DQX wheel files to the Unity Catalog volume. If the task-runner job is triggered before the app has fully started at least once, it will fail to find its wheels. Wait for `Uploaded databricks_labs_dqx-<version>...` in the app logs before triggering any profiler or dry-run jobs. If Lakebase is enabled, also wait for `Lakebase OLTP routing enabled` before opening the UI — when Lakebase is configured (`DQX_LAKEBASE_INSTANCE_NAME` non-empty) and init fails, the app refuses to start and the Databricks Apps platform will restart it; silent fallback to Delta would split-brain OLTP writes across two physical stores and is not safe. To run on Delta only, unset `DQX_LAKEBASE_INSTANCE_NAME`.
 </Admonition>
 
 ### Upgrade DQX Studio

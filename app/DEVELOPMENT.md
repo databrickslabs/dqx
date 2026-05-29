@@ -47,7 +47,7 @@ DQX_ADMIN_GROUP=admins                      # workspace group granted bootstrap 
 
 # Lakebase (optional — leave DQX_LAKEBASE_INSTANCE_NAME empty to run OLTP tables on Delta locally)
 DQX_LAKEBASE_INSTANCE_NAME=                 # e.g. dqx-studio-lakebase; empty = Delta-only mode
-DQX_LAKEBASE_DATABASE_NAME=dqx_studio       # database within the Lakebase instance
+DQX_LAKEBASE_DATABASE_NAME=databricks_postgres  # logical Postgres DB; defaults to the always-present admin DB
 DQX_LAKEBASE_SCHEMA=public                  # Postgres schema (default: public)
 DQX_LAKEBASE_POOL_MIN_SIZE=1                # psycopg connection pool floor
 DQX_LAKEBASE_POOL_MAX_SIZE=10               # psycopg connection pool ceiling

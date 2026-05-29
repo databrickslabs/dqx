@@ -1,29 +1,42 @@
 """Unit tests for :class:`PgMigrationRunner` (Lakebase Postgres migrations).
 
-The runner is tested in pure isolation against a mock satisfying the
-``_Executor`` Protocol. The real :class:`PgExecutor` is exercised in
-integration tests against a live Lakebase instance.
+The runner is tested in pure isolation against a typed mock of the real
+:class:`PgExecutor`. Production exercises a live Lakebase instance via
+integration tests; here we focus on dispatch, atomicity, and identifier
+quoting.
 
-Two non-obvious things the helpers handle:
+Why the helpers look the way they do
+------------------------------------
+* **`create_autospec(PgExecutor, instance=True)`** rather than a bare
+  ``MagicMock``. The spec'd mock rejects attribute access for any
+  attribute the real :class:`PgExecutor` doesn't expose, so a future
+  rename (``query`` → ``run_query``, etc.) surfaces as an
+  AttributeError at test time. AGENTS.md mandates this pattern:
+  "construct dependencies with create_autospec rather than patching
+  internal module state."
 
-1. ``MagicMock``'s auto-generated ``__exit__`` returns a (truthy)
-   :class:`MagicMock`, which would *suppress* every exception raised
-   inside a ``with`` block. We explicitly wire ``__exit__`` to ``None``
-   on both the connection and cursor context managers so a real
-   ``RuntimeError`` from ``cur.execute`` propagates out — otherwise the
-   partial-failure test would pass for the wrong reason.
+* **No explicit ``__exit__`` wiring.** The auto-generated context-
+  manager support on the return values of method calls returns
+  ``False`` from ``__exit__`` by default — exceptions inside the
+  ``with`` block propagate out correctly without a manual override.
+  (The earlier version of this file pre-emptively forced ``__exit__``
+  to ``None`` "just in case"; that was cargo-culted from a different
+  failure mode and is no longer needed once the helper is spec'd
+  against the real surface.)
 
-2. The runner uses ``with self._exec.connection() as conn: with
-   conn.cursor() as cur: cur.execute(...)``. The cursor used inside
-   ``_apply`` therefore lives several attribute hops deep in the mock
-   chain. :func:`_cursor_of` and :func:`_connection_of` walk that chain
-   so assertions stay legible.
+* **Migration list is injected via the constructor seam.** The runner
+  accepts a ``migrations=`` kwarg defaulting to the production
+  catalogue. Tests pass a deterministic fake list directly rather
+  than monkey-patching the module-level ``PG_MIGRATIONS`` — the
+  monkey-patch pattern coupled tests to an import path and produced
+  surprise ordering issues when multiple tests ran in the same
+  process.
 """
 
 from __future__ import annotations
 
 import dataclasses
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, create_autospec
 
 import pytest
 
@@ -32,6 +45,7 @@ from databricks_labs_dqx_app.backend.migrations.postgres import (
     PgMigration,
     PgMigrationRunner,
 )
+from databricks_labs_dqx_app.backend.pg_executor import PgExecutor
 
 
 # ---------------------------------------------------------------------------
@@ -40,22 +54,22 @@ from databricks_labs_dqx_app.backend.migrations.postgres import (
 
 
 def _make_executor(*, applied_versions: tuple[int, ...] = (), schema: str = "public") -> MagicMock:
-    """Build a mock ``_Executor`` pre-seeded with the given applied-versions list."""
-    exec_mock = MagicMock(name="PgExecutor")
+    """Build a typed mock of :class:`PgExecutor` pre-seeded with applied versions.
+
+    Uses ``create_autospec`` so the mock rejects access to attributes
+    that aren't on the real class — a future rename of any method the
+    runner calls produces a loud test-time AttributeError rather than
+    a silent passthrough.
+    """
+    exec_mock = create_autospec(PgExecutor, instance=True)
     exec_mock.schema = schema
     exec_mock.database = "test_db"
-    # _applied_versions issues one SELECT and parses ``[[str(v)], ...]``.
+    # Mirror :meth:`PgExecutor.q` — ANSI double-quotes with internal
+    # ``"`` doubled. The runner uses ``q()`` for every schema reference
+    # so a hyphenated schema name stays parseable end-to-end.
+    exec_mock.q.side_effect = lambda ident: '"' + ident.replace('"', '""') + '"'
+    # ``_applied_versions`` issues one SELECT and parses ``[[str(v)], ...]``.
     exec_mock.query.return_value = [[str(v)] for v in applied_versions]
-
-    # Disarm MagicMock's truthy auto-__exit__ on both context managers
-    # so exceptions inside ``with self._exec.connection() as conn:`` and
-    # ``with conn.cursor() as cur:`` propagate normally.
-    conn_cm = exec_mock.connection.return_value
-    conn_cm.__exit__.return_value = None
-    conn = conn_cm.__enter__.return_value
-    cur_cm = conn.cursor.return_value
-    cur_cm.__exit__.return_value = None
-
     return exec_mock
 
 
@@ -145,18 +159,14 @@ class TestRunAllDispatch:
         # _apply is never entered, so connection() must not be touched.
         exec_mock.connection.assert_not_called()
 
-    def test_runs_only_pending_when_some_already_applied(self, monkeypatch):
+    def test_runs_only_pending_when_some_already_applied(self):
         """With v1 already applied, only the new v2 should run."""
         fake_migrations = [
             PgMigration(version=1, description="v1", sql="CREATE TABLE {schema}.t1 (id int);"),
             PgMigration(version=2, description="v2", sql="CREATE TABLE {schema}.t2 (id int);"),
         ]
-        monkeypatch.setattr(
-            "databricks_labs_dqx_app.backend.migrations.postgres.PG_MIGRATIONS",
-            fake_migrations,
-        )
         exec_mock = _make_executor(applied_versions=(1,))
-        runner = PgMigrationRunner(exec_mock)
+        runner = PgMigrationRunner(exec_mock, migrations=fake_migrations)
 
         applied = runner.run_all()
 
@@ -193,6 +203,70 @@ class TestRunAllDispatch:
             assert "{schema}" not in sql, f"Unsubstituted placeholder in: {sql!r}"
         # And the configured schema name actually appears somewhere.
         assert any("custom_app_schema" in s for s in _executed_sqls(cur))
+
+
+# ---------------------------------------------------------------------------
+# Constructor injection — migrations= kwarg behaviour
+# ---------------------------------------------------------------------------
+
+
+class TestMigrationsInjection:
+    """The ``migrations=`` constructor seam exists so tests don't have
+    to monkey-patch the module-level constant. These tests pin down the
+    contract so a future refactor doesn't silently drop the seam."""
+
+    def test_default_is_the_module_level_catalogue(self):
+        """``migrations=None`` (the default) must wire to ``PG_MIGRATIONS``."""
+        exec_mock = _make_executor(applied_versions=tuple(m.version for m in PG_MIGRATIONS))
+        runner = PgMigrationRunner(exec_mock)
+        # If the default wiring is correct then "every version already
+        # applied" causes zero new applications.
+        assert runner.run_all() == 0
+
+    def test_injected_list_is_used_in_place_of_default(self):
+        """An explicit ``migrations=`` list must shadow ``PG_MIGRATIONS``."""
+        fake = [
+            PgMigration(version=10, description="injected v10", sql="CREATE TABLE {schema}.t10 (id int);"),
+            PgMigration(version=11, description="injected v11", sql="CREATE TABLE {schema}.t11 (id int);"),
+        ]
+        exec_mock = _make_executor(applied_versions=())
+        runner = PgMigrationRunner(exec_mock, migrations=fake)
+
+        assert runner.run_all() == len(fake)
+        cur = _cursor_of(exec_mock)
+        inserts = _insert_meta_sqls(cur)
+        # Only the injected versions land in dq_migrations — no leak
+        # from the production catalogue.
+        assert len(inserts) == len(fake)
+        assert any("VALUES (10," in s for s in inserts)
+        assert any("VALUES (11," in s for s in inserts)
+        assert not any(f"VALUES ({m.version}," in s for s in inserts for m in PG_MIGRATIONS)
+
+    def test_injected_list_is_snapshotted_defensively(self):
+        """Mutating the caller's list after construction must not move the runner's view.
+
+        The runner stores a tuple snapshot to prevent the
+        action-at-a-distance footgun where a test fixture mutates its
+        shared list and quietly changes runner behaviour mid-suite.
+        """
+        fake = [PgMigration(version=1, description="v1", sql="CREATE TABLE {schema}.t (id int);")]
+        runner = PgMigrationRunner(_make_executor(), migrations=fake)
+
+        fake.append(PgMigration(version=2, description="v2", sql="CREATE TABLE {schema}.t2 (id int);"))
+        # Snapshot length is what was passed at construction time.
+        assert len(runner._migrations) == 1
+
+    def test_empty_injected_list_runs_zero_migrations_but_still_bootstraps(self):
+        """An empty migration list still produces schema + meta-table bootstrap."""
+        exec_mock = _make_executor(applied_versions=())
+        runner = PgMigrationRunner(exec_mock, migrations=[])
+
+        assert runner.run_all() == 0
+        bootstrap = [c.args[0] for c in exec_mock.execute.call_args_list]
+        assert any("CREATE SCHEMA IF NOT EXISTS" in s for s in bootstrap)
+        assert any("dq_migrations" in s and "CREATE TABLE IF NOT EXISTS" in s for s in bootstrap)
+        # No _apply ever runs → connection() must not be touched.
+        exec_mock.connection.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -242,12 +316,12 @@ class TestApplyAtomicity:
             "would break migration atomicity"
         )
 
-    def test_failure_during_ddl_aborts_transaction_and_propagates(self, monkeypatch):
+    def test_failure_during_ddl_aborts_transaction_and_propagates(self):
         """If a DDL statement raises, the transaction rolls back (no
         commit), the version row is never written, and the exception
         propagates so the next start retries cleanly."""
-        # Replace PG_MIGRATIONS with a deterministic single migration so
-        # we know exactly which cur.execute call should fail.
+        # Inject a deterministic single migration via the constructor
+        # seam so we know exactly which cur.execute call should fail.
         fake_migration = PgMigration(
             version=42,
             description="failing test",
@@ -257,17 +331,13 @@ class TestApplyAtomicity:
                 "CREATE TABLE {schema}.t3 (id int);"
             ),
         )
-        monkeypatch.setattr(
-            "databricks_labs_dqx_app.backend.migrations.postgres.PG_MIGRATIONS",
-            [fake_migration],
-        )
 
         exec_mock = _make_executor(applied_versions=())
         cur = _cursor_of(exec_mock)
         # Pass: t1 → succeed, t2 → succeed, t3 → boom. INSERT never reached.
         cur.execute.side_effect = [None, None, RuntimeError("boom"), None, None]
 
-        runner = PgMigrationRunner(exec_mock)
+        runner = PgMigrationRunner(exec_mock, migrations=[fake_migration])
         with pytest.raises(RuntimeError, match="boom"):
             runner.run_all()
 
@@ -278,7 +348,7 @@ class TestApplyAtomicity:
         # And the version row must never have been requested either.
         assert not _insert_meta_sqls(cur)
 
-    def test_failure_in_first_migration_skips_subsequent_migrations(self, monkeypatch):
+    def test_failure_in_first_migration_skips_subsequent_migrations(self):
         """A failed migration must short-circuit the rest of the run —
         otherwise a later migration could land on top of a partially-
         rolled-back schema."""
@@ -286,19 +356,100 @@ class TestApplyAtomicity:
             PgMigration(version=1, description="v1", sql="BROKEN;"),
             PgMigration(version=2, description="v2", sql="CREATE TABLE {schema}.t2 (id int);"),
         ]
-        monkeypatch.setattr(
-            "databricks_labs_dqx_app.backend.migrations.postgres.PG_MIGRATIONS",
-            fake_migrations,
-        )
 
         exec_mock = _make_executor(applied_versions=())
         cur = _cursor_of(exec_mock)
         cur.execute.side_effect = RuntimeError("boom")  # every execute fails
 
-        runner = PgMigrationRunner(exec_mock)
+        runner = PgMigrationRunner(exec_mock, migrations=fake_migrations)
         with pytest.raises(RuntimeError, match="boom"):
             runner.run_all()
 
         # v2's DDL must not have been attempted.
         sqls = _executed_sqls(cur)
         assert not any(".t2 " in s for s in sqls), "v2 ran despite v1 failing — short-circuit broken"
+
+
+# ---------------------------------------------------------------------------
+# Executor-protocol consolidation
+# ---------------------------------------------------------------------------
+
+
+class TestExecutorProtocolConsolidation:
+    """The migration runner's ``_Executor`` Protocol MUST extend
+    :class:`OltpExecutorProtocol`.
+
+    Why this matters: pre-consolidation the module re-declared its own
+    ``schema`` / ``execute`` / ``query`` / ``q`` Protocol members
+    independently of the shared OLTP contract. That drift is silent —
+    a future addition to ``OltpExecutorProtocol`` (a new upsert
+    variant, a new dialect helper) would NOT propagate here, and the
+    structural-typing surface across the two callers would slowly
+    diverge until someone tripped over a runtime AttributeError on a
+    code path that only fires in production.
+
+    Locking the inheritance relationship as a structural assertion
+    means a regression to the independent-declaration form fails this
+    test loudly instead of waiting for an integration smoke run.
+    """
+
+    def test_executor_protocol_extends_oltp_executor_protocol(self):
+        from databricks_labs_dqx_app.backend.migrations.postgres import _Executor
+        from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol
+
+        # Direct MRO check — any future refactor that drops the
+        # inheritance (e.g. someone "simplifies" by re-listing the
+        # members inline) trips this immediately.
+        assert OltpExecutorProtocol in _Executor.__mro__, (
+            "_Executor must extend OltpExecutorProtocol so the executor "
+            "surface stays single-sourced. If you removed the inheritance, "
+            "you've re-introduced the duplication the consolidation fixed."
+        )
+
+    def test_executor_protocol_adds_only_connection_beyond_oltp_surface(self):
+        """The runner-specific surface is exactly one method: ``connection()``.
+
+        Anything else added here is either (a) redundant with the OLTP
+        contract — push it up to :class:`OltpExecutorProtocol` — or
+        (b) leaking psycopg-specific concerns into the shared layer.
+        Either way it deserves explicit review, which a failing assert
+        forces.
+        """
+        from databricks_labs_dqx_app.backend.migrations.postgres import _Executor
+        from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol
+
+        # The Protocol member set lives on ``__protocol_attrs__`` on
+        # Python 3.12+; on 3.11 we approximate via __annotations__ +
+        # dir() filtering. Either way: subtract the OLTP surface to
+        # see what's unique to the migration runner.
+        oltp_members = set(dir(OltpExecutorProtocol)) - set(dir(object))
+        runner_members = set(dir(_Executor)) - set(dir(object))
+        runner_only = runner_members - oltp_members
+
+        assert runner_only == {"connection"}, (
+            f"_Executor must add exactly 'connection' beyond OltpExecutorProtocol; "
+            f"got runner-only members: {sorted(runner_only)}. "
+            "Anything else either belongs on OltpExecutorProtocol "
+            "(if the OLTP services would use it) or signals new "
+            "psycopg-specific surface leaking into the shared layer."
+        )
+
+    def test_pg_executor_structurally_satisfies_extended_protocol(self):
+        """PgExecutor remains the canonical implementation post-extension.
+
+        Because ``OltpExecutorProtocol`` is ``@runtime_checkable``, an
+        ``isinstance`` check passes iff PgExecutor exposes every member
+        the Protocol requires. If a future PgExecutor refactor drops a
+        Protocol-required method (or rename without an alias), this
+        test fails BEFORE production hits the AttributeError.
+        """
+        from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol
+
+        exec_mock = _make_executor()
+        assert isinstance(exec_mock, OltpExecutorProtocol), (
+            "create_autospec(PgExecutor) must satisfy OltpExecutorProtocol — "
+            "if this fails, PgExecutor no longer structurally satisfies the "
+            "shared Protocol and every OLTP service annotation is now lying."
+        )
+        # And the runner-only surface is on the mock too.
+        assert hasattr(exec_mock, "connection")

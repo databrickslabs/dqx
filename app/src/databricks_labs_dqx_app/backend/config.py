@@ -60,8 +60,16 @@ class AppConfig(BaseSettings):
         validation_alias="DQX_LAKEBASE_INSTANCE_NAME",
         description="Lakebase instance name. Empty disables Lakebase routing.",
     )
+    # Default must match the ``lakebase_database_name`` bundle var in
+    # ``app/databricks.yml`` (``databricks_postgres`` — the always-present
+    # admin database every Lakebase instance ships with). The bundle
+    # intentionally does NOT create a per-app logical Postgres database;
+    # per-app isolation lives in ``lakebase_schema_name`` below. Keep
+    # the two defaults in sync so contexts where the DABs env-var
+    # injection isn't in effect — local dev, unit tests, debug shells —
+    # don't try to connect to a logical DB that was never created.
     lakebase_database_name: str = Field(
-        default="dqx_studio",
+        default="databricks_postgres",
         validation_alias="DQX_LAKEBASE_DATABASE_NAME",
         description="Database within the Lakebase instance the app connects to.",
     )
@@ -77,6 +85,50 @@ class AppConfig(BaseSettings):
     lakebase_token_refresh_minutes: int = Field(
         default=50,
         validation_alias="DQX_LAKEBASE_TOKEN_REFRESH_MINUTES",
+    )
+    # ------------------------------------------------------------------
+    # Token-refresh resilience (see PgExecutor._token_refresh_loop).
+    # ------------------------------------------------------------------
+    # When a refresh attempt fails we sleep ``retry_seconds`` ± jitter
+    # and try again *fast* — NOT the full 50-minute scheduled interval
+    # — because the pool's ``max_lifetime`` is also 50 minutes. If we
+    # only retried at the scheduled cadence, a refresh failure window
+    # of 50-60 minutes would silently drain the pool: every in-pool
+    # connection dies at ``max_lifetime``, no valid replacement is
+    # ever minted, and the app stops accepting work without any
+    # explicit "token rotation failed" error visible to operators.
+    #
+    # After ``max_failures`` consecutive failures (default 12 × 10s ≈
+    # 2 minutes of sustained failure) the executor escalates by
+    # exiting the process so the supervisor (uvicorn / Databricks
+    # Apps) restarts the worker. Crashing loud at 2 minutes is much
+    # better than silently degrading at 50 minutes.
+    lakebase_token_refresh_retry_seconds: int = Field(
+        default=10,
+        validation_alias="DQX_LAKEBASE_TOKEN_REFRESH_RETRY_SECONDS",
+        description=(
+            "Base back-off between failed token-refresh attempts. " "Jittered by ±retry_jitter on each retry."
+        ),
+    )
+    lakebase_token_refresh_retry_jitter: float = Field(
+        default=0.3,
+        validation_alias="DQX_LAKEBASE_TOKEN_REFRESH_RETRY_JITTER",
+        description=(
+            "Fractional jitter applied to retry back-off so multiple "
+            "workers don't thunder-herd against the SDK on the same "
+            "second after a shared transient failure."
+        ),
+    )
+    lakebase_token_refresh_max_failures: int = Field(
+        default=12,
+        validation_alias="DQX_LAKEBASE_TOKEN_REFRESH_MAX_FAILURES",
+        description=(
+            "Consecutive refresh failures before the executor escalates "
+            "by exiting the process so the supervisor restarts the "
+            "worker. Default 12 × 10s ≈ 2 minutes of sustained "
+            "failure, which leaves ~48 minutes of pool buffer before "
+            "max_lifetime would otherwise drain the pool silently."
+        ),
     )
 
     @property

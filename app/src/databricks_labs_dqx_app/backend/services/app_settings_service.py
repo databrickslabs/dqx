@@ -1,14 +1,31 @@
 import json
 import logging
 
-from databricks.labs.blueprint.installation import Installation
 from databricks.labs.dqx.config import WorkspaceConfig
+from pydantic import TypeAdapter, ValidationError
 
-from databricks_labs_dqx_app.backend.sql_executor import RawSql, SqlExecutor
+from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql
 
 logger = logging.getLogger(__name__)
 
 _CONFIG_KEY = "workspace_config"
+
+# Module-level adapter so we pay the type-tree walk once at import time
+# rather than on every ``get_config`` call. ``TypeAdapter`` is Pydantic's
+# public v2 surface for validating non-BaseModel types against a target
+# type (here, the DQX ``WorkspaceConfig`` dataclass). We use this
+# instead of :func:`databricks.labs.blueprint.installation.Installation._unmarshal_type`
+# — that one is a leading-underscore private API in blueprint and the
+# next blueprint release can change its signature without warning.
+#
+# Pydantic round-trips ``WorkspaceConfig`` exactly the same way the
+# blueprint helper does (verified against blueprint output during
+# refactor). And it's the same path the project's ``ConfigIn`` /
+# ``ConfigOut`` BaseModel response models already use to deserialize
+# the user-POSTed config — so we're aligning the LOAD path with the
+# trusted SAVE path rather than relying on a separate, private
+# deserializer.
+_WORKSPACE_CONFIG_ADAPTER: TypeAdapter[WorkspaceConfig] = TypeAdapter(WorkspaceConfig)
 
 
 class AppSettingsService:
@@ -23,7 +40,7 @@ class AppSettingsService:
     Delta otherwise. The injected executor decides which.
     """
 
-    def __init__(self, sql: SqlExecutor) -> None:
+    def __init__(self, sql: OltpExecutorProtocol) -> None:
         self._sql = sql
         self._table = sql.fqn("dq_app_settings")
 
@@ -42,19 +59,38 @@ class AppSettingsService:
         logger.debug("AppSettingsService.ensure_table() is a no-op; migrations handle DDL")
 
     def get_config(self) -> WorkspaceConfig:
-        """Load the workspace config from the settings table."""
+        """Load the workspace config from the settings table.
+
+        Deserialization goes through :data:`_WORKSPACE_CONFIG_ADAPTER`
+        (a module-level Pydantic ``TypeAdapter[WorkspaceConfig]``) so
+        we depend only on Pydantic — already a project dependency for
+        the route models — and not on any private blueprint helper.
+
+        Defensive fallback: malformed JSON or a payload that doesn't
+        match the ``WorkspaceConfig`` shape returns an empty default
+        rather than propagating. This keeps a corrupt settings row from
+        bricking the admin UI; the bad row stays visible to operators
+        via the WARNING log without short-circuiting the rest of the
+        app.
+        """
         sql = f"SELECT setting_value FROM {self._table} WHERE setting_key = '{_CONFIG_KEY}'"
         rows = self._sql.query(sql)
         if not rows:
             logger.info("No config found in settings table, returning default")
             return WorkspaceConfig(run_configs=[])
 
-        data = json.loads(rows[0][0])
-        result = Installation._unmarshal_type(data, "dq_app_settings", WorkspaceConfig)
-        if not isinstance(result, WorkspaceConfig):
-            logger.warning("Config unmarshal returned unexpected type, using default")
+        raw = rows[0][0]
+        try:
+            data = json.loads(raw)
+        except (TypeError, json.JSONDecodeError):
+            logger.warning("workspace_config row is not valid JSON; returning default")
             return WorkspaceConfig(run_configs=[])
-        return result
+
+        try:
+            return _WORKSPACE_CONFIG_ADAPTER.validate_python(data)
+        except ValidationError:
+            logger.warning("workspace_config row failed schema validation; returning default", exc_info=True)
+            return WorkspaceConfig(run_configs=[])
 
     def save_config(self, config: WorkspaceConfig, user_email: str | None = None) -> WorkspaceConfig:
         """Save the workspace config to the settings table."""

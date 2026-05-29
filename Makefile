@@ -118,16 +118,26 @@ app-test:
 	  $(if $(COV),--cov=src/databricks_labs_dqx_app/backend --cov-report=term-missing --cov-report=xml:coverage-app.xml)
 
 # Grant Unity Catalog permissions after bundle deploy.
+#
 # Usage: make app-grant-permissions PROFILE=my-profile
+#        make app-grant-permissions PROFILE=my-profile TARGET=dev \
+#                                   BUNDLE_VARS='--var=catalog_name=foo'
+#
+# BUNDLE_VARS must match the overrides used at deploy time. The script
+# reads bundle variables to discover which catalog / schema / volume to
+# grant on, so an unforwarded override would point the GRANTs at the
+# wrong objects.
 app-grant-permissions:
 	@test -n "$(PROFILE)" || (echo "Usage: make app-grant-permissions PROFILE=<databricks-profile> [TARGET=<bundle-target>]"; exit 1)
-	app/scripts/post_deploy_grants.sh -p $(PROFILE) $(if $(TARGET),-t $(TARGET))
+	app/scripts/post_deploy_grants.sh -p $(PROFILE) $(if $(TARGET),-t $(TARGET)) $(if $(BUNDLE_VARS),-- $(BUNDLE_VARS))
 
 # Adopt pre-existing storage resources into bundle management.
 #
 # Use ONCE per target on workspaces where the schemas / volume /
-# Lakebase instance / Lakebase logical database already exist (e.g.
-# from a previous bootstrap-script deploy, or from manual creation).
+# Lakebase instance already exist (e.g. from a previous bootstrap-
+# script deploy, or from manual creation). The app's Postgres schema
+# inside ``databricks_postgres`` is not bundle-managed and does not
+# need binding — the app re-creates it on first connection if missing.
 # Without binding, ``databricks bundle deploy`` would try to CREATE
 # them and fail with "already exists" / "Instance name is not unique".
 #
@@ -161,16 +171,23 @@ app-bind:
 #                        BUNDLE_VARS='--var=lakebase_instance_name=<fresh-name>'
 #
 # BUNDLE_VARS forwards arbitrary ``--var key=value`` arguments to
-# ``bundle deploy`` and ``bundle run``. The common use case is
-# overriding ``lakebase_instance_name`` when the original name is
-# locked by Lakebase's ~7-day soft-delete retention after a manual
-# delete (the deploy errors out with "Instance name is not unique"
-# otherwise). Per-deploy CLI overrides keep ``databricks.yml`` clean.
+# every step of the deploy: ``bundle deploy``, ``post_deploy_grants.sh``,
+# and ``bundle run``. Threading the same overrides through all three is
+# load-bearing — the grants script re-runs ``bundle validate`` to
+# discover the deployed catalog / schema / volume, and without the
+# overrides it would issue GRANTs on the bundle defaults instead of
+# the resources actually deployed.
+#
+# The common use case is overriding ``lakebase_instance_name`` when the
+# original name is locked by Lakebase's ~7-day soft-delete retention
+# after a manual delete (the deploy errors out with "Instance name is
+# not unique" otherwise). Per-deploy CLI overrides keep ``databricks.yml``
+# clean.
 app-deploy: app-build
 	@test -n "$(PROFILE)" || (echo "Usage: make app-deploy PROFILE=<databricks-profile> TARGET=<bundle-target>"; exit 1)
 	@test -n "$(TARGET)" || (echo "Usage: make app-deploy PROFILE=<databricks-profile> TARGET=<bundle-target>"; exit 1)
 	cd app && databricks bundle deploy -p $(PROFILE) -t $(TARGET) $(BUNDLE_VARS)
-	app/scripts/post_deploy_grants.sh -p $(PROFILE) -t $(TARGET)
+	app/scripts/post_deploy_grants.sh -p $(PROFILE) -t $(TARGET) $(if $(BUNDLE_VARS),-- $(BUNDLE_VARS))
 	cd app && databricks bundle run $(APP_NAME) -p $(PROFILE) -t $(TARGET) $(BUNDLE_VARS)
 
 APP_NAME ?= dqx-studio

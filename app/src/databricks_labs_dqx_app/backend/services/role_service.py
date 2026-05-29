@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from databricks_labs_dqx_app.backend.common.authorization import ROLE_PRIORITY, UserRole
-from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
+from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
 logger = logging.getLogger(__name__)
@@ -39,7 +39,7 @@ class RoleService:
     executor decides which.
     """
 
-    def __init__(self, sql: SqlExecutor) -> None:
+    def __init__(self, sql: OltpExecutorProtocol) -> None:
         self._sql = sql
         self._table = sql.fqn("dq_role_mappings")
         self._mappings_cache: list[RoleMapping] | None = None
@@ -100,41 +100,27 @@ class RoleService:
     def create_mapping(self, role: str, group_name: str, user_email: str) -> RoleMapping:
         """Create or update a role-to-group mapping.
 
-        On UPDATE we only refresh ``updated_*`` so the original
-        ``created_*`` survive — this is why we hand-write the upsert
-        statement rather than calling :meth:`SqlExecutor.upsert`,
-        which would clobber every column on the matched branch.
+        Dialect-agnostic — :meth:`OltpExecutorProtocol.upsert_with_audit`
+        with ``preserve_created=True`` handles the
+        ``MERGE INTO`` (Delta) / ``INSERT ... ON CONFLICT DO UPDATE``
+        (Postgres) choice so the original ``created_*`` survive on
+        UPDATE.
         """
         if role not in [r.value for r in UserRole]:
             raise ValueError(f"Invalid role: {role}. Must be one of {[r.value for r in UserRole]}")
 
-        escaped_role = escape_sql_string(role)
-        escaped_group = escape_sql_string(group_name)
-        escaped_user = escape_sql_string(user_email)
-
-        if getattr(self._sql, "dialect", "delta") == "postgres":
-            sql = (
-                f"INSERT INTO {self._table} "
-                "(role, group_name, created_by, created_at, updated_by, updated_at) "
-                f"VALUES ('{escaped_role}', '{escaped_group}', '{escaped_user}', now(), "
-                f"'{escaped_user}', now()) "
-                "ON CONFLICT (role, group_name) DO UPDATE SET "
-                f"  updated_by = '{escaped_user}', "
-                "  updated_at = now()"
-            )
-        else:
-            sql = (
-                f"MERGE INTO {self._table} AS target "
-                f"USING (SELECT '{escaped_role}' AS role, '{escaped_group}' AS group_name) AS source "
-                "ON target.role = source.role AND target.group_name = source.group_name "
-                "WHEN MATCHED THEN UPDATE SET "
-                f"  updated_by = '{escaped_user}', "
-                "  updated_at = now() "
-                "WHEN NOT MATCHED THEN INSERT (role, group_name, created_by, created_at, updated_by, updated_at) "
-                f"VALUES ('{escaped_role}', '{escaped_group}', '{escaped_user}', now(), "
-                f"'{escaped_user}', now())"
-            )
-        self._sql.execute(sql)
+        now = RawSql("now()")
+        self._sql.upsert_with_audit(
+            table=self._table,
+            key_cols={"role": role, "group_name": group_name},
+            value_cols={
+                "created_by": user_email,
+                "created_at": now,
+                "updated_by": user_email,
+                "updated_at": now,
+            },
+            preserve_created=True,
+        )
         self.invalidate_mappings_cache()
         logger.info(f"Created/updated role mapping: {role} -> {group_name}")
 
