@@ -1541,14 +1541,16 @@ wheels = [
 
 [[package]]
 name = "datacontract-cli"
-version = "0.11.7"
+version = "0.12.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "boto3" },
     { name = "datacontract-specification" },
+    { name = "deepdiff" },
     { name = "fastjsonschema" },
     { name = "jinja-partials" },
     { name = "jinja2" },
+    { name = "jsonschema" },
     { name = "open-data-contract-standard" },
     { name = "pydantic" },
     { name = "python-dotenv" },
@@ -1561,9 +1563,9 @@ dependencies = [
     { name = "sqlglot" },
     { name = "typer" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/4c/08/260c62e52d56d9c5b4712f021d7a9bd0cf58e95a588bdda31268736e3596/datacontract_cli-0.11.7.tar.gz", hash = "sha256:79cd941e0066bcf81b04e517428cf188aab312e90e6295af96cbacf53f4b6949", size = 334477, upload-time = "2026-03-24T19:04:19.106Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/26/a0/c5175e73d1e52ea85fe0e12d665fc6ffac5e7258d8caa96c360b0db53c01/datacontract_cli-0.12.4.tar.gz", hash = "sha256:9b77afd39ed5c68a264bdf4e202851fb24a2ef13da35b9be0ebc7b19df34901b", size = 413984, upload-time = "2026-05-21T20:26:22.38Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/46/dd/a197cc26c23274c5546f741103f034f8f27bc687c36756da2593776e3f88/datacontract_cli-0.11.7-py3-none-any.whl", hash = "sha256:92443a808c67f57939e863c93b02756c985c925c5051d74ef487c4633329f9ac", size = 292988, upload-time = "2026-03-24T19:04:17.177Z" },
+    { url = "https://files.pythonhosted.org/packages/51/ee/0f6e4eeea7b83257af5c96523b17af07f97b5d4885662ad9e45854e15df5/datacontract_cli-0.12.4-py3-none-any.whl", hash = "sha256:536321fcde612dc92d8924856ad11489f884a73f78a46707114c9e54cfa67aa5", size = 339977, upload-time = "2026-05-21T20:26:20.569Z" },
 ]
 
 [[package]]
