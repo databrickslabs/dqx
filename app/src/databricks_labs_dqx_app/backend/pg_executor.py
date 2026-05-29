@@ -36,50 +36,37 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import date, datetime, timezone
 from decimal import Decimal
-from typing import Any, LiteralString, cast
+from typing import Any
 
 from databricks.sdk import WorkspaceClient
 from psycopg import Connection, Cursor
 from psycopg_pool import ConnectionPool
 
+# ``run_trusted_sql`` / ``run_parameterized_sql`` live in the
+# psycopg-free :mod:`backend.pg_cursor_helpers` module so callers
+# that ONLY need the trust-boundary wrappers (notably
+# :mod:`backend.migrations.postgres`) can be imported in environments
+# that don't have psycopg installed. We re-export them here so existing
+# imports of the form ``from backend.pg_executor import run_trusted_sql``
+# keep working — the executor is the "real" psycopg consumer and the
+# natural place to look for them.
+from databricks_labs_dqx_app.backend.pg_cursor_helpers import (
+    run_parameterized_sql,
+    run_trusted_sql,
+)
 from databricks_labs_dqx_app.backend.sql_executor import RawSql, _render_value
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
 logger = logging.getLogger(__name__)
 
-
-def run_trusted_sql(cur: Cursor[Any], sql: str) -> None:
-    """Execute a backend-composed SQL string against a psycopg cursor.
-
-    psycopg's stubs (PEP 675) require :meth:`Cursor.execute`'s
-    ``query`` argument to be a :class:`typing.LiteralString` — a
-    string the type-checker can statically prove is not a runtime
-    concatenation of untrusted input. That's a deliberate type-level
-    defence against SQL injection; passing a plain ``str`` makes
-    basedpyright raise ``reportCallIssue`` + ``reportArgumentType``.
-
-    Our backend never executes SQL that flows from a request body or
-    a user form. Every string reaching this helper is built from one
-    of:
-
-    * Validated identifiers (catalog / schema / table names verified
-      by :func:`backend.sql_utils.validate_fqn` and quoted via
-      :meth:`PgExecutor.q` / :func:`backend.sql_utils.quote_fqn`).
-    * Properly escaped value literals rendered by
-      :func:`sql_executor._render_value` / :func:`escape_sql_string`.
-    * Hand-written DDL / migration strings vendored alongside the
-      code that consumes them.
-
-    Casting to ``LiteralString`` in this *one* place concentrates
-    that trust boundary into a single auditable wrapper instead of
-    sprinkling ``# pyright: ignore[reportCallIssue,
-    reportArgumentType]`` at every call site (which AGENTS.md rule
-    #6 explicitly prohibits). The cast is the contract: if a future
-    change ever pipes untrusted SQL through here, the fix is to
-    parameterise the query (``cur.execute(sql, params)``) at the
-    call site — NOT to widen the trust granted by this helper.
-    """
-    _ = cur.execute(cast(LiteralString, sql))
+# Re-exports so ``from backend.pg_executor import run_trusted_sql`` keeps
+# working after the helpers moved to ``backend.pg_cursor_helpers``.
+__all__ = [
+    "PgExecutor",
+    "build_pg_executor",
+    "run_parameterized_sql",
+    "run_trusted_sql",
+]
 
 
 class _TokenHolder:

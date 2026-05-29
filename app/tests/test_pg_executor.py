@@ -179,11 +179,48 @@ class TestToText:
     def test_bool_false_renders_lowercase(self) -> None:
         assert _to_text(False) == "false"
 
-    def test_decimal_renders_as_str_no_scientific(self) -> None:
-        # Reviewer-flagged: services calling json.loads on the round-trip
-        # would die if we shortened Decimal("0.0000001") to "1e-7".
-        assert _to_text(Decimal("0.0000001")) == "1E-7"  # noqa: SIM222 - documenting Decimal's repr
-        assert _to_text(Decimal("123.456")) == "123.456"
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            # Decimals within the "normal" exponent range round-trip
+            # as plain notation, byte-for-byte equal to what the user
+            # originally wrote. This is the common case and the one
+            # service code actually exercises.
+            (Decimal("0"), "0"),
+            (Decimal("123"), "123"),
+            (Decimal("123.456"), "123.456"),
+            (Decimal("-0.5"), "-0.5"),
+            # Very small / very large magnitudes flip to scientific
+            # notation because that's what Python's :meth:`Decimal.__str__`
+            # produces once the exponent leaves the normal range. We
+            # deliberately accept this output (see method docstring) —
+            # downstream Postgres and CSV consumers parse ``1E-7`` and
+            # ``1E+21`` exactly like the plain forms. Switching to
+            # ``format(d, "f")`` would force plain notation but bloat
+            # output for legitimately tiny / huge values and surprise
+            # readers used to Decimal's canonical repr.
+            (Decimal("0.0000001"), "1E-7"),
+            (Decimal("1E+21"), "1E+21"),
+        ],
+    )
+    def test_decimal_uses_decimal_str_repr(self, value: Decimal, expected: str) -> None:
+        """Decimal values pass through ``str(value)`` verbatim.
+
+        The function does NOT force plain notation; it relies on
+        :meth:`Decimal.__str__`, which switches to scientific notation
+        once the exponent is outside Decimal's "normal" range
+        (configurable via :class:`decimal.Context`, default ±28). The
+        test name documents this contract — an earlier version of this
+        test claimed "no scientific notation" while asserting on
+        ``"1E-7"``, which silently passed for the wrong reason.
+
+        If a future caller cannot tolerate scientific notation (e.g.
+        a strict CSV importer that doesn't recognise the ``E`` form),
+        the fix is to apply ``format(d, "f")`` at the formatting layer
+        — NOT to swap :func:`_to_text`'s implementation, which would
+        bloat output for legitimately tiny / huge values.
+        """
+        assert _to_text(value) == expected
 
     @pytest.mark.parametrize(
         ("value", "expected"),
@@ -929,6 +966,128 @@ class TestRefreshFailureEscalation:
                 "Log must include the last-successful-refresh timestamp "
                 "so operators know how long the failure window is."
             )
+
+    def test_loop_invokes_os_exit_after_exactly_max_failures(self) -> None:
+        """End-to-end: loop → escalate → ``os._exit(1)`` with NOTHING
+        between ``os._exit`` and the loop patched out.
+
+        The earlier ``test_loop_calls_escalate_after_max_failures``
+        patches ``_escalate_refresh_failure`` itself, so it only
+        verifies the loop *reaches* the escalation hand-off. That
+        leaves the load-bearing claim — "the supervisor actually sees
+        a non-zero exit after max_failures consecutive failures" —
+        untested end-to-end. If a future refactor changed
+        ``os._exit(1)`` to ``sys.exit(1)`` (which a daemon thread
+        silently swallows), the existing test would still pass and
+        the pool would silently drain in production exactly like the
+        original 60s-sleep bug.
+
+        Here we drive the loop with ``_generate_token`` raising every
+        time, leave ``_escalate_refresh_failure`` UN-patched, and
+        verify the chain reaches ``os._exit(1)`` after exactly
+        ``max_failures`` token-generation attempts — not earlier
+        (escalates one short of the budget) and not later
+        (escalates one past the budget).
+        """
+        executor = _make_pg_executor(token_refresh_max_failures=4)
+        # Never auto-stop via the sleep counter — the loop must stop
+        # on its own via the ``return`` after ``_escalate_refresh_failure``.
+        executor._stop.wait = lambda timeout=None: False  # type: ignore[method-assign,assignment]
+
+        with (
+            patch(
+                "databricks_labs_dqx_app.backend.pg_executor._generate_token",
+                side_effect=RuntimeError("Lakebase is down"),
+            ) as gen,
+            patch("databricks_labs_dqx_app.backend.pg_executor.os._exit") as exit_call,
+        ):
+            executor._token_refresh_loop()
+
+        # Exactly ``max_failures`` token-generation attempts before
+        # escalation fired. Anything less means escalation fires too
+        # early (operators lose retries the policy promised them);
+        # anything more means escalation fires too late (the pool's
+        # ``max_lifetime`` may start expiring connections without a
+        # valid replacement token, which is the original bug).
+        assert gen.call_count == 4, (
+            f"Expected escalation after exactly 4 consecutive failures, "
+            f"got {gen.call_count} ``_generate_token`` calls. The "
+            f"threshold check in ``_token_refresh_loop`` is off-by-one "
+            f"or the counter increment landed on the wrong branch."
+        )
+        exit_call.assert_called_once_with(1)
+        assert executor.consecutive_refresh_failures == 4
+
+    def test_success_grants_a_fresh_threshold_window_before_escalation(self) -> None:
+        """A single successful refresh resets the ENTIRE failure budget,
+        not just decrements the counter by one.
+
+        Drive ``max_failures=3`` with the sequence::
+
+            fail, fail,                (counter = 2; one short of escalate)
+            success,                   (counter must reset to 0)
+            fail, fail,                (counter = 2; one short of escalate)
+            fail                       (counter = 3 → escalate)
+
+        Escalation must fire on the **6th** ``_generate_token`` call
+        (the 3rd post-recovery failure), not the 4th (which would mean
+        the success only suppressed the immediate escalate but the
+        threshold was already poisoned), and not the 5th (which would
+        mean the success only decremented by one).
+
+        This catches subtle refactors of the reset path:
+        - ``self._consecutive_refresh_failures -= 1`` instead of
+          ``= 0`` → escalation would fire on the 5th call.
+        - Forgetting the reset entirely (e.g. only updating
+          ``last_successful_refresh_at``) → escalation would fire
+          on the 4th call.
+        Without this test, either bug ships green.
+        """
+        executor = _make_pg_executor(token_refresh_max_failures=3)
+        executor._stop.wait = lambda timeout=None: False  # type: ignore[method-assign,assignment]
+
+        # 6 attempts: 2 fail, 1 success, 3 fail (escalate). The list
+        # is sized to the *expected* count so an early escalation
+        # leaves entries unused (gen.call_count < 6, test fails) and
+        # a late one would attempt a 7th call (StopIteration → still
+        # caught by the loop's ``except Exception`` but escalation
+        # would by then have fired off the wrong counter value).
+        token_seq: list[object] = [
+            RuntimeError("transient #1"),
+            RuntimeError("transient #2"),
+            "recovered-token",
+            RuntimeError("transient #3"),
+            RuntimeError("transient #4"),
+            RuntimeError("transient #5"),
+        ]
+
+        with (
+            patch(
+                "databricks_labs_dqx_app.backend.pg_executor._generate_token",
+                side_effect=token_seq,
+            ) as gen,
+            patch("databricks_labs_dqx_app.backend.pg_executor.os._exit") as exit_call,
+        ):
+            executor._token_refresh_loop()
+
+        assert gen.call_count == 6, (
+            f"Expected 6 ``_generate_token`` calls (2 fail + 1 success + "
+            f"3 fail to re-reach the threshold of 3), got {gen.call_count}. "
+            f"A count of 4 means success only suppressed the immediate "
+            f"escalate (no counter reset). A count of 5 means success "
+            f"only decremented the counter by one instead of resetting it."
+        )
+        exit_call.assert_called_once_with(1)
+        # Counter at escalation time is exactly the threshold — the
+        # success path fully reset it, the post-recovery failures
+        # rebuilt it from zero.
+        assert executor.consecutive_refresh_failures == 3
+        # And the success in the middle DID update the token + the
+        # observability surface — proving the reset is genuine (the
+        # success branch ran in full), not a side-effect of some
+        # other branch suppressing escalation.
+        assert executor._token_holder.token == "recovered-token"
+        assert executor._connect_kwargs["password"] == "recovered-token"
 
 
 # ===========================================================================

@@ -532,12 +532,20 @@ class SqlExecutor:
         if not key_cols:
             raise ValueError("upsert requires at least one key column")
 
-        on_clause = " AND ".join(f"target.{k} = source.{k}" for k in key_cols)
-        source_select = ", ".join(f"{_render_value(v)} AS {k}" for k, v in key_cols.items())
-        update_set = ", ".join(f"{k} = {_render_value(v)}" for k, v in value_cols.items())
+        # Every column-name position is routed through :meth:`q` so a
+        # future audit column whose name is a Delta reserved word
+        # (``check``, ``order``, ``group``, …) survives interpolation
+        # into the MERGE. Mirrors the same quoting strategy that
+        # :meth:`PgExecutor.upsert` already applies on the Postgres
+        # side so the two backends stay symmetric — without this the
+        # Postgres path accepts a reserved-word column and Delta
+        # raises a parse error.
+        on_clause = " AND ".join(f"target.{self.q(k)} = source.{self.q(k)}" for k in key_cols)
+        source_select = ", ".join(f"{_render_value(v)} AS {self.q(k)}" for k, v in key_cols.items())
+        update_set = ", ".join(f"{self.q(k)} = {_render_value(v)}" for k, v in value_cols.items())
         all_cols = list(key_cols.keys()) + list(value_cols.keys())
         all_vals = [_render_value(v) for v in list(key_cols.values()) + list(value_cols.values())]
-        insert_cols = ", ".join(all_cols)
+        insert_cols = ", ".join(self.q(c) for c in all_cols)
         insert_vals = ", ".join(all_vals)
 
         sql = (
@@ -572,8 +580,16 @@ class SqlExecutor:
                 "with its initial INSERT value (e.g. {'version': 1})"
             )
 
-        on_clause = " AND ".join(f"target.{k} = source.{k}" for k in key_cols)
-        source_select = ", ".join(f"{_render_value(v)} AS {k}" for k, v in key_cols.items())
+        # Every column-name position is routed through :meth:`q` so a
+        # future audit column whose name is a Delta reserved word
+        # (``check``, ``order``, ``group``, …) survives interpolation
+        # into the MERGE. Mirrors the same quoting strategy that
+        # :meth:`PgExecutor.upsert_with_audit` already applies on the
+        # Postgres side so the two backends stay symmetric — without
+        # this the Postgres path accepts a reserved-word audit column
+        # and Delta raises a parse error.
+        on_clause = " AND ".join(f"target.{self.q(k)} = source.{self.q(k)}" for k in key_cols)
+        source_select = ", ".join(f"{_render_value(v)} AS {self.q(k)}" for k, v in key_cols.items())
 
         # UPDATE SET excludes created_* columns when preserve_created;
         # the increment column (if any) gets the dialect-specific
@@ -582,17 +598,18 @@ class SqlExecutor:
         for col, val in value_cols.items():
             if preserve_created and col.startswith("created_"):
                 continue
+            qcol = self.q(col)
             if col == increment_on_update:
                 # Delta MERGE — qualify with the ``target`` alias to
                 # disambiguate from the source row.
-                update_pairs.append(f"{col} = target.{col} + 1")
+                update_pairs.append(f"{qcol} = target.{qcol} + 1")
             else:
-                update_pairs.append(f"{col} = {_render_value(val)}")
+                update_pairs.append(f"{qcol} = {_render_value(val)}")
         update_set = ", ".join(update_pairs)
 
         all_cols = list(key_cols.keys()) + list(value_cols.keys())
         all_vals = [_render_value(v) for v in list(key_cols.values()) + list(value_cols.values())]
-        insert_cols = ", ".join(all_cols)
+        insert_cols = ", ".join(self.q(c) for c in all_cols)
         insert_vals = ", ".join(all_vals)
 
         sql = (

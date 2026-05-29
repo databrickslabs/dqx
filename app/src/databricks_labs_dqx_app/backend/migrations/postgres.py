@@ -40,7 +40,13 @@ from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from ..pg_executor import run_trusted_sql
+# Import directly from the psycopg-free helpers module — NOT from
+# :mod:`..pg_executor`, which would transitively pull in :mod:`psycopg`
+# at module load. The migration runner itself only needs the trust-
+# boundary wrappers; deferring the heavy psycopg import to the
+# executor's own users keeps this module importable in Delta-only
+# environments (e.g. the dqx-library integration test rig).
+from ..pg_cursor_helpers import run_parameterized_sql, run_trusted_sql
 from ..sql_executor import OltpExecutorProtocol
 
 logger = logging.getLogger(__name__)
@@ -340,7 +346,6 @@ class PgMigrationRunner:
         compound string.
         """
         formatted = migration.sql.format(schema=self._schema_q)
-        escaped_desc = migration.description.replace("'", "''")
         with self._exec.connection() as conn:
             with conn.cursor() as cur:
                 for stmt in formatted.split(";"):
@@ -349,10 +354,22 @@ class PgMigrationRunner:
                         run_trusted_sql(cur, stmt)
                 # Same transaction: either the whole migration lands
                 # *and* its version row is recorded, or nothing does.
-                run_trusted_sql(
+                #
+                # The template here is trusted (``self._meta_table`` is
+                # built via the executor's ``q()`` quoter at __init__),
+                # but ``migration.version`` / ``migration.description``
+                # are runtime values from a Python object — they MUST
+                # NOT be f-string-interpolated even with manual escaping.
+                # Routing them through ``run_parameterized_sql`` hands
+                # the binding to psycopg / libpq, which keeps the values
+                # out of the SQL string entirely. See the docstring on
+                # ``backend.pg_executor.run_trusted_sql`` for the full
+                # contract.
+                run_parameterized_sql(
                     cur,
                     f"INSERT INTO {self._meta_table} (version, description, applied_at) "
-                    f"VALUES ({migration.version}, '{escaped_desc}', CURRENT_TIMESTAMP)",
+                    "VALUES (%s, %s, CURRENT_TIMESTAMP)",
+                    (migration.version, migration.description),
                 )
             conn.commit()
         logger.info("Postgres migration v%d applied", migration.version)

@@ -89,8 +89,38 @@ def _executed_sqls(cursor_mock: MagicMock) -> list[str]:
 
 
 def _insert_meta_sqls(cursor_mock: MagicMock) -> list[str]:
-    """Just the ``INSERT INTO ...dq_migrations`` calls."""
+    """Just the ``INSERT INTO ...dq_migrations`` SQL templates."""
     return [s for s in _executed_sqls(cursor_mock) if "INSERT INTO" in s and "dq_migrations" in s]
+
+
+def _insert_meta_calls(cursor_mock: MagicMock) -> list[tuple[str, tuple[object, ...]]]:
+    """Return ``(sql_template, params)`` pairs for every meta-table INSERT.
+
+    Post-review the runner uses psycopg native parameter binding
+    (:func:`run_parameterized_sql` -> ``cur.execute(template, params)``)
+    rather than f-string-baking the version/description into the SQL
+    string. Tests assert on the bound ``params`` tuple rather than
+    on substrings of the template — manual escaping in the template
+    is exactly the pattern the security review rejected. See
+    ``backend.pg_executor.run_trusted_sql`` for the full contract.
+    """
+    out: list[tuple[str, tuple[object, ...]]] = []
+    for c in cursor_mock.execute.call_args_list:
+        sql = c.args[0]
+        if "INSERT INTO" in sql and "dq_migrations" in sql:
+            params = tuple(c.args[1]) if len(c.args) >= 2 else ()
+            out.append((sql, params))
+    return out
+
+
+def _insert_meta_versions(cursor_mock: MagicMock) -> list[object]:
+    """Just the migration-version values bound to dq_migrations INSERTs.
+
+    The first positional ``%s`` in the template is ``version``; this
+    helper hands the test the *bound* values so assertions don't have
+    to know about the placeholder/params split.
+    """
+    return [params[0] for _, params in _insert_meta_calls(cursor_mock) if params]
 
 
 # ---------------------------------------------------------------------------
@@ -172,9 +202,15 @@ class TestRunAllDispatch:
 
         assert applied == 1
         cur = _cursor_of(exec_mock)
-        inserts = _insert_meta_sqls(cur)
+        inserts = _insert_meta_calls(cur)
         assert len(inserts) == 1
-        assert "VALUES (2," in inserts[0]
+        # Version 2 is bound through psycopg's parameter binder, not
+        # baked into the SQL string.
+        assert _insert_meta_versions(cur) == [2]
+        # The template uses ``%s`` placeholders for both value
+        # columns — confirms we didn't regress to f-string interpolation.
+        template = inserts[0][0]
+        assert "VALUES (%s, %s," in template
         # v1's DDL must not be re-applied.
         sqls = _executed_sqls(cur)
         assert not any(".t1 " in s for s in sqls), "v1 DDL ran a second time"
@@ -234,13 +270,19 @@ class TestMigrationsInjection:
 
         assert runner.run_all() == len(fake)
         cur = _cursor_of(exec_mock)
-        inserts = _insert_meta_sqls(cur)
+        inserts = _insert_meta_calls(cur)
         # Only the injected versions land in dq_migrations — no leak
-        # from the production catalogue.
+        # from the production catalogue. The versions are bound via
+        # psycopg's parameter binder, so we read them from the
+        # ``params`` tuple rather than substring-searching the SQL.
         assert len(inserts) == len(fake)
-        assert any("VALUES (10," in s for s in inserts)
-        assert any("VALUES (11," in s for s in inserts)
-        assert not any(f"VALUES ({m.version}," in s for s in inserts for m in PG_MIGRATIONS)
+        bound_versions = _insert_meta_versions(cur)
+        assert 10 in bound_versions
+        assert 11 in bound_versions
+        production_versions = {m.version for m in PG_MIGRATIONS}
+        assert not (set(bound_versions) & production_versions), (
+            "Injected runner leaked production-catalogue versions: " f"{set(bound_versions) & production_versions}"
+        )
 
     def test_injected_list_is_snapshotted_defensively(self):
         """Mutating the caller's list after construction must not move the runner's view.
@@ -321,7 +363,7 @@ class TestApplyAtomicity:
         commit), the version row is never written, and the exception
         propagates so the next start retries cleanly."""
         # Inject a deterministic single migration via the constructor
-        # seam so we know exactly which cur.execute call should fail.
+        # seam so we know exactly which DDL statement should fail.
         fake_migration = PgMigration(
             version=42,
             description="failing test",
@@ -334,8 +376,25 @@ class TestApplyAtomicity:
 
         exec_mock = _make_executor(applied_versions=())
         cur = _cursor_of(exec_mock)
-        # Pass: t1 → succeed, t2 → succeed, t3 → boom. INSERT never reached.
-        cur.execute.side_effect = [None, None, RuntimeError("boom"), None, None]
+
+        # Content-keyed failure instead of a positional ``[None, None,
+        # RuntimeError, ...]`` list. The earlier form was brittle: if
+        # the runner ever changed how it splits or batches statements
+        # (e.g. adds an explicit ``BEGIN``, switches from per-statement
+        # ``execute`` to ``executemany``, or skips empty trailing
+        # tokens differently), the failure index would drift and the
+        # test would pass for the wrong reason — green even though the
+        # rollback path was never actually exercised. Keying the
+        # failure to a substring of the offending DDL means the test
+        # fails on the same statement regardless of how the runner
+        # batches around it.
+        boom_marker = ".t2 "  # space avoids matching the un-related ``t2x`` future-proofing
+
+        def _fail_on_t2(sql: str, *_args: object, **_kwargs: object) -> None:
+            if boom_marker in sql:
+                raise RuntimeError("boom")
+
+        cur.execute.side_effect = _fail_on_t2
 
         runner = PgMigrationRunner(exec_mock, migrations=[fake_migration])
         with pytest.raises(RuntimeError, match="boom"):
@@ -347,6 +406,26 @@ class TestApplyAtomicity:
         conn.commit.assert_not_called()
         # And the version row must never have been requested either.
         assert not _insert_meta_sqls(cur)
+
+        # The failing statement WAS the one we targeted (the assertion
+        # is what makes the content-keyed predicate load-bearing — if
+        # the runner stops emitting ``.t2`` entirely the test fails
+        # loudly here rather than silently). Equally, anything emitted
+        # AFTER ``.t2`` proves the abort path is broken: a single
+        # failed statement must stop the whole migration in its
+        # tracks, not "let it skip and move on".
+        sqls = _executed_sqls(cur)
+        assert any(boom_marker in s for s in sqls), (
+            "The targeted DDL statement was never issued — the runner "
+            "may have stopped emitting it, in which case the rollback "
+            "path is no longer exercised by this test."
+        )
+        idx_of_failure = next(i for i, s in enumerate(sqls) if boom_marker in s)
+        assert not any(".t3 " in s for s in sqls[idx_of_failure + 1 :]), (
+            "Runner kept executing DDL after a statement raised — the "
+            "transaction's all-or-nothing semantics rely on the loop "
+            "short-circuiting on first failure."
+        )
 
     def test_failure_in_first_migration_skips_subsequent_migrations(self):
         """A failed migration must short-circuit the rest of the run —

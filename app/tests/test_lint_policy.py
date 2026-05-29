@@ -181,9 +181,28 @@ class TestPsycopgExecutePyrightIgnorePolicy:
         """The helper that replaces the per-call ignores must exist
         and carry the trust-boundary docstring. If it gets renamed
         or deleted, this test fails loud rather than letting the
-        per-call pattern silently creep back in."""
-        from databricks_labs_dqx_app.backend.pg_executor import run_trusted_sql
+        per-call pattern silently creep back in.
 
+        The helper now lives in :mod:`backend.pg_cursor_helpers` (a
+        psycopg-free module — see that module's docstring), but is
+        re-exported by :mod:`backend.pg_executor` for back-compat.
+        Both import paths are pinned so a refactor that drops either
+        re-export breaks loudly here.
+        """
+        from databricks_labs_dqx_app.backend.pg_cursor_helpers import (
+            run_trusted_sql as run_trusted_sql_canonical,
+        )
+        from databricks_labs_dqx_app.backend.pg_executor import (
+            run_trusted_sql as run_trusted_sql_reexport,
+        )
+
+        assert run_trusted_sql_canonical is run_trusted_sql_reexport, (
+            "``backend.pg_executor.run_trusted_sql`` must be the SAME "
+            "object as ``backend.pg_cursor_helpers.run_trusted_sql`` — "
+            "a divergence means the re-export drifted from the canonical "
+            "definition and callers will silently use the wrong version."
+        )
+        run_trusted_sql = run_trusted_sql_canonical
         assert callable(run_trusted_sql), "run_trusted_sql must be a callable wrapper"
         doc = (run_trusted_sql.__doc__ or "").lower()
         # The docstring is the trust-boundary contract — these tokens
@@ -196,27 +215,223 @@ class TestPsycopgExecutePyrightIgnorePolicy:
                 "so the trust boundary is explicit in the helper "
                 "rather than implicit in the call sites."
             )
-
-    def test_pg_executor_call_sites_use_helper_not_raw_execute(self):
-        """Internal coverage: pg_executor.py's own ``execute``,
-        ``query``, ``query_dicts`` methods must route through
-        ``run_trusted_sql`` so the trust-boundary discipline starts
-        at the file that owns the helper. If a future change adds
-        a raw ``cur.execute(sql)`` here, the convention is already
-        breaking down."""
-        text = (SRC_ROOT / "databricks_labs_dqx_app" / "backend" / "pg_executor.py").read_text(encoding="utf-8")
-        # The helper body itself is the one legitimate ``cur.execute``
-        # site — every other call must use ``run_trusted_sql``.
-        # Counting matches is more robust than substring checks
-        # because someone could add a comment containing the literal.
-        raw_execute_calls = sum(1 for line in text.splitlines() if re.match(r"^\s*(_ = )?cur\.execute\(", line))
-        helper_calls = text.count("run_trusted_sql(cur,")
-        assert raw_execute_calls == 1, (
-            f"Expected exactly 1 raw ``cur.execute(...)`` in pg_executor.py "
-            f"(the body of ``run_trusted_sql`` itself), found {raw_execute_calls}. "
-            "New call sites must route through ``run_trusted_sql``."
+        # The narrowed contract (post-review) must explicitly point
+        # callers with RUNTIME values at the parameterised sibling
+        # helper / psycopg's native binding — otherwise a future
+        # reader sees only the LiteralString cast and assumes the
+        # helper sanitises everything.
+        assert "run_parameterized_sql" in doc or "cur.execute(sql, params)" in doc, (
+            "run_trusted_sql.__doc__ must point runtime-value callers "
+            "at ``run_parameterized_sql`` (or psycopg's native "
+            "``cur.execute(sql, params)`` binding) so the cast is not "
+            "mistaken for a value sanitiser."
         )
+
+    def test_run_parameterized_sql_helper_is_importable_and_documented(self):
+        """Sibling of :func:`run_trusted_sql` for the "trusted
+        template + runtime values" case. It centralises the same
+        ``cast(LiteralString, ...)`` discipline (so call sites do
+        NOT need ``# pyright: ignore``) while binding values through
+        psycopg's native parameter binding so f-string value
+        interpolation is structurally impossible at the call site.
+
+        Same dual-import pin as :func:`run_trusted_sql`: the canonical
+        definition lives in :mod:`backend.pg_cursor_helpers` and the
+        executor re-exports it. Both paths and identity-equality are
+        pinned."""
+        from databricks_labs_dqx_app.backend.pg_cursor_helpers import (
+            run_parameterized_sql as run_parameterized_sql_canonical,
+        )
+        from databricks_labs_dqx_app.backend.pg_executor import (
+            run_parameterized_sql as run_parameterized_sql_reexport,
+        )
+
+        assert run_parameterized_sql_canonical is run_parameterized_sql_reexport, (
+            "``backend.pg_executor.run_parameterized_sql`` must be the "
+            "SAME object as the canonical definition in "
+            "``backend.pg_cursor_helpers`` — re-export drift means "
+            "callers silently bind through the wrong version."
+        )
+        run_parameterized_sql = run_parameterized_sql_canonical
+        assert callable(run_parameterized_sql), "run_parameterized_sql must be a callable wrapper"
+        doc = (run_parameterized_sql.__doc__ or "").lower()
+        # Load-bearing tokens — explain the two halves of the
+        # contract (the template is trusted like in run_trusted_sql,
+        # the values go through psycopg's binder).
+        for token in ("literalstring", "trusted", "psycopg", "binding"):
+            assert token in doc, (
+                f"run_parameterized_sql.__doc__ must mention {token!r} "
+                "so the trust contract (trusted template + bound values) "
+                "is explicit in the helper."
+            )
+
+    def test_helper_bodies_are_the_only_raw_cursor_execute_sites(self):
+        """The two trust-boundary helper bodies in
+        :mod:`backend.pg_cursor_helpers` are the ONLY places in the
+        backend that may call ``cur.execute(...)`` directly. Every
+        other caller — pg_executor's own methods, the migration
+        runner, anything new — must route through the helpers so
+        the ``cast(LiteralString, ...)`` happens in exactly one
+        auditable place.
+
+        This is stricter than the previous form of the test (which
+        only checked ``pg_executor.py``): after the helpers moved
+        to their own psycopg-free module the executor file now
+        contains ZERO raw ``cur.execute`` calls, and the two
+        canonical raw calls live in ``pg_cursor_helpers.py``.
+        """
+        backend = SRC_ROOT / "databricks_labs_dqx_app" / "backend"
+        helpers_text = (backend / "pg_cursor_helpers.py").read_text(encoding="utf-8")
+        executor_text = (backend / "pg_executor.py").read_text(encoding="utf-8")
+
+        # The two helper bodies are the only legitimate raw call
+        # sites. Counting matches (rather than substring) keeps a
+        # comment that happens to mention ``cur.execute(`` from
+        # blowing the test up.
+        raw_in_helpers = sum(1 for line in helpers_text.splitlines() if re.match(r"^\s*(_ = )?cur\.execute\(", line))
+        raw_in_executor = sum(1 for line in executor_text.splitlines() if re.match(r"^\s*(_ = )?cur\.execute\(", line))
+
+        assert raw_in_helpers == 2, (
+            f"Expected exactly 2 raw ``cur.execute(...)`` in "
+            f"pg_cursor_helpers.py (the bodies of ``run_trusted_sql`` "
+            f"and ``run_parameterized_sql``), found {raw_in_helpers}. "
+            "If you added a third helper, update the policy test "
+            "deliberately rather than letting the count drift."
+        )
+        assert raw_in_executor == 0, (
+            f"Expected ZERO raw ``cur.execute(...)`` in pg_executor.py — "
+            f"every cursor call must route through ``run_trusted_sql`` / "
+            f"``run_parameterized_sql`` from ``backend.pg_cursor_helpers``. "
+            f"Found {raw_in_executor}."
+        )
+
+        # The executor must still USE the helpers — at minimum on its
+        # ``execute``, ``query``, and ``query_dicts`` data paths.
+        # Counting helper invocations protects against a refactor
+        # that silently routes a method through ``conn.execute`` or
+        # ``conn.cursor().execute`` directly.
+        helper_calls = executor_text.count("run_trusted_sql(cur,")
         assert helper_calls >= 3, (
             f"Expected at least 3 ``run_trusted_sql(cur, ...)`` call sites in "
             f"pg_executor.py (execute, query, query_dicts), found {helper_calls}."
+        )
+
+    def test_pg_cursor_helpers_is_psycopg_free_at_runtime(self):
+        """The whole point of splitting :mod:`backend.pg_cursor_helpers`
+        out of :mod:`backend.pg_executor` was to give consumers (notably
+        :mod:`backend.migrations.postgres`) a way to import the trust-
+        boundary helpers WITHOUT transitively pulling in :mod:`psycopg`.
+
+        That property breaks the moment someone moves the ``Cursor``
+        import out of the ``TYPE_CHECKING`` guard. This test pins both
+        halves of the contract — the file must (a) import ``Cursor``
+        from psycopg ONLY under the guard and (b) carry zero
+        unconditional ``import psycopg`` / ``from psycopg import …``
+        statements.
+
+        If a future change actually needs a runtime psycopg dependency
+        in this module, the helpers' purpose has changed and the
+        caller graph (especially ``migrations.postgres``) needs to be
+        re-audited; bumping this test deliberately at that point is
+        the intended remediation.
+        """
+        backend = SRC_ROOT / "databricks_labs_dqx_app" / "backend"
+        text = (backend / "pg_cursor_helpers.py").read_text(encoding="utf-8")
+
+        # Walk lines, tracking whether we are inside the
+        # ``if TYPE_CHECKING:`` block. Any ``import psycopg`` /
+        # ``from psycopg import …`` line OUTSIDE that block breaks
+        # the runtime-free promise.
+        in_type_checking_block = False
+        offenders: list[tuple[int, str]] = []
+        # A new top-level statement (non-indented, non-blank, non-comment)
+        # exits the ``if TYPE_CHECKING:`` indented block.
+        for lineno, line in enumerate(text.splitlines(), start=1):
+            stripped = line.strip()
+            if stripped.startswith("if TYPE_CHECKING") and stripped.endswith(":"):
+                in_type_checking_block = True
+                continue
+            if in_type_checking_block:
+                # Indented or blank/comment lines stay inside the guard;
+                # a non-indented, non-blank, non-comment line leaves it.
+                if line and not line.startswith((" ", "\t")) and not stripped.startswith("#"):
+                    in_type_checking_block = False
+            if in_type_checking_block:
+                continue
+            if re.match(r"^\s*(import\s+psycopg|from\s+psycopg(\s|\.))", line):
+                offenders.append((lineno, stripped))
+
+        assert not offenders, (
+            "pg_cursor_helpers.py imported psycopg outside the "
+            "``if TYPE_CHECKING:`` guard. That re-couples every "
+            "caller of these helpers (including ``migrations.postgres`` "
+            "and any future psycopg-free consumer) to psycopg, "
+            "undoing the whole point of the split. Offenders:\n"
+            + "\n".join(f"  line {n}: {snippet}" for n, snippet in offenders)
+        )
+
+        # And, defensively, confirm the guard exists at all — a
+        # refactor that drops it entirely would still pass the
+        # negative check above (no psycopg imports anywhere) but
+        # would mean the module no longer carries the type hints
+        # the call-sites rely on.
+        assert "if TYPE_CHECKING:" in text, (
+            "pg_cursor_helpers.py is expected to import ``Cursor`` "
+            "for type hints under an ``if TYPE_CHECKING:`` guard. "
+            "Dropping the guard means losing the type surface the "
+            "helpers' signatures are written against."
+        )
+
+    def test_migrations_postgres_does_not_transitively_import_psycopg(self):
+        """Companion of the previous test, from the consumer's side.
+
+        :mod:`backend.migrations.postgres` MUST be importable in an
+        environment that does NOT have :mod:`psycopg` installed.
+        Before the helper split, importing it would crash with
+        ``ModuleNotFoundError: psycopg`` because
+        ``from ..pg_executor import run_trusted_sql`` pulled in
+        psycopg via the executor's top-level imports.
+
+        We can't simulate "psycopg is not installed" cleanly in
+        unit tests, so we assert the structural precondition: the
+        runner imports the helpers from :mod:`pg_cursor_helpers`
+        (which is psycopg-free per the test above), not from
+        :mod:`pg_executor`. This catches a regression as soon as
+        anyone re-routes the import without realising the cost.
+        """
+        text = (SRC_ROOT / "databricks_labs_dqx_app" / "backend" / "migrations" / "postgres.py").read_text(
+            encoding="utf-8"
+        )
+
+        # The forbidden pattern: importing the trust-boundary
+        # helpers from ``pg_executor`` instead of ``pg_cursor_helpers``.
+        # Matches both relative (``..pg_executor``) and absolute
+        # (``databricks_labs_dqx_app.backend.pg_executor``) forms.
+        forbidden = re.compile(
+            r"^\s*from\s+(?:\.\.|databricks_labs_dqx_app\.backend\.)pg_executor\s+import\s+.*\b"
+            r"(run_trusted_sql|run_parameterized_sql)\b"
+        )
+        offenders = [(n, line) for n, line in enumerate(text.splitlines(), 1) if forbidden.match(line)]
+        assert not offenders, (
+            "migrations/postgres.py imports a trust-boundary helper "
+            "from ``backend.pg_executor`` — that re-couples the "
+            "migration runner to ``psycopg`` and resurrects the lazy-"
+            "import dance in ``app.py``. Import from "
+            "``backend.pg_cursor_helpers`` instead. Offenders:\n"
+            + "\n".join(f"  line {n}: {line.strip()}" for n, line in offenders)
+        )
+
+        # And confirm the migration runner DOES use the canonical
+        # psycopg-free import path — symmetric assertion so a
+        # refactor that deletes the helpers from the runner entirely
+        # (replacing with raw cursor calls) fails loudly here.
+        expected = re.compile(
+            r"^\s*from\s+(?:\.\.|databricks_labs_dqx_app\.backend\.)pg_cursor_helpers\s+import\s+.*\b"
+            r"(run_trusted_sql|run_parameterized_sql)\b"
+        )
+        assert any(expected.match(line) for line in text.splitlines()), (
+            "migrations/postgres.py is expected to import the trust-"
+            "boundary helpers from ``backend.pg_cursor_helpers``. "
+            "If the runner stopped using them, route every cursor "
+            "call through the helpers instead of dropping them."
         )
