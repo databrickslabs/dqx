@@ -297,18 +297,38 @@ class DQEngineCore(DQEngineCoreBase):
         validate_custom_check_functions: bool = True,
     ) -> ChecksValidationStatus:
         """
-        Validate checks defined as metadata to ensure they conform to the expected structure and types.
-        """
-        # --- Issue #1169: Semantic Validation Patch ---
-        for check in checks:
-            if isinstance(check, dict):
-                # Dig into the dictionary to find if there is an SQL expression
-                expr = check.get("kwargs", {}).get("expression") or check.get("expression")
-                if expr:
-                    SemanticValidator.validate_sql_expression(expr)
-        # ----------------------------------------------
+        Validate checks defined as metadata to ensure they conform to the expected
+        structure and types.
 
-        return ChecksValidator.validate_checks(checks, custom_check_functions, validate_custom_check_functions)
+        This method validates the presence of required keys, the existence and
+        callability of functions, the types of arguments passed to those functions,
+        and performs semantic validation to reject destructive SQL expressions.
+
+        Args:
+            checks: List of checks to apply to the DataFrame. Each check should be a dictionary.
+            custom_check_functions: Optional dictionary with custom check functions
+                (e.g., *globals()* of the calling module).
+            validate_custom_check_functions: If True, validate custom check functions.
+
+        Returns:
+            ChecksValidationStatus indicating the validation result.
+        """
+        # Run structural validation first; collect all errors into the status object.
+        status = ChecksValidator.validate_checks(checks, custom_check_functions, validate_custom_check_functions)
+
+        # Run semantic validation on top; add any findings into the same status.
+        for check in checks:
+            if not isinstance(check, dict):
+                continue
+            expr = check.get("kwargs", {}).get("expression") or check.get("expression")
+            if not expr:
+                continue
+            try:
+                SemanticValidator.validate_sql_expression(expr)
+            except ValueError as e:
+                status.add_error(str(e))
+
+        return status
 
     def get_invalid(self, df: DataFrame) -> DataFrame:
         """
