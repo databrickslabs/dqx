@@ -81,10 +81,12 @@ class OltpExecutorProtocol(Protocol):
         (``PgExecutor.catalog`` aliases ``database`` so portable code
         works on both backends).
         """
+        ...
 
     @property
     def schema(self) -> str:
         """The schema the executor operates against."""
+        ...
 
     def fqn(self, table: str) -> str:
         """Build a backend-specific fully-qualified path for *table*.
@@ -94,6 +96,7 @@ class OltpExecutorProtocol(Protocol):
         hand-rolled ``f"{x.catalog}.{x.schema}.{t}"`` so the dialect
         branch stays in one place.
         """
+        ...
 
     def q(self, identifier: str) -> str:
         """Dialect-aware identifier quoter (backticks on Delta, ANSI ``"`` on Postgres).
@@ -103,6 +106,7 @@ class OltpExecutorProtocol(Protocol):
         a hyphenated UC catalog like ``team-data``) survive
         interpolation into DDL.
         """
+        ...
 
     def json_literal_expr(self, json_str: str) -> str:
         """Render *json_str* as a backend-native JSON literal expression.
@@ -110,6 +114,7 @@ class OltpExecutorProtocol(Protocol):
         Delta wraps with :func:`parse_json`; Postgres uses ``::jsonb``.
         Always returns a safe-to-inline expression (escaping baked in).
         """
+        ...
 
     def ts_text(self, col: str) -> str:
         """Project a timestamp column as an ISO-string-safe expression.
@@ -118,6 +123,7 @@ class OltpExecutorProtocol(Protocol):
         column verbatim because :func:`backend.pg_executor._to_text`
         ISO-formats it during row coercion.
         """
+        ...
 
     def execute(self, sql: str, *, timeout_seconds: int = 120) -> None:
         """Run a non-returning statement and commit it."""
@@ -137,9 +143,11 @@ class OltpExecutorProtocol(Protocol):
         services that ``json.loads`` JSON columns work on both
         backends without dialect branches.
         """
+        ...
 
     def query_dicts(self, sql: str, *, timeout_seconds: int = 120) -> list[dict[str, str | None]]:
         """Like :meth:`query` but rows are column-name-keyed dicts."""
+        ...
 
     def upsert(
         self,
