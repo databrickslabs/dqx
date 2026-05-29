@@ -13,7 +13,17 @@ from .config import conf
 from .dependencies import get_sp_ws, set_oltp_executor
 from .logger import logger
 from .migrations import MigrationRunner
-from .migrations.postgres import PgMigrationRunner
+
+# ``PgMigrationRunner`` is intentionally NOT imported here. Its
+# module (`migrations.postgres`) eagerly imports ``pg_executor``,
+# which in turn imports ``psycopg`` — a Lakebase-only optional
+# dependency that is absent from the dqx-library test environment
+# (where `tests/integration/test_app_backend.py` lives). Importing
+# it at module load would make ``from ...backend.app import app``
+# raise ``ModuleNotFoundError: psycopg`` for every consumer that
+# only exercises the Delta path. The lazy import lives inside the
+# ``if conf.lakebase_enabled:`` branch in :func:`lifespan`,
+# matching the existing pattern for ``build_pg_executor``.
 from .routes import api_router
 from .services.scheduler_service import SchedulerService
 from .services.view_service import mark_tmp_schema_ready
@@ -209,6 +219,12 @@ async def lifespan(app: FastAPI):
     pg_executor = None
     if conf.lakebase_enabled:
         try:
+            # Lazy imports: see the module-load comment above the
+            # `from .migrations import MigrationRunner` line for
+            # the rationale. ``pg_executor`` and ``migrations.postgres``
+            # both pull in ``psycopg``, which the Delta-only test
+            # environment does not install.
+            from .migrations.postgres import PgMigrationRunner
             from .pg_executor import build_pg_executor
 
             pg_executor = await asyncio.to_thread(
