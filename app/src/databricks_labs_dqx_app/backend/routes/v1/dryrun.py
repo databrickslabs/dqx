@@ -14,6 +14,7 @@ from databricks_labs_dqx_app.backend.common.authorization import UserRole
 from databricks_labs_dqx_app.backend.config import AppConfig
 from databricks_labs_dqx_app.backend.dependencies import (
     CurrentUserRole,
+    get_app_settings_service,
     get_check_validator,
     get_conf,
     get_job_service,
@@ -23,7 +24,9 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_user_catalog_names,
     get_view_service,
     require_role,
+    require_runner,
 )
+from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 from databricks_labs_dqx_app.backend.logger import logger
 from databricks_labs_dqx_app.backend.models import (
@@ -106,6 +109,10 @@ async def list_validation_runs(
                     total_rows=int(v) if (v := row.get("total_rows")) else None,
                     valid_rows=int(v) if (v := row.get("valid_rows")) else None,
                     invalid_rows=int(v) if (v := row.get("invalid_rows")) else None,
+                    # ``is not None`` (vs the truthiness pattern above) so the UI
+                    # can distinguish "0 errors / warnings" from pre-migration NULLs.
+                    error_rows=int(v) if (v := row.get("error_rows")) is not None else None,
+                    warning_rows=int(v) if (v := row.get("warning_rows")) is not None else None,
                     created_at=row.get("created_at"),
                     run_type=row.get("run_type"),
                     error_message=row.get("error_message"),
@@ -122,7 +129,11 @@ async def list_validation_runs(
     "/batch-from-catalog",
     response_model=BatchRunFromCatalogOut,
     operation_id="batchRunFromCatalog",
-    dependencies=[require_role(*_NON_VIEWERS)],
+    # Executing approved rules from the Run Rules page is gated on the
+    # orthogonal runner role (admins are implicit runners). Authors and
+    # approvers without an explicit RUNNER mapping cannot trigger batch
+    # runs even though they would otherwise pass the _NON_VIEWERS check.
+    dependencies=[require_runner()],
 )
 def batch_run_from_catalog(
     body: BatchRunFromCatalogIn,
@@ -130,6 +141,7 @@ def batch_run_from_catalog(
     view_svc: Annotated[ViewService, Depends(get_view_service)],
     job_svc: Annotated[JobService, Depends(get_job_service)],
     rules_svc: Annotated[RulesCatalogService, Depends(get_rules_catalog_service)],
+    settings_svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
     app_conf: Annotated[AppConfig, Depends(get_conf)],
 ) -> BatchRunFromCatalogOut:
     """Read approved checks from the rules catalog for the given tables and submit dry-run jobs."""
@@ -139,6 +151,9 @@ def batch_run_from_catalog(
     user = obo_ws.current_user.me()
     requesting_user = user.user_name or "unknown"
     runs_table = f"{app_conf.catalog}.{app_conf.schema_name}.dq_validation_runs"
+
+    # Custom metrics apply globally — fetch once for the whole batch.
+    custom_metrics = settings_svc.get_custom_metrics()
 
     for table_fqn in body.table_fqns:
         try:
@@ -159,12 +174,14 @@ def batch_run_from_catalog(
             else:
                 view_fqn = view_svc.create_view(table_fqn)
 
-            config = {
+            config: dict[str, Any] = {
                 "checks": approved_checks,
                 "sample_size": body.sample_size,
                 "source_table_fqn": table_fqn,
                 "is_sql_check": is_sql_check,
             }
+            if custom_metrics:
+                config["custom_metrics"] = custom_metrics
             job_run_id = job_svc.submit_run(
                 task_type="dryrun",
                 view_fqn=view_fqn,
@@ -202,6 +219,7 @@ def submit_dry_run(
     view_svc: Annotated[ViewService, Depends(get_view_service)],
     job_svc: Annotated[JobService, Depends(get_job_service)],
     validate_checks_fn: Annotated[Callable[[list[Any]], ChecksValidationStatus], Depends(get_check_validator)],
+    settings_svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
     app_conf: Annotated[AppConfig, Depends(get_conf)],
 ) -> DryRunSubmitOut:
     """Validate checks, create a temporary view (OBO), and submit a dry-run job (SP)."""
@@ -239,6 +257,13 @@ def submit_dry_run(
         }
         if body.skip_history:
             config["skip_history"] = True
+        # Skip custom metrics for preview runs — they're scoped to small
+        # samples and have no downstream dashboard consumers, so the
+        # extra observer columns just add noise.
+        if not body.skip_history:
+            custom_metrics = settings_svc.get_custom_metrics()
+            if custom_metrics:
+                config["custom_metrics"] = custom_metrics
         job_run_id = job_svc.submit_run(
             task_type="dryrun",
             view_fqn=view_fqn,
@@ -490,6 +515,8 @@ def get_dry_run_results(
             total_rows=int(v) if (v := row.get("total_rows")) else None,
             valid_rows=int(v) if (v := row.get("valid_rows")) else None,
             invalid_rows=int(v) if (v := row.get("invalid_rows")) else None,
+            error_rows=int(v) if (v := row.get("error_rows")) is not None else None,
+            warning_rows=int(v) if (v := row.get("warning_rows")) is not None else None,
             error_summary=json.loads(error_summary_json),
             sample_invalid=json.loads(sample_invalid_json),
         )

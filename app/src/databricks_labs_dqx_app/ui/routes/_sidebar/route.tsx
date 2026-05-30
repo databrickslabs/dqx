@@ -31,7 +31,7 @@ export const Route = createFileRoute("/_sidebar")({
 
 function Layout() {
   const location = useLocation();
-  const { canCreateRules, isViewer } = usePermissions();
+  const { canCreateRules, canRunRules } = usePermissions();
 
   const isCreateActive =
     location.pathname.startsWith("/rules/create") ||
@@ -152,8 +152,10 @@ function Layout() {
 
             <hr className="my-2 border-sidebar-border" />
 
-            {/* Run Rules — hidden for viewers */}
-            {!isViewer && (
+            {/* Run Rules — only visible to users with the RUNNER role
+                (admins are implicit runners). Authors/approvers without
+                an explicit RUNNER mapping cannot see this entry. */}
+            {canRunRules && (
             <SidebarMenuItem>
               <Link
                 to="/runs"

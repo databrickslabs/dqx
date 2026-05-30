@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from databricks_labs_dqx_app.backend.common.authorization import ROLE_PRIORITY, UserRole
-from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
+from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
 logger = logging.getLogger(__name__)
@@ -31,15 +31,17 @@ class RoleMapping:
 
 
 class RoleService:
-    """Manages role-to-group mappings in a Delta table.
+    """Manages role-to-group mappings in ``dq_role_mappings``.
 
-    All operations use the app's service principal, not the calling user's
-    OBO token.
+    All operations use the app's service principal, not the calling
+    user's OBO token. The table lives on Lakebase Postgres when
+    Lakebase is enabled and on Delta otherwise — the injected
+    executor decides which.
     """
 
-    def __init__(self, sql: SqlExecutor) -> None:
+    def __init__(self, sql: OltpExecutorProtocol) -> None:
         self._sql = sql
-        self._table = f"{sql.catalog}.{sql.schema}.dq_role_mappings"
+        self._table = sql.fqn("dq_role_mappings")
         self._mappings_cache: list[RoleMapping] | None = None
         self._mappings_cache_expires: float = 0.0
 
@@ -50,7 +52,7 @@ class RoleService:
 
         sql = (
             f"SELECT role, group_name, created_by, "
-            f"CAST(created_at AS STRING), updated_by, CAST(updated_at AS STRING) "
+            f"{self._sql.ts_text('created_at')}, updated_by, {self._sql.ts_text('updated_at')} "
             f"FROM {self._table} ORDER BY role, group_name"
         )
         rows = self._sql.query(sql)
@@ -79,7 +81,7 @@ class RoleService:
         escaped_role = escape_sql_string(role)
         sql = (
             f"SELECT role, group_name, created_by, "
-            f"CAST(created_at AS STRING), updated_by, CAST(updated_at AS STRING) "
+            f"{self._sql.ts_text('created_at')}, updated_by, {self._sql.ts_text('updated_at')} "
             f"FROM {self._table} WHERE role = '{escaped_role}' ORDER BY group_name"
         )
         rows = self._sql.query(sql)
@@ -96,26 +98,29 @@ class RoleService:
         ]
 
     def create_mapping(self, role: str, group_name: str, user_email: str) -> RoleMapping:
-        """Create or update a role-to-group mapping."""
+        """Create or update a role-to-group mapping.
+
+        Dialect-agnostic — :meth:`OltpExecutorProtocol.upsert_with_audit`
+        with ``preserve_created=True`` handles the
+        ``MERGE INTO`` (Delta) / ``INSERT ... ON CONFLICT DO UPDATE``
+        (Postgres) choice so the original ``created_*`` survive on
+        UPDATE.
+        """
         if role not in [r.value for r in UserRole]:
             raise ValueError(f"Invalid role: {role}. Must be one of {[r.value for r in UserRole]}")
 
-        escaped_role = escape_sql_string(role)
-        escaped_group = escape_sql_string(group_name)
-        escaped_user = escape_sql_string(user_email)
-
-        sql = (
-            f"MERGE INTO {self._table} AS target "
-            f"USING (SELECT '{escaped_role}' AS role, '{escaped_group}' AS group_name) AS source "
-            "ON target.role = source.role AND target.group_name = source.group_name "
-            "WHEN MATCHED THEN UPDATE SET "
-            f"  updated_by = '{escaped_user}', "
-            "  updated_at = current_timestamp() "
-            "WHEN NOT MATCHED THEN INSERT (role, group_name, created_by, created_at, updated_by, updated_at) "
-            f"VALUES ('{escaped_role}', '{escaped_group}', '{escaped_user}', current_timestamp(), "
-            f"'{escaped_user}', current_timestamp())"
+        now = RawSql("now()")
+        self._sql.upsert_with_audit(
+            table=self._table,
+            key_cols={"role": role, "group_name": group_name},
+            value_cols={
+                "created_by": user_email,
+                "created_at": now,
+                "updated_by": user_email,
+                "updated_at": now,
+            },
+            preserve_created=True,
         )
-        self._sql.execute(sql)
         self.invalidate_mappings_cache()
         logger.info(f"Created/updated role mapping: {role} -> {group_name}")
 
@@ -139,7 +144,7 @@ class RoleService:
         logger.info(f"Deleted role mapping: {role} -> {group_name}")
 
     def resolve_role(self, user_groups: list[str], admin_group: str | None = None) -> UserRole:
-        """Determine user's highest role based on group membership.
+        """Determine user's highest *primary* role based on group membership.
 
         Args:
             user_groups: List of Databricks group names the user belongs to.
@@ -147,6 +152,13 @@ class RoleService:
 
         Returns:
             The highest priority role the user has, or VIEWER if no mappings match.
+
+        Note:
+            ``UserRole.RUNNER`` is **not** part of the primary-role hierarchy —
+            it's an additive role resolved separately by
+            :meth:`has_runner_role`. A user mapped only to RUNNER still has
+            ``VIEWER`` as their primary role; the runner privilege is
+            applied on top.
         """
         if admin_group and admin_group in user_groups:
             logger.debug(f"User in bootstrap admin group '{admin_group}', granting ADMIN")
@@ -172,13 +184,37 @@ class RoleService:
                     except ValueError:
                         logger.warning(f"Unknown role in mapping: {role_str}")
 
-        if not matched_roles:
-            logger.debug("User groups don't match any role mappings, defaulting to VIEWER")
-            return UserRole.VIEWER
-
+        # Walk the priority list (which excludes RUNNER) — this is what
+        # makes RUNNER orthogonal: it never up-ranks the primary role.
         for role in reversed(ROLE_PRIORITY):
             if role in matched_roles:
                 logger.debug(f"Resolved role: {role.value}")
                 return role
 
+        # Either there were no matches at all, or the only match was
+        # RUNNER (which is fine — primary role stays VIEWER, runner flag
+        # is applied separately).
+        logger.debug("No primary-role match (or runner-only); defaulting to VIEWER")
         return UserRole.VIEWER
+
+    def has_runner_role(self, user_groups: list[str], admin_group: str | None = None) -> bool:
+        """Return True if the user holds the orthogonal RUNNER role.
+
+        Resolution rules:
+        - Members of the bootstrap admin group are *always* runners (so
+          ADMINs never need an explicit RUNNER mapping).
+        - Otherwise, the user is a runner iff at least one of their groups
+          is mapped to ``UserRole.RUNNER`` in ``dq_role_mappings``.
+
+        This is intentionally separate from :meth:`resolve_role` so the
+        runner flag never bleeds into primary-role hierarchy comparisons.
+        """
+        if admin_group and admin_group in user_groups:
+            return True
+        mappings = self.list_mappings(use_cache=True)
+        if not mappings:
+            return False
+        runner_groups = {m.group_name for m in mappings if m.role == UserRole.RUNNER.value}
+        if not runner_groups:
+            return False
+        return any(g in runner_groups for g in user_groups)

@@ -29,7 +29,37 @@ from .services.rules_catalog_service import RulesCatalogService
 from .services.comments_service import CommentsService
 from .services.schedule_config_service import ScheduleConfigService
 from .services.view_service import ViewService
-from .sql_executor import SqlExecutor
+from .sql_executor import OltpExecutorProtocol, SqlExecutor
+
+# Process-wide OLTP executor. Constructed once at app startup by
+# ``app.lifespan`` and reused across all requests so the psycopg pool
+# isn't rebuilt per call. ``None`` means Lakebase is not configured and
+# the legacy Delta executor handles OLTP traffic instead.
+#
+# Annotated with :class:`OltpExecutorProtocol` so neither this module
+# nor downstream callers need to import :class:`PgExecutor` directly
+# — the Protocol is the only contract the OLTP plumbing depends on.
+# Avoids dragging psycopg into the import graph for Delta-only
+# deployments.
+_pg_executor: OltpExecutorProtocol | None = None
+
+
+def set_oltp_executor(executor: OltpExecutorProtocol | None) -> None:
+    """Register (or clear) the process-wide OLTP executor.
+
+    Called from :func:`backend.app.lifespan` after the connection pool
+    is open.  Keeping this in module state (rather than passing it
+    through every request) lets the FastAPI ``Depends`` graph stay
+    request-local while still sharing the pool.
+    """
+    global _pg_executor
+    _pg_executor = executor
+
+
+def get_oltp_executor() -> OltpExecutorProtocol | None:
+    """Return the registered OLTP executor or ``None`` if Lakebase is off."""
+    return _pg_executor
+
 
 _SP_TTL = 45 * 60  # 45 minutes
 _OBO_TTL = 45 * 60  # 45 minutes
@@ -116,6 +146,31 @@ async def get_obo_sql_executor(
     )
 
 
+async def get_sp_oltp_executor(
+    sp_sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+) -> OltpExecutorProtocol:
+    """Return the executor that owns the OLTP tables.
+
+    When Lakebase is configured the lifespan handler registers a
+    :class:`backend.pg_executor.PgExecutor` via :func:`set_oltp_executor`
+    and we hand it back to every OLTP service.  Otherwise we fall back
+    to the legacy Delta executor (``get_sp_sql_executor``) so existing
+    deployments keep working with no code changes on their side.
+
+    The return type is :class:`OltpExecutorProtocol` so every
+    downstream service annotation type-checks against the structural
+    surface shared by both executors. No ``cast`` is needed: both
+    :class:`SqlExecutor` and :class:`PgExecutor` structurally satisfy
+    the Protocol, so the type-checker validates every ``.execute()``,
+    ``.query()`` etc. call against a single source of truth instead
+    of being muted by a Delta-class cast around the Postgres path.
+    """
+    pg = get_oltp_executor()
+    if pg is None:
+        return sp_sql
+    return pg
+
+
 # ---------------------------------------------------------------------------
 # Service factories
 # ---------------------------------------------------------------------------
@@ -124,21 +179,26 @@ async def get_obo_sql_executor(
 async def get_migration_runner(
     sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
 ) -> MigrationRunner:
-    """Create a MigrationRunner using app (SP) credentials."""
+    """Create the Delta MigrationRunner using app (SP) credentials.
+
+    The Postgres :class:`PgMigrationRunner` is constructed separately
+    in :func:`backend.app.lifespan` because it needs the running
+    :class:`PgExecutor`, not a SQL warehouse executor.
+    """
     return MigrationRunner(sql=sql)
 
 
 async def get_app_settings_service(
-    sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+    sql: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
 ) -> AppSettingsService:
-    """Create an AppSettingsService using app (SP) credentials."""
+    """Create an AppSettingsService routed at the OLTP executor."""
     return AppSettingsService(sql=sql)
 
 
 async def get_role_service(
-    sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+    sql: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
 ) -> RoleService:
-    """Create a RoleService using app (SP) credentials."""
+    """Create a RoleService routed at the OLTP executor."""
     return RoleService(sql=sql)
 
 
@@ -155,9 +215,9 @@ async def get_ai_rules_service(
 
 
 async def get_rules_catalog_service(
-    sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+    sql: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
 ) -> RulesCatalogService:
-    """Create a RulesCatalogService using app (SP) credentials."""
+    """Create a RulesCatalogService routed at the OLTP executor."""
     return RulesCatalogService(sql=sql)
 
 
@@ -184,16 +244,16 @@ async def get_view_service(
 
 
 async def get_comments_service(
-    sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+    sql: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
 ) -> CommentsService:
-    """Create a CommentsService using app (SP) credentials."""
+    """Create a CommentsService routed at the OLTP executor."""
     return CommentsService(sql=sql)
 
 
 async def get_schedule_config_service(
-    sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+    sql: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
 ) -> ScheduleConfigService:
-    """Create a ScheduleConfigService using app (SP) credentials."""
+    """Create a ScheduleConfigService routed at the OLTP executor."""
     return ScheduleConfigService(sql=sql)
 
 
@@ -296,6 +356,61 @@ def require_role(*roles: UserRole):
 CurrentUserRole = Annotated[UserRole, Depends(get_user_role)]
 
 
+# ---------------------------------------------------------------------------
+# Runner role — orthogonal to the primary-role hierarchy
+# ---------------------------------------------------------------------------
+
+
+async def get_user_runner_flag(
+    email: Annotated[str, Depends(get_user_email)],
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    role_svc: Annotated[RoleService, Depends(get_role_service)],
+) -> bool:
+    """Return True iff the caller holds the orthogonal RUNNER role.
+
+    Admins are implicit runners (handled inside ``has_runner_role``).
+    On transient failures we degrade to ``False`` rather than 5xx so a
+    SCIM hiccup doesn't break the whole UI; gated endpoints will then
+    return 403 with a clearer message until the upstream recovers.
+    """
+    try:
+        user = await asyncio.to_thread(obo_ws.current_user.me)
+        user_groups = [g.display for g in (user.groups or []) if g.display]
+        return role_svc.has_runner_role(user_groups, conf.admin_group)
+    except Exception as exc:
+        logger.warning(
+            f"Runner-flag resolution failed for {email}, falling back to False: {exc}",
+            exc_info=True,
+        )
+        return False
+
+
+CurrentUserRunner = Annotated[bool, Depends(get_user_runner_flag)]
+
+
+def require_runner():
+    """Dependency that rejects callers who can't see the Run Rules page.
+
+    Implements the user-facing rule: admins always pass; non-admins must
+    be members of a group mapped to ``UserRole.RUNNER``. Other roles
+    (author/approver/viewer) by themselves do **not** grant runner
+    access — they need an explicit RUNNER mapping.
+    """
+
+    async def _check(
+        role: Annotated[UserRole, Depends(get_user_role)],
+        is_runner: Annotated[bool, Depends(get_user_runner_flag)],
+    ) -> bool:
+        if role == UserRole.ADMIN or is_runner:
+            return True
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Requires the 'runner' role. Ask an admin to assign your group to the Runner role.",
+        )
+
+    return Depends(_check)
+
+
 async def get_user_catalog_names(
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
 ) -> frozenset[str]:
@@ -317,6 +432,9 @@ __all__ = [
     "get_obo_ws",
     "get_sp_sql_executor",
     "get_obo_sql_executor",
+    "get_sp_oltp_executor",
+    "get_oltp_executor",
+    "set_oltp_executor",
     "get_conf",
     "get_check_validator",
     "get_migration_runner",
@@ -332,7 +450,10 @@ __all__ = [
     "get_comments_service",
     "get_schedule_config_service",
     "require_role",
+    "require_runner",
     "CurrentUserRole",
+    "CurrentUserRunner",
+    "get_user_runner_flag",
     "get_user_catalog_names",
     "rt",
 ]

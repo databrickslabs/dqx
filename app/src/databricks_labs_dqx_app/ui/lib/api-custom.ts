@@ -174,6 +174,8 @@ export interface ValidationRunSummaryOut {
   total_rows: number | null;
   valid_rows: number | null;
   invalid_rows: number | null;
+  error_rows: number | null;
+  warning_rows: number | null;
   created_at: string | null;
   error_message: string | null;
   checks: Record<string, unknown>[];
@@ -567,6 +569,7 @@ export interface QuarantineRecordOut {
   requesting_user: string | null;
   row_data: Record<string, unknown> | null;
   errors: unknown[] | null;
+  warnings: unknown[] | null;
   created_at: string | null;
 }
 
@@ -810,6 +813,164 @@ export const useSaveTimezone = <
   const { mutation: mutationOptions, axios: axiosOptions } = options ?? {};
   return useMutation({
     mutationFn: ({ data }: { data: TimezoneIn }) => saveTimezone(data, axiosOptions),
+    ...mutationOptions,
+  });
+};
+
+// ---------------------------------------------------------------------------
+// Label definitions (admin-managed catalog of label keys + allowed values).
+// The reserved key ``weight`` drives the weight selector on rule pages.
+// ---------------------------------------------------------------------------
+
+export interface LabelDefinition {
+  key: string;
+  description?: string | null;
+  values: string[];
+  allow_custom_values: boolean;
+}
+
+export interface LabelDefinitionsOut {
+  definitions: LabelDefinition[];
+}
+
+export interface LabelDefinitionsIn {
+  definitions: LabelDefinition[];
+}
+
+export const getLabelDefinitions = (
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<LabelDefinitionsOut>> =>
+  axios.default.get("/api/v1/config/label-definitions", options);
+
+export const getLabelDefinitionsQueryKey = () => ["label-definitions"] as const;
+
+export const useLabelDefinitions = <
+  TData = Awaited<ReturnType<typeof getLabelDefinitions>>["data"],
+  TError = AxiosError<unknown>,
+>(
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof getLabelDefinitions>>, TError, TData>>;
+    axios?: AxiosRequestConfig;
+  },
+): UseQueryResult<TData, TError> => {
+  const { query: queryOptions, axios: axiosOptions } = options ?? {};
+  return useQuery({
+    queryKey: queryOptions?.queryKey ?? getLabelDefinitionsQueryKey(),
+    queryFn: () => getLabelDefinitions(axiosOptions),
+    select: ((resp: Awaited<ReturnType<typeof getLabelDefinitions>>) => resp.data) as never,
+    staleTime: 5 * 60 * 1000,
+    ...queryOptions,
+  }) as UseQueryResult<TData, TError>;
+};
+
+export const saveLabelDefinitions = (
+  body: LabelDefinitionsIn,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<LabelDefinitionsOut>> =>
+  axios.default.put("/api/v1/config/label-definitions", body, options);
+
+export const useSaveLabelDefinitions = <
+  TError = AxiosError<unknown>,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof saveLabelDefinitions>>,
+      TError,
+      { data: LabelDefinitionsIn },
+      TContext
+    >;
+    axios?: AxiosRequestConfig;
+  },
+): UseMutationResult<
+  Awaited<ReturnType<typeof saveLabelDefinitions>>,
+  TError,
+  { data: LabelDefinitionsIn },
+  TContext
+> => {
+  const { mutation: mutationOptions, axios: axiosOptions } = options ?? {};
+  return useMutation({
+    mutationFn: ({ data }: { data: LabelDefinitionsIn }) => saveLabelDefinitions(data, axiosOptions),
+    ...mutationOptions,
+  });
+};
+
+// ---------------------------------------------------------------------------
+// Retention settings — global vs. quarantine-specific DELETE windows
+// surfaced for the admin Configuration page. Mirrors
+// ``backend/routes/v1/config.py``.
+// ---------------------------------------------------------------------------
+
+export interface RetentionSettingsOut {
+  retention_days: number;
+  quarantine_retention_days: number;
+  retention_days_default: number;
+  quarantine_retention_days_default: number;
+  retention_days_min: number;
+  retention_days_max: number;
+  retention_days_set: boolean;
+  quarantine_retention_days_set: boolean;
+}
+
+export interface RetentionSettingsIn {
+  retention_days?: number | null;
+  quarantine_retention_days?: number | null;
+}
+
+export const getRetentionSettings = (
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<RetentionSettingsOut>> =>
+  axios.default.get("/api/v1/config/retention", options);
+
+export const getRetentionSettingsQueryKey = () => ["retention-settings"] as const;
+
+export const useRetentionSettings = <
+  TData = Awaited<ReturnType<typeof getRetentionSettings>>["data"],
+  TError = AxiosError<unknown>,
+>(
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof getRetentionSettings>>, TError, TData>>;
+    axios?: AxiosRequestConfig;
+  },
+): UseQueryResult<TData, TError> => {
+  const { query: queryOptions, axios: axiosOptions } = options ?? {};
+  return useQuery({
+    queryKey: queryOptions?.queryKey ?? getRetentionSettingsQueryKey(),
+    queryFn: () => getRetentionSettings(axiosOptions),
+    select: ((resp: Awaited<ReturnType<typeof getRetentionSettings>>) => resp.data) as never,
+    staleTime: 5 * 60 * 1000,
+    ...queryOptions,
+  }) as UseQueryResult<TData, TError>;
+};
+
+export const saveRetentionSettings = (
+  body: RetentionSettingsIn,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<RetentionSettingsOut>> =>
+  axios.default.put("/api/v1/config/retention", body, options);
+
+export const useSaveRetentionSettings = <
+  TError = AxiosError<unknown>,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof saveRetentionSettings>>,
+      TError,
+      { data: RetentionSettingsIn },
+      TContext
+    >;
+    axios?: AxiosRequestConfig;
+  },
+): UseMutationResult<
+  Awaited<ReturnType<typeof saveRetentionSettings>>,
+  TError,
+  { data: RetentionSettingsIn },
+  TContext
+> => {
+  const { mutation: mutationOptions, axios: axiosOptions } = options ?? {};
+  return useMutation({
+    mutationFn: ({ data }: { data: RetentionSettingsIn }) => saveRetentionSettings(data, axiosOptions),
     ...mutationOptions,
   });
 };

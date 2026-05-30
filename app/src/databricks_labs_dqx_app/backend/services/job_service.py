@@ -92,8 +92,29 @@ class JobService:
         )
 
     def get_run_creator(self, job_run_id: int) -> str | None:
-        """Return the creator_user_name for a job run, or None if unavailable."""
+        """Return the requesting end-user for a job run, or None if unavailable.
+
+        All app-submitted jobs are run-as the service principal, so
+        ``run.creator_user_name`` is always the SP and can't be used for
+        ownership checks. The actual end user is propagated through the
+        ``requesting_user`` job parameter (set in :meth:`submit_run`); we
+        prefer that value, falling back to ``creator_user_name`` for
+        backwards compatibility with runs that predate parameter-based
+        attribution.
+        """
         run = self._ws.jobs.get_run(job_run_id)
+        # job_parameters surface as a list of JobParameter on the run; each
+        # entry exposes ``name`` and ``value``. We mirror the SDK shape
+        # defensively because both list-of-dataclass and dict shapes have
+        # appeared across SDK versions.
+        params = getattr(run, "job_parameters", None) or []
+        for param in params:
+            name = getattr(param, "name", None) if not isinstance(param, dict) else param.get("name")
+            if name != "requesting_user":
+                continue
+            value = getattr(param, "value", None) if not isinstance(param, dict) else param.get("value")
+            if value:
+                return value
         return run.creator_user_name
 
     def _record_running_placeholder(
@@ -108,18 +129,22 @@ class JobService:
         run_type: str | None = None,
         job_run_id: int | None = None,
     ) -> None:
-        """Insert a RUNNING placeholder row. Non-fatal on failure."""
-        from datetime import datetime, timezone
+        """Insert a RUNNING placeholder row. Non-fatal on failure.
+
+        ``created_at`` is now TIMESTAMP in the schema; we use
+        ``current_timestamp()`` rather than an ISO-string literal so the
+        warehouse stamps the value with its own clock and zone-mapping
+        works correctly on the cluster key.
+        """
         from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
-        now = datetime.now(timezone.utc).isoformat()
         er = escape_sql_string(run_id)
         eu = escape_sql_string(requesting_user)
         ef = escape_sql_string(source_table_fqn)
         ev = escape_sql_string(view_fqn)
 
         cols = f"run_id, requesting_user, source_table_fqn, view_fqn, {size_column}, status, created_at"
-        vals = f"'{er}', '{eu}', '{ef}', '{ev}', {int(size_value)}, 'RUNNING', '{now}'"
+        vals = f"'{er}', '{eu}', '{ef}', '{ev}', {int(size_value)}, 'RUNNING', current_timestamp()"
         if run_type:
             ert = escape_sql_string(run_type)
             cols += ", run_type"
@@ -180,16 +205,23 @@ class JobService:
             job_run_id=job_run_id,
         )
 
+    # ``updated_at`` and ``created_at`` are TIMESTAMP — cast to STRING so
+    # the existing query_dicts → JSON serialization keeps producing ISO
+    # values for the frontend without further plumbing.
     _PROFILE_COLS = (
         "run_id, requesting_user, source_table_fqn, view_fqn, sample_limit, "
         "rows_profiled, columns_profiled, duration_seconds, summary_json, "
-        "generated_rules_json, status, error_message, canceled_by, updated_at, created_at"
+        "generated_rules_json, status, error_message, canceled_by, "
+        "CAST(updated_at AS STRING) AS updated_at, "
+        "CAST(created_at AS STRING) AS created_at"
     )
 
     _DRYRUN_COLS = (
         "run_id, requesting_user, source_table_fqn, sample_size, "
-        "total_rows, valid_rows, invalid_rows, "
-        "status, error_message, canceled_by, updated_at, created_at, "
+        "total_rows, valid_rows, invalid_rows, error_rows, warning_rows, "
+        "status, error_message, canceled_by, "
+        "CAST(updated_at AS STRING) AS updated_at, "
+        "CAST(created_at AS STRING) AS created_at, "
         "COALESCE(run_type, 'dryrun') AS run_type, "
         "checks_json"
     )

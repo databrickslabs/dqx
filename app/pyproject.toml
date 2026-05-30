@@ -1,7 +1,7 @@
 [project]
 name = "databricks-labs-dqx-app"
 dynamic = ["version"]
-description = "App for Data Quality eXtended (DQX), a Python library for data quality monitoring"
+description = "DQX Studio for Data Quality eXtended (DQX), a Python library for data quality monitoring"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -12,12 +12,33 @@ dependencies = [
     "databricks-sdk~=0.73",
     "databricks-sql-connector[pyarrow]==4.2.5",
     "openpyxl>=3.1",
+    # Lakebase (Postgres) backend for OLTP state. ``binary`` ships a
+    # pre-built libpq so we don't need a system Postgres install at
+    # runtime; ``pool`` adds the threaded ConnectionPool used by
+    # PgExecutor.  Both are optional features of the same package.
+    "psycopg[binary,pool]>=3.2",
 ]
 
 [dependency-groups]
 dev = [
     "apx",
     "ruff>=0.14.7",
+]
+test = [
+    "pytest~=8.3",
+    "pytest-asyncio~=0.24",
+    "pytest-cov~=5.0",
+    "pytest-mock~=3.14",
+    "httpx~=0.28",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --strict-config"
+asyncio_mode = "auto"
+filterwarnings = [
+    "ignore::DeprecationWarning:pydantic.*",
+    "ignore::PendingDeprecationWarning",
 ]
 
 [tool.apx.metadata]
@@ -60,3 +81,61 @@ exclude = ["src/databricks_labs_dqx_app/ui"]
 line-length = 120
 target-version = "py311"
 
+[tool.ruff.lint]
+# ---------------------------------------------------------------------------
+# Project-wide policy on broad-except (BLE001).
+# ---------------------------------------------------------------------------
+# BLE001 ("Do not catch blind exception: ``Exception``") is intentionally
+# NOT in the active rule set. Several backend surfaces deliberately catch
+# the broad ``Exception`` because best-effort resilience is the contract,
+# not a code smell:
+#
+#   * Lifespan teardown — :meth:`pg_executor.PgExecutor.close` and the
+#     ``lifespan`` cleanup branch in ``backend.app``. A close() that
+#     raises would leak Postgres connections on every restart flap and
+#     could hang the worker indefinitely; the pool is already being torn
+#     down so the only meaningful action is "log and move on".
+#
+#   * Background-thread resilience —
+#     :meth:`pg_executor.PgExecutor._token_refresh_loop`. The refresher
+#     is a daemon thread that MUST NOT die: if a single SDK / network /
+#     OAuth failure killed it, the pool's tokens would silently expire
+#     and every subsequent connect would fail with confusing SCRAM
+#     errors. The loop logs and backs off instead.
+#
+#   * Route-level resilience wrappers — endpoints that swallow per-item
+#     exceptions so a single bad row doesn't 500 the whole list endpoint
+#     (config label-definition migration, optional check-function
+#     resolution, etc.).
+#
+# A narrower catch (e.g. ``(psycopg.Error, OSError)``) cannot cover
+# every plausible failure mode at these surfaces. The guarantee we need
+# is "this MUST NOT propagate", and that's exactly what ``except
+# Exception`` provides.
+#
+# Convention for any new broad-except site:
+#   1. Add an inline comment explaining the resilience contract — why
+#      narrowing would re-introduce a real failure mode. If you can't
+#      write the comment, you probably shouldn't use the broad catch.
+#   2. Do NOT add ``# noqa: BLE001``. Per AGENTS.md rule #6, per-line
+#      noqa is the wrong escape hatch.
+#   3. If a future change makes BLE001 worth enforcing project-wide,
+#      enable it here and add ``[tool.ruff.lint.per-file-ignores]``
+#      entries for the resilience files listed above — never per-line
+#      noqa.
+
+[tool.basedpyright]
+# ``apx dev check`` runs basedpyright but only syncs the default + dev
+# dependency groups, not ``test``. That means pytest (and the rest of the
+# test toolchain) is missing from the env basedpyright sees, which blows
+# up every ``import pytest`` with reportMissingImports. The mock-heavy
+# scheduler service tests also produce noisy reportAttributeAccessIssue
+# errors against ``MethodType`` because we monkey-patch service methods
+# with ``MagicMock()`` instances — basedpyright can't follow that without
+# the test deps and ``spec`` annotations on every mock.
+#
+# Tests are already type-checked at collection time by ``make app-test``,
+# which uses the proper ``--group test`` env, so excluding them from the
+# static check here removes the false positives without losing real
+# coverage.
+exclude = ["tests", "**/.venv", "**/__pycache__", "src/databricks_labs_dqx_app/__dist__"]

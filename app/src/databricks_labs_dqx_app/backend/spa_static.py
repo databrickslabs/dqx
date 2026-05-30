@@ -46,5 +46,9 @@ class SPAStaticFiles(StaticFiles):
             if exc.status_code == 404:
                 last_segment = path.rsplit("/", 1)[-1]
                 if not last_segment.endswith(_ASSET_EXTS):
-                    return await super().get_response("/index.html", scope)
+                    # ``index.html`` is intentionally relative — the parent's
+                    # ``lookup_path`` joins it onto ``self.directory``. A
+                    # leading slash would be treated as an absolute filesystem
+                    # path and fail the security check, breaking the fallback.
+                    return await super().get_response("index.html", scope)
             raise

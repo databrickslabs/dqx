@@ -2,7 +2,7 @@
 
 ## Overview
 
-FastAPI REST API serving as the DQX App backend. Deployed as a **Databricks App** with On-Behalf-Of (OBO) authentication. Serves both API endpoints (`/api/v1/*`) and the compiled React frontend as static files.
+FastAPI REST API serving as the DQX Studio backend. Deployed as a **Databricks App** with On-Behalf-Of (OBO) authentication. Serves both API endpoints (`/api/v1/*`) and the compiled React frontend as static files.
 
 ## Architecture
 
@@ -12,11 +12,12 @@ backend/
 ├── cache.py               # CacheFactory — async in-memory TTL cache + @cached decorator
 ├── config.py              # AppConfig (Pydantic BaseSettings, DQX_ env prefix)
 ├── dependencies.py        # FastAPI Depends() — OBO/SP auth, RBAC, services
-├── migrations/            # MigrationRunner — versioned DDL applied at startup
+├── migrations/            # MigrationRunner (Delta) + PgMigrationRunner (Lakebase)
 ├── models.py              # Pydantic request/response models
 ├── run_status_manager.py  # Helpers for reading/updating dq_validation_runs status
 ├── settings.py            # SettingsManager — per-user prefs in ~/.dqx/app.yml
 ├── sql_executor.py        # SqlExecutor — Databricks Statement Execution API wrapper
+├── pg_executor.py         # PgExecutor — Lakebase Postgres wrapper (parity API w/ SqlExecutor)
 ├── sql_utils.py           # Shared SQL helpers: escape_sql_string, validate_fqn, quote_fqn
 ├── runtime.py             # Runtime singleton (lazy WorkspaceClient)
 ├── logger.py              # Custom logging formatter
@@ -168,3 +169,120 @@ uv run uvicorn databricks_labs_dqx_app.backend.app:app --reload  # Dev server
 - **Scheduler:** runs in-process as an asyncio task, gated by an exclusive file lock (`/tmp/.dqx_scheduler.lock`) so only one uvicorn worker drives it. Disable with `DQX_SCHEDULER_DISABLED=1`.
 - **Caches:** `app_cache` (`cache.py`) is per-process in-memory with TTL. SP `WorkspaceClient`, OBO `WorkspaceClient`, and per-user catalog list are all cached. Use the `MISS` sentinel — never `is None` — to detect cache absence.
 - **SPA static files:** `spa_static.py` falls through to `index.html` only for non-asset paths (positive allowlist of asset extensions), so SPA routes containing dots still work.
+
+## Hybrid Storage Backend (Delta + Lakebase)
+
+The DQX Studio data model is split across two physical backends and the
+choice is driven entirely by `databricks.yml`:
+
+| Backend | Tables | Why |
+|---------|--------|-----|
+| **Delta Lake** (always) | `dq_validation_runs`, `dq_profiling_results`, `dq_quarantine_records`, `dq_metrics` | Spark task runner writes these; high-volume append-mostly; columnar reads. |
+| **Lakebase Postgres** *(default — opt-out via `lakebase_instance_name=""`)* | `dq_app_settings`, `dq_role_mappings`, `dq_quality_rules`, `dq_quality_rules_history`, `dq_comments`, `dq_schedule_configs`, `dq_schedule_configs_history`, `dq_schedule_runs` | Low-latency point reads/writes from FastAPI request handlers; row-level upserts; primary-key/foreign-key semantics. |
+
+When Lakebase is **disabled** (no `lakebase_instance_name` set), the OLTP
+tables fall back to Delta — `MigrationRunner` runs both
+`v1: Delta analytical baseline` *and* `v2: Delta OLTP fallback`. When
+Lakebase is **enabled**, only `v1` runs on Delta and `PgMigrationRunner`
+provisions the OLTP tables in Postgres.
+
+### Key types
+
+- `SqlExecutor` (`sql_executor.py`) wraps the Databricks Statement
+  Execution API for Delta.
+- `PgExecutor` (`pg_executor.py`) wraps `psycopg` + a `psycopg_pool.ConnectionPool`
+  for Lakebase. It mirrors `SqlExecutor`'s public surface: `execute`,
+  `query`, `query_dicts`, `upsert`, plus the dialect helpers
+  `q(identifier)`, `json_literal_expr(json_str)`, `ts_text(col)`. A
+  background daemon thread refreshes the OAuth password every
+  `DQX_LAKEBASE_TOKEN_REFRESH_MINUTES` minutes (default 50; tokens
+  expire at 60). The pool's `kwargs["password"]` is mutated in place
+  so subsequent connects pick up the new credential, and existing
+  connections age out via `max_lifetime`.
+- Services keep their `sql: SqlExecutor` annotation; the dependency
+  injection layer (`dependencies.get_sp_oltp_executor`) hands back
+  whichever executor is registered, casting to `SqlExecutor` because
+  the two classes share an identical method surface.
+- The `SchedulerService` accepts `oltp_sql: SqlExecutor | PgExecutor | None`
+  and routes OLTP-table SQL (schedule configs, settings, rules) to
+  the OLTP executor while keeping retention/GC against the Delta
+  executor.
+
+### Retention sweep (daily)
+
+The scheduler runs a `DELETE` pass against the analytical tables once
+per `_RETENTION_INTERVAL_HOURS` (24h). Two knobs, both stored in
+`dq_app_settings` and surfaced via `GET/PUT /api/v1/config/retention`:
+
+| Setting key                  | Default | Tables affected |
+|------------------------------|--------:|-----------------|
+| `retention_days`             | 90      | `dq_validation_runs`, `dq_profiling_results`, `dq_metrics`, plus the OLTP history tables (`dq_quality_rules_history`, `dq_schedule_configs_history`). Picked to match what trend dashboards expect. |
+| `quarantine_retention_days`  | 30      | `dq_quarantine_records` only. Tighter because that table holds the full source row payload (PII surface). |
+
+Both resolvers share a `_RETENTION_DAYS_MIN = 7` floor so a
+mis-typed setting can never wipe data inside the safety window. Reads
+swallow exceptions and fall back to the compiled-in default so a
+SQL-warehouse hiccup never crashes the scheduler tick.
+
+### Writing portable SQL inside services
+
+Always go through the executor's dialect helpers — never hard-code
+backticks, `parse_json(...)`, or `CAST(... AS STRING)`:
+
+```python
+self._sql.q("check")              # `check` (Delta) | "check" (Postgres)
+self._sql.json_literal_expr(j)    # parse_json('...') | '...'::jsonb
+self._sql.ts_text("created_at")   # CAST(created_at AS STRING) | created_at
+```
+
+For upserts, `SqlExecutor.upsert(table, key_cols, value_cols)` and
+`PgExecutor.upsert` take the same arguments. Pass
+`RawSql("current_timestamp()")` for timestamps — both backends rewrite
+to their native syntax.
+
+### Bundle / DAB conventions
+
+Stateful resources declared in `databricks.yml` with
+`lifecycle.prevent_destroy: true` (Databricks CLI 0.268+):
+
+* `resources.schemas.main_schema` — `dqx_studio` schema
+* `resources.schemas.tmp_schema` — `dqx_studio_tmp` schema
+* `resources.volumes.wheels` — wheels volume
+* `resources.database_instances.lakebase` — Lakebase Postgres instance
+  (autoscaling by default per [Lakebase Autoscaling](https://docs.databricks.com/aws/en/oltp/upgrade-to-autoscaling))
+
+The app connects to the always-present `databricks_postgres` admin
+database on the Lakebase instance — that's the default value of
+`lakebase_database_name` and the value the app→database binding
+wires up. On first start, the app creates its own `dqx_studio`
+Postgres schema inside `databricks_postgres` and runs migrations
+against it. Multiple apps can therefore share the same
+`databricks_postgres` on one Lakebase instance safely; each gets its
+own schema namespace.
+
+The bundle deliberately does NOT use `database_catalogs`. That DAB
+resource is the only way to *create* a custom logical Postgres
+database, but it also creates a Unity Catalog catalog as a side
+effect and therefore requires `CREATE CATALOG` on the metastore — a
+permission most app deployers don't hold. Connecting to the
+pre-existing `databricks_postgres` instead keeps the bundle fully
+declarative with no out-of-band bootstrap step and no metastore-level
+permissions assumed.
+
+`prevent_destroy` blocks `databricks bundle destroy` and any deploy
+that would force-replace a bundle-managed resource — the alternative
+is silent data loss. To intentionally tear one down: remove the flag,
+run `databricks bundle deployment unbind <key>`, then destroy. The
+app's `dqx_studio` Postgres schema lives below the resource layer
+DABs models, so `prevent_destroy` doesn't apply to it directly; the
+instance-level guard is what protects it.
+
+For workspaces where the schemas, volume, or Lakebase instance were
+provisioned out-of-band (e.g. by the legacy bootstrap script),
+one-time binding is required: `make app-bind PROFILE=... TARGET=...`.
+After bind, `bundle deploy` adopts the existing resources instead of
+trying to CREATE them.
+
+Privileges on UC objects for the auto-created app SP are still applied
+by `scripts/post_deploy_grants.sh` after each deploy — the app SP's
+UUID isn't known at bundle-write time.
