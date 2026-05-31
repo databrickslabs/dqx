@@ -492,9 +492,9 @@ Rules defined with `for_each_column` produce per-column errors with fingerprints
         run_id,
         run_time,
         input_location,
-        MAX(CASE WHEN metric_name = 'input_row_count'   THEN CAST(metric_value AS BIGINT) END) AS input_rows,
-        MAX(CASE WHEN metric_name = 'valid_row_count'   THEN CAST(metric_value AS BIGINT) END) AS valid_rows,
-        MAX(CASE WHEN metric_name = 'error_row_count'   THEN CAST(metric_value AS BIGINT) END) AS error_rows,
+        MAX(CASE WHEN metric_name = 'input_row_count' THEN CAST(metric_value AS BIGINT) END) AS input_rows,
+        MAX(CASE WHEN metric_name = 'valid_row_count' THEN CAST(metric_value AS BIGINT) END) AS valid_rows,
+        MAX(CASE WHEN metric_name = 'error_row_count' THEN CAST(metric_value AS BIGINT) END) AS error_rows,
         MAX(CASE WHEN metric_name = 'warning_row_count' THEN CAST(metric_value AS BIGINT) END) AS warning_rows,
         ROUND(
             MAX(CASE WHEN metric_name = 'error_row_count' THEN CAST(metric_value AS DOUBLE) END) /
@@ -658,7 +658,7 @@ This extends Recipe 7. Instead of the current error rate, you want the *first* r
         ```sql
         SELECT
         cm.check_name,
-        MIN(sm.run_time)               AS first_failure_time,
+        MIN(sm.run_time) AS first_failure_time,
         MIN_BY(sm.run_id, sm.run_time) AS first_failure_run_id
         FROM catalog.schema.summary_metrics sm
         LATERAL VIEW explode(from_json(metric_value, 'array<struct<check_name:string,error_count:bigint,warning_count:bigint>>')) AS cm
@@ -768,9 +768,9 @@ Recipe 10 tells you *when* a check first failed. This one gives you the rows. Re
         -- Same shape but grouped by day, swap DATE_TRUNC granularity as needed.
         SELECT
             DATE_TRUNC('day', run_time) AS run_day,
-            MAX(CASE WHEN metric_name = 'error_count'   THEN CAST(metric_value AS BIGINT) END) AS error_count,
+            MAX(CASE WHEN metric_name = 'error_count' THEN CAST(metric_value AS BIGINT) END) AS error_count,
             MAX(CASE WHEN metric_name = 'warning_count' THEN CAST(metric_value AS BIGINT) END) AS warning_count,
-            MAX(CASE WHEN metric_name = 'total_rows'    THEN CAST(metric_value AS BIGINT) END) AS total_rows
+            MAX(CASE WHEN metric_name = 'total_rows' THEN CAST(metric_value AS BIGINT) END) AS total_rows
         FROM catalog.schema.summary_metrics
         WHERE metric_name IN ('error_count', 'warning_count', 'total_rows')
         GROUP BY run_day
