@@ -42,6 +42,8 @@ Pick the row that matches what you already have, and jump to the recipe that use
 | A table name (multi-table run) | Runs for that specific table only | [8. Scoping to One Table](#8-scoping-to-one-table) |
 | A shared checks table | Rules partitioned by `run_config_name` | [9. Checks by Run Config](#9-checks-by-run-config) |
 | A failing check | The first run it appeared in | [10. First Failure per Check](#10-first-failure-per-check) |
+| A check name | All quarantine rows that failed that check | [11. All Failures per Check](#11-all-failures-per-check) |
+| A run or time window | Wide summary view with metrics as columns | [12. Summary Metrics Pivot](#12-summary-metrics-pivot) |
 
 New to the tables? Start with **[Recipe 1 - A quick peek at each table](#1-a-quick-peek-at-each-table)** for orientation.
 
@@ -696,6 +698,117 @@ This extends Recipe 7. Instead of the current error rate, you want the *first* r
         )
 
         display(first_failures_df)
+        ```
+    </TabItem>
+</Tabs>
+
+## 11. All Failures per Check
+
+**Goal**: Given a check name, find every quarantine row that failed that check across all runs.
+
+Recipe 10 tells you *when* a check first failed. This one gives you the rows. Replace `<your_check_name>` with the value from the `name` column in the error struct - the same value Recipe 5 surfaces under `e.name`.
+
+<Tabs>
+    <TabItem value="SQL" label="SQL" default>
+        ```sql
+        SELECT
+            t.*,
+            e.run_id,
+            e.name        AS check_name,
+            e.rule_fingerprint
+        FROM catalog.schema.quarantine_table t
+        LATERAL VIEW explode(t._errors) AS e
+        WHERE e.name = '<your_check_name>'
+        ORDER BY e.run_id DESC;
+        ```
+    </TabItem>
+    <TabItem value="Python" label="Python">
+        ```python
+        import pyspark.sql.functions as F
+
+        # Replace with the check name you want to inspect, same value as e.name in Recipe 5.
+        check_name = "<your_check_name>"
+
+        failures_df = (
+            spark.table("catalog.schema.quarantine_table")
+            .select("*", F.explode(F.col("_errors")).alias("e"))
+            .filter(F.col("e.name") == check_name)
+            .select("*", F.col("e.run_id"), F.col("e.name").alias("check_name"), F.col("e.rule_fingerprint"))
+            .drop("_errors", "_warnings", "e")
+            .orderBy(F.col("run_id").desc())
+        )
+
+        display(failures_df)
+        ```
+    </TabItem>
+</Tabs>
+
+## 12. Summary Metrics Pivot
+
+**Goal**: Transform the long-format summary metrics table into a wide view with one row per run and metric values as columns.
+
+`summary_metrics` stores one row per metric per run. Pivoting turns those rows into columns, making it straightforward to compare `error_count`, `warning_count`, and `total_rows` side by side. The second query groups by day instead of individual run - useful for dashboards and trend charts that extend Recipe 7.
+
+<Tabs>
+    <TabItem value="SQL" label="SQL" default>
+        ```sql
+        -- One row per run, metrics as columns.
+        SELECT *
+        FROM (
+            SELECT run_id, run_time, metric_name, CAST(metric_value AS BIGINT) AS metric_value
+            FROM catalog.schema.summary_metrics
+            WHERE metric_name IN ('error_count', 'warning_count', 'total_rows')
+        )
+        PIVOT (
+            MAX(metric_value)
+            FOR metric_name IN ('error_count', 'warning_count', 'total_rows')
+        )
+        ORDER BY run_time DESC;
+
+        -- Same shape but grouped by day, swap DATE_TRUNC granularity as needed.
+        SELECT
+            DATE_TRUNC('day', run_time) AS run_day,
+            MAX(CASE WHEN metric_name = 'error_count'   THEN CAST(metric_value AS BIGINT) END) AS error_count,
+            MAX(CASE WHEN metric_name = 'warning_count' THEN CAST(metric_value AS BIGINT) END) AS warning_count,
+            MAX(CASE WHEN metric_name = 'total_rows'    THEN CAST(metric_value AS BIGINT) END) AS total_rows
+        FROM catalog.schema.summary_metrics
+        WHERE metric_name IN ('error_count', 'warning_count', 'total_rows')
+        GROUP BY run_day
+        ORDER BY run_day DESC;
+        ```
+    </TabItem>
+    <TabItem value="Python" label="Python">
+        ```python
+        import pyspark.sql.functions as F
+
+        metrics = ["error_count", "warning_count", "total_rows"]
+
+        # One row per run, metrics as columns.
+        pivot_df = (
+            spark.table("catalog.schema.summary_metrics")
+            .filter(F.col("metric_name").isin(metrics))
+            .withColumn("metric_value", F.col("metric_value").cast("long"))
+            .groupBy("run_id", "run_time")
+            .pivot("metric_name", metrics)
+            .agg(F.max("metric_value"))
+            .orderBy(F.col("run_time").desc())
+        )
+
+        display(pivot_df)
+
+        # Group by daym change "day" to "week" or "month" as needed.
+        daily_df = (
+            spark.table("catalog.schema.summary_metrics")
+            .filter(F.col("metric_name").isin(metrics))
+            .withColumn("metric_value", F.col("metric_value").cast("long"))
+            .withColumn("run_day", F.date_trunc("day", F.col("run_time")))
+            .groupBy("run_day")
+            .pivot("metric_name", metrics)
+            .agg(F.max("metric_value"))
+            .orderBy(F.col("run_day").desc())
+        )
+
+        display(daily_df)
         ```
     </TabItem>
 </Tabs>
