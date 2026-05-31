@@ -93,8 +93,8 @@ Before any joins, it is good to look at what is actually in each table. One row 
 
 **What to notice:**
 
-- `summary_metrics` is in long format, one row per metric. To get a wide view, pivot on `metric_name` (recipe 7).
-- Output and quarantine rows look like your original data plus two array columns: `_errors` and `_warnings`. Each array element is a struct describing one issue.
+- `summary_metrics` is in long format, one row per metric per run. To get a wide view, pivot on `metric_name` (recipe 7).
+- Output and quarantine rows look like your original data plus two array columns: `_errors` and `_warnings`. Each array element is a struct describing one failed DQX check.
 - The checks table has a `rule_fingerprint` (a hash of one individual rule's definition - its function, arguments, and criticality) and a `rule_set_fingerprint` (a hash of the entire collection of rules active during a run). Both fingerprints appear inside each error and warning struct, which is how recipes 3 and 4 join back to the checks table.
 
 ## 2. Summary to Row-Level Errors
