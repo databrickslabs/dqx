@@ -714,12 +714,11 @@ Recipe 10 tells you *when* a check first failed. This one gives you the rows. Re
         SELECT
             t.*,
             e.run_id,
-            e.name        AS check_name,
+            e.name AS check_name,
             e.rule_fingerprint
         FROM catalog.schema.quarantine_table t
         LATERAL VIEW explode(t._errors) AS e
-        WHERE e.name = '<your_check_name>'
-        ORDER BY e.run_id DESC;
+        WHERE e.name = '<your_check_name>';
         ```
     </TabItem>
     <TabItem value="Python" label="Python">
@@ -747,7 +746,7 @@ Recipe 10 tells you *when* a check first failed. This one gives you the rows. Re
 
 **Goal**: Transform the long-format summary metrics table into a wide view with one row per run and metric values as columns.
 
-`summary_metrics` stores one row per metric per run. Pivoting turns those rows into columns, making it straightforward to compare `error_count`, `warning_count`, and `total_rows` side by side. The second query groups by day instead of individual run - useful for dashboards and trend charts that extend Recipe 7.
+`summary_metrics` stores one row per metric per run. Pivoting turns those rows into columns, making it straightforward to compare `input_row_count`, `error_row_count`, `warning_row_count`, and `valid_row_count` side by side. The second query groups by day instead of individual run - useful for dashboards and trend charts that extend Recipe 7.
 
 <Tabs>
     <TabItem value="SQL" label="SQL" default>
@@ -757,22 +756,23 @@ Recipe 10 tells you *when* a check first failed. This one gives you the rows. Re
         FROM (
             SELECT run_id, run_time, metric_name, CAST(metric_value AS BIGINT) AS metric_value
             FROM catalog.schema.summary_metrics
-            WHERE metric_name IN ('error_count', 'warning_count', 'total_rows')
+            WHERE metric_name IN ('input_row_count', 'error_row_count', 'warning_row_count', 'valid_row_count')
         )
         PIVOT (
             MAX(metric_value)
-            FOR metric_name IN ('error_count', 'warning_count', 'total_rows')
+            FOR metric_name IN ('input_row_count', 'error_row_count', 'warning_row_count', 'valid_row_count')
         )
         ORDER BY run_time DESC;
 
         -- Same shape but grouped by day, swap DATE_TRUNC granularity as needed.
         SELECT
-            DATE_TRUNC('day', run_time) AS run_day,
-            MAX(CASE WHEN metric_name = 'error_count' THEN CAST(metric_value AS BIGINT) END) AS error_count,
-            MAX(CASE WHEN metric_name = 'warning_count' THEN CAST(metric_value AS BIGINT) END) AS warning_count,
-            MAX(CASE WHEN metric_name = 'total_rows' THEN CAST(metric_value AS BIGINT) END) AS total_rows
+            DATE_TRUNC('day', run_time)                                                                 AS run_day,
+            MAX(CASE WHEN metric_name = 'input_row_count'   THEN CAST(metric_value AS BIGINT) END)     AS input_row_count,
+            MAX(CASE WHEN metric_name = 'error_row_count'   THEN CAST(metric_value AS BIGINT) END)     AS error_row_count,
+            MAX(CASE WHEN metric_name = 'warning_row_count' THEN CAST(metric_value AS BIGINT) END)     AS warning_row_count,
+            MAX(CASE WHEN metric_name = 'valid_row_count'   THEN CAST(metric_value AS BIGINT) END)     AS valid_row_count
         FROM catalog.schema.summary_metrics
-        WHERE metric_name IN ('error_count', 'warning_count', 'total_rows')
+        WHERE metric_name IN ('input_row_count', 'error_row_count', 'warning_row_count', 'valid_row_count')
         GROUP BY run_day
         ORDER BY run_day DESC;
         ```
@@ -781,7 +781,7 @@ Recipe 10 tells you *when* a check first failed. This one gives you the rows. Re
         ```python
         import pyspark.sql.functions as F
 
-        metrics = ["error_count", "warning_count", "total_rows"]
+        metrics = ["input_row_count", "error_row_count", "warning_row_count", "valid_row_count"]
 
         # One row per run, metrics as columns.
         pivot_df = (
@@ -796,7 +796,7 @@ Recipe 10 tells you *when* a check first failed. This one gives you the rows. Re
 
         display(pivot_df)
 
-        # Group by daym change "day" to "week" or "month" as needed.
+        # Group by day, change "day" to "week" or "month" as needed.
         daily_df = (
             spark.table("catalog.schema.summary_metrics")
             .filter(F.col("metric_name").isin(metrics))
