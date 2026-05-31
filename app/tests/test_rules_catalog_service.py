@@ -220,10 +220,11 @@ class TestFindDuplicates:
     def test_detects_existing_match(self, svc, sql_executor_mock):
         existing_check = {"check": {"function": "is_not_null", "arguments": {"column": "x"}}}
         # _row_to_entry expects 10 columns from _SELECT_COLS — emulate that.
+        # Column 1 is to_json(`check`): a bare check object, not an array.
         sql_executor_mock.query.return_value = [
             (
                 "a.b.c",
-                json.dumps([existing_check]),
+                json.dumps(existing_check),
                 1,
                 "draft",
                 "u@x",
@@ -243,7 +244,7 @@ class TestFindDuplicates:
         sql_executor_mock.query.return_value = [
             (
                 "a.b.c",
-                json.dumps([existing_check]),
+                json.dumps(existing_check),
                 1,
                 "rejected",  # rejected → not a duplicate
                 "u@x",
@@ -261,7 +262,7 @@ class TestFindDuplicates:
         sql_executor_mock.query.return_value = [
             (
                 "a.b.c",
-                json.dumps([existing_check]),
+                json.dumps(existing_check),
                 1,
                 "approved",
                 "u@x",

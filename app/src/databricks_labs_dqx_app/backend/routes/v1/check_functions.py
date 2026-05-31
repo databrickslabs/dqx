@@ -220,7 +220,18 @@ def _resolve_callable(name: str) -> Callable[..., Any] | None:
 
     try:
         return resolve_check_function(name, fail_on_missing=False)
-    except Exception as exc:  # noqa: BLE001 — defensive
+    except Exception as exc:
+        # Resolution can fail for reasons beyond "name not found":
+        # ``resolve_check_function`` triggers side-effect imports of
+        # optional check modules (PII, geo, etc.) that may not be
+        # installed on every deployment. A missing optional module
+        # raises ImportError; a syntactically-valid but broken module
+        # could raise AttributeError, TypeError, or anything its
+        # ``@register_rule`` evaluator throws. The contract here is
+        # "this endpoint must keep listing available functions even
+        # when one optional module misbehaves" — returning None lets
+        # the caller skip the broken entry without 500ing the whole
+        # registry endpoint. See the BLE001 policy in pyproject.toml.
         logger.warning("Failed to resolve DQX check function %r: %s", name, exc)
         return None
 

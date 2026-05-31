@@ -89,9 +89,61 @@ import { useActiveRuns, type ActiveRun } from "@/hooks/use-active-runs";
 import { getDryRunStatus, type RunStatusOut } from "@/lib/api";
 import { cancelDryRun } from "@/lib/api-custom";
 import { CircleStop, ShieldAlert } from "lucide-react";
-import { parseFqn, formatDateTime as formatDate } from "@/lib/format-utils";
+import { parseFqn, formatDateTime as formatDate, getUserMetadata, labelToken, tokenToLabel, formatLabel } from "@/lib/format-utils";
+import { LabelFilter, LabelsBadges, labelsMatchFilter } from "@/components/Labels";
 import { usePermissions } from "@/hooks/use-permissions";
 import { requireRunnerOrRedirect } from "@/lib/route-guards";
+
+// Collect every distinct ``(key, value)`` label seen on the checks of the
+// supplied approved rule sets. Used to populate ``<LabelFilter>`` dropdowns
+// on the Execute tab and the schedule editor.
+function collectAvailableLabels(
+  rules: RuleCatalogEntryOut[],
+): { key: string; value: string }[] {
+  const seen = new Set<string>();
+  const out: { key: string; value: string }[] = [];
+  for (const r of rules) {
+    for (const c of r.checks) {
+      const md = getUserMetadata(c as Record<string, unknown>);
+      for (const [k, v] of Object.entries(md)) {
+        const tok = labelToken(k, v);
+        if (!seen.has(tok)) {
+          seen.add(tok);
+          out.push({ key: k, value: v });
+        }
+      }
+    }
+  }
+  return out;
+}
+
+// True iff at least one check on ``rule`` carries a label that satisfies
+// the user's selection. Empty selection always passes.
+function ruleMatchesLabels(
+  rule: RuleCatalogEntryOut,
+  selected: Set<string>,
+): boolean {
+  if (selected.size === 0) return true;
+  return rule.checks.some((c) =>
+    labelsMatchFilter(getUserMetadata(c as Record<string, unknown>), selected),
+  );
+}
+
+// Merge every check's ``user_metadata`` for the rule set into a single
+// ``Record<string, string>`` for display next to the table name.
+// Most rule sets use the same labels across all checks; for the rare
+// case where a key has different values per check, last-write-wins —
+// the LabelFilter still shows every distinct ``(key, value)`` pair.
+function collectRuleLabels(rule: RuleCatalogEntryOut): Record<string, string> {
+  const merged: Record<string, string> = {};
+  for (const c of rule.checks) {
+    const md = getUserMetadata(c as Record<string, unknown>);
+    for (const [k, v] of Object.entries(md)) {
+      merged[k] = v;
+    }
+  }
+  return merged;
+}
 
 export const Route = createFileRoute("/_sidebar/runs")({
   // URL-level guard: aborts the route load before the page ever mounts
@@ -128,6 +180,11 @@ interface ScheduleConfig {
   scope_catalogs?: string[];
   scope_schemas?: string[];
   scope_tables?: string[];
+  // Optional label filter intersected with the FQN-based scope above. A rule
+  // set is included only if at least one of its checks carries a matching
+  // ``user_metadata`` label. Persisted as a list of ``{key, value}`` so the
+  // YAML round-trips cleanly and values containing ``=`` don't collide.
+  scope_labels?: { key: string; value: string }[];
   sample_size?: number;
 }
 
@@ -348,18 +405,40 @@ function ScopePicker({
     return Array.from(set).sort();
   }, [approvedRules]);
 
+  const availableLabels = useMemo(
+    () => collectAvailableLabels(approvedRules),
+    [approvedRules],
+  );
+
+  const selectedLabelTokens = useMemo(() => {
+    const set = new Set<string>();
+    for (const { key, value } of config.scope_labels ?? []) {
+      set.add(labelToken(key, value));
+    }
+    return set;
+  }, [config.scope_labels]);
+
+  const onLabelFilterChange = (selected: Set<string>) => {
+    const next = [...selected].map(tokenToLabel);
+    update({ scope_labels: next.length > 0 ? next : undefined });
+  };
+
   const matchedCount = useMemo(() => {
     return approvedRules.filter((r) => {
       const { catalog, schema } = parseFqn(r.table_fqn);
-      switch (config.scope_mode) {
-        case "all": return true;
-        case "catalog": return (config.scope_catalogs ?? []).includes(catalog);
-        case "schema": return (config.scope_schemas ?? []).includes(`${catalog}.${schema}`);
-        case "tables": return (config.scope_tables ?? []).includes(r.table_fqn);
-        default: return true;
-      }
+      const fqnMatches = (() => {
+        switch (config.scope_mode) {
+          case "all": return true;
+          case "catalog": return (config.scope_catalogs ?? []).includes(catalog);
+          case "schema": return (config.scope_schemas ?? []).includes(`${catalog}.${schema}`);
+          case "tables": return (config.scope_tables ?? []).includes(r.table_fqn);
+          default: return true;
+        }
+      })();
+      if (!fqnMatches) return false;
+      return ruleMatchesLabels(r, selectedLabelTokens);
     }).length;
-  }, [approvedRules, config]);
+  }, [approvedRules, config, selectedLabelTokens]);
 
   const toggleInList = (list: string[], item: string): string[] => {
     return list.includes(item) ? list.filter((x) => x !== item) : [...list, item];
@@ -442,7 +521,10 @@ function ScopePicker({
                   onClick={() => !disabled && update({ scope_tables: toggleInList(config.scope_tables ?? [], rule.table_fqn) })}
                 >
                   <Checkbox checked={(config.scope_tables ?? []).includes(rule.table_fqn)} onCheckedChange={() => update({ scope_tables: toggleInList(config.scope_tables ?? [], rule.table_fqn) })} disabled={disabled} />
-                  <span className="font-mono text-xs flex-1 truncate">{rule.display_name || rule.table_fqn}</span>
+                  <div className="flex items-center gap-2 flex-1 min-w-0 flex-wrap">
+                    <span className="font-mono text-xs truncate">{rule.display_name || rule.table_fqn}</span>
+                    <LabelsBadges labels={collectRuleLabels(rule)} max={3} size="xs" />
+                  </div>
                   <Badge variant="secondary" className="text-[10px]">{rule.checks.length} rule{rule.checks.length !== 1 ? "s" : ""}</Badge>
                 </div>
               ))}
@@ -450,6 +532,23 @@ function ScopePicker({
           )}
         </div>
       )}
+
+      <div className="grid gap-2">
+        <Label>Filter by labels (optional)</Label>
+        <div>
+          <LabelFilter
+            available={availableLabels}
+            selected={selectedLabelTokens}
+            onChange={onLabelFilterChange}
+            className="h-9 w-full justify-between"
+          />
+        </div>
+        {availableLabels.length === 0 && (
+          <p className="text-[11px] text-muted-foreground">
+            No labels found on approved rules — add labels to checks to use this filter.
+          </p>
+        )}
+      </div>
 
       <p className="text-xs text-muted-foreground">
         {matchedCount} of {approvedRules.length} approved rule set{approvedRules.length !== 1 ? "s" : ""} matched
@@ -495,16 +594,23 @@ function resolveScheduleScope(
   cfg: ScheduleConfig,
   approvedRules: RuleCatalogEntryOut[],
 ): string[] {
+  const labelTokens = new Set<string>(
+    (cfg.scope_labels ?? []).map(({ key, value }) => labelToken(key, value)),
+  );
   return approvedRules
     .filter((r) => {
       const { catalog, schema } = parseFqn(r.table_fqn);
-      switch (cfg.scope_mode) {
-        case "all": return true;
-        case "catalog": return (cfg.scope_catalogs ?? []).includes(catalog);
-        case "schema": return (cfg.scope_schemas ?? []).includes(`${catalog}.${schema}`);
-        case "tables": return (cfg.scope_tables ?? []).includes(r.table_fqn);
-        default: return true;
-      }
+      const fqnMatches = (() => {
+        switch (cfg.scope_mode) {
+          case "all": return true;
+          case "catalog": return (cfg.scope_catalogs ?? []).includes(catalog);
+          case "schema": return (cfg.scope_schemas ?? []).includes(`${catalog}.${schema}`);
+          case "tables": return (cfg.scope_tables ?? []).includes(r.table_fqn);
+          default: return true;
+        }
+      })();
+      if (!fqnMatches) return false;
+      return ruleMatchesLabels(r, labelTokens);
     })
     .map((r) => r.table_fqn);
 }
@@ -719,6 +825,7 @@ function ExecuteTab({ onGoToHistory }: { onGoToHistory: () => void }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [filterCatalog, setFilterCatalog] = useState<string>("__all__");
   const [filterSchema, setFilterSchema] = useState<string>("__all__");
+  const [labelFilter, setLabelFilter] = useState<Set<string>>(new Set());
   const [isRunning, setIsRunning] = useState(false);
   const [runNotification, setRunNotification] = useState<RunNotification | null>(null);
 
@@ -759,6 +866,11 @@ function ExecuteTab({ onGoToHistory }: { onGoToHistory: () => void }) {
     }
   }, [availableSchemas, filterSchema]);
 
+  const availableLabels = useMemo(
+    () => collectAvailableLabels(approvedRules),
+    [approvedRules],
+  );
+
   const filteredRules = useMemo(() => {
     return approvedRules.filter((r) => {
       const isSqlCheck = r.table_fqn.startsWith(_SQL_CHECK_PREFIX);
@@ -779,9 +891,10 @@ function ExecuteTab({ onGoToHistory }: { onGoToHistory: () => void }) {
         const q = searchQuery.toLowerCase();
         if (!(r.display_name || r.table_fqn).toLowerCase().includes(q)) return false;
       }
+      if (!ruleMatchesLabels(r, labelFilter)) return false;
       return true;
     });
-  }, [approvedRules, filterCatalog, filterSchema, searchQuery]);
+  }, [approvedRules, filterCatalog, filterSchema, searchQuery, labelFilter]);
 
   const grouped = useMemo(() => {
     const groups = new Map<string, RuleCatalogEntryOut[]>();
@@ -1071,6 +1184,13 @@ function ExecuteTab({ onGoToHistory }: { onGoToHistory: () => void }) {
                     </SelectContent>
                   </Select>
                 </div>
+
+                <LabelFilter
+                  available={availableLabels}
+                  selected={labelFilter}
+                  onChange={setLabelFilter}
+                  className="h-8"
+                />
 
                 <div className="relative flex-1 max-w-xs">
                   <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
@@ -1416,7 +1536,12 @@ function RuleTable({
                   onClick={(e: React.MouseEvent) => e.stopPropagation()}
                 />
               </td>
-              <td className="p-3 font-mono text-xs">{rule.display_name || rule.table_fqn}</td>
+              <td className="p-3 font-mono text-xs">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="truncate">{rule.display_name || rule.table_fqn}</span>
+                  <LabelsBadges labels={collectRuleLabels(rule)} max={3} size="xs" />
+                </div>
+              </td>
               <td className="p-3 text-right tabular-nums">{rule.checks.length}</td>
               <td className="p-3">
                 <div className="flex items-center gap-1.5">
@@ -1618,17 +1743,23 @@ function RunEditorError({ resetErrorBoundary }: { resetErrorBoundary: () => void
 // ===========================================================================
 
 function scopeLabel(cfg: ScheduleConfig): string {
-  switch (cfg.scope_mode) {
-    case "all": return "All approved rules";
-    case "catalog": return (cfg.scope_catalogs ?? []).join(", ") || "No catalogs";
-    case "schema": return (cfg.scope_schemas ?? []).join(", ") || "No schemas";
-    case "tables": {
-      const tables = cfg.scope_tables ?? [];
-      if (tables.length <= 2) return tables.join(", ") || "No tables";
-      return `${tables[0]}, ${tables[1]} +${tables.length - 2} more`;
+  const base = (() => {
+    switch (cfg.scope_mode) {
+      case "all": return "All approved rules";
+      case "catalog": return (cfg.scope_catalogs ?? []).join(", ") || "No catalogs";
+      case "schema": return (cfg.scope_schemas ?? []).join(", ") || "No schemas";
+      case "tables": {
+        const tables = cfg.scope_tables ?? [];
+        if (tables.length <= 2) return tables.join(", ") || "No tables";
+        return `${tables[0]}, ${tables[1]} +${tables.length - 2} more`;
+      }
+      default: return "All";
     }
-    default: return "All";
-  }
+  })();
+  const labels = cfg.scope_labels ?? [];
+  if (labels.length === 0) return base;
+  const labelStr = labels.map(({ key, value }) => formatLabel(key, value)).join(", ");
+  return `${base} · labels: ${labelStr}`;
 }
 
 function SchedulesListView({ isDeleting }: { isDeleting?: boolean }) {
@@ -1739,7 +1870,7 @@ function SchedulesListView({ isDeleting }: { isDeleting?: boolean }) {
                 </span>
               </td>
               <td className="px-4 py-3 text-muted-foreground">
-                {sched.config.sample_size != null ? sched.config.sample_size.toLocaleString() : "All rows"}
+                {sched.config.sample_size ? sched.config.sample_size.toLocaleString() : "All rows"}
               </td>
               <td className="px-4 py-3 text-muted-foreground text-xs">
                 {sched.updated_at ? formatDate(sched.updated_at) : sched.created_at ? formatDate(sched.created_at) : "—"}
@@ -2177,6 +2308,26 @@ function FormEditor({
         if (parsed.scope_catalogs) schedFromYaml.scope_catalogs = parsed.scope_catalogs;
         if (parsed.scope_schemas) schedFromYaml.scope_schemas = parsed.scope_schemas;
         if (parsed.scope_tables) schedFromYaml.scope_tables = parsed.scope_tables;
+        if (Array.isArray(parsed.scope_labels)) {
+          // Tolerate both the canonical ``[{key, value}]`` form and a
+          // ``["key=value"]`` shorthand that admins might hand-edit.
+          schedFromYaml.scope_labels = parsed.scope_labels
+            .map((entry: unknown) => {
+              if (entry && typeof entry === "object" && !Array.isArray(entry)) {
+                const e = entry as Record<string, unknown>;
+                if (typeof e.key === "string") {
+                  return { key: e.key, value: String(e.value ?? "") };
+                }
+              }
+              if (typeof entry === "string") {
+                const idx = entry.indexOf("=");
+                if (idx < 0) return { key: entry, value: "" };
+                return { key: entry.slice(0, idx), value: entry.slice(idx + 1) };
+              }
+              return null;
+            })
+            .filter((v: unknown): v is { key: string; value: string } => v !== null);
+        }
         if (parsed.sample_size != null) schedFromYaml.sample_size = parsed.sample_size;
         if (parsed.cron_expression) schedFromYaml.cron_expression = parsed.cron_expression;
         setScheduleConfig({ ...DEFAULT_SCHEDULE, ...schedFromYaml });
