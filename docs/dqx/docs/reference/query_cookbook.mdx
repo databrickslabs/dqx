@@ -714,11 +714,13 @@ Recipe 10 tells you *when* a check first failed. This one gives you the rows. Re
         SELECT
             t.*,
             e.run_id,
+            e.run_time,
             e.name AS check_name,
             e.rule_fingerprint
         FROM catalog.schema.quarantine_table t
         LATERAL VIEW explode(t._errors) AS e
-        WHERE e.name = '<your_check_name>';
+        WHERE e.name = '<your_check_name>'
+        ORDER BY e.run_time DESC;
         ```
     </TabItem>
     <TabItem value="Python" label="Python">
@@ -732,9 +734,9 @@ Recipe 10 tells you *when* a check first failed. This one gives you the rows. Re
             spark.table("catalog.schema.quarantine_table")
             .select("*", F.explode(F.col("_errors")).alias("e"))
             .filter(F.col("e.name") == check_name)
-            .select("*", F.col("e.run_id"), F.col("e.name").alias("check_name"), F.col("e.rule_fingerprint"))
+            .select("*", F.col("e.run_id"), F.col("e.run_time"), F.col("e.name").alias("check_name"), F.col("e.rule_fingerprint"))
             .drop("_errors", "_warnings", "e")
-            .orderBy(F.col("run_id").desc())
+            .orderBy(F.col("run_time").desc())
         )
 
         display(failures_df)
