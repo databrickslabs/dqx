@@ -658,7 +658,7 @@ This extends Recipe 7. Instead of the current error rate, you want the *first* r
         ```sql
         SELECT
         cm.check_name,
-        MIN(sm.run_time) AS first_failure_time,
+        MIN(sm.run_time) AS first_failure_time,
         MIN_BY(sm.run_id, sm.run_time) AS first_failure_run_id
         FROM catalog.schema.summary_metrics sm
         LATERAL VIEW explode(from_json(metric_value, 'array<struct<check_name:string,error_count:bigint,warning_count:bigint>>')) AS cm
@@ -768,11 +768,11 @@ Recipe 10 tells you *when* a check first failed. This one gives you the rows. Re
 
         -- Same shape but grouped by day, swap DATE_TRUNC granularity as needed.
         SELECT
-            DATE_TRUNC('day', run_time)                                                                 AS run_day,
-            MAX(CASE WHEN metric_name = 'input_row_count'   THEN CAST(metric_value AS BIGINT) END)     AS input_row_count,
-            MAX(CASE WHEN metric_name = 'error_row_count'   THEN CAST(metric_value AS BIGINT) END)     AS error_row_count,
-            MAX(CASE WHEN metric_name = 'warning_row_count' THEN CAST(metric_value AS BIGINT) END)     AS warning_row_count,
-            MAX(CASE WHEN metric_name = 'valid_row_count'   THEN CAST(metric_value AS BIGINT) END)     AS valid_row_count
+            DATE_TRUNC('day', run_time) AS run_day,
+            MAX(CASE WHEN metric_name = 'input_row_count' THEN CAST(metric_value AS BIGINT) END) AS input_row_count,
+            MAX(CASE WHEN metric_name = 'error_row_count' THEN CAST(metric_value AS BIGINT) END) AS error_row_count,
+            MAX(CASE WHEN metric_name = 'warning_row_count' THEN CAST(metric_value AS BIGINT) END) AS warning_row_count,
+            MAX(CASE WHEN metric_name = 'valid_row_count' THEN CAST(metric_value AS BIGINT) END) AS valid_row_count
         FROM catalog.schema.summary_metrics
         WHERE metric_name IN ('input_row_count', 'error_row_count', 'warning_row_count', 'valid_row_count')
         GROUP BY run_day
@@ -785,7 +785,7 @@ Recipe 10 tells you *when* a check first failed. This one gives you the rows. Re
 
         metrics = ["input_row_count", "error_row_count", "warning_row_count", "valid_row_count"]
 
-        # One row per run, metrics as columns.
+        # get the row counts per run, one row per run_id and run_time - metrics spread as columns.
         pivot_df = (
             spark.table("catalog.schema.summary_metrics")
             .filter(F.col("metric_name").isin(metrics))
@@ -798,7 +798,7 @@ Recipe 10 tells you *when* a check first failed. This one gives you the rows. Re
 
         display(pivot_df)
 
-        # Group by day, change "day" to "week" or "month" as needed.
+        # highest row counts per day across all runs, grouped by run_day - change "day" to "week" or "month" as needed.
         daily_df = (
             spark.table("catalog.schema.summary_metrics")
             .filter(F.col("metric_name").isin(metrics))
