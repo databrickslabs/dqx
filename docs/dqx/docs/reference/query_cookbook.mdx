@@ -4,6 +4,8 @@ title: Lineage Query Cookbook
 ---
 
 import Admonition from '@theme/Admonition';
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
 
 # Lineage Query Cookbook
 
@@ -61,30 +63,33 @@ The recipes below assume quarantine is configured. If it isn't, substitute `outp
 
 Before any joins, it is good to look at what is actually in each table. One row of each table tells you the grain of what a single row represents, which is the foundation for every aggregation you will write later.
 
-### SQL
-
+<Tabs>
+    <TabItem value="SQL" label="SQL" default>
 ```sql
--- Summary metrics: one row per metric per run
-SELECT * FROM catalog.schema.summary_metrics LIMIT 5;
+    -- Summary metrics: one row per metric per run
+    SELECT * FROM catalog.schema.summary_metrics LIMIT 5;
 
--- Output: clean rows only (no _errors or _warnings columns)
-SELECT * FROM catalog.schema.output_table LIMIT 5;
+    -- Output: rows without any errors (no _errors or _warnings columns)
+    SELECT * FROM catalog.schema.output_table LIMIT 5;
 
--- Quarantine: rows with any errors or warnings, with _errors and _warnings populated
-SELECT * FROM catalog.schema.quarantine_table LIMIT 5;
+    -- Quarantine: rows with any errors or warnings, with _errors and _warnings populated
+    SELECT * FROM catalog.schema.quarantine_table LIMIT 5;
 
--- Checks: one row per check definition
-SELECT * FROM catalog.schema.checks_table LIMIT 5;
-```
+    -- Checks: one row per check definition
+    SELECT * FROM catalog.schema.checks_table LIMIT 5;
+    ```
+    </TabItem>
+    <TabItem value="Python" label="Python">
+        ```python
+        display(spark.table("catalog.schema.summary_metrics").limit(5))
+        display(spark.table("catalog.schema.output_table").limit(5))
+        display(spark.table("catalog.schema.quarantine_table").limit(5))
+        display(spark.table("catalog.schema.checks_table").limit(5))
+        ```
+    </TabItem>
 
-### PySpark
+</Tabs>
 
-```python
-display(spark.table("catalog.schema.summary_metrics").limit(5))
-display(spark.table("catalog.schema.output_table").limit(5))
-display(spark.table("catalog.schema.quarantine_table").limit(5))
-display(spark.table("catalog.schema.checks_table").limit(5))
-```
 
 **What to notice:**
 
@@ -98,116 +103,118 @@ display(spark.table("catalog.schema.checks_table").limit(5))
 
 Start by getting a `run_id` from the summary table. Every recipe that takes a `run_id` as input begins here.
 
-### SQL
+<Tabs>
+    <TabItem value="SQL" label="SQL" default>
+        ```sql
+        -- Step 1: get a run_id. Adjust the filter or ordering to select a different run.
+        SELECT
+        run_id,
+        run_time,
+        output_location,
+        quarantine_location,
+        rule_set_fingerprint
+        FROM catalog.schema.summary_metrics
+        ORDER BY run_time DESC
+        LIMIT 1;
 
-```sql
--- Step 1: get a run_id. Adjust the filter or ordering to select a different run.
-SELECT
-  run_id,
-  run_time,
-  output_location,
-  quarantine_location,
-  rule_set_fingerprint
-FROM catalog.schema.summary_metrics
-ORDER BY run_time DESC
-LIMIT 1;
+        -- Step 2: replace <run_id> with a value from the query above.
+        SELECT t.*, e.*
+        FROM catalog.schema.quarantine_table t
+        LATERAL VIEW explode(t._errors) AS e
+        WHERE e.run_id = '<run_id>';
 
--- Step 2: replace <run_id> with a value from the query above.
-SELECT t.*, e.*
-FROM catalog.schema.quarantine_table t
-LATERAL VIEW explode(t._errors) AS e
-WHERE e.run_id = '<run_id>';
+        -- Use the same pattern with _warnings to inspect warning-level issues.
+        SELECT t.*, w.*
+        FROM catalog.schema.quarantine_table t
+        LATERAL VIEW explode(t._warnings) AS w
+        WHERE w.run_id = '<run_id>';
+        ```
+    </TabItem>
 
--- Use the same pattern with _warnings to inspect warning-level issues.
-SELECT t.*, w.*
-FROM catalog.schema.quarantine_table t
-LATERAL VIEW explode(t._warnings) AS w
-WHERE w.run_id = '<run_id>';
-```
+    <TabItem value="Python" label="Python">
+        ```python
+        import pyspark.sql.functions as F
 
-### PySpark
+        # Step 1: get a run_id from summary metrics.
+        latest = (
+            spark.table("catalog.schema.summary_metrics")
+            .orderBy(F.col("run_time").desc())
+            .first()
+        )
+        run_id = latest["run_id"]
+        quarantine_table = latest["quarantine_location"]
+        # spark.table() works when quarantine_location is a table name (e.g. catalog.schema.table).
+        # If it is a storage path (/Volumes/..., s3://..., abfss://...), use spark.read.format(...).load(quarantine_table) instead.
 
-```python
-import pyspark.sql.functions as F
+        # Step 2: explode errors and warnings for that run.
+        errors_df = (
+            spark.table(quarantine_table)
+            .select(F.explode(F.col("_errors")).alias("result"))
+            .select(F.expr("result.*"))
+            .filter(F.col("run_id") == run_id)
+        )
 
-# Step 1: get a run_id from summary metrics.
-latest = (
-    spark.table("catalog.schema.summary_metrics")
-    .orderBy(F.col("run_time").desc())
-    .first()
-)
-run_id = latest["run_id"]
-quarantine_table = latest["quarantine_location"]
-# spark.table() works when quarantine_location is a table name (e.g. catalog.schema.table).
-# If it is a storage path (/Volumes/..., s3://..., abfss://...), use spark.read.format(...).load(quarantine_table) instead.
+        warnings_df = (
+            spark.table(quarantine_table)
+            .select(F.explode(F.col("_warnings")).alias("result"))
+            .select(F.expr("result.*"))
+            .filter(F.col("run_id") == run_id)
+        )
 
-# Step 2: explode errors and warnings for that run.
-errors_df = (
-    spark.table(quarantine_table)
-    .select(F.explode(F.col("_errors")).alias("result"))
-    .select(F.expr("result.*"))
-    .filter(F.col("run_id") == run_id)
-)
-
-warnings_df = (
-    spark.table(quarantine_table)
-    .select(F.explode(F.col("_warnings")).alias("result"))
-    .select(F.expr("result.*"))
-    .filter(F.col("run_id") == run_id)
-)
-
-display(errors_df)
-display(warnings_df)
-```
+        display(errors_df)
+        display(warnings_df)
+        ```
+    </TabItem>
+</Tabs>
 
 ## 3. Row Details
 
 ### To Run Summary
 
 **Goal**: From a failing row, look up the run metadata in the summary table.
+<Tabs>
+    <TabItem value="SQL" label="SQL" default>
+        ```sql
+        SELECT sm.*
+        FROM catalog.schema.summary_metrics sm
+        INNER JOIN (
+        SELECT DISTINCT e.run_id
+        FROM catalog.schema.quarantine_table t
+        LATERAL VIEW explode(t._errors) AS e
+        UNION
+        SELECT DISTINCT w.run_id
+        FROM catalog.schema.quarantine_table t
+        LATERAL VIEW explode(t._warnings) AS w
+        ) runs ON sm.run_id = runs.run_id
+        ORDER BY sm.run_time DESC;
+        ```
+    </TabItem>
+    <TabItem value="Python" label="Python">
+        ```python
+        import pyspark.sql.functions as F
 
-#### SQL
+        quarantine_df = spark.table("catalog.schema.quarantine_table")
+        error_run_ids = (
+            quarantine_df
+            .select(F.explode(F.col("_errors")).alias("result"))
+            .select(F.expr("result.*"))
+            .select("run_id")
+        )
+        warning_run_ids = (
+            quarantine_df
+            .select(F.explode(F.col("_warnings")).alias("result"))
+            .select(F.expr("result.*"))
+            .select("run_id")
+        )
+        run_ids_df = error_run_ids.union(warning_run_ids).distinct()
 
-```sql
-SELECT sm.*
-FROM catalog.schema.summary_metrics sm
-INNER JOIN (
-  SELECT DISTINCT e.run_id
-  FROM catalog.schema.quarantine_table t
-  LATERAL VIEW explode(t._errors) AS e
-  UNION
-  SELECT DISTINCT w.run_id
-  FROM catalog.schema.quarantine_table t
-  LATERAL VIEW explode(t._warnings) AS w
-) runs ON sm.run_id = runs.run_id
-ORDER BY sm.run_time DESC;
-```
+        summary_df = spark.table("catalog.schema.summary_metrics")
+        result_df = summary_df.join(run_ids_df, on="run_id")
 
-#### PySpark
-
-```python
-import pyspark.sql.functions as F
-
-quarantine_df = spark.table("catalog.schema.quarantine_table")
-error_run_ids = (
-    quarantine_df
-    .select(F.explode(F.col("_errors")).alias("result"))
-    .select(F.expr("result.*"))
-    .select("run_id")
-)
-warning_run_ids = (
-    quarantine_df
-    .select(F.explode(F.col("_warnings")).alias("result"))
-    .select(F.expr("result.*"))
-    .select("run_id")
-)
-run_ids_df = error_run_ids.union(warning_run_ids).distinct()
-
-summary_df = spark.table("catalog.schema.summary_metrics")
-result_df = summary_df.join(run_ids_df, on="run_id")
-
-display(result_df)
-```
+        display(result_df)
+        ```
+    </TabItem>
+</Tabs>
 
 ### To Checks Table
 
@@ -217,52 +224,54 @@ display(result_df)
 Rules defined with `for_each_column` are stored as a single row in the checks table but expand into one error entry per column at runtime, each with its own `rule_fingerprint`. These per-column fingerprints do not match the parent row in the checks table, so those errors will not appear in the join results below. To inspect the originating rule for those errors, match on `rule_set_fingerprint` and `check.function` instead.
 </Admonition>
 
-#### SQL
+<Tabs>
+    <TabItem value="SQL" label="SQL" default>
+        ```sql
+        SELECT
+        e.name AS error_name,
+        e.message,
+        e.columns,
+        c.check.function,
+        c.check.arguments,
+        c.filter,
+        c.criticality
+        FROM catalog.schema.quarantine_table t
+        LATERAL VIEW explode(t._errors) AS e
+        INNER JOIN catalog.schema.checks_table c
+        ON e.rule_fingerprint = c.rule_fingerprint
+        AND e.rule_set_fingerprint = c.rule_set_fingerprint;
+        ```
+    </TabItem>
+    <TabItem value="Python" label="Python">
+        ```python
+        import pyspark.sql.functions as F
 
-```sql
-SELECT
-  e.name AS error_name,
-  e.message,
-  e.columns,
-  c.check.function,
-  c.check.arguments,
-  c.filter,
-  c.criticality
-FROM catalog.schema.quarantine_table t
-LATERAL VIEW explode(t._errors) AS e
-INNER JOIN catalog.schema.checks_table c
-  ON e.rule_fingerprint = c.rule_fingerprint
-  AND e.rule_set_fingerprint = c.rule_set_fingerprint;
-```
+        errors_df = (
+            spark.table("catalog.schema.quarantine_table")
+            .select(F.explode(F.col("_errors")).alias("result"))
+            .select(F.expr("result.*"))
+        )
 
-#### PySpark
+        checks_df = spark.table("catalog.schema.checks_table")
+        result_df = (
+            errors_df.alias("e")
+            .join(checks_df.alias("c"), on=["rule_fingerprint", "rule_set_fingerprint"])
+            .select(
+                F.col("e.name").alias("error_name"),
+                F.col("e.message"),
+                F.col("e.columns"),
+                F.col("c.check.function"),
+                F.col("c.check.arguments"),
+                F.col("c.filter"),
+                F.col("c.criticality"),
+            )
+        )
 
-```python
-import pyspark.sql.functions as F
+        display(result_df)
+        ```
+     </TabItem>
+</Tabs>
 
-errors_df = (
-    spark.table("catalog.schema.quarantine_table")
-    .select(F.explode(F.col("_errors")).alias("result"))
-    .select(F.expr("result.*"))
-)
-
-checks_df = spark.table("catalog.schema.checks_table")
-result_df = (
-    errors_df.alias("e")
-    .join(checks_df.alias("c"), on=["rule_fingerprint", "rule_set_fingerprint"])
-    .select(
-        F.col("e.name").alias("error_name"),
-        F.col("e.message"),
-        F.col("e.columns"),
-        F.col("c.check.function"),
-        F.col("c.check.arguments"),
-        F.col("c.filter"),
-        F.col("c.criticality"),
-    )
-)
-
-display(result_df)
-```
 
 ## 4. Summary to Checks Table
 
@@ -272,60 +281,61 @@ display(result_df)
 `checks_location` in the summary metrics table is `null` when checks were passed inline rather than loaded from a storage table. The queries below join on `rule_set_fingerprint` only, so they work either way - but you will need to know your checks table name upfront if `checks_location` is null.
 </Admonition>
 
-### SQL
+<Tabs>
+    <TabItem value="SQL" label="SQL" default>
+        ```sql
+        -- Get the rule set used in the latest run
+        SELECT c.*
+        FROM catalog.schema.checks_table c
+        INNER JOIN (
+        SELECT DISTINCT checks_location, rule_set_fingerprint
+        FROM catalog.schema.summary_metrics
+        WHERE run_id = '<run_id>'
+        ) sm
+        ON c.rule_set_fingerprint = sm.rule_set_fingerprint;
+        ```
+    </TabItem>
+    <TabItem value="Python" label="Python">
+        ```python
+        import pyspark.sql.functions as F
 
-```sql
--- Get the rule set used in the latest run
-SELECT c.*
-FROM catalog.schema.checks_table c
-INNER JOIN (
-  SELECT DISTINCT checks_location, rule_set_fingerprint
-  FROM catalog.schema.summary_metrics
-  WHERE run_id = '<run_id>'
-) sm
-ON c.rule_set_fingerprint = sm.rule_set_fingerprint;
-```
+        # Get rule_set_fingerprint from a specific run
+        summary_df = spark.table("catalog.schema.summary_metrics")
+        run_info = (
+            summary_df
+            .filter(F.col("run_id") == "<run_id>")
+            .select("rule_set_fingerprint")
+            .first()
+        )
 
-### PySpark
+        # Load the matching checks
+        checks_df = (
+            spark.table("catalog.schema.checks_table")
+            .filter(F.col("rule_set_fingerprint") == run_info["rule_set_fingerprint"])
+        )
 
-```python
-import pyspark.sql.functions as F
+        display(checks_df)
+        ```
+        <Admonition type="tip" title="Loading checks with DQX">
+        You can also load checks by fingerprint using DQX:
 
-# Get rule_set_fingerprint from a specific run
-summary_df = spark.table("catalog.schema.summary_metrics")
-run_info = (
-    summary_df
-    .filter(F.col("run_id") == "<run_id>")
-    .select("rule_set_fingerprint")
-    .first()
-)
+        ```python
+        from databricks.labs.dqx.engine import DQEngine
+        from databricks.labs.dqx.config import TableChecksStorageConfig
+        from databricks.sdk import WorkspaceClient
 
-# Load the matching checks
-checks_df = (
-    spark.table("catalog.schema.checks_table")
-    .filter(F.col("rule_set_fingerprint") == run_info["rule_set_fingerprint"])
-)
+        dq_engine = DQEngine(WorkspaceClient())
+        checks = dq_engine.load_checks(
+        config=TableChecksStorageConfig(
+            location="catalog.schema.checks_table",
+            rule_set_fingerprint="<fingerprint>",
+            )
+        )
+        ```
+        </Admonition>
+     </TabItem>
+</Tabs>
 
-display(checks_df)
-```
-
-<Admonition type="tip" title="Loading checks with DQX">
-You can also load checks by fingerprint using DQX:
-
-```python
-from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.config import TableChecksStorageConfig
-from databricks.sdk import WorkspaceClient
-
-dq_engine = DQEngine(WorkspaceClient())
-checks = dq_engine.load_checks(
-    config=TableChecksStorageConfig(
-        location="catalog.schema.checks_table",
-        rule_set_fingerprint="<fingerprint>",
-    )
-)
-```
-</Admonition>
 
 ## 5. Which Checks Failed for a Run
 
@@ -333,42 +343,44 @@ checks = dq_engine.load_checks(
 
 The `check_metrics` field in the summary table already contains a per-check breakdown - no joins needed for a quick summary.
 
-### SQL
+<Tabs>
+    <TabItem value="SQL" label="SQL" default>
+        ```sql
+        SELECT
+        cm.check_name,
+        cm.error_count,
+        cm.warning_count
+        FROM catalog.schema.summary_metrics
+        LATERAL VIEW explode(from_json(metric_value, 'array<struct<check_name:string,error_count:bigint,warning_count:bigint>>')) AS cm
+        WHERE run_id = '<run_id>'
+        AND metric_name = 'check_metrics'
+        AND (cm.error_count > 0 OR cm.warning_count > 0);
+        ```
+    </TabItem>
 
-```sql
-SELECT
-  cm.check_name,
-  cm.error_count,
-  cm.warning_count
-FROM catalog.schema.summary_metrics
-LATERAL VIEW explode(from_json(metric_value, 'array<struct<check_name:string,error_count:bigint,warning_count:bigint>>')) AS cm
-WHERE run_id = '<run_id>'
-  AND metric_name = 'check_metrics'
-  AND (cm.error_count > 0 OR cm.warning_count > 0);
-```
+    <TabItem value="Python" label="Python">
+        ```python
+        from pyspark.sql.types import ArrayType, StructType, StructField, StringType, LongType
+        import pyspark.sql.functions as F
 
-### PySpark
+        check_metrics_schema = ArrayType(StructType([
+            StructField("check_name", StringType()),
+            StructField("error_count", LongType()),
+            StructField("warning_count", LongType()),
+        ]))
 
-```python
-from pyspark.sql.types import ArrayType, StructType, StructField, StringType, LongType
-import pyspark.sql.functions as F
+        failed_checks_df = (
+            spark.table("catalog.schema.summary_metrics")
+            .filter((F.col("run_id") == "<run_id>") & (F.col("metric_name") == "check_metrics"))
+            .select(F.explode(F.from_json(F.col("metric_value"), check_metrics_schema)).alias("cm"))
+            .select("cm.*")
+            .filter((F.col("error_count") > 0) | (F.col("warning_count") > 0))
+        )
 
-check_metrics_schema = ArrayType(StructType([
-    StructField("check_name", StringType()),
-    StructField("error_count", LongType()),
-    StructField("warning_count", LongType()),
-]))
-
-failed_checks_df = (
-    spark.table("catalog.schema.summary_metrics")
-    .filter((F.col("run_id") == "<run_id>") & (F.col("metric_name") == "check_metrics"))
-    .select(F.explode(F.from_json(F.col("metric_value"), check_metrics_schema)).alias("cm"))
-    .select("cm.*")
-    .filter((F.col("error_count") > 0) | (F.col("warning_count") > 0))
-)
-
-display(failed_checks_df)
-```
+        display(failed_checks_df)
+        ```
+    </TabItem>
+</Tabs>
 
 If you also need the full check definition (function, arguments, filter), join to the checks table:
 
@@ -378,137 +390,146 @@ If you also need the full check definition (function, arguments, filter), join t
 Rules defined with `for_each_column` produce per-column errors with fingerprints that do not match the parent row in the checks table. Those rows will join with `null` check columns. See the same note in [Recipe 3](#3-row-details) for details.
 </Admonition>
 
-#### SQL
 
-```sql
-SELECT DISTINCT
-  e.name,
-  e.rule_fingerprint,
-  c.check.function,
-  c.check.arguments,
-  c.filter
-FROM catalog.schema.quarantine_table t
-LATERAL VIEW explode(t._errors) AS e
-LEFT JOIN catalog.schema.checks_table c
-  ON e.rule_fingerprint = c.rule_fingerprint
-  AND e.rule_set_fingerprint = c.rule_set_fingerprint
-WHERE e.run_id = '<run_id>';
-```
+<Tabs>
+    <TabItem value="SQL" label="SQL" default>
+        ```sql
+        SELECT DISTINCT
+        e.name,
+        e.rule_fingerprint,
+        c.check.function,
+        c.check.arguments,
+        c.filter
+        FROM catalog.schema.quarantine_table t
+        LATERAL VIEW explode(t._errors) AS e
+        LEFT JOIN catalog.schema.checks_table c
+        ON e.rule_fingerprint = c.rule_fingerprint
+        AND e.rule_set_fingerprint = c.rule_set_fingerprint
+        WHERE e.run_id = '<run_id>';
+        ```
+    </TabItem>
+    <TabItem value="Python" label="Python">
+        ```python
+        import pyspark.sql.functions as F
 
-#### PySpark
+        errors_df = (
+        spark.table("catalog.schema.quarantine_table")
+        .select(F.explode(F.col("_errors")).alias("result"))
+        .select(F.expr("result.*"))
+        .filter(F.col("run_id") == "<run_id>")
+        )
 
-```python
-import pyspark.sql.functions as F
+        checks_df = spark.table("catalog.schema.checks_table")
+        failed_checks_df = (
+        errors_df
+        .select(
+            F.col("name").alias("error_name"),
+            "rule_fingerprint",
+            "rule_set_fingerprint",
+        )
+        .distinct()
+        .join(checks_df, on=["rule_fingerprint", "rule_set_fingerprint"], how="left")
+        )
 
-errors_df = (
-    spark.table("catalog.schema.quarantine_table")
-    .select(F.explode(F.col("_errors")).alias("result"))
-    .select(F.expr("result.*"))
-    .filter(F.col("run_id") == "<run_id>")
-)
+        display(failed_checks_df)
+        ```
+    </TabItem>
+</Tabs>
 
-checks_df = spark.table("catalog.schema.checks_table")
-failed_checks_df = (
-    errors_df
-    .select(
-        F.col("name").alias("error_name"),
-        "rule_fingerprint",
-        "rule_set_fingerprint",
-    )
-    .distinct()
-    .join(checks_df, on=["rule_fingerprint", "rule_set_fingerprint"], how="left")
-)
 
-display(failed_checks_df)
-```
 
 ## 6. Which Rules Were Applied in a Run
 
 **Goal**: List all rules that were active for a given run, whether or not they produced failures.
 
-### SQL
+<Tabs>
+    <TabItem value="SQL" label="SQL" default>
+        ```sql
+        SELECT c.name, c.criticality, c.check.function, c.check.arguments, c.filter
+        FROM catalog.schema.checks_table c
+        WHERE c.rule_set_fingerprint = (
+        SELECT DISTINCT rule_set_fingerprint
+        FROM catalog.schema.summary_metrics
+        WHERE run_id = '<run_id>'
+        )
+        ORDER BY c.name;
+        ```
+    </TabItem>
 
-```sql
-SELECT c.name, c.criticality, c.check.function, c.check.arguments, c.filter
-FROM catalog.schema.checks_table c
-WHERE c.rule_set_fingerprint = (
-  SELECT DISTINCT rule_set_fingerprint
-  FROM catalog.schema.summary_metrics
-  WHERE run_id = '<run_id>'
-)
-ORDER BY c.name;
-```
+    <TabItem value="Python" label="Python">
+        ```python
+        import pyspark.sql.functions as F
 
-### PySpark
+        rsf = (
+        spark.table("catalog.schema.summary_metrics")
+        .filter(F.col("run_id") == "<run_id>")
+        .select("rule_set_fingerprint")
+        .first()["rule_set_fingerprint"]
+        )
 
-```python
-import pyspark.sql.functions as F
+        rules_df = (
+        spark.table("catalog.schema.checks_table")
+        .filter(F.col("rule_set_fingerprint") == rsf)
+        .select("name", "criticality", "check.function", "check.arguments", "filter")
+        .orderBy("name")
+        )
 
-rsf = (
-    spark.table("catalog.schema.summary_metrics")
-    .filter(F.col("run_id") == "<run_id>")
-    .select("rule_set_fingerprint")
-    .first()["rule_set_fingerprint"]
-)
-
-rules_df = (
-    spark.table("catalog.schema.checks_table")
-    .filter(F.col("rule_set_fingerprint") == rsf)
-    .select("name", "criticality", "check.function", "check.arguments", "filter")
-    .orderBy("name")
-)
-
-display(rules_df)
-```
+        display(rules_df)
+        ```
+    </TabItem>
+</Tabs>
 
 ## 7. Run Tracking Over Time
 
 **Goal**: Monitor data quality trends across runs with error rates, warning rates, and row counts.
 
-### SQL
+<Tabs>
+    <TabItem value="SQL" label="SQL" default>
+        ```sql
+        SELECT
+        run_id,
+        run_time,
+        input_location,
+        MAX(CASE WHEN metric_name = 'input_row_count'   THEN CAST(metric_value AS BIGINT) END) AS input_rows,
+        MAX(CASE WHEN metric_name = 'valid_row_count'   THEN CAST(metric_value AS BIGINT) END) AS valid_rows,
+        MAX(CASE WHEN metric_name = 'error_row_count'   THEN CAST(metric_value AS BIGINT) END) AS error_rows,
+        MAX(CASE WHEN metric_name = 'warning_row_count' THEN CAST(metric_value AS BIGINT) END) AS warning_rows,
+        ROUND(
+            MAX(CASE WHEN metric_name = 'error_row_count' THEN CAST(metric_value AS DOUBLE) END) /
+            NULLIF(MAX(CASE WHEN metric_name = 'input_row_count' THEN CAST(metric_value AS DOUBLE) END), 0) * 100,
+            2
+        ) AS error_rate_pct
+        FROM catalog.schema.summary_metrics
+        GROUP BY run_id, run_time, input_location
+        ORDER BY run_time DESC;
+        ```
+    </TabItem>
 
-```sql
-SELECT
-  run_id,
-  run_time,
-  input_location,
-  MAX(CASE WHEN metric_name = 'input_row_count'   THEN CAST(metric_value AS BIGINT) END) AS input_rows,
-  MAX(CASE WHEN metric_name = 'valid_row_count'   THEN CAST(metric_value AS BIGINT) END) AS valid_rows,
-  MAX(CASE WHEN metric_name = 'error_row_count'   THEN CAST(metric_value AS BIGINT) END) AS error_rows,
-  MAX(CASE WHEN metric_name = 'warning_row_count' THEN CAST(metric_value AS BIGINT) END) AS warning_rows,
-  ROUND(
-    MAX(CASE WHEN metric_name = 'error_row_count' THEN CAST(metric_value AS DOUBLE) END) /
-    NULLIF(MAX(CASE WHEN metric_name = 'input_row_count' THEN CAST(metric_value AS DOUBLE) END), 0) * 100,
-    2
-  ) AS error_rate_pct
-FROM catalog.schema.summary_metrics
-GROUP BY run_id, run_time, input_location
-ORDER BY run_time DESC;
-```
+    <TabItem value="Python" label="Python">
+        ```python
+        import pyspark.sql.functions as F
 
-### PySpark
+        summary_df = spark.table("catalog.schema.summary_metrics")
 
-```python
-import pyspark.sql.functions as F
+        trend_df = (
+            summary_df.filter(
+                F.col("metric_name").isin("input_row_count", "valid_row_count", "error_row_count", "warning_row_count")
+            )
+            .groupBy("run_id", "run_time", "input_location")
+            .pivot("metric_name")
+            .agg(F.first(F.col("metric_value").cast("double")))
+            .withColumn(
+                "error_rate_pct",
+                F.round(F.col("error_row_count") / F.col("input_row_count") * 100, 2),
+            )
+            .orderBy(F.col("run_time").desc())
+        )
 
-summary_df = spark.table("catalog.schema.summary_metrics")
+        display(trend_df)
+        ```
+    </TabItem>
+</Tabs>
 
-trend_df = (
-    summary_df.filter(
-        F.col("metric_name").isin("input_row_count", "valid_row_count", "error_row_count", "warning_row_count")
-    )
-    .groupBy("run_id", "run_time", "input_location")
-    .pivot("metric_name")
-    .agg(F.first(F.col("metric_value").cast("double")))
-    .withColumn(
-        "error_rate_pct",
-        F.round(F.col("error_row_count") / F.col("input_row_count") * 100, 2),
-    )
-    .orderBy(F.col("run_time").desc())
-)
-
-display(trend_df)
-```
 
 <Admonition type="tip" title="Alerting on trends">
 Use Databricks SQL Alerts on the run tracking
@@ -522,48 +543,51 @@ for more on monitoring best practices.
 
 This is the entry point for Recipes 2, 5, 6, and 7 in a multi-table setup. Without this filter, trend queries aggregate across all tables and produce meaningless mixed rates.
 
-### SQL
+<Tabs>
+    <TabItem value="SQL" label="SQL" default>
+        ```sql
+        -- List all distinct input tables tracked in the metrics table
+        SELECT DISTINCT input_location
+        FROM catalog.schema.summary_metrics
+        ORDER BY input_location;
 
-```sql
--- List all distinct input tables tracked in the metrics table
-SELECT DISTINCT input_location
-FROM catalog.schema.summary_metrics
-ORDER BY input_location;
+        -- Get the latest run for one specific input table
+        SELECT
+        run_id,
+        run_time,
+        input_location,
+        output_location,
+        quarantine_location,
+        checks_location,
+        rule_set_fingerprint
+        FROM catalog.schema.summary_metrics
+        WHERE input_location = 'catalog.schema.my_table'
+        ORDER BY run_time DESC
+        LIMIT 1;
+        ```
+    </TabItem>
+    <TabItem value="Python" label="Python">
+        ```python
+        import pyspark.sql.functions as F
 
--- Get the latest run for one specific input table
-SELECT
-  run_id,
-  run_time,
-  input_location,
-  output_location,
-  quarantine_location,
-  checks_location,
-  rule_set_fingerprint
-FROM catalog.schema.summary_metrics
-WHERE input_location = 'catalog.schema.my_table'
-ORDER BY run_time DESC
-LIMIT 1;
-```
+        summary_df = spark.table("catalog.schema.summary_metrics")
 
-### PySpark
+        # List all tracked input tables
+        summary_df.select("input_location").distinct().orderBy("input_location").display()
 
-```python
-import pyspark.sql.functions as F
+        # Get the latest run for a specific table
+        latest = (
+            summary_df
+            .filter(F.col("input_location") == "catalog.schema.my_table")
+            .orderBy(F.col("run_time").desc())
+            .first()
+        )
+        run_id = latest["run_id"]
+        ```
+    </TabItem>
+</Tabs>
 
-summary_df = spark.table("catalog.schema.summary_metrics")
 
-# List all tracked input tables
-summary_df.select("input_location").distinct().orderBy("input_location").display()
-
-# Get the latest run for a specific table
-latest = (
-    summary_df
-    .filter(F.col("input_location") == "catalog.schema.my_table")
-    .orderBy(F.col("run_time").desc())
-    .first()
-)
-run_id = latest["run_id"]
-```
 
 ## 9. Checks by Run Config
 
@@ -571,52 +595,55 @@ run_id = latest["run_id"]
 
 `run_config_name` is the partition key written by `save_checks`. The default value is `"default"`. When checks for different tables are saved to the same checks table with distinct `run_config_name` values (e.g. the table name), you must use the same value at load time or `load_checks` returns empty.
 
-### SQL
+<Tabs>
+    <TabItem value="SQL" label="SQL" default>
+        ```sql
+        -- List all run_config_name values in a shared checks table
+        SELECT DISTINCT run_config_name
+        FROM catalog.schema.checks_table
+        ORDER BY run_config_name;
 
-```sql
--- List all run_config_name values in a shared checks table
-SELECT DISTINCT run_config_name
-FROM catalog.schema.checks_table
-ORDER BY run_config_name;
+        -- Load checks for a specific run config
+        SELECT *
+        FROM catalog.schema.checks_table
+        WHERE run_config_name = 'catalog.schema.my_table'
+        ORDER BY name;
+        ```
+    </TabItem>
+    <TabItem value="Python" label="Python">
+        ```python
+        import pyspark.sql.functions as F
 
--- Load checks for a specific run config
-SELECT *
-FROM catalog.schema.checks_table
-WHERE run_config_name = 'catalog.schema.my_table'
-ORDER BY name;
-```
+        checks_df = spark.table("catalog.schema.checks_table")
 
-### PySpark
+        # List all run configs
+        checks_df.select("run_config_name").distinct().orderBy("run_config_name").display()
 
-```python
-import pyspark.sql.functions as F
+        # Load checks for a specific run config
+        checks_df.filter(F.col("run_config_name") == "catalog.schema.my_table").display()
+        ```
 
-checks_df = spark.table("catalog.schema.checks_table")
+        <Admonition type="tip" title="Loading with DQX">
+        Use `load_checks` with the matching `run_config_name` to get the rules as `DQRule` objects:
 
-# List all run configs
-checks_df.select("run_config_name").distinct().orderBy("run_config_name").display()
+        ```python
+        from databricks.labs.dqx.engine import DQEngine
+        from databricks.labs.dqx.config import TableChecksStorageConfig
+        from databricks.sdk import WorkspaceClient
 
-# Load checks for a specific run config
-checks_df.filter(F.col("run_config_name") == "catalog.schema.my_table").display()
-```
+        dq_engine = DQEngine(WorkspaceClient())
+        checks = dq_engine.load_checks(
+            config=TableChecksStorageConfig(
+                location="catalog.schema.checks_table",
+                run_config_name="catalog.schema.my_table",
+            )
+        )
+        ```
+        </Admonition>
+    </TabItem>
+</Tabs>
 
-<Admonition type="tip" title="Loading with DQX">
-Use `load_checks` with the matching `run_config_name` to get the rules as `DQRule` objects:
 
-```python
-from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.config import TableChecksStorageConfig
-from databricks.sdk import WorkspaceClient
-
-dq_engine = DQEngine(WorkspaceClient())
-checks = dq_engine.load_checks(
-    config=TableChecksStorageConfig(
-        location="catalog.schema.checks_table",
-        run_config_name="catalog.schema.my_table",
-    )
-)
-```
-</Admonition>
 
 ## 10. First Failure per Check
 
@@ -624,50 +651,51 @@ checks = dq_engine.load_checks(
 
 This extends Recipe 7. Instead of the current error rate, you want the *first* run_time a particular check failed - useful for correlating regressions with upstream changes.
 
-### SQL
+<Tabs>
+    <TabItem value="SQL" label="SQL" default>
+        ```sql
+        SELECT
+        cm.check_name,
+        MIN(sm.run_time)               AS first_failure_time,
+        MIN_BY(sm.run_id, sm.run_time) AS first_failure_run_id
+        FROM catalog.schema.summary_metrics sm
+        LATERAL VIEW explode(from_json(metric_value, 'array<struct<check_name:string,error_count:bigint,warning_count:bigint>>')) AS cm
+        WHERE metric_name = 'check_metrics'
+        AND cm.error_count > 0
+        GROUP BY cm.check_name
+        ORDER BY first_failure_time DESC;
+        ```
+    </TabItem>
+    <TabItem value="Python" label="Python">
+        ```python
+        from pyspark.sql.types import ArrayType, StructType, StructField, StringType, LongType
+        import pyspark.sql.functions as F
 
-```sql
-SELECT
-  cm.check_name,
-  MIN(sm.run_time)               AS first_failure_time,
-  MIN_BY(sm.run_id, sm.run_time) AS first_failure_run_id
-FROM catalog.schema.summary_metrics sm
-LATERAL VIEW explode(from_json(metric_value, 'array<struct<check_name:string,error_count:bigint,warning_count:bigint>>')) AS cm
-WHERE metric_name = 'check_metrics'
-  AND cm.error_count > 0
-GROUP BY cm.check_name
-ORDER BY first_failure_time DESC;
-```
+        check_metrics_schema = ArrayType(StructType([
+            StructField("check_name", StringType()),
+            StructField("error_count", LongType()),
+            StructField("warning_count", LongType()),
+        ]))
 
-### PySpark
+        first_failures_df = (
+            spark.table("catalog.schema.summary_metrics")
+            .filter(F.col("metric_name") == "check_metrics")
+            .select(
+                "run_id",
+                "run_time",
+                F.explode(F.from_json(F.col("metric_value"), check_metrics_schema)).alias("cm"),
+            )
+            .select("run_id", "run_time", F.col("cm.check_name"), F.col("cm.error_count"))
+            .filter(F.col("error_count") > 0)
+            .groupBy("check_name")
+            .agg(
+                F.min("run_time").alias("first_failure_time"),
+                F.min_by("run_id", "run_time").alias("first_failure_run_id"),
+            )
+            .orderBy(F.col("first_failure_time").desc())
+        )
 
-```python
-from pyspark.sql.types import ArrayType, StructType, StructField, StringType, LongType
-import pyspark.sql.functions as F
-
-check_metrics_schema = ArrayType(StructType([
-    StructField("check_name", StringType()),
-    StructField("error_count", LongType()),
-    StructField("warning_count", LongType()),
-]))
-
-first_failures_df = (
-    spark.table("catalog.schema.summary_metrics")
-    .filter(F.col("metric_name") == "check_metrics")
-    .select(
-        "run_id",
-        "run_time",
-        F.explode(F.from_json(F.col("metric_value"), check_metrics_schema)).alias("cm"),
-    )
-    .select("run_id", "run_time", F.col("cm.check_name"), F.col("cm.error_count"))
-    .filter(F.col("error_count") > 0)
-    .groupBy("check_name")
-    .agg(
-        F.min("run_time").alias("first_failure_time"),
-        F.min_by("run_id", "run_time").alias("first_failure_run_id"),
-    )
-    .orderBy(F.col("first_failure_time").desc())
-)
-
-display(first_failures_df)
-```
+        display(first_failures_df)
+        ```
+    </TabItem>
+</Tabs>
