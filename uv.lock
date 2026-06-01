@@ -1371,7 +1371,7 @@ dev = [
     { name = "pytest-benchmark", specifier = "~=5.1.0" },
     { name = "pytest-cov", specifier = "~=4.1.0" },
     { name = "pytest-mock", specifier = "~=3.14.0" },
-    { name = "pytest-rerunfailures", specifier = "~=14.0" },
+    { name = "pytest-rerunfailures", specifier = ">=14,<17" },
     { name = "pytest-timeout", specifier = "~=2.3.1" },
     { name = "pytest-xdist", specifier = "~=3.5.0" },
     { name = "ruff", specifier = "~=0.3.4" },
@@ -1406,7 +1406,7 @@ test = [
     { name = "pytest-benchmark", specifier = "~=5.1.0" },
     { name = "pytest-cov", specifier = "~=4.1.0" },
     { name = "pytest-mock", specifier = "~=3.14.0" },
-    { name = "pytest-rerunfailures", specifier = "~=14.0" },
+    { name = "pytest-rerunfailures", specifier = ">=14,<17" },
     { name = "pytest-timeout", specifier = "~=2.3.1" },
     { name = "pytest-xdist", specifier = "~=3.5.0" },
 ]
@@ -5228,15 +5228,15 @@ wheels = [
 
 [[package]]
 name = "pytest-rerunfailures"
-version = "14.0"
+version = "16.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "packaging" },
     { name = "pytest" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/cc/a4/6de45fe850759e94aa9a55cda807c76245af1941047294df26c851dfb4a9/pytest-rerunfailures-14.0.tar.gz", hash = "sha256:4a400bcbcd3c7a4ad151ab8afac123d90eca3abe27f98725dc4d9702887d2e92", size = 21350, upload-time = "2024-03-13T08:21:39.444Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/4d/f0/74f8e685be7ecd1572c1256132f18fce3a665d7e07649a3f23b7eb2d3bec/pytest_rerunfailures-16.3.tar.gz", hash = "sha256:37c9b1231c8083e9f4e724f50f7a21241822f9516c15c700ebbf218d6452355c", size = 34148, upload-time = "2026-05-22T06:51:22.292Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/dc/e7/e75bd157331aecc190f5f8950d7ea3d2cf56c3c57fb44da70e60b221133f/pytest_rerunfailures-14.0-py3-none-any.whl", hash = "sha256:4197bdd2eaeffdbf50b5ea6e7236f47ff0e44d1def8dae08e409f536d84e7b32", size = 12709, upload-time = "2024-03-13T08:21:37.199Z" },
+    { url = "https://files.pythonhosted.org/packages/f8/98/58a71d68d3126d7f6a6ed1944c37ec207a4ff3dc66cad3bed7b59d38df61/pytest_rerunfailures-16.3-py3-none-any.whl", hash = "sha256:6bdfb8ffb46c46072e6c16bdedee38b6c13eac620d9415ed5b63152cbf283170", size = 15396, upload-time = "2026-05-22T06:51:20.547Z" },
 ]
 
 [[package]]
