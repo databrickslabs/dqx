@@ -34,13 +34,11 @@ from databricks.labs.dqx.errors import InvalidPhysicalTypeError, ODCSContractErr
 from databricks.labs.dqx.telemetry import telemetry_logger
 from databricks.labs.dqx.package_utils import missing_required_packages
 
-# DQLLMEngine is referenced only as a type annotation on __init__. Eagerly
-# importing it forces the [llm] extras to be installed even for callers who
-# don't use text-based rules — and when those extras aren't installed, the
-# resulting ImportError is caught by a broad try/except in profiler/generator.py
-# which then disables the entire datacontract feature with a misleading
-# "install datacontract-cli" error. See #1168.
-if TYPE_CHECKING:
+# DQLLMEngine is referenced only as a type annotation. Eagerly importing it
+# requires installation of [llm] extras which may not be installed or wanted
+# by the user. If llm_engine is specified and [llm] extras are not installed,
+# an error is raised when instantiating the DataContractRulesGenerator.
+if TYPE_CHECKING:  # pragma: no cover
     from databricks.labs.dqx.llm.llm_engine import DQLLMEngine
 
 logger = logging.getLogger(__name__)
