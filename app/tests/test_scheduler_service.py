@@ -13,7 +13,6 @@ integration tests; here we keep the surface narrow and deterministic.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -27,22 +26,45 @@ from databricks_labs_dqx_app.backend.services.scheduler_service import (
 )
 
 
-def _make_service() -> SchedulerService:
-    """Construct a SchedulerService without invoking ``__init__``.
+# ---------------------------------------------------------------------------
+# Fixture
+#
+# The shared :func:`make_scheduler` factory (in ``conftest.py``) routes
+# through the real ``SchedulerService(...)`` constructor and injects mocks
+# via the public ``oltp_sql=`` parameter. We use ``distinct_sql=True`` and
+# ``distinct_tmp_sql=True`` because the view-GC tests need to inspect
+# ``_sql`` (in-use cross-check) and ``_tmp_sql`` (DROP VIEW execution) as
+# independently addressable mocks. The previous ``object.__new__`` +
+# private-attribute pattern coupled the tests to internal field names; the
+# helper makes the rename surface (``oltp_sql=`` constructor parameter)
+# the test contract instead.
+# ---------------------------------------------------------------------------
 
-    The real constructor builds two ``SqlExecutor`` instances (which
-    requires a ``WorkspaceClient`` and a warehouse id), neither of which
-    is needed for these tests. We bypass it via ``object.__new__`` and
-    set the handful of attributes the methods we test actually read.
+
+@pytest.fixture
+def gc_scheduler(make_scheduler):
+    """Construct a scheduler with distinct ``_sql`` and ``_tmp_sql`` mocks.
+
+    Returns ``(svc, mocks)``. ``mocks.sql`` is the analytical Delta
+    executor (for the in-use cross-check); ``mocks.tmp`` is the tmp-
+    schema executor (for SHOW VIEWS / DROP VIEW). ``_next_view_gc_at``
+    starts at year 2099 (the make_scheduler factory schedules a real
+    next-Saturday value; tests that exercise the GC schedule
+    explicitly override this).
     """
-    svc = object.__new__(SchedulerService)
-    svc._catalog = "main"
-    svc._schema = "dqx"
-    svc._tmp_schema = "dqx_tmp"
-    svc._sql = MagicMock(name="SqlExecutor (main schema)")
-    svc._tmp_sql = MagicMock(name="SqlExecutor (tmp schema)")
+    svc, mocks = make_scheduler(
+        catalog="main",
+        schema="dqx",
+        tmp_schema="dqx_tmp",
+        distinct_sql=True,
+        distinct_tmp_sql=True,
+    )
+    # Park the next-fire well into the future so tests opt into firing
+    # by overriding ``_next_view_gc_at`` explicitly. (This one field
+    # has no constructor seam because in production it's computed from
+    # the current wall clock — the override is an inherent test seam.)
     svc._next_view_gc_at = datetime(2099, 1, 1, tzinfo=timezone.utc)
-    return svc
+    return svc, mocks
 
 
 # ---------------------------------------------------------------------------
@@ -116,75 +138,75 @@ class TestNextSaturday01Utc:
 
 
 class TestGcOrphanViews:
-    def test_no_candidates_returns_quickly(self):
-        svc = _make_service()
-        svc._tmp_sql.query.return_value = []
+    def test_no_candidates_returns_quickly(self, gc_scheduler):
+        svc, mocks = gc_scheduler
+        mocks.tmp.query.return_value = []
         svc._gc_orphan_views()
         # No DROP VIEW issued.
-        svc._tmp_sql.execute.assert_not_called()
+        mocks.tmp.execute.assert_not_called()
 
-    def test_drops_eligible_views_skipping_in_use(self):
-        svc = _make_service()
+    def test_drops_eligible_views_skipping_in_use(self, gc_scheduler):
+        svc, mocks = gc_scheduler
         # Three candidates: tmp_view_aaaa1111, tmp_view_bbbb2222, tmp_view_cccc3333
-        svc._tmp_sql.query.return_value = [
+        mocks.tmp.query.return_value = [
             ("tmp_view_aaaa1111",),
             ("tmp_view_bbbb2222",),
             ("tmp_view_cccc3333",),
         ]
         # tmp_view_bbbb2222 is currently in use by a RUNNING dryrun
-        svc._sql.query.return_value = [("main.dqx_tmp.tmp_view_bbbb2222",)]
+        mocks.sql.query.return_value = [("main.dqx_tmp.tmp_view_bbbb2222",)]
         svc._gc_orphan_views()
 
-        executed = [c.args[0] for c in svc._tmp_sql.execute.call_args_list]
+        executed = [c.args[0] for c in mocks.tmp.execute.call_args_list]
         assert any("tmp_view_aaaa1111" in s for s in executed)
         assert any("tmp_view_cccc3333" in s for s in executed)
         assert not any("tmp_view_bbbb2222" in s for s in executed)
 
-    def test_invalid_view_names_are_filtered_out(self):
-        svc = _make_service()
+    def test_invalid_view_names_are_filtered_out(self, gc_scheduler):
+        svc, mocks = gc_scheduler
         # The regex requires tmp_view_<8-32 lowercase hex>; everything else
         # is skipped to keep the GC laser-focused.
-        svc._tmp_sql.query.return_value = [
+        mocks.tmp.query.return_value = [
             ("tmp_view_DEADBEEF",),  # uppercase hex → not matched
             ("tmp_view_short",),  # too short / non-hex
             ("tmp_view_aaaa1111",),  # valid
             ("real_user_view",),  # not the right prefix
             ("tmp_view_zzzzzzzzzz",),  # non-hex characters
         ]
-        svc._sql.query.return_value = []
+        mocks.sql.query.return_value = []
         svc._gc_orphan_views()
 
-        executed = [c.args[0] for c in svc._tmp_sql.execute.call_args_list]
+        executed = [c.args[0] for c in mocks.tmp.execute.call_args_list]
         assert len(executed) == 1
         assert "tmp_view_aaaa1111" in executed[0]
 
-    def test_in_use_query_failure_does_not_abort_cleanup(self):
-        svc = _make_service()
-        svc._tmp_sql.query.return_value = [("tmp_view_aaaa1111",)]
-        svc._sql.query.side_effect = RuntimeError("warehouse cold")
+    def test_in_use_query_failure_does_not_abort_cleanup(self, gc_scheduler):
+        svc, mocks = gc_scheduler
+        mocks.tmp.query.return_value = [("tmp_view_aaaa1111",)]
+        mocks.sql.query.side_effect = RuntimeError("warehouse cold")
         # Should still drop the candidate using age-only criteria.
         svc._gc_orphan_views()
-        svc._tmp_sql.execute.assert_called_once()
+        mocks.tmp.execute.assert_called_once()
 
-    def test_individual_drop_failure_continues_loop(self):
-        svc = _make_service()
-        svc._tmp_sql.query.return_value = [
+    def test_individual_drop_failure_continues_loop(self, gc_scheduler):
+        svc, mocks = gc_scheduler
+        mocks.tmp.query.return_value = [
             ("tmp_view_aaaa1111",),
             ("tmp_view_bbbb2222",),
         ]
-        svc._sql.query.return_value = []
-        svc._tmp_sql.execute.side_effect = [RuntimeError("locked"), None]
+        mocks.sql.query.return_value = []
+        mocks.tmp.execute.side_effect = [RuntimeError("locked"), None]
         # Both DROPs are attempted even when the first one blows up.
         svc._gc_orphan_views()
-        assert svc._tmp_sql.execute.call_count == 2
+        assert mocks.tmp.execute.call_count == 2
 
-    def test_list_query_failure_returns_silently(self):
-        svc = _make_service()
-        svc._tmp_sql.query.side_effect = RuntimeError("warehouse down")
+    def test_list_query_failure_returns_silently(self, gc_scheduler):
+        svc, mocks = gc_scheduler
+        mocks.tmp.query.side_effect = RuntimeError("warehouse down")
         svc._gc_orphan_views()
-        svc._tmp_sql.execute.assert_not_called()
+        mocks.tmp.execute.assert_not_called()
         # Must not have attempted the in-use cross-check either.
-        svc._sql.query.assert_not_called()
+        mocks.sql.query.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -194,8 +216,8 @@ class TestGcOrphanViews:
 
 class TestMaybeGcOrphanViews:
     @pytest.mark.asyncio
-    async def test_skips_when_not_yet_due(self):
-        svc = _make_service()
+    async def test_skips_when_not_yet_due(self, gc_scheduler):
+        svc, mocks = gc_scheduler
         future = datetime(2099, 1, 1, tzinfo=timezone.utc)
         svc._next_view_gc_at = future
 
@@ -203,29 +225,29 @@ class TestMaybeGcOrphanViews:
 
         # Schedule untouched, no SQL run.
         assert svc._next_view_gc_at == future
-        svc._tmp_sql.query.assert_not_called()
+        mocks.tmp.query.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_advances_schedule_before_running(self):
-        svc = _make_service()
+    async def test_advances_schedule_before_running(self, gc_scheduler):
+        svc, mocks = gc_scheduler
         # Schedule a fire on 2026-05-02 01:00 UTC.
         due = datetime(2026, 5, 2, 1, 0, tzinfo=timezone.utc)
         svc._next_view_gc_at = due
 
         # No candidates → no work to do, but the schedule MUST advance.
-        svc._tmp_sql.query.return_value = []
+        mocks.tmp.query.return_value = []
         await svc._maybe_gc_orphan_views(due + timedelta(seconds=1))
 
         # Next fire is the following Saturday at 01:00.
         assert svc._next_view_gc_at == datetime(2026, 5, 9, 1, 0, tzinfo=timezone.utc)
 
     @pytest.mark.asyncio
-    async def test_failure_in_gc_does_not_propagate(self):
-        svc = _make_service()
+    async def test_failure_in_gc_does_not_propagate(self, gc_scheduler):
+        svc, mocks = gc_scheduler
         due = datetime(2026, 5, 2, 1, 0, tzinfo=timezone.utc)
         svc._next_view_gc_at = due
 
-        svc._tmp_sql.query.side_effect = RuntimeError("nope")
+        mocks.tmp.query.side_effect = RuntimeError("nope")
         # Must not raise; just log and reschedule.
         await svc._maybe_gc_orphan_views(due + timedelta(minutes=1))
         assert svc._next_view_gc_at > due
