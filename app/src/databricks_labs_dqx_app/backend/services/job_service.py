@@ -129,18 +129,22 @@ class JobService:
         run_type: str | None = None,
         job_run_id: int | None = None,
     ) -> None:
-        """Insert a RUNNING placeholder row. Non-fatal on failure."""
-        from datetime import datetime, timezone
+        """Insert a RUNNING placeholder row. Non-fatal on failure.
+
+        ``created_at`` is now TIMESTAMP in the schema; we use
+        ``current_timestamp()`` rather than an ISO-string literal so the
+        warehouse stamps the value with its own clock and zone-mapping
+        works correctly on the cluster key.
+        """
         from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
-        now = datetime.now(timezone.utc).isoformat()
         er = escape_sql_string(run_id)
         eu = escape_sql_string(requesting_user)
         ef = escape_sql_string(source_table_fqn)
         ev = escape_sql_string(view_fqn)
 
         cols = f"run_id, requesting_user, source_table_fqn, view_fqn, {size_column}, status, created_at"
-        vals = f"'{er}', '{eu}', '{ef}', '{ev}', {int(size_value)}, 'RUNNING', '{now}'"
+        vals = f"'{er}', '{eu}', '{ef}', '{ev}', {int(size_value)}, 'RUNNING', current_timestamp()"
         if run_type:
             ert = escape_sql_string(run_type)
             cols += ", run_type"
@@ -201,16 +205,23 @@ class JobService:
             job_run_id=job_run_id,
         )
 
+    # ``updated_at`` and ``created_at`` are TIMESTAMP — cast to STRING so
+    # the existing query_dicts → JSON serialization keeps producing ISO
+    # values for the frontend without further plumbing.
     _PROFILE_COLS = (
         "run_id, requesting_user, source_table_fqn, view_fqn, sample_limit, "
         "rows_profiled, columns_profiled, duration_seconds, summary_json, "
-        "generated_rules_json, status, error_message, canceled_by, updated_at, created_at"
+        "generated_rules_json, status, error_message, canceled_by, "
+        "CAST(updated_at AS STRING) AS updated_at, "
+        "CAST(created_at AS STRING) AS created_at"
     )
 
     _DRYRUN_COLS = (
         "run_id, requesting_user, source_table_fqn, sample_size, "
-        "total_rows, valid_rows, invalid_rows, "
-        "status, error_message, canceled_by, updated_at, created_at, "
+        "total_rows, valid_rows, invalid_rows, error_rows, warning_rows, "
+        "status, error_message, canceled_by, "
+        "CAST(updated_at AS STRING) AS updated_at, "
+        "CAST(created_at AS STRING) AS created_at, "
         "COALESCE(run_type, 'dryrun') AS run_type, "
         "checks_json"
     )
