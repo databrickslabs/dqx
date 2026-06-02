@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
+from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, validate_schedule_name
 
 logger = logging.getLogger(__name__)
@@ -33,15 +33,16 @@ class ScheduleConfigEntry:
 class ScheduleConfigService:
     """CRUD for per-schedule configuration rows in ``dq_schedule_configs``."""
 
-    def __init__(self, sql: SqlExecutor) -> None:
+    def __init__(self, sql: OltpExecutorProtocol) -> None:
         self._sql = sql
-        self._table = f"{sql.catalog}.{sql.schema}.dq_schedule_configs"
-        self._history_table = f"{sql.catalog}.{sql.schema}.dq_schedule_configs_history"
+        self._table = sql.fqn("dq_schedule_configs")
+        self._history_table = sql.fqn("dq_schedule_configs_history")
 
     def list_schedules(self) -> list[ScheduleConfigEntry]:
+        ts = self._sql.ts_text
         sql = (
             f"SELECT schedule_name, config_json, version, created_by, "
-            f"CAST(created_at AS STRING), updated_by, CAST(updated_at AS STRING) "
+            f"{ts('created_at')}, updated_by, {ts('updated_at')} "
             f"FROM {self._table} ORDER BY schedule_name"
         )
         rows = self._sql.query(sql)
@@ -50,9 +51,10 @@ class ScheduleConfigService:
     def get(self, name: str) -> ScheduleConfigEntry | None:
         validate_schedule_name(name)
         escaped = escape_sql_string(name)
+        ts = self._sql.ts_text
         sql = (
             f"SELECT schedule_name, config_json, version, created_by, "
-            f"CAST(created_at AS STRING), updated_by, CAST(updated_at AS STRING) "
+            f"{ts('created_at')}, updated_by, {ts('updated_at')} "
             f"FROM {self._table} WHERE schedule_name = '{escaped}'"
         )
         rows = self._sql.query(sql)
@@ -66,33 +68,42 @@ class ScheduleConfigService:
         config: dict[str, Any],
         user_email: str,
     ) -> ScheduleConfigEntry:
+        """Upsert a schedule config row, incrementing ``version`` on update.
+
+        Dialect-agnostic via :meth:`OltpExecutorProtocol.upsert_with_audit`:
+
+        - ``preserve_created=True`` keeps the original ``created_*``
+          on UPDATE,
+        - ``increment_on_update="version"`` rewrites the version
+          column's UPDATE branch to ``existing + 1`` using the
+          dialect-appropriate self-reference (``target.version + 1``
+          on Delta MERGE, bare ``"version" + 1`` on Postgres
+          ON CONFLICT).
+        """
         validate_schedule_name(name)
         config_json = json.dumps(config)
-        now = datetime.now(timezone.utc).isoformat()
 
-        escaped_name = escape_sql_string(name)
-        escaped_json = escape_sql_string(config_json)
-        escaped_user = escape_sql_string(user_email)
-
-        sql = (
-            f"MERGE INTO {self._table} AS target "
-            f"USING (SELECT '{escaped_name}' AS schedule_name) AS source "
-            "ON target.schedule_name = source.schedule_name "
-            "WHEN MATCHED THEN UPDATE SET "
-            f"  config_json = '{escaped_json}', "
-            "  version = target.version + 1, "
-            f"  updated_by = '{escaped_user}', "
-            f"  updated_at = '{now}' "
-            "WHEN NOT MATCHED THEN INSERT "
-            "(schedule_name, config_json, version, created_by, created_at, updated_by, updated_at) "
-            f"VALUES ('{escaped_name}', '{escaped_json}', 1, '{escaped_user}', '{now}', '{escaped_user}', '{now}')"
+        now = RawSql("now()")
+        self._sql.upsert_with_audit(
+            table=self._table,
+            key_cols={"schedule_name": name},
+            value_cols={
+                "config_json": config_json,
+                "version": 1,  # initial INSERT value; UPDATE branch increments via increment_on_update
+                "created_by": user_email,
+                "created_at": now,
+                "updated_by": user_email,
+                "updated_at": now,
+            },
+            preserve_created=True,
+            increment_on_update="version",
         )
-        self._sql.execute(sql)
         self._record_history(name, config_json, user_email, "save")
         logger.info("Saved schedule config: %s (user=%s)", name, user_email)
 
         entry = self.get(name)
         if entry is None:
+            now = datetime.now(timezone.utc).isoformat()
             return ScheduleConfigEntry(
                 schedule_name=name,
                 config=config,
@@ -125,7 +136,7 @@ class ScheduleConfigService:
         escaped = escape_sql_string(name)
         sql = (
             f"SELECT schedule_name, config_json, version, action, changed_by, "
-            f"CAST(changed_at AS STRING) "
+            f"{self._sql.ts_text('changed_at')} "
             f"FROM {self._history_table} "
             f"WHERE schedule_name = '{escaped}' "
             "ORDER BY changed_at DESC"
@@ -162,7 +173,6 @@ class ScheduleConfigService:
         version: int = 0,
     ) -> None:
         try:
-            now = datetime.now(timezone.utc).isoformat()
             escaped_name = escape_sql_string(name)
             escaped_json = escape_sql_string(config_json)
             escaped_user = escape_sql_string(user_email)
@@ -171,7 +181,7 @@ class ScheduleConfigService:
                 f"INSERT INTO {self._history_table} "
                 "(schedule_name, config_json, version, action, changed_by, changed_at) "
                 f"VALUES ('{escaped_name}', '{escaped_json}', {version}, '{escaped_action}', "
-                f"'{escaped_user}', '{now}')"
+                f"'{escaped_user}', now())"
             )
             self._sql.execute(sql)
         except Exception:

@@ -36,9 +36,14 @@ def _query_quarantine(
     count_rows = sql.query(count_sql)
     total_count = int(count_rows[0][0] or 0) if count_rows and count_rows[0] else 0
 
+    # row_data / errors / warnings are VARIANT — render as JSON strings for
+    # the existing _row_to_record parser. created_at is TIMESTAMP — cast to
+    # STRING so query_dicts returns an ISO-formatted value.
     data_sql = (
         f"SELECT quarantine_id, run_id, source_table_fqn, requesting_user, "
-        f"row_data, errors, created_at "
+        f"to_json(row_data) AS row_data, to_json(errors) AS errors, "
+        f"to_json(warnings) AS warnings, "
+        f"CAST(created_at AS STRING) AS created_at "
         f"FROM {table} WHERE run_id = '{er}' "
         f"ORDER BY created_at DESC LIMIT {limit} OFFSET {offset}"
     )
@@ -61,6 +66,18 @@ def _row_to_record(row: dict[str, Any]) -> QuarantineRecordOut:
         except (json.JSONDecodeError, TypeError):
             errors = [row["errors"]]
 
+    # ``warnings`` is missing on rows written before migration v4; the
+    # column is ``null`` for SQL-check quarantines.
+    warnings: list[Any] | None = None
+    raw_warnings = row.get("warnings")
+    if raw_warnings and raw_warnings != "null":
+        try:
+            parsed = json.loads(raw_warnings)
+            if parsed is not None:
+                warnings = parsed if isinstance(parsed, list) else [parsed]
+        except (json.JSONDecodeError, TypeError):
+            warnings = [raw_warnings]
+
     return QuarantineRecordOut(
         quarantine_id=row.get("quarantine_id", ""),
         run_id=row.get("run_id", ""),
@@ -68,6 +85,7 @@ def _row_to_record(row: dict[str, Any]) -> QuarantineRecordOut:
         requesting_user=row.get("requesting_user"),
         row_data=row_data,
         errors=errors,
+        warnings=warnings,
         created_at=row.get("created_at"),
     )
 
@@ -132,7 +150,9 @@ def export_quarantine_records(
 
     stmt = (
         f"SELECT quarantine_id, run_id, source_table_fqn, requesting_user, "
-        f"row_data, errors, created_at "
+        f"to_json(row_data) AS row_data, to_json(errors) AS errors, "
+        f"to_json(warnings) AS warnings, "
+        f"CAST(created_at AS STRING) AS created_at "
         f"FROM {table} WHERE run_id = '{er}' ORDER BY created_at DESC "  # noqa: S608
         f"LIMIT {int(max_rows)}"
     )
@@ -164,15 +184,18 @@ def export_quarantine_records(
                 except (json.JSONDecodeError, TypeError):
                     pass
         data_keys = sorted(all_data_keys)
-        headers = ["quarantine_id", "run_id", "source_table_fqn", "errors"] + data_keys + ["created_at"]
+        headers = ["quarantine_id", "run_id", "source_table_fqn", "errors", "warnings"] + data_keys + ["created_at"]
         ws.append(headers)
 
         for r in rows:
+            raw_warn = r.get("warnings")
+            warn_str = "" if not raw_warn or raw_warn == "null" else raw_warn
             flat: dict[str, str] = {
                 "quarantine_id": r.get("quarantine_id", "") or "",
                 "run_id": r.get("run_id", "") or "",
                 "source_table_fqn": r.get("source_table_fqn", "") or "",
                 "errors": r.get("errors", "") or "",
+                "warnings": warn_str or "",
                 "created_at": r.get("created_at", "") or "",
             }
             raw_rd = r.get("row_data")
@@ -203,15 +226,18 @@ def export_quarantine_records(
                 except (json.JSONDecodeError, TypeError):
                     pass
         csv_dk = sorted(csv_data_keys)
-        fieldnames = ["quarantine_id", "run_id", "source_table_fqn", "errors"] + csv_dk + ["created_at"]
+        fieldnames = ["quarantine_id", "run_id", "source_table_fqn", "errors", "warnings"] + csv_dk + ["created_at"]
         writer = csv.DictWriter(buf, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
         for r in rows:
+            raw_warn_csv = r.get("warnings")
+            warn_str_csv = "" if not raw_warn_csv or raw_warn_csv == "null" else raw_warn_csv
             csv_flat: dict[str, str] = {
                 "quarantine_id": r.get("quarantine_id", "") or "",
                 "run_id": r.get("run_id", "") or "",
                 "source_table_fqn": r.get("source_table_fqn", "") or "",
                 "errors": r.get("errors", "") or "",
+                "warnings": warn_str_csv or "",
                 "created_at": r.get("created_at", "") or "",
             }
             raw_rd = r.get("row_data")
