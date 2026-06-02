@@ -300,7 +300,7 @@ def generated_email_df(spark):
     email_templates = {
         "col1_email_standard": r"kkkkkkkkkkkk@kkkkkkkk.org",
         "col2_email_with_quoted_local_part": r"\"kkkkkkkkkkkk\"@kkkkkkkk.org",
-        "col3_email_with_ip_domain": r"kkkkkkkkkkkk@\[\n.\n.\n.\n\]",
+        "col3_email_with_ip_domain": r"kkkkkkkkkkkk@\[\\n.\\n.\\n.\\n\]",
         "col4_email_with_multi_part_domain": r"kkkkkkkkkkkk@kkkk.kkkk.com",
     }
 
