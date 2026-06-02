@@ -34,7 +34,9 @@ def update_run_status(
     es = escape_sql_string(status)
     em = escape_sql_string(error_message or "")
 
-    set_clause = f"status = '{es}', error_message = '{em}', updated_at = CAST(current_timestamp() AS STRING)"
+    # updated_at is TIMESTAMP in the baseline; pass current_timestamp()
+    # directly rather than casting to STRING.
+    set_clause = f"status = '{es}', error_message = '{em}', updated_at = current_timestamp()"
     if canceled_by:
         ec = escape_sql_string(canceled_by)
         set_clause += f", canceled_by = '{ec}'"
