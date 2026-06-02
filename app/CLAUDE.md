@@ -36,36 +36,72 @@ RBAC is enforced — routes use `require_role(*roles)` from `backend/dependencie
 
 ## Internal Storage
 
-App uses a dedicated catalog selected at install time, with two schemas (managed by `MigrationRunner` in `backend/migrations/`):
+App uses a **hybrid backend** — analytical/append tables in Delta, OLTP
+tables in Lakebase Postgres. Both backends are managed by their own
+migration runner in `backend/migrations/`. Schemas, volume, and Lakebase
+instance are declared as bundle resources in `databricks.yml` with
+`lifecycle.prevent_destroy: true`, so `databricks bundle destroy` cannot
+drop them — see "Bundle conventions" below. The app's `dqx_studio`
+Postgres schema (inside the `databricks_postgres` admin database on the
+Lakebase instance) is created at startup, not provisioned by the bundle,
+but is protected transitively by the instance-level guard.
 
 ```
 {user_catalog}
- ├── dqx_app                          ← main schema (SP-managed)
- │   ├── dq_app_settings              ← key/value app configuration
- │   ├── dq_quality_rules             ← active/approved rules
- │   ├── dq_quality_rules_history     ← rule change audit log
- │   ├── dq_role_mappings             ← role → workspace group mappings (RBAC)
- │   ├── dq_comments                  ← comment threads on rules/runs
- │   ├── dq_profiling_results         ← profiler run results (suggestions in generated_rules_json)
- │   ├── dq_validation_runs           ← dryrun + scheduled run history
- │   ├── dq_quarantine_records        ← invalid rows captured by runs
- │   ├── dq_metrics                   ← per-run quality metrics for trend tracking
- │   ├── dq_schedule_configs          ← per-schedule config (cron/interval, target rules)
- │   ├── dq_schedule_configs_history  ← schedule config change audit log
- │   ├── dq_schedule_runs             ← scheduler last/next run state (survives restarts)
- │   └── dq_migrations                ← migration version tracker
- └── dqx_app_tmp                      ← temp views created via OBO for profiler/dryrun jobs
+ ├── dqx_studio                       ← main schema (SP-managed)
+ │   ├── dq_profiling_results         (Delta) profiler run results
+ │   ├── dq_validation_runs           (Delta) dryrun + scheduled run history
+ │   ├── dq_quarantine_records        (Delta) invalid rows captured by runs
+ │   ├── dq_metrics                   (Delta) per-run quality metrics for trend tracking
+ │   ├── dq_app_settings              (OLTP*) key/value app configuration
+ │   ├── dq_quality_rules             (OLTP*) active/approved rules
+ │   ├── dq_quality_rules_history     (OLTP*) rule change audit log
+ │   ├── dq_role_mappings             (OLTP*) role → workspace group mappings (RBAC)
+ │   ├── dq_comments                  (OLTP*) comment threads on rules/runs
+ │   ├── dq_schedule_configs          (OLTP*) per-schedule config (cron/interval, target rules)
+ │   ├── dq_schedule_configs_history  (OLTP*) schedule config change audit log
+ │   ├── dq_schedule_runs             (OLTP*) scheduler last/next run state (survives restarts)
+ │   └── dq_migrations                (Delta) Delta migration version tracker
+ ├── dqx_studio_tmp                   ← temp views created via OBO for profiler/dryrun jobs
+ └── dqx_studio.wheels (volume)       ← DQX + task-runner wheels uploaded at app startup
+
+Lakebase database (when enabled, default = `dqx-studio-lakebase`):
+ └── dqx_studio                       (database)
+     └── public                        (schema, configurable via DQX_LAKEBASE_SCHEMA)
+         ├── dq_app_settings, dq_role_mappings, dq_quality_rules,
+         │   dq_quality_rules_history, dq_comments, dq_schedule_configs,
+         │   dq_schedule_configs_history, dq_schedule_runs
+         └── dq_migrations             (Postgres migration version tracker)
 ```
 
-A separate UC volume (`{catalog}.dqx_app.wheels` by default) holds the DQX + task-runner wheels uploaded at app startup.
+`(OLTP*)` = lives in **Lakebase Postgres** when
+`lakebase_instance_name` is set, otherwise **Delta** (the
+`v2: Delta OLTP fallback` migration).
 
 ## Key Decisions
 
-- **No config.yaml** — all settings stored in Delta tables
-- **Dedicated catalog** — user selects at install, `dqx_app` schema created by the app
-- **Rule promotion** — export rules then deploy separately to prod; or save directly to prod checks table
-- **Internal storage** — Delta table (preferred); Lakebase also supported as option at install time
-- **Target environments** — Dev, UAT/QA (prod-like data); app is not intended for production rule execution
+- **No config.yaml** — all settings stored in Delta or Lakebase tables.
+- **Dedicated catalog** — user selects at install; `dqx_studio` and `dqx_studio_tmp` schemas are declared as bundle resources and created by `databricks bundle deploy`.
+- **Hybrid storage** — high-volume append tables in Delta; transactional/low-latency tables in Lakebase Postgres.
+- **Rule promotion** — export rules then deploy separately to prod; or save directly to prod checks table.
+- **Target environments** — Dev, UAT/QA (prod-like data); app is not intended for production rule execution.
+
+## Bundle conventions
+
+Stateful resources declared in `databricks.yml`:
+
+- `resources.schemas.main_schema` — `dqx_studio` schema
+- `resources.schemas.tmp_schema` — `dqx_studio_tmp` schema
+- `resources.volumes.wheels` — wheels volume
+- `resources.database_instances.lakebase` — Lakebase Postgres instance (autoscaling)
+
+Each carries `lifecycle.prevent_destroy: true` (Databricks CLI 0.268+), which blocks `databricks bundle destroy` and any deploy that would force-replace the resource. To intentionally tear something down: drop the flag, `databricks bundle deployment unbind <key> -t <target>`, then destroy.
+
+The app connects to the always-present `databricks_postgres` admin database on the Lakebase instance (set as the default `lakebase_database_name`) and creates its own `dqx_studio` Postgres schema there on first start. No DAB resource is needed to provision a per-app logical database; the bundle stays fully declarative. We deliberately do not use `database_catalogs` because it also creates a Unity Catalog catalog and therefore requires `CREATE CATALOG` on the metastore — a permission most app deployers don't hold.
+
+For workspaces where the schemas / volume / Lakebase instance already exist (e.g. created out-of-band before this layout existed), run `make app-bind PROFILE=... TARGET=...` once per target to adopt them — otherwise `databricks bundle deploy` errors out with "already exists" / "Instance name is not unique".
+
+Privileges on UC objects for the auto-created app SP are still reapplied with `scripts/post_deploy_grants.sh` after each deploy, because the app SP's UUID isn't known at bundle-write time.
 
 ## Architecture
 
