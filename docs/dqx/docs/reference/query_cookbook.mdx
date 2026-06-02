@@ -67,19 +67,19 @@ Before any joins, it is good to look at what is actually in each table. One row 
 
 <Tabs>
     <TabItem value="SQL" label="SQL" default>
-```sql
-    -- Summary metrics: one row per metric per run
-    SELECT * FROM catalog.schema.summary_metrics LIMIT 5;
+        ```sql
+        -- Summary metrics: one row per metric per run
+        SELECT * FROM catalog.schema.summary_metrics LIMIT 5;
 
-    -- Output: rows without any errors (no _errors or _warnings columns)
-    SELECT * FROM catalog.schema.output_table LIMIT 5;
+        -- Output: rows without any errors (no _errors or _warnings columns)
+        SELECT * FROM catalog.schema.output_table LIMIT 5;
 
-    -- Quarantine: rows with any errors or warnings, with _errors and _warnings populated
-    SELECT * FROM catalog.schema.quarantine_table LIMIT 5;
+        -- Quarantine: rows with any errors or warnings, with _errors and _warnings populated
+        SELECT * FROM catalog.schema.quarantine_table LIMIT 5;
 
-    -- Checks: one row per check definition
-    SELECT * FROM catalog.schema.checks_table LIMIT 5;
-    ```
+        -- Checks: one row per check definition
+        SELECT * FROM catalog.schema.checks_table LIMIT 5;
+        ```
     </TabItem>
     <TabItem value="Python" label="Python">
         ```python
@@ -132,7 +132,6 @@ Start by getting a `run_id` from the summary table. Every recipe that takes a `r
         WHERE w.run_id = '<run_id>';
         ```
     </TabItem>
-
     <TabItem value="Python" label="Python">
         ```python
         import pyspark.sql.functions as F
@@ -271,7 +270,7 @@ Rules defined with `for_each_column` are stored as a single row in the checks ta
 
         display(result_df)
         ```
-     </TabItem>
+    </TabItem>
 </Tabs>
 
 
@@ -335,7 +334,7 @@ Rules defined with `for_each_column` are stored as a single row in the checks ta
         )
         ```
         </Admonition>
-     </TabItem>
+    </TabItem>
 </Tabs>
 
 
@@ -359,7 +358,6 @@ The `check_metrics` field in the summary table already contains a per-check brea
         AND (cm.error_count > 0 OR cm.warning_count > 0);
         ```
     </TabItem>
-
     <TabItem value="Python" label="Python">
         ```python
         from pyspark.sql.types import ArrayType, StructType, StructField, StringType, LongType
@@ -457,7 +455,6 @@ Rules defined with `for_each_column` produce per-column errors with fingerprints
         ORDER BY c.name;
         ```
     </TabItem>
-
     <TabItem value="Python" label="Python">
         ```python
         import pyspark.sql.functions as F
@@ -506,7 +503,6 @@ Rules defined with `for_each_column` produce per-column errors with fingerprints
         ORDER BY run_time DESC;
         ```
     </TabItem>
-
     <TabItem value="Python" label="Python">
         ```python
         import pyspark.sql.functions as F
@@ -735,7 +731,6 @@ Recipe 10 tells you *when* a check first failed. This one gives you the rows. Re
             .select("*", F.explode(F.col("_errors")).alias("e"))
             .filter(F.col("e.name") == check_name)
             .select("*", F.col("e.run_id"), F.col("e.run_time"), F.col("e.name").alias("check_name"), F.col("e.rule_fingerprint"))
-            .drop("_errors", "_warnings", "e")
             .orderBy(F.col("run_time").desc())
         )
 
