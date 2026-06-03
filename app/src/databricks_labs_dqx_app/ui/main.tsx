@@ -56,7 +56,7 @@ const rootElement = document.getElementById("root")!;
 
 if (!rootElement.innerHTML) {
   const root = createRoot(rootElement);
-  void i18nReady.then(() => {
+  const renderApp = () => {
     root.render(
       <StrictMode>
         <AuthGuard>
@@ -66,5 +66,10 @@ if (!rootElement.innerHTML) {
         </AuthGuard>
       </StrictMode>,
     );
+  };
+
+  void i18nReady.then(renderApp).catch((err) => {
+    console.error("i18n init failed; rendering with English fallback", err);
+    renderApp();
   });
 }
