@@ -589,7 +589,7 @@ This is the entry point for Recipes 2, 5, 6, and 7 in a multi-table setup. Witho
 
 ## 9. Checks by Run Config
 
-**Goal**: When multiple tables share a single checks table (partitioned by `run_config_name`), list the available run configs and load the rules for a specific one.
+**Goal**: When multiple input tables share a single checks table (partitioned by `run_config_name`), list the available run configs and load the rules for a specific one.
 
 `run_config_name` is the partition key written by `save_checks`. The default value is `"default"`. When checks for different tables are saved to the same checks table with distinct `run_config_name` values (e.g. the table name), you must use the same value at load time or `load_checks` returns empty.
 
