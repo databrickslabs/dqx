@@ -59,8 +59,7 @@ def test_apply_checks_with_dynamic_column_value_message(ws, spark):
             check_func=check_funcs.is_not_null,
             column="b",
             message_expr=(
-                "concat('Rule b_not_null (is_not_null) failed for value: ',"
-                " coalesce(cast(b as string), 'null'))"
+                "concat('Rule b_not_null (is_not_null) failed for value: '," " coalesce(cast(b as string), 'null'))"
             ),
         ),
     ]
@@ -155,10 +154,7 @@ def test_apply_checks_with_column_value_non_null(ws, spark):
             check_func=check_funcs.is_not_less_than,
             column="b",
             check_func_kwargs={"limit": 0},
-            message_expr=(
-                "concat('b_positive: value ', coalesce(cast(b as string), 'null'),"
-                " ' is not positive')"
-            ),
+            message_expr=("concat('b_positive: value ', coalesce(cast(b as string), 'null')," " ' is not positive')"),
         ),
     ]
 
@@ -284,8 +280,7 @@ def test_metadata_dynamic_column_value_message(ws, spark):
             "name": "b_not_null",
             "criticality": "warn",
             "message_expr": (
-                "concat('Rule b_not_null (is_not_null) failed for value: ',"
-                " coalesce(cast(b as string), 'null'))"
+                "concat('Rule b_not_null (is_not_null) failed for value: '," " coalesce(cast(b as string), 'null'))"
             ),
             "check": {"function": "is_not_null", "arguments": {"column": "b"}},
         }
