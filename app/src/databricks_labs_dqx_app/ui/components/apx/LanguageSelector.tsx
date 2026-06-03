@@ -8,7 +8,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
-import { SUPPORTED_LANGUAGES, ensureLocaleLoaded } from "@/lib/i18n";
+import { SUPPORTED_LANGUAGES, ensureLocaleLoaded, toSupportedCode } from "@/lib/i18n";
 
 interface LanguageSelectorProps {
   className?: string;
@@ -20,11 +20,7 @@ export default function LanguageSelector({
   hideLabel = false,
 }: LanguageSelectorProps) {
   const { t, i18n } = useTranslation();
-  const primaryTag = i18n.resolvedLanguage?.split("-")[0];
-  const current =
-    SUPPORTED_LANGUAGES.find((l) => l.code === i18n.resolvedLanguage)?.code ??
-    SUPPORTED_LANGUAGES.find((l) => l.code.split("-")[0] === primaryTag)?.code ??
-    "en";
+  const current = toSupportedCode(i18n.resolvedLanguage ?? "en");
 
   const handleChange = (value: string) => {
     void ensureLocaleLoaded(value).then(() => i18n.changeLanguage(value));

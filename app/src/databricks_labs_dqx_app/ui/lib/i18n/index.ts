@@ -21,12 +21,27 @@ const localeLoaders: Record<string, () => Promise<{ default: Record<string, unkn
   es: () => import("./locales/es.json"),
 };
 
+const SUPPORTED_CODES = SUPPORTED_LANGUAGES.map((l) => l.code);
+
+/**
+ * Normalize a (possibly region-tagged) language code to the closest supported
+ * code. Region variants resolve to their base locale — e.g. "es-MX" -> "es",
+ * "en-GB" -> "en", "pt-PT" -> "pt-BR" — mirroring i18next's
+ * `nonExplicitSupportedLngs` behaviour so the lazy loader can find a bundle.
+ */
+export function toSupportedCode(lng: string): string {
+  if (SUPPORTED_CODES.includes(lng as LanguageCode)) return lng;
+  const base = lng.split("-")[0];
+  return SUPPORTED_CODES.find((code) => code.split("-")[0] === base) ?? "en";
+}
+
 export async function ensureLocaleLoaded(lng: string): Promise<void> {
-  if (lng === "en" || i18n.hasResourceBundle(lng, "translation")) return;
-  const loader = localeLoaders[lng];
+  const code = toSupportedCode(lng);
+  if (code === "en" || i18n.hasResourceBundle(code, "translation")) return;
+  const loader = localeLoaders[code];
   if (!loader) return;
   const mod = await loader();
-  i18n.addResourceBundle(lng, "translation", mod.default);
+  i18n.addResourceBundle(code, "translation", mod.default);
 }
 
 export const i18nReady = i18n
@@ -49,14 +64,17 @@ export const i18nReady = i18n
     },
   })
   .then(async () => {
-    const requested = i18n.language;
-    if (requested && requested !== "en") {
+    // Resolve the detected language (which may carry a region tag, e.g.
+    // "es-MX") to a supported code, then lazy-load and select its bundle. Only
+    // "en" ships in the initial bundle, so non-English locales need this step.
+    const requested = toSupportedCode(i18n.language);
+    if (requested !== "en") {
       await ensureLocaleLoaded(requested);
       if (i18n.resolvedLanguage !== requested) {
         await i18n.changeLanguage(requested);
       }
     }
-    document.documentElement.lang = i18n.resolvedLanguage ?? requested ?? "en";
+    document.documentElement.lang = i18n.resolvedLanguage ?? requested;
   });
 
 i18n.on("languageChanged", (lng) => {
