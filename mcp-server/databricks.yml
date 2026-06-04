@@ -12,10 +12,15 @@ resources:
       user_api_scopes:
         - sql
         - files.files
+        - clusters
 
       permissions:
         - level: CAN_USE
           group_name: users
+
+sync:
+  include:
+    - "notebooks/**"
 
 targets:
   dev:
