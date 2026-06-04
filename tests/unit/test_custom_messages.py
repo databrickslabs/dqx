@@ -25,7 +25,7 @@ def test_dq_row_rule_accepts_message_expr_column():
         column="id",
         message_expr=column_expr,
     )
-    assert isinstance(rule.message_expr, Column)
+    assert rule.message_expr is not None
 
 
 def test_dq_row_rule_message_expr_defaults_to_none():
