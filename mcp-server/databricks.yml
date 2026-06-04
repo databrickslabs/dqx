@@ -12,7 +12,7 @@ resources:
       user_api_scopes:
         - sql
         - files.files
-        - clusters
+        - jobs
 
       permissions:
         - level: CAN_USE
