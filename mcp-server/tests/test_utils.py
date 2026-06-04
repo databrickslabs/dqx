@@ -1,5 +1,4 @@
 import json
-from datetime import timedelta
 from unittest.mock import MagicMock, create_autospec, patch
 
 import pytest
@@ -30,7 +29,6 @@ def _make_mock_ws(notebook_output_json: str, run_id: int = 123) -> MagicMock:
     output.notebook_output = MagicMock(spec=NotebookOutput)
     output.notebook_output.result = notebook_output_json
     output.notebook_output.truncated = False
-    # Need to get the task run_id from run.tasks
     task_run = MagicMock()
     task_run.run_id = 456
     run.tasks = [task_run]
@@ -46,7 +44,7 @@ class TestSubmitNotebookJob:
         expected_result = {"table_name": "catalog.schema.table", "columns": [], "row_count": 0}
         ws = _make_mock_ws(json.dumps(expected_result))
 
-        with patch("server.utils.get_workspace_client", return_value=ws):
+        with patch("server.utils._get_sp_client", return_value=ws):
             result = submit_notebook_job("get_table_schema", {"table_name": "catalog.schema.table"})
 
         assert result == expected_result
@@ -57,7 +55,7 @@ class TestSubmitNotebookJob:
 
         ws = _make_mock_ws(json.dumps({"result": "ok"}))
 
-        with patch("server.utils.get_workspace_client", return_value=ws):
+        with patch("server.utils._get_sp_client", return_value=ws):
             submit_notebook_job("profile_table", {"table_name": "t", "columns": ["a"]})
 
         call_kwargs = ws.jobs.submit.call_args.kwargs
@@ -66,6 +64,36 @@ class TestSubmitNotebookJob:
         base_params = tasks[0].notebook_task.base_parameters
         assert base_params["operation"] == "profile_table"
         assert json.loads(base_params["params"]) == {"table_name": "t", "columns": ["a"]}
+
+    def test_run_as_user_when_email_present(self):
+        from server.utils import submit_notebook_job, _user_email_var
+
+        ws = _make_mock_ws(json.dumps({"ok": True}))
+
+        token = _user_email_var.set("user@company.com")
+        try:
+            with patch("server.utils._get_sp_client", return_value=ws):
+                submit_notebook_job("get_table_schema", {"table_name": "t"})
+        finally:
+            _user_email_var.reset(token)
+
+        call_kwargs = ws.jobs.submit.call_args.kwargs
+        assert call_kwargs["run_as"].user_name == "user@company.com"
+
+    def test_no_run_as_when_no_email(self):
+        from server.utils import submit_notebook_job, _user_email_var
+
+        ws = _make_mock_ws(json.dumps({"ok": True}))
+
+        token = _user_email_var.set(None)
+        try:
+            with patch("server.utils._get_sp_client", return_value=ws):
+                submit_notebook_job("get_table_schema", {"table_name": "t"})
+        finally:
+            _user_email_var.reset(token)
+
+        call_kwargs = ws.jobs.submit.call_args.kwargs
+        assert call_kwargs["run_as"] is None
 
     def test_job_failure_raises_error(self):
         from server.utils import submit_notebook_job
@@ -90,7 +118,7 @@ class TestSubmitNotebookJob:
         output.error = "Something went wrong"
         ws.jobs.get_run_output.return_value = output
 
-        with patch("server.utils.get_workspace_client", return_value=ws):
+        with patch("server.utils._get_sp_client", return_value=ws):
             with pytest.raises(RuntimeError, match="DQX job failed"):
                 submit_notebook_job("run_checks", {"table_name": "t", "checks": []})
 
@@ -100,7 +128,7 @@ class TestSubmitNotebookJob:
         error_result = {"error": "AnalysisException: Table not found"}
         ws = _make_mock_ws(json.dumps(error_result))
 
-        with patch("server.utils.get_workspace_client", return_value=ws):
+        with patch("server.utils._get_sp_client", return_value=ws):
             result = submit_notebook_job("get_table_schema", {"table_name": "bad.table"})
 
         assert result == error_result
@@ -110,7 +138,7 @@ class TestSubmitNotebookJob:
 
         ws = _make_mock_ws(json.dumps({"ok": True}))
 
-        with patch("server.utils.get_workspace_client", return_value=ws), \
+        with patch("server.utils._get_sp_client", return_value=ws), \
              patch.dict("os.environ", {"DQX_RUNNER_NOTEBOOK_PATH": "/custom/path/runner"}):
             submit_notebook_job("get_table_schema", {"table_name": "t"})
 
