@@ -8,12 +8,13 @@ from pyspark.errors import AnalysisException
 from pyspark.sql import DataFrame, Column, SparkSession
 
 from databricks.labs.dqx import check_funcs
+from databricks.labs.dqx.errors import UnsafeSqlQueryError
 from databricks.labs.dqx.executor import DQCheckResult, DQRuleExecutorFactory
 from databricks.labs.dqx.rule import (
     DQRule,
 )
 from databricks.labs.dqx.schema.dq_result_schema import dq_result_item_schema
-from databricks.labs.dqx.utils import get_column_name_or_alias
+from databricks.labs.dqx.utils import get_column_name_or_alias, is_sql_query_safe
 
 logger = logging.getLogger(__name__)
 
@@ -183,13 +184,22 @@ class DQRuleManager:
             The custom DQX condition message if ``message_expr`` is set on the rule, otherwise the
             default DQX condition message.
         """
+        _max_message_length = 500
         if self.check.message_expr is None:
             return condition
 
-        custom_message = (
-            self.check.message_expr if isinstance(self.check.message_expr, Column) else F.expr(self.check.message_expr)
-        )
-        return F.when(condition.isNotNull(), custom_message).otherwise(F.lit(None).cast("string"))
+        if isinstance(self.check.message_expr, str):
+            if not is_sql_query_safe(self.check.message_expr):
+                raise UnsafeSqlQueryError(
+                    "Provided message expression is not safe for execution. Please ensure it does not contain any unsafe operations."
+                )
+            return F.when(
+                condition.isNotNull(), F.substr(F.expr(self.check.message_expr)), F.lit(1), F.lit(_max_message_length)
+            ).otherwise(F.lit(None).cast("string"))
+
+        return F.when(
+            condition.isNotNull(), F.substr(self.check.message_expr, F.lit(1), F.lit(_max_message_length))
+        ).otherwise(F.lit(None).cast("string"))
 
     def _get_invalid_cols_message(self) -> str:
         """

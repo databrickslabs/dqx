@@ -12,7 +12,7 @@ from typing import Any
 from pyspark.sql import Column
 import pyspark.sql.functions as F
 from databricks.labs.dqx.utils import get_column_name_or_alias, normalize_bound_args
-from databricks.labs.dqx.errors import InvalidCheckError
+from databricks.labs.dqx.errors import InvalidCheckError, InvalidParameterError
 
 logger = logging.getLogger(__name__)
 
@@ -190,6 +190,8 @@ class DQRule(abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleColumnsMixin):
         self._validate_attributes()
         check_condition = self.get_check_condition()
         self._initialize_name_if_missing(check_condition)
+        if self.message_expr and isinstance(self.message_expr, str):
+            self._validate_message_expression(self.message_expr)
 
     @abc.abstractmethod
     def get_check_condition(self) -> Column:
@@ -267,8 +269,10 @@ class DQRule(abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleColumnsMixin):
             metadata["user_metadata"] = self.user_metadata
         # Only string expressions can be round-tripped through metadata; Column objects are
         # in-process Spark expressions with no canonical YAML/JSON representation.
-        if isinstance(self.message_expr, str) and self.message_expr:
-            metadata["message_expr"] = self.message_expr
+        if self.message_expr:
+            if isinstance(self.message_expr, str):
+                metadata["message_expr"] = self.message_expr
+            logger.warning("Message expressions of type 'Column' cannot be serialized; falling back to default message")
         return metadata
 
     def _initialize_column_if_missing(self):
@@ -350,6 +354,24 @@ class DQRule(abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleColumnsMixin):
         if param is None:
             return None  # Argument not present
         return param.default is not inspect.Parameter.empty
+
+    @staticmethod
+    def _validate_message_expression(message_expr: str) -> None:
+        """
+        Checks that the message expression is a logically valid Spark SQL expression.
+
+        Args:
+            message_expr: Message expression
+
+        Raises:
+            InvalidParameterError: If the expression is not a logically valid Spark SQL expression.
+        """
+        try:
+            F.expr(message_expr)
+        except Exception as exc:
+            raise InvalidParameterError(
+                f"Custom message expression '{message_expr}' is not a valid Spark SQL expression."
+            ) from exc
 
 
 @dataclass(frozen=True)
