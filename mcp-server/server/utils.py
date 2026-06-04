@@ -96,21 +96,18 @@ _engine = None
 
 
 def _get_spark():
-    global _spark, _profiler, _generator, _engine
-    if _spark is not None:
-        try:
-            _spark.sql("SELECT 1")
-        except Exception:
-            logger.warning("Spark session expired, creating a new one")
-            _spark = None
-            _profiler = None
-            _generator = None
-            _engine = None
-    if _spark is None:
-        from databricks.connect import DatabricksSession
+    """Get a Spark session via Databricks Connect using the app's service principal.
 
-        _spark = DatabricksSession.builder.serverless(True).getOrCreate()
-    return _spark
+    The app's SP credentials (DATABRICKS_CLIENT_ID + DATABRICKS_CLIENT_SECRET)
+    are in the environment and have the databricks-connect scope.
+    We use these instead of the user's forwarded token which lacks that scope.
+    """
+    from databricks.connect import DatabricksSession
+
+    logger.info("Creating DatabricksSession with app service principal (serverless)...")
+    session = DatabricksSession.builder.serverless(True).getOrCreate()
+    logger.info("DatabricksSession created successfully")
+    return session
 
 
 def _get_profiler():
