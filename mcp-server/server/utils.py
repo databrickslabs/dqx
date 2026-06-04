@@ -3,9 +3,9 @@ Utility functions for the DQX MCP server.
 
 Key patterns:
 - Pure ASGI middleware for OBO (not BaseHTTPMiddleware — avoids streaming timeouts)
-- Lazy WorkspaceClient creation per-request using contextvars
+- Extracts user identity from Databricks Apps proxy headers (X-Forwarded-Email)
+- SP submits notebook jobs with run_as=user for OBO (Apps can't grant 'jobs' scope)
 - auth_type="pat" to avoid conflict with auto-injected SP env vars
-- Jobs API notebook submission for Spark operations (no Databricks Connect)
 """
 
 import contextvars
@@ -24,19 +24,24 @@ DEFAULT_NOTEBOOK_PATH = "/Workspace/.bundle/mcp-dqx/notebooks/runner"
 
 # ── OBO Auth via contextvars ──────────────────────────────────────────
 
+# Store user identity per-request from Databricks Apps proxy headers
 _user_token_var: contextvars.ContextVar[tuple[str, str] | None] = contextvars.ContextVar(
     "user_token", default=None
 )
+_user_email_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "user_email", default=None
+)
 
+# Service principal client singleton
 _sp_client = None
 
 
 class OBOAuthMiddleware:
     """Pure ASGI middleware for on-behalf-of authentication.
 
-    Extracts X-Forwarded-Access-Token from Databricks Apps proxy headers
-    and stores it in a context var. WorkspaceClient is created lazily
-    only when get_workspace_client() is called.
+    Extracts user identity from Databricks Apps proxy headers:
+    - X-Forwarded-Access-Token: user's OBO token
+    - X-Forwarded-Email: user's email (used for run_as in job submission)
 
     Using pure ASGI (not BaseHTTPMiddleware) is critical — BaseHTTPMiddleware
     buffers response bodies which causes MCP streaming timeouts.
@@ -52,12 +57,15 @@ class OBOAuthMiddleware:
 
         headers = dict(scope.get("headers", []))
         user_token = headers.get(b"x-forwarded-access-token", b"").decode() or None
+        user_email = headers.get(b"x-forwarded-email", b"").decode() or None
 
         if user_token:
             host = os.environ.get("DATABRICKS_HOST", "")
             _user_token_var.set((host, user_token))
         else:
             _user_token_var.set(None)
+
+        _user_email_var.set(user_email)
 
         await self.app(scope, receive, send)
 
@@ -83,14 +91,32 @@ def get_workspace_client():
     return _sp_client
 
 
+def _get_sp_client():
+    """Get the service principal WorkspaceClient (always).
+
+    Used for job submission since the OBO token can't have the 'jobs' scope
+    in Databricks Apps. The SP has full API access.
+    """
+    from databricks.sdk import WorkspaceClient
+
+    global _sp_client
+    if _sp_client is None:
+        _sp_client = WorkspaceClient()
+    return _sp_client
+
+
 # ── Jobs API notebook submission ─────────────────────────────────────
 
 
 def submit_notebook_job(operation: str, params: dict[str, Any]) -> dict[str, Any]:
     """Submit a DQX operation as a serverless notebook job and wait for results.
 
-    Uses the OBO WorkspaceClient so the job runs as the logged-in user.
-    Falls back to service principal when no OBO token is present.
+    Uses the app's service principal to submit the job (OBO tokens can't call
+    the Jobs API — 'jobs' is not a valid App scope). Passes run_as with the
+    user's email so the job runs under the user's identity, preserving
+    Unity Catalog governance.
+
+    Falls back to SP identity when no user email is present (e.g., direct API call).
 
     Args:
         operation: The DQX operation name (e.g. 'get_table_schema', 'run_checks').
@@ -102,12 +128,17 @@ def submit_notebook_job(operation: str, params: dict[str, Any]) -> dict[str, Any
     Raises:
         RuntimeError: If the job fails or times out.
     """
-    from databricks.sdk.service.jobs import NotebookTask, SubmitTask
+    from databricks.sdk.service.jobs import JobRunAs, NotebookTask, SubmitTask
 
-    ws = get_workspace_client()
+    # Always use SP for job submission (OBO token lacks 'jobs' scope)
+    ws = _get_sp_client()
     notebook_path = os.environ.get("DQX_RUNNER_NOTEBOOK_PATH", DEFAULT_NOTEBOOK_PATH)
+    user_email = _user_email_var.get(None)
 
-    logger.info(f"Submitting notebook job: operation={operation}, notebook={notebook_path}")
+    logger.info(
+        f"Submitting notebook job: operation={operation}, notebook={notebook_path}, "
+        f"run_as={user_email or 'SP (no user)'}"
+    )
 
     notebook_task = NotebookTask(
         notebook_path=notebook_path,
@@ -122,9 +153,13 @@ def submit_notebook_job(operation: str, params: dict[str, Any]) -> dict[str, Any
         notebook_task=notebook_task,
     )
 
+    # run_as user if we have their email, otherwise job runs as SP
+    run_as = JobRunAs(user_name=user_email) if user_email else None
+
     wait = ws.jobs.submit(
         run_name=f"mcp-dqx-{operation}",
         tasks=[task],
+        run_as=run_as,
     )
 
     run = wait.result(timeout=timedelta(minutes=10))

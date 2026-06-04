@@ -11,7 +11,7 @@ resources:
       # OBO: request user token scopes so API calls run as the user
       user_api_scopes:
         - sql
-        - files.files
+        - files
 
       permissions:
         - level: CAN_USE
