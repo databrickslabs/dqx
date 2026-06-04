@@ -194,7 +194,7 @@ class DQRuleManager:
                     "Provided message expression is not safe for execution. Please ensure it does not contain any unsafe operations."
                 )
             return F.when(
-                condition.isNotNull(), F.substr(F.expr(self.check.message_expr)), F.lit(1), F.lit(_max_message_length)
+                condition.isNotNull(), F.substr(F.expr(self.check.message_expr), F.lit(1), F.lit(_max_message_length))
             ).otherwise(F.lit(None).cast("string"))
 
         return F.when(
