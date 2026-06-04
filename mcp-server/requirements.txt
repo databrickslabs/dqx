@@ -2,5 +2,4 @@ fastmcp>=2.12.5
 uvicorn>=0.34.2
 databricks-sdk>=0.60.0
 databricks-labs-dqx
-databricks-connect~=15.4
 starlette
