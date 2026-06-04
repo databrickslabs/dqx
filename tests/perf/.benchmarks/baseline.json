@@ -6186,6 +6186,154 @@
       }
     },
     {
+      "group": "test_benchmark_is_valid_email col1_email_standard",
+      "name": "test_benchmark_is_valid_email[col1_email_standard]",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_valid_email[col1_email_standard]",
+      "params": {
+        "column": "col1_email_standard"
+      },
+      "param": "col1_email_standard",
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 5,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "warmup": false
+      },
+      "stats": {
+        "min": 0.2499822480003786,
+        "max": 0.2969827329998225,
+        "mean": 0.26604646460018555,
+        "stddev": 0.01806312192154807,
+        "rounds": 5,
+        "median": 0.2612638930004323,
+        "iqr": 0.016022086000020863,
+        "q1": 0.25611087300012514,
+        "q3": 0.272132959000146,
+        "iqr_outliers": 1,
+        "stddev_outliers": 1,
+        "outliers": "1;1",
+        "ld15iqr": 0.2499822480003786,
+        "hd15iqr": 0.2969827329998225,
+        "ops": 3.758741923155413,
+        "total": 1.3302323230009279,
+        "iterations": 1
+      }
+    },
+    {
+      "group": "test_benchmark_is_valid_email col2_email_with_quoted_local_part",
+      "name": "test_benchmark_is_valid_email[col2_email_with_quoted_local_part]",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_valid_email[col2_email_with_quoted_local_part]",
+      "params": {
+        "column": "col2_email_with_quoted_local_part"
+      },
+      "param": "col2_email_with_quoted_local_part",
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 5,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "warmup": false
+      },
+      "stats": {
+        "min": 0.258073437999883,
+        "max": 0.29496533000019554,
+        "mean": 0.27552759860009246,
+        "stddev": 0.01695470943317835,
+        "rounds": 5,
+        "median": 0.27109213699986867,
+        "iqr": 0.03158998899971266,
+        "q1": 0.26090000950034664,
+        "q3": 0.2924899985000593,
+        "iqr_outliers": 0,
+        "stddev_outliers": 2,
+        "outliers": "2;0",
+        "ld15iqr": 0.258073437999883,
+        "hd15iqr": 0.29496533000019554,
+        "ops": 3.629400485036073,
+        "total": 1.3776379930004623,
+        "iterations": 1
+      }
+    },
+    {
+      "group": "test_benchmark_is_valid_email col3_email_with_ip_domain",
+      "name": "test_benchmark_is_valid_email[col3_email_with_ip_domain]",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_valid_email[col3_email_with_ip_domain]",
+      "params": {
+        "column": "col3_email_with_ip_domain"
+      },
+      "param": "col3_email_with_ip_domain",
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 5,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "warmup": false
+      },
+      "stats": {
+        "min": 0.2497637489996123,
+        "max": 0.30636869499994646,
+        "mean": 0.2685539575999428,
+        "stddev": 0.023569912474017934,
+        "rounds": 5,
+        "median": 0.2565829209997901,
+        "iqr": 0.03161046325067218,
+        "q1": 0.2524817324997457,
+        "q3": 0.2840921957504179,
+        "iqr_outliers": 0,
+        "stddev_outliers": 1,
+        "outliers": "1;0",
+        "ld15iqr": 0.2497637489996123,
+        "hd15iqr": 0.30636869499994646,
+        "ops": 3.723646484069587,
+        "total": 1.342769787999714,
+        "iterations": 1
+      }
+    },
+    {
+      "group": "test_benchmark_is_valid_email col4_email_with_multi_part_domain",
+      "name": "test_benchmark_is_valid_email[col4_email_with_multi_part_domain]",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_valid_email[col4_email_with_multi_part_domain]",
+      "params": {
+        "column": "col4_email_with_multi_part_domain"
+      },
+      "param": "col4_email_with_multi_part_domain",
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 5,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "warmup": false
+      },
+      "stats": {
+        "min": 0.24899362600081076,
+        "max": 0.3049307860001136,
+        "mean": 0.2804901036004594,
+        "stddev": 0.021123223699233366,
+        "rounds": 5,
+        "median": 0.28707819300052506,
+        "iqr": 0.027055607250304092,
+        "q1": 0.26625571525028136,
+        "q3": 0.29331132250058545,
+        "iqr_outliers": 0,
+        "stddev_outliers": 2,
+        "outliers": "2;0",
+        "ld15iqr": 0.24899362600081076,
+        "hd15iqr": 0.3049307860001136,
+        "ops": 3.5651881730003474,
+        "total": 1.402450518002297,
+        "iterations": 1
+      }
+    },
+    {
       "group": "test_benchmark_is_valid_ipv4_address col1_ipv4_standard",
       "name": "test_benchmark_is_valid_ipv4_address[col1_ipv4_standard]",
       "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_valid_ipv4_address[col1_ipv4_standard]",
