@@ -1,7 +1,6 @@
 """Tests for custom message expressions on DQRule."""
 
 import pyspark.sql.functions as F
-from pyspark.sql import Column
 
 from databricks.labs.dqx.check_funcs import is_not_null, is_not_null_and_not_empty
 from databricks.labs.dqx.rule import DQRowRule, DQForEachColRule
