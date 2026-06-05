@@ -21,6 +21,29 @@ variables:
   sql_warehouse_name:
     description: "Name of the deployed SQL warehouse for DQX Studio queries (must be unique per workspace)"
     default: "dqx-studio-sql-warehouse"
+  sql_warehouse_id:
+    description: >
+      ID of the SQL warehouse the app queries. Every target MUST set
+      this. Two ways to populate it; see DEPLOYMENT.md
+      "Choosing a SQL warehouse mode" for the side-by-side comparison.
+      
+      Mode A (bundle-managed, see ``bdf-vo``): set to
+      ``${resources.sql_warehouses.dqx_sql_warehouse.id}`` AND declare a
+      ``sql_warehouses.dqx_sql_warehouse`` block under the target's
+      ``resources:``. The bundle CREATES the warehouse; ``bundle destroy``
+      DELETES it.
+      
+      Mode B (external / reuse, see ``kaizen-app``): set to a literal
+      warehouse ID. The bundle never creates, mutates, or destroys the
+      warehouse. ``post_deploy_grants.sh`` GRANTs ``CAN_USE`` to the app
+      SP, job SP, and the ``users`` workspace group via the warehouses
+      permissions API (the bundle doesn't own the warehouse, so
+      ``databricks_permissions`` can't be used).
+      
+      Default is intentionally empty so a target that forgets to set it
+      fails fast at deploy time rather than silently picking the wrong
+      warehouse.
+    default: ""
   wheels_volume_name:
     description: "Name of the UC volume for storing DQX wheel files"
     default: "wheels"
@@ -113,20 +136,22 @@ sync:
 
 artifacts:
   default:
-    # ``apx build`` injects a build timestamp into the application
-    # wheel's *filename* but leaves the wheel's internal METADATA
-    # untouched.  pip reads the version from METADATA, so successive
-    # rebuilds (without a new git commit) all advertise the same
-    # version and pip silently skips reinstall in the Databricks App
-    # container's persistent venv — the running app keeps executing
-    # stale code.  ``_align_wheel_version.py`` rewrites METADATA,
-    # RECORD and the dist-info dir to match the timestamped filename
-    # so every rebuild produces a unique package version and pip
-    # always installs fresh.
+    # ``scripts/build_app.py`` replaces the legacy ``apx build`` pipeline.
+    # It produces the application wheel with a build-tag local-version
+    # segment (e.g. ``.b20260530t012345``) baked into BOTH the wheel
+    # filename and the internal METADATA, so pip in Databricks Apps'
+    # persistent venv reinstalls fresh code on every redeploy — same
+    # outcome the legacy ``_align_wheel_version.py`` post-processor
+    # used to achieve by repairing apx's filename-only mangling. See
+    # ``[tool.uv-dynamic-versioning]`` in pyproject.toml for the
+    # ``DQX_APP_BUILD_TAG`` env var contract.
+    #
+    # ``scripts/build_app.py`` also writes ``.build/requirements.txt``
+    # with the freshly-built app wheel; the trailing shell snippet
+    # prepends the parent DQX library wheel filename so Databricks
+    # Apps' pip install picks up both, in dependency order.
     build: >
-      uv run apx build &&
-      uv run python scripts/_align_wheel_version.py
-      $(ls -1 .build/databricks_labs_dqx_app-*.whl | head -1) &&
+      uv run python scripts/build_app.py &&
       uv build ../ --wheel --out-dir .build/ &&
       uv build tasks/ --wheel --out-dir .build/tasks/ &&
       dqx_whl=$(ls -1 .build/databricks_labs_dqx-*.whl | head -1 | xargs basename) &&
@@ -164,7 +189,14 @@ resources:
         - name: "dqx-sql-warehouse"
           description: "SQL Warehouse for DQX Studio queries"
           sql_warehouse:
-            id: ${resources.sql_warehouses.dqx_sql_warehouse.id}
+            # ``sql_warehouse_id`` is set per-target. For bundle-managed
+            # warehouses (e.g. bdf-vo) the target sets it to
+            # ``${resources.sql_warehouses.dqx_sql_warehouse.id}`` and
+            # also declares the ``sql_warehouses.dqx_sql_warehouse``
+            # block locally. For external warehouses (e.g. kaizen-app)
+            # the target sets it to a literal ID and the bundle never
+            # creates a warehouse for that target.
+            id: ${var.sql_warehouse_id}
             permission: "CAN_USE"
         - name: "dqx-task-runner-job"
           description: "Job for async profiler and dry-run tasks"
@@ -191,17 +223,13 @@ resources:
         - group_name: "account users"
           level: "CAN_USE"
 
-  sql_warehouses:
-    dqx_sql_warehouse:
-      name: ${var.sql_warehouse_name}
-      cluster_size: "X-Small"
-      enable_serverless_compute: true
-      max_num_clusters: 1
-      min_num_clusters: 1
-      auto_stop_mins: 10
-      permissions:
-        - group_name: "users"
-          level: "CAN_USE"
+  # ``sql_warehouses.dqx_sql_warehouse`` is intentionally NOT declared at
+  # top-level. Targets that want a bundle-managed warehouse declare it
+  # inside their own ``resources.sql_warehouses`` block (see bdf-vo).
+  # Targets that point at an existing warehouse just set
+  # ``sql_warehouse_id`` to the literal ID (see kaizen-app). This keeps
+  # ``bundle destroy`` honest — it can't accidentally delete a shared
+  # warehouse the bundle never created.
 
   # ------------------------------------------------------------------
   # Stateful storage (schemas, volume, Lakebase instance + database).
@@ -302,26 +330,51 @@ resources:
           default: "unknown"
 
 targets:
-  # Template for adding a new target. Required variables are
-  # ``catalog_name`` and ``dqx_service_principal_application_id``;
-  # everything else has a sensible default in the ``variables:`` block
+  # Template for adding a new target. Required variables are:
+  #   - ``catalog_name``
+  #   - ``dqx_service_principal_application_id``
+  #   - ``sql_warehouse_id`` (chooses warehouse mode; see DEPLOYMENT.md
+  #     "Choosing a SQL warehouse mode" and the live ``bdf-vo`` /
+  #     ``kaizen-app`` targets below for worked Mode A / Mode B examples)
+  # Everything else has a sensible default in the ``variables:`` block
   # at the top of this file and can be overridden per target below.
   #
-  # example-target:
+  # example-target-mode-a:
   #   workspace:
   #     profile: <your-profile>
   #   variables:
   #     catalog_name: <your-catalog>
   #     dqx_service_principal_application_id: <your-sp-application-id>
+  #     sql_warehouse_id: ${resources.sql_warehouses.dqx_sql_warehouse.id}
   #     # Optional overrides:
   #     # admin_group: <your-admin-group>
   #     # app_name: <your-app-name>
-  #     # sql_warehouse_name: <your-sql-warehouse-name>
+  #     # sql_warehouse_name: <your-sql-warehouse-name>   # Mode A only
   #     # schema_name: <your-schema-name>
   #     # tmp_schema_name: <your-tmp-schema-name>
   #     # wheels_volume_name: <your-volume-name>
   #     # lakebase_instance_name: <your-lakebase-instance>
   #     # lakebase_database_name: <your-lakebase-db>
   #     # lakebase_capacity: CU_1 | CU_2 | CU_4 | CU_8
-  #   presets:
-  #     trigger_pause_status: PAUSED
+  #   resources:
+  #     sql_warehouses:
+  #       dqx_sql_warehouse:
+  #         name: ${var.sql_warehouse_name}
+  #         cluster_size: "X-Small"
+  #         enable_serverless_compute: true
+  #         max_num_clusters: 1
+  #         min_num_clusters: 1
+  #         auto_stop_mins: 10
+  #         permissions:
+  #           - group_name: "users"
+  #             level: "CAN_USE"
+  #
+  # example-target-mode-b:
+  #   workspace:
+  #     profile: <your-profile>
+  #   variables:
+  #     catalog_name: <your-catalog>
+  #     dqx_service_principal_application_id: <your-sp-application-id>
+  #     sql_warehouse_id: "<existing-warehouse-id>"   # just the ID
+  #   # No resources.sql_warehouses block. post_deploy_grants.sh grants
+  #   # CAN_USE to app SP / job SP / users via the warehouses API.

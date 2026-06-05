@@ -114,6 +114,12 @@ SCHEMA=$(echo "$BUNDLE_JSON" | jq -r '.variables.schema_name.value // .variables
 TMP_SCHEMA=$(echo "$BUNDLE_JSON" | jq -r '.variables.tmp_schema_name.value // .variables.tmp_schema_name.default // "dqx_studio_tmp"')
 VOLUME=$(echo "$BUNDLE_JSON" | jq -r '.variables.wheels_volume_name.value // .variables.wheels_volume_name.default // "wheels"')
 JOB_SP=$(echo "$BUNDLE_JSON" | jq -r '.variables.dqx_service_principal_application_id.value // .variables.dqx_service_principal_application_id.default // empty')
+# External warehouse ID — set on targets that point the app at an existing
+# warehouse instead of the bundle-managed one. When non-empty, the bundle
+# does NOT own this warehouse, so we can't grant CAN_USE via the
+# ``databricks_permissions.sql_endpoint_*`` resource — we have to call
+# the warehouses permissions API directly post-deploy.
+EXTERNAL_WH_ID=$(echo "$BUNDLE_JSON" | jq -r '.variables.sql_warehouse_id.value // .variables.sql_warehouse_id.default // empty')
 
 if [[ -z "$CATALOG" ]]; then
   echo "ERROR: Could not determine catalog_name from bundle variables." >&2
@@ -158,9 +164,55 @@ run_sql "GRANT ALL PRIVILEGES ON SCHEMA \`$CATALOG\`.\`$SCHEMA\` TO \`$JOB_SP\`"
 run_sql "GRANT ALL PRIVILEGES ON SCHEMA \`$CATALOG\`.\`$TMP_SCHEMA\` TO \`$JOB_SP\`"
 run_sql "GRANT ALL PRIVILEGES ON VOLUME \`$CATALOG\`.\`$SCHEMA\`.\`$VOLUME\` TO \`$JOB_SP\`"
 
+# Only run the warehouse-permissions PATCH when ``sql_warehouse_id``
+# resolved to a *literal* warehouse ID (Mode B). In Mode A the variable
+# is set to ``${resources.sql_warehouses.dqx_sql_warehouse.id}`` and
+# ``bundle validate`` leaves that as a deferred Terraform reference
+# string (the real ID isn't known until ``bundle deploy`` runs apply),
+# so the value starts with ``$``. Sending that to the warehouses
+# permissions API would produce a bogus URL like
+# ``/api/2.0/permissions/warehouses/${resources...}``. The Mode-A
+# permissions block under ``sql_warehouses.dqx_sql_warehouse`` handles
+# those grants via Terraform instead, so skipping here is correct.
+if [[ -n "$EXTERNAL_WH_ID" && "$EXTERNAL_WH_ID" != \$* ]]; then
+  echo ""
+  echo "==> Granting CAN_USE on external warehouse $EXTERNAL_WH_ID..."
+  # The warehouses permissions API takes a PATCH with the principals we
+  # want to ADD; existing grants are preserved. We grant CAN_USE to the
+  # app SP, the job SP, and the workspace ``users`` group so the OBO-
+  # token dry-run path also works.
+  # Note: the API expects the warehouse ID as a path segment and the
+  # principal as either ``user_name`` (for users), ``group_name`` (for
+  # workspace groups), or ``service_principal_name`` (for SPs, identified
+  # by their application ID UUID, NOT the numeric workspace ID). The UC
+  # ``account users`` group is account-scoped and rejected here — we use
+  # workspace ``users`` (which every workspace member is in by default)
+  # to match the original bundle-managed warehouse's permissions block.
+  $CLI api patch "/api/2.0/permissions/warehouses/$EXTERNAL_WH_ID" --json "$(cat <<EOF
+{
+  "access_control_list": [
+    {"service_principal_name": "$APP_SP_ID", "permission_level": "CAN_USE"},
+    {"service_principal_name": "$JOB_SP",    "permission_level": "CAN_USE"},
+    {"group_name": "users",                  "permission_level": "CAN_USE"}
+  ]
+}
+EOF
+)" -o json | jq -r '.access_control_list[]? | "   granted \(.permission_level) to \(.user_name // .group_name // .service_principal_name)"' || {
+    echo "   WARNING: failed to patch warehouse permissions — grant CAN_USE manually via Databricks UI"
+  }
+fi
+
 echo ""
-echo "==> Granting USE CATALOG to account users (for end-user tmp view creation)..."
+echo "==> Granting end-user permissions for tmp view creation..."
+# The app's dry-run / preview feature creates temp views via the user's
+# OBO token (see backend/services/view_service.py + dependencies.get_view_service)
+# so the user's source-table read permissions are enforced. The view
+# itself lives in $CATALOG.$TMP_SCHEMA, so end users need CREATE TABLE
+# and USE SCHEMA there in addition to USE CATALOG on the parent catalog.
+# Granting only USE CATALOG (the historical behavior) made every dry-run
+# fail with PERMISSION_DENIED on the CREATE OR REPLACE VIEW.
 run_sql "GRANT USE CATALOG ON CATALOG \`$CATALOG\` TO \`account users\`"
+run_sql "GRANT USE SCHEMA, CREATE TABLE ON SCHEMA \`$CATALOG\`.\`$TMP_SCHEMA\` TO \`account users\`"
 
 echo ""
 echo "==> Done. All grants applied."

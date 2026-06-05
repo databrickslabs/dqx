@@ -102,8 +102,8 @@ The schemas, wheels volume, and Lakebase instance are declared as bundle resourc
 
 Lakebase (Postgres) — when enabled (default):
  dqx-studio-lakebase (database_instance)
- └── dqx_studio (database)
-     └── public (schema)               ← provisioned by PgMigrationRunner on first start
+ └── databricks_postgres (database)    ← always-present admin DB; no per-app logical DB provisioned
+     └── dqx_studio (schema)           ← created by PgMigrationRunner on first start (DQX_LAKEBASE_SCHEMA)
          ├── dq_app_settings, dq_role_mappings, dq_quality_rules,
          ├── dq_quality_rules_history, dq_comments, dq_schedule_configs,
          ├── dq_schedule_configs_history, dq_schedule_runs

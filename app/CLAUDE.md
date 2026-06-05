@@ -12,7 +12,7 @@ The DQX Studio is a **UI for authoring and managing data quality rules**. It low
 
 - Deploys as a **Databricks App** (FastAPI backend + React frontend in a single Python wheel)
 - Must be publishable to **Databricks Marketplace**
-- Uses **On-Behalf-Of (OBO)** authentication — all operations run as the logged-in user
+- Uses a **hybrid auth model**: data-plane reads (catalog/schema/table browse, dry-run preview, query execution against the user's tables) run as the logged-in user via **On-Behalf-Of (OBO)** tokens so Unity Catalog perms are enforced. Control-plane writes (rules CRUD, RBAC mappings, migrations, wheel sync, task-runner job submission) run as the app's **service principal** so they don't require every end user to hold those workspace permissions. See `README.md` for the full split.
 
 ## Target Personas
 
@@ -65,9 +65,9 @@ but is protected transitively by the instance-level guard.
  ├── dqx_studio_tmp                   ← temp views created via OBO for profiler/dryrun jobs
  └── dqx_studio.wheels (volume)       ← DQX + task-runner wheels uploaded at app startup
 
-Lakebase database (when enabled, default = `dqx-studio-lakebase`):
- └── dqx_studio                       (database)
-     └── public                        (schema, configurable via DQX_LAKEBASE_SCHEMA)
+Lakebase instance (when enabled, default name = `dqx-studio-lakebase`):
+ └── databricks_postgres              (database — always-present admin DB; no per-app DB provisioned)
+     └── dqx_studio                   (schema — created by PgMigrationRunner on first start; configurable via DQX_LAKEBASE_SCHEMA)
          ├── dq_app_settings, dq_role_mappings, dq_quality_rules,
          │   dq_quality_rules_history, dq_comments, dq_schedule_configs,
          │   dq_schedule_configs_history, dq_schedule_runs

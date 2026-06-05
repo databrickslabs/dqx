@@ -66,8 +66,9 @@ def _find_wheels() -> list[Path]:
     Databricks Apps sets the working directory to the source code directory, but
     we also walk up from this file's location as a fallback (handles the case
     where the package is installed in a venv inside the source tree).
-    For local dev (apx dev start), the DAB build places DQX wheels in .build/
-    relative to the app source root rather than in the cwd itself.
+    For local dev (``make app-start-dev`` / ``scripts/dev.py``), the DAB build
+    places DQX wheels in .build/ relative to the app source root rather than
+    in the cwd itself.
     """
     cwd = Path.cwd()
     search_roots: list[Path] = [cwd]

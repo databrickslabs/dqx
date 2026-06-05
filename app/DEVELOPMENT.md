@@ -3,25 +3,31 @@
 ## Prerequisites
 
 - **Python 3.11+**
-- **Node.js 18+** and **yarn**
+- **Node.js 18+** and **yarn** (yarn classic v1 — used for the committed `app/yarn.lock`; `bun.lock` / `package-lock.json` are gitignored)
+- **bun** — used by `make app-check` to run `tsc -b` (TypeScript incremental compile). Install via `curl -fsSL https://bun.sh/install | bash` or `brew install oven-sh/bun/bun`.
 - **uv** — Python package manager
-- **Databricks CLI** — `pip install databricks-cli`
+- **Databricks CLI** v0.268+ — install per the [official guide](https://docs.databricks.com/aws/en/dev-tools/cli/install) (the legacy `databricks-cli` PyPI package is unrelated and not supported). Verify with `databricks --version`.
 - Access to a Databricks workspace
 
 ## Command Reference
 
-`apx` is the project's development CLI, installed as part of the app's Python dependencies. Every `uv run apx` command has a root-level `make` equivalent that also handles environment setup. **Prefer `make` from the project root.**
+Every workflow runs through `make` targets at the project root. The
+underlying invocations are pure-Python orchestrators (`scripts/build_app.py`,
+`scripts/dev.py`) plus `bun` / `uv` / `node_modules/.bin/*` — no
+project-specific CLI required. **Prefer `make` from the project root.**
 
-| `make` (from root) | `apx` equivalent (from `app/`) | What it does |
-|---|---|---|
-| `make app-install` | `yarn install --frozen-lockfile` | Install JS dependencies |
-| `make app-build` | `uv run apx build` | Compile UI, generate OpenAPI schema, package wheels |
-| `make app-start-dev` | `uv run apx dev start` | Build then start all dev servers |
-| `make app-stop-dev` | `uv run apx dev stop` | Stop all dev servers |
-| `make app-check` | `uv run apx dev check` | TypeScript + Python type-check and lint |
-| `make fmt` | — | Format Python (run from root before committing) |
-| `make test` | — | Unit tests |
-| `make integration` | — | Integration tests (requires live workspace) |
+| `make` (from root) | What it does |
+|---|---|
+| `make app-install` | Install JS dependencies (yarn) |
+| `make app-build` | Compile UI, generate OpenAPI schema, package wheels (runs `app/scripts/build_app.py`) |
+| `make app-start-dev` | Build then start uvicorn + vite via `app/scripts/dev.py` (foreground; Ctrl+C to stop) |
+| `make app-stop-dev` | Stop dev servers started in another shell (`pkill`-based) |
+| `make app-check` | TypeScript (`tsc -b`) + Python (`basedpyright`) type-check |
+| `make app-regen-api` | Regenerate `ui/lib/api.ts` after backend model changes (no full wheel rebuild) |
+| `make app-test` | Backend pytest suite |
+| `make fmt` | Format Python (run from root before committing) |
+| `make test` | Library unit tests |
+| `make integration` | Integration tests (requires live workspace) |
 
 > Lock files (`yarn.lock` and `uv.lock`) must be committed to ensure reproducible builds.
 
@@ -48,7 +54,7 @@ DQX_ADMIN_GROUP=admins                      # workspace group granted bootstrap 
 # Lakebase (optional — leave DQX_LAKEBASE_INSTANCE_NAME empty to run OLTP tables on Delta locally)
 DQX_LAKEBASE_INSTANCE_NAME=                 # e.g. dqx-studio-lakebase; empty = Delta-only mode
 DQX_LAKEBASE_DATABASE_NAME=databricks_postgres  # logical Postgres DB; defaults to the always-present admin DB
-DQX_LAKEBASE_SCHEMA=public                  # Postgres schema (default: public)
+DQX_LAKEBASE_SCHEMA=dqx_studio              # Postgres schema (default: dqx_studio)
 DQX_LAKEBASE_POOL_MIN_SIZE=1                # psycopg connection pool floor
 DQX_LAKEBASE_POOL_MAX_SIZE=10               # psycopg connection pool ceiling
 DQX_LAKEBASE_TOKEN_REFRESH_MINUTES=50       # OAuth token refresh cadence (token expires at 60)
@@ -87,39 +93,49 @@ From the **project root**:
 make app-build
 ```
 
-Or from the `app/` directory:
+Or directly from the `app/` directory:
 ```bash
-uv run apx build
+uv run python scripts/build_app.py
 ```
 
-This generates the OpenAPI schema, compiles the React/TypeScript UI into `__dist__/`, and packages everything into a wheel.
+This generates the OpenAPI schema, compiles the React/TypeScript UI into `__dist__/`, and packages everything into a wheel. The wheel filename and METADATA both carry a build-tag local-version segment (e.g. `.b20260530t012345`) so successive deploys at the same git commit force a fresh pip install in Databricks Apps' persistent venv.
 
 ## 4. Start Dev Servers
 
 From the **project root**:
 ```bash
-make app-start-dev   # builds first, then starts all servers
+make app-start-dev   # builds first, then starts uvicorn + vite in the foreground
 ```
 
-Or from the `app/` directory:
+Or directly from the `app/` directory:
 ```bash
-uv run apx dev start
+uv run python scripts/dev.py
 ```
 
-This starts the FastAPI backend, Vite HMR frontend, and OpenAPI schema watcher as background processes.
+This spawns:
+
+* **uvicorn** on `http://localhost:9002` (FastAPI, `--reload` for backend hot reload)
+* **vite** on `http://localhost:9001` (UI + HMR, with built-in proxy forwarding `/api`, `/docs`, `/redoc`, `/openapi.json` to uvicorn)
 
 Access the app at:
 - **UI**: http://localhost:9001
 - **API**: http://localhost:9001/api
 - **OpenAPI docs**: http://localhost:9001/docs
 
+Logs stream to the foreground terminal. **Ctrl+C** sends `SIGINT` to both children (via process group) for a clean shutdown — typically under one second.
+
 ## Monitoring & Logs
 
 ```bash
-uv run apx dev logs          # view all logs
-uv run apx dev logs -f       # stream logs in real time
-uv run apx dev status        # check server status
-make app-stop-dev            # stop all servers
+make app-start-dev    # all logs stream to stdout (foreground)
+make app-stop-dev     # stop dev servers started in another shell
+```
+
+To background the dev loop and tail logs separately, redirect to a file:
+
+```bash
+nohup make app-start-dev > /tmp/dqx-dev.log 2>&1 &
+tail -f /tmp/dqx-dev.log
 ```
 
 ## Development Workflow
@@ -127,20 +143,22 @@ make app-stop-dev            # stop all servers
 **Adding a new API endpoint:**
 1. Define the endpoint in `backend/routes/v1/` with a Pydantic response model and `operation_id`
 2. Add request/response models to `backend/models.py` if needed
-3. Run `make app-build` to regenerate the OpenAPI schema and `ui/lib/api.ts`
+3. Run `make app-regen-api` to regenerate the OpenAPI schema and `ui/lib/api.ts` (fast — no full wheel rebuild)
 4. Use the generated React Query hooks in your components
 
 **Making UI changes:**
 1. Edit components in `ui/components/` or routes in `ui/routes/`
 2. Vite HMR reloads the browser automatically — no manual refresh needed
-3. Run `make app-build` after backend changes to update `ui/lib/api.ts`
+3. Run `make app-regen-api` after backend changes to update `ui/lib/api.ts`
 
 ## Code Quality
 
 ```bash
-make app-check   # TypeScript + Python type-check and lint
+make app-check   # TypeScript (`bun run tsc -b`) + Python (`basedpyright --level error`) type-check
 make fmt          # format Python (run before every commit)
 ```
+
+`make app-check` is **type-check only** — it does not run ESLint or ruff. Run linters separately if you need them: `make lint` from the project root covers ruff + mypy at the library level.
 
 ## Testing
 
@@ -173,12 +191,12 @@ make app-build
 
 **TypeScript type errors in the UI:**
 ```bash
-make app-build   # regenerates ui/lib/api.ts from the current OpenAPI spec
+make app-regen-api   # regenerates ui/lib/api.ts from the current OpenAPI spec
 ```
 
 **Build artifacts are stale:**
 ```bash
-rm -rf .build .apx __dist__
+rm -rf .build src/databricks_labs_dqx_app/__dist__
 make app-build
 ```
 

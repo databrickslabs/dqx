@@ -84,19 +84,52 @@ app-build:
 	cd app && \
 	  UV_BUILD_CONSTRAINT=.build-constraints.txt \
 	  UV_REQUIRE_HASHES=1 \
-	  $(UV_RUN) apx build && \
+	  $(UV_RUN) python scripts/build_app.py && \
 	  uv build ../ --wheel --out-dir .build/ && \
 	  uv build tasks/ --wheel --out-dir .build/tasks/
 
+# Start the local dev loop (foreground). ``scripts/dev.py`` spawns
+# uvicorn (FastAPI, port 9002) and vite (port 9001) and wires vite's
+# built-in proxy so the documented http://localhost:9001 URL works
+# end-to-end. Ctrl+C cleanly terminates both children.
+#
+# We depend on ``app-build`` to ensure ``_metadata.py``, the typed
+# UI client (``api.ts``), and the UI bundle exist before the dev
+# servers come up — otherwise vite would fail to import them.
 app-start-dev: app-build
-	cd app && $(UV_RUN) apx dev start
+	cd app && $(UV_RUN) python scripts/dev.py
 
+# Stop any dev servers started in another shell. The pkill scopes are
+# narrow enough that they only match THIS project's processes.
 app-stop-dev:
-	-cd app && $(UV_RUN) apx dev stop
+	-pkill -f "$(CURDIR)/app/scripts/dev.py"
 	-pkill -f "$(CURDIR)/app/node_modules/.bin/vite"
+	-pkill -f "uvicorn databricks_labs_dqx_app.backend.app:app"
 
+# Regenerate ``src/databricks_labs_dqx_app/ui/lib/api.ts`` from the
+# current FastAPI app's OpenAPI schema. Run this after editing pydantic
+# models or adding new routes so the typed React Query client picks up
+# the changes without a full ``make app-build``. ``uvicorn --reload``
+# inside ``app-start-dev`` already handles backend hot reload; this
+# target closes the loop for the UI's typed-client layer.
+app-regen-api:
+	cd app && $(UV_RUN) python -c "import json; \
+from databricks_labs_dqx_app.backend.app import app; \
+open('.build/openapi.json', 'w').write(json.dumps(app.openapi(), indent=2))"
+	cd app && ./node_modules/.bin/orval
+
+# Type-check both languages of the app — TypeScript front-end and
+# Python backend — by invoking ``tsc -b`` and ``basedpyright`` directly,
+# so a future Vite / basedpyright upgrade doesn't require coordinating
+# with any wrapper tool. The TypeScript pass uses incremental mode
+# (``-b``) so subsequent runs only re-check changed files; the Python
+# pass runs basedpyright at ``error`` level only (per the existing
+# pyproject configuration excluding tests, see [tool.basedpyright]).
 app-check:
-	cd app && $(UV_RUN) apx dev check
+	@echo "🔍 Checking TypeScript..."
+	cd app && bun run tsc -b --incremental
+	@echo "🔍 Checking Python..."
+	cd app && $(UV_RUN) basedpyright --level error
 
 # Run the app's backend unit-test suite (pytest, no Databricks dependencies).
 # Usage:  make app-test            # run everything

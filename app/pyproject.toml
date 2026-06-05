@@ -21,7 +21,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "apx",
+    "basedpyright>=1.31",
     "ruff>=0.14.7",
 ]
 test = [
@@ -41,11 +41,17 @@ filterwarnings = [
     "ignore::PendingDeprecationWarning",
 ]
 
-[tool.apx.metadata]
+# Single source of truth for app identity. Consumed by:
+#   * ``scripts/build_app.py`` — writes a matching ``_metadata.py`` into
+#     the wheel so backend code can import these values at runtime.
+#   * ``vite.config.ts`` — reads ``app-name`` / ``app-slug`` to wire
+#     the UI build output and the dev-server SPA shell.
+# Renamed from the legacy ``[tool.apx.metadata]`` as part of the apx
+# framework removal — same schema, new namespace.
+[tool.dqx_app.metadata]
 app-name = "DQX Studio"
 app-slug = "databricks_labs_dqx_app"
 app-module = "databricks_labs_dqx_app.backend.app:app"
-metadata-path = "src/databricks_labs_dqx_app/_metadata.py"
 
 
 [tool.uv]
@@ -54,7 +60,6 @@ exclude-newer-package = { "databricks-sdk" = false }
 
 [tool.uv.sources]
 databricks-labs-dqx = { path = "../", editable = true }
-apx = { git = "https://github.com/databricks-solutions/apx.git" }  # PyPi package not available yet
 
 [build-system]
 requires = ["hatchling==1.29.0", "uv-dynamic-versioning>=0.7.0"]
@@ -65,7 +70,21 @@ source = "uv-dynamic-versioning"
 
 [tool.uv-dynamic-versioning]
 vcs = "git"
-format-jinja = "{{version}}"
+# Append an optional build tag (set by ``scripts/build_app.py`` to a
+# timestamp like ``b20260530t012345``) as an extra PEP 440 local-version
+# segment, e.g. ``0.14.0.post42.dev0+abc1234.b20260530t012345``.
+# Without the env var (``uv build`` invoked directly during dev) the
+# version is unchanged.
+#
+# The build tag forces every redeploy of the same git commit to produce
+# a strictly greater version than the previous deploy, so pip in
+# Databricks Apps' persistent venv reinstalls fresh code instead of
+# skipping with "already satisfied". This replaces the legacy
+# ``scripts/_align_wheel_version.py`` post-processor — apx's ``build``
+# command used to inject the timestamp into the wheel filename only,
+# leaving the internal METADATA stale; we now bake the tag in at
+# build time so filename and METADATA agree by construction.
+format-jinja = "{{ version }}{% if env.get('DQX_APP_BUILD_TAG') %}.{{ env['DQX_APP_BUILD_TAG'] }}{% endif %}"
 
 [tool.hatch.build.hooks.version]
 path = "src/databricks_labs_dqx_app/_version.py"
@@ -125,14 +144,15 @@ target-version = "py311"
 #      noqa.
 
 [tool.basedpyright]
-# ``apx dev check`` runs basedpyright but only syncs the default + dev
-# dependency groups, not ``test``. That means pytest (and the rest of the
-# test toolchain) is missing from the env basedpyright sees, which blows
-# up every ``import pytest`` with reportMissingImports. The mock-heavy
-# scheduler service tests also produce noisy reportAttributeAccessIssue
-# errors against ``MethodType`` because we monkey-patch service methods
-# with ``MagicMock()`` instances — basedpyright can't follow that without
-# the test deps and ``spec`` annotations on every mock.
+# ``make app-check`` runs basedpyright on a venv synced with only the
+# default + dev dependency groups (not ``test``). That means pytest
+# and the rest of the test toolchain are missing from the env
+# basedpyright sees, which would blow up every ``import pytest`` with
+# reportMissingImports. The mock-heavy scheduler service tests also
+# produce noisy reportAttributeAccessIssue errors against ``MethodType``
+# because we monkey-patch service methods with ``MagicMock()``
+# instances — basedpyright can't follow that without the test deps and
+# ``spec`` annotations on every mock.
 #
 # Tests are already type-checked at collection time by ``make app-test``,
 # which uses the proper ``--group test`` env, so excluding them from the
