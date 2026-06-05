@@ -158,8 +158,8 @@
     "keyPlaceholder": "es. team"
   },
   "discovery": {
-    "breadcrumb": "Discovery",
-    "title": "Discovery",
+    "breadcrumb": "Esplorazione",
+    "title": "Esplorazione",
     "subtitle": "Sfoglia gli asset di Unity Catalog per trovare tabelle per i tuoi controlli di qualità.",
     "browseCatalog": "Sfoglia Catalogo",
     "browseCatalogDescription": "Seleziona un catalogo, schema e tabella per visualizzare le sue colonne.",
@@ -1059,7 +1059,7 @@
     "missingColumns": "Colonne richieste mancanti"
   },
   "columnDiscovery": {
-    "title": "Discovery colonne",
+    "title": "Esplorazione colonne",
     "browseColumns": "(sfoglia colonne)",
     "hint": "Ricerca rapida delle colonne in qualsiasi tabella UC. Clicca su una colonna per copiarne il nome; incolla nel campo colonna di qualsiasi controllo sotto.",
     "loading": "Caricamento…",
