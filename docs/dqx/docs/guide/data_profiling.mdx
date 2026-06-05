@@ -537,6 +537,9 @@ from databricks.labs.dqx.profiler.profiler import DQProfiler
 
 profiler = DQProfiler(WorkspaceClient())
 
+# Flag a column when its mean shifts by more than this fraction of the baseline (20% here). Tune to taste.
+mean_drift_threshold = 0.2
+
 # Baseline captured earlier — persist summary_stats however you prefer (e.g. as a Delta table or JSON)
 baseline_stats, _ = profiler.profile(reference_df)
 
@@ -546,7 +549,7 @@ current_stats, _ = profiler.profile(current_df)
 for column, baseline in baseline_stats.items():
     current = current_stats.get(column, {})
     base_mean, cur_mean = baseline.get("mean"), current.get("mean")
-    if base_mean and cur_mean and abs(cur_mean - base_mean) / abs(base_mean) > 0.2:
+    if base_mean and cur_mean and abs(cur_mean - base_mean) / abs(base_mean) > mean_drift_threshold:
         print(f"Drift in '{column}': mean {base_mean} -> {cur_mean}")
 ```
 
