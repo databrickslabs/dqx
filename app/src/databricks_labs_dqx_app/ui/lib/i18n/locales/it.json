@@ -38,7 +38,8 @@
   },
   "language": {
     "label": "Lingua",
-    "description": "Scegli la lingua utilizzata nell'interfaccia."
+    "description": "Scegli la lingua utilizzata nell'interfaccia.",
+    "switchFailed": "Impossibile cambiare lingua. Riprova."
   },
   "sidebar": {
     "createRules": "Crea Regole",

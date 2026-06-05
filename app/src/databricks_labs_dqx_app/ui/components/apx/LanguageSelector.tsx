@@ -1,6 +1,7 @@
 import { useId } from "react";
 import { useTranslation } from "react-i18next";
 import { Languages } from "lucide-react";
+import { toast } from "sonner";
 import {
   Select,
   SelectContent,
@@ -25,7 +26,12 @@ export default function LanguageSelector({
   const current = toSupportedCode(i18n.resolvedLanguage ?? "en");
 
   const handleChange = (value: string) => {
-    void ensureLocaleLoaded(value).then(() => i18n.changeLanguage(value));
+    ensureLocaleLoaded(value)
+      .then(() => i18n.changeLanguage(value))
+      .catch((err) => {
+        console.error("Failed to switch language", err);
+        toast.error(t("language.switchFailed"));
+      });
   };
 
   return (

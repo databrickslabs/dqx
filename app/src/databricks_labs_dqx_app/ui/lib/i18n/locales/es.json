@@ -38,7 +38,8 @@
   },
   "language": {
     "label": "Idioma",
-    "description": "Elige el idioma utilizado en toda la interfaz."
+    "description": "Elige el idioma utilizado en toda la interfaz.",
+    "switchFailed": "No se pudo cambiar el idioma. Inténtalo de nuevo."
   },
   "sidebar": {
     "createRules": "Crear Reglas",
