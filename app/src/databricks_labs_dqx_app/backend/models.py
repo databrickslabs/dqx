@@ -141,7 +141,11 @@ class DryRunSubmitOut(BaseModel):
 class DryRunOut(BaseModel):
     total_rows: int
     valid_rows: int
+    # ``invalid_rows`` is kept for backwards compatibility but is no longer
+    # the primary count surfaced in the UI — see ``error_rows`` below.
     invalid_rows: int
+    error_rows: int = 0
+    warning_rows: int = 0
     error_summary: list[dict[str, Any]]
     sample_invalid: list[dict[str, Any]]
 
@@ -261,6 +265,10 @@ class DryRunResultsOut(BaseModel):
     total_rows: int | None = None
     valid_rows: int | None = None
     invalid_rows: int | None = None
+    # ``error_rows`` / ``warning_rows`` are the authoritative DQX observer
+    # counts; ``invalid_rows`` is kept for backwards compatibility only.
+    error_rows: int | None = None
+    warning_rows: int | None = None
     error_summary: list[dict[str, Any]] = Field(default_factory=list)
     sample_invalid: list[dict[str, Any]] = Field(default_factory=list)
 
@@ -277,6 +285,8 @@ class ValidationRunSummaryOut(BaseModel):
     run_type: str | None = None
     valid_rows: int | None = None
     invalid_rows: int | None = None
+    error_rows: int | None = None
+    warning_rows: int | None = None
     created_at: str | None = None
     error_message: str | None = None
     checks: list[dict[str, Any]] = Field(default_factory=list)
@@ -328,6 +338,7 @@ class QuarantineRecordOut(BaseModel):
     requesting_user: str | None = None
     row_data: dict[str, Any] | None = None
     errors: list[Any] | None = None
+    warnings: list[Any] | None = None
     created_at: str | None = None
 
 

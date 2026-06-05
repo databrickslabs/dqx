@@ -22,6 +22,7 @@ from databricks.labs.dqx.check_funcs import (
     is_aggr_not_equal,
     foreign_key,
     is_valid_ipv4_address,
+    is_valid_email,
     is_ipv4_address_in_cidr,
     is_not_less_than,
     is_not_greater_than,
@@ -247,6 +248,7 @@ def test_build_rules():
         DQRowRule(
             criticality="warn", check_func=is_ipv4_address_in_cidr, column="g", check_func_args=["192.168.1.0/24"]
         ),
+        DQRowRule(criticality="warn", check_func=is_valid_email, column="g"),
         DQDatasetRule(
             criticality="error",
             check_func=sql_query,
@@ -505,6 +507,12 @@ def test_build_rules():
             column="g",
             check_func_args=["192.168.1.0/24"],
         ),
+        DQRowRule(
+            name="g_does_not_match_pattern_email_address",
+            criticality="warn",
+            check_func=is_valid_email,
+            column="g",
+        ),
         DQDatasetRule(
             criticality="error",
             check_func=sql_query,
@@ -756,6 +764,11 @@ def test_build_rules_by_metadata():
                 "function": "is_ipv4_address_in_cidr",
                 "arguments": {"column": "a", "cidr_block": "192.168.1.0/24"},
             },
+        },
+        {
+            "name": "a_is_valid_email",
+            "criticality": "error",
+            "check": {"function": "is_valid_email", "arguments": {"column": "a"}},
         },
     ]
 
@@ -1022,6 +1035,12 @@ def test_build_rules_by_metadata():
             check_func=is_ipv4_address_in_cidr,
             column="a",
             check_func_kwargs={"cidr_block": "192.168.1.0/24"},
+        ),
+        DQRowRule(
+            name="a_is_valid_email",
+            criticality="error",
+            check_func=is_valid_email,
+            column="a",
         ),
     ]
 
