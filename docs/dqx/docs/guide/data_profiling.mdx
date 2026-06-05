@@ -519,7 +519,7 @@ Rule of thumb: `count ≈ min(limit, sample_fraction × total_rows)`.
 
 ## Data Drift Detection
 
-When you profile the same data repeatedly over time, the profiler's summary statistics let you detect **data drift** — shifts in the statistical distribution of your data that can silently degrade downstream analytics or ML models. Treat a profile captured at a known-good point in time as a **baseline**, then compare later profiles against it.
+When you profile the same data repeatedly over time, the profiler's summary statistics let you detect **data drift** — shifts in the statistical distribution of your data. This matters for profiling because DQX derives quality-rule candidates from these statistics (e.g. `min`/`max` ranges, `is_in` allowed values, null-ratio thresholds): when the data drifts, rules generated from an earlier profile go stale and start producing false positives or stop catching real issues. Treat a profile captured at a known-good point in time as a **baseline**, compare later profiles against it, and regenerate the rules when the baseline has moved.
 
 ### Metrics to compare against a baseline
 
