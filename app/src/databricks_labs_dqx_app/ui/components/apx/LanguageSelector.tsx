@@ -1,3 +1,4 @@
+import { useId } from "react";
 import { useTranslation } from "react-i18next";
 import { Languages } from "lucide-react";
 import {
@@ -20,6 +21,7 @@ export default function LanguageSelector({
   hideLabel = false,
 }: LanguageSelectorProps) {
   const { t, i18n } = useTranslation();
+  const selectId = useId();
   const current = toSupportedCode(i18n.resolvedLanguage ?? "en");
 
   const handleChange = (value: string) => {
@@ -29,13 +31,17 @@ export default function LanguageSelector({
   return (
     <div className={className}>
       {!hideLabel && (
-        <Label htmlFor="language-selector" className="flex items-center gap-2 mb-2">
+        <Label htmlFor={selectId} className="flex items-center gap-2 mb-2">
           <Languages className="h-4 w-4" />
           {t("language.label")}
         </Label>
       )}
       <Select value={current} onValueChange={handleChange}>
-        <SelectTrigger id="language-selector" className="w-full sm:w-64">
+        <SelectTrigger
+          id={selectId}
+          aria-label={hideLabel ? t("language.label") : undefined}
+          className="w-full sm:w-64"
+        >
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
