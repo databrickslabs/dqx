@@ -116,9 +116,15 @@ def _failed_response(message: str = "boom") -> StatementResponse:
 
 _SAMPLE_CHECKS = [{"criticality": "error", "check": {"function": "is_not_null", "arguments": {"column": "id"}}}]
 
+# Row[1] must JSON-decode to a *bare* check object, not a list. After
+# the v1 baseline split each catalog row stores one check in the
+# VARIANT/JSONB ``check`` column rather than an array of checks
+# (see RulesCatalogService._row_to_entry — anything that decodes to a
+# non-dict is dropped). ``_SAMPLE_CHECKS`` keeps its list shape because
+# it is the *input* to ``save`` (which writes one row per element).
 _SAMPLE_ROW = [
     "catalog.schema.table",
-    json.dumps(_SAMPLE_CHECKS),
+    json.dumps(_SAMPLE_CHECKS[0]),
     "3",
     "draft",
     "alice@example.com",
