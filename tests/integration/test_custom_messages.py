@@ -1,8 +1,10 @@
 """Integration tests for custom message expressions on DQRule."""
 
 import pyspark.sql.functions as F
+import pytest
 
 from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.errors import UnsafeSqlQueryError
 from databricks.labs.dqx.rule import DQRowRule, DQForEachColRule
 from databricks.labs.dqx import check_funcs
 from tests.integration.conftest import (
@@ -367,3 +369,40 @@ def test_metadata_for_each_column_with_custom_message(ws, spark):
         EXPECTED_SCHEMA,
     )
     assert_df_equality(checked_df, expected_df)
+
+
+def test_apply_checks_with_unsafe_message_expr_raises(ws, spark):
+    """A string message_expr containing an unsafe SQL keyword must be rejected when applied."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    test_df = spark.createDataFrame([[1, 3, None]], SCHEMA)
+
+    rules = [
+        DQRowRule(
+            name="c_not_null",
+            criticality="error",
+            check_func=check_funcs.is_not_null,
+            column="c",
+            message_expr="concat('msg ', (select x from t where y = (drop table t)))",
+        ),
+    ]
+
+    with pytest.raises(UnsafeSqlQueryError, match="not safe for execution"):
+        dq_engine.apply_checks(test_df, rules)
+
+
+def test_apply_checks_by_metadata_with_unsafe_message_expr_raises(ws, spark):
+    """An unsafe message_expr supplied via metadata must also be rejected when applied."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    test_df = spark.createDataFrame([[1, 3, None]], SCHEMA)
+
+    checks = [
+        {
+            "name": "c_not_null",
+            "criticality": "error",
+            "check": {"function": "is_not_null", "arguments": {"column": "c"}},
+            "message_expr": "delete from audit",
+        }
+    ]
+
+    with pytest.raises(UnsafeSqlQueryError, match="not safe for execution"):
+        dq_engine.apply_checks_by_metadata(test_df, checks)

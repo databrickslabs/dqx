@@ -190,7 +190,7 @@ class DQRule(abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleColumnsMixin):
         self._validate_attributes()
         check_condition = self.get_check_condition()
         self._initialize_name_if_missing(check_condition)
-        if self.message_expr and isinstance(self.message_expr, str):
+        if isinstance(self.message_expr, str):
             self._validate_message_expression(self.message_expr)
 
     @abc.abstractmethod
@@ -269,9 +269,9 @@ class DQRule(abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleColumnsMixin):
             metadata["user_metadata"] = self.user_metadata
         # Only string expressions can be round-tripped through metadata; Column objects are
         # in-process Spark expressions with no canonical YAML/JSON representation.
-        if self.message_expr:
-            if isinstance(self.message_expr, str):
-                metadata["message_expr"] = self.message_expr
+        if isinstance(self.message_expr, str):
+            metadata["message_expr"] = self.message_expr
+        elif self.message_expr is not None:
             logger.warning("Message expressions of type 'Column' cannot be serialized; falling back to default message")
         return metadata
 
