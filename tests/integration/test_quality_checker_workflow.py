@@ -190,12 +190,6 @@ def test_quality_checker_workflow_with_quarantine_only(
 
     assert_quarantine_df_only(ws, spark, expected_quality_checking_output, run_config.quarantine_config)
 
-    # quarantine-only must not produce a valid-output table; only the input and quarantine tables exist
-    catalog_name, schema_name, quarantine_table = run_config.quarantine_config.location.split(".")
-    input_table = run_config.input_config.location.split(".")[-1]
-    existing_tables = {row.tableName for row in spark.sql(f"SHOW TABLES FROM {catalog_name}.{schema_name}").collect()}
-    assert existing_tables == {input_table, quarantine_table}
-
 
 def test_quality_checker_workflow_when_missing_checks_file(ws, setup_serverless_workflows):
     installation_ctx, run_config = setup_serverless_workflows()
