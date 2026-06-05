@@ -4102,6 +4102,7 @@ Users can override the default failure message of any `DQRule` by specifying a c
 <Admonition type="tip" title="Using custom messages">
 When using custom message expressions:
 
+* Messages defined as SQL expressions are only validated when checks are run (e.g. with `apply_checks_by_metadata(...)`).
 * Wrap column references with `coalesce` to avoid null messages. In Spark SQL, `concat(..., null)` returns `null`.
 * Pass literal string values with quotes (e.g. `'Email must not be null'`) to ensure they are not evaluated as SQL expressions.
 * Avoid long messages or referencing unbounded string columns. Message text is **truncated at 500 characters**.
