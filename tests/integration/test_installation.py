@@ -586,18 +586,26 @@ def test_install_config_with_quarantine_only(ws, installation_ctx):
     assert run_config.quarantine_config == OutputConfig(location="main.dqx_test.quarantine_table")
 
 
-def test_install_config_rejects_no_output_and_no_quarantine(ws, installation_ctx):
-    installation_ctx = installation_ctx.replace(
-        extend_prompts={
+def test_install_config_rejects_no_output_and_no_quarantine(ws):
+    # Use an isolated installer (not the shared installation_ctx) so skipping both output and
+    # quarantine does not poison the fixture teardown, which rebuilds the config via configure().
+    product_info = ProductInfo.for_testing(WorkspaceConfig)
+    prompts = MockPrompts(
+        {
+            r"Provide location for the input data .*": "main.dqx_test.input_table",
             r"Provide output table .*": "skipped",
             r".*PRO or SERVERLESS SQL warehouse.*": "1",
-        },
+            r".*": "",
+        }
     )
-    installation_ctx.__dict__.pop("workspace_installer", None)
-    installation_ctx.__dict__.pop("prompts", None)
+    installer = WorkspaceInstaller(ws, {}).replace(
+        installation=Installation(ws, product_info.product_name()),
+        product_info=product_info,
+        prompts=prompts,
+    )
 
     with pytest.raises(
         InvalidParameterError,
         match="At least one of an output table or a quarantine table",
     ):
-        installation_ctx.workspace_installer.configure()
+        installer.configure()

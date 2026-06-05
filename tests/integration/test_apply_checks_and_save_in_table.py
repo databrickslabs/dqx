@@ -1849,7 +1849,9 @@ def test_apply_checks_and_save_in_tables_for_patterns_with_quarantine(
         patterns=[f"{catalog_name}.{schema.name}.*"],
         checks_location=workspace_folder,
         max_parallelism=2,
-        run_config_template=RunConfig(quarantine_config=OutputConfig(location="")),
+        run_config_template=RunConfig(
+            output_config=OutputConfig(location=""), quarantine_config=OutputConfig(location="")
+        ),
     )
 
     # Verify both tables were created and contain the expected data
@@ -1976,7 +1978,9 @@ def test_apply_checks_and_save_in_tables_for_patterns_with_exclude_patterns(
         exclude_patterns=[f"*{output_table_suffix}", f"*{quarantine_table_suffix}"],
         checks_location=workspace_folder + "/checks.yml",  # should strip the file name automatically,
         max_parallelism=2,
-        run_config_template=RunConfig(quarantine_config=OutputConfig(location="")),
+        run_config_template=RunConfig(
+            output_config=OutputConfig(location=""), quarantine_config=OutputConfig(location="")
+        ),
         output_table_suffix=output_table_suffix,
         quarantine_table_suffix=quarantine_table_suffix,
     )
