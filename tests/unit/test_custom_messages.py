@@ -4,8 +4,8 @@ import logging
 
 import pyspark.sql.functions as F
 
-from databricks.labs.dqx.check_funcs import is_not_null, is_not_null_and_not_empty
-from databricks.labs.dqx.rule import DQRowRule, DQForEachColRule
+from databricks.labs.dqx.check_funcs import is_not_null, is_unique
+from databricks.labs.dqx.rule import DQRowRule, DQForEachColRule, DQDatasetRule
 
 
 def test_dq_row_rule_accepts_message_expr_string():
@@ -37,7 +37,7 @@ def test_dq_row_rule_message_expr_defaults_to_none():
 
 def test_dq_dataset_rule_message_expr_defaults_to_none():
     """DQDatasetRule without message_expr should default to None."""
-    rule = DQRowRule(check_func=is_not_null_and_not_empty, column="id")
+    rule = DQDatasetRule(check_func=is_unique, columns=["id"])
     assert rule.message_expr is None
 
 

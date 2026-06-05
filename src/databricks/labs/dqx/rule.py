@@ -169,7 +169,8 @@ class DQRule(abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleColumnsMixin):
         a Spark SQL expression string or a Spark *Column* expression. The expression is evaluated as-is.
         Any column references, casts, or rule-identifying literals must be supplied directly by the caller
         (e.g., ``F.concat(F.lit('age_positive: value '), F.col('age').cast('string'))`` or
-        ``"concat('age_positive: value ', cast(age as string))"``).
+        ``"concat('age_positive: value ', cast(age as string))"``). The same message is shared across all
+        rules generated from a ``DQForEachColRule``.
     """
 
     check_func: Callable
