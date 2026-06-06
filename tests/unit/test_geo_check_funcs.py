@@ -98,3 +98,83 @@ def test_is_geo_intersects_approximate_bytes_reference_raises():
     """Raises InvalidParameterError when bytes reference geometry is used in approximate mode."""
     with pytest.raises(InvalidParameterError):
         is_geo_intersects("location", b"\x00\x01", precise=False, resolution=5)
+
+
+def test_is_geo_contains_precise_has_proper_alias():
+    column = is_geo_contains("location", _REFERENCE_GEOMETRY_WKT, convert_column=True, convert_reference_geometry=True)
+    column_str = _column_expression_clean(column)
+    assert column_str.endswith("location_is_not_in_reference_geometry"), f'{column_str} has incorrect alias suffix'
+
+
+def test_is_geo_intersects_precise_has_proper_alias():
+    column = is_geo_intersects(
+        "location", _REFERENCE_GEOMETRY_WKT, precise=True, convert_column=True, convert_reference_geometry=True
+    )
+    column_str = _column_expression_clean(column)
+    assert column_str.endswith(
+        "location_does_not_intersect_reference_geometry_precisely"
+    ), f'{column_str} has incorrect alias suffix'
+
+
+def test_is_geo_intersects_approximate_has_proper_alias():
+    column = is_geo_intersects(
+        "location",
+        _REFERENCE_GEOMETRY_WKT,
+        precise=False,
+        convert_column=True,
+        resolution=10,
+        convert_reference_geometry=True,
+    )
+    column_str = _column_expression_clean(column)
+    assert column_str.endswith(
+        "location_does_not_intersect_reference_geometry_approximately"
+    ), f'{column_str} has incorrect alias suffix'
+
+
+def test_is_is_geo_covers_precise_has_proper_alias():
+    column = is_geo_covers(
+        "location", _REFERENCE_GEOMETRY_WKT, precise=True, convert_column=True, convert_reference_geometry=True
+    )
+    column_str = _column_expression_clean(column)
+    assert column_str.endswith(
+        "location_is_not_covered_by_reference_geometry_precisely"
+    ), f'{column_str} has incorrect alias suffix'
+
+
+def test_is_is_geo_covers_approximate_has_proper_alias():
+    column = is_geo_covers(
+        "location",
+        _REFERENCE_GEOMETRY_WKT,
+        precise=False,
+        convert_column=True,
+        resolution=10,
+        convert_reference_geometry=True,
+    )
+    column_str = _column_expression_clean(column)
+    assert column_str.endswith(
+        "location_is_not_covered_by_reference_geometry_approximately"
+    ), f'{column_str} has incorrect alias suffix'
+
+
+def test_is_geo_touches_has_proper_alias():
+    column = is_geo_touches("location", _REFERENCE_GEOMETRY_WKT)
+    column_str = _column_expression_clean(column)
+    assert column_str.endswith("location_does_not_touch_reference_geometry"), f'{column_str} has incorrect alias suffix'
+
+
+def test_is_geo_touches_with_conversion_has_proper_alias():
+    column = is_geo_touches("location", _REFERENCE_GEOMETRY_WKT, convert_column=True, convert_reference_geometry=True)
+    column_str = _column_expression_clean(column)
+    assert column_str.endswith("location_does_not_touch_reference_geometry"), f'{column_str} has incorrect alias suffix'
+
+
+def test_is_geo_within_has_proper_alias():
+    column = is_geo_within("location", _REFERENCE_GEOMETRY_WKT, convert_column=True, convert_reference_geometry=True)
+    column_str = _column_expression_clean(column)
+    assert column_str.endswith(
+        "location_does_not_contain_reference_geometry"
+    ), f'{column_str} has incorrect alias suffix'
+
+
+def _column_expression_clean(column) -> str:
+    return str(column).lstrip("Column<'").rstrip("'>")

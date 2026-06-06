@@ -2096,10 +2096,8 @@ def test_benchmark_has_no_aggr_outliers(benchmark, ws, generated_df):
 def test_benchmark_is_geo_covers_precise(benchmark, ws, generated_df):
     """Benchmark is_geo_covers check on.
 
-    Uses col6 (timestamp spanning 1900–2025 at 1-second intervals) bucketed by day,
-    averaging col2 per day. With 100M rows and ~45k day-buckets the rolling-window
-    aggregation exercises both the groupBy/Window path and the broadcast join back to
-    every row in df.
+    Uses col_geo_point with point geometry to benchmark it against polygon geometry value with `precise=True`
+    configuration to use ST_* family of functions.
     """
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     checks = [
@@ -2123,10 +2121,8 @@ def test_benchmark_is_geo_covers_precise(benchmark, ws, generated_df):
 def test_benchmark_is_geo_covers_approximate(benchmark, ws, generated_df):
     """Benchmark is_geo_covers check on.
 
-    Uses col6 (timestamp spanning 1900–2025 at 1-second intervals) bucketed by day,
-    averaging col2 per day. With 100M rows and ~45k day-buckets the rolling-window
-    aggregation exercises both the groupBy/Window path and the broadcast join back to
-    every row in df.
+    Uses col_geo_point with point geometry to benchmark it against polygon geometry value with `precise=False`
+    configuration to use H3 family of functions.
     """
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     checks = [

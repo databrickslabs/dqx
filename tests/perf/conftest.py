@@ -110,7 +110,15 @@ def generated_df(spark, rows=DEFAULT_ROWS):
         .withColumnSpec("col_ipv4", template=r"\n.\n.\n.\n")
         .withColumnSpec("col_ipv6", template="XXXX:XXXX:XXXX:XXXX:XXXX:XXXX:XXXX:XXXX")
         .withColumnSpec("col_json_str", template=r"{'key1': '\w', 'key2': 'd\w'}")
-        .withColumnSpec("col_geo_point", values=["POINT(4.48 51.92)"])
+        .withColumnSpec(
+            "col_geo_point",
+            values=[
+                "POINT(4.90 52.37)",
+                "POINT(4.73 52.28)",
+                "POINT(4.48 51.92)",
+                "POINT(5.20 52.35)",
+            ],
+        )
     )
     return spec.build()
 

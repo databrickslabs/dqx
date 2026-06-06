@@ -31,6 +31,32 @@ _PRECISE_TOPOLOGICAL_FUNCS: dict[str, str] = {
 
 _APPROXIMATE_TOPOLOGICAL_RELATIONSHIPS = frozenset({"COVERS", "INTERSECTS"})
 
+_PRECISE_ALIAS_SUFFIX = {
+    "CONTAINS": "is_not_in_reference_geometry",
+    "COVERS": "is_not_covered_by_reference_geometry_precisely",
+    "INTERSECTS": "does_not_intersect_reference_geometry_precisely",
+    "TOUCHES": "does_not_touch_reference_geometry",
+    "WITHIN": "does_not_contain_reference_geometry",
+}
+
+_PRECISE_MESSAGE_SUFFIX = {
+    "CONTAINS": "is not in the reference geometry",
+    "COVERS": "is not covered by the reference geometry precisely",
+    "INTERSECTS": "does not intersect the reference geometry precisely",
+    "TOUCHES": "does not touch the reference geometry",
+    "WITHIN": "does not contain reference geometry",
+}
+
+_APPROXIMATE_ALIAS_SUFFIX = {
+    "COVERS": "is_not_covered_by_reference_geometry_approximately",
+    "INTERSECTS": "does_not_intersect_reference_geometry_approximately",
+}
+
+_APPROXIMATE_MESSAGE_SUFFIX = {
+    "COVERS": "is not covered by the reference geometry approximately",
+    "INTERSECTS": "does not approximately intersect the reference geometry",
+}
+
 
 @register_rule("row")
 def is_latitude(column: str | Column) -> Column:
@@ -838,7 +864,7 @@ def _compare_spatial_sql_function_result(
     )
 
 
-@register_rule("row")
+@register_rule("dataset")
 def are_polygons_mutually_disjoint(
     column: str | Column,
     row_filter: str | None = None,
@@ -954,7 +980,12 @@ def _has_topological_relationship_precise(
 
     has_relationship = F.call_function(_PRECISE_TOPOLOGICAL_FUNCS[topological_relationship], ref_geom, col_geom)
     condition = F.when(col_expr.isNull(), F.lit(None)).otherwise(~has_relationship)
-    text_value_col = F.call_function("st_astext", col_expr) if not convert_column else col_expr.cast("string")
+    text_value_col = F.call_function("st_astext", F.call_function("try_to_geometry", col_expr))
+
+    alias_suffix = _PRECISE_ALIAS_SUFFIX[topological_relationship]
+    alias = f'{col_str_norm}_{alias_suffix}'
+
+    message_suffix = _PRECISE_MESSAGE_SUFFIX[topological_relationship]
 
     return make_condition(
         condition,
@@ -962,9 +993,9 @@ def _has_topological_relationship_precise(
             "",
             F.lit("value `"),
             text_value_col,
-            F.lit(f"` in column `{col_expr_str}` has no relationship with the reference geometry"),
+            F.lit(f"` in column `{col_expr_str}` {message_suffix}"),
         ),
-        f"{col_str_norm}_outside_reference_geometry",
+        alias=alias,
     )
 
 
@@ -972,10 +1003,11 @@ def _has_topological_relationship_approximate(
     column: str | Column,
     reference_geometry: str | Column,
     resolution: int | Column,
-    topological_relationship: Literal["COVERS"] | Literal["INTERSECTS"] = "COVERS",
+    topological_relationship: Literal["COVERS", "INTERSECTS"] = "COVERS",
 ) -> Column:
     if not (isinstance(resolution, Column) or (isinstance(resolution, int) and 0 <= resolution <= 15)):
         raise InvalidParameterError("'resolution' must be between 0 and 15.")
+
     if topological_relationship not in _APPROXIMATE_TOPOLOGICAL_RELATIONSHIPS:
         raise InvalidParameterError(
             f"'topological_relationship' must be one of {sorted(_APPROXIMATE_TOPOLOGICAL_RELATIONSHIPS)}, got '{topological_relationship}'."
@@ -985,33 +1017,47 @@ def _has_topological_relationship_approximate(
     ref_col = reference_geometry if isinstance(reference_geometry, Column) else F.lit(reference_geometry)
     resolution_col = resolution if isinstance(resolution, Column) else F.lit(resolution)
 
-    col_h3_array = F.coalesce(
-        F.call_function("h3_try_coverash3", col_expr, resolution_col),
-        F.array(F.call_function("h3_pointash3", col_expr, resolution_col)),
+    col_h3_array = F.array_distinct(
+        F.coalesce(
+            F.call_function("h3_try_coverash3", col_expr, resolution_col),
+            F.array(F.call_function("h3_pointash3", col_expr, resolution_col)),
+        )
     )
-    ref_h3_array = F.coalesce(
-        F.call_function("h3_try_coverash3", ref_col, resolution_col),
-        F.array(F.call_function("h3_pointash3", ref_col, resolution_col)),
+    ref_h3_array = F.array_distinct(
+        F.coalesce(
+            F.call_function("h3_try_coverash3", ref_col, resolution_col),
+            F.array(F.call_function("h3_pointash3", ref_col, resolution_col)),
+        )
     )
     intersection_size = F.size(F.array_intersect(col_h3_array, ref_h3_array))
 
+    is_inside = None
     match topological_relationship:
         case "INTERSECTS":
             is_inside = intersection_size > 0
         case "COVERS":
             is_inside = intersection_size == F.size(col_h3_array)
+        case _:
+            raise InvalidParameterError(f"Unsupported approximate relationship: {topological_relationship!r}")
 
     condition = F.when(col_expr.isNull(), F.lit(None)).otherwise(~is_inside)
+
+    text_value_col = F.call_function("st_astext", F.call_function("try_to_geometry", col_expr))
+
+    alias_suffix = _APPROXIMATE_ALIAS_SUFFIX[topological_relationship]
+    alias = f'{col_str_norm}_{alias_suffix}'
+
+    message_suffix = _APPROXIMATE_MESSAGE_SUFFIX[topological_relationship]
 
     return make_condition(
         condition,
         F.concat_ws(
             "",
             F.lit("value `"),
-            col_expr.cast("string"),
-            F.lit(f"` in column `{col_expr_str}` is approximately outside the reference geometry"),
+            text_value_col,
+            F.lit(f"` in column `{col_expr_str}` {message_suffix}"),
         ),
-        f"{col_str_norm}_outside_reference_geometry_approximate",
+        alias=alias,
     )
 
 
@@ -1036,7 +1082,9 @@ def is_geo_contains(
 
     Args:
         column: Column to check. Null values are skipped for validation.
-        reference_geometry: Reference geometry as a literal value or a column name.
+        reference_geometry: Reference geometry as a literal WKT/WKB/EWKT/EWKB string or bytes value,
+            or a Column expression (e.g. *F.col('col_name')*) to reference another column. A plain
+            string is always treated as a literal, not a column name.
         convert_column: When True, *try_to_geometry* is applied to convert the column values to GEOMETRY.
             When False (default), the column is assumed to already hold a native GEOMETRY value.
         convert_reference_geometry: When True, *try_to_geometry* is applied to convert the reference
@@ -1082,8 +1130,10 @@ def is_geo_covers(
 
     Args:
         column: Column to check. Null values are skipped for validation.
-        reference_geometry: Reference geometry as a literal value or a column name. Bytes (WKB) are
-            only supported in precise mode.
+        reference_geometry: Reference geometry as a literal WKT/WKB/EWKT/EWKB string or bytes value,
+            or a Column expression (e.g. *F.col('col_name')*) to reference another column. A plain
+            string is always treated as a literal, not a column name. Bytes (WKB) are only supported
+            in precise mode.
         precise: When True, uses exact `st_covers` computation. When False (default), uses the H3
             approximate method which requires *resolution*.
         resolution: H3 resolution integer (0–15) or column reference. Required when *precise* is False.
@@ -1139,8 +1189,10 @@ def is_geo_intersects(
 
     Args:
         column: Column to check. Null values are skipped for validation.
-        reference_geometry: Reference geometry as a literal value or a column name. Bytes (WKB) are
-            only supported in precise mode.
+        reference_geometry: Reference geometry as a literal WKT/WKB/EWKT/EWKB string or bytes value,
+            or a Column expression (e.g. *F.col('col_name')*) to reference another column. A plain
+            string is always treated as a literal, not a column name. Bytes (WKB) are only supported
+            in precise mode.
         precise: When True, uses exact `st_intersects` computation. When False (default), uses the H3
             approximate method which requires *resolution*.
         resolution: H3 resolution integer (0–15) or column reference. Required when *precise* is False.
@@ -1191,7 +1243,9 @@ def is_geo_touches(
 
     Args:
         column: Column to check. Null values are skipped for validation.
-        reference_geometry: Reference geometry as a literal value or a column name.
+        reference_geometry: Reference geometry as a literal WKT/WKB/EWKT/EWKB string or bytes value,
+            or a Column expression (e.g. *F.col('col_name')*) to reference another column. A plain
+            string is always treated as a literal, not a column name.
         convert_column: When True, *try_to_geometry* is applied to convert column values to GEOMETRY.
             When False (default), the column is assumed to already hold a native GEOMETRY value.
         convert_reference_geometry: When True, *try_to_geometry* is applied to convert the reference
@@ -1218,6 +1272,9 @@ def is_geo_within(
 ) -> Column:
     """Checks if the reference geometry is within the column geometry using `st_within` with meter-level precision.
 
+    *NOTE*: the column geometry is the OUTER container in this check; the reference is the inner test geometry.
+    Contrast with is_geo_contains where the reference is the outer container.
+
     `st_within(reference, column)` returns true when the reference geometry lies entirely within the
     column geometry. This is the converse of `st_contains`: the column geometry must contain the
     reference, with the reference's boundary and interior both lying inside the column's interior.
@@ -1229,7 +1286,9 @@ def is_geo_within(
 
     Args:
         column: Column to check. Null values are skipped for validation.
-        reference_geometry: Reference geometry as a literal value or a column name.
+        reference_geometry: Reference geometry as a literal WKT/WKB/EWKT/EWKB string or bytes value,
+            or a Column expression (e.g. *F.col('col_name')*) to reference another column. A plain
+            string is always treated as a literal, not a column name.
         convert_column: When True, *try_to_geometry* is applied to convert column values to GEOMETRY.
             When False (default), the column is assumed to already hold a native GEOMETRY value.
         convert_reference_geometry: When True, *try_to_geometry* is applied to convert the reference
