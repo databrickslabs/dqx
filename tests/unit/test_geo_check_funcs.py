@@ -177,4 +177,4 @@ def test_is_geo_within_has_proper_alias():
 
 
 def _column_expression_clean(column) -> str:
-    return str(column).lstrip("Column<'").rstrip("'>")
+    return str(column).removeprefix("Column<'").removesuffix("'>")

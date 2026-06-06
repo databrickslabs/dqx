@@ -2133,9 +2133,6 @@ def test_benchmark_is_geo_covers_approximate(benchmark, ws, generated_df):
             check_func_kwargs={
                 "reference_geometry": "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
                 "resolution": 7,
-                "precise": False,
-                "convert_column": True,
-                "convert_reference_geometry": True,
             },
         )
     ]

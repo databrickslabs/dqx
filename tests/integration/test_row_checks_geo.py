@@ -38,16 +38,41 @@ _POINT_OUTSIDE = "POINT(4.48 51.92)"
 _REF_POLYGON = "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))"
 _OVERLAPPING_POLYGON = "POLYGON((4.95 52.25, 5.30 52.25, 5.30 52.40, 4.95 52.40, 4.95 52.25))"
 _GEO_SCHEMA = "geom: string"
-_PRECISE_SCHEMA = "geom: string, geom_outside_reference_geometry: string"
-_APPROXIMATE_SCHEMA = "geom: string, geom_outside_reference_geometry_approximate: string"
+_CONTAINS_SCHEMA = "geom: string, geom_is_not_in_reference_geometry: string"
+_COVERS_PRECISE_SCHEMA = "geom: string, geom_is_not_covered_by_reference_geometry_precisely: string"
+_COVERS_APPROXIMATE_SCHEMA = "geom: string, geom_is_not_covered_by_reference_geometry_approximately: string"
+_INTERSECTS_PRECISE_SCHEMA = "geom: string, geom_does_not_intersect_reference_geometry_precisely: string"
+_INTERSECTS_APPROXIMATE_SCHEMA = "geom: string, geom_does_not_intersect_reference_geometry_approximately: string"
+_TOUCHES_SCHEMA = "geom: string, geom_does_not_touch_reference_geometry: string"
+_WITHIN_SCHEMA = "geom: string, geom_does_not_contain_reference_geometry: string"
 
 
-def _precise_violation(value: str) -> str:
-    return f"value `{value}` in column `geom` has no relationship with the reference geometry"
+def _contains_violation(value: str) -> str:
+    return f"value `{value}` in column `geom` is not in the reference geometry"
 
 
-def _approximate_violation(value: str) -> str:
-    return f"value `{value}` in column `geom` is approximately outside the reference geometry"
+def _covers_precise_violation(value: str) -> str:
+    return f"value `{value}` in column `geom` is not covered by the reference geometry precisely"
+
+
+def _covers_approximate_violation(value: str) -> str:
+    return f"value `{value}` in column `geom` is not covered by the reference geometry approximately"
+
+
+def _intersects_precise_violation(value: str) -> str:
+    return f"value `{value}` in column `geom` does not intersect the reference geometry precisely"
+
+
+def _intersects_approximate_violation(value: str) -> str:
+    return f"value `{value}` in column `geom` does not approximately intersect the reference geometry"
+
+
+def _touches_violation(value: str) -> str:
+    return f"value `{value}` in column `geom` does not touch the reference geometry"
+
+
+def _within_violation(value: str) -> str:
+    return f"value `{value}` in column `geom` does not contain reference geometry"
 
 
 def test_is_geometry(skip_if_runtime_not_geo_compatible, spark):
@@ -793,7 +818,7 @@ def test_is_geo_contains_interior_point_no_violation(skip_if_runtime_not_geo_com
     test_df = spark.createDataFrame([[_POINT_INSIDE], [None]], _GEO_SCHEMA)
     condition = is_geo_contains("geom", _REF_POLYGON, convert_column=True, convert_reference_geometry=True)
     actual = test_df.select("geom", condition)
-    expected = spark.createDataFrame([[_POINT_INSIDE, None], [None, None]], _PRECISE_SCHEMA)
+    expected = spark.createDataFrame([[_POINT_INSIDE, None], [None, None]], _CONTAINS_SCHEMA)
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
@@ -802,7 +827,9 @@ def test_is_geo_contains_boundary_point_violation(skip_if_runtime_not_geo_compat
     test_df = spark.createDataFrame([[_POINT_EDGE], [None]], _GEO_SCHEMA)
     condition = is_geo_contains("geom", _REF_POLYGON, convert_column=True, convert_reference_geometry=True)
     actual = test_df.select("geom", condition)
-    expected = spark.createDataFrame([[_POINT_EDGE, _precise_violation(_POINT_EDGE)], [None, None]], _PRECISE_SCHEMA)
+    expected = spark.createDataFrame(
+        [[_POINT_EDGE, _contains_violation(_POINT_EDGE)], [None, None]], _CONTAINS_SCHEMA
+    )
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
@@ -812,7 +839,7 @@ def test_is_geo_contains_exterior_point_wkt_violation(skip_if_runtime_not_geo_co
     condition = is_geo_contains("geom", _REF_POLYGON, convert_column=True, convert_reference_geometry=True)
     actual = test_df.select("geom", condition)
     expected = spark.createDataFrame(
-        [[_POINT_OUTSIDE, _precise_violation(_POINT_OUTSIDE)], [None, None]], _PRECISE_SCHEMA
+        [[_POINT_OUTSIDE, _contains_violation(_POINT_OUTSIDE)], [None, None]], _CONTAINS_SCHEMA
     )
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
@@ -822,7 +849,7 @@ def test_is_geo_covers_precise_interior_point_no_violation(skip_if_runtime_not_g
     test_df = spark.createDataFrame([[_POINT_INSIDE], [None]], _GEO_SCHEMA)
     condition = is_geo_covers("geom", _REF_POLYGON, precise=True, convert_column=True, convert_reference_geometry=True)
     actual = test_df.select("geom", condition)
-    expected = spark.createDataFrame([[_POINT_INSIDE, None], [None, None]], _PRECISE_SCHEMA)
+    expected = spark.createDataFrame([[_POINT_INSIDE, None], [None, None]], _COVERS_PRECISE_SCHEMA)
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
@@ -831,7 +858,7 @@ def test_is_geo_covers_precise_boundary_point_no_violation(skip_if_runtime_not_g
     test_df = spark.createDataFrame([[_POINT_EDGE], [None]], _GEO_SCHEMA)
     condition = is_geo_covers("geom", _REF_POLYGON, precise=True, convert_column=True, convert_reference_geometry=True)
     actual = test_df.select("geom", condition)
-    expected = spark.createDataFrame([[_POINT_EDGE, None], [None, None]], _PRECISE_SCHEMA)
+    expected = spark.createDataFrame([[_POINT_EDGE, None], [None, None]], _COVERS_PRECISE_SCHEMA)
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
@@ -841,7 +868,7 @@ def test_is_geo_covers_precise_exterior_point_wkt_violation(skip_if_runtime_not_
     condition = is_geo_covers("geom", _REF_POLYGON, precise=True, convert_column=True, convert_reference_geometry=True)
     actual = test_df.select("geom", condition)
     expected = spark.createDataFrame(
-        [[_POINT_OUTSIDE, _precise_violation(_POINT_OUTSIDE)], [None, None]], _PRECISE_SCHEMA
+        [[_POINT_OUTSIDE, _covers_precise_violation(_POINT_OUTSIDE)], [None, None]], _COVERS_PRECISE_SCHEMA
     )
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
@@ -851,7 +878,7 @@ def test_is_geo_covers_approximate_interior_point_resolution_5_no_violation(skip
     test_df = spark.createDataFrame([[_POINT_INSIDE], [None]], _GEO_SCHEMA)
     condition = is_geo_covers("geom", _REF_POLYGON, resolution=5)
     actual = test_df.select("geom", condition)
-    expected = spark.createDataFrame([[_POINT_INSIDE, None], [None, None]], _APPROXIMATE_SCHEMA)
+    expected = spark.createDataFrame([[_POINT_INSIDE, None], [None, None]], _COVERS_APPROXIMATE_SCHEMA)
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
@@ -860,7 +887,7 @@ def test_is_geo_covers_approximate_interior_point_resolution_7_no_violation(skip
     test_df = spark.createDataFrame([[_POINT_INSIDE], [None]], _GEO_SCHEMA)
     condition = is_geo_covers("geom", _REF_POLYGON, resolution=7)
     actual = test_df.select("geom", condition)
-    expected = spark.createDataFrame([[_POINT_INSIDE, None], [None, None]], _APPROXIMATE_SCHEMA)
+    expected = spark.createDataFrame([[_POINT_INSIDE, None], [None, None]], _COVERS_APPROXIMATE_SCHEMA)
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
@@ -870,7 +897,7 @@ def test_is_geo_covers_approximate_exterior_point_resolution_5_violation(skip_if
     condition = is_geo_covers("geom", _REF_POLYGON, resolution=5)
     actual = test_df.select("geom", condition)
     expected = spark.createDataFrame(
-        [[_POINT_OUTSIDE, _approximate_violation(_POINT_OUTSIDE)], [None, None]], _APPROXIMATE_SCHEMA
+        [[_POINT_OUTSIDE, _covers_approximate_violation(_POINT_OUTSIDE)], [None, None]], _COVERS_APPROXIMATE_SCHEMA
     )
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
@@ -881,7 +908,7 @@ def test_is_geo_covers_approximate_exterior_point_resolution_7_violation(skip_if
     condition = is_geo_covers("geom", _REF_POLYGON, resolution=7)
     actual = test_df.select("geom", condition)
     expected = spark.createDataFrame(
-        [[_POINT_OUTSIDE, _approximate_violation(_POINT_OUTSIDE)], [None, None]], _APPROXIMATE_SCHEMA
+        [[_POINT_OUTSIDE, _covers_approximate_violation(_POINT_OUTSIDE)], [None, None]], _COVERS_APPROXIMATE_SCHEMA
     )
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
@@ -894,7 +921,8 @@ def test_is_geo_covers_approximate_overlapping_polygon_resolution_5_violation(
     condition = is_geo_covers("geom", _REF_POLYGON, resolution=5)
     actual = test_df.select("geom", condition)
     expected = spark.createDataFrame(
-        [[_OVERLAPPING_POLYGON, _approximate_violation(_OVERLAPPING_POLYGON)], [None, None]], _APPROXIMATE_SCHEMA
+        [[_OVERLAPPING_POLYGON, _covers_approximate_violation(_OVERLAPPING_POLYGON)], [None, None]],
+        _COVERS_APPROXIMATE_SCHEMA,
     )
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
@@ -907,7 +935,8 @@ def test_is_geo_covers_approximate_overlapping_polygon_resolution_7_violation(
     condition = is_geo_covers("geom", _REF_POLYGON, resolution=7)
     actual = test_df.select("geom", condition)
     expected = spark.createDataFrame(
-        [[_OVERLAPPING_POLYGON, _approximate_violation(_OVERLAPPING_POLYGON)], [None, None]], _APPROXIMATE_SCHEMA
+        [[_OVERLAPPING_POLYGON, _covers_approximate_violation(_OVERLAPPING_POLYGON)], [None, None]],
+        _COVERS_APPROXIMATE_SCHEMA,
     )
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
@@ -927,12 +956,14 @@ def test_is_geo_covers_precise_flags_near_boundary_point_approximate_does_not(
         "geom", _REF_POLYGON, precise=True, convert_column=True, convert_reference_geometry=True
     )
     actual_precise = test_df.select("geom", precise_condition)
-    expected_precise = spark.createDataFrame([[point, _precise_violation(point)], [None, None]], _PRECISE_SCHEMA)
+    expected_precise = spark.createDataFrame(
+        [[point, _covers_precise_violation(point)], [None, None]], _COVERS_PRECISE_SCHEMA
+    )
     assertDataFrameEqual(actual_precise, expected_precise, checkRowOrder=False)
 
     approximate_condition = is_geo_covers("geom", _REF_POLYGON, resolution=5)
     actual_approximate = test_df.select("geom", approximate_condition)
-    expected_approximate = spark.createDataFrame([[point, None], [None, None]], _APPROXIMATE_SCHEMA)
+    expected_approximate = spark.createDataFrame([[point, None], [None, None]], _COVERS_APPROXIMATE_SCHEMA)
     assertDataFrameEqual(actual_approximate, expected_approximate, checkRowOrder=False)
 
 
@@ -943,7 +974,7 @@ def test_is_geo_intersects_precise_interior_point_no_violation(skip_if_runtime_n
         "geom", _REF_POLYGON, precise=True, convert_column=True, convert_reference_geometry=True
     )
     actual = test_df.select("geom", condition)
-    expected = spark.createDataFrame([[_POINT_INSIDE, None], [None, None]], _PRECISE_SCHEMA)
+    expected = spark.createDataFrame([[_POINT_INSIDE, None], [None, None]], _INTERSECTS_PRECISE_SCHEMA)
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
@@ -954,7 +985,7 @@ def test_is_geo_intersects_precise_boundary_point_no_violation(skip_if_runtime_n
         "geom", _REF_POLYGON, precise=True, convert_column=True, convert_reference_geometry=True
     )
     actual = test_df.select("geom", condition)
-    expected = spark.createDataFrame([[_POINT_EDGE, None], [None, None]], _PRECISE_SCHEMA)
+    expected = spark.createDataFrame([[_POINT_EDGE, None], [None, None]], _INTERSECTS_PRECISE_SCHEMA)
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
@@ -966,7 +997,7 @@ def test_is_geo_intersects_precise_exterior_point_wkt_violation(skip_if_runtime_
     )
     actual = test_df.select("geom", condition)
     expected = spark.createDataFrame(
-        [[_POINT_OUTSIDE, _precise_violation(_POINT_OUTSIDE)], [None, None]], _PRECISE_SCHEMA
+        [[_POINT_OUTSIDE, _intersects_precise_violation(_POINT_OUTSIDE)], [None, None]], _INTERSECTS_PRECISE_SCHEMA
     )
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
@@ -978,7 +1009,7 @@ def test_is_geo_intersects_approximate_interior_point_resolution_5_no_violation(
     test_df = spark.createDataFrame([[_POINT_INSIDE], [None]], _GEO_SCHEMA)
     condition = is_geo_intersects("geom", _REF_POLYGON, resolution=5)
     actual = test_df.select("geom", condition)
-    expected = spark.createDataFrame([[_POINT_INSIDE, None], [None, None]], _APPROXIMATE_SCHEMA)
+    expected = spark.createDataFrame([[_POINT_INSIDE, None], [None, None]], _INTERSECTS_APPROXIMATE_SCHEMA)
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
@@ -989,7 +1020,7 @@ def test_is_geo_intersects_approximate_interior_point_resolution_7_no_violation(
     test_df = spark.createDataFrame([[_POINT_INSIDE], [None]], _GEO_SCHEMA)
     condition = is_geo_intersects("geom", _REF_POLYGON, resolution=7)
     actual = test_df.select("geom", condition)
-    expected = spark.createDataFrame([[_POINT_INSIDE, None], [None, None]], _APPROXIMATE_SCHEMA)
+    expected = spark.createDataFrame([[_POINT_INSIDE, None], [None, None]], _INTERSECTS_APPROXIMATE_SCHEMA)
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
@@ -999,7 +1030,8 @@ def test_is_geo_intersects_approximate_exterior_point_resolution_5_violation(ski
     condition = is_geo_intersects("geom", _REF_POLYGON, resolution=5)
     actual = test_df.select("geom", condition)
     expected = spark.createDataFrame(
-        [[_POINT_OUTSIDE, _approximate_violation(_POINT_OUTSIDE)], [None, None]], _APPROXIMATE_SCHEMA
+        [[_POINT_OUTSIDE, _intersects_approximate_violation(_POINT_OUTSIDE)], [None, None]],
+        _INTERSECTS_APPROXIMATE_SCHEMA,
     )
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
@@ -1010,7 +1042,8 @@ def test_is_geo_intersects_approximate_exterior_point_resolution_7_violation(ski
     condition = is_geo_intersects("geom", _REF_POLYGON, resolution=7)
     actual = test_df.select("geom", condition)
     expected = spark.createDataFrame(
-        [[_POINT_OUTSIDE, _approximate_violation(_POINT_OUTSIDE)], [None, None]], _APPROXIMATE_SCHEMA
+        [[_POINT_OUTSIDE, _intersects_approximate_violation(_POINT_OUTSIDE)], [None, None]],
+        _INTERSECTS_APPROXIMATE_SCHEMA,
     )
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
@@ -1022,7 +1055,7 @@ def test_is_geo_intersects_approximate_overlapping_polygon_resolution_5_no_viola
     test_df = spark.createDataFrame([[_OVERLAPPING_POLYGON], [None]], _GEO_SCHEMA)
     condition = is_geo_intersects("geom", _REF_POLYGON, resolution=5)
     actual = test_df.select("geom", condition)
-    expected = spark.createDataFrame([[_OVERLAPPING_POLYGON, None], [None, None]], _APPROXIMATE_SCHEMA)
+    expected = spark.createDataFrame([[_OVERLAPPING_POLYGON, None], [None, None]], _INTERSECTS_APPROXIMATE_SCHEMA)
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
@@ -1033,7 +1066,7 @@ def test_is_geo_intersects_approximate_overlapping_polygon_resolution_7_no_viola
     test_df = spark.createDataFrame([[_OVERLAPPING_POLYGON], [None]], _GEO_SCHEMA)
     condition = is_geo_intersects("geom", _REF_POLYGON, resolution=7)
     actual = test_df.select("geom", condition)
-    expected = spark.createDataFrame([[_OVERLAPPING_POLYGON, None], [None, None]], _APPROXIMATE_SCHEMA)
+    expected = spark.createDataFrame([[_OVERLAPPING_POLYGON, None], [None, None]], _INTERSECTS_APPROXIMATE_SCHEMA)
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
@@ -1043,7 +1076,7 @@ def test_is_geo_touches_interior_point_violation(skip_if_runtime_not_geo_compati
     condition = is_geo_touches("geom", _REF_POLYGON, convert_column=True, convert_reference_geometry=True)
     actual = test_df.select("geom", condition)
     expected = spark.createDataFrame(
-        [[_POINT_INSIDE, _precise_violation(_POINT_INSIDE)], [None, None]], _PRECISE_SCHEMA
+        [[_POINT_INSIDE, _touches_violation(_POINT_INSIDE)], [None, None]], _TOUCHES_SCHEMA
     )
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
@@ -1053,7 +1086,7 @@ def test_is_geo_touches_boundary_point_no_violation(skip_if_runtime_not_geo_comp
     test_df = spark.createDataFrame([[_POINT_EDGE], [None]], _GEO_SCHEMA)
     condition = is_geo_touches("geom", _REF_POLYGON, convert_column=True, convert_reference_geometry=True)
     actual = test_df.select("geom", condition)
-    expected = spark.createDataFrame([[_POINT_EDGE, None], [None, None]], _PRECISE_SCHEMA)
+    expected = spark.createDataFrame([[_POINT_EDGE, None], [None, None]], _TOUCHES_SCHEMA)
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
@@ -1063,7 +1096,7 @@ def test_is_geo_touches_exterior_point_wkt_violation(skip_if_runtime_not_geo_com
     condition = is_geo_touches("geom", _REF_POLYGON, convert_column=True, convert_reference_geometry=True)
     actual = test_df.select("geom", condition)
     expected = spark.createDataFrame(
-        [[_POINT_OUTSIDE, _precise_violation(_POINT_OUTSIDE)], [None, None]], _PRECISE_SCHEMA
+        [[_POINT_OUTSIDE, _touches_violation(_POINT_OUTSIDE)], [None, None]], _TOUCHES_SCHEMA
     )
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
@@ -1075,7 +1108,7 @@ def test_is_geo_within_interior_reference_no_violation(skip_if_runtime_not_geo_c
     test_df = spark.createDataFrame([[column_polygon], [None]], _GEO_SCHEMA)
     condition = is_geo_within("geom", reference_point, convert_column=True, convert_reference_geometry=True)
     actual = test_df.select("geom", condition)
-    expected = spark.createDataFrame([[column_polygon, None], [None, None]], _PRECISE_SCHEMA)
+    expected = spark.createDataFrame([[column_polygon, None], [None, None]], _WITHIN_SCHEMA)
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
@@ -1087,7 +1120,7 @@ def test_is_geo_within_boundary_reference_violation(skip_if_runtime_not_geo_comp
     condition = is_geo_within("geom", reference_point, convert_column=True, convert_reference_geometry=True)
     actual = test_df.select("geom", condition)
     expected = spark.createDataFrame(
-        [[column_polygon, _precise_violation(column_polygon)], [None, None]], _PRECISE_SCHEMA
+        [[column_polygon, _within_violation(column_polygon)], [None, None]], _WITHIN_SCHEMA
     )
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
@@ -1100,6 +1133,6 @@ def test_is_geo_within_exterior_reference_violation(skip_if_runtime_not_geo_comp
     condition = is_geo_within("geom", reference_point, convert_column=True, convert_reference_geometry=True)
     actual = test_df.select("geom", condition)
     expected = spark.createDataFrame(
-        [[column_polygon, _precise_violation(column_polygon)], [None, None]], _PRECISE_SCHEMA
+        [[column_polygon, _within_violation(column_polygon)], [None, None]], _WITHIN_SCHEMA
     )
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
