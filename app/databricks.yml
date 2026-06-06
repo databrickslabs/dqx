@@ -378,3 +378,12 @@ targets:
   #     sql_warehouse_id: "<existing-warehouse-id>"   # just the ID
   #   # No resources.sql_warehouses block. post_deploy_grants.sh grants
   #   # CAN_USE to app SP / job SP / users via the warehouses API.
+
+  # Mode B: reuses the pre-existing ``dqx-studio-sql-warehouse``
+  # (X-Small serverless) and the pre-existing
+  # ``dqx-studio-lakebase-v2`` instance that an earlier deploy of the
+  # apx-based bundle created in this workspace. Point at them by ID/name
+  # instead of having the bundle create new copies, so this target is a
+  # straight redeploy of the apx-removal branch on top of the existing
+  # demo state. ``post_deploy_grants.sh`` handles ``CAN_USE`` on the
+  # external warehouse via the warehouses permissions API.

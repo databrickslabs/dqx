@@ -159,3 +159,21 @@ target-version = "py311"
 # static check here removes the false positives without losing real
 # coverage.
 exclude = ["tests", "**/.venv", "**/__pycache__", "src/databricks_labs_dqx_app/__dist__"]
+
+# basedpyright defaults to ``recommended`` mode, which enables ~10
+# strict-only rules (reportAny, reportExplicitAny,
+# reportUnannotatedClassAttribute, reportUnknownMemberType,
+# reportUnknownVariableType, reportUnusedCallResult, …). Those rules
+# fire on every ``Any``-typed value coming back from FastAPI request
+# bodies, SQLAlchemy ORM results, MLflow client calls, and Databricks
+# SDK responses — third-party libraries we cannot annotate further —
+# and produced ~900 false-positive warnings on this codebase.
+#
+# The CI ``make app-check`` step trips on those warnings on Linux even
+# though ``--level error`` suppresses them locally on macOS, because
+# the underlying pyright binary's exit-code semantics for warnings
+# differ across platforms. Pinning the mode to ``standard`` (pyright's
+# stricter-than-default level) removes the noise everywhere while
+# still catching the real type errors we care about (wrong argument
+# types, missing returns, undefined names, etc.).
+typeCheckingMode = "standard"
