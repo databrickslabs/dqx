@@ -7,12 +7,19 @@
 # GRANT statements via the Statement Execution API.
 #
 # Usage:
-#   ./scripts/post_deploy_grants.sh -p <profile> [-t <bundle-target>]
+#   ./scripts/post_deploy_grants.sh -p <profile> [-t <bundle-target>] [-- <bundle-var-overrides...>]
 #
 # The bundle target is required when the bundle defines more than one
 # target and none is marked as default. Without it, ``databricks bundle
 # validate`` errors out and we have no way to discover the catalog name
 # or job SP from variables.
+#
+# Everything after a ``--`` separator is forwarded to ``bundle validate``
+# as extra ``--var key=value`` overrides. Pass the SAME overrides used
+# at ``bundle deploy`` time — otherwise the script reads the default
+# catalog/schema/volume names from the bundle and issues GRANTs on the
+# wrong objects (the overridden resources receive no permissions and
+# the app SP cannot read them).
 #
 # Requirements:
 #   - databricks CLI authenticated
@@ -25,7 +32,7 @@ PROFILE=""
 TARGET=""
 
 usage() {
-  echo "Usage: $0 -p <databricks-profile> [-t <bundle-target>]"
+  echo "Usage: $0 -p <databricks-profile> [-t <bundle-target>] [-- <bundle-var-overrides...>]"
   exit 1
 }
 
@@ -36,8 +43,17 @@ while getopts "p:t:" opt; do
     *) usage ;;
   esac
 done
+shift $((OPTIND - 1))
 
 [[ -z "$PROFILE" ]] && usage
+
+# Forwarded ``--var key=value`` overrides. Threading them into
+# ``bundle validate`` matters because that call produces the JSON we
+# parse below for catalog / schema / volume / job-SP names. Without
+# forwarding, a deploy-time override (e.g. ``--var=catalog_name=foo``)
+# would issue GRANTs on the bundle's default catalog instead of the
+# one actually deployed.
+EXTRA_VARS=("$@")
 
 CLI="databricks -p $PROFILE"
 # Bundle commands need the target unless one is marked default.
@@ -54,7 +70,10 @@ cd "$BUNDLE_DIR"
 # instead of an empty $BUNDLE_JSON and a confusing downstream error.
 BUNDLE_VALIDATE_STDERR=$(mktemp)
 trap 'rm -f "$BUNDLE_VALIDATE_STDERR"' EXIT
-if ! BUNDLE_JSON=$($CLI bundle validate "${BUNDLE_FLAGS[@]}" -o json 2>"$BUNDLE_VALIDATE_STDERR"); then
+# macOS bash 3.2 + ``set -u`` treats expansion of an empty array as
+# unbound. Guard with the ``${arr[@]+...}`` idiom so a run with no
+# extra ``--var`` overrides (or no ``-t``) does not abort here.
+if ! BUNDLE_JSON=$($CLI bundle validate ${BUNDLE_FLAGS[@]+"${BUNDLE_FLAGS[@]}"} ${EXTRA_VARS[@]+"${EXTRA_VARS[@]}"} -o json 2>"$BUNDLE_VALIDATE_STDERR"); then
   echo "ERROR: 'databricks bundle validate' failed:" >&2
   cat "$BUNDLE_VALIDATE_STDERR" >&2
   if [[ -z "$TARGET" ]]; then
@@ -91,8 +110,8 @@ fi
 echo "   Warehouse: $WH_ID"
 
 CATALOG=$(echo "$BUNDLE_JSON" | jq -r '.variables.catalog_name.value // .variables.catalog_name.default // empty')
-SCHEMA=$(echo "$BUNDLE_JSON" | jq -r '.variables.schema_name.value // .variables.schema_name.default // "dqx_app"')
-TMP_SCHEMA=$(echo "$BUNDLE_JSON" | jq -r '.variables.tmp_schema_name.value // .variables.tmp_schema_name.default // "dqx_app_tmp"')
+SCHEMA=$(echo "$BUNDLE_JSON" | jq -r '.variables.schema_name.value // .variables.schema_name.default // "dqx_studio"')
+TMP_SCHEMA=$(echo "$BUNDLE_JSON" | jq -r '.variables.tmp_schema_name.value // .variables.tmp_schema_name.default // "dqx_studio_tmp"')
 VOLUME=$(echo "$BUNDLE_JSON" | jq -r '.variables.wheels_volume_name.value // .variables.wheels_volume_name.default // "wheels"')
 JOB_SP=$(echo "$BUNDLE_JSON" | jq -r '.variables.dqx_service_principal_application_id.value // .variables.dqx_service_principal_application_id.default // empty')
 
