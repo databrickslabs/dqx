@@ -8,13 +8,12 @@ from pyspark.errors import AnalysisException
 from pyspark.sql import DataFrame, Column, SparkSession
 
 from databricks.labs.dqx import check_funcs
-from databricks.labs.dqx.errors import UnsafeSqlQueryError
 from databricks.labs.dqx.executor import DQCheckResult, DQRuleExecutorFactory
 from databricks.labs.dqx.rule import (
     DQRule,
 )
 from databricks.labs.dqx.schema.dq_result_schema import dq_result_item_schema
-from databricks.labs.dqx.utils import get_column_name_or_alias, is_sql_query_safe
+from databricks.labs.dqx.utils import get_column_name_or_alias
 
 logger = logging.getLogger(__name__)
 
@@ -194,7 +193,7 @@ class DQRuleManager:
         message_expr = F.substr(
             F.expr(self.check.message_expr) if isinstance(self.check.message_expr, str) else self.check.message_expr,
             F.lit(1),
-            F.lit(_max_message_length)
+            F.lit(_max_message_length),
         )
 
         return F.when(condition.isNotNull(), message_expr).otherwise(F.lit(None).cast("string"))

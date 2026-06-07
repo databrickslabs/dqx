@@ -1,16 +1,16 @@
 """Integration tests for custom message expressions on DQRule."""
 
 import pyspark.sql.functions as F
-import pytest
 
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.errors import UnsafeSqlQueryError
 from databricks.labs.dqx.rule import DQRowRule, DQForEachColRule
 from databricks.labs.dqx import check_funcs
 from tests.integration.conftest import (
     EXTRA_PARAMS,
     assert_df_equality_ignore_fingerprints as assert_df_equality,
     REPORTING_COLUMNS,
+    RUN_ID,
+    RUN_TIME,
     build_quality_violation,
 )
 
@@ -371,38 +371,38 @@ def test_metadata_for_each_column_with_custom_message(ws, spark):
     assert_df_equality(checked_df, expected_df)
 
 
-def test_apply_checks_with_unsafe_message_expr_raises(ws, spark):
-    """A string message_expr containing an unsafe SQL keyword must be rejected when applied."""
+def test_apply_checks_skip_message_overrides_custom_message_for_invalid_sql_expression(ws, spark):
+    """test that message_expr is overridden when a sql_expression check is skipped due to an invalid expression"""
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
-    test_df = spark.createDataFrame([[1, 3, None]], SCHEMA)
+    test_df = spark.createDataFrame([[1, 3, 5]], SCHEMA)
 
     rules = [
         DQRowRule(
-            name="c_not_null",
+            name="invalid_sql_expression",
             criticality="error",
-            check_func=check_funcs.is_not_null,
-            column="c",
-            message_expr="concat('msg ', (select x from t where y = (drop table t)))",
+            check_func=check_funcs.sql_expression,
+            check_func_kwargs={"expression": "missing_col > 0"},
+            message_expr="'Custom error: this message must be overridden by the skip message'",
+            user_metadata={"should_be": "IGNORED"},
         ),
     ]
 
-    with pytest.raises(UnsafeSqlQueryError, match="not safe for execution"):
-        dq_engine.apply_checks(test_df, rules)
-
-
-def test_apply_checks_by_metadata_with_unsafe_message_expr_raises(ws, spark):
-    """An unsafe message_expr supplied via metadata must also be rejected when applied."""
-    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
-    test_df = spark.createDataFrame([[1, 3, None]], SCHEMA)
-
-    checks = [
+    checked_df = dq_engine.apply_checks(test_df, rules)
+    expected_errors = [
         {
-            "name": "c_not_null",
-            "criticality": "error",
-            "check": {"function": "is_not_null", "arguments": {"column": "c"}},
-            "message_expr": "delete from audit",
+            "name": "invalid_sql_expression",
+            "message": "Check evaluation skipped due to invalid sql expression: 'missing_col > 0'",
+            "columns": None,
+            "filter": None,
+            "function": "sql_expression",
+            "run_time": RUN_TIME,
+            "run_id": RUN_ID,
+            "user_metadata": {"should_be": "IGNORED"},
+            "skipped": True,
         }
     ]
-
-    with pytest.raises(UnsafeSqlQueryError, match="not safe for execution"):
-        dq_engine.apply_checks_by_metadata(test_df, checks)
+    expected_df = spark.createDataFrame(
+        [[1, 3, 5, expected_errors, None]],
+        EXPECTED_SCHEMA,
+    )
+    assert_df_equality(checked_df, expected_df)

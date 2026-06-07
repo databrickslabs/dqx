@@ -4098,6 +4098,7 @@ When using dataset-level checks, the top-level `filter` condition is pushed down
 ## Customizing check messages
 
 Users can override the default failure message of any `DQRule` by specifying a custom message expression. Set `message_expr` to either a Spark SQL expression string or a Spark `Column` expression that returns a string-valued message when data fails a check.
+If a check cannot be evaluated (for example, because it references invalid columns or uses an invalid SQL expression), the results report the default skip message instead of the custom message.
 
 <Admonition type="tip" title="Using custom messages">
 When using custom message expressions:
