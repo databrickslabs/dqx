@@ -152,7 +152,7 @@ class DQRuleManager:
         # or use literal run time if explicitly overridden
         run_time_expr = F.current_timestamp() if self.run_time_overwrite is None else F.lit(self.run_time_overwrite)
 
-        message_col = self._build_message_col(condition)
+        message_col = self._build_message_col(condition, skipped=skipped)
 
         return F.struct(
             F.lit(self.check.name).alias("name"),
@@ -170,36 +170,34 @@ class DQRuleManager:
             F.lit(skipped or None).alias("skipped"),
         ).cast(dq_result_item_schema)
 
-    def _build_message_col(self, condition: Column) -> Column:
+    def _build_message_col(self, condition: Column, skipped: bool = False) -> Column:
         """
-        Builds the message column, using the default message or the user-supplied
-        ``message_expr`` from the rule definition. The expression is evaluated as-is — DQX
-        does not substitute placeholders. Accepts either a Spark SQL expression string or a
+        Builds the message column, using the default message or the user-supplied ``message_expr`` from the
+        rule definition. The expression is evaluated as-is. Accepts either a Spark SQL expression string or a
         Spark Column.
 
         Args:
             condition: Default DQX condition message returned by evaluating the DQX check function
+            skipped: Whether the check was skipped (default False)
 
         Returns:
-            The custom DQX condition message if ``message_expr`` is set on the rule, otherwise the
-            default DQX condition message.
+            The custom DQX condition message if ``message_expr`` is set on the rule and the check was not skipped,
+            otherwise the default DQX condition message.
         """
-        _max_message_length = 500
+        if skipped:
+            return condition
+
         if self.check.message_expr is None:
             return condition
 
-        if isinstance(self.check.message_expr, str):
-            if not is_sql_query_safe(self.check.message_expr):
-                raise UnsafeSqlQueryError(
-                    "Provided message expression is not safe for execution. Please ensure it does not contain any unsafe operations."
-                )
-            return F.when(
-                condition.isNotNull(), F.substr(F.expr(self.check.message_expr), F.lit(1), F.lit(_max_message_length))
-            ).otherwise(F.lit(None).cast("string"))
+        _max_message_length = 500
+        message_expr = F.substr(
+            F.expr(self.check.message_expr) if isinstance(self.check.message_expr, str) else self.check.message_expr,
+            F.lit(1),
+            F.lit(_max_message_length)
+        )
 
-        return F.when(
-            condition.isNotNull(), F.substr(self.check.message_expr, F.lit(1), F.lit(_max_message_length))
-        ).otherwise(F.lit(None).cast("string"))
+        return F.when(condition.isNotNull(), message_expr).otherwise(F.lit(None).cast("string"))
 
     def _get_invalid_cols_message(self) -> str:
         """
