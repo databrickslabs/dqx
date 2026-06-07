@@ -95,7 +95,20 @@ export function DryRunResults({ result }: DryRunResultsProps) {
   const { t } = useTranslation();
   const totalRows = result.total_rows ?? 0;
   const validRows = result.valid_rows ?? 0;
-  const invalidRows = result.invalid_rows ?? 0;
+  // ``invalid_rows`` (rows that failed any check) is kept on the model for
+  // backwards compatibility, but we surface DQX's authoritative observer
+  // counts instead: ``error_rows`` (= ``error_row_count``) and
+  // ``warning_rows`` (= ``warning_row_count``). Pre-v5 history rows have
+  // ``error_rows = null`` — fall back to ``invalid_rows`` so the card
+  // doesn't show ``0`` for runs created before the rename.
+  const errorRows = result.error_rows ?? result.invalid_rows ?? 0;
+  const warningRows = result.warning_rows;
+  const showWarnings = warningRows != null;
+  // The bottom data table still drives off the quarantine endpoint, which
+  // contains rows that failed any check (errors OR warnings). We use
+  // ``hasFailedRows`` so the table renders whenever there's anything to
+  // show — not just when there are errors.
+  const hasFailedRows = errorRows > 0 || (warningRows ?? 0) > 0;
   const errorSummary = result.error_summary ?? [];
   const sampleInvalid = result.sample_invalid ?? [];
 
@@ -113,6 +126,7 @@ export function DryRunResults({ result }: DryRunResultsProps) {
       return {
         ...rest,
         errors: Array.isArray(_errors) ? _errors.map(formatError).join("; ") : String(_errors ?? ""),
+        warnings: Array.isArray(_warnings) ? _warnings.map(formatError).join("; ") : String(_warnings ?? ""),
       };
     });
   }, [sampleInvalid]);
@@ -131,10 +145,10 @@ export function DryRunResults({ result }: DryRunResultsProps) {
 
   const { data: quarantineResp, isLoading: quarantineLoading } =
     useListQuarantineRecords(result.run_id, { offset, limit: pageSize }, {
-      query: { enabled: invalidRows > 0 },
+      query: { enabled: hasFailedRows },
     });
   const { data: countResp } = useQuarantineCount(result.run_id, {
-    query: { enabled: invalidRows > 0 },
+    query: { enabled: hasFailedRows },
   });
 
   const quarantineRecords: QuarantineRecordOut[] = quarantineResp?.data?.records ?? [];
@@ -149,11 +163,19 @@ export function DryRunResults({ result }: DryRunResultsProps) {
     return sampleInvalid.slice(offset, offset + pageSize);
   }, [hasQuarantine, sampleInvalid, offset, pageSize]);
 
-  const rows: Array<{ rowData: Record<string, unknown>; errors: unknown[] }> = useMemo(() => {
+  const rows: Array<{
+    rowData: Record<string, unknown>;
+    errors: unknown[];
+    warnings: unknown[];
+  }> = useMemo(() => {
     if (hasQuarantine) {
       return displayRecords.map((r) => ({
         rowData: r.row_data ?? {},
         errors: r.errors ?? [],
+        // ``warnings`` is null for rows written before migration v4 and
+        // for SQL-check quarantines. Render an empty array so the column
+        // shows nothing rather than ``null``.
+        warnings: r.warnings ?? [],
       }));
     }
     return fallbackRows.map((r) => {
@@ -161,9 +183,18 @@ export function DryRunResults({ result }: DryRunResultsProps) {
       return {
         rowData: rest,
         errors: Array.isArray(_errors) ? (_errors as unknown[]) : [],
+        warnings: Array.isArray(_warnings) ? (_warnings as unknown[]) : [],
       };
     });
   }, [hasQuarantine, displayRecords, fallbackRows]);
+
+  // Only render the Warnings column when at least one displayed row has a
+  // warning payload. Pre-v4 quarantine rows have ``null`` warnings — hiding
+  // the column keeps the table compact for runs that have only errors.
+  const hasAnyWarning = useMemo(
+    () => rows.some((r) => Array.isArray(r.warnings) && r.warnings.length > 0),
+    [rows],
+  );
 
   const dataColumns = useMemo(() => {
     const keys = new Set<string>();
@@ -177,8 +208,12 @@ export function DryRunResults({ result }: DryRunResultsProps) {
 
   return (
     <div className="space-y-4">
-      {/* Summary stats */}
-      <div className="grid grid-cols-3 gap-4">
+      {/* ``Errors`` and ``Warnings`` are independent buckets — a row can be in
+          both. Both come from DQX's observer (``error_row_count`` /
+          ``warning_row_count``) so they're bounded by the input row count
+          and don't suffer from the fan-out artefacts that ``invalid_rows``
+          can have on certain check types. */}
+      <div className={`grid gap-4 ${showWarnings ? "grid-cols-4" : "grid-cols-3"}`}>
         <div className="rounded-lg border p-3 text-center">
           <div className="text-2xl font-bold tabular-nums">{totalRows}</div>
           <div className="text-xs text-muted-foreground">{t("dryRun.totalRows")}</div>
@@ -191,12 +226,22 @@ export function DryRunResults({ result }: DryRunResultsProps) {
           </div>
         </div>
         <div className="rounded-lg border p-3 text-center">
-          <div className="text-2xl font-bold tabular-nums text-red-600">{invalidRows}</div>
+          <div className="text-2xl font-bold tabular-nums text-red-600">{errorRows}</div>
           <div className="text-xs text-muted-foreground flex items-center justify-center gap-1">
             <XCircle className="h-3 w-3" />
             {t("dryRun.invalid")}
+            Errors
           </div>
         </div>
+        {showWarnings && (
+          <div className="rounded-lg border p-3 text-center">
+            <div className="text-2xl font-bold tabular-nums text-amber-600">{warningRows}</div>
+            <div className="text-xs text-muted-foreground flex items-center justify-center gap-1">
+              <AlertTriangle className="h-3 w-3" />
+              Warnings
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Pass rate bar */}
@@ -215,7 +260,12 @@ export function DryRunResults({ result }: DryRunResultsProps) {
         </div>
       </div>
 
-      {/* Error summary */}
+      {/* Check failure summary — each row is one approved check that
+          produced at least one error or warning. We split the total
+          into ``error_count`` / ``warning_count`` columns so a
+          warning-level check is visually distinct from an error-level
+          one (otherwise warning-only checks look identical to errors,
+          which is what users hit in practice). */}
       {errorSummary.length > 0 && (
         <div className="space-y-2">
           <h4 className="text-sm font-medium flex items-center gap-1.5">
@@ -229,23 +279,44 @@ export function DryRunResults({ result }: DryRunResultsProps) {
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b bg-muted/50">
-                  <th className="text-left p-2 font-medium">{t("dryRun.errorHeader")}</th>
-                  <th className="text-right p-2 font-medium w-20">{t("dryRun.countHeader")}</th>
+                  <th className="text-left p-2 font-medium">Check</th>
+                  <th className="text-right p-2 font-medium w-24">Errors</th>
+                  <th className="text-right p-2 font-medium w-24">Warnings</th>
                 </tr>
               </thead>
               <tbody>
-                {visibleErrorSummary.map((item, idx) => (
-                  <tr key={idx} className="border-b last:border-b-0">
-                    <td className="p-2 text-muted-foreground" title={String(item.error ?? "")}>
-                      {summarizeErrorText(String(item.error ?? ""))}
-                    </td>
-                    <td className="p-2 text-right tabular-nums">
-                      <Badge variant="secondary" className="text-xs">
-                        {String(item.count ?? 0)}
-                      </Badge>
-                    </td>
-                  </tr>
-                ))}
+                {visibleErrorSummary.map((item, idx) => {
+                  const errCount = Number(item.error_count ?? 0);
+                  const warnCount = Number(item.warning_count ?? 0);
+                  return (
+                    <tr key={idx} className="border-b last:border-b-0">
+                      <td className="p-2 text-muted-foreground" title={String(item.error ?? "")}>
+                        {summarizeErrorText(String(item.error ?? ""))}
+                      </td>
+                      <td className="p-2 text-right tabular-nums">
+                        {errCount > 0 ? (
+                          <Badge variant="destructive" className="text-xs">
+                            {errCount}
+                          </Badge>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </td>
+                      <td className="p-2 text-right tabular-nums">
+                        {warnCount > 0 ? (
+                          <Badge
+                            variant="outline"
+                            className="text-xs border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+                          >
+                            {warnCount}
+                          </Badge>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
             {hiddenErrorCount > 0 && (
@@ -260,13 +331,15 @@ export function DryRunResults({ result }: DryRunResultsProps) {
         </div>
       )}
 
-      {/* Invalid rows data table */}
-      {invalidRows > 0 && (
+      {/* Failed rows data table — includes both error rows and warning rows
+          since DQX's split puts anything that failed a check into the same
+          quarantine bucket. */}
+      {hasFailedRows && (
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <h4 className="text-sm font-medium flex items-center gap-1.5">
-              <XCircle className="h-4 w-4 text-red-500" />
-              {t("dryRun.invalidRows")}
+              <AlertTriangle className="h-4 w-4 text-amber-500" />
+              Failed rows
               <span className="text-muted-foreground font-normal">
                 ({hasQuarantine ? `${quarantineTotal} ${t("dryRun.quarantinedSuffix")}` : `${sampleInvalid.length} ${t("dryRun.samplesSuffix")}`})
               </span>
@@ -347,7 +420,10 @@ export function DryRunResults({ result }: DryRunResultsProps) {
                         {col}
                       </th>
                     ))}
-                    <th className="text-left p-2 font-medium whitespace-nowrap">{t("dryRun.errorsHeader")}</th>
+                    <th className="text-left p-2 font-medium whitespace-nowrap">Errors</th>
+                    {hasAnyWarning && (
+                      <th className="text-left p-2 font-medium whitespace-nowrap">Warnings</th>
+                    )}
                   </tr>
                 </thead>
                 <tbody>
@@ -368,6 +444,21 @@ export function DryRunResults({ result }: DryRunResultsProps) {
                           ))}
                         </div>
                       </td>
+                      {hasAnyWarning && (
+                        <td className="p-2">
+                          <div className="flex flex-wrap gap-1">
+                            {(row.warnings ?? []).map((w, wi) => (
+                              <Badge
+                                key={wi}
+                                variant="outline"
+                                className="text-[10px] whitespace-nowrap border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+                              >
+                                {formatError(w)}
+                              </Badge>
+                            ))}
+                          </div>
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>

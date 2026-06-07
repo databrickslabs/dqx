@@ -168,7 +168,7 @@ function RunsHistoryPage() {
   );
 }
 
-type RunsSortKey = "table" | "type" | "status" | "requested_by" | "total" | "valid" | "invalid" | "run_date";
+type RunsSortKey = "table" | "type" | "status" | "requested_by" | "total" | "valid" | "errors" | "warnings" | "run_date";
 
 function RunHistoryContent() {
   const { t } = useTranslation();
@@ -182,7 +182,11 @@ function RunHistoryContent() {
   const [tableSearch, setTableSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [runTypeFilter, setRunTypeFilter] = useState("all");
-  const [invalidOnly, setInvalidOnly] = useState(false);
+  // ``failedOnly`` keeps a row if it has either errors or warnings — the
+  // user-facing "Has failures" toggle that replaced the old "Has invalid"
+  // filter. We still tolerate ``error_rows`` being ``null`` on pre-v5 rows
+  // by falling back to ``invalid_rows``.
+  const [failedOnly, setFailedOnly] = useState(false);
   const [myRunsOnly, setMyRunsOnly] = useState(false);
   const [labelFilter, setLabelFilter] = useState<Set<string>>(new Set());
   const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
@@ -289,7 +293,12 @@ function RunHistoryContent() {
       }
       if (statusFilter !== "all" && run.status !== statusFilter) return false;
       if (runTypeFilter !== "all" && (run.run_type ?? "dryrun") !== runTypeFilter) return false;
-      if (invalidOnly && !(run.invalid_rows != null && run.invalid_rows > 0)) return false;
+      if (failedOnly) {
+        const errors = run.error_rows ?? run.invalid_rows;
+        const warnings = run.warning_rows;
+        const hasFailures = (errors != null && errors > 0) || (warnings != null && warnings > 0);
+        if (!hasFailures) return false;
+      }
       if (myRunsOnly && currentUserEmail && run.requesting_user !== currentUserEmail) return false;
       if (labelFilter.size > 0) {
         // Match the label filter against any check captured on the run; an
@@ -325,8 +334,11 @@ function RunHistoryContent() {
         case "valid":
           cmp = (a.valid_rows ?? 0) - (b.valid_rows ?? 0);
           break;
-        case "invalid":
-          cmp = (a.invalid_rows ?? 0) - (b.invalid_rows ?? 0);
+        case "errors":
+          cmp = (a.error_rows ?? a.invalid_rows ?? 0) - (b.error_rows ?? b.invalid_rows ?? 0);
+          break;
+        case "warnings":
+          cmp = (a.warning_rows ?? 0) - (b.warning_rows ?? 0);
           break;
         case "run_date":
           cmp = (a.created_at ?? "").localeCompare(b.created_at ?? "");
@@ -334,7 +346,7 @@ function RunHistoryContent() {
       }
       return cmp * dir;
     });
-  }, [allRuns, catalogFilter, schemaFilter, tableFilter, tableSearch, statusFilter, runTypeFilter, invalidOnly, myRunsOnly, currentUserEmail, rSortKey, rSortDir, labelFilter]);
+  }, [allRuns, catalogFilter, schemaFilter, tableFilter, tableSearch, statusFilter, runTypeFilter, failedOnly, myRunsOnly, currentUserEmail, rSortKey, rSortDir, labelFilter]);
 
   // Distinct labels seen across all runs' checks. Drives the LabelFilter
   // dropdown content for this page.
@@ -372,7 +384,7 @@ function RunHistoryContent() {
     setTableFilter("all");
   };
 
-  const hasActiveFilters = catalogFilter !== "all" || schemaFilter !== "all" || tableFilter !== "all" || tableSearch !== "" || statusFilter !== "all" || runTypeFilter !== "all" || invalidOnly || myRunsOnly || labelFilter.size > 0;
+  const hasActiveFilters = catalogFilter !== "all" || schemaFilter !== "all" || tableFilter !== "all" || tableSearch !== "" || statusFilter !== "all" || runTypeFilter !== "all" || failedOnly || myRunsOnly || labelFilter.size > 0;
 
   const PAGE_SIZE = 25;
   const [currentPage, setCurrentPage] = useState(1);
@@ -382,7 +394,7 @@ function RunHistoryContent() {
     [runs, currentPage],
   );
 
-  useEffect(() => { setCurrentPage(1); }, [catalogFilter, schemaFilter, tableFilter, tableSearch, statusFilter, runTypeFilter, invalidOnly, myRunsOnly, rSortKey, rSortDir]);
+  useEffect(() => { setCurrentPage(1); }, [catalogFilter, schemaFilter, tableFilter, tableSearch, statusFilter, runTypeFilter, failedOnly, myRunsOnly, rSortKey, rSortDir]);
 
   return (
     <div className="space-y-4 h-full overflow-y-auto">
@@ -478,10 +490,11 @@ function RunHistoryContent() {
             </Select>
 
             <Button
-              variant={invalidOnly ? "default" : "outline"}
+              variant={failedOnly ? "default" : "outline"}
               size="sm"
               className="h-9 gap-1.5 text-xs"
-              onClick={() => setInvalidOnly((prev) => !prev)}
+              onClick={() => setFailedOnly((prev) => !prev)}
+              title="Show only runs that have at least one error or warning"
             >
               <AlertCircle className="h-3.5 w-3.5" />
               {t("runsHistory.hasInvalid")}
@@ -515,7 +528,7 @@ function RunHistoryContent() {
                   setTableSearch("");
                   setStatusFilter("all");
                   setRunTypeFilter("all");
-                  setInvalidOnly(false);
+                  setFailedOnly(false);
                   setMyRunsOnly(false);
                   setLabelFilter(new Set());
                 }}
@@ -573,7 +586,10 @@ function RunHistoryContent() {
                         <SortableHeader label={t("runsHistory.headerValid")} sortKey="valid" active={rSortKey === "valid"} direction={rSortDir} onSort={handleRunsSort} align="right" />
                       </th>
                       <th className="text-right p-3 font-medium">
-                        <SortableHeader label={t("runsHistory.headerInvalid")} sortKey="invalid" active={rSortKey === "invalid"} direction={rSortDir} onSort={handleRunsSort} align="right" />
+                        <SortableHeader label="Errors" sortKey="errors" active={rSortKey === "errors"} direction={rSortDir} onSort={handleRunsSort} align="right" />
+                      </th>
+                      <th className="text-right p-3 font-medium">
+                        <SortableHeader label="Warnings" sortKey="warnings" active={rSortKey === "warnings"} direction={rSortDir} onSort={handleRunsSort} align="right" />
                       </th>
                       <th className="text-left p-3 font-medium">
                         <SortableHeader label={t("runsHistory.headerRunDate")} sortKey="run_date" active={rSortKey === "run_date"} direction={rSortDir} onSort={handleRunsSort} />
@@ -582,16 +598,19 @@ function RunHistoryContent() {
                   </thead>
                   <tbody>
                     {pagedRuns.map((run) => {
-                      const invalidPct =
-                        run.total_rows && run.invalid_rows
-                          ? ((run.invalid_rows / run.total_rows) * 100).toFixed(1)
+                      // ``error_rows`` is the DQX observer count (post-v5); fall back
+                      // to ``invalid_rows`` for runs created before the rename.
+                      const errors = run.error_rows ?? run.invalid_rows;
+                      const errorPct =
+                        run.total_rows && errors
+                          ? ((errors / run.total_rows) * 100).toFixed(1)
                           : null;
                       const isExpanded = expandedRunId === run.run_id;
                       return (
                         <RunHistoryRow
                           key={run.run_id}
                           run={run}
-                          invalidPct={invalidPct}
+                          errorPct={errorPct}
                           isExpanded={isExpanded}
                           onToggle={() => setExpandedRunId(isExpanded ? null : run.run_id)}
                         />
@@ -676,12 +695,12 @@ function RunHistoryContent() {
 
 function RunHistoryRow({
   run,
-  invalidPct,
+  errorPct,
   isExpanded,
   onToggle,
 }: {
   run: ValidationRunSummaryOut;
-  invalidPct: string | null;
+  errorPct: string | null;
   isExpanded: boolean;
   onToggle: () => void;
 }) {
@@ -759,14 +778,29 @@ function RunHistoryRow({
           {run.valid_rows?.toLocaleString() ?? "—"}
         </td>
         <td className="p-3 text-right tabular-nums">
-          {run.invalid_rows != null ? (
-            <span className={run.invalid_rows > 0 ? "text-red-600 font-medium" : ""}>
-              {run.invalid_rows.toLocaleString()}
-              {invalidPct && run.invalid_rows > 0 && (
-                <span className="text-muted-foreground font-normal ml-1">({invalidPct}%)</span>
-              )}
+          {/* ``error_rows`` is the authoritative DQX observer count
+              (``error_row_count``). Pre-v5 runs only have ``invalid_rows``
+              — fall back to that so historical data still renders. */}
+          {(() => {
+            const errors = run.error_rows ?? run.invalid_rows;
+            if (errors == null) return "—";
+            return (
+              <span className={errors > 0 ? "text-red-600 font-medium" : ""}>
+                {errors.toLocaleString()}
+                {errorPct && errors > 0 && (
+                  <span className="text-muted-foreground font-normal ml-1">({errorPct}%)</span>
+                )}
+              </span>
+            );
+          })()}
+        </td>
+        <td className="p-3 text-right tabular-nums">
+          {run.warning_rows != null ? (
+            <span className={run.warning_rows > 0 ? "text-amber-600 font-medium" : ""}>
+              {run.warning_rows.toLocaleString()}
             </span>
           ) : (
+            // Em dash distinguishes pre-v3 history rows from "0 warnings".
             "—"
           )}
         </td>
@@ -776,7 +810,7 @@ function RunHistoryRow({
       </tr>
       {isExpanded && (
         <tr>
-          <td colSpan={10} className="p-0">
+          <td colSpan={11} className="p-0">
             <div className="border-t bg-muted/10 p-4 space-y-4">
               {run.status === "FAILED" && run.error_message && (
                 <div className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950/30 p-3">
