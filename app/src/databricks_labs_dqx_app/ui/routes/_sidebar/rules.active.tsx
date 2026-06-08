@@ -334,7 +334,10 @@ function ActiveRulesPage() {
                 <CardDescription>
                   {isLoading
                     ? t("common.loading")
-                    : t("rulesActive.tablesAndChecks", { tables: filteredRules.length, tablesPlural: filteredRules.length !== 1 ? "s" : "", checks: totalCheckCount })}
+                    : t("rulesActive.tablesAndChecks", {
+                        tables: t("rulesActive.tablesCount", { count: filteredRules.length }),
+                        checks: totalCheckCount,
+                      })}
                 </CardDescription>
               </div>
             </div>
@@ -743,7 +746,10 @@ function ByRuleView({ checks }: { checks: CheckWithMeta[] }) {
                     {t("rulesActive.warnsCount", { count: warnCount })}
                   </Badge>
                 )}
-                <span>{t("rulesActive.checksAcrossTables", { checks: items.length, checksPlural: items.length > 1 ? "s" : "", tables: tables.size, tablesPlural: tables.size > 1 ? "s" : "" })}</span>
+                <span>{t("rulesActive.checksAcrossTables", {
+                  checks: t("rulesActive.checksCount", { count: items.length }),
+                  tables: t("rulesActive.tablesCount", { count: tables.size }),
+                })}</span>
               </span>
             </button>
             {isOpen && (
