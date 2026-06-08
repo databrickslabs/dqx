@@ -121,6 +121,30 @@ def build_quality_violation(
     }
 
 
+def build_skipped_violation(
+    name: str,
+    message: str,
+    columns: list[str] | None,
+    *,
+    function: str = "is_not_null",
+    filter_expr: str | None = None,
+    user_metadata: dict | None = None,
+) -> dict[str, Any]:
+    """Helper for constructing expected entries for checks that were skipped during evaluation."""
+
+    return {
+        "name": name,
+        "message": message,
+        "columns": columns,
+        "filter": filter_expr,
+        "function": function,
+        "run_time": RUN_TIME,
+        "run_id": RUN_ID,
+        "user_metadata": user_metadata or {},
+        "skipped": True,
+    }
+
+
 def assert_check_and_split_results(
     checked: DataFrame,
     good_df: DataFrame,

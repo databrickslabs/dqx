@@ -9,9 +9,8 @@ from tests.integration.conftest import (
     EXTRA_PARAMS,
     assert_df_equality_ignore_fingerprints as assert_df_equality,
     REPORTING_COLUMNS,
-    RUN_ID,
-    RUN_TIME,
     build_quality_violation,
+    build_skipped_violation,
 )
 
 SCHEMA = "a: int, b: int, c: int"
@@ -371,6 +370,162 @@ def test_metadata_for_each_column_with_custom_message(ws, spark):
     assert_df_equality(checked_df, expected_df)
 
 
+def test_apply_checks_skip_message_for_invalid_custom_message(ws, spark):
+    """A check with a valid evaluation but an unresolvable custom message expression should be skipped."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    test_df = spark.createDataFrame([[1, 3, 5]], SCHEMA)
+
+    rules = [
+        DQRowRule(
+            name="c_not_null",
+            criticality="error",
+            check_func=check_funcs.is_not_null,
+            column="c",
+            message_expr="concat('Custom error for value: ', missing_col)",
+            user_metadata={"should_be": "IGNORED"},
+        ),
+    ]
+
+    checked_df = dq_engine.apply_checks(test_df, rules)
+    expected_errors = [
+        build_skipped_violation(
+            name="c_not_null",
+            message="Check evaluation skipped due to invalid custom message expression: "
+            "'concat('Custom error for value: ', missing_col)'",
+            columns=["c"],
+            user_metadata={"should_be": "IGNORED"},
+        )
+    ]
+    expected_df = spark.createDataFrame(
+        [[1, 3, 5, expected_errors, None]],
+        EXPECTED_SCHEMA,
+    )
+    assert_df_equality(checked_df, expected_df)
+
+
+def test_metadata_skip_message_for_invalid_custom_message(ws, spark):
+    """A metadata-defined check with an unresolvable custom message expression should be skipped."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    test_df = spark.createDataFrame([[1, 3, 5]], SCHEMA)
+
+    checks = [
+        {
+            "name": "c_not_null",
+            "criticality": "error",
+            "message_expr": "concat('Custom error for value: ', missing_col)",
+            "check": {"function": "is_not_null", "arguments": {"column": "c"}},
+        }
+    ]
+
+    checked_df = dq_engine.apply_checks_by_metadata(test_df, checks)
+    expected_errors = [
+        build_skipped_violation(
+            name="c_not_null",
+            message="Check evaluation skipped due to invalid custom message expression: "
+            "'concat('Custom error for value: ', missing_col)'",
+            columns=["c"],
+        )
+    ]
+    expected_df = spark.createDataFrame(
+        [[1, 3, 5, expected_errors, None]],
+        EXPECTED_SCHEMA,
+    )
+    assert_df_equality(checked_df, expected_df)
+
+
+def test_apply_checks_skip_message_for_invalid_column_message_expr(ws, spark):
+    """A Column message_expr that cannot be resolved should be skipped without injecting the Column repr."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    test_df = spark.createDataFrame([[1, 3, 5]], SCHEMA)
+
+    rules = [
+        DQRowRule(
+            name="c_not_null",
+            criticality="error",
+            check_func=check_funcs.is_not_null,
+            column="c",
+            message_expr=F.col("missing_col"),
+        ),
+    ]
+
+    checked_df = dq_engine.apply_checks(test_df, rules)
+    expected_errors = [
+        build_skipped_violation(
+            name="c_not_null",
+            message="Check evaluation skipped due to invalid custom message expression",
+            columns=["c"],
+        )
+    ]
+    expected_df = spark.createDataFrame(
+        [[1, 3, 5, expected_errors, None]],
+        EXPECTED_SCHEMA,
+    )
+    assert_df_equality(checked_df, expected_df)
+
+
+def test_apply_checks_skip_message_combines_invalid_columns_and_custom_message(ws, spark):
+    """When both the check column and the custom message are invalid, both reasons should be reported."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    test_df = spark.createDataFrame([[1, 3, 5]], SCHEMA)
+
+    rules = [
+        DQRowRule(
+            name="missing_not_null",
+            criticality="error",
+            check_func=check_funcs.is_not_null,
+            column="missing_col",
+            message_expr="concat('Custom error for value: ', another_missing_col)",
+        ),
+    ]
+
+    checked_df = dq_engine.apply_checks(test_df, rules)
+    expected_errors = [
+        build_skipped_violation(
+            name="missing_not_null",
+            message="Check evaluation skipped due to invalid check columns: ['missing_col']; "
+            "Check evaluation skipped due to invalid custom message expression: "
+            "'concat('Custom error for value: ', another_missing_col)'",
+            columns=["missing_col"],
+        )
+    ]
+    expected_df = spark.createDataFrame(
+        [[1, 3, 5, expected_errors, None]],
+        EXPECTED_SCHEMA,
+    )
+    assert_df_equality(checked_df, expected_df)
+
+
+def test_apply_checks_valid_custom_message_not_skipped(ws, spark):
+    """A check without invalid fields and with a valid custom message must not be marked skipped."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    test_df = spark.createDataFrame([[1, 3, None]], SCHEMA)
+
+    rules = [
+        DQRowRule(
+            name="c_not_null",
+            criticality="error",
+            check_func=check_funcs.is_not_null,
+            column="c",
+            message_expr="concat('Custom error for c: ', coalesce(cast(c as string), 'null'))",
+        ),
+    ]
+
+    checked_df = dq_engine.apply_checks(test_df, rules)
+    expected_errors = [
+        build_quality_violation(
+            name="c_not_null",
+            message="Custom error for c: null",
+            columns=["c"],
+            function="is_not_null",
+        )
+    ]
+    expected_df = spark.createDataFrame(
+        [[1, 3, None, expected_errors, None]],
+        EXPECTED_SCHEMA,
+    )
+    assert_df_equality(checked_df, expected_df)
+
+
 def test_apply_checks_skip_message_overrides_custom_message_for_invalid_sql_expression(ws, spark):
     """test that message_expr is overridden when a sql_expression check is skipped due to an invalid expression"""
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
@@ -389,17 +544,13 @@ def test_apply_checks_skip_message_overrides_custom_message_for_invalid_sql_expr
 
     checked_df = dq_engine.apply_checks(test_df, rules)
     expected_errors = [
-        {
-            "name": "invalid_sql_expression",
-            "message": "Check evaluation skipped due to invalid sql expression: 'missing_col > 0'",
-            "columns": None,
-            "filter": None,
-            "function": "sql_expression",
-            "run_time": RUN_TIME,
-            "run_id": RUN_ID,
-            "user_metadata": {"should_be": "IGNORED"},
-            "skipped": True,
-        }
+        build_skipped_violation(
+            name="invalid_sql_expression",
+            message="Check evaluation skipped due to invalid sql expression: 'missing_col > 0'",
+            columns=None,
+            function="sql_expression",
+            user_metadata={"should_be": "IGNORED"},
+        )
     ]
     expected_df = spark.createDataFrame(
         [[1, 3, 5, expected_errors, None]],

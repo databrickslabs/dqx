@@ -105,6 +105,8 @@ class DQRuleManager:
         """
         Returns a boolean indicating whether the custom message expression is invalid in the input DataFrame.
         """
+        if self.check.message_expr is None:
+            return False
         return self._is_invalid_column(self.check.message_expr)
 
     @cached_property
@@ -196,9 +198,6 @@ class DQRuleManager:
         if self.check.message_expr is None:
             return condition
 
-        if self.has_invalid_custom_message:
-            return F.lit(self._get_invalid_cols_message())
-
         _max_message_length = 500
         message_expr = F.substr(
             F.expr(self.check.message_expr) if isinstance(self.check.message_expr, str) else self.check.message_expr,
@@ -229,9 +228,15 @@ class DQRuleManager:
             )
 
         if self.has_invalid_custom_message:
-            logger.warning(f"Skipping check '{self.check.name}' due to invalid custom message expression: '{self.check.message_expr}'")
+            if isinstance(self.check.message_expr, str):
+                custom_message_detail = f": '{self.check.message_expr}'"
+            else:
+                custom_message_detail = ""
+            logger.warning(
+                f"Skipping check '{self.check.name}' due to invalid custom message expression{custom_message_detail}"
+            )
             invalid_cols_message_parts.append(
-                f"Check evaluation skipped due to invalid custom message expression: '{self.check.message_expr}'"
+                f"Check evaluation skipped due to invalid custom message expression{custom_message_detail}"
             )
 
         if self.invalid_sql_expression:
