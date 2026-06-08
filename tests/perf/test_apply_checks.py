@@ -2137,6 +2137,8 @@ def test_benchmark_is_geo_covers_approximate(benchmark, ws, generated_df):
         )
     ]
     checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
 
 
 @pytest.mark.parametrize(

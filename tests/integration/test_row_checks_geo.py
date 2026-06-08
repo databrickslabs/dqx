@@ -827,9 +827,7 @@ def test_is_geo_contains_boundary_point_violation(skip_if_runtime_not_geo_compat
     test_df = spark.createDataFrame([[_POINT_EDGE], [None]], _GEO_SCHEMA)
     condition = is_geo_contains("geom", _REF_POLYGON, convert_column=True, convert_reference_geometry=True)
     actual = test_df.select("geom", condition)
-    expected = spark.createDataFrame(
-        [[_POINT_EDGE, _contains_violation(_POINT_EDGE)], [None, None]], _CONTAINS_SCHEMA
-    )
+    expected = spark.createDataFrame([[_POINT_EDGE, _contains_violation(_POINT_EDGE)], [None, None]], _CONTAINS_SCHEMA)
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
