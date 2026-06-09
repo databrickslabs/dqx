@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Loader2, MessageSquare, Send, Trash2 } from "lucide-react";
@@ -19,6 +20,7 @@ interface CommentThreadProps {
 }
 
 export function CommentThread({ entityType, entityId }: CommentThreadProps) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [newComment, setNewComment] = useState("");
   const [isOpen, setIsOpen] = useState(false);
@@ -40,7 +42,7 @@ export function CommentThread({ entityType, entityId }: CommentThreadProps) {
       setNewComment("");
       queryClient.invalidateQueries({ queryKey: getListCommentsQueryKey(entityType, entityId) });
     } catch {
-      toast.error("Failed to add comment");
+      toast.error(t("commentThread.failedAdd"));
     }
   };
 
@@ -49,7 +51,7 @@ export function CommentThread({ entityType, entityId }: CommentThreadProps) {
       await deleteMutation.mutateAsync({ commentId });
       queryClient.invalidateQueries({ queryKey: getListCommentsQueryKey(entityType, entityId) });
     } catch {
-      toast.error("Failed to delete comment");
+      toast.error(t("commentThread.failedDelete"));
     }
   };
 
@@ -62,7 +64,7 @@ export function CommentThread({ entityType, entityId }: CommentThreadProps) {
       >
         <MessageSquare className="h-4 w-4" />
         <span>
-          {isOpen ? "Hide" : "Show"} comments
+          {isOpen ? t("commentThread.hideComments") : t("commentThread.showComments")} {t("commentThread.commentsSuffix")}
           {comments.length > 0 && ` (${comments.length})`}
         </span>
       </button>
@@ -72,12 +74,12 @@ export function CommentThread({ entityType, entityId }: CommentThreadProps) {
           {isLoading && (
             <div className="flex items-center gap-2 text-muted-foreground text-xs py-2">
               <Loader2 className="h-3 w-3 animate-spin" />
-              Loading comments...
+              {t("commentThread.loading")}
             </div>
           )}
 
           {!isLoading && comments.length === 0 && (
-            <p className="text-xs text-muted-foreground py-1">No comments yet.</p>
+            <p className="text-xs text-muted-foreground py-1">{t("commentThread.empty")}</p>
           )}
 
           {comments.map((c) => (
@@ -107,7 +109,7 @@ export function CommentThread({ entityType, entityId }: CommentThreadProps) {
             <Textarea
               value={newComment}
               onChange={(e) => setNewComment(e.target.value)}
-              placeholder="Add a comment..."
+              placeholder={t("commentThread.placeholder")}
               className="text-sm min-h-[60px] flex-1"
               onKeyDown={(e) => {
                 if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) handleAdd();
