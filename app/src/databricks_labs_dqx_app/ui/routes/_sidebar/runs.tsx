@@ -90,7 +90,7 @@ import { useActiveRuns, type ActiveRun } from "@/hooks/use-active-runs";
 import { getDryRunStatus, type RunStatusOut } from "@/lib/api";
 import { cancelDryRun } from "@/lib/api-custom";
 import { CircleStop, ShieldAlert } from "lucide-react";
-import { parseFqn, formatDateTime as formatDate, getUserMetadata, labelToken, tokenToLabel, formatLabel } from "@/lib/format-utils";
+import { parseFqn, formatDateTime as formatDate, getUserMetadata, labelToken, tokenToLabel } from "@/lib/format-utils";
 import { LabelFilter, LabelsBadges, labelsMatchFilter } from "@/components/Labels";
 import { usePermissions } from "@/hooks/use-permissions";
 import { requireRunnerOrRedirect } from "@/lib/route-guards";
