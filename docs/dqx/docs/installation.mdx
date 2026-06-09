@@ -6,7 +6,15 @@ import Admonition from '@theme/Admonition';
 
 # Installation
 
-The framework can be installed on a Databricks workspace as a tool or used as a standalone library.
+DQX can be installed in three ways, depending on how you want to use it:
+
+- as a **standalone library** in a Databricks cluster or notebook, for code-level integration into pipelines (see [DQX installation as a Library](#dqx-installation-as-a-library))
+- as a **workspace tool** via the Databricks CLI, which deploys the configuration-driven profiling, quality-checker, and end-to-end workflows (see [DQX installation as a Tool](#dqx-installation-as-a-tool-in-a-databricks-workspace))
+- as **DQX Studio**, a web UI deployed as a Databricks App for authoring, reviewing, running, and monitoring quality rules through a browser (see [DQX Studio installation](#dqx-studio-installation))
+
+<Admonition type="tip" title="Recommended for a no-code experience">
+If you want to use DQX without writing code, **DQX Studio is the recommended option** — it provides a full browser-based UI on top of DQX's profiling and quality-checking capabilities, with no configuration files to maintain.
+</Admonition>
 
 ## DQX installation as a Library
 
@@ -94,7 +102,7 @@ PIP_INDEX_URL="https://url-to-company-hosted-pypi.internal" pip install databric
 ## DQX installation as a Tool in a Databricks Workspace
 
 If you install DQX via PyPI and use it purely as a library, you don’t need to pre-install DQX in the workspace.
-However, installing DQX in the workspace offers additional benefits such as profiling and quality checker workflows allowing for no-code quality checking, a pre-configured dashboard, and convenient configuration management.
+However, installing DQX in the workspace offers additional benefits such as profiling and quality checker workflows allowing for no-code quality checking, a pre-configured dashboard, and convenient configuration management. For a fully no-code experience driven by a browser-based UI, [DQX Studio](#dqx-studio-installation) is the recommended option.
 
 See the [Installation Configuration reference](/docs/reference/installation_wizard) for a complete reference options available through the installation wizard.
 
