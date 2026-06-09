@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -80,12 +81,14 @@ export function LabelsEditor({
   value,
   onChange,
   disabled,
-  title = "Labels (optional)",
+  title,
   defaultOpen = false,
   variant = "inline",
   showHeader = true,
   definitions,
 }: LabelsEditorProps) {
+  const { t } = useTranslation();
+  const editorTitle = title ?? t("labelsEditor.title");
   const [open, setOpen] = useState(defaultOpen);
   const [rows, setRows] = useState<Row[]>(() => recordToRows(value));
 
@@ -160,7 +163,7 @@ export function LabelsEditor({
             disabled={disabled}
           >
             <Plus className="h-3.5 w-3.5" />
-            Add label
+            {t("labelsEditor.addLabel")}
           </Button>
         )}
         {constrained && (
@@ -171,10 +174,10 @@ export function LabelsEditor({
             className="h-7 text-xs gap-1 text-muted-foreground"
             onClick={addCustomRow}
             disabled={disabled}
-            title="Add a label whose key isn't in the admin catalog"
+            title={t("labelsEditor.customLabelTooltip")}
           >
             <Plus className="h-3.5 w-3.5" />
-            Custom label
+            {t("labelsEditor.customLabel")}
           </Button>
         )}
       </div>
@@ -197,7 +200,7 @@ export function LabelsEditor({
           <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
         )}
         <Tags className="h-3.5 w-3.5 text-muted-foreground" />
-        <Label className="text-xs cursor-pointer">{title}</Label>
+        <Label className="text-xs cursor-pointer">{editorTitle}</Label>
         {count > 0 && (
           <Badge variant="secondary" className="text-[10px] h-4 px-1.5">
             {count}
@@ -228,6 +231,7 @@ function LabelRow({
   onChange,
   onRemove,
 }: LabelRowProps) {
+  const { t } = useTranslation();
   const isDefined = constrained && definition !== undefined;
 
   return (
@@ -243,7 +247,7 @@ function LabelRow({
         </Badge>
       ) : (
         <Input
-          placeholder="key"
+          placeholder={t("labelsEditor.keyPlaceholder")}
           value={row.key}
           onChange={(e) => onChange({ key: e.target.value })}
           disabled={disabled}
@@ -260,7 +264,7 @@ function LabelRow({
         />
       ) : (
         <Input
-          placeholder="value (blank → true)"
+          placeholder={t("labelsEditor.valuePlaceholder")}
           value={row.value}
           onChange={(e) => onChange({ value: e.target.value })}
           disabled={disabled}
@@ -274,7 +278,7 @@ function LabelRow({
         className="h-7 w-7 shrink-0"
         onClick={onRemove}
         disabled={disabled}
-        aria-label="Remove label"
+        aria-label={t("labelsEditor.removeLabel")}
       >
         <X className="h-3.5 w-3.5" />
       </Button>
@@ -297,6 +301,7 @@ function KeyPickerButton({
   onPick,
   disabled,
 }: KeyPickerButtonProps) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
 
@@ -321,14 +326,14 @@ function KeyPickerButton({
           disabled={disabled || definitions.length === 0}
         >
           <Plus className="h-3.5 w-3.5" />
-          Add label
+          {t("labelsEditor.addLabel")}
           <ChevronDown className="h-3 w-3 opacity-60" />
         </Button>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-72 p-2">
         <div className="space-y-2">
           <Input
-            placeholder="Search label keys…"
+            placeholder={t("labelsEditor.searchKeys")}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             className="h-7 text-xs"
@@ -337,7 +342,7 @@ function KeyPickerButton({
           <div className="max-h-64 overflow-y-auto space-y-0.5">
             {filtered.length === 0 && (
               <p className="text-xs text-muted-foreground italic px-2 py-3 text-center">
-                No matching keys.
+                {t("labelsEditor.noMatchingKeys")}
               </p>
             )}
             {filtered.map((d) => {
@@ -360,13 +365,13 @@ function KeyPickerButton({
                     <Tag className="h-3 w-3 opacity-60" />
                     <span className="font-medium">{d.key}</span>
                     {used && (
-                      <span className="text-[10px] text-muted-foreground">(in use)</span>
+                      <span className="text-[10px] text-muted-foreground">{t("labelsEditor.inUse")}</span>
                     )}
                     <span className="ml-auto text-[10px] text-muted-foreground shrink-0">
                       {d.values.length === 0
-                        ? "boolean"
-                        : `${d.values.length} value${d.values.length === 1 ? "" : "s"}`}
-                      {d.allow_custom_values ? " + custom" : ""}
+                        ? t("labelsEditor.boolean")
+                        : t("labelsEditor.valueCount", { count: d.values.length })}
+                      {d.allow_custom_values ? t("labelsEditor.plusCustom") : ""}
                     </span>
                   </div>
                   {d.description && (
@@ -399,6 +404,7 @@ function ValuePickerButton({
   onChange,
   disabled,
 }: ValuePickerButtonProps) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [customDraft, setCustomDraft] = useState("");
@@ -421,10 +427,10 @@ function ValuePickerButton({
         )}
         onClick={() => onChange(isTrue ? "false" : "true")}
         disabled={disabled}
-        title="Click to toggle"
+        title={t("labelsEditor.clickToToggle")}
       >
         <span className="truncate font-mono">{value || "true"}</span>
-        <span className="text-[10px] text-muted-foreground">click to toggle</span>
+        <span className="text-[10px] text-muted-foreground">{t("labelsEditor.clickToToggle")}</span>
       </button>
     );
   }
@@ -443,7 +449,7 @@ function ValuePickerButton({
         >
           <span className="truncate">
             {value || (
-              <span className="italic text-muted-foreground">Pick a value…</span>
+              <span className="italic text-muted-foreground">{t("labelsEditor.pickValue")}</span>
             )}
           </span>
           <ChevronDown className="h-3 w-3 shrink-0 opacity-60" />
@@ -452,7 +458,7 @@ function ValuePickerButton({
       <PopoverContent align="start" className="w-64 p-2">
         <div className="space-y-2">
           <Input
-            placeholder="Search values…"
+            placeholder={t("labelsEditor.searchValues")}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             className="h-7 text-xs"
@@ -484,18 +490,18 @@ function ValuePickerButton({
             ))}
             {filtered.length === 0 && (
               <p className="text-xs text-muted-foreground italic px-2 py-2 text-center">
-                No matching values.
+                {t("labelsEditor.noMatchingValues")}
               </p>
             )}
           </div>
           {definition.allow_custom_values && (
             <div className="border-t pt-2 space-y-1.5">
               <p className="text-[10px] text-muted-foreground uppercase tracking-wide">
-                Or enter custom value
+                {t("labelsEditor.orCustomValue")}
               </p>
               <div className="flex gap-1">
                 <Input
-                  placeholder="custom…"
+                  placeholder={t("labelsEditor.customPlaceholder")}
                   value={isCustomValue && !customDraft ? value : customDraft}
                   onChange={(e) => setCustomDraft(e.target.value)}
                   className="h-7 text-xs"
@@ -512,12 +518,12 @@ function ValuePickerButton({
                     setQuery("");
                   }}
                 >
-                  Set
+                  {t("labelsEditor.set")}
                 </Button>
               </div>
               {isCustomValue && (
                 <p className="text-[10px] text-muted-foreground italic">
-                  Current value <code>{value}</code> isn&apos;t in the catalog.
+                  {t("labelsEditor.currentNotInCatalog", { value })}
                 </p>
               )}
             </div>
@@ -601,6 +607,7 @@ export function LabelFilter({
   onChange,
   className,
 }: LabelFilterProps) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
 
@@ -634,14 +641,14 @@ export function LabelFilter({
 
   const triggerLabel =
     selected.size === 0
-      ? "All Labels"
+      ? t("labelFilter.allLabels")
       : selected.size === 1
         ? (() => {
             const tok = [...selected][0];
             const { key, value } = tokenToLabel(tok);
             return formatLabel(key, value);
           })()
-        : `${selected.size} labels`;
+        : t("labelFilter.labelsCount", { count: selected.size });
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -663,7 +670,7 @@ export function LabelFilter({
       <PopoverContent align="start" className="w-72 p-2">
         <div className="space-y-2">
           <Input
-            placeholder="Search labels…"
+            placeholder={t("labelFilter.searchLabels")}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             className="h-7 text-xs"
@@ -672,12 +679,12 @@ export function LabelFilter({
           <div className="max-h-64 overflow-y-auto space-y-0.5">
             {tokens.length === 0 && (
               <p className="text-xs text-muted-foreground italic px-2 py-3 text-center">
-                No labels found in the current view.
+                {t("labelFilter.noLabelsFound")}
               </p>
             )}
             {tokens.length > 0 && filtered.length === 0 && (
               <p className="text-xs text-muted-foreground italic px-2 py-3 text-center">
-                No matches for &quot;{query}&quot;.
+                {t("labelFilter.noMatches", { query })}
               </p>
             )}
             {filtered.map(([token, { key, value }]) => (
@@ -698,7 +705,7 @@ export function LabelFilter({
           {selected.size > 0 && (
             <div className="flex items-center justify-between border-t pt-2">
               <span className="text-[11px] text-muted-foreground">
-                {selected.size} selected
+                {selected.size} {t("labelFilter.selectedSuffix")}
               </span>
               <Button
                 variant="ghost"
@@ -706,7 +713,7 @@ export function LabelFilter({
                 className="h-6 text-[11px]"
                 onClick={clearAll}
               >
-                Clear
+                {t("labelFilter.clear")}
               </Button>
             </div>
           )}

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Select,
@@ -93,6 +94,7 @@ export function ColumnDiscoveryPanel({
   defaultCollapsed = true,
   variant = "inline",
 }: ColumnDiscoveryPanelProps) {
+  const { t } = useTranslation();
   const [catalog, setCatalog] = useState("");
   const [schema, setSchema] = useState("");
   const [table, setTable] = useState("");
@@ -189,12 +191,12 @@ export function ColumnDiscoveryPanel({
     }
     try {
       await navigator.clipboard.writeText(col.name);
-      toast.success(`Copied "${col.name}"`, {
-        description: "Paste into the column field.",
+      toast.success(t("columnDiscovery.copied", { name: col.name }), {
+        description: t("columnDiscovery.copyHint"),
         duration: 1500,
       });
     } catch {
-      toast.error("Could not copy to clipboard");
+      toast.error(t("columnDiscovery.couldNotCopy"));
     }
   };
 
@@ -219,11 +221,11 @@ export function ColumnDiscoveryPanel({
           )}
           <Database className="h-4 w-4 text-sky-600 dark:text-sky-400" />
           <span className="text-sky-900 dark:text-sky-200">
-            Column discovery
+            {t("columnDiscovery.title")}
           </span>
           {collapsed && (
             <span className="text-[11px] text-muted-foreground font-normal">
-              (browse columns)
+              {t("columnDiscovery.browseColumns")}
             </span>
           )}
         </button>
@@ -238,8 +240,7 @@ export function ColumnDiscoveryPanel({
       </div>
       {!collapsed && (
         <p className="text-[11px] text-muted-foreground leading-snug pl-6">
-          Quick lookup of columns in any UC table. Click a column to copy its
-          name; paste into the column field of any check below.
+          {t("columnDiscovery.hint")}
         </p>
       )}
     </>
@@ -264,7 +265,7 @@ export function ColumnDiscoveryPanel({
         >
           <SelectTrigger className="h-8 text-xs w-full min-w-0">
             <SelectValue
-              placeholder={catalogsLoading ? "Loading…" : "Catalog"}
+              placeholder={catalogsLoading ? t("columnDiscovery.loading") : t("columnDiscovery.catalogPlaceholder")}
             />
           </SelectTrigger>
           <SelectContent>
@@ -288,7 +289,7 @@ export function ColumnDiscoveryPanel({
           <SelectTrigger className="h-8 text-xs w-full min-w-0">
             <SelectValue
               placeholder={
-                !catalog ? "Schema" : schemasLoading ? "Loading…" : "Schema"
+                !catalog ? t("columnDiscovery.schemaPlaceholder") : schemasLoading ? t("columnDiscovery.loading") : t("columnDiscovery.schemaPlaceholder")
               }
             />
           </SelectTrigger>
@@ -312,14 +313,14 @@ export function ColumnDiscoveryPanel({
           <SelectTrigger className="h-8 text-xs w-full min-w-0">
             <SelectValue
               placeholder={
-                !schema ? "Table" : tablesLoading ? "Loading…" : "Table"
+                !schema ? t("columnDiscovery.tablePlaceholder") : tablesLoading ? t("columnDiscovery.loading") : t("columnDiscovery.tablePlaceholder")
               }
             />
           </SelectTrigger>
           <SelectContent>
-            {tables.map((t) => (
-              <SelectItem key={t.name} value={t.name} className="text-xs">
-                {t.name}
+            {tables.map((tbl) => (
+              <SelectItem key={tbl.name} value={tbl.name} className="text-xs">
+                {tbl.name}
               </SelectItem>
             ))}
           </SelectContent>
@@ -333,7 +334,7 @@ export function ColumnDiscoveryPanel({
           <Input
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
-            placeholder="Filter columns by name or type…"
+            placeholder={t("columnDiscovery.filterPlaceholder")}
             className="h-8 pl-7 pr-7 text-xs"
           />
           {filter && (
@@ -341,7 +342,7 @@ export function ColumnDiscoveryPanel({
               type="button"
               onClick={() => setFilter("")}
               className="absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-              aria-label="Clear filter"
+              aria-label={t("columnDiscovery.clearFilter")}
             >
               <X className="h-3 w-3" />
             </button>
@@ -352,7 +353,7 @@ export function ColumnDiscoveryPanel({
       {/* Columns list */}
       {!table ? (
         <div className="text-[11px] text-muted-foreground italic py-3 text-center border rounded-md bg-background/60">
-          Pick a catalog, schema, and table above to see its columns.
+          {t("columnDiscovery.pickHint")}
         </div>
       ) : columnsLoading ? (
         <div className="space-y-1.5">
@@ -362,20 +363,19 @@ export function ColumnDiscoveryPanel({
         </div>
       ) : columnsError ? (
         <div className="text-[11px] text-red-500 py-2">
-          Failed to load columns for {table}.
+          {t("columnDiscovery.failedToLoad", { table })}
         </div>
       ) : filteredColumns.length === 0 ? (
         <div className="text-[11px] text-muted-foreground italic py-3 text-center">
           {filter
-            ? `No columns match "${filter}".`
-            : "This table has no columns."}
+            ? t("columnDiscovery.noMatch", { filter })
+            : t("columnDiscovery.noColumns")}
         </div>
       ) : (
         <>
           <div className="flex items-center justify-between text-[11px] text-muted-foreground">
             <span className="truncate">
-              {filteredColumns.length} of {columns.length} column
-              {columns.length === 1 ? "" : "s"}
+              {t("columnDiscovery.columnsCount", { visible: filteredColumns.length, total: columns.length, count: columns.length })}
               <span
                 className="ml-2 font-mono text-muted-foreground/80"
                 title={tableFqn}
@@ -388,7 +388,7 @@ export function ColumnDiscoveryPanel({
               onClick={handleClearTable}
               className="hover:text-foreground shrink-0 ml-2"
             >
-              Reset
+              {t("columnDiscovery.reset")}
             </button>
           </div>
           <div className="border rounded-md overflow-hidden max-h-[260px] overflow-y-auto bg-background">
@@ -404,7 +404,7 @@ export function ColumnDiscoveryPanel({
                     <div className="font-mono truncate">{col.name}</div>
                     <div className="text-[10px] text-muted-foreground truncate">
                       {col.type_name}
-                      {col.nullable === false ? " · NOT NULL" : ""}
+                      {col.nullable === false ? t("columnDiscovery.notNullSuffix") : ""}
                       {col.comment ? ` · ${col.comment}` : ""}
                     </div>
                   </div>
@@ -420,13 +420,13 @@ export function ColumnDiscoveryPanel({
                             e.stopPropagation();
                             handleCopy(col);
                           }}
-                          aria-label={`Copy ${col.name}`}
+                          aria-label={t("columnDiscovery.copyAria", { name: col.name })}
                         >
                           <Copy className="h-3 w-3" />
                         </Button>
                       </TooltipTrigger>
                       <TooltipContent>
-                        <p className="text-xs">Copy column name</p>
+                        <p className="text-xs">{t("columnDiscovery.copyTooltip")}</p>
                       </TooltipContent>
                     </Tooltip>
                   </TooltipProvider>
@@ -440,7 +440,7 @@ export function ColumnDiscoveryPanel({
       {(catalogsLoading || schemasLoading || tablesLoading) && (
         <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
           <Loader2 className="h-3 w-3 animate-spin" />
-          Loading catalog metadata…
+          {t("columnDiscovery.loadingMetadata")}
         </div>
       )}
     </div>

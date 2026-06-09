@@ -259,7 +259,7 @@ run_configs:                        # <- list of run configurations, each run co
     options:                        # <- additional options for reading from the input location (optional)
       versionAsOf: '0'
 
-  output_config:                    # <- output data configuration
+  output_config:                    # <- optional output data configuration (omit when only the quarantine table is desired)
     location: main.iot.silver       # <- output location (table), used as input for the quality dashboard if quarantine location is not provided
     format: delta                   # <- format of the output table
     mode: append                    # <- write mode for the output table (append or overwrite)

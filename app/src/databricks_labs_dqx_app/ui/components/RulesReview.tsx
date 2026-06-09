@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -22,6 +23,7 @@ interface RulesReviewProps {
 }
 
 export function RulesReview({ checks, onChange }: RulesReviewProps) {
+  const { t } = useTranslation();
   const [yamlText, setYamlText] = useState(() =>
     yaml.dump(checks, { sortKeys: false }),
   );
@@ -36,7 +38,7 @@ export function RulesReview({ checks, onChange }: RulesReviewProps) {
         onChange(parsed);
         setYamlError(null);
       } else {
-        setYamlError("YAML must be a list of check definitions");
+        setYamlError(t("rulesReview.yamlMustBeList"));
       }
     } catch (e) {
       setYamlError((e as Error).message);
@@ -67,37 +69,37 @@ export function RulesReview({ checks, onChange }: RulesReviewProps) {
 
   const handleCopyYaml = () => {
     navigator.clipboard.writeText(yaml.dump(checks, { sortKeys: false }));
-    toast.success("YAML copied to clipboard");
+    toast.success(t("rulesReview.yamlCopied"));
   };
 
   return (
     <Tabs value={activeTab} onValueChange={handleTabChange}>
       <div className="flex items-center justify-between mb-4">
         <TabsList>
-          <TabsTrigger value="table">Rules</TabsTrigger>
-          <TabsTrigger value="yaml">YAML</TabsTrigger>
+          <TabsTrigger value="table">{t("rulesReview.rulesTab")}</TabsTrigger>
+          <TabsTrigger value="yaml">{t("rulesReview.yamlTab")}</TabsTrigger>
         </TabsList>
         <Button variant="outline" size="sm" onClick={handleCopyYaml}>
-          Copy YAML
+          {t("rulesReview.copyYaml")}
         </Button>
       </div>
 
       <TabsContent value="table">
         {checks.length === 0 ? (
           <p className="text-muted-foreground text-sm text-center py-4">
-            No rules defined.
+            {t("rulesReview.noRules")}
           </p>
         ) : (
           <div className="border rounded-lg overflow-hidden">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b bg-muted/50">
-                  <th className="text-left p-3 font-medium">#</th>
-                  <th className="text-left p-3 font-medium">Function</th>
-                  <th className="text-left p-3 font-medium">Column(s)</th>
-                  <th className="text-left p-3 font-medium">Criticality</th>
-                  <th className="text-left p-3 font-medium">Labels</th>
-                  <th className="text-left p-3 font-medium">Parameters</th>
+                  <th className="text-left p-3 font-medium">{t("rulesReview.headerHash")}</th>
+                  <th className="text-left p-3 font-medium">{t("rulesReview.headerFunction")}</th>
+                  <th className="text-left p-3 font-medium">{t("rulesReview.headerColumns")}</th>
+                  <th className="text-left p-3 font-medium">{t("rulesReview.headerCriticality")}</th>
+                  <th className="text-left p-3 font-medium">{t("rulesReview.headerLabels")}</th>
+                  <th className="text-left p-3 font-medium">{t("rulesReview.headerParameters")}</th>
                   <th className="text-right p-3 font-medium"></th>
                 </tr>
               </thead>
@@ -155,8 +157,8 @@ export function RulesReview({ checks, onChange }: RulesReviewProps) {
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="error">Error</SelectItem>
-                            <SelectItem value="warn">Warn</SelectItem>
+                            <SelectItem value="error">{t("rulesReview.criticalityError")}</SelectItem>
+                            <SelectItem value="warn">{t("rulesReview.criticalityWarn")}</SelectItem>
                           </SelectContent>
                         </Select>
                       </td>

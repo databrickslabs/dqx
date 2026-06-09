@@ -1,9 +1,11 @@
 import { Moon, Sun } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
 import { useTheme } from "@/components/apx/theme-provider";
 
 export function ModeToggle() {
+  const { t } = useTranslation();
   const { theme, setTheme } = useTheme();
 
   const toggleTheme = () => {
@@ -22,7 +24,7 @@ export function ModeToggle() {
       ) : (
         <Moon className="rotate-90 h-4 w-4 scale-0 transition-all dark:rotate-0 dark:scale-100" />
       )}
-      <span className="sr-only">Toggle theme</span>
+      <span className="sr-only">{t("navbar.toggleTheme")}</span>
     </Button>
   );
 }

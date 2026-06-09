@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import {
   Select,
   SelectContent,
@@ -39,6 +40,7 @@ export function CatalogBrowser({
   onAllTablesLoaded,
   disabledTables,
 }: CatalogBrowserProps) {
+  const { t } = useTranslation();
   const [catalog, setCatalog] = useState("");
   const [schema, setSchema] = useState("");
   const [table, setTable] = useState("");
@@ -166,7 +168,7 @@ export function CatalogBrowser({
     <div className="space-y-3">
       <div className="grid grid-cols-3 gap-3">
         <div className="grid gap-1.5">
-          <Label className="text-xs text-muted-foreground">Catalog</Label>
+          <Label className="text-xs text-muted-foreground">{t("catalogBrowser.catalog")}</Label>
           <Select
             value={catalog}
             onValueChange={handleCatalogChange}
@@ -176,7 +178,7 @@ export function CatalogBrowser({
               {catalogsLoading ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
-                <SelectValue placeholder="Select catalog" />
+                <SelectValue placeholder={t("catalogBrowser.selectCatalog")} />
               )}
             </SelectTrigger>
             <SelectContent>
@@ -190,7 +192,7 @@ export function CatalogBrowser({
         </div>
 
         <div className="grid gap-1.5">
-          <Label className="text-xs text-muted-foreground">Schema</Label>
+          <Label className="text-xs text-muted-foreground">{t("catalogBrowser.schema")}</Label>
           <Select
             value={schema}
             onValueChange={handleSchemaChange}
@@ -200,7 +202,7 @@ export function CatalogBrowser({
               {schemasLoading ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
-                <SelectValue placeholder="Select schema" />
+                <SelectValue placeholder={t("catalogBrowser.selectSchema")} />
               )}
             </SelectTrigger>
             <SelectContent>
@@ -215,7 +217,7 @@ export function CatalogBrowser({
 
         {!multiSelect && (
           <div className="grid gap-1.5">
-            <Label className="text-xs text-muted-foreground">Table</Label>
+            <Label className="text-xs text-muted-foreground">{t("catalogBrowser.table")}</Label>
             <Select
               value={table}
               onValueChange={handleTableChange}
@@ -225,7 +227,7 @@ export function CatalogBrowser({
                 {tablesLoading ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
-                  <SelectValue placeholder="Select table" />
+                  <SelectValue placeholder={t("catalogBrowser.selectTable")} />
                 )}
               </SelectTrigger>
               <SelectContent>
@@ -242,13 +244,15 @@ export function CatalogBrowser({
         {multiSelect && (
           <div className="grid gap-1.5">
             <Label className="text-xs text-muted-foreground">
-              Tables {currentSchemaSelectedCount > 0 && `(${currentSchemaSelectedCount} in this schema${selectedTables.length > currentSchemaSelectedCount ? `, ${selectedTables.length} total` : ""})`}
+              {t("catalogBrowser.tables")} {currentSchemaSelectedCount > 0 && (selectedTables.length > currentSchemaSelectedCount
+                ? t("catalogBrowser.tablesInSchemaWithTotal", { schema: currentSchemaSelectedCount, total: selectedTables.length })
+                : t("catalogBrowser.tablesInSchema", { schema: currentSchemaSelectedCount }))}
             </Label>
             <div className="h-9 flex items-center text-sm text-muted-foreground">
-              {!schema ? "Select schema first" : tablesLoading ? (
+              {!schema ? t("catalogBrowser.selectSchemaFirst") : tablesLoading ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
-                `${tables.length} tables available`
+                t("catalogBrowser.tablesAvailable", { count: tables.length })
               )}
             </div>
           </div>
@@ -266,7 +270,7 @@ export function CatalogBrowser({
               disabled={disabled || currentSchemaSelectedCount === tables.length}
             >
               <CheckSquare className="h-3 w-3" />
-              Select All
+              {t("catalogBrowser.selectAll")}
             </Button>
             <Button
               variant="outline"
@@ -276,20 +280,20 @@ export function CatalogBrowser({
               disabled={disabled || currentSchemaSelectedCount === 0}
             >
               <Square className="h-3 w-3" />
-              Clear
+              {t("catalogBrowser.clear")}
             </Button>
           </div>
           <div className="border rounded-md p-2 max-h-48 overflow-y-auto">
             <div className="grid grid-cols-2 md:grid-cols-3 gap-1">
-              {tables.map((t) => {
-                const fqn = `${catalog}.${schema}.${t.name}`;
+              {tables.map((tbl) => {
+                const fqn = `${catalog}.${schema}.${tbl.name}`;
                 const isSelected = selectedTables.includes(fqn);
                 const isDisabledByFilter = disabledTables?.includes(fqn);
                 const isItemDisabled = disabled || isDisabledByFilter;
                 return (
                   <label
-                    key={t.name}
-                    title={isDisabledByFilter ? "Missing required columns" : undefined}
+                    key={tbl.name}
+                    title={isDisabledByFilter ? t("catalogBrowser.missingColumns") : undefined}
                     className={`flex items-center gap-2 px-2 py-1.5 rounded text-sm transition-colors ${
                       isItemDisabled
                         ? "opacity-40 cursor-not-allowed"
@@ -301,11 +305,11 @@ export function CatalogBrowser({
                     <input
                       type="checkbox"
                       checked={isSelected}
-                      onChange={() => !isItemDisabled && toggleTable(t.name)}
+                      onChange={() => !isItemDisabled && toggleTable(tbl.name)}
                       disabled={isItemDisabled}
                       className="h-4 w-4 rounded border-gray-300"
                     />
-                    <span className="truncate font-mono text-xs">{t.name}</span>
+                    <span className="truncate font-mono text-xs">{tbl.name}</span>
                   </label>
                 );
               })}

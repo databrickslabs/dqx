@@ -1,5 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { PageBreadcrumb } from "@/components/apx/PageBreadcrumb";
 import { CatalogBrowser } from "@/components/CatalogBrowser";
 import { useGetTableColumns, useGetRules, ColumnOut } from "@/lib/api";
@@ -35,6 +36,7 @@ export const Route = createFileRoute("/_sidebar/discovery")({
 });
 
 function DiscoveryPage() {
+  const { t } = useTranslation();
   const [catalog, setCatalog] = useState("");
   const [schema, setSchema] = useState("");
   const [table, setTable] = useState("");
@@ -51,13 +53,12 @@ function DiscoveryPage() {
   return (
     <div className="space-y-6">
       <div className="space-y-2">
-        <PageBreadcrumb page="Discovery" />
+        <PageBreadcrumb page={t("discovery.breadcrumb")} />
         <h1 className="text-2xl font-bold tracking-tight">
-          <ShinyText text="Discovery" speed={6} className="font-bold" />
+          <ShinyText text={t("discovery.title")} speed={6} className="font-bold" />
         </h1>
         <p className="text-muted-foreground">
-          Browse Unity Catalog assets to find tables for your data quality
-          checks.
+          {t("discovery.subtitle")}
         </p>
       </div>
 
@@ -65,10 +66,10 @@ function DiscoveryPage() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Search className="h-5 w-5" />
-            Browse Catalog
+            {t("discovery.browseCatalog")}
           </CardTitle>
           <CardDescription>
-            Select a catalog, schema, and table to view its columns.
+            {t("discovery.browseCatalogDescription")}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -91,11 +92,10 @@ function DiscoveryPage() {
             <Database className="h-8 w-8 text-muted-foreground" />
           </div>
           <h3 className="text-lg font-medium text-muted-foreground">
-            Select a Table
+            {t("discovery.selectTableTitle")}
           </h3>
           <p className="text-muted-foreground/70 text-sm mt-1 max-w-md">
-            Choose a catalog, schema, and table above to view its column
-            definitions.
+            {t("discovery.selectTableHint")}
           </p>
         </div>
       )}
@@ -103,34 +103,35 @@ function DiscoveryPage() {
   );
 }
 
-function statusBadge(status: string) {
+function StatusBadge({ status }: { status: string }) {
+  const { t } = useTranslation();
   switch (status) {
     case "draft":
       return (
         <Badge variant="secondary" className="gap-1">
           <FileEdit className="h-3 w-3" />
-          Draft
+          {t("discovery.draft")}
         </Badge>
       );
     case "pending_approval":
       return (
         <Badge variant="outline" className="gap-1 border-amber-500 text-amber-600">
           <Clock className="h-3 w-3" />
-          Pending
+          {t("discovery.pending")}
         </Badge>
       );
     case "approved":
       return (
         <Badge variant="outline" className="gap-1 border-green-500 text-green-600">
           <CheckCircle2 className="h-3 w-3" />
-          Approved
+          {t("discovery.approved")}
         </Badge>
       );
     case "rejected":
       return (
         <Badge variant="outline" className="gap-1 border-red-500 text-red-600">
           <XCircle className="h-3 w-3" />
-          Rejected
+          {t("discovery.rejected")}
         </Badge>
       );
     default:
@@ -139,6 +140,7 @@ function statusBadge(status: string) {
 }
 
 function RulesPanel({ tableFqn }: { tableFqn: string }) {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const { data: rulesResp, isLoading, error } = useGetRules(tableFqn);
   const entry = rulesResp?.data?.[0];
@@ -149,16 +151,16 @@ function RulesPanel({ tableFqn }: { tableFqn: string }) {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <BookCheck className="h-5 w-5" />
-          Quality Rules
+          {t("discovery.qualityRules")}
         </CardTitle>
         <CardDescription>
           {isLoading
-            ? "Checking for existing rules..."
+            ? t("discovery.checkingRules")
             : error
-              ? "Failed to load rules for this table."
+              ? t("discovery.failedLoadRules")
               : hasRules
-                ? `${entry.checks.length} rule${entry.checks.length !== 1 ? "s" : ""} defined for this table`
-                : "No quality rules defined for this table yet."}
+                ? t("discovery.rulesDefined", { count: entry.checks.length })
+                : t("discovery.noRulesYet")}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -169,7 +171,7 @@ function RulesPanel({ tableFqn }: { tableFqn: string }) {
         {!isLoading && error && (
           <div className="flex items-center gap-2 text-sm text-destructive">
             <AlertCircle className="h-4 w-4 shrink-0" />
-            <span>Could not load rules: {(error as Error).message}</span>
+            <span>{t("discovery.couldNotLoadRules", { error: (error as Error).message })}</span>
           </div>
         )}
 
@@ -178,14 +180,14 @@ function RulesPanel({ tableFqn }: { tableFqn: string }) {
             <div className="flex items-center gap-3 text-sm">
               <span className="tabular-nums font-medium">v{entry.version}</span>
               <span className="text-muted-foreground">·</span>
-              {statusBadge(entry.status)}
+              <StatusBadge status={entry.status} />
               <span className="text-muted-foreground">·</span>
-              <span className="tabular-nums">{entry.checks.length} rules</span>
+              <span className="tabular-nums">{t("discovery.rulesCount", { count: entry.checks.length })}</span>
               {entry.updated_at && (
                 <>
                   <span className="text-muted-foreground">·</span>
                   <span className="text-muted-foreground text-xs">
-                    Updated {new Date(entry.updated_at).toLocaleDateString()}
+                    {t("discovery.updated", { date: new Date(entry.updated_at).toLocaleDateString() })}
                   </span>
                 </>
               )}
@@ -201,7 +203,7 @@ function RulesPanel({ tableFqn }: { tableFqn: string }) {
               }
             >
               <Pencil className="h-3.5 w-3.5" />
-              Edit Rules
+              {t("discovery.editRules")}
             </Button>
           </div>
         )}
@@ -209,7 +211,7 @@ function RulesPanel({ tableFqn }: { tableFqn: string }) {
         {!isLoading && !hasRules && (
           <div className="flex items-center justify-between">
             <p className="text-sm text-muted-foreground">
-              Get started by generating rules with AI.
+              {t("discovery.getStartedAi")}
             </p>
             <Button
               size="sm"
@@ -222,7 +224,7 @@ function RulesPanel({ tableFqn }: { tableFqn: string }) {
               }
             >
               <Plus className="h-3.5 w-3.5" />
-              Create Rules
+              {t("discovery.createRules")}
             </Button>
           </div>
         )}
@@ -240,6 +242,7 @@ function ColumnsTable({
   schema: string;
   table: string;
 }) {
+  const { t } = useTranslation();
   const { data: columnsResp, isLoading, error } = useGetTableColumns(
     catalog,
     schema,
@@ -259,8 +262,8 @@ function ColumnsTable({
         <CardDescription className="flex items-center gap-2">
           <Columns3 className="h-4 w-4" />
           {isLoading
-            ? "Loading columns..."
-            : `${columns.length} column${columns.length !== 1 ? "s" : ""}`}
+            ? t("discovery.loadingColumns")
+            : t("discovery.columnsCount", { count: columns.length })}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -274,7 +277,7 @@ function ColumnsTable({
 
         {error && (
           <p className="text-destructive text-sm">
-            Failed to load columns: {(error as Error).message}
+            {t("discovery.failedLoadColumns", { error: (error as Error).message })}
           </p>
         )}
 
@@ -283,11 +286,11 @@ function ColumnsTable({
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b bg-muted/50">
-                  <th className="text-left p-3 font-medium">#</th>
-                  <th className="text-left p-3 font-medium">Name</th>
-                  <th className="text-left p-3 font-medium">Type</th>
-                  <th className="text-left p-3 font-medium">Nullable</th>
-                  <th className="text-left p-3 font-medium">Comment</th>
+                  <th className="text-left p-3 font-medium">{t("discovery.columnHash")}</th>
+                  <th className="text-left p-3 font-medium">{t("discovery.columnName")}</th>
+                  <th className="text-left p-3 font-medium">{t("discovery.columnType")}</th>
+                  <th className="text-left p-3 font-medium">{t("discovery.columnNullable")}</th>
+                  <th className="text-left p-3 font-medium">{t("discovery.columnComment")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -310,7 +313,7 @@ function ColumnsTable({
                         variant={col.nullable ? "outline" : "default"}
                         className="text-xs"
                       >
-                        {col.nullable ? "yes" : "no"}
+                        {col.nullable ? t("common.yes") : t("common.no")}
                       </Badge>
                     </td>
                     <td className="p-3 text-muted-foreground max-w-xs truncate">
@@ -325,7 +328,7 @@ function ColumnsTable({
 
         {!isLoading && !error && columns.length === 0 && (
           <p className="text-muted-foreground text-sm text-center py-4">
-            No columns found for this table.
+            {t("discovery.noColumns")}
           </p>
         )}
       </CardContent>
