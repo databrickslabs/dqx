@@ -1127,6 +1127,8 @@ def is_geo_covers(
     Both the target column and the reference geometry are always handled as `GEOMETRY` in precise mode.
     When conversion is requested (*convert_column* or *convert_reference_geometry* set to True),
     *try_to_geometry* is applied. These flags are ignored in approximate mode.
+    **NOTE**: If `precise=False` and `column` or `reference_geometry` contains an invalid WKT/WKB/EWKT/EWKB value,
+    this may raise an error and cause the entire job to fail.
 
     Args:
         column: Column to check. Null values are skipped for validation.
@@ -1186,6 +1188,8 @@ def is_geo_intersects(
     Both the target column and the reference geometry are always handled as `GEOMETRY` in precise mode.
     When conversion is requested (*convert_column* or *convert_reference_geometry* set to True),
     *try_to_geometry* is applied. These flags are ignored in approximate mode.
+    **NOTE**: If `precise=False` and `column` or `reference_geometry` contains an invalid WKT/WKB/EWKT/EWKB value,
+    this may raise an error and cause the entire job to fail.
 
     Args:
         column: Column to check. Null values are skipped for validation.

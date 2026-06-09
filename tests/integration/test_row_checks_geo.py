@@ -32,11 +32,13 @@ from databricks.labs.dqx.geo.check_funcs import (
     is_geo_within,
 )
 
-_POINT_INSIDE = "POINT(4.90 52.37)"
+_POINT_INSIDE = "POINT(4.9 52.37)"
 _POINT_EDGE = "POINT(4.73 52.28)"
 _POINT_OUTSIDE = "POINT(4.48 51.92)"
-_REF_POLYGON = "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))"
-_OVERLAPPING_POLYGON = "POLYGON((4.95 52.25, 5.30 52.25, 5.30 52.40, 4.95 52.40, 4.95 52.25))"
+_REF_POLYGON = "POLYGON((4.73 52.28,5.05 52.28,5.05 52.43,4.73 52.43,4.73 52.28))"
+_OVERLAPPING_POLYGON = "POLYGON((4.95 52.25,5.3 52.25,5.3 52.4,4.95 52.4,4.95 52.25))"
+_POINT_INVALID = "POINT()"
+_REF_POLYGON_INVALID = "POLYGON(())"
 _GEO_SCHEMA = "geom: string"
 _CONTAINS_SCHEMA = "geom: string, geom_is_not_in_reference_geometry: string"
 _COVERS_PRECISE_SCHEMA = "geom: string, geom_is_not_covered_by_reference_geometry_precisely: string"
@@ -949,7 +951,7 @@ def test_is_geo_covers_precise_flags_near_boundary_point_approximate_does_not(
     This demonstrates that H3 cell boundaries differ from exact geometry boundaries — a point outside
     the polygon may still share H3 cells with it at coarser resolutions.
     """
-    point = "POINT(5.20 52.35)"
+    point = "POINT(5.2 52.35)"
     test_df = spark.createDataFrame([[point], [None]], _GEO_SCHEMA)
 
     precise_condition = is_geo_covers(

@@ -7,6 +7,8 @@ from databricks.labs.dqx.geo.check_funcs import (
     is_geo_intersects,
     is_geo_touches,
     is_geo_within,
+    _has_topological_relationship_precise,
+    _has_topological_relationship_approximate
 )
 
 _REFERENCE_GEOMETRY_WKT = "POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))"
@@ -175,6 +177,15 @@ def test_is_geo_within_has_proper_alias():
         "location_does_not_contain_reference_geometry"
     ), f'{column_str} has incorrect alias suffix'
 
+def test__has_topological_relationship_precise_invalid_relationship():
+    """Raises InvalidParameterError when the relationship is not one of the supported ones."""
+    with pytest.raises(InvalidParameterError):
+        _has_topological_relationship_precise("location", _REFERENCE_GEOMETRY_WKT, topological_relationship="invalid")
+
+def test__has_topological_relationship_approximate():
+    """Raises InvalidParameterError when the relationship is not one of the supported ones."""
+    with pytest.raises(InvalidParameterError):
+        _has_topological_relationship_approximate("location", _REFERENCE_GEOMETRY_WKT, resolution=5, topological_relationship="invalid")
 
 def _column_expression_clean(column) -> str:
     return str(column).removeprefix("Column<'").removesuffix("'>")
