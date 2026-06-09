@@ -2139,3 +2139,29 @@ def test_benchmark_is_geo_covers_approximate(benchmark, ws, generated_df):
     checked = dq_engine.apply_checks(generated_df, checks)
     actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
+
+
+@pytest.mark.parametrize(
+    "column",
+    [
+        "col1_email_standard",
+        "col2_email_with_quoted_local_part",
+        "col3_email_with_ip_domain",
+        "col4_email_with_multi_part_domain",
+    ],
+)
+@pytest.mark.benchmark(group="test_benchmark_is_valid_email")
+def test_benchmark_is_valid_email(benchmark, ws, generated_email_df, column):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            name=f"{column}_is_valid_email_address",
+            criticality="warn",
+            check_func=check_funcs.is_valid_email,
+            column=column,
+        ),
+    ]
+    benchmark.group += f" {column}"
+    checked = dq_engine.apply_checks(generated_email_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
