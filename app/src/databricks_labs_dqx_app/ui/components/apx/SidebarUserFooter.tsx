@@ -1,5 +1,6 @@
 import { Suspense, useMemo } from "react";
 import { Link, useLocation } from "@tanstack/react-router";
+import { useTranslation } from "react-i18next";
 import { SidebarMenuButton } from "@/components/ui/sidebar";
 import {
   useCurrentUserSuspense,
@@ -27,6 +28,7 @@ function SidebarUserFooterSkeleton() {
 }
 
 function SidebarUserFooterContent() {
+  const { t } = useTranslation();
   const { data: user } = useCurrentUserSuspense(selector<User>());
   const { data: roleResp } = useCurrentUserRoleSuspense(selector<UserRoleOut>());
   const location = useLocation();
@@ -61,7 +63,7 @@ function SidebarUserFooterContent() {
         >
           <Link to="/config" className="flex items-center gap-2">
             <Settings size={16} />
-            <span>Configuration</span>
+            <span>{t("sidebarUser.configuration")}</span>
           </Link>
         </SidebarMenuButton>
       )}

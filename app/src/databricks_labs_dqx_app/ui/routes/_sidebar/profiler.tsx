@@ -1,6 +1,7 @@
 import { createFileRoute, Link, Navigate } from "@tanstack/react-router";
 import { formatDateTime as formatDate } from "@/lib/format-utils";
 import { useState, useCallback, useEffect, useRef, useMemo, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import { usePermissions } from "@/hooks/use-permissions";
 import { PageBreadcrumb } from "@/components/apx/PageBreadcrumb";
 import {
@@ -139,31 +140,32 @@ interface ActiveBatchRun {
 // Helpers
 // ──────────────────────────────────────────────────────────────────────────────
 
-function statusBadge(status: string | null | undefined) {
+function ProfilerStatusBadge({ status }: { status: string | null | undefined }) {
+  const { t } = useTranslation();
   switch (status) {
     case "SUCCESS":
       return (
         <Badge variant="outline" className="gap-1 border-green-500 text-green-600">
           <CheckCircle2 className="h-3 w-3" />
-          Success
+          {t("profiler.successBadge")}
         </Badge>
       );
     case "FAILED":
       return (
         <Badge variant="outline" className="gap-1 border-red-500 text-red-600">
           <XCircle className="h-3 w-3" />
-          Failed
+          {t("profiler.failedBadge")}
         </Badge>
       );
     case "RUNNING":
       return (
         <Badge variant="outline" className="gap-1 border-blue-500 text-blue-600">
           <Loader2 className="h-3 w-3 animate-spin" />
-          Running
+          {t("profiler.runningBadge")}
         </Badge>
       );
     default:
-      return <Badge variant="secondary">{status ?? "Unknown"}</Badge>;
+      return <Badge variant="secondary">{status ?? t("profiler.unknownBadge")}</Badge>;
   }
 }
 
@@ -290,6 +292,7 @@ function useSort<K extends string>(defaultKey: K, defaultDir: SortDir = "desc") 
 // ──────────────────────────────────────────────────────────────────────────────
 
 function ProfilerPage() {
+  const { t } = useTranslation();
   const { canCreateRules } = usePermissions();
   if (!canCreateRules) return <Navigate to="/rules/active" replace />;
 
@@ -498,12 +501,12 @@ function ProfilerPage() {
         try {
           const resp = await resultsQuery.refetch();
           if (resp.data?.data) setResults(resp.data.data);
-          toast.success("Profiling complete");
+          toast.success(t("profiler.profilingComplete"));
         } catch {
-          toast.error("Failed to fetch profiler results");
+          toast.error(t("profiler.failedFetchResults"));
         }
       } else {
-        toast.error(`Profiling failed: ${status.message || "Unknown error"}`);
+        toast.error(t("profiler.profilingFailed", { message: status.message || t("common.unknownError") }));
       }
       setJobRunId(null);
       setViewFqn(null);
@@ -511,7 +514,7 @@ function ProfilerPage() {
       refetchRuns();
     },
     onError: () => {
-      toast.error("Failed to check profiler status");
+      toast.error(t("profiler.failedCheckStatus"));
     },
   });
 
@@ -605,7 +608,7 @@ function ProfilerPage() {
   const handleSingleRun = async () => {
     const tableFqn = selectedTables[0];
     if (!tableFqn || !parseTableFqn(tableFqn)) {
-      toast.error("Select a table first");
+      toast.error(t("profiler.selectTableFirst"));
       return;
     }
     try {
@@ -632,7 +635,7 @@ function ProfilerPage() {
         mode: "single",
         submittedAt: Date.now(),
       });
-      toast.info("Profiling job submitted — waiting for results...");
+      toast.info(t("profiler.submittedWaiting"));
     } catch (err) {
       // Surface the backend's detail message to the user instead of a
       // generic "Failed to submit". The most common cause is a missing
@@ -644,7 +647,7 @@ function ProfilerPage() {
         isAxiosError(err) && err.response?.status === 403;
       toast.error(detail, {
         description: isPermission
-          ? "Ask your workspace admin to grant the required Unity Catalog permissions, then try again."
+          ? t("profiler.permissionHint")
           : undefined,
         duration: isPermission ? 12_000 : 8_000,
       });
@@ -652,7 +655,7 @@ function ProfilerPage() {
   };
 
   const handleBatchRun = async () => {
-    if (selectedTables.length === 0) { toast.error("Select at least one table"); return; }
+    if (selectedTables.length === 0) { toast.error(t("profiler.selectAtLeastOneTable")); return; }
     try {
       setResults(null);
       setRunId(null);
@@ -695,12 +698,8 @@ function ProfilerPage() {
       );
       const failures = resp.data.errors ?? [];
       if (newRuns.length > 0) {
-        toast.info(`${newRuns.length} profiling jobs submitted`);
+        toast.info(t("profiler.jobsSubmitted", { count: newRuns.length }));
       }
-      // Surface every per-table failure as its own toast so the user
-      // can see *which* tables failed and *why* (e.g. missing USE
-      // SCHEMA on a specific catalog/schema). Capped at 3 toasts to
-      // avoid flooding the screen — anything beyond gets summarised.
       if (failures.length > 0) {
         const previewCount = Math.min(failures.length, 3);
         for (const f of failures.slice(0, previewCount)) {
@@ -708,14 +707,14 @@ function ProfilerPage() {
           toast.error(`${tableShort}: ${f.error}`, {
             description:
               f.error_code === "INSUFFICIENT_PERMISSIONS"
-                ? "Ask your workspace admin to grant the required Unity Catalog permissions on this table."
+                ? t("profiler.permissionHintTable")
                 : undefined,
             duration: 12_000,
           });
         }
         if (failures.length > previewCount) {
           toast.error(
-            `… and ${failures.length - previewCount} more table(s) failed to submit`,
+            t("profiler.moreFailed", { count: failures.length - previewCount }),
             { duration: 8_000 },
           );
         }
@@ -726,7 +725,7 @@ function ProfilerPage() {
         isAxiosError(err) && err.response?.status === 403;
       toast.error(detail, {
         description: isPermission
-          ? "Ask your workspace admin to grant the required Unity Catalog permissions on the selected tables, then try again."
+          ? t("profiler.permissionHintBatch")
           : undefined,
         duration: isPermission ? 12_000 : 8_000,
       });
@@ -751,7 +750,7 @@ function ProfilerPage() {
         job_run_id: jobRunId,
         view_fqn: viewFqn ?? undefined,
       });
-      toast.info("Profiling run canceled");
+      toast.info(t("profiler.runCanceled"));
       polling.stopPolling();
       removeStoredRun(runId);
       setJobRunId(null);
@@ -759,7 +758,7 @@ function ProfilerPage() {
       setStartedAt(null);
       refetchRuns();
     } catch {
-      toast.error("Failed to cancel run");
+      toast.error(t("profiler.failedCancelRun"));
     } finally {
       setIsCancellingSingle(false);
     }
@@ -776,13 +775,13 @@ function ProfilerPage() {
       setBatchRuns((prev) =>
         prev.map((r) =>
           r.runId === run.runId
-            ? { ...r, state: "failed" as const, message: "Canceled by user" }
+            ? { ...r, state: "failed" as const, message: t("profiler.canceledByUser") }
             : r,
         ),
       );
-      toast.info(`Canceled profiling for ${run.tableFqn.split(".").pop()}`);
+      toast.info(t("profiler.canceledFor", { table: run.tableFqn.split(".").pop() ?? "" }));
     } catch {
-      toast.error("Failed to cancel run");
+      toast.error(t("profiler.failedCancelRun"));
     } finally {
       setCancellingBatchRunIds((prev) => {
         const next = new Set(prev);
@@ -817,7 +816,7 @@ function ProfilerPage() {
   /** Batch API for multi-table or single-table without column subset; single-table API when columns are chosen. */
   const handleProfileRun = async () => {
     if (selectedTables.length === 0) {
-      toast.error("Select at least one table");
+      toast.error(t("profiler.selectAtLeastOneTable"));
       return;
     }
     if (selectedTables.length === 1 && selectedColumns.length > 0) {
@@ -830,11 +829,11 @@ function ProfilerPage() {
   return (
     <div className="space-y-6">
       <div className="space-y-2">
-        <PageBreadcrumb items={[{ label: "Create Rules", to: "/rules/create" }]} page="Profile & generate" />
+        <PageBreadcrumb items={[{ label: t("rulesCreate.breadcrumb"), to: "/rules/create" }]} page={t("profiler.breadcrumb")} />
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Profile & generate</h1>
+          <h1 className="text-2xl font-bold tracking-tight">{t("profiler.title")}</h1>
           <p className="text-muted-foreground">
-            Profile tables to generate data quality rule suggestions based on data distribution.
+            {t("profiler.subtitle")}
           </p>
         </div>
       </div>
@@ -844,10 +843,10 @@ function ProfilerPage() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <BarChart3 className="h-5 w-5" />
-            New Profile Run
+            {t("profiler.newRunTitle")}
           </CardTitle>
           <CardDescription>
-            Select one or more tables (or an entire schema), configure sampling, and run the profiler.
+            {t("profiler.newRunDescription")}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -862,7 +861,7 @@ function ProfilerPage() {
           {selectedTables.length > 0 && (
             <div className="space-y-1.5">
               <p className="text-sm font-medium">
-                {selectedTables.length} table{selectedTables.length !== 1 ? "s" : ""} selected
+                {t("profiler.tablesSelected", { count: selectedTables.length })}
               </p>
               <div className="flex flex-wrap gap-1">
                 {selectedTables.map((t) => (
@@ -884,7 +883,7 @@ function ProfilerPage() {
 
           <div className="flex items-end gap-4">
             <div className="grid gap-2 max-w-xs">
-              <Label htmlFor="sample-limit">Sample Limit (rows)</Label>
+              <Label htmlFor="sample-limit">{t("profiler.sampleLimit")}</Label>
               <Input
                 id="sample-limit"
                 type="number"
@@ -896,7 +895,7 @@ function ProfilerPage() {
                 min={1}
                 max={100_000}
               />
-              <p className="text-xs text-muted-foreground">Max 100,000 rows per table</p>
+              <p className="text-xs text-muted-foreground">{t("profiler.maxSampleLimit")}</p>
             </div>
 
             {isBusy ? (
@@ -912,8 +911,8 @@ function ProfilerPage() {
                   <XCircle className="h-4 w-4" />
                 )}
                 {isBatchPolling
-                  ? `Stop All (${batchCompleted}/${batchTotal})`
-                  : "Stop Run"}
+                  ? t("profiler.stopAll", { done: batchCompleted, total: batchTotal })
+                  : t("profiler.stopRun")}
               </Button>
             ) : (
               <Button
@@ -923,8 +922,8 @@ function ProfilerPage() {
               >
                 <Play className="h-4 w-4" />
                 {selectedTables.length > 1
-                  ? `Run ${selectedTables.length} Tables`
-                  : "Run Profile"}
+                  ? t("profiler.runTables", { count: selectedTables.length })
+                  : t("profiler.runProfile")}
               </Button>
             )}
           </div>
@@ -939,7 +938,7 @@ function ProfilerPage() {
               type="button"
             >
               <Settings2 className="h-4 w-4" />
-              Advanced Options
+              {t("profiler.advancedOptions")}
               <ChevronDown
                 className={`h-3 w-3 transition-transform ${advancedOpen ? "rotate-180" : ""}`}
               />
@@ -947,27 +946,27 @@ function ProfilerPage() {
             {advancedOpen && (
               <div className="mt-3 space-y-4 rounded-lg border p-4">
                 <div className="grid gap-2">
-                  <Label htmlFor="filter-sql">Row Filter (SQL WHERE clause)</Label>
+                  <Label htmlFor="filter-sql">{t("profiler.rowFilter")}</Label>
                   <Input
                     id="filter-sql"
-                    placeholder="e.g. status = 'active' AND year >= 2024"
+                    placeholder={t("profiler.rowFilterPlaceholder")}
                     value={filterSql}
                     onChange={(e) => setFilterSql(e.target.value)}
                     disabled={isBusy}
                   />
                   <p className="text-xs text-muted-foreground">
-                    Optional SQL condition applied before profiling.
-                    {selectedTables.length > 1 && " Applied to all selected tables."}
+                    {t("profiler.rowFilterHint")}
+                    {selectedTables.length > 1 && t("profiler.rowFilterAllTables")}
                   </p>
                 </div>
 
                 {selectedTables.length === 1 && availableColumns.length > 0 && (
                   <div className="grid gap-2">
                     <Label>
-                      Columns to Profile
+                      {t("profiler.columnsToProfile")}
                       {selectedColumns.length > 0 && (
                         <span className="ml-2 text-xs text-muted-foreground">
-                          ({selectedColumns.length} selected)
+                          {t("profiler.columnsSelected", { count: selectedColumns.length })}
                         </span>
                       )}
                     </Label>
@@ -994,20 +993,20 @@ function ProfilerPage() {
                         className="text-xs text-muted-foreground underline self-start"
                         onClick={() => setSelectedColumns([])}
                       >
-                        Clear selection (profile all)
+                        {t("profiler.clearSelectionProfileAll")}
                       </button>
                     )}
                     <p className="text-xs text-muted-foreground">
-                      Click to toggle. No selection = profile all columns.
+                      {t("profiler.toggleColumnsHint")}
                     </p>
                   </div>
                 )}
 
                 <div className="flex items-center justify-between">
                   <div className="grid gap-0.5">
-                    <Label htmlFor="remove-outliers">Remove Outliers</Label>
+                    <Label htmlFor="remove-outliers">{t("profiler.removeOutliers")}</Label>
                     <p className="text-xs text-muted-foreground">
-                      Exclude statistical outliers when computing min/max range checks.
+                      {t("profiler.removeOutliersHint")}
                     </p>
                   </div>
                   <Switch
@@ -1020,7 +1019,7 @@ function ProfilerPage() {
 
                 {removeOutliers && (
                   <div className="grid gap-2 max-w-xs">
-                    <Label htmlFor="num-sigmas">Outlier Threshold (σ)</Label>
+                    <Label htmlFor="num-sigmas">{t("profiler.outlierThreshold")}</Label>
                     <Input
                       id="num-sigmas"
                       type="number"
@@ -1032,16 +1031,16 @@ function ProfilerPage() {
                       step={0.5}
                     />
                     <p className="text-xs text-muted-foreground">
-                      Standard deviations from mean to consider an outlier (default: 3).
+                      {t("profiler.outlierThresholdHint")}
                     </p>
                   </div>
                 )}
 
                 <div className="flex items-center justify-between">
                   <div className="grid gap-0.5">
-                    <Label htmlFor="llm-pk">LLM Primary Key Detection</Label>
+                    <Label htmlFor="llm-pk">{t("profiler.llmPkDetection")}</Label>
                     <p className="text-xs text-muted-foreground">
-                      Use AI to detect primary key columns and generate uniqueness checks.
+                      {t("profiler.llmPkHint")}
                     </p>
                   </div>
                   <Switch
@@ -1061,11 +1060,11 @@ function ProfilerPage() {
               <div className="flex items-center gap-2 text-sm">
                 <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
                 <span className="font-medium">
-                  {polling.status?.state ?? "Submitting..."}
+                  {polling.status?.state ?? t("profiler.submitting")}
                 </span>
                 <span className="text-muted-foreground tabular-nums ml-auto">
-                  {elapsedSeconds}s elapsed
-                  {etaSeconds != null && ` · ~${formatDuration(etaSeconds)} estimated`}
+                  {t("profiler.elapsed", { seconds: elapsedSeconds })}
+                  {etaSeconds != null && t("profiler.estimated", { duration: formatDuration(etaSeconds) })}
                 </span>
                 <Button
                   variant="outline"
@@ -1079,7 +1078,7 @@ function ProfilerPage() {
                   ) : (
                     <XCircle className="h-3.5 w-3.5" />
                   )}
-                  Stop
+                  {t("profiler.stop")}
                 </Button>
               </div>
             </div>
@@ -1096,8 +1095,10 @@ function ProfilerPage() {
                     <CheckCircle2 className="h-4 w-4 text-green-500" />
                   )}
                   {isBatchPolling
-                    ? `Profiling in progress — ${batchCompleted} of ${batchTotal} complete`
-                    : `Batch complete — ${batchSucceeded} succeeded${batchFailed > 0 ? `, ${batchFailed} failed` : ""}`}
+                    ? t("profiler.profilingInProgress", { done: batchCompleted, total: batchTotal })
+                    : batchFailed > 0
+                      ? t("profiler.batchCompleteWithFailed", { succeeded: batchSucceeded, failed: batchFailed })
+                      : t("profiler.batchComplete", { succeeded: batchSucceeded })}
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="text-muted-foreground text-xs tabular-nums">
@@ -1111,7 +1112,7 @@ function ProfilerPage() {
                       onClick={handleCancelAllBatch}
                     >
                       <XCircle className="h-3 w-3" />
-                      Stop All
+                      {t("profiler.stopAllShort")}
                     </Button>
                   )}
                 </div>
@@ -1137,12 +1138,12 @@ function ProfilerPage() {
                     <code className="font-mono truncate flex-1">{run.tableFqn}</code>
                     <span className="text-muted-foreground shrink-0">
                       {run.state === "running"
-                        ? "running"
+                        ? t("common.running")
                         : run.state === "success"
                           ? run.result
-                            ? `${run.result.rows_profiled?.toLocaleString() ?? "?"} rows · ${run.result.generated_rules?.length ?? 0} rules`
-                            : "done"
-                          : run.message ?? "failed"}
+                            ? t("profiler.rulesGenCountAndCount", { rows: run.result.rows_profiled?.toLocaleString() ?? "?", count: run.result.generated_rules?.length ?? 0 })
+                            : t("common.done")
+                          : run.message ?? t("common.failed")}
                     </span>
                     {run.state === "running" && (
                       <Button
@@ -1178,7 +1179,7 @@ function ProfilerPage() {
             <>
               <Separator />
               <div className="space-y-4">
-                <h3 className="text-sm font-semibold">Results by Table</h3>
+                <h3 className="text-sm font-semibold">{t("profiler.resultsByTable")}</h3>
                 {batchRuns.map((run) =>
                   run.state === "success" && run.result ? (
                     <BatchTableResult key={run.runId} run={run} />
@@ -1206,13 +1207,13 @@ function ProfilerPage() {
             <div>
               <CardTitle className="flex items-center gap-2">
                 <History className="h-5 w-5" />
-                Run History
+                {t("profiler.runHistory")}
               </CardTitle>
               <CardDescription>
                 {runsLoading
-                  ? "Loading..."
-                  : `${runs.length} run${runs.length !== 1 ? "s" : ""}${
-                      runs.length !== allRuns.length ? ` (filtered from ${allRuns.length})` : ""
+                  ? t("common.loading")
+                  : `${t("profiler.runs", { count: runs.length })}${
+                      runs.length !== allRuns.length ? t("profiler.filteredFrom", { total: allRuns.length }) : ""
                     }`}
               </CardDescription>
             </div>
@@ -1224,11 +1225,11 @@ function ProfilerPage() {
                 onClick={() => setMyRunsOnly((prev) => !prev)}
               >
                 <User className="h-3.5 w-3.5" />
-                My runs
+                {t("profiler.myRuns")}
               </Button>
               <Button variant="ghost" size="sm" onClick={() => refetchRuns()} className="h-8 gap-1.5 text-xs">
                 <Clock className="h-3.5 w-3.5" />
-                Refresh
+                {t("common.refresh")}
               </Button>
             </div>
           </div>
@@ -1236,10 +1237,10 @@ function ProfilerPage() {
           <div className="flex items-center gap-2 flex-wrap pt-2">
             <Select value={hCatalogFilter} onValueChange={handleHCatalogChange}>
               <SelectTrigger className="w-[160px] h-8 text-xs">
-                <SelectValue placeholder="All Catalogs" />
+                <SelectValue placeholder={t("profiler.allCatalogs")} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Catalogs</SelectItem>
+                <SelectItem value="all">{t("profiler.allCatalogs")}</SelectItem>
                 {hCatalogs.map((cat) => (
                   <SelectItem key={cat} value={cat}>{cat}</SelectItem>
                 ))}
@@ -1248,10 +1249,10 @@ function ProfilerPage() {
 
             <Select value={hSchemaFilter} onValueChange={handleHSchemaChange} disabled={hCatalogFilter === "all"}>
               <SelectTrigger className="w-[160px] h-8 text-xs">
-                <SelectValue placeholder="All Schemas" />
+                <SelectValue placeholder={t("profiler.allSchemas")} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Schemas</SelectItem>
+                <SelectItem value="all">{t("profiler.allSchemas")}</SelectItem>
                 {hAvailableSchemas.map((sch) => (
                   <SelectItem key={sch} value={sch}>{sch}</SelectItem>
                 ))}
@@ -1260,10 +1261,10 @@ function ProfilerPage() {
 
             <Select value={hTableFilter} onValueChange={setHTableFilter} disabled={hSchemaFilter === "all"}>
               <SelectTrigger className="w-[180px] h-8 text-xs">
-                <SelectValue placeholder="All Tables" />
+                <SelectValue placeholder={t("profiler.allTables")} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Tables</SelectItem>
+                <SelectItem value="all">{t("profiler.allTables")}</SelectItem>
                 {hAvailableTables.map((tbl) => (
                   <SelectItem key={tbl} value={tbl}>{tbl}</SelectItem>
                 ))}
@@ -1282,7 +1283,7 @@ function ProfilerPage() {
                   setMyRunsOnly(false);
                 }}
               >
-                Clear filters
+                {t("common.clearFilters")}
               </Button>
             )}
           </div>
@@ -1298,7 +1299,7 @@ function ProfilerPage() {
 
           {!runsLoading && runs.length === 0 && (
             <p className="text-sm text-muted-foreground text-center py-6">
-              No profiling runs yet. Run the profiler above to get started.
+              {t("profiler.noRuns")}
             </p>
           )}
 
@@ -1309,24 +1310,24 @@ function ProfilerPage() {
                 <thead>
                   <tr className="border-b bg-muted/50">
                     <th className="text-left p-3 font-medium">
-                      <SortableHeader label="Table" sortKey="table" active={pSortKey === "table"} direction={pSortDir} onSort={handleProfileSort} />
+                      <SortableHeader label={t("profiler.tableHeader")} sortKey="table" active={pSortKey === "table"} direction={pSortDir} onSort={handleProfileSort} />
                     </th>
                     <th className="text-left p-3 font-medium">
-                      <SortableHeader label="Status" sortKey="status" active={pSortKey === "status"} direction={pSortDir} onSort={handleProfileSort} />
+                      <SortableHeader label={t("common.status")} sortKey="status" active={pSortKey === "status"} direction={pSortDir} onSort={handleProfileSort} />
                     </th>
                     <th className="text-left p-3 font-medium">
-                      <SortableHeader label="Rows" sortKey="rows" active={pSortKey === "rows"} direction={pSortDir} onSort={handleProfileSort} />
+                      <SortableHeader label={t("profiler.rowsHeader")} sortKey="rows" active={pSortKey === "rows"} direction={pSortDir} onSort={handleProfileSort} />
                     </th>
                     <th className="text-left p-3 font-medium">
-                      <SortableHeader label="Duration" sortKey="duration" active={pSortKey === "duration"} direction={pSortDir} onSort={handleProfileSort} />
+                      <SortableHeader label={t("profiler.durationHeader")} sortKey="duration" active={pSortKey === "duration"} direction={pSortDir} onSort={handleProfileSort} />
                     </th>
                     <th className="text-left p-3 font-medium">
-                      <SortableHeader label="Started" sortKey="started" active={pSortKey === "started"} direction={pSortDir} onSort={handleProfileSort}>
+                      <SortableHeader label={t("profiler.startedHeader")} sortKey="started" active={pSortKey === "started"} direction={pSortDir} onSort={handleProfileSort}>
                         <Clock className="h-3.5 w-3.5" />
                       </SortableHeader>
                     </th>
                     <th className="text-left p-3 font-medium">
-                      <SortableHeader label="By" sortKey="by" active={pSortKey === "by"} direction={pSortDir} onSort={handleProfileSort} />
+                      <SortableHeader label={t("profiler.byHeader")} sortKey="by" active={pSortKey === "by"} direction={pSortDir} onSort={handleProfileSort} />
                     </th>
                     <th className="p-3"></th>
                   </tr>
@@ -1342,10 +1343,10 @@ function ProfilerPage() {
                       </td>
                       <td className="p-3">
                         <div className="flex flex-col gap-0.5">
-                          {statusBadge(run.status)}
+                          <ProfilerStatusBadge status={run.status} />
                           {run.status === "CANCELED" && run.canceled_by && (
-                            <span className="text-[10px] text-muted-foreground" title={`Canceled by ${run.canceled_by}`}>
-                              by {run.canceled_by.split("@")[0]}
+                            <span className="text-[10px] text-muted-foreground" title={t("profiler.canceledFor", { table: run.canceled_by })}>
+                              {t("profiler.canceledByPrefix")}{run.canceled_by.split("@")[0]}
                             </span>
                           )}
                         </div>
@@ -1371,7 +1372,7 @@ function ProfilerPage() {
                             onClick={() => setHistoryRunId(run.run_id)}
                           >
                             <Eye className="h-3 w-3" />
-                            View
+                            {t("profiler.viewBtn")}
                           </Button>
                         )}
                       </td>
@@ -1439,7 +1440,7 @@ function ProfilerPage() {
       <Dialog open={historyRunId !== null} onOpenChange={(open) => !open && setHistoryRunId(null)}>
         <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Profile Run Results</DialogTitle>
+            <DialogTitle>{t("profiler.profileRunResults")}</DialogTitle>
             <DialogDescription>
               {runs.find((r) => r.run_id === historyRunId)?.source_table_fqn ?? ""}
               {" · "}
@@ -1456,7 +1457,7 @@ function ProfilerPage() {
           {historyResultsQuery.isError && (
             <div className="flex items-center gap-2 text-sm text-destructive py-4">
               <AlertTriangle className="h-4 w-4" />
-              Failed to load results.
+              {t("profiler.failedToLoadResults")}
             </div>
           )}
           {historyResultsQuery.data?.data && (
@@ -1476,6 +1477,7 @@ function ProfilerPage() {
 // ──────────────────────────────────────────────────────────────────────────────
 
 function BatchTableResult({ run }: { run: ActiveBatchRun }) {
+  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const tableName = run.tableFqn.split(".").pop() ?? run.tableFqn;
 
@@ -1489,8 +1491,7 @@ function BatchTableResult({ run }: { run: ActiveBatchRun }) {
         <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" />
         <code className="font-mono font-medium flex-1">{tableName}</code>
         <span className="text-muted-foreground text-xs">
-          {run.result?.rows_profiled?.toLocaleString() ?? "?"} rows ·{" "}
-          {run.result?.generated_rules?.length ?? 0} rules generated
+          {t("profiler.rulesGenCountAndCount", { rows: run.result?.rows_profiled?.toLocaleString() ?? "?", count: run.result?.generated_rules?.length ?? 0 })}
         </span>
         <ChevronDown
           className={`h-4 w-4 text-muted-foreground transition-transform ${expanded ? "rotate-180" : ""}`}
@@ -1516,6 +1517,7 @@ function ProfileResults({
   results: ProfileResultsOut;
   tableFqn: string;
 }) {
+  const { t } = useTranslation();
   const saveRules = useSaveRules();
   const [added, setAdded] = useState(false);
   const [selectedRules, setSelectedRules] = useState<Set<number>>(new Set());
@@ -1611,9 +1613,9 @@ function ProfileResults({
     try {
       await saveRules.mutateAsync({ data: { table_fqn: tableFqn, checks: normalizedRules } });
       setAdded(true);
-      toast.success(`${normalizedRules.length} rules saved as drafts for ${tableFqn}`);
+      toast.success(t("profiler.savedAsDrafts", { count: normalizedRules.length, table: tableFqn }));
     } catch {
-      toast.error("Failed to add rules");
+      toast.error(t("profiler.failedAddRules"));
     }
   };
 
@@ -1633,17 +1635,17 @@ function ProfileResults({
           <div className="text-2xl font-bold tabular-nums">
             {results.rows_profiled?.toLocaleString() ?? "—"}
           </div>
-          <div className="text-xs text-muted-foreground">Rows Profiled</div>
+          <div className="text-xs text-muted-foreground">{t("profiler.rowsProfiled")}</div>
         </div>
         <div className="rounded-lg border p-3 text-center">
           <div className="text-2xl font-bold tabular-nums">{results.columns_profiled ?? "—"}</div>
-          <div className="text-xs text-muted-foreground">Columns</div>
+          <div className="text-xs text-muted-foreground">{t("profiler.columnsLabel")}</div>
         </div>
         <div className="rounded-lg border p-3 text-center">
           <div className="text-2xl font-bold tabular-nums">
             {results.duration_seconds != null ? formatDuration(results.duration_seconds) : "—"}
           </div>
-          <div className="text-xs text-muted-foreground">Duration</div>
+          <div className="text-xs text-muted-foreground">{t("profiler.durationLabel")}</div>
         </div>
       </div>
 
@@ -1652,12 +1654,12 @@ function ProfileResults({
           <div className="flex items-center justify-between">
             <h4 className="text-sm font-medium flex items-center gap-1.5">
               <CheckCircle2 className="h-4 w-4 text-green-500" />
-              Generated Rules ({allRules.length})
+              {t("profiler.generatedRules", { count: allRules.length })}
             </h4>
             <div className="flex items-center gap-2">
               {added && (
                 <Button size="sm" variant="default" className="gap-1.5" asChild>
-                  <Link to="/rules/drafts">View in Drafts & Review</Link>
+                  <Link to="/rules/drafts">{t("profiler.viewInDrafts")}</Link>
                 </Button>
               )}
               <Button
@@ -1674,7 +1676,7 @@ function ProfileResults({
                 ) : (
                   <Plus className="h-3.5 w-3.5" />
                 )}
-                {added ? "Saved to Drafts" : `Add ${selectedCount} Selected`}
+                {added ? t("profiler.savedToDrafts") : t("profiler.addSelected", { count: selectedCount })}
               </Button>
             </div>
           </div>
@@ -1696,7 +1698,7 @@ function ProfileResults({
                       : "hover:bg-muted"
                   }`}
                 >
-                  {f === "all" ? "All" : f === "error" ? "Error" : "Warning"}
+                  {f === "all" ? t("common.all") : f === "error" ? t("common.error") : t("common.warning")}
                 </button>
               ))}
             </div>
@@ -1708,7 +1710,7 @@ function ProfileResults({
                 onClick={handleSelectAll}
                 disabled={added || allFilteredSelected || newRulesCount === 0}
               >
-                Select All
+                {t("common.selectAll")}
               </Button>
               <Button
                 variant="outline"
@@ -1717,13 +1719,13 @@ function ProfileResults({
                 onClick={handleSelectNone}
                 disabled={added || selectedCount === 0}
               >
-                Select None
+                {t("common.selectNone")}
               </Button>
             </div>
             <span className="text-xs text-muted-foreground ml-auto">
-              {selectedCount} of {newRulesCount} new selected
+              {t("profiler.selectedOf", { selected: selectedCount, newCount: newRulesCount })}
               {existingCount > 0 && (
-                <span className="ml-1 text-green-600">({existingCount} already in catalog)</span>
+                <span className="ml-1 text-green-600">{t("profiler.alreadyInCatalog", { count: existingCount })}</span>
               )}
             </span>
           </div>
@@ -1733,9 +1735,9 @@ function ProfileResults({
               <thead>
                 <tr className="border-b bg-muted/50">
                   <th className="w-8 p-2"></th>
-                  <th className="text-left p-2 font-medium">Function</th>
-                  <th className="text-left p-2 font-medium">Column</th>
-                  <th className="text-left p-2 font-medium">Criticality</th>
+                  <th className="text-left p-2 font-medium">{t("profiler.headerFunction")}</th>
+                  <th className="text-left p-2 font-medium">{t("profiler.headerColumn")}</th>
+                  <th className="text-left p-2 font-medium">{t("profiler.headerCriticality")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -1778,7 +1780,7 @@ function ProfileResults({
                         {String(check.function ?? "—")}
                         {ruleExists && (
                           <Badge variant="outline" className="ml-2 text-[10px] py-0 px-1 text-green-600 border-green-600">
-                            Added
+                            {t("profiler.addedBadge")}
                           </Badge>
                         )}
                       </td>
@@ -1800,7 +1802,7 @@ function ProfileResults({
       {allRules.length === 0 && (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <AlertTriangle className="h-4 w-4" />
-          No rules were generated from the profiling data.
+          {t("profiler.noRulesGenerated")}
         </div>
       )}
     </div>
