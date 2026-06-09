@@ -1,5 +1,6 @@
 import { Outlet } from "@tanstack/react-router";
 import type { ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import {
   Sidebar,
   SidebarContent,
@@ -19,6 +20,7 @@ interface SidebarLayoutProps {
 }
 
 function SidebarLayout({ children }: SidebarLayoutProps) {
+  const { t } = useTranslation();
   const { data: resp } = useVersion();
   const appVersion = resp?.data?.version;
 
@@ -58,7 +60,7 @@ function SidebarLayout({ children }: SidebarLayoutProps) {
           <footer className="shrink-0 border-t bg-background py-2 px-6">
             <div className="max-w-7xl mx-auto flex items-center justify-between text-[11px] text-muted-foreground">
               <span>
-                DQX Studio — Data Quality Explorer
+                {t("footer.tagline")}
                 {appVersion ? ` · v${appVersion}` : ""}
               </span>
               <a

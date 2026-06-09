@@ -1,5 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import React from "react";
+import { useTranslation } from "react-i18next";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -20,12 +21,13 @@ interface PageBreadcrumbProps {
 }
 
 export function PageBreadcrumb({ items = [], page }: PageBreadcrumbProps) {
+  const { t } = useTranslation();
   return (
     <Breadcrumb>
       <BreadcrumbList>
         <BreadcrumbItem>
           <BreadcrumbLink asChild>
-            <Link to="/">Home</Link>
+            <Link to="/">{t("breadcrumb.home")}</Link>
           </BreadcrumbLink>
         </BreadcrumbItem>
         <BreadcrumbSeparator />
