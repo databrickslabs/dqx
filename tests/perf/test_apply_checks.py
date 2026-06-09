@@ -2094,7 +2094,7 @@ def test_benchmark_has_no_aggr_outliers(benchmark, ws, generated_df):
 
 
 def test_benchmark_is_geo_covers_precise(benchmark, ws, generated_df):
-    """Benchmark is_geo_covers check on.
+    """Benchmark `is_geo_covers`  precise version.
 
     Uses col_geo_point with point geometry to benchmark it against polygon geometry value with `precise=True`
     configuration to use ST_* family of functions.
@@ -2119,7 +2119,7 @@ def test_benchmark_is_geo_covers_precise(benchmark, ws, generated_df):
 
 
 def test_benchmark_is_geo_covers_approximate(benchmark, ws, generated_df):
-    """Benchmark is_geo_covers check on.
+    """Benchmark `is_geo_covers`  approximate version.
 
     Uses col_geo_point with point geometry to benchmark it against polygon geometry value with `precise=False`
     configuration to use H3 family of functions.
