@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import {
   Zap,
@@ -12,14 +13,15 @@ export const Route = createFileRoute("/_sidebar/home")({
   component: LandingPage,
 });
 
-const highlights = [
-  { icon: <Layers className="h-4 w-4" />, text: "Unity Catalog integration" },
-  { icon: <Zap className="h-4 w-4" />, text: "AI-powered rule generation" },
-  { icon: <Clock className="h-4 w-4" />, text: "Scheduled rule execution" },
-  { icon: <CheckCircle2 className="h-4 w-4" />, text: "Role-based approval workflow" },
-];
-
 function LandingPage() {
+  const { t } = useTranslation();
+  const highlights = [
+    { icon: <Layers className="h-4 w-4" />, text: t("home.highlights.uc") },
+    { icon: <Zap className="h-4 w-4" />, text: t("home.highlights.ai") },
+    { icon: <Clock className="h-4 w-4" />, text: t("home.highlights.schedule") },
+    { icon: <CheckCircle2 className="h-4 w-4" />, text: t("home.highlights.rbac") },
+  ];
+
   return (
     <div className="flex flex-col items-center -mt-4">
       <section className="flex flex-col items-center text-center px-6 pt-14 pb-12 w-full">
@@ -30,18 +32,17 @@ function LandingPage() {
           </h1>
         </div>
         <p className="text-lg text-muted-foreground max-w-2xl leading-relaxed mb-8">
-          Monitor, validate, and improve data quality across your Databricks
-          Lakehouse — with automated rules, scheduling, and approval workflows.
+          {t("home.subtitle")}
         </p>
         <div className="flex flex-wrap items-center justify-center gap-3">
           <Button asChild size="lg" className="gap-2">
             <Link to="/rules/create">
-              Get Started
+              {t("home.getStarted")}
               <ArrowRight className="h-4 w-4" />
             </Link>
           </Button>
           <Button asChild variant="outline" size="lg">
-            <Link to="/rules">View Rules</Link>
+            <Link to="/rules">{t("home.viewRules")}</Link>
           </Button>
         </div>
 

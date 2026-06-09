@@ -36,6 +36,10 @@ Checks can be applied to the input data by one of the following methods of the `
 
 You can see the full list of `DQEngine` methods [here](/docs/reference/engine/#dqx-engine-methods).
 
+<Admonition type="info" title="Quarantine-only mode">
+The end-to-end `apply_checks_and_save_in_table` and `apply_checks_by_metadata_and_save_in_table` methods accept either `output_config`, `quarantine_config`, or both. If `output_config` is omitted and `quarantine_config` is provided, only the quarantined table is produced. This applies to both `apply_checks_and_save_in_tables` and `apply_checks_and_save_in_tables_for_patterns`.
+</Admonition>
+
 The engine ensures that the specified `column`, `columns`, `filter`, or sql 'expression' fields can be resolved in the input DataFrame. If any of these fields are invalid, the check evaluation is skipped, and the results include the check failure with a message identifying the invalid fields and `skipped=True` in the result struct. You can suppress these entries entirely or identify them downstream — see [Suppressing skipped check entries](/docs/guide/additional_configuration#suppressing-skipped-check-entries).
 The engine will raise an error if you try to apply checks with invalid definition (e.g. wrong syntax).
 In addition, you can also perform a standalone syntax validation of the checks as described [here](/docs/guide/quality_checks_definition#validating-syntax-of-quality-checks).
@@ -127,7 +131,14 @@ You can customize the reporting columns as described in the [additional configur
         output_config=OutputConfig(location="catalog.schema.output"),
     )
 
-    # Option 5 End-to-End approach: load checks from a storage location and apply them to the entire input table
+    # Option 5 End-to-End approach: apply checks and write only invalid rows to a quarantine table
+    dq_engine.apply_checks_and_save_in_table(
+        checks=checks,
+        input_config=InputConfig(location="catalog.schema.input"),
+        quarantine_config=OutputConfig(location="catalog.schema.quarantine"),
+    )
+
+    # Option 6 End-to-End approach: load checks from a storage location and apply them to the entire input table
     dq_engine.apply_checks_and_save_in_table(
         input_config=InputConfig(location="catalog.schema.input"),
         output_config=OutputConfig(location="catalog.schema.valid"),
@@ -212,7 +223,15 @@ In the example below, checks are defined in YAML syntax for convenience and then
         output_config=OutputConfig(location="catalog.schema.output"),
     )
 
-    # Option 5 End-to-End approach: load checks from a storage location and apply them to the entire input table
+    # Option 5 End-to-End approach: apply checks and write only invalid rows to a quarantine table
+    # (valid rows are not written when output_config is omitted)
+    dq_engine.apply_checks_by_metadata_and_save_in_table(
+        checks=checks,
+        input_config=InputConfig(location="catalog.schema.input"),
+        quarantine_config=OutputConfig(location="catalog.schema.quarantine"),
+    )
+
+    # Option 6 End-to-End approach: load checks from a storage location and apply them to the entire input table
     # By default, apply_checks_and_save_in_table method apply checks to the entire input table.
     # Incremental processing is supported using streaming with the AvailableNow trigger for batch-style execution, along with checkpointing to ensure consistency across runs.
     dq_engine.apply_checks_by_metadata_and_save_in_table(

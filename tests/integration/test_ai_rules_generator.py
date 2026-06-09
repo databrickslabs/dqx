@@ -9,16 +9,13 @@ from databricks.labs.dqx.check_funcs import make_condition, register_rule
 
 # Sample user input with specific requirements to avoid flakiness in tests
 USER_INPUT = """
-Users at age 18 or above must have a valid email address checked using regex.
+Users at age 18 or above must have a valid email address.
 Age should be between 0 and 120. Output the rules in the given order.
 """
 
 EXPECTED_CHECKS = [
     {
-        "check": {
-            "arguments": {"column": "email", "regex": "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$"},
-            "function": "regex_match",
-        },
+        "check": {"arguments": {"column": "email"}, "function": "is_valid_email"},
         "criticality": "error",
         "filter": "age >= 18",
     },

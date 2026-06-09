@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Card } from "@/components/ui/card";
@@ -16,22 +17,23 @@ interface AICheckGeneratorProps {
 }
 
 export function AICheckGenerator({ onGenerate, isGenerating, runContext }: AICheckGeneratorProps) {
+  const { t } = useTranslation();
   const [userInput, setUserInput] = useState("");
   const [generatedYaml, setGeneratedYaml] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
   const handleGenerate = async () => {
     if (!userInput.trim()) {
-      toast.error("Please enter a description of your data quality requirements");
+      toast.error(t("aiCheckGenerator.enterDescriptionFirst"));
       return;
     }
 
     try {
       const result = await onGenerate(userInput, runContext?.yaml);
       setGeneratedYaml(result.yaml_output);
-      toast.success("Checks generated successfully!");
+      toast.success(t("aiCheckGenerator.checksGenerated"));
     } catch (error) {
-      toast.error("Failed to generate checks. Please try again.");
+      toast.error(t("aiCheckGenerator.failedGenerate"));
     }
   };
 
@@ -39,7 +41,7 @@ export function AICheckGenerator({ onGenerate, isGenerating, runContext }: AIChe
     if (generatedYaml) {
       navigator.clipboard.writeText(generatedYaml);
       setCopied(true);
-      toast.success("YAML copied to clipboard");
+      toast.success(t("aiCheckGenerator.yamlCopied"));
       setTimeout(() => setCopied(false), 2000);
     }
   };
@@ -59,9 +61,9 @@ export function AICheckGenerator({ onGenerate, isGenerating, runContext }: AIChe
           <Sparkles className="h-5 w-5 text-primary" />
         </div>
         <div className="flex-1 min-w-0">
-          <h2 className="text-lg font-bold">AI-Assisted Rules Generation</h2>
+          <h2 className="text-lg font-bold">{t("aiCheckGenerator.title")}</h2>
           <p className="text-sm text-muted-foreground">
-            Describe your data quality needs
+            {t("aiCheckGenerator.subtitle")}
           </p>
         </div>
       </div>
@@ -71,7 +73,7 @@ export function AICheckGenerator({ onGenerate, isGenerating, runContext }: AIChe
         <div className="mb-3">
           <Badge variant="secondary" className="gap-1.5 text-xs font-normal">
             <FileCode className="h-3 w-3" />
-            Using context from: {runContext.runName}
+            {t("aiCheckGenerator.usingContextFrom", { name: runContext.runName })}
           </Badge>
         </div>
       )}
@@ -90,7 +92,7 @@ export function AICheckGenerator({ onGenerate, isGenerating, runContext }: AIChe
             >
               <div className="flex items-center justify-between mb-2">
                 <h3 className="text-sm font-semibold text-muted-foreground">
-                  Generated Checks
+                  {t("aiCheckGenerator.generatedChecks")}
                 </h3>
                 <Button
                   size="sm"
@@ -101,12 +103,12 @@ export function AICheckGenerator({ onGenerate, isGenerating, runContext }: AIChe
                   {copied ? (
                     <>
                       <Check className="h-3 w-3" />
-                      Copied
+                      {t("aiCheckGenerator.copied")}
                     </>
                   ) : (
                     <>
                       <Copy className="h-3 w-3" />
-                      Copy
+                      {t("aiCheckGenerator.copy")}
                     </>
                   )}
                 </Button>
@@ -129,11 +131,11 @@ export function AICheckGenerator({ onGenerate, isGenerating, runContext }: AIChe
               <div className="text-center space-y-4 text-muted-foreground">
                 <Sparkles className="h-16 w-16 mx-auto opacity-20" />
                 <div>
-                  <p className="font-medium">No rules generated yet</p>
+                  <p className="font-medium">{t("aiCheckGenerator.noRulesYet")}</p>
                   <p className="text-sm">
                     {runContext
-                      ? `Enter requirements for "${runContext.runName}" to get started`
-                      : "Enter your requirements below to get started"}
+                      ? t("aiCheckGenerator.enterRequirementsContext", { name: runContext.runName })
+                      : t("aiCheckGenerator.enterRequirements")}
                   </p>
                 </div>
               </div>
@@ -151,8 +153,8 @@ export function AICheckGenerator({ onGenerate, isGenerating, runContext }: AIChe
             onKeyDown={handleKeyDown}
             placeholder={
               runContext
-                ? `Describe rules for "${runContext.runName}"...`
-                : "Example: Sales amount must be positive"
+                ? t("aiCheckGenerator.describeRulesContext", { name: runContext.runName })
+                : t("aiCheckGenerator.examplePlaceholder")
             }
             className="min-h-[100px] resize-none pr-12 bg-card/50 backdrop-blur-sm"
             disabled={isGenerating}
@@ -173,8 +175,8 @@ export function AICheckGenerator({ onGenerate, isGenerating, runContext }: AIChe
           </div>
         </div>
         <p className="text-xs text-muted-foreground">
-          Press <kbd className="px-1.5 py-0.5 text-xs font-semibold bg-muted rounded">Enter</kbd> to generate or{" "}
-          <kbd className="px-1.5 py-0.5 text-xs font-semibold bg-muted rounded">Shift+Enter</kbd> for a new line
+          <kbd className="px-1.5 py-0.5 text-xs font-semibold bg-muted rounded">Enter</kbd> {t("aiCheckGenerator.kbdHint")}{" "}
+          <kbd className="px-1.5 py-0.5 text-xs font-semibold bg-muted rounded">Shift+Enter</kbd> {t("aiCheckGenerator.kbdHintSuffix")}
         </p>
       </div>
     </div>
