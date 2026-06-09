@@ -1,5 +1,6 @@
 import { Suspense, useMemo, useState } from "react";
 import { Link, useLocation } from "@tanstack/react-router";
+import { useTranslation } from "react-i18next";
 import {
   useCurrentUserSuspense,
   useCurrentUserRoleSuspense,
@@ -27,6 +28,7 @@ function HeaderUserMenuContent() {
   const { data: roleResp } = useCurrentUserRoleSuspense(selector<UserRoleOut>());
   const location = useLocation();
   const [open, setOpen] = useState(false);
+  const { t } = useTranslation();
 
   const role = roleResp?.role;
   const isAdmin = role === "admin";
@@ -74,7 +76,7 @@ function HeaderUserMenuContent() {
             )}
           >
             <UserIcon className="h-4 w-4" />
-            Profile
+            {t("userMenu.profile")}
           </Link>
           {isAdmin && (
             <Link
@@ -86,7 +88,7 @@ function HeaderUserMenuContent() {
               )}
             >
               <Settings className="h-4 w-4" />
-              Configuration
+              {t("userMenu.configuration")}
             </Link>
           )}
         </div>

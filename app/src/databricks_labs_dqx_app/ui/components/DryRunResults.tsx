@@ -1,4 +1,5 @@
 import { useState, useMemo, useCallback } from "react";
+import { useTranslation } from "react-i18next";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -91,6 +92,7 @@ function downloadAsExcel(rows: Record<string, unknown>[], filename: string): voi
 }
 
 export function DryRunResults({ result }: DryRunResultsProps) {
+  const { t } = useTranslation();
   const totalRows = result.total_rows ?? 0;
   const validRows = result.valid_rows ?? 0;
   // ``invalid_rows`` (rows that failed any check) is kept on the model for
@@ -214,19 +216,20 @@ export function DryRunResults({ result }: DryRunResultsProps) {
       <div className={`grid gap-4 ${showWarnings ? "grid-cols-4" : "grid-cols-3"}`}>
         <div className="rounded-lg border p-3 text-center">
           <div className="text-2xl font-bold tabular-nums">{totalRows}</div>
-          <div className="text-xs text-muted-foreground">Total Rows</div>
+          <div className="text-xs text-muted-foreground">{t("dryRun.totalRows")}</div>
         </div>
         <div className="rounded-lg border p-3 text-center">
           <div className="text-2xl font-bold tabular-nums text-green-600">{validRows}</div>
           <div className="text-xs text-muted-foreground flex items-center justify-center gap-1">
             <CheckCircle2 className="h-3 w-3" />
-            Valid
+            {t("dryRun.valid")}
           </div>
         </div>
         <div className="rounded-lg border p-3 text-center">
           <div className="text-2xl font-bold tabular-nums text-red-600">{errorRows}</div>
           <div className="text-xs text-muted-foreground flex items-center justify-center gap-1">
             <XCircle className="h-3 w-3" />
+            {t("dryRun.invalid")}
             Errors
           </div>
         </div>
@@ -244,7 +247,7 @@ export function DryRunResults({ result }: DryRunResultsProps) {
       {/* Pass rate bar */}
       <div className="space-y-1">
         <div className="flex items-center justify-between text-xs">
-          <span className="text-muted-foreground">Pass rate</span>
+          <span className="text-muted-foreground">{t("dryRun.passRate")}</span>
           <span className="font-medium">{passRate}%</span>
         </div>
         <div className="h-2 rounded-full bg-muted overflow-hidden">
@@ -267,9 +270,9 @@ export function DryRunResults({ result }: DryRunResultsProps) {
         <div className="space-y-2">
           <h4 className="text-sm font-medium flex items-center gap-1.5">
             <AlertTriangle className="h-4 w-4 text-amber-500" />
-            Failed checks
+            {t("dryRun.errorSummary")}
             <span className="text-muted-foreground font-normal">
-              ({errorSummary.length} distinct)
+              ({errorSummary.length} {t("dryRun.distinctSuffix")})
             </span>
           </h4>
           <div className="border rounded-lg overflow-hidden">
@@ -321,7 +324,7 @@ export function DryRunResults({ result }: DryRunResultsProps) {
                 className="w-full py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
                 onClick={() => setShowAllErrors((v) => !v)}
               >
-                {showAllErrors ? "Show less" : `Show ${hiddenErrorCount} more...`}
+                {showAllErrors ? t("dryRun.showLess") : t("dryRun.showMore", { count: hiddenErrorCount })}
               </button>
             )}
           </div>
@@ -338,15 +341,16 @@ export function DryRunResults({ result }: DryRunResultsProps) {
               <AlertTriangle className="h-4 w-4 text-amber-500" />
               Failed rows
               <span className="text-muted-foreground font-normal">
-                ({hasQuarantine ? `${quarantineTotal} quarantined` : `${sampleInvalid.length} samples`})
+                ({hasQuarantine ? `${quarantineTotal} ${t("dryRun.quarantinedSuffix")}` : `${sampleInvalid.length} ${t("dryRun.samplesSuffix")}`})
               </span>
             </h4>
             <div className="flex items-center gap-1.5 flex-wrap">
               {hasQuarantine ? (
                 <>
                   <span className="text-xs text-muted-foreground">
-                    Export {quarantineTotal > EXPORT_MAX_ROWS ? `first ${EXPORT_MAX_ROWS.toLocaleString()} of ` : ""}
-                    {quarantineTotal.toLocaleString()} rows:
+                    {quarantineTotal > EXPORT_MAX_ROWS
+                      ? t("dryRun.exportFirstOf", { first: EXPORT_MAX_ROWS.toLocaleString(), count: quarantineTotal.toLocaleString() })
+                      : t("dryRun.exportRows", { count: quarantineTotal.toLocaleString() })}
                   </span>
                   <Button
                     variant="outline"
@@ -355,7 +359,7 @@ export function DryRunResults({ result }: DryRunResultsProps) {
                     onClick={() => exportQuarantineRecords(result.run_id, "csv")}
                   >
                     <Download className="h-3.5 w-3.5" />
-                    CSV
+                    {t("dryRun.csv")}
                   </Button>
                   <Button
                     variant="outline"
@@ -364,19 +368,19 @@ export function DryRunResults({ result }: DryRunResultsProps) {
                     onClick={() => exportQuarantineRecords(result.run_id, "xlsx")}
                   >
                     <Download className="h-3.5 w-3.5" />
-                    Excel
+                    {t("dryRun.excel")}
                   </Button>
                   {quarantineTotal > EXPORT_MAX_ROWS && (
                     <span className="text-[10px] text-amber-500 flex items-center gap-0.5">
                       <Info className="h-3 w-3" />
-                      Max {EXPORT_MAX_ROWS.toLocaleString()} rows per export
+                      {t("dryRun.maxExport", { count: EXPORT_MAX_ROWS.toLocaleString() })}
                     </span>
                   )}
                 </>
               ) : sampleInvalid.length > 0 ? (
                 <>
                   <span className="text-xs text-muted-foreground">
-                    Download {sampleInvalid.length} sample rows:
+                    {t("dryRun.downloadSampleRows", { count: sampleInvalid.length })}
                   </span>
                   <Button
                     variant="outline"
@@ -385,7 +389,7 @@ export function DryRunResults({ result }: DryRunResultsProps) {
                     onClick={downloadSampleCSV}
                   >
                     <Download className="h-3.5 w-3.5" />
-                    CSV
+                    {t("dryRun.csv")}
                   </Button>
                   <Button
                     variant="outline"
@@ -394,7 +398,7 @@ export function DryRunResults({ result }: DryRunResultsProps) {
                     onClick={downloadSampleExcel}
                   >
                     <Download className="h-3.5 w-3.5" />
-                    Excel
+                    {t("dryRun.excel")}
                   </Button>
                 </>
               ) : null}
@@ -403,9 +407,9 @@ export function DryRunResults({ result }: DryRunResultsProps) {
 
           <div className="border rounded-lg overflow-auto max-h-[420px]">
             {quarantineLoading ? (
-              <div className="p-6 text-center text-sm text-muted-foreground">Loading quarantine data...</div>
+              <div className="p-6 text-center text-sm text-muted-foreground">{t("dryRun.loadingQuarantine")}</div>
             ) : rows.length === 0 ? (
-              <div className="p-6 text-center text-sm text-muted-foreground">No failed rows to display</div>
+              <div className="p-6 text-center text-sm text-muted-foreground">{t("dryRun.noInvalidRows")}</div>
             ) : (
               <table className="w-full text-xs">
                 <thead className="sticky top-0 bg-muted/80 backdrop-blur-sm">
@@ -466,7 +470,7 @@ export function DryRunResults({ result }: DryRunResultsProps) {
           {displayTotal > 10 && (
             <div className="flex items-center justify-between text-xs">
               <div className="flex items-center gap-2">
-                <span className="text-muted-foreground">Rows per page:</span>
+                <span className="text-muted-foreground">{t("common.rowsPerPage")}</span>
                 <select
                   className="border rounded px-1.5 py-0.5 text-xs bg-background"
                   value={pageSize}
