@@ -320,6 +320,120 @@ def test_apply_checks_by_metadata_and_save_in_single_table_with_quarantine(ws, s
     assert_df_equality(actual_quarantine_df, expected_quarantine_df, ignore_nullable=True)
 
 
+def test_apply_checks_by_metadata_and_save_in_table_quarantine_only(ws, spark, make_schema, make_random):
+    catalog_name = TEST_CATALOG
+    schema = make_schema(catalog_name=catalog_name)
+    input_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+    quarantine_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+
+    test_schema = "a: int, b: int, c: string"
+    test_df = spark.createDataFrame([[1, 2, "valid"], [None, 3, "invalid"], [4, 5, "good"]], test_schema)
+    test_df.write.format("delta").mode("overwrite").saveAsTable(input_table)
+
+    checks = [
+        {
+            "name": "a_is_null",
+            "criticality": "error",
+            "check": {"function": "is_not_null", "arguments": {"column": "a"}},
+        },
+    ]
+
+    # Apply checks with only a quarantine table configured (no output_config for valid records)
+    engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
+    engine.apply_checks_by_metadata_and_save_in_table(
+        checks=checks,
+        input_config=InputConfig(location=input_table),
+        quarantine_config=OutputConfig(
+            location=quarantine_table, mode="overwrite", options={"overwriteSchema": "true"}
+        ),
+    )
+
+    actual_quarantine_df = spark.table(quarantine_table)
+    quarantine_schema = test_schema + REPORTING_COLUMNS
+    expected_quarantine_df = spark.createDataFrame(
+        [
+            [
+                None,
+                3,
+                "invalid",
+                [
+                    {
+                        "name": "a_is_null",
+                        "message": "Column 'a' value is null",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "is_not_null",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    }
+                ],
+                None,
+            ]
+        ],
+        schema=quarantine_schema,
+    )
+
+    assert_df_equality(actual_quarantine_df, expected_quarantine_df, ignore_nullable=True)
+
+
+def test_apply_checks_and_save_in_table_quarantine_only(ws, spark, make_schema, make_random):
+    catalog_name = TEST_CATALOG
+    schema = make_schema(catalog_name=catalog_name)
+    input_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+    quarantine_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+
+    test_schema = "a: int, b: int, c: string"
+    test_df = spark.createDataFrame([[1, 2, "valid"], [None, 3, "invalid"], [4, 5, "good"]], test_schema)
+    test_df.write.format("delta").mode("overwrite").saveAsTable(input_table)
+
+    checks = [
+        DQRowRule(
+            name="a_is_null",
+            criticality="error",
+            check_func=check_funcs.is_not_null,
+            column="a",
+        ),
+    ]
+
+    engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
+    engine.apply_checks_and_save_in_table(
+        checks=checks,
+        input_config=InputConfig(location=input_table),
+        quarantine_config=OutputConfig(
+            location=quarantine_table, mode="overwrite", options={"overwriteSchema": "true"}
+        ),
+    )
+
+    actual_quarantine_df = spark.table(quarantine_table)
+    quarantine_schema = test_schema + REPORTING_COLUMNS
+    expected_quarantine_df = spark.createDataFrame(
+        [
+            [
+                None,
+                3,
+                "invalid",
+                [
+                    {
+                        "name": "a_is_null",
+                        "message": "Column 'a' value is null",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "is_not_null",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    }
+                ],
+                None,
+            ]
+        ],
+        schema=quarantine_schema,
+    )
+
+    assert_df_equality(actual_quarantine_df, expected_quarantine_df, ignore_nullable=True)
+
+
 def test_apply_checks_and_save_in_table_with_options(ws, spark, make_schema, make_random):
     catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
@@ -1224,12 +1338,15 @@ def test_apply_checks_and_save_in_tables_missing_input_config(ws, spark):
         engine.apply_checks_and_save_in_tables(run_configs=[run_config])
 
 
-def test_apply_checks_and_save_in_tables_missing_output_config(ws, spark):
+def test_apply_checks_and_save_in_tables_missing_output_and_quarantine_config(ws, spark):
     engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
 
     run_config = RunConfig(input_config=InputConfig(location="some_table"))
 
-    with pytest.raises(InvalidConfigError, match="Output configuration not provided"):
+    with pytest.raises(
+        InvalidConfigError,
+        match="At least one of 'output_config' or 'quarantine_config' must be provided",
+    ):
         engine.apply_checks_and_save_in_tables(run_configs=[run_config])
 
 
@@ -1475,6 +1592,107 @@ def test_apply_checks_and_save_in_tables_for_patterns(ws, spark, make_schema, ma
     assert_df_equality(actual_df2, expected_df2, ignore_nullable=True)
 
 
+def test_apply_checks_and_save_in_tables_for_patterns_quarantine_only(
+    ws, spark, make_schema, make_random, make_directory
+):
+    catalog_name = TEST_CATALOG
+    schema = make_schema(catalog_name=catalog_name)
+
+    input_tables = [f"{catalog_name}.{schema.name}.{make_random(8).lower()}" for _ in range(2)]
+    quarantine_tables = [f"{table}_dq_quarantine" for table in input_tables]
+    output_tables = [f"{table}_dq_output" for table in input_tables]
+
+    test_schema = "a: int, b: string"
+    test_df1 = spark.createDataFrame([[1, "valid"], [None, "invalid"]], test_schema)
+    test_df2 = spark.createDataFrame([[100, "test"], [200, None]], test_schema)
+
+    test_df1.write.format("delta").mode("overwrite").saveAsTable(input_tables[0])
+    test_df2.write.format("delta").mode("overwrite").saveAsTable(input_tables[1])
+
+    table1_checks = [
+        {
+            "name": "a_is_null",
+            "criticality": "error",
+            "check": {"function": "is_not_null", "arguments": {"column": "a"}},
+        }
+    ]
+    table2_checks = [
+        {
+            "name": "b_is_null",
+            "criticality": "error",
+            "check": {"function": "is_not_null", "arguments": {"column": "b"}},
+        }
+    ]
+
+    engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
+    workspace_folder = str(make_directory().absolute())
+    checks_location1 = f"{workspace_folder}/{input_tables[0]}.yml"
+    checks_location2 = f"{workspace_folder}/{input_tables[1]}.yml"
+    engine.save_checks(table1_checks, config=WorkspaceFileChecksStorageConfig(location=checks_location1))
+    engine.save_checks(table2_checks, config=WorkspaceFileChecksStorageConfig(location=checks_location2))
+
+    engine.apply_checks_and_save_in_tables_for_patterns(
+        patterns=[f"{catalog_name}.{schema.name}.*"],
+        checks_location=workspace_folder,
+        run_config_template=RunConfig(quarantine_config=OutputConfig(location="", mode="overwrite")),
+    )
+
+    expected_schema = test_schema + REPORTING_COLUMNS
+    expected_quarantine_df1 = spark.createDataFrame(
+        [
+            [
+                None,
+                "invalid",
+                [
+                    {
+                        "name": "a_is_null",
+                        "message": "Column 'a' value is null",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "is_not_null",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    }
+                ],
+                None,
+            ],
+        ],
+        schema=expected_schema,
+    )
+    expected_quarantine_df2 = spark.createDataFrame(
+        [
+            [
+                200,
+                None,
+                [
+                    {
+                        "name": "b_is_null",
+                        "message": "Column 'b' value is null",
+                        "columns": ["b"],
+                        "filter": None,
+                        "function": "is_not_null",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    }
+                ],
+                None,
+            ],
+        ],
+        schema=expected_schema,
+    )
+
+    assert_df_equality(spark.table(quarantine_tables[0]), expected_quarantine_df1, ignore_nullable=True)
+    assert_df_equality(spark.table(quarantine_tables[1]), expected_quarantine_df2, ignore_nullable=True)
+
+    for output_table in output_tables:
+        assert (
+            spark.sql(f"SHOW TABLES FROM {catalog_name}.{schema.name} LIKE '{output_table.split('.')[-1]}'").count()
+            == 0
+        ), f"Output table {output_table} should not have been created"
+
+
 def test_apply_checks_and_save_in_tables_for_patterns_checks_in_table(ws, spark, make_schema, make_random):
     catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
@@ -1631,7 +1849,9 @@ def test_apply_checks_and_save_in_tables_for_patterns_with_quarantine(
         patterns=[f"{catalog_name}.{schema.name}.*"],
         checks_location=workspace_folder,
         max_parallelism=2,
-        run_config_template=RunConfig(quarantine_config=OutputConfig(location="")),
+        run_config_template=RunConfig(
+            output_config=OutputConfig(location=""), quarantine_config=OutputConfig(location="")
+        ),
     )
 
     # Verify both tables were created and contain the expected data
@@ -1758,7 +1978,9 @@ def test_apply_checks_and_save_in_tables_for_patterns_with_exclude_patterns(
         exclude_patterns=[f"*{output_table_suffix}", f"*{quarantine_table_suffix}"],
         checks_location=workspace_folder + "/checks.yml",  # should strip the file name automatically,
         max_parallelism=2,
-        run_config_template=RunConfig(quarantine_config=OutputConfig(location="")),
+        run_config_template=RunConfig(
+            output_config=OutputConfig(location=""), quarantine_config=OutputConfig(location="")
+        ),
         output_table_suffix=output_table_suffix,
         quarantine_table_suffix=quarantine_table_suffix,
     )

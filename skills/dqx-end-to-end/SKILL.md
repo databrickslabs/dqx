@@ -43,7 +43,16 @@ dq.apply_checks_and_save_in_table(
     input_config=InputConfig(location="catalog.schema.input"),
     output_config=OutputConfig(location="catalog.schema.annotated"),
 )
+
+# Or — quarantine only: write just the invalid rows, skip the valid output table
+dq.apply_checks_and_save_in_table(
+    checks=checks,
+    input_config=InputConfig(location="catalog.schema.input"),
+    quarantine_config=OutputConfig(location="catalog.schema.quarantine"),
+)
 ```
+
+`output_config` is optional, but **at least one** of `output_config` / `quarantine_config` must be provided — omitting both raises `InvalidParameterError`. Omit `output_config` (with `quarantine_config` set) to write only the invalid rows.
 
 ## Metadata form (checks loaded from storage)
 
@@ -69,12 +78,12 @@ If `checks` is omitted and `checks_location` is set on a `RunConfig` (workspace 
 ## Multi-table / pattern execution
 
 - **`apply_checks_and_save_in_tables(run_configs)`** — accept a list of `RunConfig` and fan out over each `(input, output, quarantine)` triple.
-- **`apply_checks_and_save_in_tables_for_patterns(patterns, checks_location, run_config_template=...)`** — expand wildcard patterns (Python `list[str]`, e.g. `["main.product001.*", "main.product002"]`) against Unity Catalog and reuse one `RunConfig` template for every matched table. Output / quarantine names are derived from the input name + `output_table_suffix` / `quarantine_table_suffix` (defaults `_dq_output` / `_dq_quarantine`). The semicolon-delimited form is a convention of the `databricks labs dqx` CLI, **not** the Python API.
+- **`apply_checks_and_save_in_tables_for_patterns(patterns, checks_location, run_config_template=...)`** — expand wildcard patterns (Python `list[str]`, e.g. `["main.product001.*", "main.product002"]`) against Unity Catalog and reuse one `RunConfig` template for every matched table. Output / quarantine names are derived from the input name + `output_table_suffix` / `quarantine_table_suffix` (defaults `_dq_output` / `_dq_quarantine`). A template with only `quarantine_config` set (no `output_config`) writes the quarantine table per match and skips the valid output. The semicolon-delimited form is a convention of the `databricks labs dqx` CLI, **not** the Python API.
 
 ## Do / Don't
 
 - **Do** set a unique `checkpointLocation` per output when using streaming — DQX uses it to track watermarks; sharing one across pipelines causes silent data loss.
-- **Do** point `quarantine_config` at a separate table. Without it, failed rows get the `_errors` column but remain in the single output table.
+- **Do** point `quarantine_config` at a separate table. Without it, failed rows get the `_errors` column but remain in the single output table. To persist only the invalid rows, set `quarantine_config` and omit `output_config`.
 - **Do** use the same method signature for batch and streaming — the difference is one `is_streaming` flag on `InputConfig`.
 - **Don't** manually pre-filter `_errors.isNull()` before writing — DQX already routes error-criticality rows to `quarantine_config` when you provide it.
 - **Don't** mix `checks=` and `checks_location` in a `RunConfig` — pick one source of truth.
