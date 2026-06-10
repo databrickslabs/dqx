@@ -136,13 +136,10 @@ sync:
 
 artifacts:
   default:
-    # ``scripts/build_app.py`` replaces the legacy ``apx build`` pipeline.
-    # It produces the application wheel with a build-tag local-version
-    # segment (e.g. ``.b20260530t012345``) baked into BOTH the wheel
-    # filename and the internal METADATA, so pip in Databricks Apps'
-    # persistent venv reinstalls fresh code on every redeploy — same
-    # outcome the legacy ``_align_wheel_version.py`` post-processor
-    # used to achieve by repairing apx's filename-only mangling. See
+    # ``scripts/build_app.py`` builds the application wheel with a build-tag
+    # local-version segment (e.g. ``.b20260530t012345``) baked into BOTH the
+    # wheel filename and the internal METADATA, so pip in Databricks Apps'
+    # persistent venv reinstalls fresh code on every redeploy. See
     # ``[tool.uv-dynamic-versioning]`` in pyproject.toml for the
     # ``DQX_APP_BUILD_TAG`` env var contract.
     #
@@ -381,9 +378,8 @@ targets:
 
   # Mode B: reuses the pre-existing ``dqx-studio-sql-warehouse``
   # (X-Small serverless) and the pre-existing
-  # ``dqx-studio-lakebase-v2`` instance that an earlier deploy of the
-  # apx-based bundle created in this workspace. Point at them by ID/name
-  # instead of having the bundle create new copies, so this target is a
-  # straight redeploy of the apx-removal branch on top of the existing
-  # demo state. ``post_deploy_grants.sh`` handles ``CAN_USE`` on the
+  # ``dqx-studio-lakebase-v2`` instance that an earlier deploy created in
+  # this workspace. Point at them by ID/name instead of having the bundle
+  # create new copies, so this target is a straight redeploy on top of the
+  # existing demo state. ``post_deploy_grants.sh`` handles ``CAN_USE`` on the
   # external warehouse via the warehouses permissions API.
