@@ -487,6 +487,63 @@ display(df_quarantine.orderBy(severity_col.desc()).select(
 
 # MAGIC %md
 # MAGIC ---
+# MAGIC ## Section 5b: (Optional) AI explanations
+# MAGIC
+# MAGIC Turn the raw SHAP percentages into plain-language explanations with `enable_ai_explanation=True`
+# MAGIC (requires `enable_contributions=True`). The LLM call runs **inside Spark** via the SQL `ai_query`
+# MAGIC function against a Databricks Model Serving endpoint — no extra dependency, and it scales with the
+# MAGIC cluster. Anomalous rows are grouped by a deterministic `(segment, pattern)` key and the model is
+# MAGIC called **once per group**, so cost stays predictable (capped by `max_groups`).
+# MAGIC
+# MAGIC Each anomalous row gets `_dq_info[0].anomaly.ai_explanation` with `narrative`, `business_impact`,
+# MAGIC `action`, and the deterministic `top_features` pattern.
+# MAGIC
+# MAGIC This section is optional and needs a reachable Foundation Model / Model Serving endpoint.
+
+# COMMAND ----------
+# DBTITLE 1,Apply checks with AI explanations
+
+checks_with_ai = [
+    DQDatasetRule(
+        check_func=has_no_row_anomalies,
+        check_func_kwargs={
+            "model_name": model_name_auto,
+            "registry_table": registry_table,
+            "enable_contributions": True,  # required for AI explanations
+            "enable_ai_explanation": True,
+            # model_name must resolve to a Databricks Model Serving endpoint
+            "llm_model_config": {"model_name": "databricks-claude-sonnet-4-5"},
+            # "redact_columns": ["region"],  # optional: keep sensitive names out of the prompt
+            # "max_groups": 500,             # optional: cap on LLM calls per run
+        },
+    )
+]
+
+df_ai = dq_engine.apply_checks(df_new, checks_with_ai)
+
+anomaly = F.col("_dq_info").getItem(0).getField("anomaly")
+explanation = anomaly.getField("ai_explanation")
+print("🤖 Top anomalies with AI explanations:\n")
+display(
+    df_ai.filter(anomaly.getField("is_anomaly") == True)
+    .orderBy(anomaly.getField("severity_percentile").desc())
+    .select(
+        "transaction_id",
+        "amount",
+        "quantity",
+        F.round(anomaly.getField("severity_percentile"), 1).alias("severity_percentile"),
+        explanation.getField("top_features").alias("top_features"),
+        explanation.getField("narrative").alias("why_flagged"),
+        explanation.getField("business_impact").alias("business_impact"),
+        explanation.getField("action").alias("suggested_action"),
+    )
+    .limit(10)
+)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ---
 # MAGIC ## Section 6: (Optional) Threshold Tradeoffs
 # MAGIC
 # MAGIC This section is optional. Skip if you only want the quickstart.

@@ -324,8 +324,51 @@ Each element is a **struct** with a shared “wide” schema. Currently, the onl
 | `segment` | map&lt;string, string&gt; | Segment key-value pairs for segmented models; `null` for global models. |
 | `contributions` | map&lt;string, double&gt; | Per-feature contribution percentages (0–100). Present when `enable_contributions=True`; `null` by default. |
 | `confidence_std` | double | Ensemble score standard deviation. Present when `enable_confidence_std=True`; `null` otherwise. |
+| `ai_explanation` | struct | LLM-generated explanation for the row's `(segment, pattern)` group. Present when `enable_ai_explanation=True`; `null` by default and for non-anomalous rows. See [AI explanations](#ai-explanations-llm) below. |
+
+The nested `ai_explanation` struct (when `enable_ai_explanation=True`):
+
+| Field | Type | Description |
+|--------|------|-------------|
+| `narrative` | string | Plain-language description of why the group was flagged. |
+| `business_impact` | string | Likely downstream impact if the rows are processed unchanged. |
+| `action` | string | What an analyst should investigate. |
+| `top_features` | string | Deterministic top-2 contributing features (e.g. `amount+quantity`) — the group's pattern key. |
+| `group_size` | long | Number of anomalous rows in this `(segment, pattern)` group. |
+| `group_avg_severity` | double | Mean `severity_percentile` across the group. |
 
 **Access in PySpark:** use `F.element_at(F.col("_dq_info"), 1)` for the first element (1-based), then `.getField("anomaly").getField("severity_percentile")` etc. Alternatively `F.col("_dq_info").getItem(0)` for 0-based index (see [Troubleshooting](/docs/guide/row_anomaly_detection/troubleshooting) for Spark Connect–friendly patterns).
+
+### AI explanations (LLM)
+
+Set `enable_ai_explanation=True` (requires `enable_contributions=True`) to attach a plain-language, LLM-generated explanation to each anomalous row in `_dq_info[0].anomaly.ai_explanation`. The explanation answers *why was this flagged, what's the impact, and what should I do* — without anyone reading raw SHAP percentages.
+
+The call runs inside Spark via the SQL `ai_query` function against a Databricks Model Serving endpoint, so it needs no extra dependency and scales with the cluster. Anomalous rows are grouped by a deterministic `(segment, pattern)` key (pattern = sorted top-2 contributing features) and the LLM is called **once per group**, so cost stays predictable on large datasets.
+
+```python
+from databricks.labs.dqx.rule import DQDatasetRule
+from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies
+
+checks = [
+  DQDatasetRule(
+    criticality="error",
+    check_func=has_no_row_anomalies,
+    check_func_kwargs={
+      "model_name": "catalog.schema.orders_monitor",
+      "registry_table": "catalog.schema.dqx_anomaly_models",
+      "threshold": 95.0,
+      "enable_contributions": True,      # required
+      "enable_ai_explanation": True,
+      "llm_model_config": {"model_name": "databricks-claude-sonnet-4-5"},
+    },
+  )
+]
+```
+
+<Admonition type="note" title="Cost and privacy">
+* `max_groups` (default 500) caps the number of `(segment, pattern)` groups the LLM is called for per run. For segmented models the cap is split across eligible segments with a floor of one call each, so when `max_groups` is below the eligible-segment count the effective cap is the segment count (a warning is logged).
+* `redact_columns` keeps the listed feature and segment names out of the prompt. Segment **values** for non-redacted keys are sent verbatim — avoid segmenting on sensitive columns, or list them in `redact_columns`.
+</Admonition>
 
 ## Practical examples (non-technical)
 

@@ -177,13 +177,9 @@ def has_no_row_anomalies(
             The dict is coerced back to LLMModelConfig inside the check.
 
             When calling this function directly (not via a rule), either a dict or an
-            LLMModelConfig instance is accepted.
-
-            Example (dict form)::
-
-                "llm_model_config": {
-                    "model_name": "databricks-claude-sonnet-4-5",
-                }
+            LLMModelConfig instance is accepted. The simplest dict form sets only *model_name*
+            to a Databricks Model Serving endpoint. See the AI Explanations section of the Row
+            Anomaly Detection reference docs for a full example.
         redact_columns: Column names to exclude from the LLM prompt. Filters SHAP contribution
             map keys, the top-2 pattern key, and — when the scored model is segmented — any
             matching segment key (emitted as ``key=<redacted>`` so sensitive segmentation values
