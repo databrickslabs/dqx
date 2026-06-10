@@ -1,17 +1,60 @@
 bundle:
   name: "mcp-dqx"
 
+variables:
+  catalog_name:
+    description: "UC catalog for DQX MCP temp views"
+    default: "dqx_mcp"
+  users_group:
+    description: "Group name for all workspace users (e.g. 'account users' or 'users')"
+    default: "account users"
 resources:
+  jobs:
+    dqx_runner:
+      name: "mcp-dqx-runner"
+      tasks:
+        - task_key: dqx_run
+          notebook_task:
+            notebook_path: "./notebooks/runner.py"
+          environment_key: default
+      environments:
+        - environment_key: default
+          spec:
+            environment_version: "2"
+
+    # One-time setup job — grants USE CATALOG to users and app SP.
+    # Run after first deploy: databricks bundle run dqx_setup --profile <profile>
+    dqx_setup:
+      name: "mcp-dqx-setup"
+      tasks:
+        - task_key: setup
+          notebook_task:
+            notebook_path: "./notebooks/setup.py"
+            base_parameters:
+              catalog_name: ${var.catalog_name}
+              app_name: "mcp-dqx"
+              users_group: ${var.users_group}
+          environment_key: default
+      environments:
+        - environment_key: default
+          spec:
+            environment_version: "2"
+
   apps:
     mcp-dqx:
       name: "mcp-dqx"
       description: "DQX MCP Server - AI agent tools for data quality checks"
       source_code_path: "."
 
-      # OBO: request user token scopes so API calls run as the user
       user_api_scopes:
         - sql
         - files
+
+      resources:
+        - name: dqx-runner-job
+          job:
+            id: ${resources.jobs.dqx_runner.id}
+            permission: "CAN_MANAGE_RUN"
 
       permissions:
         - level: CAN_USE

@@ -1,19 +1,27 @@
-import inspect
 import logging
-
-from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.rule import CHECK_FUNC_REGISTRY
-from databricks.labs.dqx.checks_resolver import resolve_check_function
+import os
 
 from server import utils
 
 logger = logging.getLogger(__name__)
 
 
-def load_tools(mcp_server):
-    """Register all DQX MCP tools with the server."""
+def _get_tmp_view_config() -> tuple[str, str]:
+    """Get catalog and schema for temporary views from environment."""
+    catalog = os.environ.get("DQX_CATALOG", "")
+    schema = os.environ.get("DQX_TMP_SCHEMA", "tmp")
+    if not catalog:
+        raise RuntimeError("DQX_CATALOG not set. Deploy the bundle first.")
+    return catalog, schema
 
-    # ── Job-based tools (submit to notebook) ─────────────────────────
+
+def load_tools(mcp_server):
+    """Register all DQX MCP tools with the server.
+
+    All DQX operations run in a notebook job — the app has no pyspark dependency.
+    Tools that access tables create a temporary view via the user's OBO token
+    (enforcing UC governance), then the SP job reads through the view.
+    """
 
     @mcp_server.tool
     def get_table_schema(table_name: str):
@@ -24,11 +32,25 @@ def load_tools(mcp_server):
 
         Returns a dict with:
             - 'table_name': the input table name
-            - 'columns': list of {name, type, nullable} for each column
-            - 'row_count': approximate number of rows
+            - 'columns': list of {name, type, comment} for each column
         """
         logger.info(f"Getting schema for table: {table_name}")
-        return utils.submit_notebook_job("get_table_schema", {"table_name": table_name})
+        obo_ws = utils.get_obo_client()
+        warehouse_id = utils.get_warehouse_id(obo_ws)
+
+        rows = utils.execute_sql(
+            obo_ws,
+            f"DESCRIBE TABLE {table_name}",
+            warehouse_id=warehouse_id,
+        )
+
+        columns = [
+            {"name": row["col_name"], "type": row["data_type"], "comment": row.get("comment", "")}
+            for row in rows
+            if row.get("col_name") and not row["col_name"].startswith("#")
+        ]
+
+        return {"table_name": table_name, "columns": columns}
 
     @mcp_server.tool
     def profile_table(
@@ -44,39 +66,38 @@ def load_tools(mcp_server):
         Args:
             table_name: Fully qualified table name (e.g. 'catalog.schema.table').
             columns: Optional list of column names to profile. Profiles all columns if omitted.
-            options: Optional profiling options. Supported keys include:
-                - sample_fraction (float): Fraction of data to sample (default 0.3).
-                - limit (int): Max rows to profile (default 1000).
-                - max_in_count (int): Max distinct values for is_in rules (default 10).
-                - distinct_ratio (float): Threshold for is_in rules (default 0.05).
-                - max_null_ratio (float): Threshold for is_not_null rules (default 0.01).
-                - remove_outliers (bool): Whether to remove outliers for range rules (default True).
-                - trim_strings (bool): Whether to trim strings for empty checks (default True).
-                - max_empty_ratio (float): Threshold for is_not_null_or_empty rules (default 0.01).
+            options: Optional profiling options.
 
         Returns a dict with:
             - 'table_name': the input table name
             - 'summary_stats': per-column summary statistics
-            - 'profiles': list of profile dicts, each with {name, column, description, parameters}
+            - 'profiles': list of profile dicts
         """
-        logger.info(f"Profiling table: {table_name}, columns={columns}, options={options}")
-        return utils.submit_notebook_job("profile_table", {
-            "table_name": table_name,
-            "columns": columns,
-            "options": options,
-        })
+        logger.info(f"Profiling table: {table_name}")
+        obo_ws = utils.get_obo_client()
+        sp_ws = utils._get_sp_client()
+        warehouse_id = utils.get_warehouse_id(obo_ws)
+        catalog, schema = _get_tmp_view_config()
+
+        view_fqn = utils.create_temp_view(obo_ws, table_name, catalog, schema, warehouse_id)
+        try:
+            result = utils.submit_notebook_job("profile_table", {
+                "view_name": view_fqn,
+                "columns": columns,
+                "options": options,
+            })
+            result["table_name"] = table_name
+            return result
+        finally:
+            utils.drop_view(sp_ws, view_fqn, warehouse_id=warehouse_id)
 
     @mcp_server.tool
     def generate_rules(profiles: list[dict], criticality: str = "error"):
         """Generate DQX data quality check definitions from profiling output.
 
-        Takes the 'profiles' list returned by `profile_table` and converts them into
-        fully formed DQX check definitions that can be validated and executed.
-
         Args:
-            profiles: List of profile dicts from `profile_table`, each with keys
-                {name, column, description, parameters, filter}.
-            criticality: Default criticality for generated rules: 'error' or 'warn' (default 'error').
+            profiles: List of profile dicts from `profile_table`.
+            criticality: Default criticality: 'error' or 'warn' (default 'error').
 
         Returns a dict with:
             - 'rules': list of DQX check definitions (metadata format)
@@ -88,53 +109,47 @@ def load_tools(mcp_server):
             "criticality": criticality,
         })
 
-    # ── In-process tools (no Spark needed) ───────────────────────────
-
     @mcp_server.tool
     def validate_checks(checks: list[dict]):
         """Validate a list of DQX data quality check definitions for correctness.
 
-        Each check should be a dictionary with at minimum a 'check' key containing
-        'function' (the check function name) and 'arguments' (dict of arguments).
-
         Returns a dict with 'valid' (bool) and 'errors' (list of error strings).
         """
         logger.info(f"Validating {len(checks)} check(s)")
-        status = DQEngine.validate_checks(checks)
-        result = {
-            "valid": not status.has_errors,
-            "errors": status.errors,
-        }
-        logger.info(f"Validation result: valid={result['valid']}, errors={len(result['errors'])}")
-        return result
+        return utils.submit_notebook_job("validate_checks", {"checks": checks})
 
     @mcp_server.tool
     def run_checks(table_name: str, checks: list[dict], sample_size: int = 50):
         """Execute DQX data quality checks against a Databricks table and return results.
 
-        Applies the given check definitions to the table and returns a summary of
-        valid/invalid rows plus a sample of failing rows for inspection.
-
         Args:
             table_name: Fully qualified table name (e.g. 'catalog.schema.table').
-            checks: List of DQX check definitions (metadata format), as returned by
-                `generate_rules` or written manually.
+            checks: List of DQX check definitions (metadata format).
             sample_size: Max number of invalid rows to include in the sample (default 50).
 
         Returns a dict with:
             - 'table_name': the input table name
-            - 'total_rows': total number of rows in the table
-            - 'valid_rows': number of rows passing all checks
-            - 'invalid_rows': number of rows failing at least one check
+            - 'total_rows', 'valid_rows', 'invalid_rows': row counts
             - 'error_sample': list of dicts, each representing an invalid row
             - 'rule_summary': per-rule counts of errors and warnings
         """
         logger.info(f"Running {len(checks)} checks on table: {table_name}")
-        return utils.submit_notebook_job("run_checks", {
-            "table_name": table_name,
-            "checks": checks,
-            "sample_size": sample_size,
-        })
+        obo_ws = utils.get_obo_client()
+        sp_ws = utils._get_sp_client()
+        warehouse_id = utils.get_warehouse_id(obo_ws)
+        catalog, schema = _get_tmp_view_config()
+
+        view_fqn = utils.create_temp_view(obo_ws, table_name, catalog, schema, warehouse_id)
+        try:
+            result = utils.submit_notebook_job("run_checks", {
+                "view_name": view_fqn,
+                "checks": checks,
+                "sample_size": sample_size,
+            })
+            result["table_name"] = table_name
+            return result
+        finally:
+            utils.drop_view(sp_ws, view_fqn, warehouse_id=warehouse_id)
 
     @mcp_server.tool
     def list_available_checks():
@@ -145,31 +160,7 @@ def load_tools(mcp_server):
             - 'count': total number of available check functions.
         """
         logger.info("Listing available check functions")
-        checks = []
-        for name, func_type in sorted(CHECK_FUNC_REGISTRY.items()):
-            func = resolve_check_function(name, fail_on_missing=False)
-            if func is None:
-                continue
-            sig = inspect.signature(func)
-            params = [
-                {"name": p.name, "type": str(p.annotation) if p.annotation != inspect.Parameter.empty else "Any"}
-                for p in sig.parameters.values()
-            ]
-            doc = inspect.getdoc(func) or ""
-            first_line = doc.split("\n")[0] if doc else ""
-            checks.append(
-                {
-                    "name": name,
-                    "type": func_type,
-                    "signature": f"{name}{sig}",
-                    "description": first_line,
-                    "parameters": params,
-                }
-            )
-
-        result = {"checks": checks, "count": len(checks)}
-        logger.info(f"Found {len(checks)} check functions")
-        return result
+        return utils.submit_notebook_job("list_available_checks", {})
 
     @mcp_server.tool
     def get_workflow():
@@ -185,7 +176,7 @@ def load_tools(mcp_server):
                     "tool": "get_table_schema",
                     "purpose": "Understand the table structure before profiling.",
                     "required_input": {"table_name": "Fully qualified table name (e.g. 'catalog.schema.table')"},
-                    "output": "Column names, types, nullability, and row count.",
+                    "output": "Column names, types, and comments.",
                     "optional": False,
                 },
                 {
@@ -193,10 +184,6 @@ def load_tools(mcp_server):
                     "tool": "profile_table",
                     "purpose": "Profile the table data to discover patterns.",
                     "required_input": {"table_name": "Same table name from step 1"},
-                    "optional_input": {
-                        "columns": "List of column names to profile (default: all columns)",
-                        "options": "Profiling options like sample_fraction, limit, etc.",
-                    },
                     "output": "Summary statistics and a list of 'profiles' to feed into step 3.",
                     "optional": False,
                 },
@@ -205,7 +192,6 @@ def load_tools(mcp_server):
                     "tool": "generate_rules",
                     "purpose": "Convert profiling output into DQX check rule definitions.",
                     "required_input": {"profiles": "The 'profiles' list from step 2 output"},
-                    "optional_input": {"criticality": "'error' (default) or 'warn'"},
                     "output": "A list of 'rules' (check definitions) to feed into steps 4 and 5.",
                     "optional": False,
                 },
@@ -216,7 +202,6 @@ def load_tools(mcp_server):
                     "required_input": {"checks": "The 'rules' list from step 3 output"},
                     "output": "Whether rules are valid and any error messages.",
                     "optional": True,
-                    "note": "Recommended but optional. Catches errors before execution.",
                 },
                 {
                     "step": 5,
@@ -226,19 +211,15 @@ def load_tools(mcp_server):
                         "table_name": "Same table name from step 1",
                         "checks": "The validated 'rules' from step 3",
                     },
-                    "optional_input": {"sample_size": "Max invalid rows to return (default: 50)"},
                     "output": "Total/valid/invalid row counts, per-rule summary, and a sample of failing rows.",
                     "optional": False,
                 },
             ],
             "helper_tools": [
-                {
-                    "tool": "list_available_checks",
-                    "purpose": "Discover all 68+ built-in check functions.",
-                },
+                {"tool": "list_available_checks", "purpose": "Discover all 68+ built-in check functions."},
             ],
             "notes": [
-                "All tools require a real Unity Catalog table name.",
+                "All data tools require a real Unity Catalog table name.",
                 "You can modify the generated rules between steps 3 and 5.",
                 "Re-run validate_checks after any manual edits to rules.",
             ],
