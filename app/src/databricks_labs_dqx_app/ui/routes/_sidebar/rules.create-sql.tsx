@@ -3,7 +3,7 @@ import { useUnsavedGuard } from "@/hooks/use-unsaved-guard";
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { usePermissions } from "@/hooks/use-permissions";
-import { PageBreadcrumb } from "@/components/apx/PageBreadcrumb";
+import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
 import {
   Card,
   CardContent,

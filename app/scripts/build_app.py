@@ -1,6 +1,6 @@
 """Build the DQX Studio application bundle.
 
-Replaces ``apx build`` end-to-end. Produces, under ``app/.build/``:
+Produces, under ``app/.build/``:
 
 * ``openapi.json`` — FastAPI-derived OpenAPI 3.x schema (input to orval).
 * ``app.yml`` — Databricks Apps launch manifest (uvicorn invocation).
@@ -9,9 +9,7 @@ Replaces ``apx build`` end-to-end. Produces, under ``app/.build/``:
   wheel built with hatchling + uv-dynamic-versioning. The version
   includes a build-tag local-version segment (e.g. ``+abc1234.b20260530t012345``)
   so successive deploys at the same git commit reinstall fresh code in
-  Databricks Apps' persistent venv — the same problem the legacy
-  ``scripts/_align_wheel_version.py`` post-processor was solving on top
-  of apx's filename-mangling hack.
+  Databricks Apps' persistent venv.
 
 Side effects on the source tree:
 
@@ -54,8 +52,8 @@ def _step(msg: str) -> None:
 def _run(cmd: list[str], env: dict[str, str] | None = None) -> None:
     """Run a subprocess from ``APP_DIR`` with stdio passed through.
 
-    Failures abort the build via ``check=True`` — apx-build parity:
-    every stage must succeed for the wheel to be considered usable.
+    Failures abort the build via ``check=True`` — every stage must
+    succeed for the wheel to be considered usable.
     """
     print(f"  $ {' '.join(cmd)}", flush=True)
     subprocess.run(cmd, cwd=APP_DIR, check=True, env=env)  # noqa: S603
@@ -107,9 +105,9 @@ def _write_metadata_module(meta: dict[str, str]) -> None:
 def _write_app_yml(meta: dict[str, str]) -> None:
     """Write the Databricks Apps launch manifest.
 
-    Two-worker uvicorn matching the legacy ``apx build`` output. The
-    ``app-module`` value comes from ``pyproject.toml`` so changing the
-    FastAPI app's import path is a one-line edit there.
+    Two-worker uvicorn. The ``app-module`` value comes from
+    ``pyproject.toml`` so changing the FastAPI app's import path is
+    a one-line edit there.
     """
     (BUILD_DIR / "app.yml").write_text(
         f'command: ["uvicorn", "{meta["app-module"]}", "--workers", "2"]\n',

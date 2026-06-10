@@ -46,8 +46,6 @@ filterwarnings = [
 #     the wheel so backend code can import these values at runtime.
 #   * ``vite.config.ts`` — reads ``app-name`` / ``app-slug`` to wire
 #     the UI build output and the dev-server SPA shell.
-# Renamed from the legacy ``[tool.apx.metadata]`` as part of the apx
-# framework removal — same schema, new namespace.
 [tool.dqx_app.metadata]
 app-name = "DQX Studio"
 app-slug = "databricks_labs_dqx_app"
@@ -79,11 +77,9 @@ vcs = "git"
 # The build tag forces every redeploy of the same git commit to produce
 # a strictly greater version than the previous deploy, so pip in
 # Databricks Apps' persistent venv reinstalls fresh code instead of
-# skipping with "already satisfied". This replaces the legacy
-# ``scripts/_align_wheel_version.py`` post-processor — apx's ``build``
-# command used to inject the timestamp into the wheel filename only,
-# leaving the internal METADATA stale; we now bake the tag in at
-# build time so filename and METADATA agree by construction.
+# skipping with "already satisfied". Baking the tag in at build
+# time (rather than rewriting the wheel filename after the fact)
+# ensures the filename and METADATA agree by construction.
 format-jinja = "{{ version }}{% if env.get('DQX_APP_BUILD_TAG') %}.{{ env['DQX_APP_BUILD_TAG'] }}{% endif %}"
 
 [tool.hatch.build.hooks.version]

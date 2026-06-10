@@ -5,7 +5,6 @@
 // invoking ``orval``, so the input is always in sync with the
 // backend's current routes / pydantic models.
 //
-// Replaces the previously apx-generated ``.apx/orval.config.ts``.
 // Paths are relative to ``app/`` (orval's cwd when invoked from the
 // ``Makefile`` / ``scripts/build_app.py``).
 import { defineConfig } from "orval";

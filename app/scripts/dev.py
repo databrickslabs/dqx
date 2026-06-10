@@ -1,8 +1,7 @@
 """Start the local development environment for DQX Studio.
 
-Replaces ``apx dev start`` end-to-end. Spawns two foreground subprocesses
-and wires Vite as the public-facing reverse proxy for the FastAPI
-backend, matching the legacy contract:
+Spawns two foreground subprocesses and wires Vite as the
+public-facing reverse proxy for the FastAPI backend:
 
 * **UI**: http://localhost:9001
 * **API**: http://localhost:9001/api/*  → uvicorn on 9002
@@ -11,8 +10,7 @@ backend, matching the legacy contract:
 Rationale for the layout:
 
 * uvicorn runs on a fixed internal port (``--port 9002``) with
-  ``--reload`` for backend hot reload — same wiring ``apx dev start``
-  used internally.
+  ``--reload`` for backend hot reload.
 * Vite serves the SPA on the documented public port 9001 and proxies
   the FastAPI paths via its built-in ``server.proxy`` (configured in
   ``vite.config.ts``). The proxy target port is passed through the
@@ -26,8 +24,7 @@ Rationale for the layout:
   state immediately instead of leaving half a dev server running.
 
 We deliberately do NOT regenerate ``api.ts`` automatically on backend
-changes (apx watched the OpenAPI schema and re-ran orval on every
-backend save). The auto-regen path added complexity for marginal value
+changes. The auto-regen path added complexity for marginal value
 in practice; developers run ``make app-regen-api`` after touching
 pydantic models. ``uvicorn --reload`` still picks up backend code
 changes for runtime, so only the typed client lags until manual

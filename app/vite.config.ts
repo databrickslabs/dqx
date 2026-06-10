@@ -70,9 +70,9 @@ export default defineConfig(({ command }) => {
           strictPort: true,
           // Vite forwards these path prefixes to the FastAPI backend.
           // Anything else is served by Vite itself (the SPA shell, JS
-          // assets, HMR machinery). Matches the routing surface the
-          // legacy apx dev proxy exposed: /api/* for app routes plus
-          // FastAPI's auto-docs at /docs, /redoc, and /openapi.json.
+          // assets, HMR machinery). Routing surface: /api/* for app
+          // routes plus FastAPI's auto-docs at /docs, /redoc, and
+          // /openapi.json.
           proxy: {
             "/api": backendTarget,
             "/docs": backendTarget,

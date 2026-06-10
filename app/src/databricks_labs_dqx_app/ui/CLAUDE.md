@@ -22,7 +22,7 @@ ui/
 │       └── profile.tsx         # User profile
 ├── components/
 │   ├── ui/                     # shadcn/ui primitives (button, card, dialog, select, etc.)
-│   ├── apx/                    # Shell components (Navbar, SidebarLayout, ThemeProvider, Logo) — folder name is a historical artifact from the apx scaffolding, no runtime dependency on apx
+│   ├── layout/                 # Shell components (Navbar, SidebarLayout, ThemeProvider, Logo)
 │   ├── anim/                   # Animation components (FadeIn, ShinyText)
 │   ├── backgrounds/            # Decorative backgrounds (gradient, stars)
 │   ├── AuthGuard.tsx           # Blocks render until OBO auth confirmed (exponential backoff)
