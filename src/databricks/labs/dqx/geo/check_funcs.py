@@ -1040,7 +1040,7 @@ def _has_topological_relationship_approximate(
         case _:
             raise InvalidParameterError(f"Unsupported approximate relationship: {topological_relationship!r}")
 
-    condition = F.when(col_expr.isNull(), F.lit(None)).otherwise(~is_inside)
+    condition = F.when(col_expr.isNull() | col_h3_array.isNull(), F.lit(None)).otherwise(~is_inside)
 
     text_value_col = F.call_function("st_astext", F.call_function("try_to_geometry", col_expr))
 
