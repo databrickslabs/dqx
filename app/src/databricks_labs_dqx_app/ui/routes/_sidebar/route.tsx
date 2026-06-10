@@ -1,4 +1,4 @@
-import SidebarLayout from "@/components/apx/SidebarLayout";
+import SidebarLayout from "@/components/layout/SidebarLayout";
 import { createFileRoute, Link, useLocation } from "@tanstack/react-router";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";

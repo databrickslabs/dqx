@@ -9,10 +9,10 @@ import {
   SidebarRail,
   SidebarTrigger,
 } from "@/components/ui/sidebar";
-import { ModeToggle } from "@/components/apx/mode-toggle";
+import { ModeToggle } from "@/components/layout/mode-toggle";
 import { AIAssistantTrigger } from "@/components/AIAssistantProvider";
-import Logo from "@/components/apx/Logo";
-import HeaderUserMenu from "@/components/apx/HeaderUserMenu";
+import Logo from "@/components/layout/Logo";
+import HeaderUserMenu from "@/components/layout/HeaderUserMenu";
 import { useVersion } from "@/lib/api";
 
 interface SidebarLayoutProps {

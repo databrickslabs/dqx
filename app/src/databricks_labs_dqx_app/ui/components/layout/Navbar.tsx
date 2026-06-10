@@ -1,6 +1,6 @@
-import { ModeToggle } from "@/components/apx/mode-toggle";
+import { ModeToggle } from "@/components/layout/mode-toggle";
 import { AIAssistantTrigger } from "@/components/AIAssistantProvider";
-import Logo from "@/components/apx/Logo";
+import Logo from "@/components/layout/Logo";
 import { ReactNode } from "react";
 
 interface NavbarProps {
