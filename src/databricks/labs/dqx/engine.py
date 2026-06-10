@@ -1206,7 +1206,10 @@ class DQEngine(DQEngineBase):
             None
         """
         if output_df is None and quarantine_df is None and observation is None:
-            raise InvalidConfigError("At least one of 'output_df', 'quarantine_df' or 'observation' must be provided.")
+            raise InvalidConfigError(
+                "At least one of 'output_df' or 'quarantine_df' Dataframe must be present. "
+                "For metrics-only writes, provide 'observation'."
+            )
 
         if output_df is not None and output_config is None:
             run_config = self._config_serializer.load_run_config(
