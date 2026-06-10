@@ -12,7 +12,7 @@ import logging
 import re
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
 
@@ -33,7 +33,13 @@ from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.errors import InvalidPhysicalTypeError, ODCSContractError, ParameterError
 from databricks.labs.dqx.telemetry import telemetry_logger
 from databricks.labs.dqx.package_utils import missing_required_packages
-from databricks.labs.dqx.llm.llm_engine import DQLLMEngine  # type: ignore
+
+# DQLLMEngine is referenced only as a type annotation. Eagerly importing it
+# requires installation of [llm] extras which may not be installed or wanted
+# by the user. If llm_engine is specified and [llm] extras are not installed,
+# an error is raised when instantiating the DataContractRulesGenerator.
+if TYPE_CHECKING:  # pragma: no cover
+    from databricks.labs.dqx.llm.llm_engine import DQLLMEngine
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +56,7 @@ class DataContractRulesGenerator(DQEngineBase):
     def __init__(
         self,
         workspace_client: WorkspaceClient,
-        llm_engine: DQLLMEngine | None = None,
+        llm_engine: "DQLLMEngine | None" = None,
         custom_check_functions: dict[str, Callable] | None = None,
     ):
         """

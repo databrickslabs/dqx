@@ -38,6 +38,8 @@ class ConfigProvider:
         input_config = self._prompt_input_config(is_streaming)
         output_config = self._prompt_output_config(is_streaming)
         quarantine_config = self._prompt_quarantine_config(is_streaming)
+        if output_config is None and quarantine_config is None:
+            raise InvalidParameterError("At least one of an output table or a quarantine table must be provided.")
 
         metrics_config, custom_metrics = self._prompt_metrics()
 
@@ -244,11 +246,16 @@ class ConfigProvider:
             )
         return None
 
-    def _prompt_output_config(self, is_streaming: bool) -> OutputConfig:
+    def _prompt_output_config(self, is_streaming: bool) -> OutputConfig | None:
         output_table = self._prompts.question(
-            "Provide output table in the fully qualified format `catalog.schema.table` or `schema.table`",
+            "Provide output table in the fully qualified format `catalog.schema.table` or `schema.table` "
+            "(skipped if only a quarantine table is needed)",
+            default="skipped",
             valid_regex=r"^([\w]+(?:\.[\w]+){1,2})$",
         )
+
+        if output_table == "skipped":
+            return None
 
         output_write_mode = self._prompts.question(
             "Provide write mode for output table (e.g. 'append' or 'overwrite')",

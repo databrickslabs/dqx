@@ -10,6 +10,7 @@ import useBaseUrl from '@docusaurus/useBaseUrl';
 # Applying Quality Checks
 
 You can apply quality checks to your data using the following approaches:
+* [DQX Studio (no-code UI)](/docs/guide/dqx_studio): for a no-code experience, DQX Studio is the recommended option. It lets you apply checks to data at-rest and review the results from a browser, without writing code or maintaining configuration files.
 * [Programmatic approach](#programmatic-approach): you can apply checks programmatically to a DataFrame or Tables. This method is required if you want to perform a data quality check for data in-transit.
 * [No-code approach (Workflows)](#no-code-approach-workflows): you can apply checks for data at-rest using workflows if DQX is installed in the workspace as a tool. This does not require code-level integration and is suitable for data already stored in Delta tables or files.
 
@@ -35,6 +36,10 @@ Checks can be applied to the input data by one of the following methods of the `
   * `apply_checks_and_save_in_tables_for_patterns`: apply quality checks to tables matching wildcard patterns.
 
 You can see the full list of `DQEngine` methods [here](/docs/reference/engine/#dqx-engine-methods).
+
+<Admonition type="info" title="Quarantine-only mode">
+The end-to-end `apply_checks_and_save_in_table` and `apply_checks_by_metadata_and_save_in_table` methods accept either `output_config`, `quarantine_config`, or both. If `output_config` is omitted and `quarantine_config` is provided, only the quarantined table is produced. This applies to both `apply_checks_and_save_in_tables` and `apply_checks_and_save_in_tables_for_patterns`.
+</Admonition>
 
 The engine ensures that the specified `column`, `columns`, `filter`, or sql 'expression' fields can be resolved in the input DataFrame. If any of these fields are invalid, the check evaluation is skipped, and the results include the check failure with a message identifying the invalid fields and `skipped=True` in the result struct. You can suppress these entries entirely or identify them downstream — see [Suppressing skipped check entries](/docs/guide/additional_configuration#suppressing-skipped-check-entries).
 The engine will raise an error if you try to apply checks with invalid definition (e.g. wrong syntax).
@@ -127,7 +132,14 @@ You can customize the reporting columns as described in the [additional configur
         output_config=OutputConfig(location="catalog.schema.output"),
     )
 
-    # Option 5 End-to-End approach: load checks from a storage location and apply them to the entire input table
+    # Option 5 End-to-End approach: apply checks and write only invalid rows to a quarantine table
+    dq_engine.apply_checks_and_save_in_table(
+        checks=checks,
+        input_config=InputConfig(location="catalog.schema.input"),
+        quarantine_config=OutputConfig(location="catalog.schema.quarantine"),
+    )
+
+    # Option 6 End-to-End approach: load checks from a storage location and apply them to the entire input table
     dq_engine.apply_checks_and_save_in_table(
         input_config=InputConfig(location="catalog.schema.input"),
         output_config=OutputConfig(location="catalog.schema.valid"),
@@ -212,7 +224,15 @@ In the example below, checks are defined in YAML syntax for convenience and then
         output_config=OutputConfig(location="catalog.schema.output"),
     )
 
-    # Option 5 End-to-End approach: load checks from a storage location and apply them to the entire input table
+    # Option 5 End-to-End approach: apply checks and write only invalid rows to a quarantine table
+    # (valid rows are not written when output_config is omitted)
+    dq_engine.apply_checks_by_metadata_and_save_in_table(
+        checks=checks,
+        input_config=InputConfig(location="catalog.schema.input"),
+        quarantine_config=OutputConfig(location="catalog.schema.quarantine"),
+    )
+
+    # Option 6 End-to-End approach: load checks from a storage location and apply them to the entire input table
     # By default, apply_checks_and_save_in_table method apply checks to the entire input table.
     # Incremental processing is supported using streaming with the AvailableNow trigger for batch-style execution, along with checkpointing to ensure consistency across runs.
     dq_engine.apply_checks_by_metadata_and_save_in_table(
@@ -638,6 +658,10 @@ dq_engine.apply_checks_and_save_in_table(
 ## No-code approach (Workflows)
 
 You can apply quality checks to data at-rest using DQX Workflows without writing any code. This requires installation of DQX in the workspace as a tool (see [installation guide](/docs/installation)).
+
+<Admonition type="tip" title="Prefer a UI?">
+[DQX Studio](/docs/guide/dqx_studio) is the recommended no-code option — it provides a browser-based UI to apply checks, review results, and monitor runs, without maintaining a configuration file.
+</Admonition>
 
 The workflows use [configuration file](/docs/installation/#configuration-file) to specify input and output locations, and to apply sets of quality checks from a storage.
 
