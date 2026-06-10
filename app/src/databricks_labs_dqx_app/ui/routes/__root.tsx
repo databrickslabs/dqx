@@ -1,4 +1,4 @@
-import { ThemeProvider } from "@/components/apx/theme-provider";
+import { ThemeProvider } from "@/components/layout/theme-provider";
 import { AIAssistantProvider } from "@/components/AIAssistantProvider";
 import { QueryClient } from "@tanstack/react-query";
 import { createRootRouteWithContext, Outlet } from "@tanstack/react-router";

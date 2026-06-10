@@ -5,7 +5,7 @@ import { ErrorBoundary } from "react-error-boundary";
 import { useTranslation } from "react-i18next";
 import { useCurrentUserSuspense } from "@/lib/api";
 import selector from "@/lib/selector";
-import LanguageSelector from "@/components/apx/LanguageSelector";
+import LanguageSelector from "@/components/layout/LanguageSelector";
 import {
   Card,
   CardContent,
@@ -14,7 +14,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { PageBreadcrumb } from "@/components/apx/PageBreadcrumb";
+import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";

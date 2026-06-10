@@ -22,7 +22,7 @@ ui/
 │       └── profile.tsx         # User profile
 ├── components/
 │   ├── ui/                     # shadcn/ui primitives (button, card, dialog, select, etc.)
-│   ├── apx/                    # App framework (Navbar, SidebarLayout, ThemeProvider, Logo)
+│   ├── layout/                 # Shell components (Navbar, SidebarLayout, ThemeProvider, Logo)
 │   ├── anim/                   # Animation components (FadeIn, ShinyText)
 │   ├── backgrounds/            # Decorative backgrounds (gradient, stars)
 │   ├── AuthGuard.tsx           # Blocks render until OBO auth confirmed (exponential backoff)
@@ -48,17 +48,17 @@ ui/
 
 | File | Generator | Trigger |
 |------|-----------|---------|
-| `lib/api.ts` | **orval** (from `.apx/openapi.json`) | Backend schema changes |
+| `lib/api.ts` | **orval** (from `.build/openapi.json`, config at `app/orval.config.ts`) | Backend schema changes |
 | `types/routeTree.gen.ts` | **TanStack Router** (from `routes/` folder) | Adding/removing route files |
 
 To regenerate `api.ts` after backend changes:
 ```bash
-npx orval --input .apx/openapi.json --output src/databricks_labs_dqx_app/ui/lib/api.ts
+make app-regen-api   # dumps fresh OpenAPI + runs orval, no wheel rebuild
 ```
 
-Route tree regenerates automatically when the APX dev server is running (it runs the Vite dev server as a subprocess, which watches for route file changes). It also regenerates during `uv run apx build`.
+Route tree regenerates automatically while the Vite dev server is running (the `tanstackRouter` plugin watches for route file changes). It also regenerates during `make app-build`.
 
-> **Common issue — new route not found / silently 404ing:** `routeTree.gen.ts` only regenerates while the APX dev server (or Vite) is running. If a route file is added while the dev server is stopped — e.g. by an AI agent between sessions — the file is stale and the route silently does not exist at runtime. Fix: restart `uv run apx dev` and the Vite watcher will detect the new file and regenerate immediately. Alternatively run `uv run apx build`.
+> **Common issue — new route not found / silently 404ing:** `routeTree.gen.ts` only regenerates while Vite is running. If a route file is added while the dev server is stopped — e.g. by an AI agent between sessions — the file is stale and the route silently does not exist at runtime. Fix: restart `make app-start-dev` and the Vite watcher will detect the new file and regenerate immediately. Alternatively run `make app-build`.
 
 ## Stack
 
@@ -77,13 +77,24 @@ Route tree regenerates automatically when the APX dev server is running (it runs
 
 ## Commands
 
+Prefer `make` from the project root — it spawns the correct pair of processes (uvicorn + Vite) and threads the right env vars in. Direct yarn invocations from `app/` are available for one-off frontend-only tasks.
+
 ```bash
-# From app/ directory
-npm run dev       # Vite dev server (requires APX_FRONTEND_PORT env var)
-npm run build     # Production build → __dist__/
-npm run lint      # ESLint
-npm run preview   # Preview production build
+# From project root (preferred)
+make app-install       # yarn install --frozen-lockfile
+make app-start-dev     # builds, then runs uvicorn (:9002) + Vite (:9001) in the foreground
+make app-build         # full build (OpenAPI dump + orval + Vite + wheel)
+make app-check         # tsc -b (via bun) + basedpyright
+make app-regen-api     # dump OpenAPI + run orval (no wheel rebuild)
+
+# From app/ directory (frontend-only)
+yarn vite              # Vite dev server, no backend
+yarn vite build        # Production build → __dist__/
+yarn eslint .          # ESLint
+yarn vite preview      # Preview production build
 ```
+
+`bun` is used by `make app-check` for `tsc -b --incremental`; it is **not** the project's package manager (the committed `app/yarn.lock` is the source of truth — `bun.lock` and `package-lock.json` are gitignored).
 
 ## Key Patterns
 
@@ -110,7 +121,7 @@ npm run preview   # Preview production build
 1. Create `routes/_sidebar/<name>.tsx` (or `routes/<name>.tsx` for non-sidebar pages)
 2. Export a `Route` using `createFileRoute` from TanStack Router
 3. Add nav item to `_sidebar/route.tsx` if it should appear in the sidebar
-4. Add nav item to `_sidebar/route.tsx` if it should appear in the sidebar — `types/routeTree.gen.ts` regenerates automatically while APX dev is running. If the dev server was stopped when the file was created, restart it to pick up the new route.
+4. `types/routeTree.gen.ts` regenerates automatically while the Vite dev server is running. If the dev server was stopped when the file was created, restart `make app-start-dev` (or run `make app-build`) to pick up the new route.
 
 ### Adding a New API-Backed Feature
 
@@ -137,9 +148,10 @@ The UI is fully localized with **react-i18next**. Locale bundles live in `lib/i1
 
 ## Vite Config Notes
 
-- **APX Dev Proxy Guard**: Validates `x-apx-dev-proxy` header in dev mode
+- **Dev server proxy**: Vite listens on `:9001` and forwards `/api`, `/docs`, `/redoc`, `/openapi.json` to uvicorn (target read from `DQX_APP_BACKEND_PORT` env var, default `9002`). Spawned by `scripts/dev.py`.
 - **Build output**: `../__dist__/` (relative to ui folder — ends up in the Python package)
 - **Path alias**: `@/` → `./src/databricks_labs_dqx_app/ui/`
+- **App metadata**: Read from `[tool.dqx_app.metadata]` in `pyproject.toml` at config-load time
 
 ## TypeScript Config
 
