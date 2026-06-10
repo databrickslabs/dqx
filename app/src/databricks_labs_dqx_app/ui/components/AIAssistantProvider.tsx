@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useCallback, type ReactNode } from "react";
-import axios from "axios";
 import { Sparkles } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -10,7 +10,7 @@ import {
   SheetDescription,
 } from "@/components/ui/sheet";
 import { AICheckGenerator } from "@/components/AICheckGenerator";
-import type { GenerateChecksOut } from "@/lib/api";
+import { aiAssistedChecksGeneration } from "@/lib/api";
 
 export interface RunContext {
   runName: string;
@@ -33,6 +33,7 @@ export function useAIAssistant() {
 }
 
 export function AIAssistantTrigger() {
+  const { t } = useTranslation();
   const { setOpen } = useAIAssistant();
   return (
     <Button
@@ -42,12 +43,13 @@ export function AIAssistantTrigger() {
       className="gap-2"
     >
       <Sparkles className="h-4 w-4" />
-      <span className="hidden sm:inline">AI Rules Assistant</span>
+      <span className="hidden sm:inline">{t("navbar.aiAssistant")}</span>
     </Button>
   );
 }
 
 export function AIAssistantProvider({ children }: { children: ReactNode }) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [runContext, setRunContext] = useState<RunContext | null>(null);
@@ -59,11 +61,7 @@ export function AIAssistantProvider({ children }: { children: ReactNode }) {
         ? `Given this existing run configuration:\n\`\`\`yaml\n${contextYaml}\n\`\`\`\n\n${userInput}`
         : userInput;
 
-      const response = await axios.post<GenerateChecksOut>(
-        "/api/ai-generate-checks",
-        { user_input: prompt },
-        { withCredentials: true }
-      );
+      const response = await aiAssistedChecksGeneration({ user_input: prompt });
       return response.data;
     } finally {
       setIsGenerating(false);
@@ -76,9 +74,9 @@ export function AIAssistantProvider({ children }: { children: ReactNode }) {
       <Sheet open={open} onOpenChange={setOpen}>
         <SheetContent side="right" className="sm:max-w-lg w-[500px] p-0">
           <SheetHeader className="sr-only">
-            <SheetTitle>AI Rules Assistant</SheetTitle>
+            <SheetTitle>{t("aiAssistant.title")}</SheetTitle>
             <SheetDescription>
-              Generate data quality rules using AI
+              {t("aiAssistant.description")}
             </SheetDescription>
           </SheetHeader>
           <AICheckGenerator

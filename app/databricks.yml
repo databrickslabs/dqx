@@ -1,5 +1,111 @@
 bundle:
-  name: "databricks-labs-dqx-app"
+  name: "dqx-studio"
+
+
+variables:
+  catalog_name:
+    description: "Name of the catalog for DQX Studio storage"
+    default: "dqx"
+  schema_name:
+    description: "Name of the schema for DQX Studio storage"
+    default: "dqx_studio"
+  tmp_schema_name:
+    description: "Name of the schema for temporary views and intermediate processing"
+    default: "dqx_studio_tmp"
+  admin_group:
+    description: "Databricks workspace group name for bootstrap Admin access"
+    default: "admins"
+  app_name:
+    description: "Name of the deployed Databricks App (must be unique per workspace)"
+    default: "dqx-studio"
+  sql_warehouse_name:
+    description: "Name of the deployed SQL warehouse for DQX Studio queries (must be unique per workspace)"
+    default: "dqx-studio-sql-warehouse"
+  wheels_volume_name:
+    description: "Name of the UC volume for storing DQX wheel files"
+    default: "wheels"
+  dqx_service_principal_application_id:
+    description: "Application ID of the service principal for DQX tasks"
+    default: "00000000-0000-0000-0000-000000000000"
+  # ------------------------------------------------------------------
+  # Lakebase backend
+  # ------------------------------------------------------------------
+  # The app stores its OLTP state (rules catalog, app settings, RBAC,
+  # comments, schedule configs, scheduler bookkeeping) in a Lakebase
+  # Postgres instance for sub-millisecond reads and to avoid SQL
+  # warehouse cold starts. Append-mostly observability tables
+  # (dq_validation_runs, dq_profiling_results, dq_metrics,
+  # dq_quarantine_records) stay in Delta — those are written by the
+  # Spark task runner and consumed by AI/BI dashboards.
+  #
+  # The Lakebase instance is declared as a bundle resource below with
+  # ``lifecycle.prevent_destroy: true``. New Lakebase instances are
+  # autoscaling by default (see
+  # https://docs.databricks.com/aws/en/oltp/upgrade-to-autoscaling).
+  #
+  # Connection target: ``databricks_postgres`` — the always-present
+  # admin database every Lakebase instance ships with. We don't create
+  # a per-app logical Postgres database because the only DAB resource
+  # that creates one (``database_catalogs``) also creates a Unity
+  # Catalog catalog and therefore requires ``CREATE CATALOG`` on the
+  # metastore — a permission most app deployers don't hold. Using
+  # ``databricks_postgres`` keeps the bundle fully declarative with no
+  # external bootstrap steps, and we still get per-app isolation via a
+  # dedicated Postgres schema (``DQX_LAKEBASE_SCHEMA_NAME`` in the app
+  # config, defaults to ``dqx_studio``).
+  lakebase_instance_name:
+    description: "Name of the Lakebase Postgres instance for OLTP state."
+    default: "dqx-studio-lakebase"
+  lakebase_database_name:
+    description: >
+      Logical Postgres database the app connects to inside the Lakebase
+      instance. Defaults to ``databricks_postgres`` (always present, no
+      creation required). All DQX tables live inside a dedicated
+      ``dqx_studio`` schema within this database for isolation, so
+      multiple apps can safely share ``databricks_postgres`` on the
+      same Lakebase instance.
+    default: "databricks_postgres"
+  lakebase_capacity:
+    description: "Lakebase compute capacity (CU_1, CU_2, CU_4, CU_8)"
+    default: "CU_1"
+  app_config:
+    type: complex
+    description: "Configuration for DQX Studio"
+    default:
+      # Multiple workers improve HTTP throughput. The in-process SchedulerService
+      # is guarded by a file lock so only one worker runs the scheduler loop.
+      # The in-memory CacheFactory (TTL-based, non-authoritative) warms
+      # independently per worker, which is acceptable for its use case.
+      command:
+        - "uvicorn"
+        - "databricks_labs_dqx_app.backend.app:app"
+        - "--workers"
+        - "1"
+      env:
+        - name: "DATABRICKS_WAREHOUSE_ID"
+          value_from: "dqx-sql-warehouse"
+        - name: "DQX_CATALOG"
+          value: "${var.catalog_name}"
+        - name: "DQX_SCHEMA"
+          value: "${var.schema_name}"
+        - name: "DQX_JOB_ID"
+          value_from: "dqx-task-runner-job"
+        - name: "DQX_TMP_SCHEMA"
+          value: "${var.tmp_schema_name}"
+        - name: "DQX_ADMIN_GROUP"
+          value: "${var.admin_group}"
+        - name: "DQX_WHEELS_VOLUME"
+          value: "/Volumes/${var.catalog_name}/${var.schema_name}/${var.wheels_volume_name}"
+        # Lakebase wiring. The instance is declared as a bundle
+        # resource further down (with ``lifecycle.prevent_destroy: true``
+        # so ``bundle destroy`` cannot drop it). The logical database
+        # defaults to the always-present ``databricks_postgres``; the
+        # app creates its ``dqx_studio`` Postgres schema inside it on
+        # first connection.
+        - name: "DQX_LAKEBASE_INSTANCE_NAME"
+          value: "${var.lakebase_instance_name}"
+        - name: "DQX_LAKEBASE_DATABASE_NAME"
+          value: "${var.lakebase_database_name}"
 
 sync:
   include:
@@ -7,27 +113,215 @@ sync:
 
 artifacts:
   default:
-    build: uv run apx build
+    # ``apx build`` injects a build timestamp into the application
+    # wheel's *filename* but leaves the wheel's internal METADATA
+    # untouched.  pip reads the version from METADATA, so successive
+    # rebuilds (without a new git commit) all advertise the same
+    # version and pip silently skips reinstall in the Databricks App
+    # container's persistent venv — the running app keeps executing
+    # stale code.  ``_align_wheel_version.py`` rewrites METADATA,
+    # RECORD and the dist-info dir to match the timestamped filename
+    # so every rebuild produces a unique package version and pip
+    # always installs fresh.
+    build: >
+      uv run apx build &&
+      uv run python scripts/_align_wheel_version.py
+      $(ls -1 .build/databricks_labs_dqx_app-*.whl | head -1) &&
+      uv build ../ --wheel --out-dir .build/ &&
+      uv build tasks/ --wheel --out-dir .build/tasks/ &&
+      dqx_whl=$(ls -1 .build/databricks_labs_dqx-*.whl | head -1 | xargs basename) &&
+      echo "$dqx_whl" | cat - .build/requirements.txt > .build/requirements.txt.tmp &&
+      mv .build/requirements.txt.tmp .build/requirements.txt
 
 resources:
   apps:
-    databricks-labs-dqx-app:
-      name: "databricks-labs-dqx-app"
-      description: "Databricks DQX App for Data Quality Monitoring"
+    dqx-studio:
+      name: ${var.app_name}
+      description: "Databricks DQX Studio for Data Quality Monitoring"
       source_code_path: ".build"
+      config: ${var.app_config}
 
-      # Below are scopes available today, but they are not enough for the app features to work properly.
-      # After deploying the app, you need to enable additional scopes by running:
-      # Login: databricks auth login --host https://accounts.cloud.databricks.com --account-id <dbx-account-id> --profile <profile-name>
-      # `databricks account custom-app-integration update '<oauth2-app-client-id>' --json '{"scopes": ["openid", "profile", "email", "all-apis", "offline_access", "iam.current-user"]}'`
-      # where: <oauth2-app-client-id> is the Oauth2 App Client ID which can be found in the Apps UI under User authorization
-      # alternatively, you can find it by running: `databricks account custom-app-integration list`
+      # These scopes are NOT sufficient for all app features. After deploying,
+      # enable all-apis via the account-level CLI:
+      #   databricks auth login --host https://accounts.cloud.databricks.com \
+      #     --account-id <dbx-account-id> --profile <profile-name>
+      #   databricks account custom-app-integration update '<oauth2-app-client-id>' \
+      #     --json '{"scopes": ["openid", "profile", "email", "all-apis", "offline_access", "iam.current-user"]}'
+      # <oauth2-app-client-id> is in the Apps UI under User authorization,
+      # or run: databricks account custom-app-integration list
+      #
+      # The partial list below is the DABs-managed baseline; it does NOT
+      # replace the all-apis scope requirement above.
+      user_api_scopes:
+        - sql
+        - catalog.catalogs:read
+        - catalog.schemas:read
+        - catalog.tables:read
+        - serving.serving-endpoints
 
-      # use all-apis scope for full functionality instead of the limited scopes below
-      #user_api_scopes:
-      #  - files.files
+
+      resources:
+        - name: "dqx-sql-warehouse"
+          description: "SQL Warehouse for DQX Studio queries"
+          sql_warehouse:
+            id: ${resources.sql_warehouses.dqx_sql_warehouse.id}
+            permission: "CAN_USE"
+        - name: "dqx-task-runner-job"
+          description: "Job for async profiler and dry-run tasks"
+          job:
+            id: ${resources.jobs.dqx_task_runner.id}
+            permission: "CAN_MANAGE"
+        # Lakebase Postgres for OLTP state (rules catalog, app
+        # settings, RBAC, comments, schedule configs, scheduler
+        # bookkeeping). The instance is declared as a bundle resource
+        # below; the database defaults to the always-present
+        # ``databricks_postgres`` admin DB. This entry binds the app
+        # to the (instance, database) pair so DABs configures
+        # ``CAN_CONNECT_AND_CREATE`` automatically — that lets the app
+        # SP create its ``dqx_studio`` schema inside the bound DB on
+        # first connection.
+        - name: "dqx-lakebase"
+          description: "Lakebase Postgres backend for app OLTP state"
+          database:
+            database_name: ${var.lakebase_database_name}
+            instance_name: ${resources.database_instances.lakebase.name}
+            permission: "CAN_CONNECT_AND_CREATE"
+
+      permissions:
+        - group_name: "account users"
+          level: "CAN_USE"
+
+  sql_warehouses:
+    dqx_sql_warehouse:
+      name: ${var.sql_warehouse_name}
+      cluster_size: "X-Small"
+      enable_serverless_compute: true
+      max_num_clusters: 1
+      min_num_clusters: 1
+      auto_stop_mins: 10
+      permissions:
+        - group_name: "users"
+          level: "CAN_USE"
+
+  # ------------------------------------------------------------------
+  # Stateful storage (schemas, volume, Lakebase instance + database).
+  #
+  # Every entry below is tagged ``lifecycle.prevent_destroy: true`` so
+  # that ``databricks bundle destroy`` (or a deploy that would
+  # otherwise replace the resource) fails fast instead of dropping the
+  # backing data. To intentionally tear something down: remove the
+  # flag, ``databricks bundle deployment unbind <key>``, then destroy.
+  #
+  # For an existing workspace whose resources were provisioned
+  # out-of-band (e.g. from the previous bootstrap script), one-time
+  # binding is required before the first deploy — see ``make app-bind``
+  # and DEPLOYMENT.md → "Migrating an existing workspace".
+  # ------------------------------------------------------------------
+  schemas:
+    main_schema:
+      catalog_name: ${var.catalog_name}
+      name: ${var.schema_name}
+      comment: "DQX Studio main schema (rules, run history, profiling, metrics, quarantine, OLTP fallback)"
+      lifecycle:
+        prevent_destroy: true
+
+    tmp_schema:
+      catalog_name: ${var.catalog_name}
+      name: ${var.tmp_schema_name}
+      comment: "DQX Studio temp schema for per-user dry-run views"
+      lifecycle:
+        prevent_destroy: true
+
+  volumes:
+    wheels:
+      catalog_name: ${var.catalog_name}
+      schema_name: ${resources.schemas.main_schema.name}
+      name: ${var.wheels_volume_name}
+      volume_type: MANAGED
+      comment: "DQX Studio wheel storage for the task runner"
+      lifecycle:
+        prevent_destroy: true
+
+  database_instances:
+    lakebase:
+      name: ${var.lakebase_instance_name}
+      capacity: ${var.lakebase_capacity}
+      lifecycle:
+        prevent_destroy: true
+
+  jobs:
+    dqx_task_runner:
+      name: "dqx-studio-task-runner"
+      max_concurrent_runs: 10
+      tags:
+        app: "dqx"
+      run_as:
+        service_principal_name: ${var.dqx_service_principal_application_id}
+      tasks:
+        - task_key: "run_task"
+          python_wheel_task:
+            package_name: databricks_labs_dqx_task_runner
+            entry_point: dqx-task-runner
+            parameters:
+              - "--task_type"
+              - "{{job.parameters.task_type}}"
+              - "--view_fqn"
+              - "{{job.parameters.view_fqn}}"
+              - "--result_catalog"
+              - "{{job.parameters.result_catalog}}"
+              - "--result_schema"
+              - "{{job.parameters.result_schema}}"
+              - "--config_json"
+              - "{{job.parameters.config_json}}"
+              - "--run_id"
+              - "{{job.parameters.run_id}}"
+              - "--requesting_user"
+              - "{{job.parameters.requesting_user}}"
+          environment_key: "default"
+      environments:
+        - environment_key: "default"
+          spec:
+            client: "5"
+            dependencies:
+              - ./.build/tasks/databricks_labs_dqx_task_runner-*.whl
+              - ./.build/databricks_labs_dqx-*.whl
+      parameters:
+        - name: "task_type"
+          default: "profile"
+        - name: "view_fqn"
+          default: ""
+        - name: "result_catalog"
+          default: "${var.catalog_name}"
+        - name: "result_schema"
+          default: "${var.schema_name}"
+        - name: "config_json"
+          default: "{}"
+        - name: "run_id"
+          default: ""
+        - name: "requesting_user"
+          default: "unknown"
 
 targets:
-  dev:
-    mode: development
-    default: true
+  # Template for adding a new target. Required variables are
+  # ``catalog_name`` and ``dqx_service_principal_application_id``;
+  # everything else has a sensible default in the ``variables:`` block
+  # at the top of this file and can be overridden per target below.
+  #
+  # example-target:
+  #   workspace:
+  #     profile: <your-profile>
+  #   variables:
+  #     catalog_name: <your-catalog>
+  #     dqx_service_principal_application_id: <your-sp-application-id>
+  #     # Optional overrides:
+  #     # admin_group: <your-admin-group>
+  #     # app_name: <your-app-name>
+  #     # sql_warehouse_name: <your-sql-warehouse-name>
+  #     # schema_name: <your-schema-name>
+  #     # tmp_schema_name: <your-tmp-schema-name>
+  #     # wheels_volume_name: <your-volume-name>
+  #     # lakebase_instance_name: <your-lakebase-instance>
+  #     # lakebase_database_name: <your-lakebase-db>
+  #     # lakebase_capacity: CU_1 | CU_2 | CU_4 | CU_8
+  #   presets:
+  #     trigger_pause_status: PAUSED

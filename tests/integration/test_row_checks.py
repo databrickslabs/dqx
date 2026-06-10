@@ -2,7 +2,7 @@ from datetime import datetime
 from decimal import Decimal
 import pytest
 import pyspark.sql.functions as F
-from chispa.dataframe_comparer import assert_df_equality  # type: ignore
+from pyspark.testing.utils import assertDataFrameEqual
 from pyspark.errors import AnalysisException
 
 from databricks.labs.dqx.check_funcs import (
@@ -31,6 +31,7 @@ from databricks.labs.dqx.check_funcs import (
     has_valid_json_schema,
     is_valid_timestamp,
     is_valid_ipv4_address,
+    is_valid_email,
     is_ipv4_address_in_cidr,
     is_valid_ipv6_address,
     is_ipv6_address_in_cidr,
@@ -92,7 +93,7 @@ def test_col_is_not_null_and_not_empty(spark):
         checked_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_col_is_not_empty(spark):
@@ -148,7 +149,7 @@ def test_col_is_not_empty(spark):
         checked_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_col_is_not_null(spark):
@@ -181,7 +182,7 @@ def test_col_is_not_null(spark):
         checked_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_col_is_null(spark):
@@ -227,7 +228,7 @@ def test_col_is_null(spark):
         checked_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_col_is_empty(spark):
@@ -283,7 +284,7 @@ def test_col_is_empty(spark):
         checked_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_col_is_null_or_empty(spark):
@@ -339,7 +340,7 @@ def test_col_is_null_or_empty(spark):
         checked_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_col_is_not_null_and_is_in_list(spark):
@@ -440,7 +441,7 @@ def test_col_is_not_null_and_is_in_list(spark):
         checked_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_col_is_not_in_list(spark):
@@ -528,7 +529,7 @@ def test_col_is_not_in_list(spark):
         checked_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_col_is_not_in_list_mismatch_datatype(spark):
@@ -602,9 +603,19 @@ def test_is_not_in_list(spark):
 
     expected = spark.createDataFrame(
         [
-            # Row 1: "active" - all pass (not in forbidden lists)
+            # Row 1: "active" - c["status"] = "ok" fails the case-insensitive [ok] check
             # d = ["read", "write"], try_element_at(d, 1) = "read" (1-based: first element)
-            [None, None, None, None, None, None, None, None, None],
+            [
+                None,
+                None,
+                None,
+                None,
+                None,
+                "Value 'ok' in Column 'c['status']' is in the forbidden list: [ok]",
+                None,
+                None,
+                None,
+            ],
             # Row 2: "banned" - fails where "banned" is forbidden
             # d = [None, "admin"], try_element_at(d, 1) = None (1-based: first element)
             [
@@ -661,7 +672,7 @@ def test_is_not_in_list(spark):
         checked_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_col_sql_expression(spark):
@@ -707,7 +718,7 @@ def test_col_sql_expression(spark):
         checked_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_col_sql_expression_long_name(spark):
@@ -732,7 +743,7 @@ def test_col_sql_expression_long_name(spark):
         checked_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_is_col_older_than_col2_for_n_days(spark):
@@ -793,7 +804,7 @@ def test_is_col_older_than_col2_for_n_days(spark):
         checked_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_is_col_older_than_n_days(spark):
@@ -851,7 +862,7 @@ def test_is_col_older_than_n_days(spark):
         checked_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_col_is_not_in_future(spark):
@@ -883,7 +894,7 @@ def test_col_is_not_in_future(spark):
         checked_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_col_is_not_in_near_future(spark):
@@ -919,7 +930,7 @@ def test_col_is_not_in_near_future(spark):
         checked_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_is_col_older_than_n_days_cur(spark):
@@ -962,7 +973,7 @@ def test_is_col_older_than_n_days_cur(spark):
         checked_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_col_is_not_less_than(spark, set_utc_timezone):
@@ -1006,12 +1017,12 @@ def test_col_is_not_less_than(spark, set_utc_timezone):
             [
                 "Value '1' in Column 'a' is less than limit: 2",
                 "Value '1' in Column 'a' is less than limit: 2",
-                None,
+                "Value '1' in Column 'a' is less than limit: 2",
                 None,
                 "Value '2025-01-01' in Column 'c' is less than limit: 2025-02-01",
                 "Value '2025-01-01' in Column 'c' is less than limit: 2025-02-01",
                 "Value '2025-01-01 00:00:00' in Column 'd' is less than limit: 2025-02-01 00:00:00",
-                "Value '2025-01-01 00:00:00' in Column 'd' is less than limit: 2025-02-01 00:00:00",
+                "Value '2025-01-01 00:00:00' in Column 'd' is less than limit: 2025-02-01",
                 "Value '1.00' in Column 'e' is less than limit: 2",
                 "Value '1' in Column 'try_element_at(f, 1)' is less than limit: 2",
                 "Value '1' in Column 'g['val']' is less than limit: 2",
@@ -1050,7 +1061,7 @@ def test_col_is_not_less_than(spark, set_utc_timezone):
         checked_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_col_is_not_greater_than(spark, set_utc_timezone):
@@ -1096,7 +1107,7 @@ def test_col_is_not_greater_than(spark, set_utc_timezone):
                 "Value '2025-02-01' in Column 'c' is greater than limit: 2025-01-01",
                 "Value '2025-02-01' in Column 'c' is greater than limit: 2025-01-01",
                 "Value '2025-02-01 00:00:00' in Column 'd' is greater than limit: 2025-01-01 00:00:00",
-                "Value '2025-02-01 00:00:00' in Column 'd' is greater than limit: 2025-01-01 00:00:00",
+                "Value '2025-02-01 00:00:00' in Column 'd' is greater than limit: 2025-01-01",
                 "Value '1.01' in Column 'e' is greater than limit: 1",
                 "Value '2' in Column 'try_element_at(f, 1)' is greater than limit: 1",
                 "Value '3.6' in Column 'g' is greater than limit: 2.4",
@@ -1119,7 +1130,7 @@ def test_col_is_not_greater_than(spark, set_utc_timezone):
         checked_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_col_is_in_range(spark, set_utc_timezone):
@@ -1168,7 +1179,7 @@ def test_col_is_in_range(spark, set_utc_timezone):
                 "Value '2024-12-01' in Column 'b' not in range: [2025-01-01, 2025-03-01]",
                 "Value '2024-12-01' in Column 'b' not in range: [2025-01-01, 2025-03-01]",
                 "Value '2024-12-01 00:00:00' in Column 'c' not in range: [2025-01-01 00:00:00, 2025-03-01 00:00:00]",
-                "Value '2024-12-01 00:00:00' in Column 'c' not in range: [2025-01-01 00:00:00, 2025-03-01 00:00:00]",
+                "Value '2024-12-01 00:00:00' in Column 'c' not in range: [2025-01-01, 2025-03-01]",
                 "Value '2024-12-01 00:00:00' in Column 'c' not in range: [2025-01-01 00:00:00, 2025-03-01 00:00:00]",
                 "Value '-1' in Column 'd' not in range: [0, 4]",
                 "Value '6' in Column 'f' not in range: [0, 5]",
@@ -1185,7 +1196,7 @@ def test_col_is_in_range(spark, set_utc_timezone):
                 "Value '2025-04-01' in Column 'b' not in range: [2025-01-01, 2025-03-01]",
                 "Value '2025-04-01' in Column 'b' not in range: [2025-01-01, 2025-03-01]",
                 "Value '2025-04-01 00:00:00' in Column 'c' not in range: [2025-01-01 00:00:00, 2025-03-01 00:00:00]",
-                "Value '2025-04-01 00:00:00' in Column 'c' not in range: [2025-01-01 00:00:00, 2025-03-01 00:00:00]",
+                "Value '2025-04-01 00:00:00' in Column 'c' not in range: [2025-01-01, 2025-03-01]",
                 "Value '2025-04-01 00:00:00' in Column 'c' not in range: [2025-01-01 00:00:00, 2025-03-01 00:00:00]",
                 "Value '2' in Column 'd' not in range: [4, 8]",
                 "Value '3' in Column 'f' not in range: [4, 5]",
@@ -1198,7 +1209,7 @@ def test_col_is_in_range(spark, set_utc_timezone):
         checked_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_col_is_not_in_range(spark, set_utc_timezone):
@@ -1255,7 +1266,7 @@ def test_col_is_not_in_range(spark, set_utc_timezone):
                 "Value '2025-01-01' in Column 'b' in range: [2025-01-01, 2025-01-03]",
                 "Value '2025-01-01' in Column 'b' in range: [2025-01-01, 2025-01-03]",
                 "Value '2025-01-03 00:00:00' in Column 'c' in range: [2025-01-01 00:00:00, 2025-01-03 00:00:00]",
-                "Value '2025-01-03 00:00:00' in Column 'c' in range: [2025-01-01 00:00:00, 2025-01-03 00:00:00]",
+                "Value '2025-01-03 00:00:00' in Column 'c' in range: [2025-01-01, 2025-01-03]",
                 "Value '2025-01-03 00:00:00' in Column 'c' in range: [2025-01-01 00:00:00, 2025-01-03 00:00:00]",
                 None,
                 "Value '1.00' in Column 'e' in range: [1, 3]",
@@ -1271,8 +1282,8 @@ def test_col_is_not_in_range(spark, set_utc_timezone):
                 None,
                 None,
                 None,
-                "Value '2025-02-03 00:00:00' in Column 'd' in range: [2025-02-01 00:00:00, 2025-02-03 00:00:00]",
-                "Value '2025-02-03 00:00:00' in Column 'd' in range: [2025-02-01 00:00:00, 2025-02-03 00:00:00]",
+                None,
+                None,
                 "Value '2025-02-03 00:00:00' in Column 'd' in range: [2025-02-01 00:00:00, 2025-02-03 00:00:00]",
                 "Value '3.00' in Column 'e' in range: [1, 3]",
                 "Value '3.00' in Column 'e' in range: [1.00, 3.00]",
@@ -1286,7 +1297,7 @@ def test_col_is_not_in_range(spark, set_utc_timezone):
         checked_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_col_matching_regex(spark):
@@ -1313,7 +1324,7 @@ def test_col_matching_regex(spark):
         checked_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_col_struct(spark):
@@ -1324,7 +1335,7 @@ def test_col_struct(spark):
     checked_schema = "data_x_is_empty: string"
     expected = spark.createDataFrame([[None]], checked_schema)
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_col_is_not_in_future_cur(spark):
@@ -1354,7 +1365,7 @@ def test_col_is_not_in_near_future_cur(spark):
         checked_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_col_is_not_null_and_not_empty_array(spark):
@@ -1424,7 +1435,7 @@ def test_col_is_not_null_and_not_empty_array(spark):
     ]
     expected = spark.createDataFrame(checked_data, checked_schema)
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_col_is_valid_date(spark, set_utc_timezone):
@@ -1471,7 +1482,7 @@ def test_col_is_valid_date(spark, set_utc_timezone):
     ]
     expected = spark.createDataFrame(checked_data, checked_schema)
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_col_is_valid_timestamp(spark, set_utc_timezone):
@@ -1550,7 +1561,7 @@ def test_col_is_valid_timestamp(spark, set_utc_timezone):
     ]
     expected = spark.createDataFrame(checked_data, checked_schema)
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_col_is_valid_ipv4_address(spark):
@@ -1829,7 +1840,116 @@ def test_col_is_valid_ipv4_address(spark):
         ],
         checked_schema,
     )
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
+
+
+def test_col_is_valid_email(spark):
+    schema_email = "a: string"
+    local_part_at_char_limit = "a" * 64  # 64 characters total
+    quoted_local_at_char_limit = '"' + "a" * 62 + '"'  # 64 characters including the surrounding quotes
+    full_text_at_char_limit = "a" * 64 + "@" + "b" * 63 + "." + "b" * 63 + "." + "b" * 58 + ".co"  # 254 chars total
+
+    test_df = spark.createDataFrame(
+        [
+            ["user@example.com"],
+            ["User.Name+tag@sub.domain.org"],
+            ["a@b.cd"],  # minimum valid
+            ["1234567890@numbers.io"],  # all-numeric local
+            ["mixed.case@MixedCase.Org"],  # case variations
+            ["user@[IPv6:::::::::]"],  # NOTE: IPv6 validation based on regex currently passes validation
+            [local_part_at_char_limit + "@b.com"],  # unquoted local part at 64-characters
+            [quoted_local_at_char_limit + "@example.com"],  # quoted local part at 64-characters (incl. quotes)
+            [full_text_at_char_limit],  # exactly at 254-character limit for the full text
+            ['"a"@example.com'],
+            ['"a@b"@example.com'],  # "@" inside quoted local
+            ["user@[192.0.2.1]"],
+            ["user@[IPv6:2001:db8::1]"],
+            [".user@example.com"],  # leading "."
+            ["user.@example.com"],  # trailing "."
+            ["us..er@example.com"],  # consecutive "."
+            ["user@-example.com"],  # leading hyphen on label
+            ["user@example-.com"],  # trailing hyphen on label
+            ["user@.example.com"],  # empty subdomain label
+            ["user@example..com"],  # double "." in domain
+            ["user@example.c"],  # single character TLD
+            ["user@example.123"],  # numeric TLD
+            ["user@example"],  # no TLD
+            ["userexample.com"],  # no "@"
+            ["user@@example.com"],  # double "@"
+            ["user@"],  # missing domain
+            ["@example.com"],  # missing local part
+            ["plainaddress"],  # no "@" or "."
+            ["a" + local_part_at_char_limit + "@example.com"],  # unquoted local part more than 64 characters
+            [f'"{"a" + local_part_at_char_limit}"' + "@example.com"],  # quoted local part more than 64 characters
+            ["a" + full_text_at_char_limit],  # full text more than 268 characters
+            ["user@[999.0.0.1]"],  # invalid IPv4 octet
+            ["user@[256.0.0.1]"],  # IPv4 octet over 255
+            ["user@[]"],  # empty IP literal
+            ["user@[192.0.2.1"],  # missing closing bracket
+            ["user@localhost"],  # no TLD
+            ["missing@tld"],  # no domain "."
+            [None],  # null - passes (no violation reported)
+        ],
+        schema_email,
+    )
+
+    actual = test_df.select(is_valid_email("a"))
+
+    def violation(value: str) -> str:
+        return f"Value '{value}' in Column 'a' does not match pattern 'EMAIL_ADDRESS'"
+
+    checked_schema = "a_does_not_match_pattern_email_address: string"
+    checked_data = [
+        # Valid (no violation reported)
+        [None],
+        [None],
+        [None],
+        [None],
+        [None],
+        [None],
+        [None],
+        [None],
+        [None],
+        [None],
+        [None],
+        [None],
+        [None],
+        # Invalid - dot-atom violations
+        [violation(".user@example.com")],
+        [violation("user.@example.com")],
+        [violation("us..er@example.com")],
+        # Invalid - LDH domain violations
+        [violation("user@-example.com")],
+        [violation("user@example-.com")],
+        [violation("user@.example.com")],
+        [violation("user@example..com")],
+        # Invalid - TLD constraints
+        [violation("user@example.c")],
+        [violation("user@example.123")],
+        [violation("user@example")],
+        # Invalid - structural
+        [violation("userexample.com")],
+        [violation("user@@example.com")],
+        [violation("user@")],
+        [violation("@example.com")],
+        [violation("plainaddress")],
+        # Invalid - length caps
+        [violation("a" + local_part_at_char_limit + "@example.com")],
+        [violation(f'"{"a" + local_part_at_char_limit}"' + "@example.com")],
+        [violation("a" + full_text_at_char_limit)],
+        # Invalid - IP-literal edge cases
+        [violation("user@[999.0.0.1]")],
+        [violation("user@[256.0.0.1]")],
+        [violation("user@[]")],
+        [violation("user@[192.0.2.1")],
+        # Pre-existing coverage retained
+        [violation("user@localhost")],
+        [violation("missing@tld")],
+        [None],
+    ]
+    expected = spark.createDataFrame(checked_data, checked_schema)
+
+    assertDataFrameEqual(actual, expected)
 
 
 def test_is_ipv4_address_in_cidr(spark):
@@ -2050,7 +2170,7 @@ def test_is_ipv4_address_in_cidr(spark):
         ],
         checked_schema,
     )
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_ipv4_address_cidr_edge_cases(spark):
@@ -2243,7 +2363,7 @@ def test_ipv4_address_cidr_edge_cases(spark):
         ],
         checked_schema,
     )
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_ipv4_cidr_invalid_blocks_raise_error(spark):
@@ -2545,7 +2665,7 @@ def test_col_is_valid_ipv6_address(spark):
         ],
         checked_schema,
     )
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_is_ipv6_address_in_cidr(spark):
@@ -2763,7 +2883,7 @@ def test_is_ipv6_address_in_cidr(spark):
         checked_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_ipv6_address_cidr_edge_cases(spark):
@@ -2911,7 +3031,7 @@ def test_ipv6_address_cidr_edge_cases(spark):
             ],
             [
                 None,
-                "Value '2001:db8::1' in Column 'a' is not in the CIDR block '2001:db8::1/128'",
+                None,
                 None,
                 "Value '2001:db8::1' in Column 'a' is not in the CIDR block 'fe80::/10'",
                 "Value '2001:db8::1' in Column 'a' is not in the CIDR block 'ff00::/8'",
@@ -2924,7 +3044,7 @@ def test_ipv6_address_cidr_edge_cases(spark):
                 None,
                 None,
                 "Value 'fe80::1' in Column 'a' is not in the CIDR block 'ff00::/8'",
-                None,
+                "Value 'fe80::1' in Column 'a' is not in the CIDR block 'fc00::/7'",
             ],
             [
                 "Value 'fe7f:ffff:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block '2001:db8::/32'",
@@ -2932,15 +3052,15 @@ def test_ipv6_address_cidr_edge_cases(spark):
                 None,
                 "Value 'fe7f:ffff:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block 'fe80::/10'",
                 "Value 'fe7f:ffff:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block 'ff00::/8'",
-                None,
+                "Value 'fe7f:ffff:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block 'fc00::/7'",
             ],
             [
                 "Value 'fec0::1' in Column 'a' is not in the CIDR block '2001:db8::/32'",
                 "Value 'fec0::1' in Column 'a' is not in the CIDR block '2001:db8::1/128'",
                 None,
-                None,
+                "Value 'fec0::1' in Column 'a' is not in the CIDR block 'fe80::/10'",
                 "Value 'fec0::1' in Column 'a' is not in the CIDR block 'ff00::/8'",
-                None,
+                "Value 'fec0::1' in Column 'a' is not in the CIDR block 'fc00::/7'",
             ],
             # Multicast prefix testing (/8)
             [
@@ -2965,7 +3085,7 @@ def test_ipv6_address_cidr_edge_cases(spark):
                 None,
                 "Value 'feff:ffff:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block 'fe80::/10'",
                 "Value 'feff:ffff:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block 'ff00::/8'",
-                None,
+                "Value 'feff:ffff:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block 'fc00::/7'",
             ],
             # ULA prefix testing (/7)
             [
@@ -3003,7 +3123,7 @@ def test_ipv6_address_cidr_edge_cases(spark):
         ],
         checked_schema,
     )
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_ipv6_cidr_invalid_blocks_raise_error(spark):
@@ -3085,7 +3205,7 @@ def test_is_data_fresh(spark, set_utc_timezone):
         [
             [
                 "Value '2023-01-02 00:00:00' in Column 'b' is older than 120 minutes from base timestamp '2024-01-01 00:00:00'",
-                "Value '2023-01-02 00:00:00' in Column 'b' is older than 120 minutes from base timestamp '2024-01-01 00:00:00'",
+                "Value '2023-01-02 00:00:00' in Column 'b' is older than 120 minutes from base timestamp '2024-01-01'",
                 "Value '2023-01-01' in Column 'c' is older than 3600 minutes from base timestamp '2024-01-01 00:00:00'",
                 None,
             ],
@@ -3101,7 +3221,7 @@ def test_is_data_fresh(spark, set_utc_timezone):
         checked_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_is_data_fresh_cur(spark, set_utc_timezone):
@@ -3119,7 +3239,7 @@ def test_is_data_fresh_cur(spark, set_utc_timezone):
         checked_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_col_is_not_equal_to(spark, set_utc_timezone):
@@ -3185,7 +3305,7 @@ def test_col_is_not_equal_to(spark, set_utc_timezone):
         expected_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_col_is_not_equal_to_with_tolerance(spark, set_utc_timezone):
@@ -3266,7 +3386,7 @@ def test_col_is_not_equal_to_with_tolerance(spark, set_utc_timezone):
         ],
         expected_schema,
     )
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_col_is_equal_to(spark, set_utc_timezone):
@@ -3334,7 +3454,7 @@ def test_col_is_equal_to(spark, set_utc_timezone):
         expected_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_col_is_equal_to_with_tolerance(spark, set_utc_timezone):
@@ -3415,7 +3535,7 @@ def test_col_is_equal_to_with_tolerance(spark, set_utc_timezone):
         ],
         expected_schema,
     )
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_is_valid_json(spark):
@@ -3472,7 +3592,7 @@ def test_is_valid_json(spark):
         expected_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_has_json_keys_require_all_true(spark):
@@ -3535,7 +3655,7 @@ def test_has_json_keys_require_all_true(spark):
         ],
         expected_schema,
     )
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_has_json_keys_require_at_least_one(spark):
@@ -3588,7 +3708,7 @@ def test_has_json_keys_require_at_least_one(spark):
         ],
         expected_schema,
     )
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_has_valid_json_schema(spark):
@@ -3649,7 +3769,7 @@ def test_has_valid_json_schema(spark):
         has_valid_json_schema("a", json_schema),
         has_valid_json_schema("b", json_schema),
     )
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_has_valid_json_schema_with_nested_depth_5(spark):
@@ -3692,7 +3812,7 @@ def test_has_valid_json_schema_with_nested_depth_5(spark):
     actual = test_df.select(
         has_valid_json_schema("json_data", json_schema),
     )
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_has_valid_json_schema_nullability(spark):
@@ -3721,7 +3841,7 @@ def test_has_valid_json_schema_nullability(spark):
     )
 
     actual = test_df.select(has_valid_json_schema("json_data", json_schema))
-    assert_df_equality(actual, expected)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_has_valid_json_schema_with_decimal_fields(spark):
@@ -3754,7 +3874,7 @@ def test_has_valid_json_schema_with_decimal_fields(spark):
     actual = test_df.select(
         has_valid_json_schema("json_data", json_schema),
     )
-    assert_df_equality(actual, expected)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_has_valid_json_schema_with_complex_nested_structure(spark):
@@ -3792,4 +3912,4 @@ def test_has_valid_json_schema_with_complex_nested_structure(spark):
     actual = test_df.select(
         has_valid_json_schema("json_data", json_schema),
     )
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)

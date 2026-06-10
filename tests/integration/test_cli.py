@@ -1,9 +1,8 @@
 import logging
 from dataclasses import dataclass
-import yaml
-import pytest
-from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 
+import pytest
+import yaml
 from databricks.labs.blueprint.parallel import ManyError
 from databricks.labs.dqx.cli import (
     open_remote_config,
@@ -20,7 +19,11 @@ from databricks.labs.dqx.config import WorkspaceConfig, InstallationChecksStorag
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.errors import InvalidConfigError
 from databricks.sdk.errors import NotFound
-from tests.integration.conftest import contains_expected_workflows
+
+from tests.integration.conftest import (
+    assert_df_equality_ignore_fingerprints as assert_df_equality,
+    contains_expected_workflows,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -297,7 +300,7 @@ def test_workflows(ws, installation_ctx):
     installation_ctx.installation_service.run()
     installed_workflows = workflows(installation_ctx.workspace_client, ctx=installation_ctx.workspace_installer)
 
-    expected_workflows_state = [{'workflow': 'profiler', 'state': 'UNKNOWN', 'started': '<never run>'}]
+    expected_workflows_state = [{"workflow": "profiler", "state": "UNKNOWN", "started": "<never run>"}]
     for state in expected_workflows_state:
         assert contains_expected_workflows(installed_workflows, state)
 
@@ -449,7 +452,7 @@ def test_workflows_with_custom_folder(ws, installation_ctx_custom_install_folder
         install_folder=custom_folder,
     )
 
-    expected_workflows_state = [{'workflow': 'profiler', 'state': 'UNKNOWN', 'started': '<never run>'}]
+    expected_workflows_state = [{"workflow": "profiler", "state": "UNKNOWN", "started": "<never run>"}]
     for state in expected_workflows_state:
         assert contains_expected_workflows(installed_workflows, state)
 

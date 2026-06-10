@@ -2,12 +2,16 @@
 
 import logging
 import os
+import time
 from typing import Any
 from uuid import uuid4
 
 import mlflow
+import mlflow.sklearn
+import mlflow.utils.rest_utils as mlflow_rest_utils
 import pytest
 import pyspark.sql.functions as F
+from mlflow.exceptions import RestException
 from pyspark.sql import DataFrame, SparkSession
 
 from databricks.labs.dqx.anomaly.anomaly_engine import AnomalyEngine
@@ -371,6 +375,47 @@ def create_anomaly_dataset_rule(
 # -----------------------------------------------------------------------------
 
 
+_AUTH_FLAKE_MARKERS = ("Credential was not sent", "401")
+
+
+def _is_transient_auth_flake(exc: RestException) -> bool:
+    return any(marker in str(exc) for marker in _AUTH_FLAKE_MARKERS)
+
+
+@pytest.fixture(autouse=True)
+def _retry_mlflow_auth_flakes(monkeypatch):
+    """Retry transient 401s from Databricks metadata-service auth on MLflow REST calls.
+
+    Test-only workaround: the Databricks SDK's metadata-service auth path occasionally
+    returns stale/empty headers without raising. MLflow then sends the request and
+    Databricks rejects it with 401 "Credential was not sent". Production code
+    intentionally does not retry — real users with genuine auth issues should see the
+    error immediately.
+
+    Patches *mlflow.utils.rest_utils.http_request* — the single HTTP call every MLflow
+    REST operation routes through (load_model, MlflowClient methods, mlflow.* helpers,
+    log_model, etc.). This is MLflow-internal API; if the symbol relocates in a future
+    MLflow release, tests will fail with AttributeError at startup rather than silently
+    skipping the retry.
+    """
+    original_http_request = mlflow_rest_utils.http_request
+
+    def retrying_http_request(*args: Any, **kwargs: Any) -> Any:
+        last_exc: RestException | None = None
+        for attempt in range(5):
+            try:
+                return original_http_request(*args, **kwargs)
+            except RestException as e:
+                if not _is_transient_auth_flake(e):
+                    raise
+                last_exc = e
+                time.sleep(2**attempt)  # 1s, 2s, 4s, 8s, 16s (max ~31s total)
+        assert last_exc is not None
+        raise last_exc
+
+    monkeypatch.setattr(mlflow_rest_utils, "http_request", retrying_http_request)
+
+
 @pytest.fixture
 def anomaly_engine(ws, spark):
     """Provide an AnomalyEngine instance for anomaly integration tests."""
@@ -399,6 +444,25 @@ def _delete_mlflow_experiment_by_name(experiment_path: str) -> None:
     except Exception as e:
         msg = f"Could not delete MLflow experiment by name {experiment_path}: {e}"
         logger.warning(msg)
+
+
+@pytest.fixture(autouse=True)
+def _ensure_databricks_config_file(ws, tmp_path_factory):
+    """Ensure DATABRICKS_CONFIG_FILE points to a valid profile.
+
+    MLflow requires a Databricks config profile to exist even when using SDK auth.
+    If DATABRICKS_CONFIG_FILE is already set and the file exists, this is a no-op.
+    Otherwise, create a dummy profile with the real host from the workspace client.
+    """
+    config_file = os.environ.get("DATABRICKS_CONFIG_FILE")
+    if config_file and os.path.isfile(config_file):
+        return
+
+    profile_dir = tmp_path_factory.mktemp("databricks_config")
+    profile_path = profile_dir / "databricks_profile"
+    host = ws.config.host
+    profile_path.write_text(f"[DEFAULT]\nhost = {host}\ntoken = dummy\n")
+    os.environ["DATABRICKS_CONFIG_FILE"] = str(profile_path)
 
 
 @pytest.fixture

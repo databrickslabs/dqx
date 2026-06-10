@@ -81,6 +81,7 @@ class StreamingMetricsListener(listener.StreamingQueryListener):
             output_location=self.metrics_observation.output_location,
             quarantine_location=self.metrics_observation.quarantine_location,
             checks_location=self.metrics_observation.checks_location,
+            rule_set_fingerprint=self.metrics_observation.rule_set_fingerprint,
             user_metadata=self.metrics_observation.user_metadata,
         )
         metrics_df = DQMetricsObserver.build_metrics_df(self.spark, metrics_observation)

@@ -1,6 +1,6 @@
 import pyspark.errors.exceptions.connect
 import pytest
-from chispa.dataframe_comparer import assert_df_equality  # type: ignore
+from pyspark.testing.utils import assertDataFrameEqual
 
 from databricks.labs.dqx.config import OutputConfig
 from databricks.labs.dqx.engine import DQEngine
@@ -34,8 +34,8 @@ def test_save_results_in_table(ws, spark, make_schema, make_random):
     output_df_loaded = spark.table(output_table)
     quarantine_df_loaded = spark.table(quarantine_table)
 
-    assert_df_equality(output_df, output_df_loaded)
-    assert_df_equality(quarantine_df, quarantine_df_loaded)
+    assertDataFrameEqual(output_df, output_df_loaded, checkRowOrder=False)
+    assertDataFrameEqual(quarantine_df, quarantine_df_loaded, checkRowOrder=False)
 
     output_config.mode = "append"
     output_config.options = {"overwriteSchema": "true"}
@@ -49,8 +49,8 @@ def test_save_results_in_table(ws, spark, make_schema, make_random):
         quarantine_config=quarantine_config,
     )
 
-    assert_df_equality(output_df.union(output_df), output_df_loaded)
-    assert_df_equality(quarantine_df.union(quarantine_df), quarantine_df_loaded)
+    assertDataFrameEqual(output_df.union(output_df), output_df_loaded, checkRowOrder=False)
+    assertDataFrameEqual(quarantine_df.union(quarantine_df), quarantine_df_loaded, checkRowOrder=False)
 
 
 def test_save_results_in_table_only_output(ws, spark, make_schema, make_random):
@@ -70,8 +70,7 @@ def test_save_results_in_table_only_output(ws, spark, make_schema, make_random):
     )
 
     output_df_loaded = spark.table(output_table)
-
-    assert_df_equality(output_df, output_df_loaded)
+    assertDataFrameEqual(output_df, output_df_loaded, checkRowOrder=False)
 
 
 def test_save_results_in_table_only_quarantine(ws, spark, make_schema, make_random):
@@ -88,7 +87,7 @@ def test_save_results_in_table_only_quarantine(ws, spark, make_schema, make_rand
     engine.save_results_in_table(quarantine_df=quarantine_df, quarantine_config=quarantine_config)
 
     output_df_loaded = spark.table(quarantine_table)
-    assert_df_equality(quarantine_df, output_df_loaded)
+    assertDataFrameEqual(quarantine_df, output_df_loaded)
 
 
 def test_save_results_in_table_in_user_installation(ws, spark, installation_ctx, make_schema, make_random):
@@ -120,8 +119,8 @@ def test_save_results_in_table_in_user_installation(ws, spark, installation_ctx,
     output_df_loaded = spark.table(output_table)
     quarantine_df_loaded = spark.table(quarantine_table)
 
-    assert_df_equality(output_df, output_df_loaded)
-    assert_df_equality(quarantine_df, quarantine_df_loaded)
+    assertDataFrameEqual(output_df, output_df_loaded, checkRowOrder=False)
+    assertDataFrameEqual(quarantine_df, quarantine_df_loaded, checkRowOrder=False)
 
 
 def test_save_results_in_table_in_user_installation_only_output(ws, spark, installation_ctx, make_schema, make_random):
@@ -147,7 +146,7 @@ def test_save_results_in_table_in_user_installation_only_output(ws, spark, insta
     )
 
     output_df_loaded = spark.table(output_table)
-    assert_df_equality(output_df, output_df_loaded)
+    assertDataFrameEqual(output_df, output_df_loaded, checkRowOrder=False)
 
 
 def test_save_results_in_table_in_user_installation_only_quarantine(
@@ -175,7 +174,7 @@ def test_save_results_in_table_in_user_installation_only_quarantine(
     )
 
     output_df_loaded = spark.table(quarantine_table)
-    assert_df_equality(quarantine_df, output_df_loaded)
+    assertDataFrameEqual(quarantine_df, output_df_loaded)
 
 
 def test_save_results_in_table_in_user_installation_output_table_provided(
@@ -209,8 +208,8 @@ def test_save_results_in_table_in_user_installation_output_table_provided(
     output_df_loaded = spark.table(output_table)
     quarantine_df_loaded = spark.table(quarantine_table)
 
-    assert_df_equality(output_df, output_df_loaded)
-    assert_df_equality(quarantine_df, quarantine_df_loaded)
+    assertDataFrameEqual(output_df, output_df_loaded, checkRowOrder=False)
+    assertDataFrameEqual(quarantine_df, quarantine_df_loaded, checkRowOrder=False)
 
 
 def test_save_results_in_table_in_user_installation_quarantine_table_provided(
@@ -244,8 +243,8 @@ def test_save_results_in_table_in_user_installation_quarantine_table_provided(
     output_df_loaded = spark.table(output_table)
     quarantine_df_loaded = spark.table(quarantine_table)
 
-    assert_df_equality(output_df, output_df_loaded)
-    assert_df_equality(quarantine_df, quarantine_df_loaded)
+    assertDataFrameEqual(output_df, output_df_loaded, checkRowOrder=False)
+    assertDataFrameEqual(quarantine_df, quarantine_df_loaded, checkRowOrder=False)
 
 
 def test_save_results_in_table_in_user_installation_missing_output_and_quarantine_table(
@@ -326,8 +325,8 @@ def test_save_results_in_table_in_custom_folder_installation(
     output_df_loaded = spark.table(output_table)
     quarantine_df_loaded = spark.table(quarantine_table)
 
-    assert_df_equality(output_df, output_df_loaded)
-    assert_df_equality(quarantine_df, quarantine_df_loaded)
+    assertDataFrameEqual(output_df, output_df_loaded, checkRowOrder=False)
+    assertDataFrameEqual(quarantine_df, quarantine_df_loaded, checkRowOrder=False)
 
 
 def test_save_streaming_results_in_table(ws, spark, make_schema, make_random, make_volume):
@@ -359,4 +358,4 @@ def test_save_streaming_results_in_table(ws, spark, make_schema, make_random, ma
     )
 
     output_df_loaded = spark.table(output_table)
-    assert_df_equality(input_df, output_df_loaded)
+    assertDataFrameEqual(input_df, output_df_loaded, checkRowOrder=False)

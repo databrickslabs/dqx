@@ -97,11 +97,14 @@ class DspyRuleSignature(dspy.Signature):
     quality_rules: str = dspy.OutputField(
         desc=(
             "Return a valid JSON array of data quality rules. Use double quotes for JSON syntax. "
-            "For string literal values in check arguments (eg. value or limit parameter), wrap them in single quotes. "
+            "For string literal values in check arguments (eg. value or limit parameter), wrap them in single quotes around the text (e.g. \"'test'\" as the JSON value), not bare test — otherwise Spark treats it as a column name. "
             "In SQL filter expressions, use single quotes for string literals and capitalize SQL keywords. "
             "Criticality can be error or warn. "
             "Filter may be used to apply the rule to the relevant records only. "
             "Check function name and doc to select the appropriate check function. "
+            "Use the exact argument names from the function signature in available_functions — do not invent synonyms (e.g. regex_match takes 'regex', not 'pattern'). "
+            "Include every required parameter for that function in check arguments (per its signature); filter does not substitute for missing arguments (e.g. regex_match still requires 'column' even when a filter mentions that column). "
+            "When using sql_query, set input_placeholder in arguments (default input_view). In the query, use double curly braces around that value, e.g. input_placeholder=orders yields FROM {{ orders }}. The placeholder name in {{ }} must match the input_placeholder argument value. "
             "Format: [{\"criticality\":\"error\",\"check\":{\"function\":\"name\",\"arguments\":{\"column\":\"col\"}},\"filter\":\"expression\"}] "
             "Example: [{\"criticality\":\"error\",\"check\":{\"function\":\"is_not_null\",\"arguments\":{\"column\":\"customer_id\"}},\"filter\":\"customer_name is not null\"}]"
         )
@@ -222,11 +225,14 @@ class DspyRuleUsingDataStatsSignature(dspy.Signature):
     quality_rules: str = dspy.OutputField(
         desc=(
             "Return a valid JSON array of data quality rules. Use double quotes for JSON syntax. "
-            "For string literal values in check arguments (eg. value or limit parameter), wrap them in single quotes. "
+            "For string literal values in check arguments (eg. value or limit parameter), wrap them in single quotes around the text (e.g. \"'test'\" as the JSON value), not bare test — otherwise Spark treats it as a column name. "
             "In SQL filter expressions, use single quotes for string literals and capitalize SQL keywords. "
             "Criticality can be error or warn. "
             "Filter may be used to apply the rule to the relevant records only. "
             "Check function name and doc to select the appropriate check function. "
+            "Use the exact argument names from the function signature in available_functions — do not invent synonyms (e.g. regex_match takes 'regex', not 'pattern'). "
+            "Include every required parameter for that function in check arguments (per its signature); filter does not substitute for missing arguments (e.g. regex_match still requires 'column' even when a filter mentions that column). "
+            "When using sql_query, set input_placeholder in arguments (default input_view). In the query, use double curly braces around that value, e.g. input_placeholder=orders yields FROM {{ orders }}. The placeholder name in {{ }} must match the input_placeholder argument value. "
             "Format: [{\"criticality\":\"error\",\"check\":{\"function\":\"name\",\"arguments\":{\"column\":\"col\"}},\"filter\":\"expression\"}] "
             "Example: [{\"criticality\":\"error\",\"check\":{\"function\":\"is_not_null\",\"arguments\":{\"column\":\"customer_id\"}},\"filter\":\"customer_name is not null\"}]"
         )

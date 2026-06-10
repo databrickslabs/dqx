@@ -10,6 +10,7 @@ import useBaseUrl from '@docusaurus/useBaseUrl';
 # Applying Quality Checks
 
 You can apply quality checks to your data using the following approaches:
+* [DQX Studio (no-code UI)](/docs/guide/dqx_studio): for a no-code experience, DQX Studio is the recommended option. It lets you apply checks to data at-rest and review the results from a browser, without writing code or maintaining configuration files.
 * [Programmatic approach](#programmatic-approach): you can apply checks programmatically to a DataFrame or Tables. This method is required if you want to perform a data quality check for data in-transit.
 * [No-code approach (Workflows)](#no-code-approach-workflows): you can apply checks for data at-rest using workflows if DQX is installed in the workspace as a tool. This does not require code-level integration and is suitable for data already stored in Delta tables or files.
 
@@ -23,12 +24,12 @@ Checks can be applied to the input data by one of the following methods of the `
 * For checks defined with DQX classes:
   * `apply_checks`: apply quality checks to a DataFrame and report issues as additional columns.
   * `apply_checks_and_split`: apply quality checks and split the input DataFrame into valid and invalid (quarantined) DataFrames.
-  * `apply_checks_and_save_in_table`: end-to-end approach to apply quality checks to a table and save results to the output table(s) via single method call.
+  * `apply_checks_and_save_in_table`: end-to-end approach to apply quality checks to a table and save results to the output table(s) via single method call. Checks can be passed directly or loaded automatically from a storage location.
 
 * For checks defined as metadata (list of dictionaries, or [loaded from a storage](/docs/guide/quality_checks_storage)):
   * `apply_checks_by_metadata`: apply quality checks to a DataFrame and report issues as additional columns.
   * `apply_checks_by_metadata_and_split`: apply quality checks and split the input DataFrame into valid and invalid (quarantined) DataFrames.
-  * `apply_checks_by_metadata_and_save_in_table`: end-to-end approach to apply quality checks to a table and save results to output table(s) via single method call.
+  * `apply_checks_by_metadata_and_save_in_table`: end-to-end approach to apply quality checks to a table and save results to output table(s) via single method call. Checks can be passed directly as metadata/dict or loaded automatically from a storage location.
 
 * There are also method for applying checks to multiple input locations at once:
   * `apply_checks_and_save_in_tables`: apply quality checks to input locations defined by provided list of `RunConfig`.
@@ -36,7 +37,11 @@ Checks can be applied to the input data by one of the following methods of the `
 
 You can see the full list of `DQEngine` methods [here](/docs/reference/engine/#dqx-engine-methods).
 
-The engine ensures that the specified `column`, `columns`, `filter`, or sql 'expression' fields can be resolved in the input DataFrame. If any of these fields are invalid, the check evaluation is skipped, and the results include the check failure with a message identifying the invalid fields.
+<Admonition type="info" title="Quarantine-only mode">
+The end-to-end `apply_checks_and_save_in_table` and `apply_checks_by_metadata_and_save_in_table` methods accept either `output_config`, `quarantine_config`, or both. If `output_config` is omitted and `quarantine_config` is provided, only the quarantined table is produced. This applies to both `apply_checks_and_save_in_tables` and `apply_checks_and_save_in_tables_for_patterns`.
+</Admonition>
+
+The engine ensures that the specified `column`, `columns`, `filter`, or sql 'expression' fields can be resolved in the input DataFrame. If any of these fields are invalid, the check evaluation is skipped, and the results include the check failure with a message identifying the invalid fields and `skipped=True` in the result struct. You can suppress these entries entirely or identify them downstream — see [Suppressing skipped check entries](/docs/guide/additional_configuration#suppressing-skipped-check-entries).
 The engine will raise an error if you try to apply checks with invalid definition (e.g. wrong syntax).
 In addition, you can also perform a standalone syntax validation of the checks as described [here](/docs/guide/quality_checks_definition#validating-syntax-of-quality-checks).
 
@@ -111,6 +116,8 @@ You can customize the reporting columns as described in the [additional configur
     )
 
     # Option 3 End-to-End approach: apply quality checks to a table and save results to valid and invalid (quarantined) tables
+    # By default, apply_checks_and_save_in_table method apply checks to the entire input table.
+    # Incremental processing is supported using streaming with the AvailableNow trigger for batch-style execution, along with checkpointing to ensure consistency across runs.
     dq_engine.apply_checks_and_save_in_table(
         checks=checks,
         input_config=InputConfig(location="catalog.schema.input"),
@@ -123,6 +130,22 @@ You can customize the reporting columns as described in the [additional configur
         checks=checks,
         input_config=InputConfig(location="catalog.schema.input"),
         output_config=OutputConfig(location="catalog.schema.output"),
+    )
+
+    # Option 5 End-to-End approach: apply checks and write only invalid rows to a quarantine table
+    dq_engine.apply_checks_and_save_in_table(
+        checks=checks,
+        input_config=InputConfig(location="catalog.schema.input"),
+        quarantine_config=OutputConfig(location="catalog.schema.quarantine"),
+    )
+
+    # Option 6 End-to-End approach: load checks from a storage location and apply them to the entire input table
+    dq_engine.apply_checks_and_save_in_table(
+        input_config=InputConfig(location="catalog.schema.input"),
+        output_config=OutputConfig(location="catalog.schema.valid"),
+        quarantine_config=OutputConfig(location="catalog.schema.quarantine"),
+        checks_location="catalog.schema.dq_checks",  # delta table, volume or workspace file path
+        run_config_name="default",  # required for checks stored in a table
     )
     ```
   </TabItem>
@@ -199,6 +222,25 @@ In the example below, checks are defined in YAML syntax for convenience and then
         checks=checks,
         input_config=InputConfig(location="catalog.schema.input"),
         output_config=OutputConfig(location="catalog.schema.output"),
+    )
+
+    # Option 5 End-to-End approach: apply checks and write only invalid rows to a quarantine table
+    # (valid rows are not written when output_config is omitted)
+    dq_engine.apply_checks_by_metadata_and_save_in_table(
+        checks=checks,
+        input_config=InputConfig(location="catalog.schema.input"),
+        quarantine_config=OutputConfig(location="catalog.schema.quarantine"),
+    )
+
+    # Option 6 End-to-End approach: load checks from a storage location and apply them to the entire input table
+    # By default, apply_checks_and_save_in_table method apply checks to the entire input table.
+    # Incremental processing is supported using streaming with the AvailableNow trigger for batch-style execution, along with checkpointing to ensure consistency across runs.
+    dq_engine.apply_checks_by_metadata_and_save_in_table(
+        input_config=InputConfig(location="catalog.schema.input"),
+        output_config=OutputConfig(location="catalog.schema.valid"),
+        quarantine_config=OutputConfig(location="catalog.schema.quarantine"),
+        checks_location="catalog.schema.dq_checks",  # delta table, volume or workspace file path
+        run_config_name="default",  # required for checks stored in a table
     )
     ```
   </TabItem>
@@ -369,16 +411,26 @@ The DQX integration with Lakeflow Pipelines does not use Expectations but DQX's 
 
 You can define checks using DQX classes or as metadata (list of dictionaries) or loaded from YAML/JSON file or a table as described [here](/docs/guide/quality_checks_storage).
 
+<Admonition type="warning" title="Incremental materialized views">
+When writing DQX results to Lakeflow Materialized Views, you can set *run_time_overwrite* and *run_id_overwrite* as **static values** in `ExtraParams` when creating the `DQEngine`. This enables Lakeflow engine to continue incrementally updating the Materialized Views across pipeline runs. Without static values, each run may be treated as a new run, preventing proper incremental updates.
+</Admonition>
+
 #### Option 1: Apply quality check and quarantine bad records
 
 <Tabs>
   <TabItem value="Python" label="Python" default>
     ```python
     import dlt
+    from databricks.labs.dqx.config import ExtraParams
     from databricks.labs.dqx.engine import DQEngine
     from databricks.sdk import WorkspaceClient
 
-    dq_engine = DQEngine(WorkspaceClient())
+    # (Optional) If you use Materialized Views (MVs) in your pipelines, you can set static run_time_overwrite and run_id_overwrite extra params to make sure incrementalizations works
+    extra_params = ExtraParams(
+        run_time_overwrite="2025-01-01T00:00:00",  # static value for MV incrementalization
+        run_id_overwrite="lakeflow_pipeline_run",   # static value for MV incrementalization
+    )
+    dq_engine = DQEngine(WorkspaceClient(), extra_params=extra_params)
 
     checks = ... # quality rules / checks defined as metadata or DQX classes
 
@@ -408,11 +460,17 @@ You can define checks using DQX classes or as metadata (list of dictionaries) or
   <TabItem value="Python" label="Python" default>
     ```python
     import dlt
+    from databricks.labs.dqx.config import ExtraParams
     from databricks.labs.dqx.engine import DQEngine
     from databricks.sdk import WorkspaceClient
 
+    # (Optional) If you use Materialized Views (MVs) in your pipelines, you can set static run_time_overwrite and run_id_overwrite extra params to make sure incrementalizations works
+    extra_params = ExtraParams(
+        run_time_overwrite="2025-01-01T00:00:00",  # static value for incrementalization
+        run_id_overwrite="lakeflow_pipeline_run",   # static value for incrementalization
+    )
     checks = ... # quality rules / checks defined as metadata or DQX classes
-    dq_engine = DQEngine(WorkspaceClient())
+    dq_engine = DQEngine(WorkspaceClient(), extra_params=extra_params)
 
     @dlt.view
     def bronze_dq_check():
@@ -555,7 +613,7 @@ dq_engine.save_results_in_table(
 
 # End-to-end method: apply checks and save results in tables using DQX method
 dq_engine.apply_checks_and_save_in_table(
-    checks=checks,
+    checks=checks,  # or provide checks_location and run_config_name to auto-load from checks storage
     input_config=InputConfig(
       location="catalog.schema.input"
     ),
@@ -574,7 +632,7 @@ dq_engine.apply_checks_and_save_in_table(
 
 # End-to-end method: apply checks and save results in tables using streaming using DQX method
 dq_engine.apply_checks_and_save_in_table(
-    checks=checks,
+    checks=checks,  # or provide checks_location and run_config_name to auto-load from checks storage
     input_config=InputConfig(
       location="catalog.schema.input",
       is_streaming=True,
@@ -600,6 +658,10 @@ dq_engine.apply_checks_and_save_in_table(
 ## No-code approach (Workflows)
 
 You can apply quality checks to data at-rest using DQX Workflows without writing any code. This requires installation of DQX in the workspace as a tool (see [installation guide](/docs/installation)).
+
+<Admonition type="tip" title="Prefer a UI?">
+[DQX Studio](/docs/guide/dqx_studio) is the recommended no-code option — it provides a browser-based UI to apply checks, review results, and monitor runs, without maintaining a configuration file.
+</Admonition>
 
 The workflows use [configuration file](/docs/installation/#configuration-file) to specify input and output locations, and to apply sets of quality checks from a storage.
 
@@ -822,6 +884,7 @@ The following fields from the [configuration file](/docs/installation/#configura
    - `sample_seed`: seed for reproducible sampling.
    - `limit`: maximum number of records to analyze.
    - `filter`: filter for the input data as a string SQL expression (default: None).
+   - `criticality`: default criticality for generated rules, either `error` or `warn` (default: `error`).
 - `checks_user_requirements`: (optional) user input for AI-assisted rule generation
 - `llm_config`: (optional) configuration for the AI-assisted features
 - `extra_params`: (optional) extra parameters to pass to the jobs such as result column names and user_metadata
@@ -872,6 +935,7 @@ Example of the configuration file (relevant fields only):
       limit: 1000
       sample_fraction: 0.3
       summary_stats_file: profile_summary_stats.yml
+      criticality: error  # default criticality for generated rules ('error' or 'warn')
       llm_primary_key_detection: false
     checks_user_requirements: "business rules description" # optional user input for the llm-assisted features
     custom_check_functions:  # optional
@@ -927,8 +991,10 @@ To enable summary metrics programmatically, create and pass a `DQMetricsObserver
     engine.save_summary_metrics(observed_metrics=metrics_observation.get, metrics_config=OutputConfig(location="catalog.schema.metrics"))
 
     # Option 3 End-to-End approach: apply quality checks to a table, save results to valid and invalid (quarantined) tables, and save metrics to a metrics table
+    # By default, apply_checks_and_save_in_table method apply checks to the entire input table.
+    # Incremental processing is supported using streaming with the AvailableNow trigger for batch-style execution, along with checkpointing to ensure consistency across runs.
     dq_engine.apply_checks_and_save_in_table(
-        checks=checks,
+        checks=checks,  # or provide checks_location and run_config_name to auto-load from checks storage
         input_config=InputConfig(location="catalog.schema.input"),
         output_config=OutputConfig(location="catalog.schema.valid"),
         quarantine_config=OutputConfig(location="catalog.schema.quarantine"),
@@ -937,7 +1003,7 @@ To enable summary metrics programmatically, create and pass a `DQMetricsObserver
 
     # Option 4 End-to-End approach: apply quality checks to a table, save results to an output table, and save metrics to a metrics table
     dq_engine.apply_checks_and_save_in_table(
-        checks=checks,
+        checks=checks,  # or provide checks_location and run_config_name to auto-load from checks storage
         input_config=InputConfig(location="catalog.schema.input"),
         output_config=OutputConfig(location="catalog.schema.output"),
         metrics_config=OutputConfig(location="catalog.schema.metrics"),
@@ -957,7 +1023,7 @@ For detailed information about summary metrics, including examples and best prac
 
 ## Detailed quality checking results
 
-Detailed row-level quality check results are added as additional columns to the output or quarantine (if defined) DataFrame or tables (if saved). These columns capture the outcomes of the checks performed on the input data.
+Detailed row-level quality check results are added as additional columns to the output or quarantine (if defined) DataFrame or tables (if saved). These columns capture the outcomes of the checks performed on the input data. For full schema reference of output, quarantine, and result columns, see [Table Schemas and Relationships](/docs/reference/table_schemas).
 The result columns are named `_error` and `_warning` by default, but you can customize them as described in the [additional configuration](/docs/guide/additional_configuration) section.
 
 The result columns can be used to monitor and track data quality issues and for further processing, such as using in a dashboard, or other downstream applications.
@@ -972,14 +1038,16 @@ Below is a sample output of a check stored in a result column (error or warning)
     "filter": "country = 'Poland'",
     "function": "is_not_null",
     "run_time": "2025-10-29T15:09:41.174Z",
-    "run_id": "2f9120cf-e9f2-446a-8278-12d508b00639"
+    "run_id": "2f9120cf-e9f2-446a-8278-12d508b00639",
     "user_metadata": {"key1": "value1", "key2": "value2"},
+    "rule_fingerprint": "f921efe3649267b67b9563861e0eee3adcbccd1ae8f38f86ac1467aeffea75eb",
+    "rule_set_fingerprint": "9266a2f58cc01e52dee9d38e6e586f138a5c2d8c17e02ba27298838e9395fb6c",
   },
 ]
 ```
 
 The structure of the result columns is an array of struct containing the following fields
-(see the exact structure [here](https://github.com/databrickslabs/dqx/blob/v0.13.0/src/databricks/labs/dqx/schema/dq_result_schema.py)):
+(see the exact structure [here](https://github.com/databrickslabs/dqx/blob/v0.14.0/src/databricks/labs/dqx/schema/dq_result_schema.py)):
 - `name`: name of the check (string type).
 - `message`: message describing the quality issue (string type).
 - `columns`: name of the column(s) where the quality issue was found (string type).
@@ -988,6 +1056,8 @@ The structure of the result columns is an array of struct containing the followi
 - `run_time`: timestamp when the check was executed (timestamp type).
 - `run_id`: unique run ID recorded in the detailed quality checking results as well as summary metrics to enable cross-referencing. When reusing the same `DQEngine` and observer instances, the run ID stays the same. Each apply checks execution does not generate a new run ID for the same instance. It is only changed when new engine and observer (if using one) is created.
 - `user_metadata`: optional key-value custom metadata provided by the user (dictionary type).
+- `rule_fingerprint`: hex-encoded SHA-256 hash string of a single rule definition
+- `rule_set_fingerprint`: hex-encoded SHA-256 hash string of the complete rule set
 
 The below example demonstrates how to extract the results from a result columns in PySpark:
 <Tabs>
@@ -1020,12 +1090,49 @@ The below example demonstrates how to extract the results from a result columns 
 
 The `results_df` will contain the following columns:
 ```python
-+------------------+-----------------------+----------+--------------------+-------------+-------------------------------+--------------------------------------+----------------+
-| name             | message               | columns  | filter             | function    | run_time                      | run_id                               | user_metadata  |
-+------------------+-----------------------+----------+--------------------+-------------+-------------------------------+--------------------------------------+----------------+
-| col_city_is_null | Column 'city' is null | ['city'] | country = 'Poland' | is_not_null | 2025-10-29T15:11:51.354+00:00 | 2f9120cf-e9f2-446a-8278-12d508b00639 | {}             |
-| ...              | ...                   | ...      | ...                | ...         | ...                           | ...                                  |                |
-+------------------+-----------------------+----------+--------------------+-------------+-------------------------------+--------------------------------------+----------------+
++------------------+-----------------------+----------+--------------------+-------------+-------------------------------+--------------------------------------+----------------+------------------------------------------------------------------+------------------------------------------------------------------+
+| name             | message               | columns  | filter             | function    | run_time                      | run_id                               | user_metadata  | rule_fingerprint                                                 | rule_set_fingerprint                                             |
++------------------+-----------------------+----------+--------------------+-------------+-------------------------------+--------------------------------------+----------------+------------------------------------------------------------------+------------------------------------------------------------------+
+| col_city_is_null | Column 'city' is null | ['city'] | country = 'Poland' | is_not_null | 2025-10-29T15:11:51.354+00:00 | 2f9120cf-e9f2-446a-8278-12d508b00639 | {}             | f921efe3649267b67b9563861e0eee3adcbccd1ae8f38f86ac1467aeffea75eb | 9266a2f58cc01e52dee9d38e6e586f138a5c2d8c17e02ba27298838e9395fb6c |
+| ...              | ...                   | ...      | ...                | ...         | ...                           | ...                                  |                | ...                                                              | ...                                                              |
++------------------+-----------------------+----------+--------------------+-------------+-------------------------------+--------------------------------------+----------------+------------------------------------------------------------------+------------------------------------------------------------------+
 ```
 
-An example of how to provide user metadata can be found in the [Additional Configuration](/docs/guide/additional_configuration) section.
+### Retrieving definition of checks applied
+
+DQX provides full traceability across all layers:
+1. **Summary table → checks table**: Use `checks_location` and `rule_set_fingerprint` from the summary table to load the exact rule set from the checks table and see which rules were applied for that run.
+2. **Summary table → row-level results**: Use `run_id` from the summary table to filter the output or quarantine table and drill down to which rows failed which checks.
+3. **Row-level results → checks table**: Use `rule_fingerprint` and `rule_set_fingerprint` from each result row to join with the checks table and retrieve the exact check definition (function, arguments, filter, etc.) for that failure.
+
+The example below shows how to get rule definitions for failed checks using detailed results and the checks table.
+DQX automatically generates rule and rule set fingerprints to make this possible. The fingerprints in the detailed results match those stored in the summary metrics table and the checks table.
+If you store checks in files instead of a table, you can calculate the fingerprints as described in [Loading quality checks from a storage](/docs/guide/quality_checks_storage#calculating-fingerprints-manually).
+
+
+```python
+from pyspark.sql import functions as F
+
+# Checks table (e.g. from DQEngine.save_checks)
+checks_table = "main.default.dqx_checks_table"
+run_config_name = "main.default.input_table"
+
+checks_df = spark.table(checks_table).filter(
+    F.col("run_config_name") == run_config_name
+).select(
+    F.col("name").alias("check_name"),
+    F.col("criticality").alias("check_criticality"),
+    F.col("check").alias("check_definition"),
+    F.col("filter").alias("check_filter"),
+    F.col("rule_fingerprint"),
+    F.col("rule_set_fingerprint"),
+  )
+
+results_with_checks = results_df.join(
+    checks_df,
+    on=["rule_fingerprint", "rule_set_fingerprint"],
+    how="left",
+)
+
+results_with_checks.select("name", "message", "check_name", "check_definition", "check_criticality", "check_filter").show()
+```

@@ -20,12 +20,21 @@ install_logger()
 logging.captureWarnings(True)
 warnings_logger = logging.getLogger("py.warnings")
 warnings_logger.setLevel(logging.INFO)
+# Ensure captured warnings display the message correctly (avoids "%s" placeholder in some envs)
+if not warnings_logger.handlers:
+    _wh = logging.StreamHandler()
+    _wh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s"))
+    warnings_logger.addHandler(_wh)
+    warnings_logger.propagate = False
 
 # Configure logger levels
 logging.getLogger("databricks").setLevel(logging.INFO)
 logging.getLogger("pyspark.sql.connect.logging").setLevel(logging.CRITICAL)
 logging.getLogger("pyspark.sql.connect.client.logging").setLevel(logging.CRITICAL)
 logging.getLogger("mlflow").setLevel(logging.ERROR)
+# pyspark.pandas attaches a JVM-backed usage logger on import; under Spark Connect there is
+# no local JVM, so the attach fails and emits a harmless WARNING on every import. Suppress it.
+logging.getLogger("pyspark.pandas.usage_logger").setLevel(logging.ERROR)
 
 
 # Disable MLflow Trace UI in notebooks

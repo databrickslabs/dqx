@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import re
+import time
 from collections.abc import Callable, Generator
 from pathlib import Path
 from dataclasses import dataclass, replace
@@ -30,12 +31,112 @@ from databricks.labs.dqx.installer.workflow_installer import WorkflowDeployment
 from databricks.labs.dqx.installer.workflow_task import Task
 from databricks.labs.dqx.workflows_runner import WorkflowsRunner
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.config import Config
 from databricks.sdk.errors import BadRequest, NotFound, RequestLimitExceeded, TooManyRequests
 from databricks.sdk.retries import retried
 from databricks.sdk.service.database import DatabaseCatalog, DatabaseInstance
 from databricks.sdk.service.workspace import ImportFormat
 
 logger = logging.getLogger(__name__)
+
+
+class PrebuiltWheels(WheelsV2):
+    """Test-only WheelsV2 that copies a pre-built wheel when `DQX_PREBUILT_WHEEL` is set.
+
+    CI builds the wheel once via the prebuild-wheel action while the JFrog token is fresh,
+    then points each pytest invocation at that artifact so per-test `pip wheel` calls do
+    not fail after the 1h OIDC token TTL expires mid-suite. Local development falls through
+    to upstream's standard `pip wheel` behaviour.
+    """
+
+    def _build_wheel(
+        self,
+        tmp_dir: str,
+        *,
+        verbose: bool = False,
+        no_deps: bool = True,
+        dirs_exist_ok: bool = False,
+    ):
+        prebuilt = os.environ.get("DQX_PREBUILT_WHEEL")
+        if not prebuilt:
+            return super()._build_wheel(tmp_dir, verbose=verbose, no_deps=no_deps, dirs_exist_ok=dirs_exist_ok)
+        src = Path(prebuilt)
+        dst = Path(tmp_dir) / src.name
+        dst.write_bytes(src.read_bytes())
+        return Path(tmp_dir).glob("*.whl")
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _mlflow_env():
+    """Ensure MLflow points at Databricks Unity Catalog when running against a workspace.
+    Uses setdefault so explicit env vars (e.g. in CI) take precedence."""
+    os.environ.setdefault("MLFLOW_TRACKING_URI", "databricks")
+    os.environ.setdefault("MLFLOW_REGISTRY_URI", "databricks-uc")
+
+
+# Transient-auth retry is observed in three flavors, all originating from the Databricks SDK's
+# metadata-service credentials path under CI load. We retry at the auth resolution step so the
+# wrapper covers every caller (WorkspaceClient, MLflow, streaming listeners, etc.) uniformly.
+_AUTH_FLAKE_MARKERS = (
+    "Metadata Service returned empty token",
+    "metadata-service",
+    "Read timed out",
+    "Credential was not sent",
+)
+
+
+def _is_transient_auth_flake(exc: BaseException) -> bool:
+    msg = str(exc)
+    return any(marker in msg for marker in _AUTH_FLAKE_MARKERS)
+
+
+@pytest.fixture(autouse=True)
+def _retry_sdk_auth_flakes(monkeypatch):
+    """Retry Databricks SDK auth on transient metadata-service failures.
+
+    Test-only workaround for several observed flake flavors from the GHA OIDC metadata
+    service: empty token, read timeout, and downstream 401 ("Credential was not sent").
+    They surface at two distinct points in the SDK's auth path, so we wrap both:
+
+    - *Config.init_auth* — runs during *WorkspaceClient* construction and probes the
+      configured credentials provider once via *token_source.token()*. A timeout here
+      raises before *authenticate* is ever called.
+    - *Config.authenticate* — called per-request to refresh headers.
+
+    Production code intentionally does not retry so real users see authentication errors
+    immediately.
+    """
+
+    def _wrap(method_name: str) -> None:
+        original = getattr(Config, method_name)
+
+        def retrying(self: Any, *args: Any, **kwargs: Any) -> Any:
+            last_exc: BaseException | None = None
+            for attempt in range(5):
+                try:
+                    return original(self, *args, **kwargs)
+                except Exception as e:
+                    if not _is_transient_auth_flake(e):
+                        raise
+                    last_exc = e
+                    time.sleep(2**attempt)  # 1s, 2s, 4s, 8s, 16s (~31s max)
+            assert last_exc is not None
+            raise last_exc
+
+        monkeypatch.setattr(Config, method_name, retrying)
+
+    _wrap("init_auth")
+    _wrap("authenticate")
+
+
+def get_schema_validation_rules(rules: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return rules that are has_valid_schema schema_validation rules (for data contract tests)."""
+    return [
+        rule
+        for rule in rules
+        if rule.get("check", {}).get("function") == "has_valid_schema"
+        and rule.get("user_metadata", {}).get("rule_type") == "schema_validation"
+    ]
 
 
 @pytest.fixture(scope="session")
@@ -59,7 +160,11 @@ def debug_env(monkeypatch, debug_env_name):
             conf = json.load(f)
             if debug_env_name in conf:
                 for env_key, value in conf[debug_env_name].items():
-                    monkeypatch.setenv(env_key, str(value))
+                    value = str(value)
+                    # Ensure DATABRICKS_HOST always has the https:// scheme
+                    if env_key == "DATABRICKS_HOST" and value and not value.startswith("https://"):
+                        value = f"https://{value}"
+                    monkeypatch.setenv(env_key, value)
     return os.environ
 
 
@@ -242,7 +347,7 @@ class MockInstallationContext(MockWorkflowContext):
             self.installation,
             self.install_state,
             self.workspace_client,
-            WheelsV2(self.installation, self.product_info),
+            PrebuiltWheels(self.installation, self.product_info),
             self.product_info,
             self.tasks,
         )
@@ -255,9 +360,9 @@ class MockInstallationContext(MockWorkflowContext):
     def prompts(self):
         return MockPrompts(
             {
-                r'Provide location for the input data .*': 'main.dqx_test.input_table',
-                r'Provide output table .*': 'main.dqx_test.output_table',
-                r'Do you want to uninstall DQX .*': 'yes',
+                r"Provide location for the input data .*": "main.dqx_test.input_table",
+                r"Provide output table .*": "main.dqx_test.output_table",
+                r"Do you want to uninstall DQX .*": "yes",
                 r".*PRO or SERVERLESS SQL warehouse.*": "1",
                 r".*": "",
             }

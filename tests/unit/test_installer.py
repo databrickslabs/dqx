@@ -1,9 +1,16 @@
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, create_autospec
 import pytest
+from databricks.labs.blueprint.installation import Installation
+from databricks.labs.blueprint.installer import InstallState
 from databricks.labs.blueprint.parallel import ManyError
+from databricks.labs.blueprint.tui import Prompts
+from databricks.labs.blueprint.wheels import ProductInfo
 
+from databricks.labs.dqx.config import RunConfig, WorkspaceConfig
 from databricks.labs.dqx.installer.version_checker import VersionChecker
-from databricks.labs.dqx.installer.install import WorkspaceInstaller
+from databricks.labs.dqx.installer.install import WorkspaceInstaller, InstallationService
+from databricks.labs.dqx.installer.warehouse_installer import WarehouseInstaller
+from databricks.labs.dqx.installer.workflow_installer import WorkflowDeployment
 
 
 def test_installer_executed_outside_workspace(mock_workspace_client):
@@ -47,6 +54,30 @@ def test_configure_raises_many_errors(mock_workspace_client):
             installer.configure()
 
     assert exc_info.value.errs == errors
+
+
+def test_installation_service_with_custom_install_folder(mock_workspace_client):
+    custom_folder = "/custom/path"
+    installation = create_autospec(Installation)
+    installation.install_folder.return_value = custom_folder
+    install_state = create_autospec(InstallState)
+    config = create_autospec(WorkspaceConfig)
+    config.get_run_config.return_value = create_autospec(RunConfig)
+    workflow_installer = create_autospec(WorkflowDeployment)
+    warehouse_configurator = create_autospec(WarehouseInstaller)
+    product_info = create_autospec(ProductInfo)
+
+    service = InstallationService(
+        config,
+        installation,
+        install_state,
+        mock_workspace_client,
+        workflow_installer,
+        warehouse_configurator,
+        Prompts(),
+        product_info,
+    )
+    assert service.install_folder == custom_folder
 
 
 def test_extract_major_minor():

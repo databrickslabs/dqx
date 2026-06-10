@@ -5,180 +5,137 @@ on:
     types: [ opened, synchronize, ready_for_review ]
   merge_group:
     types: [ checks_requested ]
-  push:
-    branches:
-      - main
 
 permissions:
-  id-token: write
   contents: read
-  pull-requests: write
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: false  # don't cancel ongoing runs to ensure fixtures are completed and resources terminated
 
 jobs:
-  anomaly-tests:
+  # Gate all downstream jobs behind a single check so PRs from forks (no access to the
+  # tool environment) and draft PRs do not trigger the expensive anomaly suite.
+  # PRs from forks are to be tested by the reviewer(s) / maintainer(s) before merging.
+  not-a-fork:
+    runs-on:
+      group: databrickslabs-protected-runner-group
+      labels: linux-ubuntu-latest
     if: github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork
+    steps:
+      - run: echo "Not a fork PR, proceeding"
+
+  anomaly-tests:
+    needs: not-a-fork
     environment: tool
-    runs-on: larger
+    runs-on:
+      group: larger-runners
+      labels: larger
+    permissions:
+      id-token: write
+      pull-requests: write
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
 
-      - name: Install Python
-        uses: actions/setup-python@v5
-        with:
-          cache: 'pip'
-          cache-dependency-path: '**/pyproject.toml'
-          python-version: '3.12'
+      - name: Setup environment
+        uses: ./.github/actions/setup-env
 
-      - name: Install hatch
-        run: pip install hatch==1.16.5
+      - name: Pre-build DQX wheel
+        uses: ./.github/actions/prebuild-wheel
 
-      # Anomaly tests are run from within tests/integration_anomaly folder.
       # Create .coveragerc with correct relative path to source code.
       - name: Prepare code coverage configuration for anomaly tests
         run: |
           cat > tests/integration_anomaly/.coveragerc << EOF
           [run]
-          source = ../../../src
-          parallel = true
+          source = ../../src
           relative_files = true
+          parallel = true
           EOF
 
-      - name: Azure login (OIDC)
-        uses: azure/login@v2
+      - name: Run anomaly integration tests
+        uses: databrickslabs/sandbox/acceptance@83461e5dd7021feabb1a9ca3ee10d6f46b72092a # acceptance/v0.4.6
         with:
-          client-id: ${{ secrets.ARM_CLIENT_ID }}
-          tenant-id: ${{ secrets.ARM_TENANT_ID }}
-          allow-no-subscriptions: true
-
-      - name: Set env vars for Azure CLI auth + MLflow
-        shell: bash
-        run: |
-          val=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-HOST" --query value -o tsv)
-          # Ensure host has https:// prefix (SDK and MLflow expect full URL)
-          if [[ ! "$val" =~ ^https?:// ]]; then
-            val="https://$val"
-          fi
-          # Workaround for MLflow OIDC auth: MLflow requires a profile to exist even when it uses SDK auth.
-          dummy_profile="${RUNNER_TEMP}/databricks_profile"
-          cat > "$dummy_profile" << EOF
-          [DEFAULT]
-          host = $val
-          token = dummy
-          EOF
-          echo "DATABRICKS_HOST=$val" >> $GITHUB_ENV
-          # Set cluster ID without printing to logs
-          echo "DATABRICKS_CLUSTER_ID=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-CLUSTER-ID" --query value -o tsv)" >> $GITHUB_ENV
-          echo "DATABRICKS_DQX_CLUSTER_ID=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-DQX-CLUSTER-ID" --query value -o tsv)" >> $GITHUB_ENV
-          
-          # Set warehouse ID without printing to logs
-          echo "DATABRICKS_WAREHOUSE_ID=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-WAREHOUSE-ID" --query value -o tsv)" >> $GITHUB_ENV
-          echo "DATABRICKS_AUTH_TYPE=azure-cli" >> $GITHUB_ENV
-          echo "DATABRICKS_CONFIG_FILE=$dummy_profile" >> $GITHUB_ENV
-
-          # MLflow: Use databricks scheme so MLflow uses SDK auth (with dummy profile present).
-          echo "MLFLOW_ENABLE_DB_SDK=true" >> $GITHUB_ENV
-          echo "MLFLOW_TRACKING_URI=databricks" >> $GITHUB_ENV
-          echo "MLFLOW_REGISTRY_URI=databricks-uc" >> $GITHUB_ENV
-          echo "MLFLOW_HTTP_REQUEST_TIMEOUT=600" >> $GITHUB_ENV
-          echo "MLFLOW_HTTP_REQUEST_MAX_RETRIES=10" >> $GITHUB_ENV
-
-      - name: Run anomaly integration tests and generate test coverage report
-        timeout-minutes: 200
+          vault_uri: ${{ secrets.VAULT_URI }}
+          timeout: 3h
+          codegen_path: tests/integration_anomaly/.codegen.json
         env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           COVERAGE_FILE: ${{ github.workspace }}/.coverage
-        run: |
-          hatch run pytest tests/integration_anomaly/ -v -rs -n 10 --cov --cov-report=xml --timeout=2000 --reruns 1 --reruns-delay 5 --durations=10
+          MLFLOW_ENABLE_DB_SDK: "true"
+          MLFLOW_TRACKING_URI: databricks
+          MLFLOW_REGISTRY_URI: databricks-uc
+          MLFLOW_HTTP_REQUEST_TIMEOUT: "600"
+          MLFLOW_HTTP_REQUEST_MAX_RETRIES: "9"
+      - name: Merge coverage reports and convert them to XML
+        run: make combine-coverage
 
-      # Recursively search the entire workspace directory for all coverage reports.
-      # All uploaded test coverage reports will be used even if publish is done multiple time.
       - name: Publish test coverage
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
         with:
           use_oidc: true
+          files: coverage-combined.xml
+          flags: anomaly
 
   anomaly-tests-serverless:
-    if: github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork
+    needs: not-a-fork
     environment: tool
-    runs-on: larger
+    runs-on:
+      group: larger-runners
+      labels: larger
+    permissions:
+      id-token: write
+      pull-requests: write
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
 
-      - name: Install Python
-        uses: actions/setup-python@v5
-        with:
-          cache: 'pip'
-          cache-dependency-path: '**/pyproject.toml'
-          python-version: '3.12'
+      - name: Setup environment
+        uses: ./.github/actions/setup-env
 
-      - name: Install hatch
-        run: pip install hatch==1.16.5
+      - name: Pre-build DQX wheel
+        uses: ./.github/actions/prebuild-wheel
 
-      # Anomaly tests are run from within tests/integration_anomaly folder.
       # Create .coveragerc with correct relative path to source code.
       - name: Prepare code coverage configuration for anomaly tests
         run: |
           cat > tests/integration_anomaly/.coveragerc << EOF
           [run]
-          source = ../../../src
-          parallel = true
+          source = ../../src
           relative_files = true
+          parallel = true
           EOF
-
-      - name: Azure login (OIDC)
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.ARM_CLIENT_ID }}
-          tenant-id: ${{ secrets.ARM_TENANT_ID }}
-          allow-no-subscriptions: true
-
-      - name: Set env vars for Azure CLI auth + MLflow
-        shell: bash
-        run: |
-          val=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-HOST" --query value -o tsv)
-          # Ensure host has https:// prefix (SDK and MLflow expect full URL)
-          if [[ ! "$val" =~ ^https?:// ]]; then
-            val="https://$val"
-          fi
-          # Workaround for MLflow OIDC auth: MLflow requires a profile to exist even when it uses SDK auth.
-          dummy_profile="${RUNNER_TEMP}/databricks_profile"
-          cat > "$dummy_profile" << EOF
-          [DEFAULT]
-          host = $val
-          token = dummy
-          EOF
-          echo "DATABRICKS_HOST=$val" >> $GITHUB_ENV
-          echo "DATABRICKS_AUTH_TYPE=azure-cli" >> $GITHUB_ENV
-          echo "DATABRICKS_CONFIG_FILE=$dummy_profile" >> $GITHUB_ENV
-          # Set warehouse ID without printing to logs
-          echo "DATABRICKS_WAREHOUSE_ID=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-WAREHOUSE-ID" --query value -o tsv)" >> $GITHUB_ENV
-
-          # MLflow: Use databricks scheme so MLflow uses SDK auth (with dummy profile present).
-          echo "MLFLOW_ENABLE_DB_SDK=true" >> $GITHUB_ENV
-          echo "MLFLOW_TRACKING_URI=databricks" >> $GITHUB_ENV
-          echo "MLFLOW_REGISTRY_URI=databricks-uc" >> $GITHUB_ENV
-          echo "MLFLOW_HTTP_REQUEST_TIMEOUT=600" >> $GITHUB_ENV
-          echo "MLFLOW_HTTP_REQUEST_MAX_RETRIES=10" >> $GITHUB_ENV
 
       - name: Run anomaly integration tests on serverless cluster
-        timeout-minutes: 200
+        uses: databrickslabs/sandbox/acceptance@83461e5dd7021feabb1a9ca3ee10d6f46b72092a # acceptance/v0.4.6
+        with:
+          vault_uri: ${{ secrets.VAULT_URI }}
+          timeout: 3h
+          codegen_path: tests/integration_anomaly/.codegen.json
         env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           COVERAGE_FILE: ${{ github.workspace }}/.coverage
           DATABRICKS_SERVERLESS_COMPUTE_ID: auto
-        run: |
-          hatch run pytest tests/integration_anomaly/ -v -rs -n 10 --cov --cov-report=xml --timeout=2000 --reruns 1 --reruns-delay 5 --durations=10
+          MLFLOW_ENABLE_DB_SDK: "true"
+          MLFLOW_TRACKING_URI: databricks
+          MLFLOW_REGISTRY_URI: databricks-uc
+          MLFLOW_HTTP_REQUEST_TIMEOUT: "600"
+          MLFLOW_HTTP_REQUEST_MAX_RETRIES: "9"
+      - name: Merge coverage reports and convert them to XML
+        run: make combine-coverage
 
-      # collects all coverage reports
       - name: Publish test coverage
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
         with:
           use_oidc: true
+          files: coverage-combined.xml
+          flags: anomaly-serverless

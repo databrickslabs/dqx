@@ -49,6 +49,9 @@ class DQRuleManager:
     run_time_overwrite: datetime | None
     run_id: str
     ref_dfs: dict[str, DataFrame] | None = None
+    suppress_skipped: bool = False
+    rule_fingerprint: str | None = None
+    rule_set_fingerprint: str | None = None
 
     @cached_property
     def user_metadata(self) -> dict[str, str]:
@@ -98,6 +101,15 @@ class DQRuleManager:
         return self._is_invalid_column(self.filter_condition)
 
     @cached_property
+    def has_invalid_custom_message(self) -> bool:
+        """
+        Returns a boolean indicating whether the custom message expression is invalid in the input DataFrame.
+        """
+        if self.check.message_expr is None:
+            return False
+        return self._is_invalid_column(self.check.message_expr)
+
+    @cached_property
     def invalid_sql_expression(self) -> str | None:
         """
         Returns an invalid expression for sql expression check.
@@ -125,8 +137,11 @@ class DQRuleManager:
         """
         invalid_cols_message = self._get_invalid_cols_message()
         if invalid_cols_message:
-            # overwrite message but preserve all other fields in the result
-            result_struct = self._build_result_struct(condition=F.lit(invalid_cols_message))
+            if self.suppress_skipped:
+                # return null condition so this check produces no entry in _errors/_warnings
+                return DQCheckResult(condition=F.lit(None).cast(dq_result_item_schema), check_df=self.df)
+            # overwrite message but preserve all other fields in the result, marking the check as skipped
+            result_struct = self._build_result_struct(condition=F.lit(invalid_cols_message), skipped=True)
             return DQCheckResult(condition=result_struct, check_df=self.df)
 
         executor = DQRuleExecutorFactory.create(self.check)
@@ -140,14 +155,16 @@ class DQRuleManager:
             condition=check_result, check_df=raw_result.check_df, info_column_name=raw_result.info_column_name
         )
 
-    def _build_result_struct(self, condition: Column) -> Column:
+    def _build_result_struct(self, condition: Column, skipped: bool = False) -> Column:
         # Use current_timestamp() to make sure streaming gets per-micro-batch timestamps,
         # or use literal run time if explicitly overridden
         run_time_expr = F.current_timestamp() if self.run_time_overwrite is None else F.lit(self.run_time_overwrite)
 
+        message_col = self._build_message_col(condition, skipped=skipped)
+
         return F.struct(
             F.lit(self.check.name).alias("name"),
-            condition.alias("message"),
+            message_col.alias("message"),
             self.check.columns_as_string_expr.alias("columns"),
             F.lit(self.check.filter or None).cast("string").alias("filter"),
             F.lit(self.check.check_func.__name__).alias("function"),
@@ -156,7 +173,39 @@ class DQRuleManager:
             F.create_map(*[item for kv in self.user_metadata.items() for item in (F.lit(kv[0]), F.lit(kv[1]))]).alias(
                 "user_metadata"
             ),
+            F.lit(self.rule_fingerprint).alias("rule_fingerprint"),
+            F.lit(self.rule_set_fingerprint).alias("rule_set_fingerprint"),
+            F.lit(skipped or None).alias("skipped"),
         ).cast(dq_result_item_schema)
+
+    def _build_message_col(self, condition: Column, skipped: bool = False) -> Column:
+        """
+        Builds the message column, using the default message or the user-supplied ``message_expr`` from the
+        rule definition. The expression is evaluated as-is. Accepts either a Spark SQL expression string or a
+        Spark Column.
+
+        Args:
+            condition: Default DQX condition message returned by evaluating the DQX check function
+            skipped: Whether the check was skipped (default False)
+
+        Returns:
+            The custom DQX condition message if ``message_expr`` is set on the rule and the check was not skipped,
+            otherwise the default DQX condition message.
+        """
+        if skipped:
+            return condition
+
+        if self.check.message_expr is None:
+            return condition
+
+        _max_message_length = 500
+        message_expr = F.substr(
+            F.expr(self.check.message_expr) if isinstance(self.check.message_expr, str) else self.check.message_expr,
+            F.lit(1),
+            F.lit(_max_message_length),
+        )
+
+        return F.when(condition.isNotNull(), message_expr).otherwise(F.lit(None).cast("string"))
 
     def _get_invalid_cols_message(self) -> str:
         """
@@ -176,6 +225,18 @@ class DQRuleManager:
             logger.warning(f"Skipping check '{self.check.name}' due to invalid check filter: '{self.check.filter}'")
             invalid_cols_message_parts.append(
                 f"Check evaluation skipped due to invalid check filter: '{self.check.filter}'"
+            )
+
+        if self.has_invalid_custom_message:
+            if isinstance(self.check.message_expr, str):
+                custom_message_detail = f": '{self.check.message_expr}'"
+            else:
+                custom_message_detail = ""
+            logger.warning(
+                f"Skipping check '{self.check.name}' due to invalid custom message expression{custom_message_detail}"
+            )
+            invalid_cols_message_parts.append(
+                f"Check evaluation skipped due to invalid custom message expression{custom_message_detail}"
             )
 
         if self.invalid_sql_expression:

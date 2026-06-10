@@ -1,7 +1,6 @@
 import copy
 
 import pytest
-from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from databricks.labs.blueprint.parallel import ManyError
 
 from databricks.labs.dqx.checks_storage import InstallationChecksStorageHandler
@@ -18,7 +17,9 @@ from tests.integration.conftest import (
     REPORTING_COLUMNS,
     assert_output_df,
     assert_quarantine_and_output_dfs,
+    assert_quarantine_df_only,
     setup_custom_check_func,
+    assert_df_equality_ignore_fingerprints as assert_df_equality,
 )
 
 from tests.constants import TEST_CATALOG
@@ -174,6 +175,20 @@ def test_quality_checker_workflow_with_quarantine(
     assert_quarantine_and_output_dfs(
         ws, spark, expected_quality_checking_output, run_config.output_config, run_config.quarantine_config
     )
+
+
+def test_quality_checker_workflow_with_quarantine_only(
+    ws, spark_keep_alive, setup_serverless_workflows, expected_quality_checking_output
+):
+    installation_ctx, run_config = setup_serverless_workflows(quarantine_only=True, checks=True)
+    spark = spark_keep_alive.spark
+
+    assert run_config.output_config is None
+    assert run_config.quarantine_config is not None
+
+    installation_ctx.deployed_workflows.run_workflow("quality-checker", run_config.name)
+
+    assert_quarantine_df_only(ws, spark, expected_quality_checking_output, run_config.quarantine_config)
 
 
 def test_quality_checker_workflow_when_missing_checks_file(ws, setup_serverless_workflows):

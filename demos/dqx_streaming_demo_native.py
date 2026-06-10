@@ -225,7 +225,7 @@ quarantine_config=OutputConfig(
 dq_engine = DQEngine(WorkspaceClient())
 
 dq_engine.apply_checks_by_metadata_and_save_in_table(
-    checks=checks,
+    checks=checks,  # or provide checks_location and run_config_name to auto-load from checks storage
     input_config=input_config,
     output_config=output_config,
     quarantine_config=quarantine_config

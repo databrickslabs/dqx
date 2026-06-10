@@ -4,7 +4,7 @@ from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.anomaly.anomaly_engine import AnomalyEngine
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.errors import InvalidParameterError
+from databricks.labs.dqx.errors import InvalidCheckError, InvalidParameterError
 
 from tests.constants import TEST_CATALOG
 from tests.integration_anomaly.constants import (
@@ -489,8 +489,9 @@ def test_apply_anomaly_check_by_metadata_parsing_validation(ws, spark: SparkSess
 
     dq_engine = DQEngine(ws, spark)
 
-    # Missing model_name/registry_table can raise TypeError (missing required args) or
-    # InvalidParameterError (if the check validates and raises)
-    with pytest.raises((InvalidParameterError, TypeError)):
+    # Missing model_name/registry_table surfaces as InvalidCheckError from the
+    # metadata validator, InvalidParameterError from runtime param checks, or
+    # TypeError if Python argument binding fails first.
+    with pytest.raises((InvalidCheckError, InvalidParameterError, TypeError)):
         result_df = dq_engine.apply_checks_by_metadata(test_df, checks)
         result_df.collect()

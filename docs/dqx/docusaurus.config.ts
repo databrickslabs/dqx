@@ -1,3 +1,4 @@
+import path from 'path';
 import { themes as prismThemes } from 'prism-react-renderer';
 import type { Config } from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
@@ -21,9 +22,16 @@ const config: Config = {
   projectName: 'dqx', // Usually your repo name.
 
   onBrokenLinks: 'throw',
-  onBrokenMarkdownLinks: 'throw',
   onDuplicateRoutes: 'throw',
   onBrokenAnchors: 'throw',
+
+  markdown: {
+    mermaid: true,
+    hooks: {
+      onBrokenMarkdownLinks: 'throw',
+    },
+  },
+  themes: ['@docusaurus/theme-mermaid'],
 
   // Even if you don't use internationalization, you can use this field to set
   // useful metadata like html lang. For example, if your site is Chinese, you
@@ -34,6 +42,26 @@ const config: Config = {
   },
 
   plugins: [
+    async () => ({
+      name: 'fix-vscode-languageserver-types-resolution',
+      configureWebpack() {
+        // theme-mermaid → mermaid → langium → vscode-languageserver-types.
+        // vscode-languageserver-types defaults to UMD (main.js) which triggers
+        // "Critical dependency: require function is used in a way in which
+        // dependencies cannot be statically extracted". Force ESM build instead.
+        const vscodeTypesPath = path.join(
+          __dirname,
+          'node_modules/vscode-languageserver-types/lib/esm/main.js',
+        );
+        return {
+          resolve: {
+            alias: {
+              'vscode-languageserver-types': vscodeTypesPath,
+            },
+          },
+        };
+      },
+    }),
     async (context, options) => {
       return {
         name: "docusaurus-plugin-tailwindcss",

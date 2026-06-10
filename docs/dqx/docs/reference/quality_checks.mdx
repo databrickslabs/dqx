@@ -16,7 +16,13 @@ DQX provides a collection of predefined built-in quality rules (checks). Additio
 All DQX rules are evaluated independently and in parallel. If one rule fails, the others are still processed.
 All rule types, including row-level and dataset-level rules, can be defined and applied simultaneously in a single execution.
 
-You can explore the implementation details of the check functions [here](https://github.com/databrickslabs/dqx/blob/v0.13.0/src/databricks/labs/dqx/check_funcs.py).
+When you define checks **declaratively** (YAML, JSON, or list of dicts), check arguments must contain every required parameter of the check function, matching its Python signature (optional parameters may be omitted). If you use `for_each_column`, DQX merges `column` or `columns` into the arguments for each expansion. Use `DQEngine.validate_checks` to catch unknown keys, type mismatches, and missing required parameters before apply. See [Quality checks definition](/docs/guide/quality_checks_definition) for the declarative format and validation section.
+
+You can explore the implementation details of the check functions [here](https://github.com/databrickslabs/dqx/blob/v0.14.0/src/databricks/labs/dqx/check_funcs.py).
+
+<Admonition type="tip" title="Variable Substitution">
+All declarative check definitions (YAML, JSON, or Delta tables) support **variable substitution** for string-based fields using the `{{ variable_name }}` syntax. This allows for dynamic parameterization of column names, thresholds, and filters at load time. See the [User Guide](/docs/guide/quality_checks_definition/#variable-substitution) for more details.
+</Admonition>
 
 ## Row-level checks reference
 
@@ -53,6 +59,7 @@ You can also define your own custom checks in Python (see [Creating custom check
 | `is_older_than_n_days`             | Checks whether the values in one input column are at least N days older than the values in another column.                                                                                                                                                                                                                                                                                                                        | `column`: column to check (can be a string column name or a column expression); `days`: number of days; `curr_date`: current date, if not provided current_date() function is used; `negate`: if the condition should be negated                                                                                                                                                                                                                                                                                                                     |
 | `is_older_than_col2_for_n_days`    | Checks whether the values in one input column are at least N days older than the values in another column.                                                                                                                                                                                                                                                                                                                        | `column1`: first column to check (can be a string column name or a column expression); `column2`: second column to check (can be a string column name or a column expression); `days`: number of days; `negate`: if the condition should be negated                                                                                                                                                                                                                                                                                                  |
 | `regex_match`                      | Checks whether the values in the input column match a given regex.                                                                                                                                                                                                                                                                                                                                                                | `column`: column to check (can be a string column name or a column expression); regex: regex to check; `negate`: if the condition should be negated (true) or not                                                                                                                                                                                                                                                                                                                                                                                    |
+| `is_valid_email`                   | Checks whether the values in the input column have valid email address format.                                                                                                                                                                                                                                                                                                                                                    | `column`: column to check (can be a string column name or a column expression)                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `is_valid_ipv4_address`            | Checks whether the values in the input column have valid IPv4 address format.                                                                                                                                                                                                                                                                                                                                                     | `column` to check (can be a string column name or a column expression)                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `is_ipv4_address_in_cidr`          | Checks whether the values in the input column have valid IPv4 address format and fall within the given CIDR block.                                                                                                                                                                                                                                                                                                                | `column`: column to check (can be a string column name or a column expression); `cidr_block`: CIDR block string                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `is_valid_ipv6_address`            | Checks whether the values in the input column have valid IPv6 address format.                                                                                                                                                                                                                                                                                                                                                     | `column` to check (can be a string column name or a column expression)                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
@@ -89,7 +96,7 @@ You can also define your own custom checks in Python (see [Creating custom check
 
 <Admonition type="warning" title="Applicability">
 Row-level checks are designed to operate on a single PySpark DataFrame.
-If your validation logic requires multiple DataFrames/Tables, you can join them beforehand to produce a single DataFrame on which the checks can be applied.
+If your validation logic requires data from other tables, you can either reference them directly via an EXISTS subquery inside `sql_expression`, or join them beforehand to produce a single DataFrame.
 See more [here](/docs/reference/quality_checks#applying-checks-on-multiple-data-sets).
 </Admonition>
 
@@ -518,6 +525,13 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
       regex: '[0-9]+'
       negate: false
 
+# is_valid_email check
+- criticality: error
+  check:
+    function: is_valid_email
+    arguments:
+      column: col1
+
 # is_valid_ipv4_address check
 - criticality: error
   check:
@@ -565,7 +579,7 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
     arguments:
       expression: col3 >= col2 and col3 <= 10
       msg: col3 is less than col2 and col3 is greater than 10
-      columns: # optional for reporting
+      columns: # optional for validating against input dataframe and reporting
       - col2
       - col3
 
@@ -1258,6 +1272,13 @@ checks = [
       }
     ),
 
+    # is_valid_email check
+    DQRowRule(
+      criticality="error",
+      check_func=check_funcs.is_valid_email,
+      column="col1"
+    ),
+
     # is_valid_ipv4_address check
     DQRowRule(
       criticality="error",
@@ -1493,7 +1514,7 @@ checks = [
       check_func_kwargs={
         "expression": "col3 >= col2 and col3 <= 10",
         "msg": "col3 is less than col2 and col3 is greater than 10",
-        "name": "custom_output_name",
+        "name": "custom_output_name",  # optional, overwritten by check name
         "negate": False
       }
     ),
@@ -1661,7 +1682,7 @@ Below are examples of how to apply checks for complex types declaratively in YAM
     arguments:
       expression: try_element_at(col7, 'key1') >= 10
       msg: col7 element 'key1' is less than 10
-      name: col7_element_key1_less_than_10
+      name: col7_element_key1_less_than_10  # optional, overwritten by check name
       negate: false
 
 # sql_expression check applied to an array of map column elements
@@ -1754,7 +1775,7 @@ checks = [
       check_func_kwargs={
         "expression": "try_element_at(col7, 'key1') >= 10",
         "msg": "col7 element 'key1' is less than 10",
-        "name": "col7_element_key1_less_than_10",
+        "name": "col7_element_key1_less_than_10", # can also be provided as check name
         "negate": False,
       },
     ),
@@ -1806,13 +1827,15 @@ You can also define your own custom dataset-level checks (see [Creating custom c
 | `is_aggr_not_less_than`            | Checks whether the aggregated values over group of rows or all rows are not less than the provided limit.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | `column`: column to check (can be a string column name or a column expression), optional for 'count' aggregation; `limit`: limit as number, column name or sql expression (string literals must be single quoted, e.g. 'string_value'); `aggr_type`: aggregation function (default: "count"), supports 20 curated functions (count, sum, avg, stddev, percentile, etc.) plus any Databricks built-in aggregate; `group_by`: (optional) list of columns or column expressions to group the rows for aggregation (no grouping by default); `aggr_params`: (optional) dict of parameters for aggregates requiring them                                                                                                                                                                                                                                                                                          |
 | `is_aggr_equal`                    | Checks whether the aggregated values over group of rows or all rows are equal to the provided limit.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | `column`: column to check (can be a string column name or a column expression), optional for 'count' aggregation; `limit`: limit as number, column name or sql expression (string literals must be single quoted, e.g. 'string_value'); `aggr_type`: aggregation function (default: "count"), supports 20 curated functions (count, sum, avg, stddev, percentile, etc.) plus any Databricks built-in aggregate; `group_by`: (optional) list of columns or column expressions to group the rows for aggregation (no grouping by default); `aggr_params`: (optional) dict of parameters for aggregates requiring them; `abs_tolerance`: (optional) absolute tolerance for equality comparison of numeric aggregations (formula: `abs(a - b) <= tolerance`); `rel_tolerance`: relative tolerance for equality comparison of numeric aggregations (formula: `abs(a - b) <= rel_tolerance * max(abs(a), abs(b))`) |
 | `is_aggr_not_equal`                | Checks whether the aggregated values over group of rows or all rows are not equal to the provided limit.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | `column`: column to check (can be a string column name or a column expression), optional for 'count' aggregation; `limit`: limit as number, column name or sql expression (string literals must be single quoted, e.g. 'string_value'); `aggr_type`: aggregation function (default: "count"), supports 20 curated functions (count, sum, avg, stddev, percentile, etc.) plus any Databricks built-in aggregate; `group_by`: (optional) list of columns or column expressions to group the rows for aggregation (no grouping by default); `aggr_params`: (optional) dict of parameters for aggregates requiring them; `abs_tolerance`: (optional) absolute tolerance for equality comparison of numeric aggregations (formula: `abs(a - b) <= tolerance`); `rel_tolerance`: relative tolerance for equality comparison of numeric aggregations (formula: `abs(a - b) <= rel_tolerance * max(abs(a), abs(b))`) |
+| `has_no_aggr_outliers`            | Rolling-window sigma outlier check for a time-series aggregate. Fires when the current bucket's aggregate deviates by more than N standard deviations from the rolling mean of the preceding `lookback_num_intervals` buckets. All logic is pure PySpark. Passes silently during warmup (fewer than `warmup_num_intervals` historical buckets), when the series is constant (stddev == 0), or when the current bucket is missing. Complements `is_aggr_not_less_than` / `is_aggr_not_greater_than` for dynamic, data-driven outlier detection on daily/hourly metrics. | `column`: column name (str) or Column expression to aggregate, e.g. `"revenue"` or `F.col("a") - F.col("b")`; `time_column`: name of the timestamp/date column used to bucket rows into time grains; `aggr_type`: aggregation type applied per bucket (default: `"avg"`); `sigma`: number of standard deviations defining the outlier band (default: `3.0`, must be > 0); `lookback_num_intervals`: number of preceding buckets used to build the rolling baseline (default: `14`, must be >= 2); `warmup_num_intervals`: minimum historical buckets required before the check fires (default: `7`, must satisfy `1 <= warmup_num_intervals <= lookback_num_intervals`); `time_interval`: granularity for bucketing the `time_column` — one of `"minute"`, `"hour"`, `"day"`, `"week"`, `"month"` (default: `"day"`); `group_by`: (optional) list of columns or column expressions to segment the outlier band per group; `aggr_params`: (optional) dict of extra parameters for aggregate functions that require them |
 | `foreign_key` (aka is_in_list)     | Checks whether input column or columns can be found in the reference DataFrame or Table (foreign key check). It supports foreign key check on single and composite keys. This check can be used to validate whether values in the input column(s) exist in a predefined list of allowed values (stored in the reference DataFrame or Table). It serves as a scalable alternative to `is_in_list` row-level checks, when working with large lists.                                                                                                                                                                                                                                                   | `columns`: columns to check (can be a list of string column names or column expressions); `ref_columns`: columns to check for existence in the reference DataFrame or Table (can be a list string column name or a column expression); `ref_df_name`: (optional) name of the reference DataFrame (dictionary of DataFrames can be passed when applying checks); `ref_table`: (optional) fully qualified reference table name; either `ref_df_name` or `ref_table` must be provided but never both; the number of passed `columns` and `ref_columns` must match and keys are checks in the given order; negate: if True the condition is negated (i.e. the check fails when the foreign key values exist in the reference DataFrame/Table), if False the check fails when the foreign key values do not exist in the reference                                                                                |
 | `sql_query`                        | Checks whether the condition column produced by a SQL query is satisfied. The check supports two modes: **Row-level validation** (when `merge_columns` is provided) - query results are joined back to the input DataFrame to mark specific rows; **Dataset-level validation** (when `merge_columns` is None or empty) - the check result applies to all rows (or filtered rows if `filter` is used), making it ideal for aggregate validations with custom metrics. The query must return a boolean condition column (True = fail, False = pass). For row-level checks: if merge columns aren't unique, multiple query rows can attach to a single input row, potentially causing false positives. Performance tip: for complex queries, writing a custom dataset-level rule is usually more performant than `sql_query` check.  | `query`: query string, must return condition column (and merge columns if provided); `input_placeholder`: name to be used in the sql query as `{{ input_placeholder }}` to refer to the input DataFrame, optional reference DataFrames are referred by the name provided in the dictionary of reference DataFrames (e.g. `{{ ref_df_key }}`, dictionary of DataFrames can be passed when applying checks); `merge_columns`: (optional) list of columns used for merging with the input DataFrame which must exist in the input DataFrame and be present in output of the sql query; when not provided (None or empty list), the check result applies to all rows in the dataset (dataset-level validation); `condition_column`: name of the column indicating a violation (False = pass, True = fail); `msg`: (optional) message to output; `name`: (optional) name of the resulting check (it can be overwritten by `name` specified at the check level); `negate`: if the condition should be negated |
 | `compare_datasets`                 | Compares two DataFrames at both row and column levels, providing detailed information about differences, including new or missing rows and column-level changes. Only columns present in both the source and reference DataFrames are compared. Use with caution if `check_missing_records` is enabled, as this may increase the number of rows in the output beyond the original input DataFrame. The comparison does not support Map types (any column comparison on map type is skipped automatically). Comparing datasets is valuable for validating data during migrations, detecting drift, performing regression testing, or verifying synchronization between source and target systems.    | `columns`: columns to use for row matching with the reference DataFrame (can be a list of string column names or column expressions, but only simple column expressions are allowed such as 'F.col("col1")'), if not having primary keys or wanting to match against all columns you can pass 'df.columns'; `ref_columns`: list of columns in the reference DataFrame or Table to row match against the source DataFrame (can be a list of string column names or column expressions, but only simple column expressions are allowed such as 'F.col("col1")'), if not having primary keys or wanting to match against all columns you can pass 'ref_df.columns'; note that `columns` are matched with `ref_columns` by position, so the order of the provided columns in both lists must be exactly aligned; `exclude_columns`: (optional) list of columns to exclude from the value comparison but not from row matching (can be a list of string column names or column expressions, but only simple column expressions are allowed such as 'F.col("col1")'); the `exclude_columns` field does not alter the list of columns used to determine row matches (columns), it only controls which columns are skipped during the value comparison; `ref_df_name`: (optional) name of the reference DataFrame (dictionary of DataFrames can be passed when applying checks); `ref_table`: (optional) fully qualified reference table name; either `ref_df_name` or `ref_table` must be provided but never both; the number of passed `columns` and `ref_columns` must match and keys are checks in the given order; `check_missing_records`: perform a FULL OUTER JOIN to identify records that are missing from source or reference DataFrames, default is False; use with caution as this may increase the number of rows in the output, as unmatched rows from both sides are included; `null_safe_row_matching`: (optional) treat NULLs as equal when matching rows using `columns` and `ref_columns` (default: True); `null_safe_column_value_matching`: (optional) treat NULLs as equal when comparing column values (default: True); `abs_tolerance`: (optional) numeric values are considered equal if the absolute difference is less than or equal to the tolerance (formula: `abs(a - b) <= tolerance`); `rel_tolerance`: differences in numeric values within this relative tolerance are ignored (formula: `abs(a - b) <= rel_tolerance * max(abs(a), abs(b))`) |
 | `is_data_fresh_per_time_window`    | Freshness check that validates whether at least X records arrive within every Y-minute time window.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | `column`: timestamp column (can be a string column name or a column expression); `window_minutes`: time window in minutes to check for data arrival; `min_records_per_window`: minimum number of records expected per time window; `lookback_windows`: (optional) number of time windows to look back from `curr_timestamp`, it filters records to include only those within the specified number of time windows from `curr_timestamp` (if no lookback is provided, the check is applied to the entire dataset); `curr_timestamp`: (optional) current timestamp column (if not provided, current_timestamp() function is used)                                                                                                                                                                                                                                                                              |
 | `has_valid_schema`                 | Schema check that validates whether the DataFrame schema matches an expected schema. In non-strict mode, validates that all expected columns exist with compatible types (allows extra columns). In strict mode, validates exact schema match (same columns, same order, same types) for all columns by default or for all columns specified in `columns`. This check is applied at the dataset level and reports schema violations for all rows in the DataFrame when incompatibilities are detected. All columns in the `exclude_columns` list will be ignored even if the column is present in the `columns` list.                                                                               | `expected_schema`: (optional) expected schema as a DDL string (e.g., "id INT, name STRING") or StructType object; `ref_df_name`: (optional) name of the reference DataFrame to load the schema from (dictionary of DataFrames can be passed when applying checks); `ref_table`: (optional) fully qualified reference table name to load the schema from (e.g. "catalog.schema.table"); exactly one of `expected_schema`, `ref_df_name`, or `ref_table` must be provided; `columns`: (optional) list of columns to validate (if not provided, all columns are considered); `strict`: (optional) whether to perform strict schema validation (default: False) - False: validates that all expected columns exist with compatible types, True: validates exact schema match; `exclude_columns`: (optional) list of columns to ignore during validation (if not provided, all columns are considered);           |
 | `has_no_outliers`                  | Checks whether the values in the input column contain any outliers. This function implements a median absolute deviation (MAD) algorithm to find outliers.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | `column`: column of type numeric to check (can be a string column name or a column expression);                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `has_no_row_anomalies`             | Flags rows that are anomalous according to a trained ML model. The model learns "normal" patterns from your training data; at check time each row is scored (severity percentile 0–100) and optionally enriched with SHAP contributions. Requires a model trained with the anomaly engine first. See [Row Anomaly Detection](#row-anomaly-detection) below for training, full parameters, and usage.                                                                                                                                                                                                                                                                                                | `model_name`: fully qualified model name (e.g. catalog.schema.model_name); `registry_table`: fully qualified registry table (e.g. catalog.schema.model_registry); `threshold`: (optional) severity percentile threshold (default 95); `drift_threshold`: (optional) warn when score distribution drifts from training (None = off); `enable_contributions`: (optional) add SHAP per-feature contributions to `_dq_info` (default False); `enable_confidence_std`: (optional) add ensemble score std to `_dq_info` (default False). See [Row Anomaly Detection](/docs/reference/quality_checks#row-anomaly-detection) section for full parameter details.                                                                                                                                                                                                                                           |
+| `has_no_row_anomalies`             | Flags rows that are anomalous according to a trained ML model. The model learns "normal" patterns from your training data; at check time each row is scored (severity percentile 0–100) and optionally enriched with SHAP contributions. Requires a model trained with the anomaly engine first. See [Row Anomaly Detection](#row-anomaly-detection) below for training, full parameters, and usage.                                                                                                                                                                                                                                                                                                | `model_name`: fully qualified model name (e.g. catalog.schema.model_name); `registry_table`: fully qualified registry table (e.g. catalog.schema.model_registry); `threshold`: (optional) severity percentile threshold (default 95); `drift_threshold`: (optional) warn when score distribution drifts from training (None = off); `enable_contributions`: (optional) add SHAP per-feature contributions to `_dq_info` (default False); `enable_confidence_std`: (optional) add ensemble score std to `_dq_info` (default False). See [Row Anomaly Detection](/docs/reference/quality_checks#row-anomaly-detection) section for full parameter details.                                                                                                                                                                                                                                                     |
+| `are_polygons_mutually_disjoint`   | Checks whether the polygons in a geometry column are mutually disjoint. Polygons sharing an edge or boundary are considered intersecting. Nulls and invalid geometries are excluded from the check. Requires Databricks runtime 17.1 or above.                                                                                                                                                                                                                                                                                                                                                                                                                                                      | `column`: column to check (can be a string column name or a column expression), must contain polygon or multipolygon geometries                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 
 <Admonition type="tip" title="Row filter">
 Most dataset-level check functions take `row_filter` as argument. This parameter is auto-injected from the top-level `filter`.
@@ -2039,6 +2062,45 @@ Complex data types are supported as well.
       limit:
         __decimal__: "200.30"
 
+# has_no_aggr_outliers check — daily row count over all rows (3-sigma band, 14-interval history)
+- criticality: warn
+  check:
+    function: has_no_aggr_outliers
+    arguments:
+      column: '*'
+      time_column: event_date
+      aggr_type: count              # other types: sum, avg, min, max, stddev, etc.
+      sigma: 3.0                    # fire when |current - baseline| > 3 * stddev
+      lookback_num_intervals: 14    # number of preceding buckets for the rolling baseline
+      warmup_num_intervals: 7       # suppress the check until at least 7 historical buckets exist
+
+# has_no_aggr_outliers check — daily sum of revenue grouped by region
+- criticality: warn
+  check:
+    function: has_no_aggr_outliers
+    arguments:
+      column: revenue
+      time_column: event_date
+      aggr_type: sum
+      sigma: 3.0
+      lookback_num_intervals: 14
+      warmup_num_intervals: 7
+      group_by:
+      - region
+
+# has_no_aggr_outliers check — hourly average latency with a row filter
+- criticality: error
+  check:
+    function: has_no_aggr_outliers
+    arguments:
+      column: latency_ms
+      time_column: request_time
+      aggr_type: avg
+      sigma: 2.5
+      lookback_num_intervals: 48    # 48 hourly buckets ≈ 2 days of history
+      warmup_num_intervals: 12
+      time_interval: hour           # bucket by hour instead of day
+
 # foreign_key check using reference DataFrame
 - criticality: error
   check:
@@ -2085,6 +2147,18 @@ Complex data types are supported as well.
       - ref_col1
       ref_df_name: ref_df_key
       negate: true
+
+# foreign_key null safe to match `null` values
+- criticality: error
+  check:
+    function: foreign_key
+    arguments:
+      columns:
+      - col1
+      ref_columns:
+      - ref_col1
+      ref_df_name: ref_df_key
+      null_safe: true
 
 # sql_query check with merge_columns (row-level validation)
 - criticality: error
@@ -2235,6 +2309,13 @@ Complex data types are supported as well.
     function: has_no_outliers
     arguments:
       column: col1
+
+# are_polygons_mutually_disjoint check (geo, requires runtime 17.1+)
+- criticality: error
+  check:
+    function: are_polygons_mutually_disjoint
+    arguments:
+      column: geom
 ```
 
 **Providing Reference DataFrames programmatically**
@@ -2313,6 +2394,7 @@ When checks are loaded, the `__decimal__` format is automatically converted back
 from databricks.labs.dqx.rule import DQDatasetRule, DQForEachColRule
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType
 from databricks.labs.dqx import check_funcs
+from databricks.labs.dqx.geo import check_funcs as geo_check_funcs
 from datetime import datetime
 
 checks = [
@@ -2491,6 +2573,50 @@ checks = [
       },
     ),
 
+    # has_no_aggr_outliers check — daily row count over all rows (3-sigma band, 14-interval history)
+    DQDatasetRule(
+      criticality="warn",
+      check_func=check_funcs.has_no_aggr_outliers,
+      column="*",
+      check_func_kwargs={
+        "time_column": "event_date",
+        "aggr_type": "count",          # other types: sum, avg, min, max, stddev, etc.
+        "sigma": 3.0,                  # fire when |current - baseline| > 3 * stddev
+        "lookback_num_intervals": 14,  # number of preceding buckets for the rolling baseline
+        "warmup_num_intervals": 7,     # suppress the check until at least 7 historical buckets exist
+      },
+    ),
+
+    # has_no_aggr_outliers check — daily sum of revenue grouped by region
+    DQDatasetRule(
+      criticality="warn",
+      check_func=check_funcs.has_no_aggr_outliers,
+      column="revenue",
+      check_func_kwargs={
+        "time_column": "event_date",
+        "aggr_type": "sum",
+        "sigma": 3.0,
+        "lookback_num_intervals": 14,
+        "warmup_num_intervals": 7,
+        "group_by": ["region"],
+      },
+    ),
+
+    # has_no_aggr_outliers check — hourly average latency
+    DQDatasetRule(
+      criticality="error",
+      check_func=check_funcs.has_no_aggr_outliers,
+      column="latency_ms",
+      check_func_kwargs={
+        "time_column": "request_time",
+        "aggr_type": "avg",
+        "sigma": 2.5,
+        "lookback_num_intervals": 48,  # 48 hourly buckets ≈ 2 days of history
+        "warmup_num_intervals": 12,
+        "time_interval": "hour",       # bucket by hour instead of day
+      },
+    ),
+
     # foreign_key check using reference DataFrame
     DQDatasetRule(
       criticality="error",
@@ -2532,6 +2658,17 @@ checks = [
         "ref_df_name": "ref_df_key",
         "negate": True
     },
+
+    # foreign_key null safe to match `null` values
+    DQDatasetRule(
+      criticality="error",
+      check_func=check_funcs.foreign_key,
+      columns=["col1"],
+      check_func_kwargs={
+        "ref_columns": ["ref_col1"],
+        "ref_df_name": "ref_df_key",
+        "null_safe": True
+    }),
 
     # sql_query check with merge_columns (row-level validation)
     DQDatasetRule(
@@ -2644,6 +2781,13 @@ checks = [
       criticality="error",
       check_func=check_funcs.has_no_outliers,
       column="col1" # or as expr: F.col("col1")
+    ),
+
+    # are_polygons_mutually_disjoint check (geo, requires runtime 17.1+)
+    DQDatasetRule(
+      criticality="error",
+      check_func=geo_check_funcs.are_polygons_mutually_disjoint,
+      column="geom" # or as expr: F.col("geom")
     ),
 
     # has_valid_schema check with specific columns, expected schema defined using StructType
@@ -3185,7 +3329,7 @@ You can define custom checks using SQL Expression rule (`sql_expression`).
       msg: col1 ends with 'foo'
 ```
 
-SQL Expressions are also useful if you need to make cross-column validation, for example:
+SQL expressions are also useful for cross-column validation:
 ```yaml
 - criticality: error
   check:
@@ -3194,6 +3338,29 @@ SQL Expressions are also useful if you need to make cross-column validation, for
       expression: col1 <= col2
       msg: col1 is greater than col2
 ```
+
+You can also use SQL subqueries to validate a column value against a reference table(s), for example:
+```yaml
+- criticality: error
+  name: order_status_valid
+  check:
+    function: sql_expression
+    arguments:
+      expression: >
+        EXISTS (
+          SELECT 1
+          FROM catalog.schema.order_status_ref AS ref
+          WHERE ref.status_code = order_status
+            AND ref.is_active = true
+        )
+      msg: order_status is not a valid active status
+```
+
+<Admonition type="tip" title="row-level vs dataset-level custom checks">
+Although `sql_expression` is a row-level check, subquery expressions are **not** executed per row. 
+Spark's Catalyst optimizer rewrites correlated `EXISTS` subqueries as **semi-joins** (typically a broadcast hash join for small reference tables), so performance is comparable to an explicit join.
+For large reference tables where a broadcast join is not possible, pre-join the reference data into the input DataFrame before applying DQX checks, then use a simple column expression instead of a subquery.
+</Admonition>
 
 #### Define the check using DQX classes
 
@@ -3449,7 +3616,7 @@ checks = [
 
 ## Creating Custom Dataset-level Checks
 
-Custom Dataset-level checks are useful if you need to make aggregation level checks within the DataFrame or across multiple DataFrames or Tables.
+Custom Dataset-level checks are useful if you need to make aggregation or set-based checks within the DataFrame or across multiple DataFrames/Tables that cannot be expressed via an EXISTS subquery inside `sql_expression`.
 Similar to row-level checks, the results of the dataset-level quality checks are reported for each individual row in the result columns.
 
 Custom dataset-level checks can be created using `sql_query` check function or by implementing a Python function that returns a condition and a closure function.
@@ -3787,11 +3954,14 @@ This can be less performant than writing a custom dataset-level where we can thi
 ### Using Row-level checks
 
 Row-level checks are intended to operate on a single DataFrame as input.
-If your validation logic requires multiple DataFrames or Tables as input, you can join them before applying the row-level checks.
-However, this may not be efficient for large datasets or complex validation logic.
+However, if your validation logic requires data from other tables, you have two options:
+
+**Option 1: Pre-join the reference data**
+
+Join the reference tables into the input DataFrame before applying checks:
 
 <details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
-<summary>**Examples**</summary>
+<summary>**Example: pre-join reference data**</summary>
 ```python
 from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
@@ -3829,9 +3999,53 @@ display(valid_and_quarantine_df)
 ```
 </details>
 
+**Option 2: Join reference tables directly inside an EXISTS subquery**
+
+You can join reference tables inside a `sql_expression` using an `EXISTS` subquery, keeping the check self-contained without an explicit pre-join:
+
+<details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
+<summary>**Example: EXISTS with a JOIN inside**</summary>
+```python
+import yaml
+from databricks.labs.dqx.engine import DQEngine
+from databricks.sdk import WorkspaceClient
+
+checks = yaml.safe_load("""
+  - criticality: error
+    name: order_refs_valid
+    check:
+      function: sql_expression
+      arguments:
+        expression: >
+          EXISTS (
+            SELECT 1
+            FROM catalog.schema.customers AS c
+            JOIN catalog.schema.products  AS p
+              ON p.product_id = product_id
+            WHERE c.customer_id  = customer_id
+              AND c.is_active    = true
+              AND p.is_available = true
+          )
+        msg: order references an inactive/missing customer or an unavailable/missing product
+""")
+
+dq_engine = DQEngine(WorkspaceClient())
+
+input_df = spark.table("catalog.schema.orders")
+valid_and_quarantine_df = dq_engine.apply_checks_by_metadata(input_df, checks)
+display(valid_and_quarantine_df)
+```
+</details>
+
+<Admonition type="tip" title="Custom python dataset-level function vs SQL query check">
+Although `sql_expression` is a row-level check, subquery expressions are **not** executed per row. 
+Spark's Catalyst optimizer rewrites correlated `EXISTS` subqueries as **semi-joins** (typically a broadcast hash join for small reference tables), so performance is comparable to an explicit join.
+For large reference tables where a broadcast join is not possible, pre-join the reference data into the input DataFrame before applying DQX checks, then use a simple column expression instead of a subquery.
+</Admonition>
+
 ### Using Dataset-level checks
 
-If you need to validate values across multiple DataFrames/Tables as part of the check without combining them beforehand, you can define custom dataset-level checks.
+If you need to run aggregate or dataset-based validation across multiple DataFrames/Tables that cannot be expressed via an EXISTS subquery inside `sql_expression`, you can define custom dataset-level checks.
 
 See [Creating Custom Dataset-level Checks](#creating-custom-dataset-level-checks) for details on how to create custom dataset-level checks.
 
@@ -3880,6 +4094,92 @@ Using DQX classes:
 <Admonition type="tip" title="Filter in Dataset-level rules">
 When using dataset-level checks, the top-level `filter` condition is pushed down as `row_filter` to the check function and applied before aggregation, ensuring that the check operates only on the relevant subset of rows rather than on the aggregated results.
 </Admonition>
+
+## Customizing check messages
+
+Users can override the default failure message of any `DQRule` by specifying a custom message expression. Set `message_expr` to either a Spark SQL expression string or a Spark `Column` expression that returns a string-valued message when data fails a check.
+If a check cannot be evaluated (for example, because it references invalid columns or uses an invalid SQL expression), the results report the default skip message instead of the custom message.
+
+<Admonition type="tip" title="Using custom messages">
+When using custom message expressions:
+
+* Messages defined as SQL expressions are only validated when checks are run (e.g. with `apply_checks_by_metadata(...)`).
+* Wrap column references with `coalesce` to avoid null messages. In Spark SQL, `concat(..., null)` returns `null`.
+* Pass literal string values with quotes (e.g. `'Email must not be null'`) to ensure they are not evaluated as SQL expressions.
+* Avoid long messages or referencing unbounded string columns. Message text is **truncated at 500 characters**.
+* Avoid unquoted SQL keywords that may be executed naively (e.g. `DELETE` or `TRUNCATE`).
+</Admonition>
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    import pyspark.sql.functions as F
+    from databricks.labs.dqx import check_funcs
+    from databricks.labs.dqx.rule import DQRowRule
+
+    # static message: "Email must not be null"
+    checks = [
+      DQRowRule(
+        name="email_not_null",
+        criticality="error",
+        check_func=check_funcs.is_not_null,
+        column="email",
+        message_expr="'Email must not be null'",
+      )
+    ]
+
+    # dynamic message using a SQL expression string: "age_positive: age <value> is not valid"
+    checks = [
+      DQRowRule(
+        name="age_positive",
+        criticality="error",
+        check_func=check_funcs.is_not_less_than,
+        column="age",
+        check_func_kwargs={"limit": 0},
+        message_expr="concat('age_positive: age ', coalesce(cast(age as string), 'null'), ' is not valid')",
+      )
+    ]
+
+    # dynamic message using a Spark Column expression: "age_positive: age <value> is not valid"
+    checks = [
+      DQRowRule(
+        name="age_positive",
+        criticality="error",
+        check_func=check_funcs.is_not_less_than,
+        column="age",
+        check_func_kwargs={"limit": 0},
+        message_expr=F.concat(
+            F.lit("age_positive: age "),
+            F.coalesce(F.col("age").cast("string"), F.lit("null")),
+            F.lit(" is not valid"),
+        ),
+      )
+    ]
+    ```
+  </TabItem>
+  <TabItem value="YAML" label="YAML">
+    ```yaml
+    # static message: "Email must not be null"
+    - name: email_not_null
+      criticality: error
+      message_expr: "'Email must not be null'"
+      check:
+        function: is_not_null
+        arguments:
+          column: email
+
+    # dynamic message using a SQL expression string: "age_positive: age <value> is not valid"
+    - name: age_positive
+      criticality: error
+      message_expr: "concat('age_positive: age ', coalesce(cast(age as string), 'null'), ' is not valid')"
+      check:
+        function: is_not_less_than
+        arguments:
+          column: age
+          limit: 0
+    ```
+  </TabItem>
+</Tabs>
 
 ## Converting checks between formats
 
@@ -4073,7 +4373,7 @@ The built-in check supports several configurable parameters:
 DQX automatically installs the built-in entity recognition models at runtime if they are not already available.
 However, for better performance and to avoid potential out-of-memory issues, it is recommended to pre-install models using pip install.
 Any additional models used in a custom configuration must also be installed on your Databricks cluster.
-See the [Using DQX for PII Detection](https://github.com/databrickslabs/dqx/blob/v0.13.0/demos/dqx_demo_pii_detection.py) notebook for examples of custom model installation.
+See the [Using DQX for PII Detection](https://github.com/databrickslabs/dqx/blob/v0.14.0/demos/dqx_demo_pii_detection.py) notebook for examples of custom model installation.
 </Admonition>
 
 #### Using Built-in NLP Engine Configurations

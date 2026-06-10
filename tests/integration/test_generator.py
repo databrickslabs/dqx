@@ -195,6 +195,24 @@ def test_generate_dq_rules_logging(ws, spark, caplog):
     assert "No rule 'is_random' for column 'vendor_id'. skipping..." in caplog.text
 
 
+def test_generate_dq_rules_is_not_empty_profile(ws, spark):
+    """is_not_empty profile (from refactored profiler) generates is_not_empty check."""
+    generator = DQGenerator(ws, spark)
+    profiles = [
+        DQProfile(
+            name="is_not_empty",
+            column="category",
+            description=None,
+            parameters={"trim_strings": True},
+        ),
+    ]
+    rules = generator.generate_dq_rules(profiles)
+    assert len(rules) == 1
+    assert rules[0]["check"]["function"] == "is_not_empty"
+    assert rules[0]["check"]["arguments"] == {"column": "category", "trim_strings": True}
+    assert rules[0]["name"] == "category_is_not_empty"
+
+
 def test_generate_dq_no_rules(ws, spark):
     generator = DQGenerator(ws, spark)
     expectations = generator.generate_dq_rules(None, criticality="warn")

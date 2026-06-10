@@ -29,6 +29,12 @@ _IPV4_CIDR_SUFFIX = r"(3[0-2]|[12]?\d)"
 IPV4_MAX_OCTET_COUNT = 4
 IPV4_BIT_LENGTH = 32
 
+# Email helpers (RFC 5322 §3.2.3, §3.2.4 + RFC 5321 §4.1.3, §4.5.3.1).
+_EMAIL_ATEXT = r"[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]"
+_EMAIL_DOMAIN_LABEL = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+_EMAIL_QTEXT = r"[\x21\x23-\x5B\x5D-\x7E]"  # printable ASCII except '"' (0x22) and '\' (0x5C)
+_EMAIL_QPAIR = r"\\[\x09\x20-\x7E]"  # quoted-pair: '\' + VCHAR or WSP; valid only inside a quoted part
+
 # Curated aggregate functions for data quality checks
 # These are univariate (single-column) aggregate functions suitable for DQ monitoring
 # Maps function names to human-readable display names for error messages
@@ -69,6 +75,25 @@ class DQPattern(Enum):
 
     IPV4_ADDRESS = rf"^{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}$"
     IPV4_CIDR_BLOCK = rf"{IPV4_ADDRESS[:-1]}/{_IPV4_CIDR_SUFFIX}$"
+    # RFC 5322 pragmatic subset: dot-atom or quoted-string local part, dot-atom or
+    # IP-literal domain, with RFC 5321 length caps (local ≤ 64, total ≤ 254).
+    # Excludes CFWS, obsolete grammar, and SMTPUTF8/IDN. ReDoS-safe.
+    EMAIL_ADDRESS = (
+        rf"^(?=.{{1,254}}$)"
+        # Local part: dot-atom or quoted-string limited to 64-characters
+        rf"(?=[^@]{{1,64}}@)"
+        rf"(?:"
+        rf"{_EMAIL_ATEXT}+(?:\.{_EMAIL_ATEXT}+)*"
+        rf'|"(?:{_EMAIL_QTEXT}|{_EMAIL_QPAIR})*"'
+        rf")"
+        rf"@"
+        # Domain: LDH hostname with alphabetic TLD, or IP-literal
+        rf"(?:"
+        rf"(?:{_EMAIL_DOMAIN_LABEL}\.)+[A-Za-z]{{2,63}}"
+        rf"|\[(?:{_IPV4_OCTET}(?:\.{_IPV4_OCTET}){{3}}|IPv6:[A-Fa-f0-9:]+)\]"
+        rf")"
+        rf"$"
+    )
 
 
 def make_condition(condition: Column, message: Column | str, alias: str) -> Column:
@@ -972,6 +997,39 @@ def is_valid_ipv4_address(column: str | Column) -> Column:
 
 
 @register_rule("row")
+def is_valid_email(column: str | Column) -> Column:
+    """Checks whether the values in the input column are valid email addresses.
+
+    Validates against a pragmatic subset of RFC 5322:
+
+    * Local part: dot-atom (RFC 5322 §3.2.3) or quoted-string (§3.2.4).
+    * Domain: dot-atom hostname with LDH labels (RFC 1035 §2.3.4) and an
+      alphabetic TLD, or an IP-literal (RFC 5321 §4.1.3) - bracketed IPv4
+      addresses will use octet validation while *[IPv6:...] addresses* are
+      only matched syntactically; Callers requiring semantic IPv6 domain
+      validation should implement a custom Python check that uses a Pandas
+      UDF to call *ipaddress.IPv6Address* methods.
+    * Length caps (per RFC 5321 §4.5.3.1): 64 octets for local-parts, 254
+      octets for the full address.
+
+    Comments and folding whitespace (CFWS), obsolete grammar
+    (*obs-local-part*, *obs-domain*, *obs-qtext*, *obs-qp*), and
+    internationalized addresses (RFC 6531 / SMTPUTF8) are not supported;
+    a separate check would be needed for each. Numeric and single-character
+    TLDs are rejected (ICANN policy + practical interoperability).
+
+    Null values will pass the check with no violation reported.
+
+    Args:
+        column: column to check; can be a string column name or a column expression
+
+    Returns:
+        Column object for condition
+    """
+    return _matches_pattern(column, DQPattern.EMAIL_ADDRESS)
+
+
+@register_rule("row")
 def is_ipv4_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
     """
     Checks if an IPv4 column value falls within the given CIDR block.
@@ -1339,6 +1397,7 @@ def foreign_key(
     ref_table: str | None = None,  # or reference table name
     negate: bool = False,
     row_filter: str | None = None,
+    null_safe: bool = False,
 ) -> tuple[Column, Callable]:
     """
     Build a foreign key check condition and closure for dataset-level validation.
@@ -1347,16 +1406,19 @@ def foreign_key(
     the corresponding reference columns of another DataFrame or table. Rows where
     foreign key values do not match the reference are reported as violations.
 
-    NULL values in the foreign key columns are ignored (SQL ANSI behavior).
+    By default, NULL values in the foreign key columns are ignored (SQL ANSI behavior).
+    When *null_safe=True*, NULL foreign-key values are matched against NULL reference values.
 
     Args:
         columns: List of column names (str) or Column expressions in the dataset (foreign key).
         ref_columns: List of column names (str) or Column expressions in the reference dataset.
         ref_df_name: Name of the reference DataFrame (used when passing DataFrames directly).
         ref_table: Name of the reference table (used when reading from catalog).
-        row_filter: Optional SQL expression for filtering rows before checking the foreign key. Auto-injected from the check filter.
         negate: If True, the condition is negated (i.e., the check fails when the foreign key values exist in the
             reference DataFrame/Table). If False, the check fails when the foreign key values do not exist in the reference.
+        row_filter: Optional SQL expression for filtering rows before checking the foreign key. Auto-injected from the check filter.
+        null_safe: If True, checks NULL foreign key values to match NULL reference values.
+            If False, skips NULL values in the foreign key columns. False is a default.
 
     Returns:
         A tuple of:
@@ -1374,14 +1436,25 @@ def foreign_key(
     _validate_ref_params(columns, ref_columns, ref_df_name, ref_table)
 
     not_null_condition = F.lit(True)
-    if len(columns) == 1:
-        column = columns[0]
-        ref_column = ref_columns[0]
+    # Wrap single columns in a struct when null_safe=True to distinguish a matched NULL key
+    # from an un-matched FK (struct(NULL) is itself non-NULL, unlike a scalar NULL).
+    if len(columns) == 1 and not null_safe:
+        join_col = columns[0]
+        join_ref_col = ref_columns[0]
     else:
-        column, ref_column, not_null_condition = _handle_fk_composite_keys(columns, ref_columns, not_null_condition)
+        join_col, join_ref_col, not_null_condition = _handle_fk_composite_keys(
+            columns, ref_columns, not_null_condition, null_safe
+        )
 
-    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
-    ref_col_str_norm, ref_col_expr_str, ref_col_expr = get_normalized_column_and_expr(ref_column)
+    # For single-column FK, render alias/message from the raw column so that enabling
+    # null_safe does not change the rule name or violation message.
+    display_col = columns[0] if len(columns) == 1 else join_col
+    display_ref_col = ref_columns[0] if len(columns) == 1 else join_ref_col
+
+    col_str_norm, col_expr_str, display_col_expr = get_normalized_column_and_expr(display_col)
+    ref_col_str_norm, ref_col_expr_str, _ = get_normalized_column_and_expr(display_ref_col)
+    _, _, col_expr = get_normalized_column_and_expr(join_col)
+    _, _, ref_col_expr = get_normalized_column_and_expr(join_ref_col)
     unique_str = uuid.uuid4().hex  # make sure any column added to the dataframe is unique
     condition_col = f"__{col_str_norm}_{unique_str}"
 
@@ -1407,11 +1480,14 @@ def foreign_key(
 
         filter_expr = F.expr(row_filter) if row_filter else F.lit(True)
 
+        # col_expr.isNotNull() only filters rows in the single-column non-null-safe path;
+        # when col_expr is a struct (composite keys or null_safe=True), the struct is never NULL
+        # so the guard is a no-op but kept for clarity
         joined = df.join(
             ref_df_distinct, on=(col_expr == F.col(ref_alias)) & col_expr.isNotNull() & filter_expr, how="left"
         )
 
-        base_condition = not_null_condition & col_expr.isNotNull()
+        base_condition = not_null_condition & col_expr.isNotNull() & filter_expr
         match_failed = F.col(ref_alias).isNull()
         match_succeeded = F.col(ref_alias).isNotNull()
         violation_condition = base_condition & (match_succeeded if negate else match_failed)
@@ -1429,7 +1505,7 @@ def foreign_key(
         message=F.concat_ws(
             "",
             F.lit("Value '"),
-            col_expr.cast("string"),
+            F.when(display_col_expr.isNull(), F.lit("null")).otherwise(display_col_expr.cast("string")),
             F.lit("' in column '"),
             F.lit(col_expr_str),
             F.lit(f"' {'' if negate else 'not '}found in reference column '"),
@@ -1770,6 +1846,233 @@ def is_aggr_not_equal(
     )
 
 
+_VALID_TIME_TRUNCATIONS: frozenset[str] = frozenset({"minute", "hour", "day", "week", "month"})
+
+
+@register_rule("dataset")
+def has_no_aggr_outliers(
+    column: str | Column,
+    time_column: str,
+    *,
+    aggr_type: str = "avg",
+    sigma: float = 3.0,
+    lookback_num_intervals: int = 14,
+    warmup_num_intervals: int = 7,
+    time_interval: str = "day",
+    group_by: list[str | Column] | None = None,
+    row_filter: str | None = None,
+    aggr_params: dict[str, Any] | None = None,
+) -> tuple[Column, Callable]:
+    """
+    Rolling-window sigma outlier check for a time-series aggregate.
+
+    For each combination of *group_by* values this check:
+
+    1. Computes *metric = aggr_type(column)* per *time_interval* bucket.
+    2. Derives a rolling baseline (mean and stddev_pop) over the preceding
+       *lookback_num_intervals* buckets.
+    3. Passes silently when fewer than *warmup_num_intervals* historical
+       buckets are available, the series is constant (stddev == 0), or the
+       most-recent bucket is missing.
+    4. Fails when *|current_metric - baseline| > sigma * stddev*.
+
+    Args:
+        column: Column name (str) or Column expression to aggregate (e.g. *"revenue"*
+            or *F.col("a") - F.col("b")*). Pass *"*"* for *count(*)*.
+        time_column: Name of the timestamp/date column used to bucket rows into
+            time grains.
+        aggr_type: Aggregation type applied per bucket (default: *"avg"*). All
+            curated DQX aggregate types are supported (count, sum, avg, min, max,
+            count_distinct, stddev, percentile, etc.).
+        sigma: Number of standard deviations that defines the outlier band
+            (default: *3.0*). Must be positive.
+        lookback_num_intervals: Number of preceding time-grain buckets used to
+            build the rolling baseline (default: *14*). Must be >= 2.
+        warmup_num_intervals: Minimum number of historical buckets required before
+            the check fires (default: *7*). Must satisfy
+            *1 <= warmup_num_intervals <= lookback_num_intervals*.
+        time_interval: Granularity at which to bucket the *time_column*
+            (default: *"day"*). One of *"minute"*, *"hour"*, *"day"*,
+            *"week"*, *"month"*.
+        group_by: Optional list of column names or Column expressions to segment
+            the outlier band (e.g. *["csp", "region"]*). The check fires if
+            *any* group exceeds its own band.
+        row_filter: Optional SQL expression to filter rows before aggregation
+            (e.g. *"status = 'Active'"*). Auto-injected from the check filter.
+        aggr_params: Optional dict of extra parameters for aggregate functions
+            that require them (e.g. *percentile=0.95* for percentile aggregates).
+
+    Returns:
+        A tuple of:
+            - A Spark Column representing the outlier condition (string message on
+              violation, NULL on pass).
+            - A closure *apply(df)* that enriches the DataFrame with the
+              condition column.
+
+    Raises:
+        InvalidParameterError: If *sigma <= 0*, *lookback_num_intervals < 2*,
+            *warmup_num_intervals* is out of range, or *time_interval* is unknown.
+        MissingParameterError: If *aggr_type* requires *aggr_params* that
+            are not supplied (e.g. percentile functions).
+    """
+    # --- Parameter validation ---
+    if sigma <= 0:
+        raise InvalidParameterError(f"'sigma' must be a positive number, got {sigma}")
+    if lookback_num_intervals < 2:
+        raise InvalidParameterError(f"'lookback_num_intervals' must be >= 2, got {lookback_num_intervals}")
+    if warmup_num_intervals < 1 or warmup_num_intervals > lookback_num_intervals:
+        raise InvalidParameterError(
+            f"'warmup_num_intervals' must satisfy 1 <= warmup_num_intervals <= lookback_num_intervals "
+            f"({lookback_num_intervals}), got {warmup_num_intervals}"
+        )
+    if time_interval not in _VALID_TIME_TRUNCATIONS:
+        raise InvalidParameterError(
+            f"'time_interval' must be one of {sorted(_VALID_TIME_TRUNCATIONS)}, got '{time_interval}'"
+        )
+
+    # Warn for non-curated aggregate functions (mirrors _is_aggr_compare behaviour)
+    if aggr_type not in CURATED_AGGR_FUNCTIONS:
+        warnings.warn(
+            f"Using non-curated aggregate function '{aggr_type}'. "
+            f"Curated functions: {', '.join(sorted(CURATED_AGGR_FUNCTIONS))}. "
+            f"Non-curated aggregates must return a single numeric value per group.",
+            UserWarning,
+            stacklevel=2,
+        )
+
+    aggr_col_str_norm, aggr_col_str, aggr_col_expr = get_normalized_column_and_expr(column)
+
+    # Unique suffix so multiple applications of this check don't collide
+    unique_str = uuid.uuid4().hex
+    condition_col = f"__dq_outlier_cond_{aggr_col_str_norm}_{aggr_type}_{unique_str}"
+    msg_col = f"__dq_outlier_msg_{aggr_col_str_norm}_{aggr_type}_{unique_str}"
+
+    def apply(df: DataFrame) -> DataFrame:
+        """
+        Apply the rolling-window outlier check to the input DataFrame.
+
+        Computes the aggregate per time-grain (and optionally per group), derives
+        the rolling mean/stddev baseline, evaluates the sigma band condition, and
+        adds the condition and message columns to every row of *df*.
+
+        Args:
+            df: The input DataFrame to validate.
+
+        Returns:
+            The DataFrame with additional condition and message columns appended.
+        """
+        time_col_type = df.schema[time_column].dataType
+        if not isinstance(time_col_type, (types.DateType, types.TimestampType, types.TimestampNTZType)):
+            raise InvalidParameterError(
+                f"Column '{time_column}' must be of date or timestamp type for time-series bucketing, "
+                f"but got type '{time_col_type.simpleString()}' instead."
+            )
+
+        filter_col = F.expr(row_filter) if row_filter else F.lit(True)
+        filtered_expr = F.when(filter_col, aggr_col_expr) if row_filter else aggr_col_expr
+        aggr_expr = _build_aggregate_expression(aggr_type, filtered_expr, aggr_params)
+
+        group_cols = [F.col(c) if isinstance(c, str) else c for c in (group_by or [])]
+        grain_col = F.date_trunc(time_interval, F.col(time_column)).alias("__dq_grain")
+
+        # Step 1: aggregate per time-grain (and group)
+        aggregate_df = df.groupBy(*group_cols, grain_col).agg(aggr_expr.alias("__dq_metric"))
+
+        # Step 2: rank grains per group, most-recent first
+        window_spec = (
+            Window.partitionBy(*group_cols).orderBy(F.col("__dq_grain").desc())
+            if group_by
+            else Window.orderBy(F.col("__dq_grain").desc())
+        )
+        ranked = aggregate_df.withColumn("__dq_rn", F.row_number().over(window_spec))
+
+        # Step 3: most-recent bucket (rank 1) and history (ranks 2..lookback_num_intervals+1)
+        current = ranked.filter(F.col("__dq_rn") == 1).select(
+            *group_cols,
+            F.col("__dq_metric").alias("__dq_current"),
+        )
+        hist = ranked.filter((F.col("__dq_rn") >= 2) & (F.col("__dq_rn") <= lookback_num_intervals + 1))
+
+        # Step 4: rolling baseline stats
+        stats = hist.groupBy(*group_cols).agg(
+            F.avg("__dq_metric").alias("__dq_mu"),
+            F.stddev_pop("__dq_metric").alias("__dq_sigma"),
+            F.count("*").alias("__dq_n"),
+        )
+
+        # Step 5: join current bucket + stats (left-join so current bucket always survives)
+        if group_by:
+            join_keys = [c if isinstance(c, str) else get_column_name_or_alias(c) for c in group_by]
+            joined = current.join(stats, on=join_keys, how="left")
+        else:
+            # Use a dummy-key left-join so the current bucket row survives even when stats
+            # is empty (e.g. only 1 bucket of data → hist is empty → stats has 0 rows).
+            # A plain crossJoin with empty stats would produce 0 rows and discard all df rows.
+            joined = (
+                current.withColumn("__dq_jkey", F.lit(1))
+                .join(
+                    stats.withColumn("__dq_jkey", F.lit(1)),
+                    on="__dq_jkey",
+                    how="left",
+                )
+                .drop("__dq_jkey")
+            )
+
+        # Step 6: compute violation and message string (2 output columns: condition + msg)
+        # Guard on NULL __dq_n: occurs when hist is empty (fewer than 2 buckets)
+        insufficient_history = F.col("__dq_n").isNull() | (F.col("__dq_n") < warmup_num_intervals)
+        delta_expr = F.abs(F.col("__dq_current") - F.col("__dq_mu"))
+        violation = (
+            F.when(insufficient_history, F.lit(False))
+            .when(F.col("__dq_sigma").isNull() | (F.col("__dq_sigma") == 0), F.lit(False))
+            .when(F.col("__dq_current").isNull(), F.lit(False))
+            .otherwise(delta_expr > F.lit(sigma) * F.col("__dq_sigma"))
+        )
+        message = F.concat_ws(
+            "",
+            F.lit(f"{aggr_type}({aggr_col_str}): current="),
+            F.col("__dq_current").cast("string"),
+            F.lit(", baseline="),
+            F.col("__dq_mu").cast("string"),
+            F.lit(", stddev="),
+            F.col("__dq_sigma").cast("string"),
+            F.lit(", delta="),
+            delta_expr.cast("string"),
+            F.lit(f" exceeds {sigma} x stddev (lookback={lookback_num_intervals} intervals)"),
+        )
+
+        result = joined.withColumn(condition_col, violation).withColumn(
+            msg_col, F.when(violation, message).otherwise(F.lit(None).cast("string"))
+        )
+
+        # Step 7: broadcast result back to every row in df
+        select_cols = [condition_col, msg_col]
+        if group_by:
+            join_keys = [c if isinstance(c, str) else get_column_name_or_alias(c) for c in group_by]
+            return df.join(result.select(*join_keys, *select_cols), on=join_keys, how="left")
+        return df.crossJoin(result.select(*select_cols))
+
+    # Build alias
+    group_by_str = (
+        "_".join(c if isinstance(c, str) else get_column_name_or_alias(c, normalize=True) for c in group_by)
+        if group_by
+        else None
+    )
+    alias = (
+        f"{aggr_col_str_norm}_{aggr_type}_outlier_group_by_{group_by_str}".lstrip("_")
+        if group_by_str
+        else f"{aggr_col_str_norm}_{aggr_type}_outlier".lstrip("_")
+    )
+
+    condition = make_condition(
+        condition=F.col(condition_col),
+        message=F.col(msg_col),
+        alias=alias,
+    )
+
+    return condition, apply
+
+
 @register_rule("dataset")
 def compare_datasets(
     columns: list[str | Column],
@@ -2053,8 +2356,8 @@ def is_data_fresh_per_time_window(
     return condition, apply
 
 
-@register_rule("dataset")
 @register_for_original_columns_preselection()
+@register_rule("dataset")
 def has_valid_schema(
     expected_schema: str | types.StructType | None = None,
     ref_df_name: str | None = None,
@@ -2067,9 +2370,7 @@ def has_valid_schema(
     Build a schema compatibility check condition and closure for dataset-level validation.
 
     This function checks whether the DataFrame schema is compatible with the expected schema.
-    In non-strict mode, validates that all expected columns exist with compatible types.
-    In strict mode, validates that the schema matches exactly (same columns, same order, same types)
-    for the columns specified in columns or for all columns if columns is not specified.
+    The check will be skipped by the engine if the columns parameter contains column names that do not exist in the checked DataFrame.
 
     All columns in the `exclude_columns` list will be ignored even if the column is present in the `columns` list.
 
@@ -2077,10 +2378,12 @@ def has_valid_schema(
         expected_schema: Expected schema as a DDL string (e.g., "id INT, name STRING") or StructType object.
         ref_df_name: Name of the reference DataFrame (used when passing DataFrames directly).
         ref_table: Name of the reference table to load the schema from (e.g. "catalog.schema.table")
-        columns: Optional list of columns to validate (default: all columns are considered)
+        columns: Optional list of columns to validate (default: all columns in the checked DataFrame are considered). Only the input DataFrame columns are filtered by this parameter.
         strict: Whether to perform strict schema validation (default: False).
-            - False: Validates that all expected columns exist with compatible types (allows extra columns)
-            - True: Validates exact schema match (same columns, same order, same types)
+            - False: Validates that all expected columns (after filtering by the `columns` parameter) exist
+            with compatible types. Allows the DataFrame to contain extra columns.
+            - True: Validates an exact schema match against the full expected schema (same columns,
+            same order, same types).
         exclude_columns: Optional list of columns in the checked DataFrame schema to
             ignore for validation.
 
@@ -2117,7 +2420,7 @@ def has_valid_schema(
             get_column_name_or_alias(col) if not isinstance(col, str) else col for col in exclude_columns
         ]
 
-    expected_schema = _get_schema(expected_schema or types.StructType(), column_names)
+    expected_schema = _get_schema(expected_schema or types.StructType(), None)
 
     unique_str = uuid.uuid4().hex  # make sure any column added to the dataframe is unique
     condition_col = f"__schema_condition_{unique_str}"
@@ -2140,11 +2443,13 @@ def has_valid_schema(
 
         if ref_df_name or ref_table:
             ref_df = _get_ref_df(ref_df_name, ref_table, ref_dfs, spark)
-            _expected_schema = _get_schema(ref_df.schema, column_names)
+            _expected_schema = _get_schema(ref_df.schema, None)
         else:
             _expected_schema = expected_schema
 
-        selected_column_names = column_names if column_names else df.columns
+        # Use columns (engine-injected or user-provided) to filter actual schema.
+        selected_column_names = column_names if column_names is not None else list(df.columns)
+
         if exclude_column_names:
             ignore_set = set(exclude_column_names)
             selected_column_names = [col for col in selected_column_names if col not in ignore_set]
@@ -2349,7 +2654,8 @@ def _get_schema(input_schema: str | types.StructType, columns: list[str] | None 
         expected_schema = input_schema
     elif isinstance(input_schema, str):
         try:
-            parsed_schema = types.StructType.fromDDL(input_schema)
+            # NOTE: Using the internal `_parse_datatype_string` for compatibility with PySpark 3
+            parsed_schema = types._parse_datatype_string(input_schema)
         except Exception as e:  # Catch schema parsing errors from Spark
             raise InvalidParameterError(f"Invalid schema string '{input_schema}'. Error: {e}") from e
 
@@ -3322,7 +3628,9 @@ def _get_column_expr(column: Column | str) -> Column:
     return F.expr(column) if isinstance(column, str) else column
 
 
-def _handle_fk_composite_keys(columns: list[str | Column], ref_columns: list[str | Column], not_null_condition: Column):
+def _handle_fk_composite_keys(
+    columns: list[str | Column], ref_columns: list[str | Column], not_null_condition: Column, null_safe: bool
+):
     """
     Construct composite key expressions and not-null condition for foreign key validation.
 
@@ -3334,6 +3642,7 @@ def _handle_fk_composite_keys(columns: list[str | Column], ref_columns: list[str
         columns: List of columns (names or expressions) from the input DataFrame forming the composite key.
         ref_columns: List of columns (names or expressions) from the reference DataFrame forming the composite key.
         not_null_condition: Existing condition Column to be combined with not-null checks for the composite key.
+        null_safe: Whether to handle nullable foreign keys or skip them.
 
     Returns:
         A tuple containing:
@@ -3344,10 +3653,11 @@ def _handle_fk_composite_keys(columns: list[str | Column], ref_columns: list[str
     # Extract column names from columns for consistent aliasing
     columns_names = [get_column_name_or_alias(col) if not isinstance(col, str) else col for col in columns]
 
-    # skip nulls from comparison for ANSI standard compliance
+    # skip nulls from comparison for ANSI standard compliance if `null_safe` is disabled.
     # if any column is Null, skip the row from the check
-    for col_name in columns_names:
-        not_null_condition = not_null_condition & F.col(col_name).isNotNull()
+    if not null_safe:
+        for col_name in columns_names:
+            not_null_condition = not_null_condition & F.col(col_name).isNotNull()
 
     column = _build_fk_composite_key_struct(columns, columns_names)
     ref_column = _build_fk_composite_key_struct(ref_columns, columns_names)

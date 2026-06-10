@@ -2,7 +2,8 @@
 Data Contract Integration for DQX.
 
 This module provides functionality to generate DQX quality rules from data contract
-specifications. Currently supports ODCS (Open Data Contract Standard) v3.0.x.
+specifications. Supports ODCS (Open Data Contract Standard) v3.x contracts (any apiVersion
+accepted by the open_data_contract_standard library, e.g. v3.0.0, v3.0.2, v3.1.0).
 
 Use DQGenerator.generate_rules_from_contract() as the main entry point for generating
 rules from data contracts.

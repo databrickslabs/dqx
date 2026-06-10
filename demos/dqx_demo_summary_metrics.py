@@ -111,6 +111,7 @@ print(f"Checks from YAML: {status}")
 # MAGIC - The number of input rows
 # MAGIC - The number of rows with warnings
 # MAGIC - The number of rows with errors
+# MAGIC - Per-check error and warning counts (as a JSON breakdown per check name)
 # MAGIC - User-defined custom metrics
 # MAGIC
 # MAGIC Summary metrics can be tracked for both streaming and batch datasets. To track summary metrics, pass a `DQMetricsObserver` when creating the `DQEngine`.
@@ -264,8 +265,10 @@ metrics_table_name = f"{demo_catalog_name}.{demo_schema_name}.metrics_table"
 metrics_config = OutputConfig(location=metrics_table_name, mode="overwrite")
 
 # Read the input data, apply checks, generate metrics, and save results
+# By default, apply_checks_and_save_in_table method apply checks to the entire input table.
+# Incremental processing is supported using streaming with the AvailableNow trigger for batch-style execution, along with checkpointing to ensure consistency across runs.
 dq_engine.apply_checks_by_metadata_and_save_in_table(
-  checks=checks_from_yaml,
+  checks=checks_from_yaml,  # or provide checks_location and run_config_name to auto-load from checks storage
   input_config=input_config,
   output_config=output_config,
   metrics_config=metrics_config

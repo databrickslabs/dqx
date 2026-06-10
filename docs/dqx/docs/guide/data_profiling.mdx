@@ -15,6 +15,7 @@ The generated data quality rules (checks) candidates can be used as input for th
 In addition, the Lakeflow (DLT) generator can generate native Lakeflow Pipelines expectations.
 
 You can run profiling and quality checks generation using the following approaches:
+* [DQX Studio (no-code UI)](/docs/guide/dqx_studio): for a no-code experience, DQX Studio is the recommended option. It lets you profile tables and review and save the generated rule candidates from a browser, without writing code.
 * [Programmatic approach](#programmatic-approach): you can use DQX classes to run the profiler and quality checks generator on DataFrames or tables, and [save the generated checks to a storage](/docs/guide/quality_checks_storage).
 * [No-code approach (Profiler Workflow)](#no-code-approach-profiler-workflow): you can run the profiler and quality checks generator on tables as a workflow if DQX is installed in the workspace as a tool. The workflow will save the generated checks to a file or table automatically.
 
@@ -312,6 +313,7 @@ The following fields from the [configuration file](/docs/installation/#configura
     - `sample_seed`: seed for reproducible sampling.
     - `limit`: maximum number of records to analyze.
     - `filter`: filter for the input data as a string SQL expression
+    - `criticality`: default criticality for generated rules, either `error` or `warn` (default: `error`).
 - `checks_user_requirements`: (optional) user input for AI-assisted rule generation. Only supported if `serverless_clusters` is enabled.
 - `llm_config`: (optional) configuration for the llm-assisted features
 - `serverless_clusters`: whether to use serverless clusters for running the workflow (default: 'true'). Using serverless clusters is recommended as it allows for automated cluster management and scaling.
@@ -340,6 +342,7 @@ Example of the configuration file (relevant fields only):
       sample_fraction: 0.3
       summary_stats_file: profile_summary_stats.yml
       filter: "maintenance_type = 'preventive'"
+      criticality: error  # default criticality for generated rules ('error' or 'warn')
       llm_primary_key_detection: false
     checks_user_requirements: "business rules description"  # optional user input for the llm-assisted features
 ```
@@ -376,7 +379,7 @@ The profiler supports extensive configuration options to customize the profiling
 
       # String handling
       "trim_strings": True,         # Trim whitespace from strings before analysis
-      "max_empty_ratio": 0.02,      # Generate is_not_null_or_empty rule if <2% empty strings
+      "max_empty_ratio": 0.02,      # Generate is_not_null_or_empty or is_not_empty rule if <2% empty strings
 
       # Distinct value analysis
       "distinct_ratio": 0.01,       # Generate is_in rule if <1% distinct values
@@ -413,6 +416,7 @@ The profiler supports extensive configuration options to customize the profiling
         - `sample_seed`: seed for reproducible sampling.
         - `limit`: maximum number of records to analyze.
         - `filter`: string SQL expression to filter the input data
+        - `criticality`: default criticality for generated rules, either `error` or `warn` (default: `error`).
 
     You can open the configuration file to check available run configs and adjust the settings if needed:
     ```commandline
@@ -427,6 +431,7 @@ The profiler supports extensive configuration options to customize the profiling
         sample_fraction: 0.3 # Fraction of data to sample (30%)
         limit: 1000          # Maximum number of records to analyze
         sample_seed: 42      # Seed for reproducible results
+        criticality: error   # default criticality for generated rules ('error' or 'warn')
         llm_primary_key_detection: false  # whether to use llm-assisted pk detection to generate uniqueness check
       ...
     ```
@@ -512,6 +517,48 @@ Rule of thumb: `count ≈ min(limit, sample_fraction × total_rows)`.
 | `max`             | Largest **non-null** value                                              | String = lexicographic; Date/Timestamp = latest; Numeric = maximum  |
 | `count_non_null`  | Number of non-null entries within the profiled rows                     |                                                                     |
 | `count_null`      | Number of null entries within the profiled rows                         | `count_non_null + count_null = count`                               |
+
+## Data Drift Detection
+
+When you profile the same data repeatedly over time, the profiler's summary statistics let you detect **data drift** — shifts in the statistical distribution of your data. This matters for profiling because DQX derives quality-rule candidates from these statistics (e.g. `min`/`max` ranges, `is_in` allowed values, null-ratio thresholds): when the data drifts, rules generated from an earlier profile go stale and start producing false positives or stop catching real issues. Treat a profile captured at a known-good point in time as a **baseline**, compare later profiles against it, and regenerate the rules when the baseline has moved.
+
+### Metrics to compare against a baseline
+
+`profiler.profile(...)` returns a `summary_stats` dictionary keyed by column name (see the [Summary Statistics Reference](#summary-statistics-reference) above). Watch these per-column metrics for significant deviations from your baseline:
+
+* **Numeric columns:** shifts in `mean` or `stddev`, movement of the `min` / `max` boundaries, or changes in the `25` / `50` / `75` percentiles.
+* **Categorical columns:** changes in `count_distinct`, or changes to the allowed-value set inferred by the profiler's `is_in` check.
+* **Completeness:** a rise in `count_null` relative to `count` (completeness = `count_non_null / count`) signals an influx of NULLs.
+
+### Example: compare a profile against a saved baseline
+
+```python
+from databricks.sdk import WorkspaceClient
+from databricks.labs.dqx.profiler.profiler import DQProfiler
+
+profiler = DQProfiler(WorkspaceClient())
+
+# Flag a column when its mean shifts by more than this fraction of the baseline (20% here). Tune to taste.
+mean_drift_threshold = 0.2
+
+# Baseline captured earlier — persist summary_stats however you prefer (e.g. as a Delta table or JSON)
+baseline_stats, _ = profiler.profile(reference_df)
+
+# Current run
+current_stats, _ = profiler.profile(current_df)
+
+for column, baseline in baseline_stats.items():
+    current = current_stats.get(column, {})
+    base_mean, cur_mean = baseline.get("mean"), current.get("mean")
+    if base_mean and cur_mean and abs(cur_mean - base_mean) / abs(base_mean) > mean_drift_threshold:
+        print(f"Drift in '{column}': mean {base_mean} -> {cur_mean}")
+```
+
+By saving profile results periodically, you can build a historical ledger and trigger alerts when these markers drift beyond acceptable thresholds.
+
+<Admonition type="tip" title="Automated drift detection">
+The approach above is a lightweight, manual comparison suited to profiling and rule-candidate generation. For **automated, scored** drift detection against a trained baseline, DQX's row anomaly detection already ships a drift detector: it compares each column against the model's training statistics using a z-score / standard-deviation-change score and flags drift past a configurable sigma threshold (default 3.0). If you need alertable drift rather than manual inspection, see the [Row Anomaly Detection](/docs/guide/row_anomaly_detection) guide.
+</Admonition>
 
 ## Performance considerations
 
