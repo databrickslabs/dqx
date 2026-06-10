@@ -22,13 +22,6 @@ from databricks.labs.dqx.config import LLMModelConfig
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.rule import register_rule
 
-try:
-    import dspy  # type: ignore
-
-    DSPY_AVAILABLE = dspy is not None
-except ImportError:
-    DSPY_AVAILABLE = False
-
 _LLM_MODEL_CONFIG_KEYS = {f.name for f in dataclasses.fields(LLMModelConfig)}
 
 
@@ -76,7 +69,6 @@ def _validate_thresholds(threshold: float, drift_threshold: float | None) -> Non
 def _validate_explanation_flags(
     enable_contributions: bool,
     enable_ai_explanation: bool,
-    llm_model_config: LLMModelConfig | None,
 ) -> None:
     if enable_contributions and not SHAP_AVAILABLE:
         raise InvalidParameterError(
@@ -87,14 +79,6 @@ def _validate_explanation_flags(
         raise InvalidParameterError(
             "enable_ai_explanation=True requires enable_contributions=True. "
             "SHAP contributions are used as input to the LLM explanation."
-        )
-    # DSPy is only required for the driver executor path; ai_query runs entirely in Spark SQL.
-    executor = (llm_model_config or LLMModelConfig()).executor
-    if enable_ai_explanation and executor == "driver" and not DSPY_AVAILABLE:
-        raise InvalidParameterError(
-            "enable_ai_explanation=True with executor='driver' requires the 'dspy' dependency. "
-            "Install: pip install databricks-labs-dqx[anomaly,llm], or use executor='ai_query' "
-            "(default) on Databricks."
         )
 
 
@@ -107,12 +91,11 @@ def _validate_anomaly_check_args(
     enable_ai_explanation: bool,
     redact_columns: list[str] | None,
     max_groups: int,
-    llm_model_config: LLMModelConfig | None,
 ) -> None:
     """Validate has_no_row_anomalies arguments. Raises InvalidParameterError on failure."""
     _validate_required_names(model_name, registry_table)
     _validate_thresholds(threshold, drift_threshold)
-    _validate_explanation_flags(enable_contributions, enable_ai_explanation, llm_model_config)
+    _validate_explanation_flags(enable_contributions, enable_ai_explanation)
 
     if redact_columns is not None:
         if not isinstance(redact_columns, list) or not all(isinstance(c, str) and c for c in redact_columns):
@@ -178,20 +161,13 @@ def has_no_row_anomalies(
         enable_confidence_std: Include ensemble confidence scores in _dq_info and top-level (default False).
             Automatically available when training with ensemble_size > 1 (default is 3).
         enable_ai_explanation: If True, add a human-readable LLM explanation for each anomalous row
-            (default False). Requires enable_contributions=True. By default the LLM call runs in
-            Spark via ``ai_query`` against a Databricks Model Serving endpoint — no extra deps.
-            Set ``llm_model_config.executor='driver'`` (and install the [llm] extra) to route
-            through DSPy instead, e.g. for non-Databricks providers. Output is in
-            _dq_info[0].anomaly.ai_explanation.
+            (default False). Requires enable_contributions=True. The LLM call runs in Spark via
+            ``ai_query`` against a Databricks Model Serving endpoint — no extra dependencies.
+            Output is in _dq_info[0].anomaly.ai_explanation.
         llm_model_config: LLM model configuration. Defaults to LLMModelConfig()
-            (databricks/databricks-claude-sonnet-4-5, executor='ai_query').
-
-            ``executor`` selects how the LLM call runs:
-              - ``'ai_query'`` (default): Spark SQL ``ai_query`` on executors against a Databricks
-                Model Serving endpoint. Scales with the cluster, no DSPy required. *model_name*
-                must be a Databricks endpoint name (with or without the ``databricks/`` prefix).
-              - ``'driver'``: DSPy on the driver with threaded fan-out. Use for any provider DSPy
-                supports via *api_base*. Requires ``pip install databricks-labs-dqx[anomaly,llm]``.
+            (model_name='databricks/databricks-claude-sonnet-4-5'). *model_name* must resolve to a
+            Databricks Model Serving endpoint (with or without the ``databricks/`` prefix); the
+            ``ai_query`` call uses the bare endpoint name.
 
             When wrapping this check in DQDatasetRule / DQRowRule, applying it via
             apply_checks / apply_checks_by_metadata, or declaring it in YAML: **pass a dict**
@@ -203,26 +179,22 @@ def has_no_row_anomalies(
             When calling this function directly (not via a rule), either a dict or an
             LLMModelConfig instance is accepted.
 
-            Example (dict form, works for both paths)::
+            Example (dict form)::
 
                 "llm_model_config": {
-                    "model_name": "databricks-qwen3-next-80b-a3b-instruct",
-                    "api_key": "<pat_token>",
-                    "api_base": "https://<gateway-id>.ai-gateway.cloud.databricks.com/mlflow/v1",
+                    "model_name": "databricks-claude-sonnet-4-5",
                 }
-
-            When ``api_base`` is set, the model is routed through litellm's OpenAI-compatible
-            adapter (``openai/<model>``) — use this for AI Gateway and other OpenAI-compatible
-            endpoints. ``api_key`` / ``api_base`` also fall back to ``OPENAI_API_KEY`` /
-            ``OPENAI_API_BASE`` env vars when unset on the config.
         redact_columns: Column names to exclude from the LLM prompt. Filters SHAP contribution
-            map keys and the top-2 pattern key. Does **not** redact segment values: when the
-            scored model is segmented, the segment ``key=value`` pairs (raw segmentation
-            column values) are included in the prompt. If those values are sensitive, avoid
-            segmenting the model on those columns.
+            map keys, the top-2 pattern key, and — when the scored model is segmented — any
+            matching segment key (emitted as ``key=<redacted>`` so sensitive segmentation values
+            never reach the prompt).
         max_groups: Maximum number of distinct (segment, pattern) groups the LLM is called for
             per scoring run (default 500). Groups beyond this cap — ranked by
             group_size * group_avg_severity — get a null ai_explanation; a warning is logged.
+            Note: for segmented models the cap is split across eligible segments with a floor of
+            one call each, so when ``max_groups`` is smaller than the number of eligible segments
+            the effective call count is the segment count (a warning is logged). Size
+            ``max_groups`` at or above your expected eligible-segment count to keep cost bounded.
         driver_only: If True, score on the driver (no UDF). Use for tests or Spark Connect when
             worker UDF dependencies are not available. Default False for production.
 
@@ -245,7 +217,6 @@ def has_no_row_anomalies(
         enable_ai_explanation=enable_ai_explanation,
         redact_columns=redact_columns,
         max_groups=max_groups,
-        llm_model_config=llm_model_config,
     )
 
     row_id_col = f"__dqx_row_id_{uuid.uuid4().hex}"
@@ -256,6 +227,7 @@ def has_no_row_anomalies(
         severity=f"__dq_severity_percentile_{uuid.uuid4().hex}",
         ai_explanation=f"__dq_ai_explanation_{uuid.uuid4().hex}",
         info=f"__dqx_info_{uuid.uuid4().hex}",
+        pattern=f"__dq_anomaly_pattern_{uuid.uuid4().hex}",
     )
 
     def apply(df: DataFrame) -> DataFrame:

@@ -1,193 +1,23 @@
-"""Unit tests for the parallel LLM-call orchestration in anomaly_llm_explainer.
+"""Unit tests for the ai_query-based group explainer in anomaly_llm_explainer.
 
-Exercises *_call_llm_for_groups* with a fake predictor — verifies that:
-- All retained groups produce a result tuple, regardless of execution order.
-- A predictor that raises for one group does not abort the run; that group emits
-  a null-explanation tuple and the others succeed (per-group failure isolation).
-
-Spark is never started — these helpers operate on plain Python dicts.
+Spark is never started — these exercise the pure helpers: prompt rendering, endpoint
+resolution, segment redaction, SQL-literal escaping, the structured-output schema, and the
+pattern-column threading through ExplanationContext.
 """
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import pytest
 
 from databricks.labs.dqx.anomaly import anomaly_llm_explainer as llm_explainer
-from databricks.labs.dqx.anomaly.anomaly_llm_explainer import DSPY_AVAILABLE, ExplanationContext
+from databricks.labs.dqx.anomaly.anomaly_llm_explainer import ExplanationContext
+from databricks.labs.dqx.anomaly.scoring_config import ScoringConfig, ScoringOutputColumns
 from databricks.labs.dqx.errors import InvalidParameterError
-
-pytestmark = pytest.mark.skipif(not DSPY_AVAILABLE, reason="dspy not installed")
-
-
-def _make_group(pattern: str, group_size: int = 10) -> dict:
-    return {
-        llm_explainer._PATTERN_COL: pattern,
-        "group_size": group_size,
-        "group_avg_severity": 97.5,
-        "severity_min": 95.0,
-        "severity_max": 99.5,
-        "mean_std": 0.04,
-        "mean_contributions": {"amount": 0.8, "quantity": 0.2},
-    }
-
-
-def _make_ctx() -> ExplanationContext:
-    return ExplanationContext(
-        severity_col="severity_percentile",
-        contributions_col="anomaly_contributions",
-        score_std_col="anomaly_score_std",
-        ai_explanation_col="ai_explanation",
-        threshold=95.0,
-        model_name="catalog.schema.m",
-    )
-
-
-_CANNED = SimpleNamespace(
-    narrative="Group flagged due to amount.",
-    business_impact="May inflate revenue.",
-    action="Investigate transaction source.",
-)
-
-
-def test_call_llm_for_groups_returns_one_tuple_per_group():
-    groups = [_make_group(f"pat{i}") for i in range(8)]
-
-    def predictor(**_):
-        return _CANNED
-
-    rows = llm_explainer._call_llm_for_groups(
-        groups,
-        _make_ctx(),
-        segment_str="",
-        is_ensemble=True,
-        drift_summary="none",
-        predictor=predictor,
-        language_model=object(),
-    )
-
-    assert len(rows) == len(groups)
-    patterns = {r[0] for r in rows}
-    assert patterns == {f"pat{i}" for i in range(8)}
-    # Each row carries the canned narrative/impact/action.
-    for pattern, narrative, impact, action, size, _avg_sev in rows:
-        assert narrative == _CANNED.narrative
-        assert impact == _CANNED.business_impact
-        assert action == _CANNED.action
-        assert size == 10
-        assert pattern.startswith("pat")
-
-
-def test_call_llm_for_groups_isolates_per_group_failures():
-    """A predictor that raises for one pattern must not abort the run; that group's row is
-    emitted with null narrative/impact/action so downstream join still produces a row, and
-    the other groups complete normally."""
-    groups = [_make_group(f"pat{i}") for i in range(5)]
-    failing_pattern = "pat2"
-
-    def predictor(**kwargs):
-        # The pattern is encoded into severity_range only indirectly; key off the unique
-        # group_size by patching one group to a distinct size and matching on it instead.
-        # Simpler: raise based on a counter — but order isn't guaranteed across threads.
-        # We mark the "failing" group via group_size below and check kwargs.group_size.
-        if kwargs.get("group_size") == "999 rows":
-            raise RuntimeError("boom")
-        return _CANNED
-
-    # Make the failing group identifiable inside the predictor by giving it a distinct size.
-    for group in groups:
-        if group[llm_explainer._PATTERN_COL] == failing_pattern:
-            group["group_size"] = 999
-
-    rows = llm_explainer._call_llm_for_groups(
-        groups,
-        _make_ctx(),
-        segment_str="",
-        is_ensemble=True,
-        drift_summary="none",
-        predictor=predictor,
-        language_model=object(),
-    )
-
-    by_pattern = {r[0]: r for r in rows}
-    assert set(by_pattern.keys()) == {f"pat{i}" for i in range(5)}
-
-    failed = by_pattern[failing_pattern]
-    # Pattern + size + avg_severity preserved; narrative/impact/action are None.
-    assert failed[1] is None
-    assert failed[2] is None
-    assert failed[3] is None
-    assert failed[4] == 999
-
-    for pattern, row in by_pattern.items():
-        if pattern == failing_pattern:
-            continue
-        assert row[1] == _CANNED.narrative
-        assert row[2] == _CANNED.business_impact
-        assert row[3] == _CANNED.action
-        assert row[4] == 10
-
-
-def test_sanitize_llm_field_passes_through_clean_text():
-    assert llm_explainer._sanitize_llm_field("plain narrative") == "plain narrative"
-
-
-def test_sanitize_llm_field_returns_none_for_none():
-    assert llm_explainer._sanitize_llm_field(None) is None
-
-
-def test_sanitize_llm_field_strips_control_chars():
-    raw = "line1\nline2\rline3\ttab\x00nul\x1bescape\x7fdel"
-    sanitized = llm_explainer._sanitize_llm_field(raw)
-    assert sanitized == "line1 line2 line3 tab nul escape del"
-
-
-def test_sanitize_llm_field_caps_length():
-    sanitized = llm_explainer._sanitize_llm_field("a" * 10_000)
-    assert sanitized is not None
-    assert len(sanitized) == llm_explainer._LLM_FIELD_MAX_LEN
-
-
-def test_sanitize_llm_field_coerces_non_str():
-    # DSPy may return non-str on malformed completions; we still want a safe string out.
-    assert llm_explainer._sanitize_llm_field(123) == "123"  # type: ignore[arg-type]
-
-
-def test_call_llm_for_groups_sanitizes_llm_output():
-    groups = [_make_group("pat0")]
-    dirty = SimpleNamespace(
-        narrative="bad\nnarrative\x00" + "x" * 1000,
-        business_impact="impact\r\nforged",
-        action="ok action",
-    )
-
-    def predictor(**_):
-        return dirty
-
-    rows = llm_explainer._call_llm_for_groups(
-        groups,
-        _make_ctx(),
-        segment_str="",
-        is_ensemble=True,
-        drift_summary="none",
-        predictor=predictor,
-        language_model=object(),
-    )
-
-    _pattern, narrative, impact, action, _size, _sev = rows[0]
-    assert "\n" not in narrative and "\x00" not in narrative
-    assert len(narrative) == llm_explainer._LLM_FIELD_MAX_LEN
-    assert impact == "impact  forged"
-    assert action == "ok action"
 
 
 def test_ai_query_prompt_header_includes_instructions_and_field_descriptions():
-    """The ai_query header is rendered from the same shared dicts the DSPy signature reads.
-
-    Asserting on a few representative tokens from each section catches accidental drift between
-    the two executor paths without coupling the test to exact wording.
-    """
+    """The header is rendered from the shared prompt tables; assert representative tokens from
+    each section so accidental drift is caught without coupling to exact wording."""
     header = llm_explainer._render_ai_query_prompt_header()
     assert "data quality analyst" in header  # instructions line
     for input_name, _ in llm_explainer._PROMPT_INPUT_FIELDS:
@@ -195,6 +25,17 @@ def test_ai_query_prompt_header_includes_instructions_and_field_descriptions():
     for output_name, _ in llm_explainer._PROMPT_OUTPUT_FIELDS:
         assert f"- {output_name}:" in header
     assert "Respond with ONLY a JSON object" in header
+
+
+def test_prompt_drops_model_name_and_includes_examples():
+    """model_name was removed from the prompt (review feedback) and few-shot exemplars added."""
+    input_names = {name for name, _ in llm_explainer._PROMPT_INPUT_FIELDS}
+    assert "model_name" not in input_names
+    header = llm_explainer._render_ai_query_prompt_header()
+    assert "model_name" not in header
+    # Two few-shot exemplars pin style + JSON shape.
+    assert header.count("Example (") == 2
+    assert "Response:" in header
 
 
 def test_resolve_ai_query_endpoint_strips_databricks_prefix():
@@ -207,7 +48,7 @@ def test_resolve_ai_query_endpoint_strips_databricks_prefix():
     "model_name, expected_match",
     [
         # Wrong provider prefix — caught by the provider check before the regex runs.
-        pytest.param("openai/gpt-4", "executor='ai_query' requires a Databricks", id="wrong_provider"),
+        pytest.param("openai/gpt-4", "require a Databricks serving endpoint", id="wrong_provider"),
         # SQL-injection shapes: quote, semicolon, comment marker. The endpoint string is
         # f-string-interpolated into the *ai_query* SQL call, so anything the regex doesn't
         # whitelist must be rejected here rather than reaching the SQL string.
@@ -251,28 +92,70 @@ def test_resolve_ai_query_endpoint_rejects_empty_model_name():
         llm_explainer._resolve_ai_query_endpoint("")
 
 
-def test_ai_query_response_format_is_strict_json_schema():
-    """Response format pins the LLM to {narrative, business_impact, action} with strict mode.
+def test_ai_query_response_format_is_strict_json_schema_built_from_output_fields():
+    """Response format pins the LLM to the output fields with strict mode, and is built from
+    *_PROMPT_OUTPUT_FIELDS* so the schema and the prompt rules cannot drift.
 
     Strict mode + ``additionalProperties:false`` blocks the model from smuggling extra fields.
     Length-capping happens post-parse via *_sanitize* (Databricks ai_query rejects ``maxLength``
-    on string types in responseFormat — see comment on *_AI_QUERY_RESPONSE_FORMAT*).
+    on string types in responseFormat).
     """
     schema = llm_explainer._AI_QUERY_RESPONSE_FORMAT
     assert '"strict":true' in schema
     assert '"additionalProperties":false' in schema
-    for field in ("narrative", "business_impact", "action"):
+    for field, _ in llm_explainer._PROMPT_OUTPUT_FIELDS:
         assert f'"{field}"' in schema
+    # Derived, not hand-rolled: rebuilding from the fields reproduces the constant exactly.
+    assert llm_explainer._build_ai_query_response_format() == schema
 
 
-def test_call_llm_for_groups_empty_input_returns_empty_list():
-    rows = llm_explainer._call_llm_for_groups(
-        [],
-        _make_ctx(),
-        segment_str="",
-        is_ensemble=True,
-        drift_summary="none",
-        predictor=lambda **_: _CANNED,
-        language_model=object(),
+def test_format_segment_empty_returns_empty_string():
+    assert llm_explainer._format_segment(None, frozenset()) == ""
+    assert llm_explainer._format_segment({}, frozenset()) == ""
+
+
+def test_format_segment_formats_key_value_pairs():
+    out = llm_explainer._format_segment({"region": "US", "product": "electronics"}, frozenset())
+    assert out == "region=US, product=electronics"
+
+
+def test_format_segment_redacts_listed_keys():
+    """A segment key in redact_columns must never leak its value into the prompt."""
+    out = llm_explainer._format_segment({"region": "US", "customer_id": "C-42"}, frozenset({"customer_id"}))
+    assert out == "region=US, customer_id=<redacted>"
+    assert "C-42" not in out
+
+
+def test_sql_string_literal_escapes_quote_and_backslash():
+    """Both single quote and backslash must be escaped — Spark SQL treats backslash as an
+    escape char inside string literals, so quote-doubling alone is insufficient."""
+    assert llm_explainer._sql_string_literal("o'brien") == "o''brien"
+    assert llm_explainer._sql_string_literal("a\\b") == "a\\\\b"
+    assert llm_explainer._sql_string_literal("x'\\y") == "x''\\\\y"
+
+
+def test_explanation_context_pattern_col_defaults_to_fixed_name():
+    ctx = ExplanationContext(
+        severity_col="severity_percentile",
+        contributions_col="anomaly_contributions",
+        score_std_col="anomaly_score_std",
+        ai_explanation_col="ai_explanation",
+        threshold=95.0,
+        model_name="catalog.schema.m",
     )
-    assert not rows
+    assert ctx.pattern_col == llm_explainer._DEFAULT_PATTERN_COL
+
+
+def test_explanation_context_threads_pattern_col_from_scoring_config():
+    """Production scoring threads a UUID-suffixed pattern column so it can't collide with a
+    user column; from_scoring_config must carry it through."""
+    config = ScoringConfig(
+        columns=["amount"],
+        model_name="catalog.schema.m",
+        registry_table="catalog.schema.reg",
+        threshold=95.0,
+        merge_columns=["__dqx_row_id_x"],
+        output_columns=ScoringOutputColumns(pattern="__dq_anomaly_pattern_abc123"),
+    )
+    ctx = ExplanationContext.from_scoring_config(config)
+    assert ctx.pattern_col == "__dq_anomaly_pattern_abc123"

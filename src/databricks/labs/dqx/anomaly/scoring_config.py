@@ -35,6 +35,10 @@ class ScoringOutputColumns:
     severity: str = "severity_percentile"
     info: str = DefaultColumnNames.INFO.value
     ai_explanation: str = "ai_explanation"
+    # Intermediate (segment, pattern) group-key column used only while building AI explanations.
+    # UUID-suffixed in production (see check_funcs.has_no_row_anomalies) so it can never collide
+    # with a user column; dropped before the scored DataFrame is returned.
+    pattern: str = "anomaly_pattern"
 
 
 @dataclass
@@ -93,3 +97,7 @@ class ScoringConfig:
     @property
     def ai_explanation_col(self) -> str:
         return self.output_columns.ai_explanation
+
+    @property
+    def pattern_col(self) -> str:
+        return self.output_columns.pattern

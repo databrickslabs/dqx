@@ -5,6 +5,7 @@ Kept in one module to avoid over-fragmentation of the scoring layer.
 """
 
 import dataclasses
+import logging
 
 import pyspark.sql.functions as F
 from pyspark.sql import DataFrame
@@ -21,7 +22,6 @@ from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRecord, Anoma
 from databricks.labs.dqx.anomaly.anomaly_llm_explainer import (
     ExplanationContext,
     add_explanation_column,
-    build_language_model,
 )
 from databricks.labs.dqx.anomaly.scoring_utils import (
     add_info_column,
@@ -39,6 +39,9 @@ from databricks.labs.dqx.anomaly.single_model_scorer import (
 from databricks.labs.dqx.errors import InvalidParameterError
 
 
+logger = logging.getLogger(__name__)
+
+
 def _split_max_groups_budget(max_groups: int, num_eligible_segments: int) -> int:
     """Allocate the per-segment LLM-call budget for *score_segmented*.
 
@@ -54,6 +57,25 @@ def _split_max_groups_budget(max_groups: int, num_eligible_segments: int) -> int
     if num_eligible_segments <= 0:
         raise InvalidParameterError("num_eligible_segments must be positive")
     return max(1, max_groups // num_eligible_segments)
+
+
+def _warn_if_max_groups_below_segments(config: ScoringConfig, num_eligible_segments: int) -> None:
+    """Cost transparency for segmented scoring.
+
+    The per-segment floor of 1 (see *_split_max_groups_budget*) means a budget smaller than the
+    eligible-segment count still makes one LLM call per segment, so the effective cap is the
+    segment count rather than *max_groups*. Surface this so a scheduled job's owner isn't
+    surprised by the bill. No-op unless AI explanations are enabled and there are eligible
+    segments to explain.
+    """
+    if not (config.enable_ai_explanation and num_eligible_segments):
+        return
+    if config.max_groups < num_eligible_segments:
+        logger.warning(
+            f"ai_explanation: max_groups={config.max_groups} is below the {num_eligible_segments} eligible "
+            f"segments; the per-segment floor of 1 makes the effective cap {num_eligible_segments} LLM "
+            f"calls. Raise max_groups to at least {num_eligible_segments} to bound cost as configured."
+        )
 
 
 def score_global_model(
@@ -212,7 +234,6 @@ def score_single_segment(
     segment_df: DataFrame,
     segment_model: AnomalyModelRecord,
     config: ScoringConfig,
-    language_model: object | None = None,
     max_groups_override: int | None = None,
 ) -> DataFrame:
     """Score a single segment with its specific model.
@@ -281,7 +302,6 @@ def score_single_segment(
             segment_model.segmentation.segment_values,
             segment_model.identity.is_ensemble,
             drift_summary=format_drift_summary(drift_result, config.redact_columns),
-            language_model=language_model,
         )
 
     segment_scored = add_info_column(
@@ -319,10 +339,6 @@ def score_segmented(
 
     df_to_score = apply_row_filter(df, config.row_filter)
 
-    shared_lm = (
-        build_language_model(ExplanationContext.from_scoring_config(config)) if config.enable_ai_explanation else None
-    )
-
     # Two-pass loop so *max_groups* can be enforced as a global cap across segments. Without
     # this, *config.max_groups* would apply independently per segment and the worst-case LLM
     # call count would be ``num_eligible_segments * config.max_groups``. First pass filters
@@ -343,6 +359,7 @@ def score_segmented(
         if config.enable_ai_explanation and eligible
         else None
     )
+    _warn_if_max_groups_below_segments(config, len(eligible))
 
     scored_dfs: list[DataFrame] = []
     for segment_model, segment_df in eligible:
@@ -350,7 +367,6 @@ def score_segmented(
             segment_df,
             segment_model,
             config,
-            language_model=shared_lm,
             max_groups_override=per_segment_budget,
         )
         scored_dfs.append(segment_scored)

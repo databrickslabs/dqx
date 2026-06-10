@@ -18,7 +18,6 @@ from databricks.labs.dqx.anomaly.model_config import (
     compute_config_hash,
 )
 from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRegistry
-from databricks.labs.dqx.config import LLMModelConfig
 from databricks.labs.dqx.errors import InvalidParameterError
 
 
@@ -120,37 +119,19 @@ def test_has_no_row_anomalies_ai_explanation_requires_contributions():
     assert "enable_ai_explanation=True requires enable_contributions=True" in str(exc_info.value)
 
 
-def test_has_no_row_anomalies_ai_explanation_driver_requires_dspy():
-    """executor='driver' + enable_ai_explanation=True raises when DSPy is not installed.
-
-    The default executor is 'ai_query' (Spark SQL, no DSPy) — DSPy is only required for the
-    driver path, so the validator gates dspy availability behind that executor choice.
-    """
-    with patch.object(check_funcs, "SHAP_AVAILABLE", True), patch.object(check_funcs, "DSPY_AVAILABLE", False):
-        with pytest.raises(InvalidParameterError) as exc_info:
-            has_no_row_anomalies(
-                model_name="catalog.schema.model",
-                registry_table="catalog.schema.table",
-                enable_ai_explanation=True,
-                enable_contributions=True,
-                llm_model_config={"executor": "driver"},
-            )
-    assert "executor='driver' requires the 'dspy' dependency" in str(exc_info.value)
-
-
-def test_validate_explanation_flags_default_executor_does_not_require_dspy():
-    """Default executor='ai_query' does NOT require dspy — runs entirely in Spark SQL.
+def test_validate_explanation_flags_ai_query_needs_no_extra_dependency():
+    """AI explanations run entirely in Spark SQL via ``ai_query`` — no DSPy/driver dependency.
 
     Calls *_validate_explanation_flags* directly so the assertion is scoped to the validator
     and doesn't depend on downstream workspace lookups or whether *has_no_row_anomalies*
     happens to fail for an unrelated reason in the test env.
     """
-    with patch.object(check_funcs, "SHAP_AVAILABLE", True), patch.object(check_funcs, "DSPY_AVAILABLE", False):
-        # Default executor on a fresh LLMModelConfig is 'ai_query' — must not raise.
-        check_funcs._validate_explanation_flags(  # pylint: disable=protected-access
+    with patch.object(check_funcs, "SHAP_AVAILABLE", True):
+        # enable_ai_explanation with contributions on must not raise — the only hard requirement
+        # is enable_contributions=True (SHAP feeds the prompt).
+        check_funcs._validate_explanation_flags(
             enable_contributions=True,
             enable_ai_explanation=True,
-            llm_model_config=LLMModelConfig(),
         )
 
 
