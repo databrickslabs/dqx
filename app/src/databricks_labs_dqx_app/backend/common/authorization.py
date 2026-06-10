@@ -1,4 +1,5 @@
 import logging
+import os
 from enum import Enum
 from typing import Annotated
 
@@ -106,6 +107,25 @@ def get_user_email(
                 return me.user_name
         except Exception:
             logger.warning("Failed to resolve user email from OBO token", exc_info=True)
+
+    # Local-dev fallback: no X-Forwarded-* headers are present locally. When a CLI
+    # profile / token is configured (loaded from app/.env), derive the email from the
+    # SDK default auth — same gate as get_obo_ws. Cannot trigger in production, which
+    # authenticates via DATABRICKS_CLIENT_ID/SECRET with no profile/PAT present.
+    if os.environ.get("DATABRICKS_CONFIG_PROFILE") or os.environ.get("DATABRICKS_TOKEN"):
+        try:
+            from databricks.sdk import WorkspaceClient
+
+            me = WorkspaceClient().current_user.me()
+            if me.user_name:
+                logger.warning(
+                    "X-Forwarded-Email/Access-Token missing — resolved email via local default "
+                    "auth (%s). Local dev only.",
+                    me.user_name,
+                )
+                return me.user_name
+        except Exception:
+            logger.warning("Failed to resolve user email from local default auth", exc_info=True)
 
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,

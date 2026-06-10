@@ -95,8 +95,24 @@ async def get_obo_ws(
     header is automatically injected with the logged-in user's access token.
     The token is hashed before use as a cache key so raw tokens are never
     stored in the key space.
+
+    Local-dev fallback: the platform always injects the header and authenticates
+    the app via DATABRICKS_CLIENT_ID/SECRET — it never has a CLI profile or PAT.
+    So when the header is absent but a profile/token is configured (loaded from
+    app/.env for local dev), we are running locally and fall back to the SDK
+    default auth (that same profile) so OBO endpoints work without a header. This
+    cannot trigger in production, where no profile/PAT is present.
     """
     if not token:
+        profile = os.environ.get("DATABRICKS_CONFIG_PROFILE")
+        if profile or os.environ.get("DATABRICKS_TOKEN"):
+            logger.warning(
+                "X-Forwarded-Access-Token missing — falling back to local default auth "
+                "(profile=%s) for OBO. Local dev only: runs as your CLI identity, not an "
+                "arbitrary end user.",
+                profile or "(env)",
+            )
+            return WorkspaceClient()  # default auth chain: app/.env profile / token
         logger.warning("OBO token is not provided in the header X-Forwarded-Access-Token")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
