@@ -817,6 +817,7 @@ class DQEngine(DQEngineBase):
         rule_set_fingerprint = compute_rule_set_fingerprint(checks) if checks else None
 
         if metrics_config is not None and batch_observation is not None and metrics_only_df is not None:
+            # Force an action so the Observation is populated; otherwise batch_observation.get below blocks
             metrics_only_df.count()
 
         # Add listener for streaming metrics, targeting the specific query to avoid duplicates
