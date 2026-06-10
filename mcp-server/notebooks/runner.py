@@ -24,42 +24,24 @@ logger.info(f"Running operation: {operation}, params keys: {list(params.keys())}
 
 # COMMAND ----------
 
-def get_table_schema(params: dict) -> dict:
-    """Retrieve schema and row count for a table."""
-    table_name = params["table_name"]
-    df = spark.table(table_name)
-    columns = [
-        {"name": f.name, "type": str(f.dataType), "nullable": f.nullable}
-        for f in df.schema.fields
-    ]
-    row_count = df.count()
-    return {
-        "table_name": table_name,
-        "columns": columns,
-        "row_count": row_count,
-    }
-
-# COMMAND ----------
-
 def profile_table(params: dict) -> dict:
-    """Profile a table and return summary stats + profiles."""
+    """Profile a view and return summary stats + profiles."""
     from databricks.sdk import WorkspaceClient
     from databricks.labs.dqx.profiler.profiler import DQProfiler
     from databricks.labs.dqx.config import InputConfig
     from dataclasses import asdict
 
-    table_name = params["table_name"]
+    view_name = params["view_name"]
     columns = params.get("columns")
     options = params.get("options")
 
     ws = WorkspaceClient()
     profiler = DQProfiler(workspace_client=ws, spark=spark)
-    input_config = InputConfig(location=table_name)
+    input_config = InputConfig(location=view_name)
     summary_stats, profiles = profiler.profile_table(input_config, columns=columns, options=options)
 
     profiles_dicts = [asdict(p) for p in profiles]
     return {
-        "table_name": table_name,
         "summary_stats": _make_json_safe(summary_stats),
         "profiles": _make_json_safe(profiles_dicts),
     }
@@ -98,19 +80,19 @@ def generate_rules(params: dict) -> dict:
 # COMMAND ----------
 
 def run_checks(params: dict) -> dict:
-    """Run DQX checks against a table."""
+    """Run DQX checks against a view."""
     from databricks.sdk import WorkspaceClient
     from databricks.labs.dqx.engine import DQEngine
     import pyspark.sql.functions as F
 
-    table_name = params["table_name"]
+    view_name = params["view_name"]
     checks = params["checks"]
     sample_size = params.get("sample_size", 50)
 
     ws = WorkspaceClient()
     engine = DQEngine(workspace_client=ws, spark=spark)
 
-    df = spark.table(table_name)
+    df = spark.table(view_name)
     valid_df, invalid_df = engine.apply_checks_by_metadata_and_split(df, checks)
 
     total_rows = df.count()
@@ -120,11 +102,9 @@ def run_checks(params: dict) -> dict:
     error_sample_rows = invalid_df.limit(sample_size).collect()
     error_sample = [_make_json_safe(row.asDict(recursive=True)) for row in error_sample_rows]
 
-    # Compute per-rule summary
     rule_summary = _compute_rule_summary(invalid_df)
 
     return {
-        "table_name": table_name,
         "total_rows": total_rows,
         "valid_rows": valid_rows,
         "invalid_rows": invalid_rows,
@@ -174,12 +154,56 @@ def _compute_rule_summary(invalid_df) -> list:
 
 # COMMAND ----------
 
+def validate_checks(params: dict) -> dict:
+    """Validate a list of DQX check definitions for correctness."""
+    from databricks.labs.dqx.engine import DQEngine
+
+    checks = params["checks"]
+    status = DQEngine.validate_checks(checks)
+    return {
+        "valid": not status.has_errors,
+        "errors": status.errors,
+    }
+
+# COMMAND ----------
+
+def list_available_checks(params: dict) -> dict:
+    """List all built-in DQX check functions with signatures and descriptions."""
+    import inspect
+    from databricks.labs.dqx.rule import CHECK_FUNC_REGISTRY
+    from databricks.labs.dqx.checks_resolver import resolve_check_function
+
+    checks = []
+    for name, func_type in sorted(CHECK_FUNC_REGISTRY.items()):
+        func = resolve_check_function(name, fail_on_missing=False)
+        if func is None:
+            continue
+        sig = inspect.signature(func)
+        func_params = [
+            {"name": p.name, "type": str(p.annotation) if p.annotation != inspect.Parameter.empty else "Any"}
+            for p in sig.parameters.values()
+        ]
+        doc = inspect.getdoc(func) or ""
+        first_line = doc.split("\n")[0] if doc else ""
+        checks.append({
+            "name": name,
+            "type": func_type,
+            "signature": f"{name}{sig}",
+            "description": first_line,
+            "parameters": func_params,
+        })
+
+    return {"checks": checks, "count": len(checks)}
+
+# COMMAND ----------
+
 # Operation dispatch
 OPERATIONS = {
-    "get_table_schema": get_table_schema,
     "profile_table": profile_table,
     "generate_rules": generate_rules,
     "run_checks": run_checks,
+    "validate_checks": validate_checks,
+    "list_available_checks": list_available_checks,
 }
 
 # COMMAND ----------

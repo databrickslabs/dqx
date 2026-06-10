@@ -1,1 +1,8 @@
 command: ["python", "server/main.py"]
+env:
+  - name: DQX_RUNNER_JOB_ID
+    valueFrom: dqx-runner-job
+  - name: DQX_CATALOG
+    value: ${var.catalog_name}
+  - name: DQX_TMP_SCHEMA
+    value: "tmp"
