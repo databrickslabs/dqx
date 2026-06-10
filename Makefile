@@ -124,12 +124,12 @@ app-build: ## Build app: openapi → orval → vite → wheels (CI parity)
 # UI client (``api.ts``), and the UI bundle exist before the dev
 # servers come up — otherwise vite would fail to import them.
 app-start-dev: app-build ## Start uvicorn + vite locally on http://localhost:9001 (foreground)
-	cd app && $(UV_RUN) python scripts/dev.py
+	cd app && $(UV_RUN) python $(CURDIR)/app/scripts/dev.py
 
 # Stop any dev servers started in another shell. The pkill scopes are
 # narrow enough that they only match THIS project's processes.
 app-stop-dev: ## Stop dev servers started by app-start-dev (any shell)
-	-pkill -f "$(CURDIR)/app/scripts/dev.py"
+	-pkill -9 -f "$(CURDIR)/app/scripts/dev.py"
 	-pkill -f "$(CURDIR)/app/node_modules/.bin/vite"
 	-pkill -f "uvicorn databricks_labs_dqx_app.backend.app:app"
 

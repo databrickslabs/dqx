@@ -207,4 +207,6 @@ rm -rf .venv/.lock # remove stale lock if needed
 ```
 
 **OBO token missing locally:**
-The `X-Forwarded-Access-Token` header is only injected by Databricks Apps. When running locally the backend falls back to the SDK default auth for OBO operations. Ensure you've authenticated via `databricks auth login` or configured `.env`.
+The `X-Forwarded-Access-Token` header is only injected by the Databricks Apps platform; it is absent when running locally. In that case the backend falls back to the **SDK default auth** for OBO operations — i.e. your configured CLI profile / `.env` (`DATABRICKS_CONFIG_PROFILE` or `DATABRICKS_TOKEN`). No extra setup is needed beyond [Configure Authentication](#1-configure-authentication): just `databricks auth login` or an `app/.env`, and OBO endpoints run as your own identity.
+
+This fallback only activates locally — production deployments authenticate via `DATABRICKS_CLIENT_ID`/`DATABRICKS_CLIENT_SECRET` (no profile/PAT present), so the header is always required there. Note OBO calls then run as **your** identity, not an arbitrary end user, so it can't simulate per-user permission differences.
