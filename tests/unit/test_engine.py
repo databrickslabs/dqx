@@ -8,6 +8,7 @@ from pyspark.sql import SparkSession
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import DatabricksError
 
+from databricks.labs.dqx import engine as engine_module
 from databricks.labs.dqx.__about__ import __version__
 from databricks.labs.dqx.config import ExtraParams
 from databricks.labs.dqx.checks_storage import (
@@ -242,10 +243,83 @@ def test_apply_checks_and_save_in_table_empty_checks_does_not_load_from_location
     mock_factory.create_for_location.assert_not_called()
 
 
-def test_apply_checks_and_save_in_table_raises_when_no_output_and_no_quarantine(mock_workspace_client, mock_spark):
+@pytest.mark.parametrize(
+    ("save_method_name", "apply_method_name"),
+    [
+        ("apply_checks_and_save_in_table", "apply_checks"),
+        ("apply_checks_by_metadata_and_save_in_table", "apply_checks_by_metadata"),
+    ],
+)
+def test_apply_checks_and_save_in_table_allows_metrics_only(
+    mock_workspace_client, mock_spark, monkeypatch, save_method_name, apply_method_name
+):
+    engine = DQEngine(mock_workspace_client, mock_spark, observer=DQMetricsObserver())
+    checked_df = Mock()
+    observation = Mock()
+    observation.get = {"input_row_count": 2}
+    apply_checks = Mock(return_value=(checked_df, observation))
+    save_summary_metrics = Mock()
+    read_input_data = Mock(return_value=Mock())
+
+    monkeypatch.setattr(engine, apply_method_name, apply_checks)
+    monkeypatch.setattr(engine, "save_summary_metrics", save_summary_metrics)
+    monkeypatch.setattr(engine_module, "read_input_data", read_input_data)
+
+    save_method = getattr(engine, save_method_name)
+    save_method(
+        input_config=InputConfig(location="catalog.schema.input"),
+        checks=[],
+        metrics_config=OutputConfig(location="catalog.schema.metrics"),
+    )
+
+    checked_df.count.assert_called_once_with()
+    save_summary_metrics.assert_called_once()
+    _, save_metrics_kwargs = save_summary_metrics.call_args
+    assert save_metrics_kwargs["observed_metrics"] == {"input_row_count": 2}
+    assert save_metrics_kwargs["metrics_config"] == OutputConfig(location="catalog.schema.metrics")
+
+
+@pytest.mark.parametrize(
+    "save_method_name",
+    ["apply_checks_and_save_in_table", "apply_checks_by_metadata_and_save_in_table"],
+)
+def test_apply_checks_and_save_in_table_metrics_only_requires_observer(
+    mock_workspace_client, mock_spark, save_method_name
+):
+    engine = DQEngine(mock_workspace_client, mock_spark)
+    save_method = getattr(engine, save_method_name)
+
+    with pytest.raises(InvalidParameterError, match="Metrics cannot be collected for engine with no observer"):
+        save_method(
+            input_config=InputConfig(location="catalog.schema.input"),
+            checks=[],
+            metrics_config=OutputConfig(location="catalog.schema.metrics"),
+        )
+
+
+@pytest.mark.parametrize(
+    "save_method_name",
+    ["apply_checks_and_save_in_table", "apply_checks_by_metadata_and_save_in_table"],
+)
+def test_apply_checks_and_save_in_table_metrics_only_streaming_unsupported(
+    mock_workspace_client, mock_spark, save_method_name
+):
+    engine = DQEngine(mock_workspace_client, mock_spark, observer=DQMetricsObserver())
+    save_method = getattr(engine, save_method_name)
+
+    with pytest.raises(InvalidParameterError, match="Metrics-only writes are not supported for streaming input"):
+        save_method(
+            input_config=InputConfig(location="catalog.schema.input", is_streaming=True),
+            checks=[],
+            metrics_config=OutputConfig(location="catalog.schema.metrics"),
+        )
+
+
+def test_apply_checks_and_save_in_table_raises_when_no_destination_configs(mock_workspace_client, mock_spark):
     engine = DQEngine(mock_workspace_client, mock_spark)
     with pytest.raises(
-        InvalidParameterError, match="At least one of 'output_config' or 'quarantine_config' must be provided"
+        InvalidParameterError,
+        match="At least one of 'output_config', 'quarantine_config' or 'metrics_config' must be provided",
     ):
         engine.apply_checks_and_save_in_table(
             input_config=InputConfig(location="catalog.schema.input"),
@@ -253,12 +327,13 @@ def test_apply_checks_and_save_in_table_raises_when_no_output_and_no_quarantine(
         )
 
 
-def test_apply_checks_by_metadata_and_save_in_table_raises_when_no_output_and_no_quarantine(
+def test_apply_checks_by_metadata_and_save_in_table_raises_when_no_destination_configs(
     mock_workspace_client, mock_spark
 ):
     engine = DQEngine(mock_workspace_client, mock_spark)
     with pytest.raises(
-        InvalidParameterError, match="At least one of 'output_config' or 'quarantine_config' must be provided"
+        InvalidParameterError,
+        match="At least one of 'output_config', 'quarantine_config' or 'metrics_config' must be provided",
     ):
         engine.apply_checks_by_metadata_and_save_in_table(
             input_config=InputConfig(location="catalog.schema.input"),

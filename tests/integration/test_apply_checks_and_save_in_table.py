@@ -12,7 +12,8 @@ from databricks.labs.dqx.config import (
     TableChecksStorageConfig,
 )
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.errors import InvalidConfigError
+from databricks.labs.dqx.errors import InvalidConfigError, InvalidParameterError
+from databricks.labs.dqx.metrics_observer import DQMetricsObserver
 from databricks.labs.dqx.rule import DQRowRule, DQDatasetRule
 from tests.integration.conftest import (
     EXTRA_PARAMS,
@@ -881,6 +882,17 @@ def test_apply_checks_and_save_in_table_streaming_write(ws, spark, make_schema, 
     assert_df_equality(actual_df.sort("a"), expected_df.sort("a"), ignore_nullable=True)
 
 
+def test_apply_checks_and_save_in_table_streaming_metrics_only_unsupported(ws, spark):
+    engine = DQEngine(ws, spark=spark, observer=DQMetricsObserver(), extra_params=EXTRA_PARAMS)
+
+    with pytest.raises(InvalidParameterError, match="Metrics-only writes are not supported for streaming input"):
+        engine.apply_checks_and_save_in_table(
+            checks=[],
+            input_config=InputConfig(location="catalog.schema.input", is_streaming=True),
+            metrics_config=OutputConfig(location="catalog.schema.metrics"),
+        )
+
+
 def test_apply_checks_and_save_in_tables(ws, spark, make_schema, make_random, make_directory):
     catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
@@ -1338,14 +1350,14 @@ def test_apply_checks_and_save_in_tables_missing_input_config(ws, spark):
         engine.apply_checks_and_save_in_tables(run_configs=[run_config])
 
 
-def test_apply_checks_and_save_in_tables_missing_output_and_quarantine_config(ws, spark):
+def test_apply_checks_and_save_in_tables_missing_destination_configs(ws, spark):
     engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
 
     run_config = RunConfig(input_config=InputConfig(location="some_table"))
 
     with pytest.raises(
         InvalidConfigError,
-        match="At least one of 'output_config' or 'quarantine_config' must be provided",
+        match="At least one of 'output_config', 'quarantine_config' or 'metrics_config' must be provided",
     ):
         engine.apply_checks_and_save_in_tables(run_configs=[run_config])
 
