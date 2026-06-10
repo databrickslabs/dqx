@@ -3,7 +3,7 @@ import { formatDateTime as formatDate } from "@/lib/format-utils";
 import { useState, useCallback, useEffect, useRef, useMemo, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { usePermissions } from "@/hooks/use-permissions";
-import { PageBreadcrumb } from "@/components/apx/PageBreadcrumb";
+import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
 import {
   Card,
   CardContent,

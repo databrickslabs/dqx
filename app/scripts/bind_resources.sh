@@ -70,7 +70,7 @@ cd "$BUNDLE_DIR"
 # ---------------------------------------------------------------------------
 BUNDLE_VALIDATE_STDERR=$(mktemp)
 trap 'rm -f "$BUNDLE_VALIDATE_STDERR"' EXIT
-if ! BUNDLE_JSON=$($CLI bundle validate "${BUNDLE_FLAGS[@]}" "${EXTRA_VARS[@]}" -o json 2>"$BUNDLE_VALIDATE_STDERR"); then
+if ! BUNDLE_JSON=$($CLI bundle validate "${BUNDLE_FLAGS[@]}" ${EXTRA_VARS[@]+"${EXTRA_VARS[@]}"} -o json 2>"$BUNDLE_VALIDATE_STDERR"); then
   echo "ERROR: 'databricks bundle validate' failed:" >&2
   cat "$BUNDLE_VALIDATE_STDERR" >&2
   exit 1
@@ -115,7 +115,7 @@ bind() {
   local key="$1"
   local id="$2"
   echo "   binding ${key} -> ${id}"
-  if ! $CLI bundle deployment bind "$key" "$id" --auto-approve "${BUNDLE_FLAGS[@]}" "${EXTRA_VARS[@]}"; then
+  if ! $CLI bundle deployment bind "$key" "$id" --auto-approve "${BUNDLE_FLAGS[@]}" ${EXTRA_VARS[@]+"${EXTRA_VARS[@]}"}; then
     echo "" >&2
     echo "ERROR: failed to bind ${key} -> ${id}" >&2
     echo "" >&2
