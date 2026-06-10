@@ -17,6 +17,13 @@ _VERSIONING_COLUMNS = ("created_at", "rule_fingerprint", "rule_set_fingerprint")
     "location, expected",
     [
         ("catalog.schema.table", True),  # Valid table location
+        ("schema.table", True),  # Valid 2-level table location
+        ("catalog.`my-schema`.table", True),  # Backticked schema with special chars
+        ("catalog.`my-schema`.`my-table`", True),  # Backticked schema and table
+        ("`my-schema`.table", True),  # Backticked schema in 2-level location
+        ("catalog.schema.`my-table`", True),  # Backticked table with special chars
+        ("`my-catalog`.schema.table", True),  # Backticked catalog with special chars
+        ("`bad`catalog.schema.table", False),  # Malformed backticks (not spanning the segment)
         ("catalog/schema/table.yml", False),  # File path with known extension
         ("catalog.schema.table.json", False),  # File path with known extension
         ("", False),  # Empty string
