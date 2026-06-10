@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from databricks.labs.dqx.anomaly.scoring_run import _split_max_groups_budget
+from databricks.labs.dqx.anomaly import scoring_run
 from databricks.labs.dqx.errors import InvalidParameterError
 
 
@@ -28,7 +28,7 @@ from databricks.labs.dqx.errors import InvalidParameterError
     ],
 )
 def test_split_keeps_total_at_or_below_cap(max_groups, num_segments, expected_per_segment):
-    per_segment = _split_max_groups_budget(max_groups, num_segments)
+    per_segment = scoring_run._split_max_groups_budget(max_groups, num_segments)
     assert per_segment == expected_per_segment
     # The whole point of the helper: total LLM calls across segments stays bounded.
     assert per_segment * num_segments <= max_groups
@@ -41,7 +41,7 @@ def test_split_floor_of_one_when_budget_under_provisioned():
     cap is still finite and proportional to the input — every segment gets a chance to
     produce at least one explanation. Locks the documented behaviour.
     """
-    per_segment = _split_max_groups_budget(max_groups=3, num_eligible_segments=10)
+    per_segment = scoring_run._split_max_groups_budget(max_groups=3, num_eligible_segments=10)
     assert per_segment == 1
     # Total = 10 > max_groups=3, by design.
     assert per_segment * 10 == 10
@@ -52,9 +52,9 @@ def test_split_rejects_zero_segments():
     skips the call entirely when *eligible* is empty. Surface it loudly here so a
     refactor that drops the guard fails fast."""
     with pytest.raises(InvalidParameterError, match="num_eligible_segments must be positive"):
-        _split_max_groups_budget(max_groups=500, num_eligible_segments=0)
+        scoring_run._split_max_groups_budget(max_groups=500, num_eligible_segments=0)
 
 
 def test_split_rejects_negative_segments():
     with pytest.raises(InvalidParameterError, match="num_eligible_segments must be positive"):
-        _split_max_groups_budget(max_groups=500, num_eligible_segments=-1)
+        scoring_run._split_max_groups_budget(max_groups=500, num_eligible_segments=-1)
