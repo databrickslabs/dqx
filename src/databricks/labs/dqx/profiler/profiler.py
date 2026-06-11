@@ -353,7 +353,7 @@ class DQProfiler(DQEngineBase):
 
         if sample_by_column:
             df = DQProfiler._stratified_sample(df, sample_by_column, sample_fraction, sample_seed)
-        elif sample_fraction:
+        elif sample_fraction is not None:
             df = df.sample(withReplacement=False, fraction=sample_fraction, seed=sample_seed)
         if limit:
             df = df.limit(limit)
@@ -394,12 +394,12 @@ class DQProfiler(DQEngineBase):
         if isinstance(sample_fraction, dict):
             sample_fractions = sample_fraction
         else:
-            if not sample_fraction:
+            if sample_fraction is None:
                 raise InvalidConfigError("sample_fraction must be provided when sample_by_column is set.")
-            slice_values = [row[0] for row in df.select(sample_by_column).distinct().collect()]
+            slice_values = [row[0] for row in df.select(sample_by_column).distinct().toLocalIterator()]
             sample_fractions = {slice_value: sample_fraction for slice_value in slice_values}
 
-        logger.info(f"Stratified sampling on column '{sample_by_column}' with fractions: {sample_fractions}")
+        logger.info(f"Stratified sampling on column '{sample_by_column}'")
         return df.sampleBy(sample_by_column, fractions=sample_fractions, seed=sample_seed)
 
     def _profile(
