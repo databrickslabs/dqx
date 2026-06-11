@@ -11,6 +11,7 @@ Before you start, confirm you have **all** of the items below. The single most c
 - **Databricks CLI** v0.268+ installed and authenticated against your workspace (`databricks auth login -p <profile>`). v0.268 is the minimum that supports `lifecycle.prevent_destroy` on bundle resources.
 - **`jq`** (used by the post-deploy grants script and the resource-bind helper)
 - **`make`** (drives the one-command deploy target)
+- **App build toolchain** — `make app-deploy` first runs `make app-build` to produce the wheel, which needs **uv**, **Node.js 18+** (provides `npm`; `brew install node` / nvm / [nodejs.org](https://nodejs.org/en/download)), **yarn** (`npm install -g yarn`), and **bun** (`curl -fsSL https://bun.sh/install | bash`). See [DEVELOPMENT.md → Prerequisites](DEVELOPMENT.md#prerequisites).
 
 ### Required permissions
 

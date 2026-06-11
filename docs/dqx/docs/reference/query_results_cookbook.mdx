@@ -114,7 +114,7 @@ Start by getting a `run_id` from the summary table. Every recipe that takes a `r
 <Tabs>
   <TabItem value="SQL" label="SQL" default>
     ```sql
-    -- Step 1: get a run_id. Adjust the filter or ordering to select a different run.
+    -- Step 1: list recent runs (newest first) and copy a run_id from the output.
     SELECT
       run_id,
       run_time,
@@ -122,7 +122,7 @@ Start by getting a `run_id` from the summary table. Every recipe that takes a `r
       quarantine_location,
       rule_set_fingerprint
     FROM catalog.schema.summary_metrics
-    ORDER BY run_time DESC
+    ORDER BY run_time DESC;
 
     -- Step 2: replace <run_id> with a value from the query above.
     SELECT t.*, e.*
@@ -141,12 +141,14 @@ Start by getting a `run_id` from the summary table. Every recipe that takes a `r
     ```python
     import pyspark.sql.functions as F
 
-    # Step 1: get a run_id from summary metrics.
-    latest = (
+    # Step 1: list recent runs (newest first); the example takes the most recent, but you can pick any run_id.
+    runs = (
       spark.table("catalog.schema.summary_metrics")
       .orderBy(F.col("run_time").desc())
-      .first()
     )
+    display(runs)
+
+    latest = runs.first()
     run_id = latest["run_id"]
     quarantine_table = latest["quarantine_location"]
     # spark.table() works when quarantine_location is a table name (e.g. catalog.schema.table).
@@ -304,7 +306,7 @@ Rules defined with `for_each_column` are stored as a single row in the checks ta
 <Tabs>
   <TabItem value="SQL" label="SQL" default>
     ```sql
-    -- Get the rule set used in the latest run
+    -- Get the rule set used in a given run
     SELECT c.*
     FROM catalog.schema.checks_table c
     INNER JOIN (
@@ -572,7 +574,7 @@ for more on monitoring best practices.
 
 **When to use**: Your metrics table covers many input tables and you want to focus on just one.
 
-**Returns**: The distinct input tables tracked, and the latest run row for a chosen table.
+**Returns**: The distinct input tables tracked, and the runs for a chosen table (newest first).
 
 This is the entry point for Recipes 2, 5, 6, and 7 in a multi-table setup. Without this filter, trend queries aggregate across all tables and produce meaningless mixed rates.
 
@@ -584,7 +586,7 @@ This is the entry point for Recipes 2, 5, 6, and 7 in a multi-table setup. Witho
     FROM catalog.schema.summary_metrics
     ORDER BY input_location;
 
-    -- Get the latest run for one specific input table
+    -- List runs for one specific input table, newest first; copy a run_id from the output.
     SELECT
       run_id,
       run_time,
@@ -595,7 +597,7 @@ This is the entry point for Recipes 2, 5, 6, and 7 in a multi-table setup. Witho
       rule_set_fingerprint
     FROM catalog.schema.summary_metrics
     WHERE input_location = 'catalog.schema.my_table'
-    ORDER BY run_time DESC
+    ORDER BY run_time DESC;
     ```
   </TabItem>
   <TabItem value="Python" label="Python">
@@ -607,13 +609,15 @@ This is the entry point for Recipes 2, 5, 6, and 7 in a multi-table setup. Witho
     # List all tracked input tables
     summary_df.select("input_location").distinct().orderBy("input_location").display()
 
-    # Get the latest run for a specific table
-    latest = (
+    # List runs for a specific table, newest first; the example takes the most recent, but you can pick any run_id.
+    table_runs = (
       summary_df
       .filter(F.col("input_location") == "catalog.schema.my_table")
       .orderBy(F.col("run_time").desc())
-      .first()
     )
+    display(table_runs)
+
+    latest = table_runs.first()
     run_id = latest["run_id"]
     ```
   </TabItem>
