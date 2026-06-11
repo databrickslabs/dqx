@@ -556,6 +556,12 @@ class DQEngineCore(DQEngineCoreBase):
         return df.observe(observation, *metric_exprs), observation
 
 
+def _populate_batch_observation(metrics_config, batch_observation, metrics_only_df) -> None:
+    """Force an action so the Observation is populated; otherwise Observation.get blocks in metrics-only mode."""
+    if metrics_config is not None and batch_observation is not None and metrics_only_df is not None:
+        metrics_only_df.count()
+
+
 class DQEngine(DQEngineBase):
     """High-level engine to apply data quality checks and manage IO.
 
@@ -816,9 +822,7 @@ class DQEngine(DQEngineBase):
         assert checks is not None  # guaranteed: either provided or loaded from checks_location above
         rule_set_fingerprint = compute_rule_set_fingerprint(checks) if checks else None
 
-        if metrics_config is not None and batch_observation is not None and metrics_only_df is not None:
-            # Force an action so the Observation is populated; otherwise batch_observation.get below blocks
-            metrics_only_df.count()
+        _populate_batch_observation(metrics_config, batch_observation, metrics_only_df)
 
         # Add listener for streaming metrics, targeting the specific query to avoid duplicates
         if self._engine.observer and metrics_config and target_streaming_query is not None:
@@ -953,9 +957,7 @@ class DQEngine(DQEngineBase):
             compute_rule_set_fingerprint_by_metadata(checks, custom_check_functions) if checks else None
         )
 
-        if metrics_config is not None and batch_observation is not None and metrics_only_df is not None:
-            # Force an action so the Observation is populated; otherwise batch_observation.get below blocks
-            metrics_only_df.count()
+        _populate_batch_observation(metrics_config, batch_observation, metrics_only_df)
 
         # Add listener for streaming metrics, targeting the specific query to avoid duplicates
         if self._engine.observer and metrics_config and target_streaming_query is not None:
@@ -1245,9 +1247,6 @@ class DQEngine(DQEngineBase):
                 "At least one of 'output_config', 'quarantine_config' or 'metrics_config' must be provided"
             )
 
-        if output_df is None and quarantine_df is None and metrics_config is not None and not self._engine.observer:
-            raise InvalidParameterError("Metrics cannot be collected for engine with no observer")
-
         output_query = None
         quarantine_query = None
 
@@ -1397,7 +1396,7 @@ class DQEngine(DQEngineBase):
         Save data quality summary metrics to a table.
 
         This method extracts observed metrics from a Spark Observation and persists them to a configured
-        output destination. Metrics are only saved if an observer is configured on the engine.
+        output destination.
 
         Args:
             observed_metrics: Collected summary metrics from Spark Observation.
@@ -1415,24 +1414,24 @@ class DQEngine(DQEngineBase):
             This method is only supported by spark batch. Spark query listener must be used for streaming:
             For streaming use spark.streams.addListener(get_streaming_metrics_listener(..))
         """
-        if self._engine.observer:
-            metrics_observation = DQMetricsObservation(
-                run_id=self._engine.run_id,
-                run_name=self._engine.observer.name,
-                run_time_overwrite=self._engine.run_time_overwrite,
-                observed_metrics=observed_metrics,
-                error_column_name=self._engine.result_column_names[ColumnArguments.ERRORS],
-                warning_column_name=self._engine.result_column_names[ColumnArguments.WARNINGS],
-                input_location=input_config.location if input_config else None,
-                output_location=output_config.location if output_config else None,
-                quarantine_location=quarantine_config.location if quarantine_config else None,
-                checks_location=checks_location,
-                rule_set_fingerprint=rule_set_fingerprint,
-                user_metadata=self._engine.engine_user_metadata,
-            )
+        run_name = self._engine.observer.name if self._engine.observer else DQMetricsObserver().name
+        metrics_observation = DQMetricsObservation(
+            run_id=self._engine.run_id,
+            run_name=run_name,
+            run_time_overwrite=self._engine.run_time_overwrite,
+            observed_metrics=observed_metrics,
+            error_column_name=self._engine.result_column_names[ColumnArguments.ERRORS],
+            warning_column_name=self._engine.result_column_names[ColumnArguments.WARNINGS],
+            input_location=input_config.location if input_config else None,
+            output_location=output_config.location if output_config else None,
+            quarantine_location=quarantine_config.location if quarantine_config else None,
+            checks_location=checks_location,
+            rule_set_fingerprint=rule_set_fingerprint,
+            user_metadata=self._engine.engine_user_metadata,
+        )
 
-            metrics_df = self._engine.observer.build_metrics_df(self.spark, metrics_observation)
-            save_dataframe_as_table(metrics_df, metrics_config)
+        metrics_df = DQMetricsObserver.build_metrics_df(self.spark, metrics_observation)
+        save_dataframe_as_table(metrics_df, metrics_config)
 
     @telemetry_logger("engine", "get_streaming_metrics_listener")
     def get_streaming_metrics_listener(

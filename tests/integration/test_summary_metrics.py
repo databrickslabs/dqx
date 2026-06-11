@@ -1878,6 +1878,47 @@ def test_save_results_in_table_batch_metrics_only(skip_if_classic_compute, spark
     assert quarantine_locations == {None}
 
 
+@pytest.mark.usefixtures("skip_if_classic_compute")
+def test_save_results_in_table_batch_metrics_only_without_observer(spark, ws, make_schema, make_random):
+    schema_name = make_schema(catalog_name=TEST_CATALOG).name
+    metrics_table_name = f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}"
+
+    observer = DQMetricsObserver(name="test_save_batch_observer")
+    observed_engine = DQEngine(workspace_client=ws, spark=spark, observer=observer, extra_params=EXTRA_PARAMS)
+
+    test_df = spark.createDataFrame(
+        [
+            [1, "Alice", 30, 50000],
+            [2, "Bob", 25, 45000],
+            [None, "Charlie", 35, 60000],
+            [4, None, 28, 55000],
+        ],
+        TEST_SCHEMA,
+    )
+
+    checked_df, observation = observed_engine.apply_checks_by_metadata(test_df, TEST_CHECKS)
+    checked_df.count()
+
+    save_engine = DQEngine(workspace_client=ws, spark=spark, extra_params=EXTRA_PARAMS)
+    save_engine.save_results_in_table(
+        observation=observation,
+        metrics_config=OutputConfig(location=metrics_table_name, mode="overwrite"),
+        rule_set_fingerprint=TEST_CHECKS_RULE_SET_FINGERPRINT,
+    )
+
+    metrics_rows = spark.table(metrics_table_name).collect()
+    metric_names = {row["metric_name"] for row in metrics_rows}
+    assert metric_names == {
+        "input_row_count",
+        "error_row_count",
+        "warning_row_count",
+        "valid_row_count",
+        "check_metrics",
+    }
+    rule_set_fingerprints = {row["rule_set_fingerprint"] for row in metrics_rows}
+    assert rule_set_fingerprints == {TEST_CHECKS_RULE_SET_FINGERPRINT}
+
+
 def test_save_results_in_table_batch_with_rule_set_fingerprint(
     skip_if_classic_compute, spark, ws, make_schema, make_random
 ):

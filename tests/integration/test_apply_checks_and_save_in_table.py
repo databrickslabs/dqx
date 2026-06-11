@@ -1705,6 +1705,75 @@ def test_apply_checks_and_save_in_tables_for_patterns_quarantine_only(
         ), f"Output table {output_table} should not have been created"
 
 
+@pytest.mark.usefixtures("skip_if_classic_compute")
+def test_apply_checks_and_save_in_tables_for_patterns_metrics_only_without_output_suffix(
+    ws, spark, make_schema, make_random, make_directory
+):
+    catalog_name = TEST_CATALOG
+    schema = make_schema(catalog_name=catalog_name)
+
+    input_tables = [f"{catalog_name}.{schema.name}.{make_random(8).lower()}" for _ in range(2)]
+    metrics_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+
+    test_schema = "a: int, b: string"
+    test_df1 = spark.createDataFrame([[1, "valid"], [None, "invalid"]], test_schema)
+    test_df2 = spark.createDataFrame([[100, "test"], [200, None]], test_schema)
+
+    test_df1.write.format("delta").mode("overwrite").saveAsTable(input_tables[0])
+    test_df2.write.format("delta").mode("overwrite").saveAsTable(input_tables[1])
+
+    table1_checks = [
+        {
+            "name": "a_is_null",
+            "criticality": "error",
+            "check": {"function": "is_not_null", "arguments": {"column": "a"}},
+        }
+    ]
+    table2_checks = [
+        {
+            "name": "b_is_null",
+            "criticality": "warn",
+            "check": {"function": "is_not_null", "arguments": {"column": "b"}},
+        }
+    ]
+
+    engine = DQEngine(ws, spark=spark, observer=DQMetricsObserver(), extra_params=EXTRA_PARAMS)
+    workspace_folder = str(make_directory().absolute())
+    engine.save_checks(
+        table1_checks, config=WorkspaceFileChecksStorageConfig(location=f"{workspace_folder}/{input_tables[0]}.yml")
+    )
+    engine.save_checks(
+        table2_checks, config=WorkspaceFileChecksStorageConfig(location=f"{workspace_folder}/{input_tables[1]}.yml")
+    )
+
+    engine.apply_checks_and_save_in_tables_for_patterns(
+        patterns=input_tables,
+        checks_location=workspace_folder,
+        run_config_template=RunConfig(metrics_config=OutputConfig(location=metrics_table)),
+        output_table_suffix="",
+        max_parallelism=1,
+    )
+
+    metrics_rows = spark.table(metrics_table).collect()
+    input_locations = {row["input_location"] for row in metrics_rows}
+    assert input_locations == set(input_tables)
+
+    metric_names = {row["metric_name"] for row in metrics_rows}
+    assert metric_names == {
+        "input_row_count",
+        "error_row_count",
+        "warning_row_count",
+        "valid_row_count",
+        "check_metrics",
+    }
+
+    output_locations = {row["output_location"] for row in metrics_rows}
+    assert output_locations == {None}
+
+    quarantine_locations = {row["quarantine_location"] for row in metrics_rows}
+    assert quarantine_locations == {None}
+
+
 def test_apply_checks_and_save_in_tables_for_patterns_checks_in_table(ws, spark, make_schema, make_random):
     catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
