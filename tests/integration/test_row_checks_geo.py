@@ -967,6 +967,32 @@ def test_is_geo_covers_precise_flags_near_boundary_point_approximate_does_not(
     assertDataFrameEqual(actual_approximate, expected_approximate, checkRowOrder=False)
 
 
+def test_is_geo_covers_approximate_invalid_geometry_is_skipped(skip_if_runtime_not_geo_compatible, spark):
+    """A non-null but invalid geometry must be skipped (no violation), not raise the job.
+
+    `h3_pointash3` is the non-`try` variant and raises on non-point/invalid input; the check gates it
+    on the value parsing to a point, so an unparseable value yields NULL H3 cells and is skipped.
+    """
+    test_df = spark.createDataFrame([[_POINT_INSIDE], ["NOT A GEOMETRY"], [None]], _GEO_SCHEMA)
+    condition = is_geo_covers("geom", _REF_POLYGON, resolution=7)
+    actual = test_df.select("geom", condition)
+    expected = spark.createDataFrame(
+        [[_POINT_INSIDE, None], ["NOT A GEOMETRY", None], [None, None]], _COVERS_APPROXIMATE_SCHEMA
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_geo_intersects_approximate_invalid_geometry_is_skipped(skip_if_runtime_not_geo_compatible, spark):
+    """A non-null but invalid geometry must be skipped (no violation), not raise the job."""
+    test_df = spark.createDataFrame([[_POINT_INSIDE], ["NOT A GEOMETRY"], [None]], _GEO_SCHEMA)
+    condition = is_geo_intersects("geom", _REF_POLYGON, resolution=7)
+    actual = test_df.select("geom", condition)
+    expected = spark.createDataFrame(
+        [[_POINT_INSIDE, None], ["NOT A GEOMETRY", None], [None, None]], _INTERSECTS_APPROXIMATE_SCHEMA
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
 def test_is_geo_intersects_precise_interior_point_no_violation(skip_if_runtime_not_geo_compatible, spark):
     """Interior point intersects the polygon — no violation."""
     test_df = spark.createDataFrame([[_POINT_INSIDE], [None]], _GEO_SCHEMA)

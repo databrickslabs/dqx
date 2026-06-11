@@ -1017,18 +1017,21 @@ def _has_topological_relationship_approximate(
     ref_col = reference_geometry if isinstance(reference_geometry, Column) else F.lit(reference_geometry)
     resolution_col = resolution if isinstance(resolution, Column) else F.lit(resolution)
 
-    col_h3_array = F.array_distinct(
-        F.coalesce(
-            F.call_function("h3_try_coverash3", col_expr, resolution_col),
-            F.array(F.call_function("h3_pointash3", col_expr, resolution_col)),
+    def _h3_cells(geom_expr: Column) -> Column:
+        # `h3_try_coverash3` returns NULL for point geometries (no areal coverage) and for
+        # invalid/unsupported input. For points we fall back to `h3_pointash3`, but that is the
+        # non-`try` variant and raises on non-point/invalid input, so gate it on the value actually
+        # parsing to a point. `coalesce` and `when` both short-circuit, so `h3_pointash3` only runs on
+        # a confirmed point; invalid geometries yield NULL and are skipped instead of failing the job.
+        cover = F.call_function("h3_try_coverash3", geom_expr, resolution_col)
+        is_point_geom = F.call_function("st_geometrytype", F.call_function("try_to_geometry", geom_expr)) == F.lit(
+            POINT_TYPE
         )
-    )
-    ref_h3_array = F.array_distinct(
-        F.coalesce(
-            F.call_function("h3_try_coverash3", ref_col, resolution_col),
-            F.array(F.call_function("h3_pointash3", ref_col, resolution_col)),
-        )
-    )
+        point_cell = F.when(is_point_geom, F.array(F.call_function("h3_pointash3", geom_expr, resolution_col)))
+        return F.array_distinct(F.coalesce(cover, point_cell))
+
+    col_h3_array = _h3_cells(col_expr)
+    ref_h3_array = _h3_cells(ref_col)
     intersection_size = F.size(F.array_intersect(col_h3_array, ref_h3_array))
 
     is_inside = None
@@ -1126,8 +1129,8 @@ def is_geo_covers(
 
     Both the target column and the reference geometry are always handled as `GEOMETRY` in precise mode.
     When conversion is requested (*convert_column* or *convert_reference_geometry* set to True),
-    *try_to_geometry* is applied. These flags are ignored in approximate mode.
-    this may raise an error and cause the entire job to fail.
+    *try_to_geometry* is applied. These flags are ignored in approximate mode, where null and invalid
+    (unparseable) geometries are skipped rather than flagged — use *is_geometry* to flag invalid values.
 
     Args:
         column: Column to check. Null values are skipped for validation.
@@ -1186,8 +1189,8 @@ def is_geo_intersects(
 
     Both the target column and the reference geometry are always handled as `GEOMETRY` in precise mode.
     When conversion is requested (*convert_column* or *convert_reference_geometry* set to True),
-    *try_to_geometry* is applied. These flags are ignored in approximate mode.
-    this may raise an error and cause the entire job to fail.
+    *try_to_geometry* is applied. These flags are ignored in approximate mode, where null and invalid
+    (unparseable) geometries are skipped rather than flagged — use *is_geometry* to flag invalid values.
 
     Args:
         column: Column to check. Null values are skipped for validation.
