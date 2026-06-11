@@ -234,8 +234,11 @@ Rules defined with `for_each_column` are stored as a single row in the checks ta
       c.check.arguments,
       c.filter,
       c.criticality
-    FROM catalog.schema.quarantine_table t
-    LATERAL VIEW explode(t._errors) AS e
+    FROM (
+      SELECT errors.*
+      FROM catalog.schema.quarantine_table t
+      LATERAL VIEW explode(t._errors) AS errors
+    ) e
     INNER JOIN catalog.schema.checks_table c
       ON e.rule_fingerprint = c.rule_fingerprint
       AND e.rule_set_fingerprint = c.rule_set_fingerprint;
@@ -395,8 +398,11 @@ Rules defined with `for_each_column` produce per-column errors with fingerprints
       c.check.function,
       c.check.arguments,
       c.filter
-    FROM catalog.schema.quarantine_table t
-    LATERAL VIEW explode(t._errors) AS e
+    FROM (
+      SELECT errors.*
+      FROM catalog.schema.quarantine_table t
+      LATERAL VIEW explode(t._errors) AS errors
+    ) e
     LEFT JOIN catalog.schema.checks_table c
       ON e.rule_fingerprint = c.rule_fingerprint
       AND e.rule_set_fingerprint = c.rule_set_fingerprint
