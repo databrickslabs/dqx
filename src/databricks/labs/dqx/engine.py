@@ -556,7 +556,11 @@ class DQEngineCore(DQEngineCoreBase):
         return df.observe(observation, *metric_exprs), observation
 
 
-def _populate_batch_observation(metrics_config, batch_observation, metrics_only_df) -> None:
+def _populate_batch_observation(
+    metrics_config: OutputConfig | None,
+    batch_observation: Observation | None,
+    metrics_only_df: DataFrame | None,
+) -> None:
     """Force an action so the Observation is populated; otherwise Observation.get blocks in metrics-only mode."""
     if metrics_config is not None and batch_observation is not None and metrics_only_df is not None:
         metrics_only_df.count()
