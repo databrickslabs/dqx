@@ -96,7 +96,8 @@ def test_engine_creation_no_workspace_connection(mock_workspace_client, mock_spa
 
 def test_get_streaming_metrics_listener_invalid_engine(mock_workspace_client, mock_spark):
     # Inject a non-DQEngineCore engine (autospec of the base class) to exercise the engine-type guard.
-    engine = DQEngine(mock_workspace_client, mock_spark, engine=create_autospec(DQEngineBase))
+    non_core_engine = create_autospec(DQEngineBase)
+    engine = DQEngine(mock_workspace_client, mock_spark, engine=non_core_engine)
     with pytest.raises(InvalidParameterError, match="Metrics cannot be collected for engine with type"):
         engine.get_streaming_metrics_listener(metrics_config=OutputConfig(location="dummy"))
 
