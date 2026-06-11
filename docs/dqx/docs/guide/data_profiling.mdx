@@ -312,6 +312,7 @@ The following fields from the [configuration file](/docs/installation/#configura
     - `sample_fraction`: fraction of data to sample. Pass a single float for uniform sampling, or a `{stratum: fraction}` dict for per-stratum sampling (requires `sample_by_column`).
     - `sample_seed`: seed for reproducible sampling.
     - `sample_by_column`: optional column used to draw a stratified sample via Spark's `DataFrame.sampleBy`. When set, the profiler samples over the distinct values of the column so every stratum is represented in the profile. Use a float `sample_fraction` for uniform sampling across all strata or a dict `sample_fraction` to control the sampling proportion per stratum.
+    - `sample_by_values_limit`: maximum number of distinct `sample_by_column` values to collect when `sample_fraction` is a single float value (default: 1000). Values beyond the limit are excluded from the sample. Ignored when `sample_fraction` is a `{stratum: fraction}` dict.
     - `limit`: maximum number of records to analyze.
     - `filter`: filter for the input data as a string SQL expression
     - `criticality`: default criticality for generated rules, either `error` or `warn` (default: `error`).
@@ -416,6 +417,7 @@ The profiler supports extensive configuration options to customize the profiling
         - `sample_fraction`: fraction of data to sample. Pass a single float for uniform sampling, or a `{stratum: fraction}` dict for per-stratum sampling (requires `sample_by_column`).
         - `sample_seed`: seed for reproducible sampling.
         - `sample_by_column`: optional column to drive a stratified sample via Spark's `DataFrame.sampleBy`. Pair with a float `sample_fraction` for uniform per-stratum sampling or a dict `sample_fraction` to override per stratum.
+        - `sample_by_values_limit`: maximum number of distinct `sample_by_column` values to collect when `sample_fraction` is a single float value (default: 1000). Values beyond the limit are excluded from the sample. Ignored when `sample_fraction` is a `{stratum: fraction}` dict.
         - `limit`: maximum number of records to analyze.
         - `filter`: string SQL expression to filter the input data
         - `criticality`: default criticality for generated rules, either `error` or `warn` (default: `error`).
@@ -620,16 +622,16 @@ When profiling large datasets, use sampling and limits for best performance.
 
 By default, the profiler uses Spark's `DataFrame.sample` to get a uniform random sample over the whole dataset. For skewed or imbalanced data, this can under-represent (or miss entirely) rare strata of the dataset.
 
-Set a `sample_by_column` to draw a stratified sample using Spark's `DataFrame.sampleBy`. The profiler samples each distinct value of the `sample_by_column` independently so every stratum contributes to the resulting profile. Use the `sample_fraction` to control how much to sample from each stratum:
+Set a `sample_by_column` to draw a stratified sample using Spark's `DataFrame.sampleBy`. The profiler samples each distinct value of the `sample_by_column` independently so every stratum contributes to the resulting profile. This is useful for ensuring rare categories are represented, comparing groups fairly, and profiling class-imbalanced datasets (e.g. over-sampling fraud or defect labels). Use the `sample_fraction` to control how much to sample from each stratum:
 * Use a single float value to sample the same fraction across all strata.
 * Use a dictionary of key-value pairs (e.g. `{stratum: fraction}`) to control the sample fraction for each stratum.
 
-<Admonition type="tip" title="When stratified sampling is useful">
-Stratified sampling is useful for:
+<Admonition type="warning" title="High-cardinality sample_by_column">
+When `sample_fraction` is a single float value, the profiler collects distinct values of `sample_by_column` to build per-stratum sampling fractions. For high-cardinality columns this lookup can be expensive and is capped by `sample_by_values_limit` (default 1000). Rows whose `sample_by_column` value falls outside the collected set are excluded from the sample. Increase `sample_by_values_limit` to cover more strata, or pass a `{stratum: fraction}` dictionary to target specific strata explicitly (the limit does not apply to dictionaries).
+</Admonition>
 
-- **Ensuring representation of all categories** - every distinct value of the column contributes rows to the sample, so rare categories are not lost.
-- **Comparing groups fairly** - profile statistics like `count`, `min`, `max`, and distinct-value sets reflect each group rather than only the dominant ones.
-- **Profiling imbalanced datasets** - for class-imbalanced datasets, pair `sample_by_column` with a `{stratum: fraction}` `sample_fraction` to over-sample minority classes (e.g. fraud or defect labels).
+<Admonition type="warning" title="Limits can underrepresent strata">
+Combining either limit with `sample_by_column` may filter out values and lead to underrepresentation of some strata. Raise these limits to cover more data, or pass a `{stratum: fraction}` dictionary to target specific strata explicitly (`sample_by_values_limit` does not apply to dictionaries).
 </Admonition>
 
 ### Programmatic example

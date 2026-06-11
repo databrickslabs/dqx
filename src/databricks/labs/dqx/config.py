@@ -80,6 +80,7 @@ class ProfilerConfig:
     sample_fraction: float | dict[object, float] | None = 0.3
     sample_seed: int | None = None  # seed for sampling
     sample_by_column: str | None = None  # column with keys to sample by
+    sample_by_values_limit: int = 1000  # max distinct sample_by_column values to collect when sampling uniformly
     limit: int = 1000  # limit the number of records to profile
     filter: str | None = None  # filter to apply to the data before profiling
     criticality: str = "error"  # default criticality for generated rules ("error" or "warn")

@@ -216,6 +216,7 @@ def test_profiler_config_defaults():
     assert config.sample_fraction == 0.3
     assert config.sample_seed is None
     assert config.sample_by_column is None
+    assert config.sample_by_values_limit == 1000
     assert config.limit == 1000
     assert config.filter is None
     assert config.criticality == "error"
@@ -227,6 +228,7 @@ def test_profiler_config_custom_values():
         sample_fraction=0.5,
         sample_seed=42,
         sample_by_column="region",
+        sample_by_values_limit=250,
         limit=5000,
         filter="col1 > 0",
         criticality="warn",
@@ -235,6 +237,7 @@ def test_profiler_config_custom_values():
     assert config.sample_fraction == 0.5
     assert config.sample_seed == 42
     assert config.sample_by_column == "region"
+    assert config.sample_by_values_limit == 250
     assert config.limit == 5000
     assert config.filter == "col1 > 0"
     assert config.criticality == "warn"

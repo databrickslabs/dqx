@@ -60,6 +60,7 @@ class DQProfiler(DQEngineBase):
         "sample_fraction": 0.3,  # fraction of data to sample. float for uniform sample, or dict for per-stratum sample (requires sample_by_column)
         "sample_seed": None,  # seed for sampling
         "sample_by_column": None,  # column used to stratify the sample via DataFrame.sampleBy
+        "sample_by_values_limit": 1000,  # max distinct sample_by_column values collected when sampling uniformly
         "limit": 1000,  # limit the number of samples
         "filter": None,  # filter to apply to the dataset
         "llm_primary_key_detection": True,  # detect primary keys
@@ -342,6 +343,7 @@ class DQProfiler(DQEngineBase):
         sample_fraction = opts.get("sample_fraction", None)
         sample_seed = opts.get("sample_seed", None)
         sample_by_column = opts.get("sample_by_column", None)
+        sample_by_values_limit = opts.get("sample_by_values_limit", None)
         limit = opts.get("limit", None)
         filter_dataset = opts.get("filter", None)
 
@@ -352,7 +354,9 @@ class DQProfiler(DQEngineBase):
             raise InvalidConfigError("sample_fraction must be of type float when sample_by_column is not set.")
 
         if sample_by_column:
-            df = DQProfiler._stratified_sample(df, sample_by_column, sample_fraction, sample_seed)
+            df = DQProfiler._stratified_sample(
+                df, sample_by_column, sample_fraction, sample_seed, sample_by_values_limit
+            )
         elif sample_fraction is not None:
             df = df.sample(withReplacement=False, fraction=sample_fraction, seed=sample_seed)
         if limit:
@@ -366,6 +370,7 @@ class DQProfiler(DQEngineBase):
         sample_by_column: str,
         sample_fraction: float | dict[Any, float] | None,
         sample_seed: int | None,
+        sample_by_values_limit: int | None = None,
     ) -> DataFrame:
         """
         Draw a stratified sample across the unique values of the specified *sample_by_column*.
@@ -374,12 +379,18 @@ class DQProfiler(DQEngineBase):
         * When *sample_fraction* is a dict, each value controls the sampling fraction for the slice key
         * When *sample_fraction* is a float, the profiler samples uniformly across all slice values
 
+        When a uniform *sample_fraction* is used, the distinct values are collected. To bound this
+        collection on high-cardinality columns, at most *sample_by_values_limit* distinct values are
+        collected; rows whose *sample_by_column* value falls outside the limit are excluded from the sample.
+
         Args:
             df: Input DataFrame to sample.
             sample_by_column: Name of the column to slice by.
             sample_fraction: Per-slice dictionary of slice value and fraction or a uniform float applied
                 to every distinct value of *sample_by_column*.
             sample_seed: Optional seed for reproducible sampling.
+            sample_by_values_limit: Maximum number of distinct *sample_by_column* values to collect when
+                *sample_fraction* is a uniform float. Ignored when *sample_fraction* is a dict.
 
         Returns:
             A stratified sample of the input DataFrame.
@@ -396,7 +407,10 @@ class DQProfiler(DQEngineBase):
         else:
             if sample_fraction is None:
                 raise InvalidConfigError("sample_fraction must be provided when sample_by_column is set.")
-            slice_values = [row[0] for row in df.select(sample_by_column).distinct().toLocalIterator()]
+            distinct_values = df.select(sample_by_column).distinct()
+            if sample_by_values_limit is not None:
+                distinct_values = distinct_values.limit(sample_by_values_limit)
+            slice_values = [row[0] for row in distinct_values.toLocalIterator()]
             sample_fractions = {slice_value: sample_fraction for slice_value in slice_values}
 
         logger.info(f"Stratified sampling on column '{sample_by_column}'")
