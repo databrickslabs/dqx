@@ -37,8 +37,8 @@ Checks can be applied to the input data by one of the following methods of the `
 
 You can see the full list of `DQEngine` methods [here](/docs/reference/engine/#dqx-engine-methods).
 
-<Admonition type="info" title="Quarantine-only mode">
-The end-to-end `apply_checks_and_save_in_table` and `apply_checks_by_metadata_and_save_in_table` methods accept either `output_config`, `quarantine_config`, or both. If `output_config` is omitted and `quarantine_config` is provided, only the quarantined table is produced. This applies to both `apply_checks_and_save_in_tables` and `apply_checks_and_save_in_tables_for_patterns`.
+<Admonition type="info" title="Save destinations">
+The end-to-end `apply_checks_and_save_in_table` and `apply_checks_by_metadata_and_save_in_table` methods accept `output_config`, `quarantine_config`, `metrics_config`, or combinations of these. If `output_config` is omitted and `quarantine_config` is provided, only the quarantined table is produced. If only `metrics_config` is provided for batch input, only summary metrics are written and no output or quarantine table is produced. Streaming metrics require an output or quarantine stream to emit the observed metrics. This applies to both `apply_checks_and_save_in_tables` and `apply_checks_and_save_in_tables_for_patterns`.
 </Admonition>
 
 The engine ensures that the specified `column`, `columns`, `filter`, or sql 'expression' fields can be resolved in the input DataFrame. If any of these fields are invalid, the check evaluation is skipped, and the results include the check failure with a message identifying the invalid fields and `skipped=True` in the result struct. You can suppress these entries entirely or identify them downstream — see [Suppressing skipped check entries](/docs/guide/additional_configuration#suppressing-skipped-check-entries).
@@ -1006,6 +1006,13 @@ To enable summary metrics programmatically, create and pass a `DQMetricsObserver
         checks=checks,  # or provide checks_location and run_config_name to auto-load from checks storage
         input_config=InputConfig(location="catalog.schema.input"),
         output_config=OutputConfig(location="catalog.schema.output"),
+        metrics_config=OutputConfig(location="catalog.schema.metrics"),
+    )
+
+    # Option 5 End-to-End approach: apply quality checks to a batch table and save only summary metrics
+    dq_engine.apply_checks_and_save_in_table(
+        checks=checks,  # or provide checks_location and run_config_name to auto-load from checks storage
+        input_config=InputConfig(location="catalog.schema.input"),
         metrics_config=OutputConfig(location="catalog.schema.metrics"),
     )
     ```
