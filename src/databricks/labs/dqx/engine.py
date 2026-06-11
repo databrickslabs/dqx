@@ -1489,8 +1489,8 @@ class DQEngine(DQEngineBase):
                 f"Metrics cannot be collected for engine with type '{self._engine.__class__.__name__}'"
             )
 
-        if not self._engine.observer:
-            raise InvalidParameterError("Metrics cannot be collected for engine with no observer")
+        self._validate_metrics_observer(metrics_config)
+        assert self._engine.observer is not None  # guaranteed by _validate_metrics_observer above (required by mypy)
 
         metrics_observation = DQMetricsObservation(
             run_id=self._engine.run_id,
