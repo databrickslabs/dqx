@@ -115,7 +115,6 @@ Start by getting a `run_id` from the summary table. Every recipe that takes a `r
       rule_set_fingerprint
     FROM catalog.schema.summary_metrics
     ORDER BY run_time DESC
-    LIMIT 1;
 
     -- Step 2: replace <run_id> with a value from the query above.
     SELECT t.*, e.*
@@ -392,21 +391,21 @@ Rules defined with `for_each_column` produce per-column errors with fingerprints
 <Tabs>
   <TabItem value="SQL" label="SQL" default>
     ```sql
-    SELECT DISTINCT
+    SELECT
       e.name,
       e.rule_fingerprint,
       c.check.function,
       c.check.arguments,
       c.filter
     FROM (
-      SELECT errors.*
+      SELECT DISTINCT errors.name, errors.rule_fingerprint, errors.rule_set_fingerprint
       FROM catalog.schema.quarantine_table t
       LATERAL VIEW explode(t._errors) AS errors
+      WHERE errors.run_id = '<run_id>'
     ) e
     LEFT JOIN catalog.schema.checks_table c
       ON e.rule_fingerprint = c.rule_fingerprint
-      AND e.rule_set_fingerprint = c.rule_set_fingerprint
-    WHERE e.run_id = '<run_id>';
+      AND e.rule_set_fingerprint = c.rule_set_fingerprint;
     ```
   </TabItem>
   <TabItem value="Python" label="Python">
@@ -559,7 +558,6 @@ This is the entry point for Recipes 2, 5, 6, and 7 in a multi-table setup. Witho
     FROM catalog.schema.summary_metrics
     WHERE input_location = 'catalog.schema.my_table'
     ORDER BY run_time DESC
-    LIMIT 1;
     ```
   </TabItem>
   <TabItem value="Python" label="Python">
