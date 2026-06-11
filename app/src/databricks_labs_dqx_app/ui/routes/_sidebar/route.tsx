@@ -14,6 +14,7 @@ import {
   ChevronDown,
   PenLine,
   History,
+  LayoutDashboard,
 } from "lucide-react";
 import {
   SidebarGroup,
@@ -185,6 +186,25 @@ function Layout() {
               >
                 <History size={16} />
                 <span>Runs History</span>
+              </Link>
+            </SidebarMenuItem>
+
+            {/* Insights — embedded Databricks AI/BI dashboard. Visible to all;
+                the dashboard itself enforces UC permissions on its data so a
+                viewer who can't read e.g. dq_quarantine_records just sees an
+                empty tile rather than being blocked at the app layer. */}
+            <SidebarMenuItem>
+              <Link
+                to="/insights"
+                className={cn(
+                  "flex items-center gap-2 p-2 rounded-lg",
+                  location.pathname.startsWith("/insights")
+                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                    : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                )}
+              >
+                <LayoutDashboard size={16} />
+                <span>Insights</span>
               </Link>
             </SidebarMenuItem>
           </SidebarMenu>

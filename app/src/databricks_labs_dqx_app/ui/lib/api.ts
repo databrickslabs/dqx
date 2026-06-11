@@ -336,6 +336,37 @@ export interface DryRunSubmitOut {
   view_fqn: string;
 }
 
+export type EmbeddedDashboardInTitle = string | null;
+
+/**
+ * Update payload — admins write the dashboard ID and optionally a display title.
+ */
+export interface EmbeddedDashboardIn {
+  dashboard_id: string;
+  title?: EmbeddedDashboardInTitle;
+}
+
+/**
+ * Optional admin-provided display title. The UI falls back to a generic label when null.
+ */
+export type EmbeddedDashboardOutTitle = string | null;
+
+/**
+ * Current embedded-dashboard configuration + the bits the UI needs to render the iframe.
+ */
+export interface EmbeddedDashboardOut {
+  /** Effective dashboard ID. Empty string means 'nothing configured'. */
+  dashboard_id?: string;
+  /** Optional admin-provided display title. The UI falls back to a generic label when null. */
+  title?: EmbeddedDashboardOutTitle;
+  /** Workspace host (e.g. 'https://e2-...cloud.databricks.com') used to build the iframe URL. */
+  workspace_host?: string;
+  /** True when the admin has saved an explicit setting (independent of the env default). */
+  is_set?: boolean;
+  /** True when the response is serving the env-provided default rather than an admin override. */
+  is_default?: boolean;
+}
+
 export type ExtraParamsResultColumnNames = { [key: string]: string };
 
 export type ExtraParamsUserMetadata = { [key: string]: string };
@@ -742,6 +773,37 @@ export interface RetentionSettingsOut {
   quarantine_retention_days_set: boolean;
 }
 
+export type ReviewStatusHistoryEntryOutPreviousStatus = string | null;
+
+export type ReviewStatusHistoryEntryOutChangedAt = string | null;
+
+export interface ReviewStatusHistoryEntryOut {
+  run_id: string;
+  status: string;
+  previous_status?: ReviewStatusHistoryEntryOutPreviousStatus;
+  changed_by: string;
+  changed_at?: ReviewStatusHistoryEntryOutChangedAt;
+}
+
+export interface ReviewStatusHistoryOut {
+  history: ReviewStatusHistoryEntryOut[];
+}
+
+export type ReviewStatusOutUpdatedBy = string | null;
+
+export type ReviewStatusOutUpdatedAt = string | null;
+
+/**
+ * Current effective review status for a run.
+ */
+export interface ReviewStatusOut {
+  run_id: string;
+  status: string;
+  updated_by?: ReviewStatusOutUpdatedBy;
+  updated_at?: ReviewStatusOutUpdatedAt;
+  is_default?: boolean;
+}
+
 export type RoleMappingOutCreatedBy = string | null;
 
 export type RoleMappingOutCreatedAt = string | null;
@@ -837,6 +899,24 @@ export interface RunConfigOut {
   config: RunConfig;
 }
 
+/**
+ * One catalogue entry. ``is_default`` flags the value auto-surfaced for unreviewed runs.
+ */
+export interface RunReviewStatusOption {
+  value: string;
+  description?: string;
+  color?: string;
+  is_default?: boolean;
+}
+
+export interface RunReviewStatusesIn {
+  statuses: RunReviewStatusOption[];
+}
+
+export interface RunReviewStatusesOut {
+  statuses: RunReviewStatusOption[];
+}
+
 export type RunStatusOutResultState = string | null;
 
 export type RunStatusOutMessage = string | null;
@@ -924,6 +1004,10 @@ export interface SchemaOut {
   name: string;
   catalog_name: string;
   comment?: SchemaOutComment;
+}
+
+export interface SetReviewStatusIn {
+  status: string;
 }
 
 /**
@@ -1077,6 +1161,12 @@ export type ValidationRunSummaryOutErrorMessage = string | null;
 
 export type ValidationRunSummaryOutChecksItem = { [key: string]: unknown };
 
+export type ValidationRunSummaryOutReviewStatus = string | null;
+
+export type ValidationRunSummaryOutReviewStatusUpdatedBy = string | null;
+
+export type ValidationRunSummaryOutReviewStatusUpdatedAt = string | null;
+
 export interface ValidationRunSummaryOut {
   run_id: string;
   source_table_fqn: string;
@@ -1094,6 +1184,10 @@ export interface ValidationRunSummaryOut {
   created_at?: ValidationRunSummaryOutCreatedAt;
   error_message?: ValidationRunSummaryOutErrorMessage;
   checks?: ValidationRunSummaryOutChecksItem[];
+  review_status?: ValidationRunSummaryOutReviewStatus;
+  review_status_is_default?: boolean;
+  review_status_updated_by?: ValidationRunSummaryOutReviewStatusUpdatedBy;
+  review_status_updated_at?: ValidationRunSummaryOutReviewStatusUpdatedAt;
 }
 
 export interface VersionOut {
@@ -1296,6 +1390,13 @@ export type ApproveRuleBody = SetStatusIn | null;
 export type BackfillRuleIds200 = { [key: string]: number };
 
 export type RejectRuleBody = SetStatusIn | null;
+
+export type ListValidationRunsParams = {
+  /**
+   * Filter to runs whose effective review status matches one of the supplied values. Repeat the param for multi-select (e.g. ?review_status=Acknowledged&review_status=Resolved). Match is on the effective value, so passing the catalogue default also catches unreviewed runs.
+   */
+  review_status?: string[] | null;
+};
 
 export type GetDryRunStatusParams = {
   job_run_id?: number | null;
@@ -4314,6 +4415,838 @@ export const useSaveCustomMetrics = <
   TContext
 > => {
   const mutationOptions = getSaveCustomMetricsMutationOptions(options);
+
+  return useMutation(mutationOptions, queryClient);
+};
+
+/**
+ * Return the current embedded-dashboard config.
+
+Available to any authenticated user — the Insights page is read-only
+and the underlying dashboard enforces UC permissions on the data,
+so we don't gate visibility here.
+ * @summary Get Embedded Dashboard
+ */
+export const getEmbeddedDashboard = (
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<EmbeddedDashboardOut>> => {
+  return axios.default.get(`/api/v1/config/embedded-dashboard`, options);
+};
+
+export const getGetEmbeddedDashboardQueryKey = () => {
+  return [`/api/v1/config/embedded-dashboard`] as const;
+};
+
+export const getGetEmbeddedDashboardQueryOptions = <
+  TData = Awaited<ReturnType<typeof getEmbeddedDashboard>>,
+  TError = AxiosError<unknown>,
+>(options?: {
+  query?: Partial<
+    UseQueryOptions<
+      Awaited<ReturnType<typeof getEmbeddedDashboard>>,
+      TError,
+      TData
+    >
+  >;
+  axios?: AxiosRequestConfig;
+}) => {
+  const { query: queryOptions, axios: axiosOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetEmbeddedDashboardQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getEmbeddedDashboard>>
+  > = ({ signal }) => getEmbeddedDashboard({ signal, ...axiosOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getEmbeddedDashboard>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+};
+
+export type GetEmbeddedDashboardQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getEmbeddedDashboard>>
+>;
+export type GetEmbeddedDashboardQueryError = AxiosError<unknown>;
+
+export function useGetEmbeddedDashboard<
+  TData = Awaited<ReturnType<typeof getEmbeddedDashboard>>,
+  TError = AxiosError<unknown>,
+>(
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getEmbeddedDashboard>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getEmbeddedDashboard>>,
+          TError,
+          Awaited<ReturnType<typeof getEmbeddedDashboard>>
+        >,
+        "initialData"
+      >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useGetEmbeddedDashboard<
+  TData = Awaited<ReturnType<typeof getEmbeddedDashboard>>,
+  TError = AxiosError<unknown>,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getEmbeddedDashboard>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getEmbeddedDashboard>>,
+          TError,
+          Awaited<ReturnType<typeof getEmbeddedDashboard>>
+        >,
+        "initialData"
+      >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useGetEmbeddedDashboard<
+  TData = Awaited<ReturnType<typeof getEmbeddedDashboard>>,
+  TError = AxiosError<unknown>,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getEmbeddedDashboard>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+/**
+ * @summary Get Embedded Dashboard
+ */
+
+export function useGetEmbeddedDashboard<
+  TData = Awaited<ReturnType<typeof getEmbeddedDashboard>>,
+  TError = AxiosError<unknown>,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getEmbeddedDashboard>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
+  const queryOptions = getGetEmbeddedDashboardQueryOptions(options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
+
+export const getGetEmbeddedDashboardSuspenseQueryOptions = <
+  TData = Awaited<ReturnType<typeof getEmbeddedDashboard>>,
+  TError = AxiosError<unknown>,
+>(options?: {
+  query?: Partial<
+    UseSuspenseQueryOptions<
+      Awaited<ReturnType<typeof getEmbeddedDashboard>>,
+      TError,
+      TData
+    >
+  >;
+  axios?: AxiosRequestConfig;
+}) => {
+  const { query: queryOptions, axios: axiosOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetEmbeddedDashboardQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getEmbeddedDashboard>>
+  > = ({ signal }) => getEmbeddedDashboard({ signal, ...axiosOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseSuspenseQueryOptions<
+    Awaited<ReturnType<typeof getEmbeddedDashboard>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+};
+
+export type GetEmbeddedDashboardSuspenseQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getEmbeddedDashboard>>
+>;
+export type GetEmbeddedDashboardSuspenseQueryError = AxiosError<unknown>;
+
+export function useGetEmbeddedDashboardSuspense<
+  TData = Awaited<ReturnType<typeof getEmbeddedDashboard>>,
+  TError = AxiosError<unknown>,
+>(
+  options: {
+    query: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getEmbeddedDashboard>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useGetEmbeddedDashboardSuspense<
+  TData = Awaited<ReturnType<typeof getEmbeddedDashboard>>,
+  TError = AxiosError<unknown>,
+>(
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getEmbeddedDashboard>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useGetEmbeddedDashboardSuspense<
+  TData = Awaited<ReturnType<typeof getEmbeddedDashboard>>,
+  TError = AxiosError<unknown>,
+>(
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getEmbeddedDashboard>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+/**
+ * @summary Get Embedded Dashboard
+ */
+
+export function useGetEmbeddedDashboardSuspense<
+  TData = Awaited<ReturnType<typeof getEmbeddedDashboard>>,
+  TError = AxiosError<unknown>,
+>(
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getEmbeddedDashboard>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
+  const queryOptions = getGetEmbeddedDashboardSuspenseQueryOptions(options);
+
+  const query = useSuspenseQuery(
+    queryOptions,
+    queryClient,
+  ) as UseSuspenseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
+
+/**
+ * Save the embedded-dashboard configuration (admin only).
+ * @summary Save Embedded Dashboard
+ */
+export const saveEmbeddedDashboard = (
+  embeddedDashboardIn: EmbeddedDashboardIn,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<EmbeddedDashboardOut>> => {
+  return axios.default.put(
+    `/api/v1/config/embedded-dashboard`,
+    embeddedDashboardIn,
+    options,
+  );
+};
+
+export const getSaveEmbeddedDashboardMutationOptions = <
+  TError = AxiosError<HTTPValidationError>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof saveEmbeddedDashboard>>,
+    TError,
+    { data: EmbeddedDashboardIn },
+    TContext
+  >;
+  axios?: AxiosRequestConfig;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof saveEmbeddedDashboard>>,
+  TError,
+  { data: EmbeddedDashboardIn },
+  TContext
+> => {
+  const mutationKey = ["saveEmbeddedDashboard"];
+  const { mutation: mutationOptions, axios: axiosOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, axios: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof saveEmbeddedDashboard>>,
+    { data: EmbeddedDashboardIn }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return saveEmbeddedDashboard(data, axiosOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type SaveEmbeddedDashboardMutationResult = NonNullable<
+  Awaited<ReturnType<typeof saveEmbeddedDashboard>>
+>;
+export type SaveEmbeddedDashboardMutationBody = EmbeddedDashboardIn;
+export type SaveEmbeddedDashboardMutationError =
+  AxiosError<HTTPValidationError>;
+
+/**
+ * @summary Save Embedded Dashboard
+ */
+export const useSaveEmbeddedDashboard = <
+  TError = AxiosError<HTTPValidationError>,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof saveEmbeddedDashboard>>,
+      TError,
+      { data: EmbeddedDashboardIn },
+      TContext
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof saveEmbeddedDashboard>>,
+  TError,
+  { data: EmbeddedDashboardIn },
+  TContext
+> => {
+  const mutationOptions = getSaveEmbeddedDashboardMutationOptions(options);
+
+  return useMutation(mutationOptions, queryClient);
+};
+
+/**
+ * Clear the admin override (admin only).
+
+The env-provided default — if any — takes over again. Useful when
+the bundle ships a starter dashboard and the admin wants to revert
+to it after a botched custom ID.
+ * @summary Delete Embedded Dashboard
+ */
+export const deleteEmbeddedDashboard = (
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<EmbeddedDashboardOut>> => {
+  return axios.default.delete(`/api/v1/config/embedded-dashboard`, options);
+};
+
+export const getDeleteEmbeddedDashboardMutationOptions = <
+  TError = AxiosError<HTTPValidationError>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteEmbeddedDashboard>>,
+    TError,
+    void,
+    TContext
+  >;
+  axios?: AxiosRequestConfig;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deleteEmbeddedDashboard>>,
+  TError,
+  void,
+  TContext
+> => {
+  const mutationKey = ["deleteEmbeddedDashboard"];
+  const { mutation: mutationOptions, axios: axiosOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, axios: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deleteEmbeddedDashboard>>,
+    void
+  > = () => {
+    return deleteEmbeddedDashboard(axiosOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DeleteEmbeddedDashboardMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deleteEmbeddedDashboard>>
+>;
+
+export type DeleteEmbeddedDashboardMutationError =
+  AxiosError<HTTPValidationError>;
+
+/**
+ * @summary Delete Embedded Dashboard
+ */
+export const useDeleteEmbeddedDashboard = <
+  TError = AxiosError<HTTPValidationError>,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof deleteEmbeddedDashboard>>,
+      TError,
+      void,
+      TContext
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof deleteEmbeddedDashboard>>,
+  TError,
+  void,
+  TContext
+> => {
+  const mutationOptions = getDeleteEmbeddedDashboardMutationOptions(options);
+
+  return useMutation(mutationOptions, queryClient);
+};
+
+/**
+ * Return the admin-managed list of run review status values.
+
+Visible to any authenticated user — both the Runs detail dropdown
+and the Runs History filter need this list, and neither is
+admin-gated. The list is seeded on first read so the UI never
+sees an empty dropdown on a fresh deploy.
+ * @summary Get Run Review Statuses
+ */
+export const getRunReviewStatuses = (
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<RunReviewStatusesOut>> => {
+  return axios.default.get(`/api/v1/config/run-review-statuses`, options);
+};
+
+export const getGetRunReviewStatusesQueryKey = () => {
+  return [`/api/v1/config/run-review-statuses`] as const;
+};
+
+export const getGetRunReviewStatusesQueryOptions = <
+  TData = Awaited<ReturnType<typeof getRunReviewStatuses>>,
+  TError = AxiosError<unknown>,
+>(options?: {
+  query?: Partial<
+    UseQueryOptions<
+      Awaited<ReturnType<typeof getRunReviewStatuses>>,
+      TError,
+      TData
+    >
+  >;
+  axios?: AxiosRequestConfig;
+}) => {
+  const { query: queryOptions, axios: axiosOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetRunReviewStatusesQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getRunReviewStatuses>>
+  > = ({ signal }) => getRunReviewStatuses({ signal, ...axiosOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getRunReviewStatuses>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+};
+
+export type GetRunReviewStatusesQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getRunReviewStatuses>>
+>;
+export type GetRunReviewStatusesQueryError = AxiosError<unknown>;
+
+export function useGetRunReviewStatuses<
+  TData = Awaited<ReturnType<typeof getRunReviewStatuses>>,
+  TError = AxiosError<unknown>,
+>(
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getRunReviewStatuses>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getRunReviewStatuses>>,
+          TError,
+          Awaited<ReturnType<typeof getRunReviewStatuses>>
+        >,
+        "initialData"
+      >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useGetRunReviewStatuses<
+  TData = Awaited<ReturnType<typeof getRunReviewStatuses>>,
+  TError = AxiosError<unknown>,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getRunReviewStatuses>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getRunReviewStatuses>>,
+          TError,
+          Awaited<ReturnType<typeof getRunReviewStatuses>>
+        >,
+        "initialData"
+      >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useGetRunReviewStatuses<
+  TData = Awaited<ReturnType<typeof getRunReviewStatuses>>,
+  TError = AxiosError<unknown>,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getRunReviewStatuses>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+/**
+ * @summary Get Run Review Statuses
+ */
+
+export function useGetRunReviewStatuses<
+  TData = Awaited<ReturnType<typeof getRunReviewStatuses>>,
+  TError = AxiosError<unknown>,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getRunReviewStatuses>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
+  const queryOptions = getGetRunReviewStatusesQueryOptions(options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
+
+export const getGetRunReviewStatusesSuspenseQueryOptions = <
+  TData = Awaited<ReturnType<typeof getRunReviewStatuses>>,
+  TError = AxiosError<unknown>,
+>(options?: {
+  query?: Partial<
+    UseSuspenseQueryOptions<
+      Awaited<ReturnType<typeof getRunReviewStatuses>>,
+      TError,
+      TData
+    >
+  >;
+  axios?: AxiosRequestConfig;
+}) => {
+  const { query: queryOptions, axios: axiosOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetRunReviewStatusesQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getRunReviewStatuses>>
+  > = ({ signal }) => getRunReviewStatuses({ signal, ...axiosOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseSuspenseQueryOptions<
+    Awaited<ReturnType<typeof getRunReviewStatuses>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+};
+
+export type GetRunReviewStatusesSuspenseQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getRunReviewStatuses>>
+>;
+export type GetRunReviewStatusesSuspenseQueryError = AxiosError<unknown>;
+
+export function useGetRunReviewStatusesSuspense<
+  TData = Awaited<ReturnType<typeof getRunReviewStatuses>>,
+  TError = AxiosError<unknown>,
+>(
+  options: {
+    query: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getRunReviewStatuses>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useGetRunReviewStatusesSuspense<
+  TData = Awaited<ReturnType<typeof getRunReviewStatuses>>,
+  TError = AxiosError<unknown>,
+>(
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getRunReviewStatuses>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useGetRunReviewStatusesSuspense<
+  TData = Awaited<ReturnType<typeof getRunReviewStatuses>>,
+  TError = AxiosError<unknown>,
+>(
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getRunReviewStatuses>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+/**
+ * @summary Get Run Review Statuses
+ */
+
+export function useGetRunReviewStatusesSuspense<
+  TData = Awaited<ReturnType<typeof getRunReviewStatuses>>,
+  TError = AxiosError<unknown>,
+>(
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getRunReviewStatuses>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
+  const queryOptions = getGetRunReviewStatusesSuspenseQueryOptions(options);
+
+  const query = useSuspenseQuery(
+    queryOptions,
+    queryClient,
+  ) as UseSuspenseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
+
+/**
+ * Replace the full catalogue (admin only).
+
+Each value is validated against ``_REVIEW_STATUS_VALUE_RE`` (printable
+short strings, no quotes/control chars), descriptions are trimmed,
+duplicates are rejected, and exactly one ``is_default`` is enforced
+by :meth:`AppSettingsService.save_run_review_statuses`.
+
+NOTE: renaming an existing value does *not* update historical
+references in ``dq_run_review_status`` / ``dq_run_review_status_history``;
+those rows keep the original string so the audit trail stays
+accurate. The UI surfaces orphaned historical values as-is. If a
+workspace operator wants to retire a value cleanly they should
+either keep it in the list (without ``is_default``) until the
+affected runs age out, or do a one-off UPDATE through the SQL
+warehouse.
+ * @summary Save Run Review Statuses
+ */
+export const saveRunReviewStatuses = (
+  runReviewStatusesIn: RunReviewStatusesIn,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<RunReviewStatusesOut>> => {
+  return axios.default.put(
+    `/api/v1/config/run-review-statuses`,
+    runReviewStatusesIn,
+    options,
+  );
+};
+
+export const getSaveRunReviewStatusesMutationOptions = <
+  TError = AxiosError<HTTPValidationError>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof saveRunReviewStatuses>>,
+    TError,
+    { data: RunReviewStatusesIn },
+    TContext
+  >;
+  axios?: AxiosRequestConfig;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof saveRunReviewStatuses>>,
+  TError,
+  { data: RunReviewStatusesIn },
+  TContext
+> => {
+  const mutationKey = ["saveRunReviewStatuses"];
+  const { mutation: mutationOptions, axios: axiosOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, axios: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof saveRunReviewStatuses>>,
+    { data: RunReviewStatusesIn }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return saveRunReviewStatuses(data, axiosOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type SaveRunReviewStatusesMutationResult = NonNullable<
+  Awaited<ReturnType<typeof saveRunReviewStatuses>>
+>;
+export type SaveRunReviewStatusesMutationBody = RunReviewStatusesIn;
+export type SaveRunReviewStatusesMutationError =
+  AxiosError<HTTPValidationError>;
+
+/**
+ * @summary Save Run Review Statuses
+ */
+export const useSaveRunReviewStatuses = <
+  TError = AxiosError<HTTPValidationError>,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof saveRunReviewStatuses>>,
+      TError,
+      { data: RunReviewStatusesIn },
+      TContext
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof saveRunReviewStatuses>>,
+  TError,
+  { data: RunReviewStatusesIn },
+  TContext
+> => {
+  const mutationOptions = getSaveRunReviewStatusesMutationOptions(options);
 
   return useMutation(mutationOptions, queryClient);
 };
@@ -10021,35 +10954,45 @@ export function useListCheckFunctionsSuspense<
  * @summary List Validation Runs
  */
 export const listValidationRuns = (
+  params?: ListValidationRunsParams,
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<ValidationRunSummaryOut[]>> => {
-  return axios.default.get(`/api/v1/dryrun/runs`, options);
+  return axios.default.get(`/api/v1/dryrun/runs`, {
+    ...options,
+    params: { ...params, ...options?.params },
+  });
 };
 
-export const getListValidationRunsQueryKey = () => {
-  return [`/api/v1/dryrun/runs`] as const;
+export const getListValidationRunsQueryKey = (
+  params?: ListValidationRunsParams,
+) => {
+  return [`/api/v1/dryrun/runs`, ...(params ? [params] : [])] as const;
 };
 
 export const getListValidationRunsQueryOptions = <
   TData = Awaited<ReturnType<typeof listValidationRuns>>,
   TError = AxiosError<HTTPValidationError>,
->(options?: {
-  query?: Partial<
-    UseQueryOptions<
-      Awaited<ReturnType<typeof listValidationRuns>>,
-      TError,
-      TData
-    >
-  >;
-  axios?: AxiosRequestConfig;
-}) => {
+>(
+  params?: ListValidationRunsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listValidationRuns>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+) => {
   const { query: queryOptions, axios: axiosOptions } = options ?? {};
 
-  const queryKey = queryOptions?.queryKey ?? getListValidationRunsQueryKey();
+  const queryKey =
+    queryOptions?.queryKey ?? getListValidationRunsQueryKey(params);
 
   const queryFn: QueryFunction<
     Awaited<ReturnType<typeof listValidationRuns>>
-  > = ({ signal }) => listValidationRuns({ signal, ...axiosOptions });
+  > = ({ signal }) => listValidationRuns(params, { signal, ...axiosOptions });
 
   return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
     Awaited<ReturnType<typeof listValidationRuns>>,
@@ -10067,6 +11010,7 @@ export function useListValidationRuns<
   TData = Awaited<ReturnType<typeof listValidationRuns>>,
   TError = AxiosError<HTTPValidationError>,
 >(
+  params: undefined | ListValidationRunsParams,
   options: {
     query: Partial<
       UseQueryOptions<
@@ -10093,6 +11037,7 @@ export function useListValidationRuns<
   TData = Awaited<ReturnType<typeof listValidationRuns>>,
   TError = AxiosError<HTTPValidationError>,
 >(
+  params?: ListValidationRunsParams,
   options?: {
     query?: Partial<
       UseQueryOptions<
@@ -10119,6 +11064,7 @@ export function useListValidationRuns<
   TData = Awaited<ReturnType<typeof listValidationRuns>>,
   TError = AxiosError<HTTPValidationError>,
 >(
+  params?: ListValidationRunsParams,
   options?: {
     query?: Partial<
       UseQueryOptions<
@@ -10141,6 +11087,7 @@ export function useListValidationRuns<
   TData = Awaited<ReturnType<typeof listValidationRuns>>,
   TError = AxiosError<HTTPValidationError>,
 >(
+  params?: ListValidationRunsParams,
   options?: {
     query?: Partial<
       UseQueryOptions<
@@ -10155,7 +11102,7 @@ export function useListValidationRuns<
 ): UseQueryResult<TData, TError> & {
   queryKey: DataTag<QueryKey, TData, TError>;
 } {
-  const queryOptions = getListValidationRunsQueryOptions(options);
+  const queryOptions = getListValidationRunsQueryOptions(params, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
@@ -10170,23 +11117,27 @@ export function useListValidationRuns<
 export const getListValidationRunsSuspenseQueryOptions = <
   TData = Awaited<ReturnType<typeof listValidationRuns>>,
   TError = AxiosError<HTTPValidationError>,
->(options?: {
-  query?: Partial<
-    UseSuspenseQueryOptions<
-      Awaited<ReturnType<typeof listValidationRuns>>,
-      TError,
-      TData
-    >
-  >;
-  axios?: AxiosRequestConfig;
-}) => {
+>(
+  params?: ListValidationRunsParams,
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof listValidationRuns>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+) => {
   const { query: queryOptions, axios: axiosOptions } = options ?? {};
 
-  const queryKey = queryOptions?.queryKey ?? getListValidationRunsQueryKey();
+  const queryKey =
+    queryOptions?.queryKey ?? getListValidationRunsQueryKey(params);
 
   const queryFn: QueryFunction<
     Awaited<ReturnType<typeof listValidationRuns>>
-  > = ({ signal }) => listValidationRuns({ signal, ...axiosOptions });
+  > = ({ signal }) => listValidationRuns(params, { signal, ...axiosOptions });
 
   return { queryKey, queryFn, ...queryOptions } as UseSuspenseQueryOptions<
     Awaited<ReturnType<typeof listValidationRuns>>,
@@ -10205,6 +11156,7 @@ export function useListValidationRunsSuspense<
   TData = Awaited<ReturnType<typeof listValidationRuns>>,
   TError = AxiosError<HTTPValidationError>,
 >(
+  params: undefined | ListValidationRunsParams,
   options: {
     query: Partial<
       UseSuspenseQueryOptions<
@@ -10223,6 +11175,7 @@ export function useListValidationRunsSuspense<
   TData = Awaited<ReturnType<typeof listValidationRuns>>,
   TError = AxiosError<HTTPValidationError>,
 >(
+  params?: ListValidationRunsParams,
   options?: {
     query?: Partial<
       UseSuspenseQueryOptions<
@@ -10241,6 +11194,7 @@ export function useListValidationRunsSuspense<
   TData = Awaited<ReturnType<typeof listValidationRuns>>,
   TError = AxiosError<HTTPValidationError>,
 >(
+  params?: ListValidationRunsParams,
   options?: {
     query?: Partial<
       UseSuspenseQueryOptions<
@@ -10263,6 +11217,7 @@ export function useListValidationRunsSuspense<
   TData = Awaited<ReturnType<typeof listValidationRuns>>,
   TError = AxiosError<HTTPValidationError>,
 >(
+  params?: ListValidationRunsParams,
   options?: {
     query?: Partial<
       UseSuspenseQueryOptions<
@@ -10277,7 +11232,10 @@ export function useListValidationRunsSuspense<
 ): UseSuspenseQueryResult<TData, TError> & {
   queryKey: DataTag<QueryKey, TData, TError>;
 } {
-  const queryOptions = getListValidationRunsSuspenseQueryOptions(options);
+  const queryOptions = getListValidationRunsSuspenseQueryOptions(
+    params,
+    options,
+  );
 
   const query = useSuspenseQuery(
     queryOptions,
@@ -14623,6 +15581,797 @@ export function useGetMetricsSummarySuspense<
   queryKey: DataTag<QueryKey, TData, TError>;
 } {
   const queryOptions = getGetMetricsSummarySuspenseQueryOptions(options);
+
+  const query = useSuspenseQuery(
+    queryOptions,
+    queryClient,
+  ) as UseSuspenseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
+
+/**
+ * Return the effective status for the run.
+
+Falls back to the catalogue default when no explicit row exists —
+the UI uses ``is_default`` to render an "(auto)" hint and skip the
+``updated_by`` / ``updated_at`` metadata that would otherwise be
+misleading for an unreviewed run.
+ * @summary Get Run Review Status
+ */
+export const getRunReviewStatus = (
+  runId: string,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<ReviewStatusOut>> => {
+  return axios.default.get(`/api/v1/runs/${runId}/review-status`, options);
+};
+
+export const getGetRunReviewStatusQueryKey = (runId?: string) => {
+  return [`/api/v1/runs/${runId}/review-status`] as const;
+};
+
+export const getGetRunReviewStatusQueryOptions = <
+  TData = Awaited<ReturnType<typeof getRunReviewStatus>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getRunReviewStatus>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+) => {
+  const { query: queryOptions, axios: axiosOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetRunReviewStatusQueryKey(runId);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getRunReviewStatus>>
+  > = ({ signal }) => getRunReviewStatus(runId, { signal, ...axiosOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!runId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getRunReviewStatus>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+};
+
+export type GetRunReviewStatusQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getRunReviewStatus>>
+>;
+export type GetRunReviewStatusQueryError = AxiosError<HTTPValidationError>;
+
+export function useGetRunReviewStatus<
+  TData = Awaited<ReturnType<typeof getRunReviewStatus>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getRunReviewStatus>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getRunReviewStatus>>,
+          TError,
+          Awaited<ReturnType<typeof getRunReviewStatus>>
+        >,
+        "initialData"
+      >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useGetRunReviewStatus<
+  TData = Awaited<ReturnType<typeof getRunReviewStatus>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getRunReviewStatus>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getRunReviewStatus>>,
+          TError,
+          Awaited<ReturnType<typeof getRunReviewStatus>>
+        >,
+        "initialData"
+      >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useGetRunReviewStatus<
+  TData = Awaited<ReturnType<typeof getRunReviewStatus>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getRunReviewStatus>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+/**
+ * @summary Get Run Review Status
+ */
+
+export function useGetRunReviewStatus<
+  TData = Awaited<ReturnType<typeof getRunReviewStatus>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getRunReviewStatus>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
+  const queryOptions = getGetRunReviewStatusQueryOptions(runId, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
+
+export const getGetRunReviewStatusSuspenseQueryOptions = <
+  TData = Awaited<ReturnType<typeof getRunReviewStatus>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getRunReviewStatus>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+) => {
+  const { query: queryOptions, axios: axiosOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetRunReviewStatusQueryKey(runId);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getRunReviewStatus>>
+  > = ({ signal }) => getRunReviewStatus(runId, { signal, ...axiosOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseSuspenseQueryOptions<
+    Awaited<ReturnType<typeof getRunReviewStatus>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+};
+
+export type GetRunReviewStatusSuspenseQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getRunReviewStatus>>
+>;
+export type GetRunReviewStatusSuspenseQueryError =
+  AxiosError<HTTPValidationError>;
+
+export function useGetRunReviewStatusSuspense<
+  TData = Awaited<ReturnType<typeof getRunReviewStatus>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  options: {
+    query: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getRunReviewStatus>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useGetRunReviewStatusSuspense<
+  TData = Awaited<ReturnType<typeof getRunReviewStatus>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getRunReviewStatus>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useGetRunReviewStatusSuspense<
+  TData = Awaited<ReturnType<typeof getRunReviewStatus>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getRunReviewStatus>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+/**
+ * @summary Get Run Review Status
+ */
+
+export function useGetRunReviewStatusSuspense<
+  TData = Awaited<ReturnType<typeof getRunReviewStatus>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getRunReviewStatus>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
+  const queryOptions = getGetRunReviewStatusSuspenseQueryOptions(
+    runId,
+    options,
+  );
+
+  const query = useSuspenseQuery(
+    queryOptions,
+    queryClient,
+  ) as UseSuspenseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
+
+/**
+ * Set the review status for a run.
+
+Records the change in the audit history with the previous effective
+value (virtual default included) so the run detail page can render
+"Pending review → Acknowledged" naturally.
+ * @summary Set Run Review Status
+ */
+export const setRunReviewStatus = (
+  runId: string,
+  setReviewStatusIn: SetReviewStatusIn,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<ReviewStatusOut>> => {
+  return axios.default.put(
+    `/api/v1/runs/${runId}/review-status`,
+    setReviewStatusIn,
+    options,
+  );
+};
+
+export const getSetRunReviewStatusMutationOptions = <
+  TError = AxiosError<HTTPValidationError>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof setRunReviewStatus>>,
+    TError,
+    { runId: string; data: SetReviewStatusIn },
+    TContext
+  >;
+  axios?: AxiosRequestConfig;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof setRunReviewStatus>>,
+  TError,
+  { runId: string; data: SetReviewStatusIn },
+  TContext
+> => {
+  const mutationKey = ["setRunReviewStatus"];
+  const { mutation: mutationOptions, axios: axiosOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, axios: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof setRunReviewStatus>>,
+    { runId: string; data: SetReviewStatusIn }
+  > = (props) => {
+    const { runId, data } = props ?? {};
+
+    return setRunReviewStatus(runId, data, axiosOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type SetRunReviewStatusMutationResult = NonNullable<
+  Awaited<ReturnType<typeof setRunReviewStatus>>
+>;
+export type SetRunReviewStatusMutationBody = SetReviewStatusIn;
+export type SetRunReviewStatusMutationError = AxiosError<HTTPValidationError>;
+
+/**
+ * @summary Set Run Review Status
+ */
+export const useSetRunReviewStatus = <
+  TError = AxiosError<HTTPValidationError>,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof setRunReviewStatus>>,
+      TError,
+      { runId: string; data: SetReviewStatusIn },
+      TContext
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof setRunReviewStatus>>,
+  TError,
+  { runId: string; data: SetReviewStatusIn },
+  TContext
+> => {
+  const mutationOptions = getSetRunReviewStatusMutationOptions(options);
+
+  return useMutation(mutationOptions, queryClient);
+};
+
+/**
+ * Revert the run to the catalogue default.
+
+Drops the explicit row and appends a history entry. Useful when a
+reviewer wants to "unacknowledge" something without picking another
+explicit value (e.g. the run was re-classified and should go back
+into the unreviewed queue).
+ * @summary Clear Run Review Status
+ */
+export const clearRunReviewStatus = (
+  runId: string,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<ReviewStatusOut>> => {
+  return axios.default.delete(`/api/v1/runs/${runId}/review-status`, options);
+};
+
+export const getClearRunReviewStatusMutationOptions = <
+  TError = AxiosError<HTTPValidationError>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof clearRunReviewStatus>>,
+    TError,
+    { runId: string },
+    TContext
+  >;
+  axios?: AxiosRequestConfig;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof clearRunReviewStatus>>,
+  TError,
+  { runId: string },
+  TContext
+> => {
+  const mutationKey = ["clearRunReviewStatus"];
+  const { mutation: mutationOptions, axios: axiosOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, axios: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof clearRunReviewStatus>>,
+    { runId: string }
+  > = (props) => {
+    const { runId } = props ?? {};
+
+    return clearRunReviewStatus(runId, axiosOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ClearRunReviewStatusMutationResult = NonNullable<
+  Awaited<ReturnType<typeof clearRunReviewStatus>>
+>;
+
+export type ClearRunReviewStatusMutationError = AxiosError<HTTPValidationError>;
+
+/**
+ * @summary Clear Run Review Status
+ */
+export const useClearRunReviewStatus = <
+  TError = AxiosError<HTTPValidationError>,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof clearRunReviewStatus>>,
+      TError,
+      { runId: string },
+      TContext
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof clearRunReviewStatus>>,
+  TError,
+  { runId: string },
+  TContext
+> => {
+  const mutationOptions = getClearRunReviewStatusMutationOptions(options);
+
+  return useMutation(mutationOptions, queryClient);
+};
+
+/**
+ * Return up to 200 most-recent audit rows, newest first.
+ * @summary Get Run Review Status History
+ */
+export const getRunReviewStatusHistory = (
+  runId: string,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<ReviewStatusHistoryOut>> => {
+  return axios.default.get(
+    `/api/v1/runs/${runId}/review-status/history`,
+    options,
+  );
+};
+
+export const getGetRunReviewStatusHistoryQueryKey = (runId?: string) => {
+  return [`/api/v1/runs/${runId}/review-status/history`] as const;
+};
+
+export const getGetRunReviewStatusHistoryQueryOptions = <
+  TData = Awaited<ReturnType<typeof getRunReviewStatusHistory>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getRunReviewStatusHistory>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+) => {
+  const { query: queryOptions, axios: axiosOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetRunReviewStatusHistoryQueryKey(runId);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getRunReviewStatusHistory>>
+  > = ({ signal }) =>
+    getRunReviewStatusHistory(runId, { signal, ...axiosOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!runId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getRunReviewStatusHistory>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+};
+
+export type GetRunReviewStatusHistoryQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getRunReviewStatusHistory>>
+>;
+export type GetRunReviewStatusHistoryQueryError =
+  AxiosError<HTTPValidationError>;
+
+export function useGetRunReviewStatusHistory<
+  TData = Awaited<ReturnType<typeof getRunReviewStatusHistory>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getRunReviewStatusHistory>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getRunReviewStatusHistory>>,
+          TError,
+          Awaited<ReturnType<typeof getRunReviewStatusHistory>>
+        >,
+        "initialData"
+      >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useGetRunReviewStatusHistory<
+  TData = Awaited<ReturnType<typeof getRunReviewStatusHistory>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getRunReviewStatusHistory>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getRunReviewStatusHistory>>,
+          TError,
+          Awaited<ReturnType<typeof getRunReviewStatusHistory>>
+        >,
+        "initialData"
+      >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useGetRunReviewStatusHistory<
+  TData = Awaited<ReturnType<typeof getRunReviewStatusHistory>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getRunReviewStatusHistory>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+/**
+ * @summary Get Run Review Status History
+ */
+
+export function useGetRunReviewStatusHistory<
+  TData = Awaited<ReturnType<typeof getRunReviewStatusHistory>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getRunReviewStatusHistory>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
+  const queryOptions = getGetRunReviewStatusHistoryQueryOptions(runId, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
+
+export const getGetRunReviewStatusHistorySuspenseQueryOptions = <
+  TData = Awaited<ReturnType<typeof getRunReviewStatusHistory>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getRunReviewStatusHistory>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+) => {
+  const { query: queryOptions, axios: axiosOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetRunReviewStatusHistoryQueryKey(runId);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getRunReviewStatusHistory>>
+  > = ({ signal }) =>
+    getRunReviewStatusHistory(runId, { signal, ...axiosOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseSuspenseQueryOptions<
+    Awaited<ReturnType<typeof getRunReviewStatusHistory>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+};
+
+export type GetRunReviewStatusHistorySuspenseQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getRunReviewStatusHistory>>
+>;
+export type GetRunReviewStatusHistorySuspenseQueryError =
+  AxiosError<HTTPValidationError>;
+
+export function useGetRunReviewStatusHistorySuspense<
+  TData = Awaited<ReturnType<typeof getRunReviewStatusHistory>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  options: {
+    query: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getRunReviewStatusHistory>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useGetRunReviewStatusHistorySuspense<
+  TData = Awaited<ReturnType<typeof getRunReviewStatusHistory>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getRunReviewStatusHistory>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useGetRunReviewStatusHistorySuspense<
+  TData = Awaited<ReturnType<typeof getRunReviewStatusHistory>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getRunReviewStatusHistory>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+/**
+ * @summary Get Run Review Status History
+ */
+
+export function useGetRunReviewStatusHistorySuspense<
+  TData = Awaited<ReturnType<typeof getRunReviewStatusHistory>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getRunReviewStatusHistory>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
+  const queryOptions = getGetRunReviewStatusHistorySuspenseQueryOptions(
+    runId,
+    options,
+  );
 
   const query = useSuspenseQuery(
     queryOptions,

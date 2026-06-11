@@ -290,6 +290,17 @@ class ValidationRunSummaryOut(BaseModel):
     created_at: str | None = None
     error_message: str | None = None
     checks: list[dict[str, Any]] = Field(default_factory=list)
+    # Per-run review status — set by reviewers on the Runs detail page,
+    # filterable on the Runs History page. ``review_status`` is the
+    # effective value (catalogue default for unreviewed runs, persisted
+    # value otherwise); ``review_status_is_default`` lets the History
+    # table render unreviewed rows distinctly (e.g. lighter badge) so
+    # they're not visually indistinguishable from rows where someone
+    # explicitly selected "Pending review".
+    review_status: str | None = None
+    review_status_is_default: bool = False
+    review_status_updated_by: str | None = None
+    review_status_updated_at: str | None = None
 
 
 # ---------------------------------------------------------------------------

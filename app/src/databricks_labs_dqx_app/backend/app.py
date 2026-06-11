@@ -218,6 +218,19 @@ async def lifespan(app: FastAPI):
                 "Lakebase initialisation failed — falling back to Delta for OLTP tables. "
                 "Verify the database_instance is provisioned and the app SP has CAN_CONNECT_AND_CREATE."
             )
+            # Hard-to-spot data divergence: previously-written rules /
+            # settings / RBAC / schedules in Lakebase remain on Postgres
+            # but every read now hits the (empty or stale) Delta fallback.
+            # Surface this loudly so operators don't conclude data was
+            # *lost* when really it's just unreachable until Lakebase
+            # comes back. Restart once Lakebase is healthy to reattach.
+            logger.warning(
+                "Previously-written Lakebase data (rules, app settings, RBAC, "
+                "comments, schedule configs, schedule runs) will be INACCESSIBLE "
+                "until Lakebase recovers and the app is restarted. Any writes "
+                "performed in this Delta-fallback session will diverge from the "
+                "Lakebase state until reconciled manually."
+            )
             pg_executor = None
             set_oltp_executor(None)
     else:

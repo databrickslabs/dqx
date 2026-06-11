@@ -19,6 +19,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_conf,
     get_job_service,
     get_obo_ws,
+    get_review_status_service,
     get_rules_catalog_service,
     get_sp_sql_executor,
     get_user_catalog_names,
@@ -40,6 +41,7 @@ from databricks_labs_dqx_app.backend.models import (
 )
 from databricks_labs_dqx_app.backend.services.job_service import JobService
 from databricks_labs_dqx_app.backend.run_status_manager import get_run_metadata, has_terminal_result, update_run_status
+from databricks_labs_dqx_app.backend.services.review_status_service import ReviewStatusService
 from databricks_labs_dqx_app.backend.services.rules_catalog_service import RulesCatalogService
 from databricks_labs_dqx_app.backend.services.view_service import ViewService
 
@@ -76,18 +78,76 @@ def _catalog_of(fqn: str) -> str:
 )
 async def list_validation_runs(
     job_svc: Annotated[JobService, Depends(get_job_service)],
+    review_svc: Annotated[ReviewStatusService, Depends(get_review_status_service)],
     app_conf: Annotated[AppConfig, Depends(get_conf)],
     user_catalogs: Annotated[frozenset[str], Depends(get_user_catalog_names)],
+    review_status: Annotated[
+        list[str] | None,
+        Query(
+            description=(
+                "Filter to runs whose effective review status matches one of "
+                "the supplied values. Repeat the param for multi-select "
+                "(e.g. ?review_status=Acknowledged&review_status=Resolved). "
+                "Match is on the effective value, so passing the catalogue "
+                "default also catches unreviewed runs."
+            ),
+        ),
+    ] = None,
 ) -> list[ValidationRunSummaryOut]:
     """Return validation (dry-run) history filtered to user-accessible catalogs."""
     try:
         table = f"{app_conf.catalog}.{app_conf.schema_name}.dq_validation_runs"
         rows = job_svc.list_dryrun_rows(table)
-        results: list[ValidationRunSummaryOut] = []
+
+        # First-pass filter on UC visibility — we don't want to bulk-fetch
+        # review statuses for runs the caller can't see anyway. Build the
+        # candidate list in the same order so the final response stays
+        # sorted by ``created_at DESC`` (already applied in the SQL).
+        candidates: list[dict[str, str | None]] = []
         for row in rows:
             fqn = row.get("source_table_fqn") or ""
             if not fqn.startswith(_SQL_CHECK_PREFIX) and _catalog_of(fqn) not in user_catalogs:
                 continue
+            candidates.append(row)
+
+        # Bulk-fetch review statuses for every visible run in one query.
+        # Lakebase/Delta-OLTP and dq_validation_runs may live on different
+        # backends, so we can't JOIN at the SQL layer — merging in Python
+        # is what keeps this dialect-portable.
+        candidate_run_ids = [row.get("run_id") or "" for row in candidates if row.get("run_id")]
+        try:
+            review_map = review_svc.bulk_get_effective(candidate_run_ids)
+        except Exception as exc:  # noqa: BLE001 - degrade gracefully if OLTP is hiccuping
+            logger.warning(
+                "Failed to bulk-fetch review statuses (rendering without): %s",
+                exc,
+                exc_info=True,
+            )
+            review_map = {}
+
+        # Normalise the optional multi-select filter into a set for O(1)
+        # checks. Empty strings (e.g. trailing ``?review_status=``) are
+        # dropped so a forgotten chip never accidentally filters
+        # everything out.
+        review_filter: set[str] | None
+        if review_status:
+            review_filter = {s.strip() for s in review_status if s and s.strip()}
+            if not review_filter:
+                review_filter = None
+        else:
+            review_filter = None
+
+        results: list[ValidationRunSummaryOut] = []
+        for row in candidates:
+            fqn = row.get("source_table_fqn") or ""
+            run_id = row.get("run_id") or ""
+            review = review_map.get(run_id)
+            review_value = review.status if review else None
+
+            if review_filter is not None:
+                if not review_value or review_value not in review_filter:
+                    continue
+
             checks: list[dict[str, Any]] = []
             raw = row.get("checks_json")
             if raw:
@@ -99,7 +159,7 @@ async def list_validation_runs(
                     pass
             results.append(
                 ValidationRunSummaryOut(
-                    run_id=row.get("run_id") or "",
+                    run_id=run_id,
                     source_table_fqn=fqn,
                     status=row.get("status"),
                     requesting_user=row.get("requesting_user"),
@@ -117,6 +177,10 @@ async def list_validation_runs(
                     run_type=row.get("run_type"),
                     error_message=row.get("error_message"),
                     checks=checks,
+                    review_status=review_value,
+                    review_status_is_default=bool(review.is_default) if review else False,
+                    review_status_updated_by=review.updated_by if review else None,
+                    review_status_updated_at=review.updated_at if review else None,
                 )
             )
         return results

@@ -43,6 +43,20 @@ class AppConfig(BaseSettings):
     dryrun_default_sample_size: int = Field(default=1_000)
 
     # ------------------------------------------------------------------
+    # Embedded dashboard (Insights page)
+    # ------------------------------------------------------------------
+    # The Insights page renders a Databricks AI/BI dashboard inside an
+    # iframe. Admins set the dashboard ID via the Configuration page,
+    # which writes to ``dq_app_settings`` and overrides this default.
+    # When unset, this env var lets the bundle ship a starter
+    # dashboard ID so the page works out-of-the-box.
+    default_dashboard_id: str = Field(
+        default="",
+        validation_alias="DQX_DEFAULT_DASHBOARD_ID",
+        description="Fallback dashboard ID for the Insights page when no admin override is set.",
+    )
+
+    # ------------------------------------------------------------------
     # Lakebase (Postgres) backend
     # ------------------------------------------------------------------
     # When ``lakebase_instance_name`` is set the OLTP-style tables
@@ -58,7 +72,15 @@ class AppConfig(BaseSettings):
     lakebase_instance_name: str = Field(
         default="",
         validation_alias="DQX_LAKEBASE_INSTANCE_NAME",
-        description="Lakebase instance name. Empty disables Lakebase routing.",
+        description=(
+            "Lakebase instance name. Empty — or any of the sentinel "
+            "values ``-`` / ``disabled`` / ``off`` / ``none`` "
+            "(case-insensitive) — disables Lakebase routing. The "
+            "sentinel form exists because Databricks Apps rejects "
+            "env vars with an empty ``value`` string, so deployments "
+            "that want to disable Lakebase must pass a non-empty "
+            "placeholder."
+        ),
     )
     lakebase_database_name: str = Field(
         default="dqx_studio",
@@ -83,15 +105,22 @@ class AppConfig(BaseSettings):
     def static_assets_path(self) -> Path:
         return Path(str(resources.files(app_slug))).joinpath("__dist__")
 
+    # Sentinel values that explicitly disable Lakebase routing even
+    # though the env var has to be non-empty (Databricks Apps rejects
+    # ``value: ""``). Comparison is case-insensitive after stripping.
+    _LAKEBASE_DISABLED_SENTINELS = frozenset({"", "-", "disabled", "off", "none"})
+
     @property
     def lakebase_enabled(self) -> bool:
         """``True`` when the deployment was provisioned with Lakebase.
 
         Falls back to ``False`` (legacy UC-only mode) when the
-        instance name is empty so existing tests and dev setups keep
-        working with no Postgres dependency.
+        instance name is empty or set to a recognised "disabled"
+        sentinel so existing tests, dev setups, and Lakebase-less
+        Databricks Apps deployments keep working with no Postgres
+        dependency.
         """
-        return bool(self.lakebase_instance_name.strip())
+        return self.lakebase_instance_name.strip().lower() not in self._LAKEBASE_DISABLED_SENTINELS
 
 
 conf = AppConfig()

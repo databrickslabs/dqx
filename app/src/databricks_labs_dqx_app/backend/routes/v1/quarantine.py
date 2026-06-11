@@ -62,9 +62,23 @@ def _row_to_record(row: dict[str, Any]) -> QuarantineRecordOut:
     errors = None
     if row.get("errors"):
         try:
-            errors = json.loads(row["errors"])
+            parsed_errors = json.loads(row["errors"])
         except (json.JSONDecodeError, TypeError):
             errors = [row["errors"]]
+        else:
+            # Normalise to a list. DQX's ``dq_result_item_schema`` (and
+            # the current SQL-check writer) emit a list of ``{name,
+            # message, ...}`` structs, but legacy SQL-check rows written
+            # before that fix used a single ``{check_name: message}``
+            # dict. Coerce the legacy shape so those rows still display
+            # — and so Pydantic's ``list[Any]`` validation doesn't 500
+            # the whole endpoint when one historical row is wrong.
+            if isinstance(parsed_errors, list):
+                errors = parsed_errors
+            elif isinstance(parsed_errors, dict):
+                errors = [{"name": k, "message": v} for k, v in parsed_errors.items()]
+            elif parsed_errors is not None:
+                errors = [parsed_errors]
 
     # ``warnings`` is missing on rows written before migration v4; the
     # column is ``null`` for SQL-check quarantines.

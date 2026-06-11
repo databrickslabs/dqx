@@ -27,6 +27,7 @@ from .services.job_service import JobService
 from .services.role_service import RoleService
 from .services.rules_catalog_service import RulesCatalogService
 from .services.comments_service import CommentsService
+from .services.review_status_service import ReviewStatusService
 from .services.schedule_config_service import ScheduleConfigService
 from .services.view_service import ViewService
 from .sql_executor import SqlExecutor
@@ -255,6 +256,19 @@ async def get_comments_service(
     return CommentsService(sql=sql)
 
 
+async def get_review_status_service(
+    sql: Annotated[SqlExecutor, Depends(get_sp_oltp_executor)],
+    settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+) -> ReviewStatusService:
+    """Create a ReviewStatusService routed at the OLTP executor.
+
+    Takes the same ``AppSettingsService`` we use everywhere else as a
+    transitive dep so the catalogue of allowed status values comes from
+    the same singleton (and same cache) as the Configuration page reads.
+    """
+    return ReviewStatusService(sql=sql, settings=settings)
+
+
 async def get_schedule_config_service(
     sql: Annotated[SqlExecutor, Depends(get_sp_oltp_executor)],
 ) -> ScheduleConfigService:
@@ -453,6 +467,7 @@ __all__ = [
     "get_sql_connector",
     "get_user_role",
     "get_comments_service",
+    "get_review_status_service",
     "get_schedule_config_service",
     "require_role",
     "require_runner",

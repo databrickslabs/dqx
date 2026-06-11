@@ -215,6 +215,45 @@ PG_MIGRATIONS: list[PgMigration] = [
             f"  ON {_S}.dq_schedule_configs_history (schedule_name, changed_at DESC);"
         ),
     ),
+    PgMigration(
+        version=2,
+        description="Run review status (per-run review label + audit history)",
+        sql=(
+            # ----------------------------------------------------------
+            # dq_run_review_status — one mutable row per run that has
+            # been explicitly reviewed. Runs without a row surface the
+            # configured default virtually at read-time (see
+            # ReviewStatusService.get_effective).
+            # ----------------------------------------------------------
+            f"CREATE TABLE IF NOT EXISTS {_S}.dq_run_review_status ("
+            "  run_id     TEXT PRIMARY KEY,"
+            "  status     TEXT NOT NULL,"
+            "  updated_by TEXT,"
+            "  updated_at TIMESTAMPTZ"
+            ");"
+            # The Runs History page filters by status across the whole
+            # list, so an index on status keeps that scan cheap as the
+            # review-status table grows alongside the run history.
+            f"CREATE INDEX IF NOT EXISTS idx_dq_run_review_status_status "
+            f"  ON {_S}.dq_run_review_status (status);"
+            # ----------------------------------------------------------
+            # dq_run_review_status_history — append-only audit log.
+            # BIGSERIAL gives us a stable display order even if two
+            # changes land on the same TIMESTAMPTZ (rare but possible
+            # with millisecond resolution + bulk admin tooling).
+            # ----------------------------------------------------------
+            f"CREATE TABLE IF NOT EXISTS {_S}.dq_run_review_status_history ("
+            "  history_id      BIGSERIAL PRIMARY KEY,"
+            "  run_id          TEXT NOT NULL,"
+            "  status          TEXT NOT NULL,"
+            "  previous_status TEXT,"
+            "  changed_by      TEXT NOT NULL,"
+            "  changed_at      TIMESTAMPTZ NOT NULL"
+            ");"
+            f"CREATE INDEX IF NOT EXISTS idx_dq_run_review_status_history_run_changed_at "
+            f"  ON {_S}.dq_run_review_status_history (run_id, changed_at DESC);"
+        ),
+    ),
 ]
 
 

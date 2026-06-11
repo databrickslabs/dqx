@@ -116,11 +116,13 @@ def _pg_render_value(value: Any) -> str:
     Behaves identically to :func:`backend.sql_executor._render_value`
     except that:
 
-    - :class:`RawSql("current_timestamp()")` is rewritten to
-      ``CURRENT_TIMESTAMP`` because Postgres rejects the parenthesised
-      Spark SQL form.  Other ``RawSql`` payloads pass through verbatim
-      so callers can still inject Postgres-specific helpers like
-      ``now()`` or ``::jsonb`` casts.
+    - :class:`RawSql` payloads matching the Spark / SQL standard "now"
+      idiom — ``current_timestamp()`` or ``now()`` — are rewritten to
+      ``CURRENT_TIMESTAMP``. The parenthesised Spark form does not
+      parse on Postgres, and rewriting bare ``now()`` keeps service
+      code dialect-agnostic. Any other ``RawSql`` payload (e.g.
+      ``::jsonb`` casts, ``gen_random_uuid()``) passes through
+      verbatim.
     - ``bool`` renders as ``TRUE``/``FALSE`` which Postgres accepts.
     """
     if isinstance(value, RawSql):

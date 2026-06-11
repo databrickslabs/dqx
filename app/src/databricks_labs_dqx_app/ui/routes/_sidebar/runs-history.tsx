@@ -12,6 +12,9 @@ import {
 import { useGetDryRunResults, getDryRunStatus, type DryRunResultsOut } from "@/lib/api";
 import { DryRunResults } from "@/components/DryRunResults";
 import { CommentThread } from "@/components/CommentThread";
+import { RunReviewStatusPanel } from "@/components/RunReviewStatusPanel";
+import { useRunReviewStatuses } from "@/lib/api-custom";
+import { reviewStatusBadgeClasses } from "@/routes/_sidebar/config";
 import { useCurrentUserSuspense } from "@/hooks/use-suspense-queries";
 import selector from "@/lib/selector";
 import { Button } from "@/components/ui/button";
@@ -43,6 +46,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { ShieldCheck } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { useState, useCallback, useEffect, Suspense, useMemo, type ReactNode } from "react";
@@ -101,6 +110,150 @@ function statusBadge(status: string | null) {
         </Badge>
       );
   }
+}
+
+// Renders the review-status badge for a row. Falls back to a neutral
+// placeholder when the listing endpoint hasn't yet populated the field
+// (transient pre-bulk-fetch state) so the column never collapses.
+function reviewStatusCell(run: ValidationRunSummaryOut, catalogueColor: Map<string, string>) {
+  const value = run.review_status;
+  if (!value) {
+    return <span className="text-xs text-muted-foreground">—</span>;
+  }
+  const color = catalogueColor.get(value) ?? "gray";
+  return (
+    <div className="flex items-center gap-1.5">
+      <Badge
+        variant="outline"
+        className={cn(
+          "text-[10px] font-normal max-w-[160px] truncate",
+          reviewStatusBadgeClasses(color),
+        )}
+        title={value}
+      >
+        {value}
+      </Badge>
+      {run.review_status_is_default && (
+        <span
+          className="text-[9px] uppercase tracking-wide text-muted-foreground"
+          title="Default — not yet reviewed"
+        >
+          auto
+        </span>
+      )}
+    </div>
+  );
+}
+
+// Multi-select chip for the toolbar — mirrors the existing
+// ``LabelFilter`` look so the two filters feel consistent. We don't try
+// to reuse LabelFilter directly because that one is keyed on
+// ``key/value`` label pairs, not flat status strings.
+function ReviewStatusFilter({
+  available,
+  selected,
+  onChange,
+}: {
+  available: { value: string; color: string; description: string }[];
+  selected: Set<string>;
+  onChange: (next: Set<string>) => void;
+}) {
+  const toggle = (value: string) => {
+    const next = new Set(selected);
+    if (next.has(value)) next.delete(value);
+    else next.add(value);
+    onChange(next);
+  };
+
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button
+          variant={selected.size > 0 ? "default" : "outline"}
+          size="sm"
+          className="h-9 gap-1.5 text-xs"
+          title="Filter by review status"
+        >
+          <ShieldCheck className="h-3.5 w-3.5" />
+          Review
+          {selected.size > 0 && (
+            <Badge variant="secondary" className="ml-1 text-[10px] h-4 px-1">
+              {selected.size}
+            </Badge>
+          )}
+          <ChevronDown className="h-3 w-3 opacity-60" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-72 p-1">
+        {available.length === 0 && (
+          <div className="px-2 py-1.5 text-[11px] text-muted-foreground">
+            No statuses configured yet. Define them in Configuration.
+          </div>
+        )}
+        <div className="space-y-0.5 max-h-64 overflow-y-auto">
+          {available.map((opt) => {
+            const checked = selected.has(opt.value);
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => toggle(opt.value)}
+                className={cn(
+                  "flex w-full items-start gap-2 rounded px-2 py-1.5 text-xs hover:bg-muted",
+                  checked && "bg-muted",
+                )}
+              >
+                <span
+                  className={cn(
+                    "mt-0.5 inline-block h-3.5 w-3.5 shrink-0 rounded border flex items-center justify-center",
+                    checked
+                      ? "bg-primary border-primary"
+                      : "border-muted-foreground/40",
+                  )}
+                >
+                  {checked && (
+                    <svg
+                      viewBox="0 0 16 16"
+                      className="h-2.5 w-2.5 text-primary-foreground"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="3"
+                    >
+                      <path d="M3 8l3 3 7-7" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  )}
+                </span>
+                <div className="flex-1 min-w-0 space-y-0.5">
+                  <Badge
+                    variant="outline"
+                    className={cn("text-[10px] font-normal", reviewStatusBadgeClasses(opt.color))}
+                  >
+                    {opt.value}
+                  </Badge>
+                  {opt.description && (
+                    <p className="text-[11px] text-muted-foreground leading-tight">
+                      {opt.description}
+                    </p>
+                  )}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+        {selected.size > 0 && (
+          <div className="border-t mt-1 pt-1">
+            <button
+              type="button"
+              onClick={() => onChange(new Set())}
+              className="w-full text-left px-2 py-1.5 text-[11px] text-muted-foreground hover:text-foreground"
+            >
+              Clear selection
+            </button>
+          </div>
+        )}
+      </PopoverContent>
+    </Popover>
+  );
 }
 
 type SortDir = "asc" | "desc";
@@ -185,10 +338,19 @@ function RunHistoryContent() {
   const [failedOnly, setFailedOnly] = useState(false);
   const [myRunsOnly, setMyRunsOnly] = useState(false);
   const [labelFilter, setLabelFilter] = useState<Set<string>>(new Set());
+  // Review-status filter — empty set means "no filter" (show all values
+  // including the auto-default for unreviewed runs). We default to empty
+  // so a fresh page load doesn't hide anything; users opt into the
+  // filter via the toolbar.
+  const [reviewStatusFilter, setReviewStatusFilter] = useState<Set<string>>(new Set());
   const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
 
   const { data: runsResp, isLoading, error, refetch } = useListValidationRuns();
   const { data: rulesResp } = useListRules({ status: "approved" }, { query: {} });
+  // Catalogue drives the filter chips. We use the same hook the
+  // Configuration page reads from, so admin edits propagate here on
+  // staleTime expiry (default 5min) or query invalidation.
+  const { data: reviewStatusCatalogue } = useRunReviewStatuses();
 
   const rawRuns: ValidationRunSummaryOut[] = Array.isArray(runsResp?.data) ? runsResp.data : [];
   const runningRuns = rawRuns.filter((r) => r.status === "RUNNING");
@@ -305,6 +467,15 @@ function RunHistoryContent() {
         );
         if (!matched) return false;
       }
+      if (reviewStatusFilter.size > 0) {
+        // The listing endpoint always populates ``review_status`` with the
+        // effective value (catalogue default for unreviewed runs); a null
+        // value only happens for the brief window between a run starting
+        // and the OLTP bulk-fetch succeeding, so we exclude those under
+        // filter to stay consistent with the "match by effective value"
+        // contract.
+        if (!run.review_status || !reviewStatusFilter.has(run.review_status)) return false;
+      }
       return true;
     });
 
@@ -342,7 +513,7 @@ function RunHistoryContent() {
       }
       return cmp * dir;
     });
-  }, [allRuns, catalogFilter, schemaFilter, tableFilter, tableSearch, statusFilter, runTypeFilter, failedOnly, myRunsOnly, currentUserEmail, rSortKey, rSortDir, labelFilter]);
+  }, [allRuns, catalogFilter, schemaFilter, tableFilter, tableSearch, statusFilter, runTypeFilter, failedOnly, myRunsOnly, currentUserEmail, rSortKey, rSortDir, labelFilter, reviewStatusFilter]);
 
   // Distinct labels seen across all runs' checks. Drives the LabelFilter
   // dropdown content for this page.
@@ -369,6 +540,18 @@ function RunHistoryContent() {
     ? tablesByCatalogSchema[`${catalogFilter}.${schemaFilter}`] || []
     : [];
 
+  // Build once per catalogue refresh so the per-row cell renderer can do a
+  // single Map lookup instead of scanning the catalogue array. Orphan
+  // values (in dq_run_review_status but no longer in the catalogue) fall
+  // through to the default colour token.
+  const reviewStatusColorMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const opt of reviewStatusCatalogue?.statuses ?? []) {
+      map.set(opt.value, opt.color);
+    }
+    return map;
+  }, [reviewStatusCatalogue]);
+
   const handleCatalogChange = (value: string) => {
     setCatalogFilter(value);
     setSchemaFilter("all");
@@ -380,7 +563,7 @@ function RunHistoryContent() {
     setTableFilter("all");
   };
 
-  const hasActiveFilters = catalogFilter !== "all" || schemaFilter !== "all" || tableFilter !== "all" || tableSearch !== "" || statusFilter !== "all" || runTypeFilter !== "all" || failedOnly || myRunsOnly || labelFilter.size > 0;
+  const hasActiveFilters = catalogFilter !== "all" || schemaFilter !== "all" || tableFilter !== "all" || tableSearch !== "" || statusFilter !== "all" || runTypeFilter !== "all" || failedOnly || myRunsOnly || labelFilter.size > 0 || reviewStatusFilter.size > 0;
 
   const PAGE_SIZE = 25;
   const [currentPage, setCurrentPage] = useState(1);
@@ -512,6 +695,12 @@ function RunHistoryContent() {
               onChange={setLabelFilter}
             />
 
+            <ReviewStatusFilter
+              available={reviewStatusCatalogue?.statuses ?? []}
+              selected={reviewStatusFilter}
+              onChange={setReviewStatusFilter}
+            />
+
             {hasActiveFilters && (
               <Button
                 variant="ghost"
@@ -527,6 +716,7 @@ function RunHistoryContent() {
                   setFailedOnly(false);
                   setMyRunsOnly(false);
                   setLabelFilter(new Set());
+                  setReviewStatusFilter(new Set());
                 }}
               >
                 Clear filters
@@ -571,6 +761,9 @@ function RunHistoryContent() {
                       <th className="text-left p-3 font-medium">
                         <SortableHeader label="Status" sortKey="status" active={rSortKey === "status"} direction={rSortDir} onSort={handleRunsSort} />
                       </th>
+                      <th className="text-left p-3 font-medium" title="Per-run review status set by reviewers on the expanded row">
+                        Review
+                      </th>
                       <th className="text-left p-3 font-medium">Rules</th>
                       <th className="text-left p-3 font-medium">
                         <SortableHeader label="Requested by" sortKey="requested_by" active={rSortKey === "requested_by"} direction={rSortDir} onSort={handleRunsSort} />
@@ -609,6 +802,7 @@ function RunHistoryContent() {
                           errorPct={errorPct}
                           isExpanded={isExpanded}
                           onToggle={() => setExpandedRunId(isExpanded ? null : run.run_id)}
+                          reviewStatusColorMap={reviewStatusColorMap}
                         />
                       );
                     })}
@@ -694,11 +888,16 @@ function RunHistoryRow({
   errorPct,
   isExpanded,
   onToggle,
+  reviewStatusColorMap,
 }: {
   run: ValidationRunSummaryOut;
   errorPct: string | null;
   isExpanded: boolean;
   onToggle: () => void;
+  // Catalogue-derived value→color lookup. Passed from the page so the
+  // row stays a pure renderer; we accept an empty Map and fall back to
+  // a neutral colour token in ``reviewStatusCell``.
+  reviewStatusColorMap: Map<string, string>;
 }) {
   const { data: resultsResp, isLoading: isLoadingResults } = useGetDryRunResults(
     run.run_id,
@@ -738,6 +937,7 @@ function RunHistoryRow({
             )}
           </div>
         </td>
+        <td className="p-3">{reviewStatusCell(run, reviewStatusColorMap)}</td>
         <td className="p-3">
           {run.checks && run.checks.length > 0 ? (() => {
             const labels = run.checks.map((c: Record<string, unknown>) => {
@@ -805,7 +1005,7 @@ function RunHistoryRow({
       </tr>
       {isExpanded && (
         <tr>
-          <td colSpan={11} className="p-0">
+          <td colSpan={12} className="p-0">
             <div className="border-t bg-muted/10 p-4 space-y-4">
               {run.status === "FAILED" && run.error_message && (
                 <div className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950/30 p-3">
@@ -833,6 +1033,13 @@ function RunHistoryRow({
                 </div>
               )}
               {results && <DryRunResults result={results} />}
+              {/* Review status sits above the comments — the dropdown is a
+                  structured action that maps to filters on this page, so it
+                  belongs above the free-text discussion that explains the
+                  why. */}
+              <div className="rounded-md border bg-background/80 p-3">
+                <RunReviewStatusPanel runId={run.run_id} />
+              </div>
               <CommentThread entityType="run" entityId={run.run_id} />
             </div>
           </td>

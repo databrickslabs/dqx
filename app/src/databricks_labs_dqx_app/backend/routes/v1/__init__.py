@@ -14,6 +14,7 @@ from .roles import router as roles_router
 from .comments import router as comments_router
 from .quarantine import router as quarantine_router
 from .metrics import router as metrics_router
+from .review_status import router as review_status_router
 from .schedules import router as schedules_router
 
 v1_router = APIRouter()
@@ -32,3 +33,4 @@ v1_router.include_router(settings_router, prefix="/settings", tags=["settings"])
 v1_router.include_router(comments_router, prefix="/comments", tags=["comments"])
 v1_router.include_router(quarantine_router, prefix="/quarantine", tags=["quarantine"])
 v1_router.include_router(metrics_router, prefix="/metrics", tags=["metrics"])
+v1_router.include_router(review_status_router, prefix="/runs", tags=["review-status"])

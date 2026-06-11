@@ -364,6 +364,41 @@ _V4_QUARANTINE_WARNINGS = f"ALTER TABLE {_PLACEHOLDER}.dq_quarantine_records " f
 _V5_VALIDATION_RUNS_ERROR_ROWS = f"ALTER TABLE {_PLACEHOLDER}.dq_validation_runs " f"  ADD COLUMN error_rows INT"
 
 
+# Run review status — per-run review label set by business / SA reviewers
+# from the Runs detail page. The allowed value list is admin-managed in
+# ``dq_app_settings.run_review_statuses`` so there's no CHECK constraint
+# on ``status``; the service validates against the live list before INSERT.
+#
+# Two tables intentionally:
+# - ``dq_run_review_status`` is mutable (one row per run that has been
+#   reviewed; absent rows surface the configured default virtually).
+# - ``dq_run_review_status_history`` is append-only so we can show
+#   "X changed status from Pending to Acknowledged on Tue" on the run
+#   detail page and answer compliance questions. Same shape as
+#   ``dq_quality_rules_history`` — no PK column on Delta (rows are
+#   ordered by ``changed_at`` for display).
+#
+# Marked ``oltp_fallback=True`` because both tables are OLTP-shaped
+# (single-key lookup, frequent mutation) and live in Lakebase when
+# enabled; this migration only runs against Delta when Lakebase is off.
+_V6_RUN_REVIEW_STATUS = (
+    f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_run_review_status ("
+    "  run_id     STRING NOT NULL,"
+    "  status     STRING NOT NULL,"
+    "  updated_by STRING,"
+    "  updated_at TIMESTAMP,"
+    "  CONSTRAINT pk_dq_run_review_status PRIMARY KEY (run_id) RELY"
+    ") CLUSTER BY (run_id);"
+    f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_run_review_status_history ("
+    "  run_id          STRING NOT NULL,"
+    "  status          STRING NOT NULL,"
+    "  previous_status STRING,"
+    "  changed_by      STRING NOT NULL,"
+    "  changed_at      TIMESTAMP NOT NULL"
+    ") CLUSTER BY (run_id, changed_at)"
+)
+
+
 # OLTP fallback migration is identified by ``oltp_fallback=True`` so
 # the runner can skip it when Lakebase is enabled. Keeping the flag on
 # the migration itself (rather than e.g. a hard-coded version number)
@@ -411,6 +446,12 @@ MIGRATIONS: list[Migration] = [
         description="Add error_rows column to dq_validation_runs (DQX error_row_count, replaces invalid_rows for UI)",
         sql_template=_V5_VALIDATION_RUNS_ERROR_ROWS,
         oltp_fallback=False,
+    ),
+    DeltaMigration(
+        version=6,
+        description="Run review status (per-run review label + audit history) — used only when Lakebase is disabled",
+        sql_template=_V6_RUN_REVIEW_STATUS,
+        oltp_fallback=True,
     ),
 ]
 
