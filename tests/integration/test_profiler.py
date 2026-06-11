@@ -7,6 +7,7 @@ import pyspark.sql.types as T
 from databricks.sdk.errors import NotFound
 
 from databricks.labs.dqx.config import InputConfig, LLMModelConfig
+from databricks.labs.dqx.errors import InvalidConfigError
 from databricks.labs.dqx.profiler.profiler import DQProfiler, DQProfile
 
 from tests.constants import TEST_CATALOG
@@ -655,6 +656,98 @@ def test_profiler_sampling(spark, ws):
     assert len(profiles) > 0
     assert stats == stats2
     assert profiles == profiles2
+
+
+def test_profiler_sample_by_column_with_uniform_fraction(spark, ws):
+    schema = "region: string, value: int"
+    rows = [["us", value] for value in range(20)] + [["eu", value] for value in range(20)]
+    input_df = spark.createDataFrame(rows, schema)
+
+    profiler = DQProfiler(ws)
+    profiler_opts = {
+        "sample_by_column": "region",
+        "sample_fraction": 0.5,
+        "sample_seed": 7,
+        "limit": None,
+        "llm_primary_key_detection": False,
+    }
+    stats, profiles = profiler.profile(input_df, options=profiler_opts)
+    stats2, profiles2 = profiler.profile(input_df, options=profiler_opts)
+
+    assert "region" in stats
+    assert "value" in stats
+    assert profiles == profiles2
+    assert stats == stats2
+
+
+def test_profiler_sample_by_column_with_explicit_fractions(spark, ws):
+    schema = "region: string, value: int"
+    rows = [["us", value] for value in range(50)] + [["eu", value] for value in range(50)]
+    input_df = spark.createDataFrame(rows, schema)
+
+    profiler = DQProfiler(ws)
+    profiler_opts = {
+        "sample_by_column": "region",
+        "sample_fraction": {"us": 1.0, "eu": 0.0},
+        "sample_seed": 7,
+        "limit": None,
+        "llm_primary_key_detection": False,
+    }
+    stats, _ = profiler.profile(input_df, options=profiler_opts)
+
+    assert stats["region"]["count"] == 50
+    assert stats["region"]["count_distinct"] == 1
+
+
+def test_profiler_dict_sample_fraction_without_sample_by_column_raises(spark, ws):
+    input_df = spark.createDataFrame([["us", 1]], "region: string, value: int")
+
+    profiler = DQProfiler(ws)
+    with pytest.raises(
+        InvalidConfigError,
+        match="sample_fraction must be of type float when sample_by_column is not set",
+    ):
+        profiler.profile(
+            input_df,
+            options={
+                "sample_fraction": {"us": 1.0},
+                "sample_by_column": None,
+                "llm_primary_key_detection": False,
+            },
+        )
+
+
+def test_profiler_sample_by_column_missing_column_raises(spark, ws):
+    input_df = spark.createDataFrame([["us", 1]], "region: string, value: int")
+
+    profiler = DQProfiler(ws)
+    with pytest.raises(InvalidConfigError, match="sample_by_column 'missing' is not a column"):
+        profiler.profile(
+            input_df,
+            options={
+                "sample_by_column": "missing",
+                "sample_fraction": 0.5,
+                "llm_primary_key_detection": False,
+            },
+        )
+
+
+def test_profiler_sample_by_column_requires_fractions(spark, ws):
+    input_df = spark.createDataFrame([["us", 1]], "region: string, value: int")
+
+    profiler = DQProfiler(ws)
+    with pytest.raises(
+        InvalidConfigError,
+        match="sample_fraction must be provided when sample_by_column is set",
+    ):
+        profiler.profile(
+            input_df,
+            options={
+                "sample_by_column": "region",
+                "sample_fraction": None,
+                "llm_primary_key_detection": False,
+            },
+        )
 
 
 def test_profile_table(spark, ws, make_schema, make_random):

@@ -215,6 +215,7 @@ def test_profiler_config_defaults():
     assert config.summary_stats_file == "profile_summary_stats.yml"
     assert config.sample_fraction == 0.3
     assert config.sample_seed is None
+    assert config.sample_by_column is None
     assert config.limit == 1000
     assert config.filter is None
     assert config.criticality == "error"
@@ -225,6 +226,7 @@ def test_profiler_config_custom_values():
         summary_stats_file="custom_stats.yml",
         sample_fraction=0.5,
         sample_seed=42,
+        sample_by_column="region",
         limit=5000,
         filter="col1 > 0",
         criticality="warn",
@@ -232,9 +234,19 @@ def test_profiler_config_custom_values():
     assert config.summary_stats_file == "custom_stats.yml"
     assert config.sample_fraction == 0.5
     assert config.sample_seed == 42
+    assert config.sample_by_column == "region"
     assert config.limit == 5000
     assert config.filter == "col1 > 0"
     assert config.criticality == "warn"
+
+
+def test_profiler_config_accepts_dict_sample_fraction():
+    config = ProfilerConfig(
+        sample_by_column="region",
+        sample_fraction={"us": 1.0, "eu": 0.1},
+    )
+    assert config.sample_by_column == "region"
+    assert config.sample_fraction == {"us": 1.0, "eu": 0.1}
 
 
 # Test LLMModelConfig
