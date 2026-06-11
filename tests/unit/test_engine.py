@@ -301,6 +301,27 @@ def test_apply_checks_and_save_in_table_metrics_only_requires_observer(
     "save_method_name",
     ["apply_checks_and_save_in_table", "apply_checks_by_metadata_and_save_in_table"],
 )
+def test_apply_checks_and_save_in_table_metrics_with_output_requires_observer(
+    mock_workspace_client, mock_spark, save_method_name
+):
+    """metrics_config requested alongside output_config but with no observer must fail fast rather than
+    silently skipping the metrics table."""
+    engine = DQEngine(mock_workspace_client, mock_spark)  # no observer
+    save_method = getattr(engine, save_method_name)
+
+    with pytest.raises(InvalidParameterError, match="Metrics cannot be collected for engine with no observer"):
+        save_method(
+            input_config=InputConfig(location="catalog.schema.input"),
+            output_config=OutputConfig(location="catalog.schema.output"),
+            checks=[],
+            metrics_config=OutputConfig(location="catalog.schema.metrics"),
+        )
+
+
+@pytest.mark.parametrize(
+    "save_method_name",
+    ["apply_checks_and_save_in_table", "apply_checks_by_metadata_and_save_in_table"],
+)
 def test_apply_checks_and_save_in_table_metrics_only_streaming_unsupported(
     mock_workspace_client, mock_spark, save_method_name
 ):
