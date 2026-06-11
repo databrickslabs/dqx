@@ -17,6 +17,7 @@ from databricks.labs.dqx.checks_storage import (
     BaseChecksStorageConfig,
 )
 from databricks.labs.dqx.config import InputConfig, OutputConfig
+from databricks.labs.dqx.base import DQEngineBase
 from databricks.labs.dqx.engine import DQEngine, DQEngineCore
 from databricks.labs.dqx.engine import InvalidParameterError
 from databricks.labs.dqx.metrics_observer import DQMetricsObserver
@@ -94,8 +95,9 @@ def test_engine_creation_no_workspace_connection(mock_workspace_client, mock_spa
 
 
 def test_get_streaming_metrics_listener_invalid_engine(mock_workspace_client, mock_spark):
-    engine = DQEngine(mock_workspace_client, mock_spark)
-    with pytest.raises(InvalidParameterError, match="Metrics cannot be collected for engine"):
+    # Inject a non-DQEngineCore engine (autospec of the base class) to exercise the engine-type guard.
+    engine = DQEngine(mock_workspace_client, mock_spark, engine=create_autospec(DQEngineBase))
+    with pytest.raises(InvalidParameterError, match="Metrics cannot be collected for engine with type"):
         engine.get_streaming_metrics_listener(metrics_config=OutputConfig(location="dummy"))
 
 
