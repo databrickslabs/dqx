@@ -1,5 +1,5 @@
 ---
-sidebar_position: 508
+sidebar_position: 501.5
 title: Query Cookbook
 ---
 
@@ -20,7 +20,7 @@ The examples below use these placeholder table names. Please replace them with y
 - `catalog.schema.quarantine_table` - quarantine table (when configured)
 - `catalog.schema.checks_table` - checks storage table
 - `catalog.schema.summary_metrics` - summary metrics table
-- `catalog.schema.my_table` - the input table being checked (used in Recipes 8 and 9)
+- `catalog.schema.my_table` - the input table being checked
 
 The default error and warning column names are `_errors` and `_warnings`.
 If you [customized](/docs/guide/additional_configuration/#customizing-result-columns) them, adjust the queries accordingly.
@@ -688,9 +688,43 @@ This extends Recipe 7. Instead of the current error rate, you want the *first* r
 
 ## 11. All Failures per Check
 
-**Goal**: Given a check name, find every quarantine row that failed that check across all runs.
+**Goal**: Starting from the per-check counts in the summary metrics table, drill into the quarantine table to get every row that failed each check.
 
-Recipe 10 tells you *when* a check first failed. This one gives you the rows. Replace `<your_check_name>` with the value from the `name` column in the error struct - the same value Recipe 5 surfaces under `e.name`. Both tabs return the same shape: every original column (including `_errors` and `_warnings`) plus the run and check identifiers from the matching error.
+Recipe 5 reads the `check_metrics` field in the summary table to tell you *how many* errors and warnings each check produced per run. This recipe takes the next step: it reconciles those counts against the actual rows in the quarantine table and lets you pull the failing rows.
+
+First, count the failures per check directly from the quarantine table. Grouping the exploded `_errors` by `e.name` and `e.run_id` gives the row-level equivalent of the summary `error_count`, so the totals should match Recipe 5 for the same run.
+
+<Tabs>
+  <TabItem value="SQL" label="SQL" default>
+    ```sql
+    SELECT
+      e.run_id,
+      e.name AS check_name,
+      COUNT(*) AS failed_rows
+    FROM catalog.schema.quarantine_table t
+    LATERAL VIEW explode(t._errors) AS e
+    GROUP BY e.run_id, e.name
+    ORDER BY e.run_id, failed_rows DESC;
+    ```
+  </TabItem>
+  <TabItem value="Python" label="Python">
+    ```python
+    import pyspark.sql.functions as F
+
+    failures_per_check_df = (
+      spark.table("catalog.schema.quarantine_table")
+      .select(F.explode(F.col("_errors")).alias("e"))
+      .groupBy(F.col("e.run_id").alias("run_id"), F.col("e.name").alias("check_name"))
+      .agg(F.count("*").alias("failed_rows"))
+      .orderBy("run_id", F.col("failed_rows").desc())
+    )
+
+    display(failures_per_check_df)
+    ```
+  </TabItem>
+</Tabs>
+
+Then drill into a single check to get the failing rows. Replace `<your_check_name>` with the value from the `check_name` column above (the same value Recipe 5 surfaces under `e.name`). Both tabs return the same shape: every original column (including `_errors` and `_warnings`) plus the run and check identifiers from the matching error.
 
 <Tabs>
   <TabItem value="SQL" label="SQL" default>
