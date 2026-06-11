@@ -1836,6 +1836,11 @@ You can also define your own custom dataset-level checks (see [Creating custom c
 | `has_no_outliers`                  | Checks whether the values in the input column contain any outliers. This function implements a median absolute deviation (MAD) algorithm to find outliers.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | `column`: column of type numeric to check (can be a string column name or a column expression);                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `has_no_row_anomalies`             | Flags rows that are anomalous according to a trained ML model. The model learns "normal" patterns from your training data; at check time each row is scored (severity percentile 0–100) and optionally enriched with SHAP contributions. Requires a model trained with the anomaly engine first. See [Row Anomaly Detection](#row-anomaly-detection) below for training, full parameters, and usage.                                                                                                                                                                                                                                                                                                | `model_name`: fully qualified model name (e.g. catalog.schema.model_name); `registry_table`: fully qualified registry table (e.g. catalog.schema.model_registry); `threshold`: (optional) severity percentile threshold (default 95); `drift_threshold`: (optional) warn when score distribution drifts from training (None = off); `enable_contributions`: (optional) add SHAP per-feature contributions to `_dq_info` (default False); `enable_confidence_std`: (optional) add ensemble score std to `_dq_info` (default False). See [Row Anomaly Detection](/docs/reference/quality_checks#row-anomaly-detection) section for full parameter details.                                                                                                                                                                                                                                                     |
 | `are_polygons_mutually_disjoint`   | Checks whether the polygons in a geometry column are mutually disjoint. Polygons sharing an edge or boundary are considered intersecting. Nulls and invalid geometries are excluded from the check. Requires Databricks runtime 17.1 or above.                                                                                                                                                                                                                                                                                                                                                                                                                                                      | `column`: column to check (can be a string column name or a column expression), must contain polygon or multipolygon geometries                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `is_geo_contains`  | Checks if the reference geometry contains each column geometry using `st_contains` with meter-level precision. A geometry A *contains* B when B lies entirely within the interior of A with no boundary points of B on the boundary of A. Points on the shared boundary are not considered contained — use `is_geo_covers` for boundary-inclusive checks. When a convert flag is set to `True`, `try_to_geometry` is applied to parse the input from any supported format (WKT, WKB, EWKT, EWKB). Null values are skipped. Requires Databricks runtime 17.1 or above. | `column`: column to check (can be a string column name or a column expression); `reference_geometry`: reference geometry as a literal WKT/WKB/EWKT/EWKB string or bytes value, or a `Column` expression (e.g. `F.col('col_name')`) — a plain string is always treated as a literal, not a column name; `convert_column`: when `True`, applies `try_to_geometry` to convert the column values to GEOMETRY (default `False`); `convert_reference_geometry`: when `True`, applies `try_to_geometry` to convert the reference geometry to GEOMETRY (default `False`) |
+| `is_geo_covers`    | Checks if the reference geometry covers each column geometry. When `precise=True`, uses `st_covers` for exact computation — A *covers* B when every point of B lies within A, including boundary points. When `precise=False` (default), approximates coverage using H3 cell indexing: all hexagonal cells of the column geometry must exist in the H3 cells of the reference geometry. Edge membership is not supported by H3 — geometries near boundaries may be misclassified. Higher `resolution` values give finer precision at the cost of more cells. Null values are skipped; in approximate mode invalid (unparseable) geometries are also skipped rather than flagged — use `is_geometry` to flag invalid values. Requires Databricks runtime 17.1 or above. | `column`: column to check (can be a string column name or a column expression); `reference_geometry`: reference geometry as a literal WKT/WKB/EWKT/EWKB string or bytes value, or a `Column` expression (e.g. `F.col('col_name')`) — a plain string is always treated as a literal, not a column name (bytes/WKB only supported when `precise=True`); `precise`: when `True`, uses exact `st_covers`; when `False` (default), uses H3 approximation and requires `resolution`; `resolution`: H3 resolution integer (0–15) or a column — required when `precise=False`; higher values give finer precision at the cost of more cells; `convert_column`: when `True`, applies `try_to_geometry` to the column (only used in precise mode, default `False`); `convert_reference_geometry`: when `True`, applies `try_to_geometry` to the reference geometry (only used in precise mode, default `False`) |
+| `is_geo_intersects` | Checks if the column geometry intersects the reference geometry. When `precise=True`, uses `st_intersects` for exact computation — two geometries intersect when they share at least one point, whether interior or boundary. When `precise=False` (default), approximates intersection using H3 cell indexing: at least one hexagonal cell must be shared between the H3 representations of both geometries. Edge membership is not supported by H3 — geometries near boundaries may be misclassified. Higher `resolution` values give finer precision. Null values are skipped; in approximate mode invalid (unparseable) geometries are also skipped rather than flagged — use `is_geometry` to flag invalid values. Requires Databricks runtime 17.1 or above. | `column`: column to check (can be a string column name or a column expression); `reference_geometry`: reference geometry as a literal WKT/WKB/EWKT/EWKB string or bytes value, or a `Column` expression (e.g. `F.col('col_name')`) — a plain string is always treated as a literal, not a column name (bytes/WKB only supported when `precise=True`); `precise`: when `True`, uses exact `st_intersects`; when `False` (default), uses H3 approximation and requires `resolution`; `resolution`: H3 resolution integer (0–15) or a column — required when `precise=False`; higher values give finer precision at the cost of more cells; `convert_column`: when `True`, applies `try_to_geometry` to the column (only used in precise mode, default `False`); `convert_reference_geometry`: when `True`, applies `try_to_geometry` to the reference geometry (only used in precise mode, default `False`) |
+| `is_geo_touches`   | Checks if the column geometry touches the reference geometry using `st_touches` with meter-level precision. Two geometries *touch* when they share at least one boundary point but their interiors do not intersect. A point strictly inside a polygon does not touch it; a point on the polygon boundary does. Only precise (`ST_*`) evaluation is supported — there is no H3 approximation for `TOUCHES`. When a convert flag is set to `True`, `try_to_geometry` is applied to parse the input. Null values are skipped. Requires Databricks runtime 17.1 or above. | `column`: column to check (can be a string column name or a column expression); `reference_geometry`: reference geometry as a literal WKT/WKB/EWKT/EWKB string or bytes value, or a `Column` expression (e.g. `F.col('col_name')`) — a plain string is always treated as a literal, not a column name; `convert_column`: when `True`, applies `try_to_geometry` to convert the column values to GEOMETRY (default `False`); `convert_reference_geometry`: when `True`, applies `try_to_geometry` to convert the reference geometry to GEOMETRY (default `False`) |
+| `is_geo_within`    | Checks if the reference geometry is within the column geometry using `st_within` with meter-level precision. `st_within(reference, column)` returns true when the reference lies entirely within the column geometry — this is the converse of `is_geo_contains`. Only precise (`ST_*`) evaluation is supported — there is no H3 approximation for `WITHIN`. When a convert flag is set to `True`, `try_to_geometry` is applied to parse the input. Null values are skipped. Requires Databricks runtime 17.1 or above. | `column`: column to check (can be a string column name or a column expression); `reference_geometry`: reference geometry as a literal WKT/WKB/EWKT/EWKB string or bytes value, or a `Column` expression (e.g. `F.col('col_name')`) — a plain string is always treated as a literal, not a column name; `convert_column`: when `True`, applies `try_to_geometry` to convert the column values to GEOMETRY (default `False`); `convert_reference_geometry`: when `True`, applies `try_to_geometry` to convert the reference geometry to GEOMETRY (default `False`) |
 
 <Admonition type="tip" title="Row filter">
 Most dataset-level check functions take `row_filter` as argument. This parameter is auto-injected from the top-level `filter`.
@@ -2316,6 +2321,87 @@ Complex data types are supported as well.
     function: are_polygons_mutually_disjoint
     arguments:
       column: geom
+
+# is_geo_contains check (geo, precise, requires runtime 17.1+)
+# reference polygon must contain each location point (uses st_contains)
+- criticality: error
+  check:
+    function: is_geo_contains
+    arguments:
+      column: location
+      reference_geometry: "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))"
+      convert_column: true
+      convert_reference_geometry: true
+
+# is_geo_covers check — approximate mode
+# H3 resolution 7 (~5 km² cells); default when precise=false
+- criticality: error
+  check:
+    function: is_geo_covers
+    arguments:
+      column: location
+      reference_geometry: "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))"
+      resolution: 7
+      convert_column: true
+      convert_reference_geometry: true
+
+# is_geo_covers check — precise mode (geo, requires runtime 17.1+)
+# uses st_covers; includes boundary points unlike st_contains
+- criticality: error
+  check:
+    function: is_geo_covers
+    arguments:
+      column: location
+      reference_geometry: "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))"
+      precise: true
+      convert_column: true
+      convert_reference_geometry: true
+
+# is_geo_intersects check — approximate mode
+# at least one shared H3 cell between location and the reference polygon
+- criticality: error
+  check:
+    function: is_geo_intersects
+    arguments:
+      column: location
+      reference_geometry: "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))"
+      resolution: 7
+      convert_column: true
+      convert_reference_geometry: true
+
+# is_geo_intersects check — precise mode (geo, requires runtime 17.1+)
+# uses st_intersects for exact computation
+- criticality: error
+  check:
+    function: is_geo_intersects
+    arguments:
+      column: location
+      reference_geometry: "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))"
+      precise: true
+      convert_column: true
+      convert_reference_geometry: true
+
+# is_geo_touches check (geo, precise only, requires runtime 17.1+)
+# location point must touch (share a boundary point with) the reference polygon
+- criticality: error
+  check:
+    function: is_geo_touches
+    arguments:
+      column: location
+      reference_geometry: "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))"
+      convert_column: true
+      convert_reference_geometry: true
+
+# is_geo_within check (geo, precise only, requires runtime 17.1+)
+# reference geometry must be within the column geometry (converse of is_geo_contains)
+- criticality: error
+  check:
+    function: is_geo_within
+    arguments:
+      column: region
+      reference_geometry: "POINT(4.90 52.37)"
+      convert_column: true
+      convert_reference_geometry: true
 ```
 
 **Providing Reference DataFrames programmatically**
@@ -2788,6 +2874,97 @@ checks = [
       criticality="error",
       check_func=geo_check_funcs.are_polygons_mutually_disjoint,
       column="geom" # or as expr: F.col("geom")
+    ),
+
+    # is_geo_contains check (geo, precise only, requires runtime 17.1+)
+    # reference polygon must contain each location point (uses st_contains)
+    DQDatasetRule(
+      criticality="error",
+      check_func=geo_check_funcs.is_geo_contains,
+      column="location", # or as expr: F.col("location")
+      check_func_kwargs={
+        "reference_geometry": "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
+        "convert_column": True,
+        "convert_reference_geometry": True,
+      }
+    ),
+
+    # is_geo_covers check — approximate mode,
+    # H3 resolution 7 (~5 km² cells); default when precise=False
+    DQDatasetRule(
+      criticality="error",
+      check_func=geo_check_funcs.is_geo_covers,
+      column="location", # or as expr: F.col("location")
+      check_func_kwargs={
+        "reference_geometry": "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
+        "resolution": 7,
+      }
+    ),
+
+    # is_geo_covers check — precise mode (geo, requires runtime 17.1+)
+    # uses st_covers; includes boundary points unlike st_contains
+    DQDatasetRule(
+      criticality="error",
+      check_func=geo_check_funcs.is_geo_covers,
+      column="location", # or as expr: F.col("location")
+      check_func_kwargs={
+        "reference_geometry": "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
+        "precise": True,
+        "convert_column": True,
+        "convert_reference_geometry": True,
+      }
+    ),
+
+    # is_geo_intersects check — approximate mode (geo, requires runtime 17.1+)
+    # at least one shared H3 cell between location and the reference polygon
+    DQDatasetRule(
+      criticality="error",
+      check_func=geo_check_funcs.is_geo_intersects,
+      column="location", # or as expr: F.col("location")
+      check_func_kwargs={
+        "reference_geometry": "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
+        "resolution": 7,
+      }
+    ),
+
+    # is_geo_intersects check — precise mode (geo, requires runtime 17.1+)
+    # uses st_intersects for exact computation
+    DQDatasetRule(
+      criticality="error",
+      check_func=geo_check_funcs.is_geo_intersects,
+      column="location", # or as expr: F.col("location")
+      check_func_kwargs={
+        "reference_geometry": "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
+        "precise": True,
+        "convert_column": True,
+        "convert_reference_geometry": True,
+      }
+    ),
+
+    # is_geo_touches check (geo, precise only, requires runtime 17.1+)
+    # location point must touch (share a boundary point with) the reference polygon
+    DQDatasetRule(
+      criticality="error",
+      check_func=geo_check_funcs.is_geo_touches,
+      column="location", # or as expr: F.col("location")
+      check_func_kwargs={
+        "reference_geometry": "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
+        "convert_column": True,
+        "convert_reference_geometry": True,
+      }
+    ),
+
+    # is_geo_within check (geo, precise only, requires runtime 17.1+)
+    # reference geometry must be within the column geometry (converse of is_geo_contains)
+    DQDatasetRule(
+      criticality="error",
+      check_func=geo_check_funcs.is_geo_within,
+      column="region", # or as expr: F.col("region")
+      check_func_kwargs={
+        "reference_geometry": "POINT(4.90 52.37)",
+        "convert_column": True,
+        "convert_reference_geometry": True,
+      }
     ),
 
     # has_valid_schema check with specific columns, expected schema defined using StructType
