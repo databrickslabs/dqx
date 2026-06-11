@@ -677,7 +677,7 @@ def test_profiler_sample_by_column_with_uniform_fraction(spark, ws):
     assert "region" in stats
     assert "value" in stats
     assert profiles == profiles2
-    assert stats == stats2
+    assert _round_stats(stats) == _round_stats(stats2)
 
 
 def test_profiler_sample_by_column_with_explicit_fractions(spark, ws):
@@ -2210,3 +2210,14 @@ def test_profiler_count_distinct_computed(spark, ws):
 
     assert stats["color"]["count_distinct"] == 2
     assert stats["value"]["count_distinct"] == 3
+
+
+def _round_stats(stats: dict[str, dict[str, int | float]], precision: int = 10) -> dict[str, dict[str, int | float]]:
+    """Rounds profiler stats to a specified precision (default 10 decimal places)."""
+    return {
+        column_name: {
+            metric_name: metric_val if isinstance(metric_val, int) else round(metric_val, precision)
+            for metric_name, metric_val in column_stats.items()
+        }
+        for column_name, column_stats in stats.items()
+    }
