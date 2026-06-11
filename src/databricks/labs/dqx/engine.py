@@ -715,6 +715,22 @@ class DQEngine(DQEngineBase):
                 "At least one of 'output_config', 'quarantine_config' or 'metrics_config' must be provided"
             )
 
+    def _validate_metrics_observer(self, metrics_config: OutputConfig | None) -> None:
+        """Validate that summary metrics can be collected whenever they are requested.
+
+        Summary metrics come from a Spark Observation that only exists when the engine is constructed with an
+        observer. If *metrics_config* is provided without one, the metrics table would be silently skipped -
+        regardless of whether output/quarantine tables are also written - so fail fast instead.
+
+        Args:
+            metrics_config: Configuration for writing summary metrics, if any.
+
+        Raises:
+            InvalidParameterError: If *metrics_config* is provided but the engine has no observer.
+        """
+        if metrics_config is not None and not self._engine.observer:
+            raise InvalidParameterError("Metrics cannot be collected for engine with no observer")
+
     def _validate_metrics_only_save(
         self,
         input_config: InputConfig,
@@ -724,9 +740,6 @@ class DQEngine(DQEngineBase):
     ) -> None:
         if output_config is not None or quarantine_config is not None or metrics_config is None:
             return
-
-        if not self._engine.observer:
-            raise InvalidParameterError("Metrics cannot be collected for engine with no observer")
 
         if input_config.is_streaming:
             raise InvalidParameterError(
@@ -775,8 +788,9 @@ class DQEngine(DQEngineBase):
 
         Raises:
             InvalidParameterError: If both *checks* and *checks_location* are not specified, if none of
-                *output_config*, *quarantine_config*, and *metrics_config* are specified, if metrics are requested
-                without an observer and no row-level results are written, or if metrics-only is requested for streaming.
+                *output_config*, *quarantine_config*, and *metrics_config* are specified, if *metrics_config* is
+                provided while the engine has no observer to collect metrics, or if metrics-only is requested for
+                streaming.
         """
         logger.info(f"Applying checks to {input_config.location}")
 
@@ -784,6 +798,7 @@ class DQEngine(DQEngineBase):
             raise InvalidParameterError("Either 'checks_location' or 'checks' must be provided")
 
         self._validate_save_destination_configs(output_config, quarantine_config, metrics_config)
+        self._validate_metrics_observer(metrics_config)
         self._validate_metrics_only_save(input_config, output_config, quarantine_config, metrics_config)
 
         if checks is None and checks_location:
@@ -905,8 +920,9 @@ class DQEngine(DQEngineBase):
 
         Raises:
             InvalidParameterError: If both *checks* and *checks_location* are not specified, if none of
-                *output_config*, *quarantine_config*, and *metrics_config* are specified, if metrics are requested
-                without an observer and no row-level results are written, or if metrics-only is requested for streaming.
+                *output_config*, *quarantine_config*, and *metrics_config* are specified, if *metrics_config* is
+                provided while the engine has no observer to collect metrics, or if metrics-only is requested for
+                streaming.
         """
         logger.info(f"Applying checks to {input_config.location}")
 
@@ -914,6 +930,7 @@ class DQEngine(DQEngineBase):
             raise InvalidParameterError("Either 'checks_location' or 'checks' must be provided")
 
         self._validate_save_destination_configs(output_config, quarantine_config, metrics_config)
+        self._validate_metrics_observer(metrics_config)
         self._validate_metrics_only_save(input_config, output_config, quarantine_config, metrics_config)
 
         if checks is None and checks_location:
@@ -1472,8 +1489,8 @@ class DQEngine(DQEngineBase):
                 f"Metrics cannot be collected for engine with type '{self._engine.__class__.__name__}'"
             )
 
-        if not self._engine.observer:
-            raise InvalidParameterError("Metrics cannot be collected for engine with no observer")
+        self._validate_metrics_observer(metrics_config)
+        assert self._engine.observer is not None  # guaranteed by _validate_metrics_observer above (required by mypy)
 
         metrics_observation = DQMetricsObservation(
             run_id=self._engine.run_id,

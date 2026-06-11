@@ -225,50 +225,6 @@ def test_observer_custom_metrics(ws, spark, apply_checks_method):
     }
 
 
-@pytest.mark.parametrize(
-    "apply_checks_method",
-    [DQEngine.apply_checks_and_save_in_table, DQEngine.apply_checks_by_metadata_and_save_in_table],
-)
-def test_engine_without_observer_no_metrics_saved(ws, spark, make_schema, make_random, apply_checks_method):
-    """Test that no metrics are saved when observer is not configured."""
-    catalog_name = TEST_CATALOG
-    schema = make_schema(catalog_name=catalog_name)
-    input_table_name = f"{catalog_name}.{schema.name}.input_{make_random(6).lower()}"
-    output_table_name = f"{catalog_name}.{schema.name}.output_{make_random(6).lower()}"
-    metrics_table_name = f"{catalog_name}.{schema.name}.metrics_{make_random(6).lower()}"
-
-    dq_engine = DQEngine(workspace_client=ws, spark=spark, extra_params=EXTRA_PARAMS)
-
-    test_df = spark.createDataFrame(
-        [
-            [1, "Alice", 30, 50000],
-            [2, "Bob", 25, 45000],
-        ],
-        TEST_SCHEMA,
-    )
-
-    test_df.write.saveAsTable(input_table_name)
-
-    input_config = InputConfig(location=input_table_name)
-    output_config = OutputConfig(location=output_table_name, mode="overwrite")
-    metrics_config = OutputConfig(location=metrics_table_name, mode="overwrite")
-
-    if apply_checks_method == DQEngine.apply_checks_and_save_in_table:
-        checks = deserialize_checks(TEST_CHECKS)
-        dq_engine.apply_checks_and_save_in_table(
-            checks=checks, input_config=input_config, output_config=output_config, metrics_config=metrics_config
-        )
-    elif apply_checks_method == DQEngine.apply_checks_by_metadata_and_save_in_table:
-        dq_engine.apply_checks_by_metadata_and_save_in_table(
-            checks=TEST_CHECKS, input_config=input_config, output_config=output_config, metrics_config=metrics_config
-        )
-    else:
-        raise ValueError("Invalid 'apply_checks_method' used for testing observable metrics.")
-
-    with pytest.raises(NotFound):
-        ws.tables.get(full_name=metrics_table_name)
-
-
 def test_save_summary_metrics(ws, spark, make_schema, make_random):
     schema_name = make_schema(catalog_name=TEST_CATALOG).name
     metrics_table_name = f"{TEST_CATALOG}.{schema_name}.metrics_{make_random(6).lower()}"
