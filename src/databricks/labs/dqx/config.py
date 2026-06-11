@@ -1,7 +1,6 @@
 import abc
 from dataclasses import asdict, dataclass, field
 from functools import cached_property
-from typing import Any
 
 from databricks.labs.dqx.checks_serializer import SerializerFactory
 from databricks.labs.dqx.errors import InvalidConfigError, InvalidParameterError
@@ -78,7 +77,7 @@ class ProfilerConfig:
     summary_stats_file: str = "profile_summary_stats.yml"  # file containing profile summary statistics
     # fraction of data to sample; can be a uniform proportion or a mapping of
     # sample_by_column values to their respective proportions
-    sample_fraction: float | dict[Any, float] | None = 0.3
+    sample_fraction: float | dict[object, float] | None = 0.3
     sample_seed: int | None = None  # seed for sampling
     sample_by_column: str | None = None  # column with keys to sample by
     limit: int = 1000  # limit the number of records to profile
