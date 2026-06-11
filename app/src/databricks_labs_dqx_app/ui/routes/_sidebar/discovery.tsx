@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { PageBreadcrumb } from "@/components/apx/PageBreadcrumb";
+import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
 import { CatalogBrowser } from "@/components/CatalogBrowser";
 import { useGetTableColumns, useGetRules, ColumnOut } from "@/lib/api";
 import {

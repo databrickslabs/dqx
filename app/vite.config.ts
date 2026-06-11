@@ -1,80 +1,30 @@
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
-import { defineConfig, type Plugin } from "vite";
+import { defineConfig } from "vite";
 import { readFileSync } from "fs";
 import { join, resolve } from "path";
 import { parse } from "smol-toml";
-import type { IncomingMessage, ServerResponse } from "http";
 
-// Header that the APX dev server adds to requests to verify they come from the proxy
-const APX_DEV_PROXY_HEADER = "x-apx-dev-proxy";
-
-type ApxMetadata = {
+type AppMetadata = {
   appName: string;
   appSlug: string;
   appModule: string;
 };
 
-// Vite plugin to verify requests come from the APX dev server proxy
-function apxDevProxyGuard(): Plugin {
-  return {
-    name: "apx-dev-proxy-guard",
-    configureServer(server) {
-      // Add middleware at the start to check for the proxy header
-      server.middlewares.use(
-        (req: IncomingMessage, res: ServerResponse, next) => {
-          // Allow internal Vite requests (HMR, etc.)
-          const url = req.url || "";
-          if (
-            url.startsWith("/@") ||
-            url.startsWith("/__vite") ||
-            url.startsWith("/node_modules")
-          ) {
-            next();
-            return;
-          }
-
-          // Check for the APX dev proxy header
-          const hasProxyHeader = req.headers[APX_DEV_PROXY_HEADER] === "true";
-          if (!hasProxyHeader) {
-            // Redirect to APX dev server instead of returning 403
-            const devServerPort = process.env.APX_DEV_SERVER_PORT;
-            if (devServerPort) {
-              const redirectUrl = `http://localhost:${devServerPort}${url}`;
-              res.statusCode = 302;
-              res.setHeader("Location", redirectUrl);
-              res.end();
-            } else {
-              // Fallback to 403 if dev server port is not set
-              res.statusCode = 403;
-              res.setHeader("Content-Type", "text/plain");
-              res.end(
-                "Direct access to Vite dev server is not allowed. " +
-                  "Please access through the APX dev server proxy.",
-              );
-            }
-            return;
-          }
-
-          next();
-        },
-      );
-    },
-  };
-}
-
-// read metadata from pyproject.toml using toml npm package
-export function readMetadata(): ApxMetadata {
+// Read project metadata from pyproject.toml. ``[tool.dqx_app.metadata]``
+// is the single source of truth for app name / slug / FastAPI module;
+// ``scripts/build_app.py`` reads the same key to write ``_metadata.py``
+// into the wheel. Keeps build-time and bundle-time wiring in lockstep.
+function readMetadata(): AppMetadata {
   const pyprojectPath = join(process.cwd(), "pyproject.toml");
   const pyproject = parse(readFileSync(pyprojectPath, "utf-8")) as any;
-
-  const metadata = pyproject?.tool?.apx?.metadata;
-
+  const metadata = pyproject?.tool?.dqx_app?.metadata;
   if (!metadata || typeof metadata !== "object") {
-    throw new Error("Could not find [tool.apx.metadata] in pyproject.toml");
+    throw new Error(
+      "Could not find [tool.dqx_app.metadata] in pyproject.toml",
+    );
   }
-
   return {
     appName: metadata["app-name"],
     appSlug: metadata["app-slug"],
@@ -82,50 +32,20 @@ export function readMetadata(): ApxMetadata {
   };
 }
 
-// Get port configuration from environment variables (set by APX dev server)
-export function getPortConfig(): { frontendPort: number; host: string } {
-  const frontendPortEnv = process.env.APX_FRONTEND_PORT;
-
-  if (!frontendPortEnv) {
-    throw new Error(
-      "APX_FRONTEND_PORT environment variable is not set. " +
-        "Please start the development server using 'apx dev' command.",
-    );
-  }
-
-  const frontendPort = parseInt(frontendPortEnv, 10);
-  if (isNaN(frontendPort)) {
-    throw new Error(
-      `Invalid APX_FRONTEND_PORT value: ${frontendPortEnv}. Expected a number.`,
-    );
-  }
-
-  return {
-    frontendPort,
-    host: "localhost",
-  };
-}
-
-// Use sync config since we read from env vars
 export default defineConfig(({ command }) => {
-  const { appName: APP_NAME, appSlug: APP_SLUG } =
-    readMetadata() as ApxMetadata;
+  const { appName: APP_NAME, appSlug: APP_SLUG } = readMetadata();
 
   const APP_UI_PATH = `./src/${APP_SLUG}/ui`;
   const OUT_DIR = `../__dist__`; // relative to APP_UI_PATH!
 
-  // Port config is only needed for dev server, not for production build
   const isDevServer = command === "serve";
-  const serverConfig = isDevServer
-    ? (() => {
-        const { frontendPort, host } = getPortConfig();
-        return {
-          host,
-          port: frontendPort,
-          strictPort: true,
-        };
-      })()
-    : undefined;
+
+  // Backend port for the dev-server proxy. ``scripts/dev.py`` sets this
+  // to match the uvicorn ``--port`` it spawns; defaults to 9002 so a
+  // standalone ``vite`` invocation still proxies to a conventional
+  // FastAPI port without needing the orchestrator script.
+  const backendPort = process.env.DQX_APP_BACKEND_PORT ?? "9002";
+  const backendTarget = `http://localhost:${backendPort}`;
 
   return {
     root: APP_UI_PATH,
@@ -139,10 +59,28 @@ export default defineConfig(({ command }) => {
       }),
       react(),
       tailwindcss(),
-      // Only add the proxy guard plugin in dev mode
-      ...(isDevServer ? [apxDevProxyGuard()] : []),
     ],
-    server: serverConfig,
+    server: isDevServer
+      ? {
+          host: "localhost",
+          // Default public-facing port for the dev workflow; overridable
+          // via ``vite --port`` (used by scripts/dev.py to keep the
+          // documented 9001 URL stable).
+          port: 9001,
+          strictPort: true,
+          // Vite forwards these path prefixes to the FastAPI backend.
+          // Anything else is served by Vite itself (the SPA shell, JS
+          // assets, HMR machinery). Routing surface: /api/* for app
+          // routes plus FastAPI's auto-docs at /docs, /redoc, and
+          // /openapi.json.
+          proxy: {
+            "/api": backendTarget,
+            "/docs": backendTarget,
+            "/redoc": backendTarget,
+            "/openapi.json": backendTarget,
+          },
+        }
+      : undefined,
     resolve: {
       alias: {
         "@": resolve(__dirname, APP_UI_PATH),
