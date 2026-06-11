@@ -1,13 +1,13 @@
 ---
 sidebar_position: 501.5
-title: Query Cookbook
+title: Query Results Cookbook
 ---
 
 import Admonition from '@theme/Admonition';
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-# Query Cookbook
+# Query Results Cookbook
 
 This cookbook is a practical guide for querying DQX result tables - summary metrics, output, quarantine, and checks - to trace errors and warnings across runs, rows, and check definitions. It will help you go from a failing run to the rows that failed, link those rows back to the rules that flagged them, and monitor quality trends across runs. It assumes you've already run DQX at least once.
 
@@ -63,6 +63,10 @@ The recipes below assume quarantine is configured. If it isn't, substitute `outp
 
 **Goal**: Get familiar with the shape and grain of each table before writing any joins.
 
+**When to use**: You are new to the DQX result tables, or unsure what a single row in each one represents.
+
+**Returns**: Five sample rows from each of the four result tables.
+
 Before any joins, it is good to look at what is actually in each table. One row of each table tells you the grain of what a single row represents, which is the foundation for every aggregation you will write later.
 
 <Tabs>
@@ -100,6 +104,10 @@ Before any joins, it is good to look at what is actually in each table. One row 
 ## 2. Summary to Row-Level Errors
 
 **Goal**: Given a run in the summary metrics table, use its `run_id` to find the rows that failed.
+
+**When to use**: A run looks bad in the summary table and you want the individual rows behind those counts.
+
+**Returns**: One row per failed check occurrence - the original row joined to the exploded `_errors` (or `_warnings`) struct.
 
 Start by getting a `run_id` from the summary table. Every recipe that takes a `run_id` as input begins here.
 
@@ -170,6 +178,10 @@ Start by getting a `run_id` from the summary table. Every recipe that takes a `r
 ### To Run Summary
 
 **Goal**: From a failing row, look up the run metadata in the summary table.
+
+**When to use**: You are looking at a output / quarantined row and need its run context - timing, input/output locations, and fingerprints.
+
+**Returns**: The summary-metrics rows for every run that produced at least one error or warning.
 <Tabs>
   <TabItem value="SQL" label="SQL" default>
     ```sql
@@ -217,6 +229,10 @@ Start by getting a `run_id` from the summary table. Every recipe that takes a `r
 ### To Checks Table
 
 **Goal**: From a failing row, get the full check definition (function, arguments, filter) that produced the failure.
+
+**When to use**: You have a failing row and want the exact rule that flagged it, not just the error message.
+
+**Returns**: One row per error, each with its check function, arguments, filter, and criticality from the checks table.
 
 <Admonition type="note" title="for_each_column rules">
 Rules defined with `for_each_column` are stored as a single row in the checks table but expand into one error per column at runtime, each with its own `rule_fingerprint`. These per-column fingerprints do not match the parent row in the checks table, so the joins below will not return those rules. To find the originating rule, list all active rules for the run with [Recipe 6](#6-which-rules-were-applied-in-a-run), look for the ones where `check.for_each_column IS NOT NULL`, and match them by `check.function` and column membership.
@@ -276,6 +292,10 @@ Rules defined with `for_each_column` are stored as a single row in the checks ta
 ## 4. Summary to Checks Table
 
 **Goal**: From a summary metrics run, find the exact rule set that was applied.
+
+**When to use**: You know a `run_id` and want the complete set of rules that ran, regardless of whether they failed.
+
+**Returns**: All checks-table rows belonging to that run's `rule_set_fingerprint`.
 
 <Admonition type="note">
 `checks_location` in the summary metrics table is `null` when checks were passed inline rather than loaded from a storage table. The queries below join on `rule_set_fingerprint` only, so they work either way - but you will need to know your checks table name upfront if `checks_location` is null.
@@ -340,6 +360,10 @@ Rules defined with `for_each_column` are stored as a single row in the checks ta
 
 **Goal**: For a given run, list all checks that had errors or warnings.
 
+**When to use**: You want a quick per-check error/warning tally for one run without touching the row-level tables.
+
+**Returns**: One row per failing check with its error and warning counts.
+
 The `check_metrics` field in the summary table already contains a per-check breakdown - no joins needed for a quick summary.
 
 <Tabs>
@@ -380,9 +404,11 @@ The `check_metrics` field in the summary table already contains a per-check brea
   </TabItem>
 </Tabs>
 
-If you also need the full check definition (function, arguments, filter), join to the checks table:
+If you also need the full check definition (function, arguments, filter), join to the checks table.
 
 ### With Check Definitions
+
+**Returns**: One row per distinct failing check, with its function, arguments, and filter (`null` for `for_each_column` rules - see the note below).
 
 <Admonition type="note" title="for_each_column rules">
 Rules defined with `for_each_column` produce per-column errors with fingerprints that do not match the parent row in the checks table, so they join with `null` check columns. See the same note in [Recipe 3](#3-row-details) for how to recover the originating rule via [Recipe 6](#6-which-rules-were-applied-in-a-run).
@@ -440,6 +466,10 @@ Rules defined with `for_each_column` produce per-column errors with fingerprints
 
 **Goal**: List all rules that were active for a given run, whether or not they produced failures.
 
+**When to use**: Auditing what actually ran for a run, including the checks that passed.
+
+**Returns**: One row per rule in that run's rule set, with name, criticality, function, arguments, and filter.
+
 <Tabs>
   <TabItem value="SQL" label="SQL" default>
     ```sql
@@ -479,6 +509,10 @@ Rules defined with `for_each_column` produce per-column errors with fingerprints
 ## 7. Run Tracking Over Time
 
 **Goal**: Monitor data quality trends across runs with error rates, warning rates, and row counts.
+
+**When to use**: Tracking quality over time, or building a monitoring dashboard or alert.
+
+**Returns**: One row per run with input/valid/error/warning row counts and the error rate as a percentage.
 
 <Tabs>
   <TabItem value="SQL" label="SQL" default>
@@ -536,6 +570,10 @@ for more on monitoring best practices.
 
 **Goal**: Summary metrics centralize data quality results in a single table, so that table typically holds results for many input tables at once. Filter by `input_location` to scope any query down to a single target table's runs.
 
+**When to use**: Your metrics table covers many input tables and you want to focus on just one.
+
+**Returns**: The distinct input tables tracked, and the latest run row for a chosen table.
+
 This is the entry point for Recipes 2, 5, 6, and 7 in a multi-table setup. Without this filter, trend queries aggregate across all tables and produce meaningless mixed rates.
 
 <Tabs>
@@ -584,6 +622,10 @@ This is the entry point for Recipes 2, 5, 6, and 7 in a multi-table setup. Witho
 ## 9. Checks by Run Config
 
 **Goal**: When multiple input tables share a single checks table (grouped by `run_config_name`), list the available run configs and load the rules for a specific one.
+
+**When to use**: Rules for serveral tables are stored in the same checks table keyed by `run_config_name`, and you want the rules for one of them.
+
+**Returns**: The distinct `run_config_name` values, and the rules stored under a chosen one.
 
 `run_config_name` is the logical group identifier written by `save_checks` and used as a filter by `load_checks` - it is a regular column, not a partition. The default value is `"default"`. When checks for different tables are saved to the same checks table with distinct `run_config_name` values (e.g. the table name), you must use the same value at load time or `load_checks` returns empty.
 
@@ -639,6 +681,10 @@ This is the entry point for Recipes 2, 5, 6, and 7 in a multi-table setup. Witho
 
 **Goal**: For each check, find the earliest run in which it produced an error. Use this to identify when a data quality regression was introduced.
 
+**When to use**: A check is failing now and you want to know when it first started, to correlate with an upstream change.
+
+**Returns**: One row per check with its earliest failing `run_time` and the `run_id` of that first failure.
+
 This extends Recipe 7. Instead of the current error rate, you want the *first* run_time a particular check failed - useful for correlating regressions with upstream changes.
 
 <Tabs>
@@ -693,6 +739,10 @@ This extends Recipe 7. Instead of the current error rate, you want the *first* r
 ## 11. All Failures per Check
 
 **Goal**: Starting from the per-check counts in the summary metrics table, drill into the quarantine table to get every row that failed each check.
+
+**When to use**: You need the actual offending rows for a check, not just the counts - for triage or to share examples.
+
+**Returns**: First, failure counts per check per run; then every quarantine row that failed one chosen check.
 
 Recipe 5 reads the `check_metrics` field in the summary table to tell you *how many* errors and warnings each check produced per run. This recipe takes the next step: it reconciles those counts against the actual rows in the quarantine table and lets you pull the failing rows.
 
@@ -775,6 +825,10 @@ Then drill into a single check to get the failing rows. Replace `<your_check_nam
 ## 12. Summary Metrics Pivot
 
 **Goal**: Transform the long-format summary metrics table into a wide view with one row per run and metric values as columns.
+
+**When to use**: Building a wide dashboard table, or comparing the row-count metrics side by side instead of in long format.
+
+**Returns**: One row per run (or per day) with each metric as its own column.
 
 `summary_metrics` stores one row per metric per run. Pivoting turns those rows into columns, making it straightforward to compare `input_row_count`, `error_row_count`, `warning_row_count`, and `valid_row_count` side by side. The second query groups by day instead of individual run - useful for dashboards and trend charts that extend Recipe 7.
 
