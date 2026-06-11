@@ -1,5 +1,6 @@
 from pyspark.testing.utils import assertDataFrameEqual
 from databricks.sdk import WorkspaceClient
+
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.geo.check_funcs import are_polygons_mutually_disjoint
 
