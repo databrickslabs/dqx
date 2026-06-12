@@ -207,6 +207,13 @@ class LLMModelConfig:
     # rule-generation / profiler path; the anomaly AI-explanation path runs via Spark SQL
     # ``ai_query`` against a Databricks Model Serving endpoint resolved from *model_name* and does
     # not use *api_base*. When used with Profiler Workflow, this can be a secret scope/key reference.
+    #
+    # This URL is passed to the outbound LLM client (litellm via DSPy) on
+    # the rule-generation path, so it must be a trusted, admin-controlled endpoint — a Databricks
+    # Model Serving / AI Gateway URL or a known OpenAI-compatible host — supplied via deployment
+    # config or a secret reference. Do NOT populate it from untrusted or end-user input, and do not
+    # point it at arbitrary internal hosts; doing so lets the profiler job issue requests to that
+    # target. Prefer HTTPS endpoints.
     api_base: str = ""
     # Per-call output token cap. Bounds cost and latency for pathological prompts (OWASP LLM04).
     max_tokens: int = 1000
