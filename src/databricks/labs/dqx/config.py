@@ -222,6 +222,10 @@ class LLMModelConfig:
     def __post_init__(self) -> None:
         if not isinstance(self.max_retries, int) or isinstance(self.max_retries, bool) or self.max_retries < 0:
             raise InvalidParameterError(f"max_retries must be a non-negative integer, got {self.max_retries!r}")
+        if not isinstance(self.max_tokens, int) or isinstance(self.max_tokens, bool) or self.max_tokens <= 0:
+            raise InvalidParameterError(f"max_tokens must be a positive integer, got {self.max_tokens!r}")
+        if not isinstance(self.temperature, (int, float)) or isinstance(self.temperature, bool) or self.temperature < 0:
+            raise InvalidParameterError(f"temperature must be a non-negative number, got {self.temperature!r}")
 
 
 @dataclass(frozen=True)

@@ -425,7 +425,7 @@ print("   • Threshold is a percentile cutoff — tune it based on your data an
 # MAGIC %md
 # MAGIC ---
 # MAGIC
-# MAGIC ## Section 5: (Optional) Review Results to understand why some records are anomalous
+# MAGIC ## Section 5a: (Optional) Review Results to understand why some records are anomalous
 # MAGIC
 # MAGIC You’ll see flagged anomalies, severity percentiles, and top contributors.
 # MAGIC

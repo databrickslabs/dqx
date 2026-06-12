@@ -285,6 +285,26 @@ def test_llm_model_config_rejects_bool_max_retries():
         LLMModelConfig(max_retries=True)  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize("bad", [0, -1, 2.5, True, None])
+def test_llm_model_config_rejects_invalid_max_tokens(bad):
+    # Must be a positive int — a clean InvalidParameterError instead of a raw TypeError at
+    # ai_query SQL-build time, and no non-positive value reaching the endpoint.
+    with pytest.raises(InvalidParameterError, match="max_tokens must be a positive integer"):
+        LLMModelConfig(max_tokens=bad)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("bad", [-0.1, -1, True, None])
+def test_llm_model_config_rejects_invalid_temperature(bad):
+    with pytest.raises(InvalidParameterError, match="temperature must be a non-negative number"):
+        LLMModelConfig(temperature=bad)  # type: ignore[arg-type]
+
+
+def test_llm_model_config_accepts_valid_budget_values():
+    config = LLMModelConfig(max_tokens=256, temperature=0.5)
+    assert config.max_tokens == 256
+    assert config.temperature == 0.5
+
+
 def test_llm_model_config_custom_values():
     config = LLMModelConfig(
         model_name="custom-model",

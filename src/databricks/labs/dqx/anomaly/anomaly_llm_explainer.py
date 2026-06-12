@@ -504,7 +504,7 @@ def _call_llm_for_groups_ai_query(
             f"ai_query('{endpoint}', __prompt, "
             f"modelParameters => named_struct('max_tokens', {int(llm_cfg.max_tokens)}, "
             f"'temperature', {float(llm_cfg.temperature)}), "
-            f"responseFormat => '{_AI_QUERY_RESPONSE_FORMAT}', "
+            f"responseFormat => '{_sql_string_literal(_AI_QUERY_RESPONSE_FORMAT)}', "
             f"failOnError => false)"
         ),
     )
