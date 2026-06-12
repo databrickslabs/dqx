@@ -376,7 +376,8 @@ class DQProfiler(DQEngineBase):
         Draw a stratified sample across the unique values of the specified *sample_by_column*.
         Uses the *sample_fraction* to control the sampling rate:
 
-        * When *sample_fraction* is a dict, each value controls the sampling fraction for the slice key
+        * When *sample_fraction* is a dict, each value controls the sampling fraction for the slice key.
+          Strata not present in the dict are assigned a fraction of 0 and excluded from the sample.
         * When *sample_fraction* is a float, the profiler samples uniformly across all slice values
 
         When a uniform *sample_fraction* is used, the distinct values are collected. To bound this
@@ -407,7 +408,10 @@ class DQProfiler(DQEngineBase):
         else:
             if sample_fraction is None:
                 raise InvalidConfigError("sample_fraction must be provided when sample_by_column is set.")
-            distinct_values = df.select(sample_by_column).distinct()
+            # Order before limiting so that *which* strata are kept is deterministic; otherwise
+            # ``distinct().limit()`` returns an arbitrary subset and the sample would not be
+            # reproducible across runs even when ``sample_seed`` is set.
+            distinct_values = df.select(sample_by_column).distinct().orderBy(sample_by_column)
             if sample_by_values_limit is not None:
                 distinct_values = distinct_values.limit(sample_by_values_limit)
             slice_values = [row[0] for row in distinct_values.toLocalIterator()]

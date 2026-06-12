@@ -624,7 +624,7 @@ By default, the profiler uses Spark's `DataFrame.sample` to get a uniform random
 
 Set a `sample_by_column` to draw a stratified sample using Spark's `DataFrame.sampleBy`. The profiler samples each distinct value of the `sample_by_column` independently so every stratum contributes to the resulting profile. This is useful for ensuring rare categories are represented, comparing groups fairly, and profiling class-imbalanced datasets (e.g. over-sampling fraud or defect labels). Use the `sample_fraction` to control how much to sample from each stratum:
 * Use a single float value to sample the same fraction across all strata.
-* Use a dictionary of key-value pairs (e.g. `{stratum: fraction}`) to control the sample fraction for each stratum.
+* Use a dictionary of key-value pairs (e.g. `{stratum: fraction}`) to control the sample fraction for each stratum. Strata that are not listed in the dictionary are excluded from the sample entirely (they are assigned a fraction of `0`), so include every stratum you want represented.
 
 <Admonition type="warning" title="High-cardinality sample_by_column">
 When `sample_fraction` is a single float value, the profiler collects distinct values of `sample_by_column` to build per-stratum sampling fractions. For high-cardinality columns this lookup can be expensive and is capped by `sample_by_values_limit` (default 1000). Rows whose `sample_by_column` value falls outside the collected set are excluded from the sample. Increase `sample_by_values_limit` to cover more strata, or pass a `{stratum: fraction}` dictionary to target specific strata explicitly (the limit does not apply to dictionaries).
