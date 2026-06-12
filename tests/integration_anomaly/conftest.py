@@ -546,6 +546,54 @@ def configure_mlflow_tracking(mlflow_worker_experiment):
     logger.debug(f"MLflow configured: experiment={experiment_path}")
 
 
+def _drop_registered_models_in_schema(ws, catalog_name: str, schema_name: str) -> None:
+    """Delete every UC registered model (and its versions) in a schema.
+
+    Anomaly training registers models inside the test schema. A forced schema delete does NOT
+    cascade registered models, so without this they (a) block the schema teardown and (b) pile up
+    toward the metastore registered-model quota across runs. Best-effort: logs and continues on
+    error (missing schema, permission, concurrent delete) so teardown never fails a test.
+    """
+    try:
+        models = list(ws.registered_models.list(catalog_name=catalog_name, schema_name=schema_name))
+    except Exception as exc:  # best-effort teardown
+        logger.warning(f"Could not list registered models in {catalog_name}.{schema_name}: {exc}")
+        return
+    for model in models:
+        try:
+            for version in ws.model_versions.list(full_name=model.full_name):
+                ws.model_versions.delete(full_name=model.full_name, version=version.version)
+            ws.registered_models.delete(full_name=model.full_name)
+            logger.debug(f"Deleted registered model {model.full_name}")
+        except Exception as exc:  # best-effort teardown
+            logger.warning(f"Could not delete registered model {model.full_name}: {exc}")
+
+
+@pytest.fixture
+def make_schema(make_schema, ws):
+    """Wrap pytester's ``make_schema`` so registered models in each schema are dropped at teardown.
+
+    Anomaly training registers UC models inside the test schema, and a forced schema delete does
+    not cascade them — pytester's own teardown leaves them behind, so they accumulate toward the
+    metastore registered-model quota and can block the schema drop. This override records every
+    schema handed out during the test and drops its registered models *before* pytester deletes the
+    schema (this fixture depends on pytester's, so its finalizer runs first). Covers both the model
+    fixtures and inline ``make_schema`` + train calls, and is scoped to schemas this test created
+    (xdist-safe — never touches another worker's schema).
+    """
+    pytester_make_schema = make_schema
+    created = []
+
+    def _make(**kwargs):
+        schema = pytester_make_schema(**kwargs)
+        created.append(schema)
+        return schema
+
+    yield _make
+    for schema in created:
+        _drop_registered_models_in_schema(ws, schema.catalog_name, schema.name)
+
+
 @pytest.fixture
 def anomaly_registry_schema(make_schema):
     """Schema for row anomaly detection test isolation."""

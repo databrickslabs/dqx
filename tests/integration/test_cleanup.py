@@ -11,7 +11,7 @@ DUMMY_SCHEMA_PREFIX = "dummy_"
 MAX_AGE_MS = 24 * 60 * 60 * 1000  # only drop objects older than 1 day
 
 
-def test_drop_dummy_schemas_from_test_catalog(ws):
+def test_remove_orhpaned_test_schemas(ws):
     """Maintenance sweep: drop every schema in the test catalog whose name starts with
     ``dummy_`` and that is older than one day, cascading the deletion to all contained
     tables and registered models.
