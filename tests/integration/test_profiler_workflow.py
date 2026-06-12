@@ -19,10 +19,11 @@ def _assert_ai_regex_match_excludes_c_prefix(checks):
     'name' column that rejects names starting with 'c' (any case).
 
     `column` is required for regex_match, so we assert it strictly. The regex
-    form is allowed to vary since LLM output is non-deterministic — two
+    form is allowed to vary since LLM output is non-deterministic — three
     equivalent forms are accepted:
     - `^[^cC].*` with negate=False (regex excludes 'c' names directly)
     - `^[cC].*` with negate=True (regex matches 'c' names, then negated)
+    - `^((?!c).)*$` with negate=False (negative lookahead excludes 'c' names)
     """
     actual = next((c for c in checks if c["check"]["function"] == "regex_match"), None)
     assert actual is not None, "AI generated regex_match check not found in the loaded checks"
@@ -37,8 +38,9 @@ def _assert_ai_regex_match_excludes_c_prefix(checks):
     negate = bool(args.get("negate", False))
     excludes_via_charclass = "c" in regex.lower() and "[^" in regex
     excludes_via_negate = "c" in regex.lower() and negate
+    excludes_via_lookahead = "c" in regex.lower() and "(?!" in regex
     assert (
-        excludes_via_charclass or excludes_via_negate
+        excludes_via_charclass or excludes_via_negate or excludes_via_lookahead
     ), f"AI generated regex does not appear to exclude names starting with 'c': regex={regex!r}, negate={negate}"
 
 

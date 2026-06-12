@@ -50,8 +50,14 @@ def _drop_registered_models(ws, catalog_name: str, schema_name: str) -> None:
     """Delete every registered (Unity Catalog) model in the given schema.
 
     A forced schema delete drops tables and functions but leaves registered models in
-    place, so they must be removed explicitly before the schema can be dropped.
+    place, so they must be removed explicitly before the schema can be dropped. Unlike
+    MLflow's ``delete_registered_model``, the SDK refuses to delete a registered model
+    that still has versions (``InvalidParameterValue: ... has N model versions``), so
+    each version must be deleted first.
     """
     for model in ws.registered_models.list(catalog_name=catalog_name, schema_name=schema_name):
+        for version in ws.model_versions.list(full_name=model.full_name):
+            ws.model_versions.delete(full_name=model.full_name, version=version.version)
+            logger.info(f"Deleted model version {model.full_name!r} v{version.version}")
         ws.registered_models.delete(full_name=model.full_name)
         logger.info(f"Deleted registered model {model.full_name!r}")
