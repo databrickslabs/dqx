@@ -191,9 +191,7 @@ class TestAppSettingsGetConfig:
             e2e_spark_conf={},
             anomaly_spark_conf={},
             custom_metrics=["count(*) AS n"],
-            llm_config=LLMConfig(
-                model=LLMModelConfig(model_name="m", api_key="k", api_base="https://example.cloud.databricks.com")
-            ),
+            llm_config=LLMConfig(model=LLMModelConfig(model_name="m", api_key="k", api_base="b")),
         )
         sql.query.return_value = [(json.dumps(original.as_dict()),)]
 
