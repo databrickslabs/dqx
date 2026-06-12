@@ -7,6 +7,8 @@ pattern-column threading through ExplanationContext.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from databricks.labs.dqx.anomaly import anomaly_llm_explainer as llm_explainer
@@ -25,6 +27,31 @@ def test_ai_query_prompt_header_includes_instructions_and_field_descriptions():
     for output_name, _ in llm_explainer._PROMPT_OUTPUT_FIELDS:
         assert f"- {output_name}:" in header
     assert "Respond with ONLY a JSON object" in header
+
+
+_PROMPT_SNAPSHOT = Path(__file__).resolve().parents[1] / "resources" / "ai_query_prompt_header.txt"
+
+
+def test_ai_query_prompt_header_matches_snapshot():
+    """Change-control gate for the LLM prompt.
+
+    The rendered prompt is the contract the model sees — any edit to _PROMPT_INSTRUCTIONS,
+    _PROMPT_INPUT_FIELDS, _PROMPT_OUTPUT_FIELDS, or _PROMPT_EXAMPLES silently changes every
+    explanation. Pinning it to a committed snapshot forces a prompt change to be deliberate and
+    surfaces it in review as a diff to the golden file (no LLM, no workspace, runs in ms).
+
+    If the change is intentional, regenerate the snapshot and review the diff:
+
+        python -c "from databricks.labs.dqx.anomaly.anomaly_llm_explainer import \\
+        _render_ai_query_prompt_header as r, _AI_QUERY_PROMPT_HEADER as _; \\
+        open('tests/resources/ai_query_prompt_header.txt','w').write(r())"
+    """
+    expected = _PROMPT_SNAPSHOT.read_text(encoding="utf-8")
+    assert llm_explainer._render_ai_query_prompt_header() == expected, (
+        "AI-explanation prompt changed vs the committed snapshot "
+        f"({_PROMPT_SNAPSHOT.name}). If this is intentional, regenerate it (see the docstring) "
+        "and review the diff; otherwise revert the prompt edit."
+    )
 
 
 def test_prompt_drops_model_name_and_includes_examples():
