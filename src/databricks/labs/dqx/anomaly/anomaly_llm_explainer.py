@@ -460,7 +460,14 @@ def _aggregate_groups_spark(
     dropped_groups_count = max(0, total_groups - len(ranked_local))
     dropped_rows_count = max(0, total_rows - kept_rows_count)
 
-    kept = ranked_with_totals.drop("__total_groups", "__total_rows").join(
+    # Rebuild the kept projection by filtering ``primary`` to the already-selected top-N pattern
+    # keys, rather than carrying the ranking window into the returned (lazy) DataFrame. ``ai_query``
+    # consumes this downstream — outside the warning-suppression block above — and callers re-action
+    # the scored DataFrame repeatedly, so a window left in this lineage re-emits the single-partition
+    # warning on every action. The kept keys are already known from ``ranked_local``, so an ``isin``
+    # filter is equivalent to the windowed top-N selection and keeps the returned lineage window-free.
+    kept_pattern_values = [r[pattern_col] for r in ranked_local]
+    kept = primary.filter(F.col(pattern_col).isin(kept_pattern_values)).join(
         per_pattern_contrib, on=pattern_col, how="left"
     )
     return kept, dropped_groups_count, dropped_rows_count, total_groups
