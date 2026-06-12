@@ -625,7 +625,15 @@ def _add_explanation_column_ai_query(
     is_ensemble: bool,
     drift_summary: str,
 ) -> DataFrame:
-    """ai_query-path explainer: SQL ``ai_query`` on executors, no driver collect of LLM output."""
+    """ai_query-path explainer: SQL ``ai_query`` on executors, results pinned once per run.
+
+    The per-group LLM results are materialised (collected and rebuilt as a local DataFrame)
+    before being joined onto the scored rows. Left lazy, the join would re-invoke ``ai_query``
+    for every downstream action on the scored DataFrame (each ``count``/``display``/write is a
+    fresh execution of the lineage), multiplying LLM cost and latency per action and breaking
+    the documented "one call per group per scoring run" cost model. The collected payload is
+    small and bounded: at most ``max_groups`` rows, each holding three length-capped text fields.
+    """
     redact_set = frozenset(ctx.redact_columns)
     anomalous = df_with_pattern.filter(F.col(ctx.severity_col) >= F.lit(ctx.threshold))
     kept_sdf, dropped_groups_count, dropped_rows_count, total_groups = _aggregate_groups_spark(
@@ -652,7 +660,11 @@ def _add_explanation_column_ai_query(
         )
     _log_dropped_groups(dropped_groups_count, dropped_rows_count, ctx.max_groups)
     result_sdf = _call_llm_for_groups_ai_query(kept_sdf, ctx, segment_str, is_ensemble, drift_summary)
-    return _attach_explanation_struct(df_with_pattern, result_sdf, ctx)
+    # Pin the LLM responses: one ai_query execution per scoring run, regardless of how many
+    # actions the caller takes on the returned DataFrame afterwards.
+    result_rows = result_sdf.collect()
+    result_local = df_with_pattern.sparkSession.createDataFrame(result_rows, schema=result_sdf.schema)
+    return _attach_explanation_struct(df_with_pattern, result_local, ctx)
 
 
 def add_explanation_column(
