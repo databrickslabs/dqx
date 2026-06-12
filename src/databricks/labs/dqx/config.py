@@ -255,7 +255,10 @@ class LLMModelConfig:
     # Additional host suffixes to allow for *api_base*, on top of the built-in allowlist. Use this
     # to permit explicitly approved AI Gateway hosts. Each entry is matched as a case-insensitive
     # suffix of the URL host (e.g. ".gateway.corp.example"). IP literals must match exactly.
-    api_base_allowed_hosts: tuple[str, ...] = ()
+    # NB: this must be a list (not a tuple) — WorkspaceConfig is persisted as YAML via blueprint's
+    # Installation, and yaml.safe_load (used on read) rejects the !!python/tuple tag a tuple emits,
+    # which breaks loading the entire config.
+    api_base_allowed_hosts: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if not isinstance(self.max_retries, int) or isinstance(self.max_retries, bool) or self.max_retries < 0:

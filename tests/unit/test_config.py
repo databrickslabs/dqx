@@ -324,12 +324,12 @@ def test_llm_model_config_rejects_disallowed_host():
 def test_llm_model_config_accepts_user_extended_allowlist():
     config = LLMModelConfig(
         api_base="https://gateway.corp.example/v1",
-        api_base_allowed_hosts=("gateway.corp.example",),
+        api_base_allowed_hosts=["gateway.corp.example"],
     )
     assert config.model_name == "databricks/databricks-claude-sonnet-4-5"
     assert config.api_key == ""
     assert config.api_base == "https://gateway.corp.example/v1"
-    assert config.api_base_allowed_hosts == ("gateway.corp.example",)
+    assert config.api_base_allowed_hosts == ["gateway.corp.example"]
 
 
 def test_llm_model_config_rejects_subdomain_prefix_bypass():
@@ -341,19 +341,19 @@ def test_llm_model_config_rejects_subdomain_prefix_bypass():
 def test_llm_model_config_rejects_empty_allowlist_entry():
     # Empty entries must not act as a wildcard
     with pytest.raises(InvalidParameterError, match="not in the allowed-hosts"):
-        LLMModelConfig(api_base="https://attacker.com", api_base_allowed_hosts=("",))
+        LLMModelConfig(api_base="https://attacker.com", api_base_allowed_hosts=[""])
 
 
 def test_llm_model_config_ip_literal_requires_exact_match():
     # 'attacker.10.0.0.1' must not match '10.0.0.1' allowlist entry
     with pytest.raises(InvalidParameterError, match="not in the allowed-hosts"):
-        LLMModelConfig(api_base="https://attacker.10.0.0.1", api_base_allowed_hosts=("10.0.0.1",))
+        LLMModelConfig(api_base="https://attacker.10.0.0.1", api_base_allowed_hosts=["10.0.0.1"])
 
 
 def test_llm_model_config_ipv6_with_brackets():
-    config = LLMModelConfig(api_base="https://[::1]/v1", api_base_allowed_hosts=("[::1]",))
+    config = LLMModelConfig(api_base="https://[::1]/v1", api_base_allowed_hosts=["[::1]"])
     assert config.api_base == "https://[::1]/v1"
-    assert config.api_base_allowed_hosts == ("[::1]",)
+    assert config.api_base_allowed_hosts == ["[::1]"]
 
 
 def test_llm_model_config_accepts_trailing_dot_fqdn():
