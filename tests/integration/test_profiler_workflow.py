@@ -408,7 +408,7 @@ def test_profiler_workflow_with_ai_rules_generation_and_model_api_keys_as_secret
     ws.secrets.put_secret(scope=scope_name, key="api_base", string_value="")
 
     config = installation_ctx.config
-    config.llm_config.model.model_name = "databricks/databricks-claude-opus-4-7"  # test different model
+    config.llm_config.model.model_name = "databricks/databricks-meta-llama-3-1-8b-instruct"  # test different model
     config.llm_config.model.api_key = api_key  # test secret retrieval
     config.llm_config.model.api_base = api_base  # test secret retrieval
 
