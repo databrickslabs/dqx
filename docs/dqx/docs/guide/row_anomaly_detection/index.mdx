@@ -322,11 +322,11 @@ Each element is a **struct** with a shared “wide” schema. Currently, the onl
 | `threshold` | double | Severity percentile threshold used (e.g. 95.0). |
 | `model` | string | Full model name (e.g. Unity Catalog name). |
 | `segment` | map&lt;string, string&gt; | Segment key-value pairs for segmented models; `null` for global models. |
-| `contributions` | map&lt;string, double&gt; | Per-feature contribution percentages (0–100). Present when `enable_contributions=True`; `null` by default. |
+| `contributions` | map&lt;string, double&gt; | Per-feature contribution percentages (0–100). On by default (`enable_contributions=True`); `null` if you set it `False`. |
 | `confidence_std` | double | Ensemble score standard deviation. Present when `enable_confidence_std=True`; `null` otherwise. |
-| `ai_explanation` | struct | LLM-generated explanation for the row's `(segment, pattern)` group. Present when `enable_ai_explanation=True`; `null` by default and for non-anomalous rows. See [AI explanations](#ai-explanations-llm) below. |
+| `ai_explanation` | struct | LLM-generated explanation for the row's `(segment, pattern)` group. On by default (`enable_ai_explanation=True`); `null` for non-anomalous rows, when disabled, or when no serving endpoint is reachable. See [AI explanations](#ai-explanations) below. |
 
-The nested `ai_explanation` struct (when `enable_ai_explanation=True`):
+The nested `ai_explanation` struct (populated when AI explanations are on — the default):
 
 | Field | Type | Description |
 |--------|------|-------------|
@@ -339,18 +339,19 @@ The nested `ai_explanation` struct (when `enable_ai_explanation=True`):
 
 **Access in PySpark:** use `F.element_at(F.col("_dq_info"), 1)` for the first element (1-based), then `.getField("anomaly").getField("severity_percentile")` etc. Alternatively `F.col("_dq_info").getItem(0)` for 0-based index (see [Troubleshooting](/docs/guide/row_anomaly_detection/troubleshooting) for Spark Connect–friendly patterns).
 
-### AI explanations (LLM)
+### AI explanations
 
-Set `enable_ai_explanation=True` (requires `enable_contributions=True`) to attach a plain-language, LLM-generated explanation to each anomalous row in `_dq_info[0].anomaly.ai_explanation`. The explanation answers *why was this flagged, what's the impact, and what should I do* — without anyone reading raw SHAP percentages.
+AI explanations are **on by default**: each anomalous row gets a plain-language, LLM-generated explanation in `_dq_info[0].anomaly.ai_explanation` answering *why was this flagged, what's the impact, and what should I do* — without anyone reading raw SHAP percentages. Set `enable_ai_explanation=False` to turn it off (or `enable_contributions=False`, which disables explanations too, since they use the SHAP contributions as input). The explanation is AI-generated from the anomaly signal (feature names + SHAP + severity); it is **not** grounded in your catalog's table/column descriptions, so treat the business-impact and action as a starting point, not authoritative.
 
-The call runs inside Spark via the SQL `ai_query` function against a Databricks Model Serving endpoint, so it needs no extra dependency and scales with the cluster. Anomalous rows are grouped by a deterministic `(segment, pattern)` key (pattern = sorted top-2 contributing features) and the LLM is called **once per group**, so cost stays predictable on large datasets.
+The call runs inside Spark via the SQL `ai_query` function against a Databricks Model Serving endpoint, so it needs no extra setup and scales with the cluster. This requires **Databricks serverless compute or Databricks Runtime 15.4 LTS or above** (where `ai_query` is available); on older runtimes explanations are skipped with a warning and scoring still completes. Similar anomalous rows are grouped together and the model is called **once per group** rather than once per row, so cost stays predictable on large datasets.
 
-Because the pattern key is only the top-2 features, two groups whose full feature distributions differ but whose top-2 contributors match (e.g. `amount+quantity` for both) collapse into one group and share a single explanation built from their averaged contributions. This is intentional — it keeps the number of LLM calls (and cost) low; the trade-off is a slightly less specific narrative for those merged groups.
+Rows are grouped by their top two contributing features, so occasionally two different kinds of anomaly that share the same top two features land in the same group and get one shared explanation. That's intentional — it keeps the number of AI calls (and the cost) low, at the price of a slightly more general explanation for those rows.
 
 ```python
 from databricks.labs.dqx.rule import DQDatasetRule
 from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies
 
+# Contributions + AI explanations are on by default — this is all you need:
 checks = [
   DQDatasetRule(
     criticality="error",
@@ -359,16 +360,17 @@ checks = [
       "model_name": "catalog.schema.orders_monitor",
       "registry_table": "catalog.schema.dqx_anomaly_models",
       "threshold": 95.0,
-      "enable_contributions": True,      # required
-      "enable_ai_explanation": True,
-      "llm_model_config": {"model_name": "databricks-claude-sonnet-4-5"},
+      # Optional: override the serving endpoint (defaults to databricks-claude-sonnet-4-5)
+      # "ai_explanation_llm_model_config": {"model_name": "databricks-claude-sonnet-4-5"},
+      # Optional: turn explanations off -> "enable_ai_explanation": False
     },
   )
 ]
 ```
 
 <Admonition type="note" title="Cost and privacy">
-* `max_groups` (default 500) caps the number of `(segment, pattern)` groups the LLM is called for per run. For segmented models the cap is split across eligible segments with a floor of one call each, so when `max_groups` is below the eligible-segment count the effective cap is the segment count (a warning is logged).
+* Explanations are **on by default** and call a Model Serving endpoint, so they add per-run LLM cost. `max_groups` (default 500) caps how many groups the model is called for per run. For segmented models the cap is shared across segments (at least one call each), so if you set `max_groups` lower than the number of segments you still get one call per segment — a warning is logged when that happens. Set `enable_ai_explanation=False` to turn explanations off.
+* No serving endpoint? If the configured endpoint isn't reachable (e.g. Foundation Model APIs aren't enabled in the workspace), explanations are skipped with a warning and scoring still completes — nothing breaks.
 * `redact_columns` keeps the listed feature and segment names out of the prompt. Segment **values** for non-redacted keys are sent verbatim — avoid segmenting on sensitive columns, or list them in `redact_columns`.
 </Admonition>
 

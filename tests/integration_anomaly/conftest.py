@@ -117,6 +117,11 @@ def create_anomaly_apply_fn(
     **check_kwargs,
 ):
     """Create apply function from has_no_row_anomalies check. Default driver_only=True for tests."""
+    # Production defaults enable_contributions / enable_ai_explanation to True, but the broad
+    # anomaly suite shouldn't pay the SHAP + ai_query (LLM) cost on every test — so this scaffold
+    # defaults them OFF. Tests that exercise contributions/explanations pass the flags explicitly.
+    check_kwargs.setdefault("enable_contributions", False)
+    check_kwargs.setdefault("enable_ai_explanation", False)
     _, apply_fn, info_col = has_no_row_anomalies(
         model_name=qualify_model_name(model_name, registry_table),
         registry_table=registry_table,
@@ -176,6 +181,10 @@ def create_anomaly_check_rule(
         "driver_only": driver_only,
     }
     check_kwargs.update(kwargs)
+    # See create_anomaly_apply_fn: default the (now production-on) contributions/explanation flags
+    # OFF in tests to avoid SHAP + ai_query cost; tests that need them pass the flags explicitly.
+    check_kwargs.setdefault("enable_contributions", False)
+    check_kwargs.setdefault("enable_ai_explanation", False)
     return DQDatasetRule(
         criticality=criticality,
         check_func=has_no_row_anomalies,

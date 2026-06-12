@@ -590,6 +590,27 @@ def _log_dropped_groups(dropped_groups_count: int, dropped_rows_count: int, max_
         )
 
 
+def _endpoint_reachable(spark: object, endpoint: str) -> bool:
+    """One-shot probe: can this workspace reach the ``ai_query`` serving endpoint?
+
+    AI explanations are on by default, but ``ai_query`` runs lazily — a missing or un-entitled
+    endpoint (no Foundation Model APIs, wrong region, etc.) would otherwise fail the whole scoring
+    run at action time. Probe once with a 1-token call; on any failure the caller skips
+    explanations and logs a warning instead of breaking scoring.
+    """
+    try:
+        spark.sql(  # type: ignore[attr-defined]
+            f"SELECT ai_query('{endpoint}', 'ping', modelParameters => named_struct('max_tokens', 1))"
+        ).collect()
+        return True
+    except Exception as exc:
+        detail = str(exc).replace("\n", " ").replace("\r", " ")[:200]
+        logger.warning(
+            f"ai_explanation: serving endpoint {endpoint!r} not reachable; skipping AI explanations. {detail}"
+        )
+        return False
+
+
 def _add_explanation_column_ai_query(
     df_with_pattern: DataFrame,
     ctx: ExplanationContext,
@@ -611,6 +632,14 @@ def _add_explanation_column_ai_query(
     )
     # No anomalies above threshold → short-circuit to a null struct, no ai_query call.
     if total_groups == 0:
+        return df_with_pattern.withColumn(ctx.ai_explanation_col, _build_empty_explanation_column()).drop(
+            ctx.pattern_col
+        )
+    # Endpoint resolution is a config check (raises for a non-Databricks provider); reachability is
+    # a runtime check — if the endpoint isn't available, degrade to null explanations + a warning
+    # rather than failing the scoring run (AI explanations are on by default).
+    endpoint = _resolve_ai_query_endpoint((ctx.llm_model_config or LLMModelConfig()).model_name)
+    if not _endpoint_reachable(df_with_pattern.sparkSession, endpoint):
         return df_with_pattern.withColumn(ctx.ai_explanation_col, _build_empty_explanation_column()).drop(
             ctx.pattern_col
         )

@@ -52,11 +52,11 @@ class ScoringConfig:
     merge_columns: list[str]
     row_filter: str | None = None
     drift_threshold: float | None = None
-    enable_contributions: bool = False
+    enable_contributions: bool = True
     enable_confidence_std: bool = False
     segment_by: list[str] | None = None
     driver_only: bool = False
-    enable_ai_explanation: bool = False
+    enable_ai_explanation: bool = True
     llm_model_config: LLMModelConfig | None = None
     redact_columns: list[str] = field(default_factory=list)
     # Global upper bound on the number of LLM calls per scoring run when

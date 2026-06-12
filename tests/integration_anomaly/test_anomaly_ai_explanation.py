@@ -15,15 +15,19 @@ import pytest
 from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.anomaly import anomaly_llm_explainer as llm_explainer
+from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies
 from databricks.labs.dqx.config import LLMModelConfig
 from databricks.labs.dqx.errors import InvalidParameterError
+from tests.integration_anomaly.conftest import qualify_model_name
 from tests.integration_anomaly.constants import (
+    DEFAULT_AI_QUERY_ENDPOINT,
     DEFAULT_SCORE_THRESHOLD,
     OUTLIER_AMOUNT,
     OUTLIER_QUANTITY,
 )
 
-_AI_QUERY_TEST_ENDPOINT = os.environ.get("DQX_AI_QUERY_TEST_ENDPOINT", "databricks-llama-4-maverick")
+_LLM_EXPLAINER_LOGGER = "databricks.labs.dqx.anomaly.anomaly_llm_explainer"
+_AI_QUERY_TEST_ENDPOINT = os.environ.get("DQX_AI_QUERY_TEST_ENDPOINT", DEFAULT_AI_QUERY_ENDPOINT)
 
 
 def _ai_query_llm_cfg(endpoint: str) -> LLMModelConfig:
@@ -37,7 +41,7 @@ def _score_with_explanation(scorer, df, model_meta, *, llm_model_config, **overr
         "threshold": DEFAULT_SCORE_THRESHOLD,
         "enable_contributions": True,
         "enable_ai_explanation": True,
-        "llm_model_config": llm_model_config,
+        "ai_explanation_llm_model_config": llm_model_config,
         "extract_score": False,
         **overrides,
     }
@@ -286,3 +290,58 @@ def test_ai_query_rejects_non_databricks_provider():
     cfg = LLMModelConfig(model_name="openai/gpt-4")
     with pytest.raises(InvalidParameterError, match="require a Databricks serving endpoint"):
         llm_explainer._resolve_ai_query_endpoint(cfg.model_name)
+
+
+def test_ai_query_explanation_on_by_default(
+    spark: SparkSession, shared_3d_model, test_df_factory, anomaly_scorer, ai_query_endpoint
+):
+    """With no enable flags, both contributions and ai_explanation are produced (on by default).
+
+    Builds the check directly (not via the test helper, which defaults the flags off) so it
+    exercises the production defaults end-to-end.
+    """
+    test_df = _make_outlier_df(spark, test_df_factory)
+    _, apply_fn, info_col = has_no_row_anomalies(
+        model_name=qualify_model_name(shared_3d_model["model_name"], shared_3d_model["registry_table"]),
+        registry_table=shared_3d_model["registry_table"],
+        driver_only=True,
+        ai_explanation_llm_model_config={"model_name": ai_query_endpoint},
+    )
+    anomaly = apply_fn(test_df).collect()[0][info_col][0]["anomaly"]
+    assert anomaly["is_anomaly"] is True
+    assert anomaly["contributions"] is not None, "contributions should be on by default"
+    assert anomaly["ai_explanation"] is not None, "ai_explanation should be on by default"
+
+
+def test_ai_query_explanation_degrades_when_endpoint_unavailable(
+    spark: SparkSession, shared_3d_model, test_df_factory, anomaly_scorer, caplog
+):
+    """A valid-format but non-existent endpoint degrades to a null explanation + WARNING — scoring
+    still completes (the default-on safety net for workspaces without a reachable endpoint)."""
+    test_df = _make_outlier_df(spark, test_df_factory)
+    bogus = LLMModelConfig(model_name="databricks-nonexistent-endpoint-zzz")
+    with caplog.at_level("WARNING", logger=_LLM_EXPLAINER_LOGGER):
+        result_df = _score_with_explanation(anomaly_scorer, test_df, shared_3d_model, llm_model_config=bogus)
+        anomaly = result_df.collect()[0]["_dq_info"][0]["anomaly"]
+    assert anomaly["is_anomaly"] is True
+    assert anomaly["ai_explanation"] is None, "explanation should degrade to null on an unreachable endpoint"
+    assert any("not reachable" in r.message for r in caplog.records), "expected a 'not reachable' WARNING"
+
+
+def test_ai_query_explanation_disabled_without_contributions(
+    spark: SparkSession, shared_3d_model, test_df_factory, anomaly_scorer, caplog
+):
+    """Turning contributions off disables AI explanations (with a WARNING) instead of erroring."""
+    test_df = _make_outlier_df(spark, test_df_factory)
+    with caplog.at_level("WARNING", logger="databricks.labs.dqx.anomaly.check_funcs"):
+        result_df = _score_with_explanation(
+            anomaly_scorer,
+            test_df,
+            shared_3d_model,
+            llm_model_config=_ai_query_llm_cfg(_AI_QUERY_TEST_ENDPOINT),
+            enable_contributions=False,  # overrides the default-True; explanation is downgraded off
+        )
+        anomaly = result_df.collect()[0]["_dq_info"][0]["anomaly"]
+    assert anomaly["contributions"] is None
+    assert anomaly["ai_explanation"] is None
+    assert any("disabling enable_ai_explanation" in r.message for r in caplog.records)

@@ -23,3 +23,8 @@ OUTLIER_QUANTITY = 1.0
 
 # Common segment values used for region-based segmentation tests.
 SEGMENT_REGIONS = ("US", "EU", "APAC")
+
+# Default Model Serving endpoint for AI-explanation tests. Matches the production default
+# (LLMModelConfig.model_name = "databricks/databricks-claude-sonnet-4-5", provider prefix stripped)
+# so the tests exercise the real default model. Override per-env with DQX_AI_QUERY_TEST_ENDPOINT.
+DEFAULT_AI_QUERY_ENDPOINT = "databricks-claude-sonnet-4-5"

@@ -1,3 +1,5 @@
+import inspect
+import logging
 from datetime import datetime
 from unittest.mock import create_autospec, patch
 
@@ -107,32 +109,54 @@ def test_has_no_row_anomalies_enable_contributions_requires_shap():
     assert "enable_contributions=True requires the 'shap' dependency" in str(exc_info.value)
 
 
-def test_has_no_row_anomalies_ai_explanation_requires_contributions():
-    """enable_ai_explanation=True without enable_contributions=True raises InvalidParameterError."""
-    with pytest.raises(InvalidParameterError) as exc_info:
-        has_no_row_anomalies(
-            model_name="catalog.schema.model",
-            registry_table="catalog.schema.table",
-            enable_ai_explanation=True,
-            enable_contributions=False,
-        )
-    assert "enable_ai_explanation=True requires enable_contributions=True" in str(exc_info.value)
+def test_default_flags_enable_contributions_and_ai_explanation():
+    """Both SHAP contributions and AI explanations are on by default."""
+    sig = inspect.signature(has_no_row_anomalies)
+    assert sig.parameters["enable_contributions"].default is True
+    assert sig.parameters["enable_ai_explanation"].default is True
+
+
+def test_scoring_config_defaults_contributions_and_ai_explanation_on():
+    """ScoringConfig mirrors the check's defaults: contributions + AI explanations on."""
+    cfg = ScoringConfig(
+        columns=["amount"],
+        model_name="catalog.schema.m",
+        registry_table="catalog.schema.reg",
+        threshold=95.0,
+        merge_columns=["__dqx_row_id_x"],
+    )
+    assert cfg.enable_contributions is True
+    assert cfg.enable_ai_explanation is True
+
+
+def test_ai_explanation_downgraded_when_contributions_off(caplog):
+    """AI explanations need SHAP contributions; with contributions off, explanation is disabled
+    (with a warning) instead of raising. Both default on, so this only fires on an explicit
+    opt-out of contributions."""
+    with caplog.at_level(logging.WARNING, logger=check_funcs.__name__):
+        resolved = check_funcs._resolve_ai_explanation_flag(enable_contributions=False, enable_ai_explanation=True)
+    assert resolved is False
+    assert any("disabling enable_ai_explanation" in r.message for r in caplog.records)
+    # With contributions on, the flag is left as-is.
+    assert check_funcs._resolve_ai_explanation_flag(enable_contributions=True, enable_ai_explanation=True) is True
+
+
+def test_has_no_row_anomalies_no_raise_when_contributions_off():
+    """With contributions off (explanation left at its default-True), the check builds without
+    raising — explanation is silently downgraded rather than erroring."""
+    check, apply_fn, _info = has_no_row_anomalies(
+        model_name="catalog.schema.model",
+        registry_table="catalog.schema.table",
+        enable_contributions=False,
+    )
+    assert check is not None and apply_fn is not None
 
 
 def test_validate_explanation_flags_ai_query_needs_no_extra_dependency():
-    """AI explanations run entirely in Spark SQL via ``ai_query`` — no DSPy/driver dependency.
-
-    Calls *_validate_explanation_flags* directly so the assertion is scoped to the validator
-    and doesn't depend on downstream workspace lookups or whether *has_no_row_anomalies*
-    happens to fail for an unrelated reason in the test env.
-    """
+    """AI explanations run in Spark SQL via ``ai_query`` — no DSPy/driver dependency. The only
+    hard requirement is SHAP (for the contributions that feed the prompt)."""
     with patch.object(check_funcs, "SHAP_AVAILABLE", True):
-        # enable_ai_explanation with contributions on must not raise — the only hard requirement
-        # is enable_contributions=True (SHAP feeds the prompt).
-        check_funcs._validate_explanation_flags(
-            enable_contributions=True,
-            enable_ai_explanation=True,
-        )
+        check_funcs._validate_explanation_flags(enable_contributions=True)
 
 
 def test_has_no_row_anomalies_redact_columns_must_be_list():
@@ -183,7 +207,7 @@ def test_has_no_row_anomalies_rejects_llm_model_config_unknown_keys():
         has_no_row_anomalies(
             model_name="catalog.schema.model",
             registry_table="catalog.schema.table",
-            llm_model_config={"model_name": "x", "api_base_url": "oops"},
+            ai_explanation_llm_model_config={"model_name": "x", "api_base_url": "oops"},
         )
     assert "unknown keys" in str(exc_info.value)
 
@@ -194,7 +218,7 @@ def test_has_no_row_anomalies_rejects_llm_model_config_wrong_type():
         has_no_row_anomalies(
             model_name="catalog.schema.model",
             registry_table="catalog.schema.table",
-            llm_model_config="databricks/foo",  # type: ignore[arg-type]
+            ai_explanation_llm_model_config="databricks/foo",  # type: ignore[arg-type]
         )
     assert "must be an LLMModelConfig instance or a dict" in str(exc_info.value)
 

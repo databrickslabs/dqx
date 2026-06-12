@@ -5,6 +5,7 @@ Facade: public rule entry point. Orchestration and scoring live in sibling modul
 """
 
 import dataclasses
+import logging
 import uuid
 from typing import Any
 
@@ -22,6 +23,8 @@ from databricks.labs.dqx.config import LLMModelConfig
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.rule import register_rule
 
+logger = logging.getLogger(__name__)
+
 _LLM_MODEL_CONFIG_KEYS = {f.name for f in dataclasses.fields(LLMModelConfig)}
 
 
@@ -37,12 +40,13 @@ def _coerce_llm_model_config(value: LLMModelConfig | dict | None) -> LLMModelCon
         unknown = set(value) - _LLM_MODEL_CONFIG_KEYS
         if unknown:
             raise InvalidParameterError(
-                f"llm_model_config has unknown keys: {sorted(unknown)}. "
+                f"ai_explanation_llm_model_config has unknown keys: {sorted(unknown)}. "
                 f"Allowed keys: {sorted(_LLM_MODEL_CONFIG_KEYS)}."
             )
         return LLMModelConfig(**value)
     raise InvalidParameterError(
-        "llm_model_config must be an LLMModelConfig instance or a dict with keys {model_name, api_key, api_base}."
+        "ai_explanation_llm_model_config must be an LLMModelConfig instance or a dict with keys "
+        "{model_name, api_key, api_base}."
     )
 
 
@@ -66,20 +70,27 @@ def _validate_thresholds(threshold: float, drift_threshold: float | None) -> Non
         raise InvalidParameterError("drift_threshold must be greater than 0 when provided.")
 
 
-def _validate_explanation_flags(
-    enable_contributions: bool,
-    enable_ai_explanation: bool,
-) -> None:
+def _validate_explanation_flags(enable_contributions: bool) -> None:
     if enable_contributions and not SHAP_AVAILABLE:
         raise InvalidParameterError(
             "enable_contributions=True requires the 'shap' dependency. "
             "Install anomaly extras: pip install databricks-labs-dqx[anomaly]"
         )
+
+
+def _resolve_ai_explanation_flag(enable_contributions: bool, enable_ai_explanation: bool) -> bool:
+    """AI explanations use SHAP contributions as their input, so they require
+    *enable_contributions*. Both default to True; if a caller turns contributions off (e.g. to
+    skip the SHAP cost) we disable explanations with a warning rather than raising, so the cheap
+    opt-out stays frictionless.
+    """
     if enable_ai_explanation and not enable_contributions:
-        raise InvalidParameterError(
-            "enable_ai_explanation=True requires enable_contributions=True. "
-            "SHAP contributions are used as input to the LLM explanation."
+        logger.warning(
+            "AI explanations require SHAP contributions; disabling enable_ai_explanation because "
+            "enable_contributions=False."
         )
+        return False
+    return enable_ai_explanation
 
 
 def _validate_anomaly_check_args(
@@ -88,14 +99,13 @@ def _validate_anomaly_check_args(
     threshold: float,
     drift_threshold: float | None,
     enable_contributions: bool,
-    enable_ai_explanation: bool,
     redact_columns: list[str] | None,
     max_groups: int,
 ) -> None:
     """Validate has_no_row_anomalies arguments. Raises InvalidParameterError on failure."""
     _validate_required_names(model_name, registry_table)
     _validate_thresholds(threshold, drift_threshold)
-    _validate_explanation_flags(enable_contributions, enable_ai_explanation)
+    _validate_explanation_flags(enable_contributions)
 
     if redact_columns is not None:
         if not isinstance(redact_columns, list) or not all(isinstance(c, str) and c for c in redact_columns):
@@ -112,10 +122,10 @@ def has_no_row_anomalies(
     threshold: float = 95.0,
     row_filter: str | None = None,
     drift_threshold: float | None = None,
-    enable_contributions: bool = False,
+    enable_contributions: bool = True,
     enable_confidence_std: bool = False,
-    enable_ai_explanation: bool = False,
-    llm_model_config: LLMModelConfig | dict | None = None,
+    enable_ai_explanation: bool = True,
+    ai_explanation_llm_model_config: LLMModelConfig | dict | None = None,
     redact_columns: list[str] | None = None,
     max_groups: int = 500,
     *,
@@ -155,19 +165,25 @@ def has_no_row_anomalies(
             this expression are scored; others are left in the output with null anomaly
             result. Auto-injected from the check filter.
         drift_threshold: Drift detection threshold (default 3.0, None to disable).
-        enable_contributions: Include SHAP feature contributions for explainability (default False).
-            Set True to get per-feature contributions in _dq_info; adds significant scoring cost.
-            Requires SHAP library when True.
+        enable_contributions: Include SHAP feature contributions for explainability (default True).
+            Per-feature contributions are added to _dq_info; adds scoring cost. Requires the SHAP
+            library (installed with the anomaly extra). Set False to skip the SHAP cost (this also
+            disables AI explanations, since they use contributions as input).
         enable_confidence_std: Include ensemble confidence scores in _dq_info and top-level (default False).
             Automatically available when training with ensemble_size > 1 (default is 3).
-        enable_ai_explanation: If True, add a human-readable LLM explanation for each anomalous row
-            (default False). Requires enable_contributions=True. The LLM call runs in Spark via
-            ``ai_query`` against a Databricks Model Serving endpoint — no extra dependencies.
-            Output is in _dq_info[0].anomaly.ai_explanation.
-        llm_model_config: LLM model configuration. Defaults to LLMModelConfig()
-            (model_name='databricks/databricks-claude-sonnet-4-5'). *model_name* must resolve to a
-            Databricks Model Serving endpoint (with or without the ``databricks/`` prefix); the
-            ``ai_query`` call uses the bare endpoint name.
+        enable_ai_explanation: Add a human-readable LLM explanation for each anomalous row
+            (default True). Uses enable_contributions as input; if contributions are off, explanations
+            are disabled (with a warning) rather than erroring. The LLM call runs in Spark via
+            ``ai_query`` against a Databricks Model Serving endpoint — no extra dependencies. If that
+            endpoint is unreachable (e.g. no Foundation Model APIs in the workspace), explanations are
+            skipped with a warning and scoring still completes. Output is in
+            _dq_info[0].anomaly.ai_explanation, and is AI-generated from the anomaly signal (feature
+            names + SHAP + severity), not grounded in catalog metadata.
+        ai_explanation_llm_model_config: LLM model configuration for AI explanations (named
+            distinctly from the check's *model_name* to avoid confusion). Defaults to
+            LLMModelConfig() (model_name='databricks/databricks-claude-sonnet-4-5'). Its *model_name*
+            must resolve to a Databricks Model Serving endpoint (with or without the ``databricks/``
+            prefix); the ``ai_query`` call uses the bare endpoint name.
 
             When wrapping this check in DQDatasetRule / DQRowRule, applying it via
             apply_checks / apply_checks_by_metadata, or declaring it in YAML: **pass a dict**
@@ -202,7 +218,11 @@ def has_no_row_anomalies(
         >>> df_scored.select(col("_dq_info").getItem(0).getField("anomaly").getField("score"), ...)
         >>> df_scored.filter(col("_dq_info").getItem(0).getField("anomaly").getField("is_anomaly"))
     """
-    llm_model_config = _coerce_llm_model_config(llm_model_config)
+    llm_model_config = _coerce_llm_model_config(ai_explanation_llm_model_config)
+    # AI explanations need SHAP contributions; if contributions are off, disable explanations
+    # (with a warning) rather than failing — both default on, so this only triggers when a caller
+    # explicitly opts out of contributions.
+    enable_ai_explanation = _resolve_ai_explanation_flag(enable_contributions, enable_ai_explanation)
 
     _validate_anomaly_check_args(
         model_name=model_name,
@@ -210,7 +230,6 @@ def has_no_row_anomalies(
         threshold=threshold,
         drift_threshold=drift_threshold,
         enable_contributions=enable_contributions,
-        enable_ai_explanation=enable_ai_explanation,
         redact_columns=redact_columns,
         max_groups=max_groups,
     )
