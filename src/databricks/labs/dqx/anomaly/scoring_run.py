@@ -22,6 +22,7 @@ from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRecord, Anoma
 from databricks.labs.dqx.anomaly.anomaly_llm_explainer import (
     ExplanationContext,
     add_explanation_column,
+    probe_endpoint_reachable,
 )
 from databricks.labs.dqx.anomaly.scoring_utils import (
     add_info_column,
@@ -243,6 +244,7 @@ def score_single_segment(
     segment_model: AnomalyModelRecord,
     config: ScoringConfig,
     max_groups_override: int | None = None,
+    endpoint_reachable: bool | None = None,
 ) -> DataFrame:
     """Score a single segment with its specific model.
 
@@ -250,6 +252,9 @@ def score_single_segment(
     ExplanationContext for this segment only. Used by *score_segmented* to enforce a
     *global* cap on LLM calls across segments — without it, *config.max_groups* applies
     independently per segment and the worst-case total is ``num_segments * max_groups``.
+
+    *endpoint_reachable* is the serving-endpoint reachability probed once by *score_segmented*
+    for the whole run; threading it through avoids one billable ``ai_query`` probe per segment.
     """
     drift_result = check_segment_drift(
         segment_df,
@@ -314,6 +319,7 @@ def score_single_segment(
             segment_model.segmentation.segment_values,
             segment_model.identity.is_ensemble,
             drift_summary=format_drift_summary(drift_result, config.redact_columns),
+            endpoint_reachable=endpoint_reachable,
         )
 
     segment_scored = add_info_column(
@@ -373,6 +379,16 @@ def score_segmented(
     )
     _warn_if_max_groups_below_segments(config, len(eligible))
 
+    # Probe the serving endpoint once for the whole run rather than once per segment: the reachability
+    # check is a billable 1-token ai_query call, so per-segment probing would cost N calls + N driver
+    # actions. None when explanations are off / no eligible segments, so score_single_segment falls
+    # back to its own per-call probe (the direct-call default).
+    endpoint_reachable = (
+        probe_endpoint_reachable(df_to_score.sparkSession, config.llm_model_config)
+        if config.enable_ai_explanation and eligible
+        else None
+    )
+
     scored_dfs: list[DataFrame] = []
     for segment_model, segment_df in eligible:
         segment_scored = score_single_segment(
@@ -380,6 +396,7 @@ def score_segmented(
             segment_model,
             config,
             max_groups_override=per_segment_budget,
+            endpoint_reachable=endpoint_reachable,
         )
         scored_dfs.append(segment_scored)
 

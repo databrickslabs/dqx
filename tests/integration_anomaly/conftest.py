@@ -202,6 +202,10 @@ def apply_anomaly_check_direct(
     **kwargs: Any,
 ) -> Any:
     """Apply anomaly detection directly (without DQEngine) to get anomaly_score column."""
+    # See create_anomaly_apply_fn: default the (now production-on) contributions/explanation flags
+    # OFF in tests to avoid SHAP + ai_query (LLM) cost; tests that need them pass the flags explicitly.
+    kwargs.setdefault("enable_contributions", False)
+    kwargs.setdefault("enable_ai_explanation", False)
     _, apply_fn, info_col = has_no_row_anomalies(
         model_name=qualify_model_name(model_name, registry_table),
         registry_table=registry_table,
@@ -366,6 +370,10 @@ def create_anomaly_dataset_rule(
     **kwargs: Any,
 ) -> DQDatasetRule:
     """Create DQDatasetRule for anomaly detection. Default driver_only=True for tests."""
+    # See create_anomaly_apply_fn: default the (now production-on) contributions/explanation flags
+    # OFF in tests to avoid SHAP + ai_query (LLM) cost; tests that need them pass the flags explicitly.
+    kwargs.setdefault("enable_contributions", False)
+    kwargs.setdefault("enable_ai_explanation", False)
     return DQDatasetRule(
         criticality=criticality,
         check_func=has_no_row_anomalies,

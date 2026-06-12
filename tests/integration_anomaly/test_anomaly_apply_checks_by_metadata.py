@@ -32,6 +32,8 @@ def test_apply_anomaly_check_by_metadata(ws, spark: SparkSession, shared_2d_mode
           model_name: {model_name}
           registry_table: {registry_table}
           threshold: {DEFAULT_SCORE_THRESHOLD}
+          enable_contributions: false
+          enable_ai_explanation: false
           driver_only: true
     """
 
@@ -69,6 +71,8 @@ def test_apply_anomaly_check_by_metadata_with_columns_autodiscovery(ws, spark: S
           model_name: {model_name}
           registry_table: {registry_table}
           threshold: {DEFAULT_SCORE_THRESHOLD}
+          enable_contributions: false
+          enable_ai_explanation: false
           driver_only: true
     """
 
@@ -131,6 +135,8 @@ def test_apply_anomaly_check_by_metadata_with_multiple_checks(ws, spark: SparkSe
           model_name: {model_name}
           registry_table: {registry_table}
           threshold: {threshold}
+          enable_contributions: false
+          enable_ai_explanation: false
           driver_only: true
     """
 
@@ -202,6 +208,8 @@ def test_apply_anomaly_multiple_checks_by_metadata(ws, spark, shared_2d_model):
           model_name: {model_name}
           registry_table: {registry_table}
           threshold: {DEFAULT_SCORE_THRESHOLD}
+          enable_contributions: false
+          enable_ai_explanation: false
           driver_only: true
     - criticality: error
       check:
@@ -210,6 +218,8 @@ def test_apply_anomaly_multiple_checks_by_metadata(ws, spark, shared_2d_model):
           model_name: {model_name}
           registry_table: {registry_table}
           threshold: {DEFAULT_SCORE_THRESHOLD}
+          enable_contributions: false
+          enable_ai_explanation: false
           driver_only: true
     - criticality: warn
       check:
@@ -218,6 +228,8 @@ def test_apply_anomaly_multiple_checks_by_metadata(ws, spark, shared_2d_model):
           model_name: {model_name}
           registry_table: {registry_table}
           threshold: {DEFAULT_SCORE_THRESHOLD}
+          enable_contributions: false
+          enable_ai_explanation: false
           driver_only: true
     """
 
@@ -268,6 +280,8 @@ def test_apply_anomaly_check_by_metadata_with_custom_threshold(ws, spark: SparkS
           model_name: {model_name}
           registry_table: {registry_table}
           threshold: 90.0
+          enable_contributions: false
+          enable_ai_explanation: false
           driver_only: true
     """
 
@@ -306,6 +320,7 @@ def test_apply_anomaly_check_by_metadata_with_contributions(ws, spark: SparkSess
           registry_table: {registry_table}
           threshold: {DEFAULT_SCORE_THRESHOLD}
           enable_contributions: true
+          enable_ai_explanation: false
           driver_only: true
     """
 
@@ -343,6 +358,8 @@ def test_apply_anomaly_check_by_metadata_with_drift_threshold(ws, spark: SparkSe
           registry_table: {registry_table}
           threshold: {DQENGINE_SCORE_THRESHOLD}
           drift_threshold: 3.0
+          enable_contributions: false
+          enable_ai_explanation: false
           driver_only: true
     """
 
@@ -380,6 +397,8 @@ def test_apply_anomaly_check_by_metadata_criticality_warn(ws, spark: SparkSessio
           model_name: {model_name}
           registry_table: {registry_table}
           threshold: {DQENGINE_SCORE_THRESHOLD}
+          enable_contributions: false
+          enable_ai_explanation: false
           driver_only: true
     """
 
@@ -437,6 +456,8 @@ def test_apply_anomaly_check_by_metadata_with_filter_segmented(ws, spark: SparkS
           model_name: {model_name}
           registry_table: {registry_table}
           threshold: {threshold}
+          enable_contributions: false
+          enable_ai_explanation: false
           driver_only: true
     """
     checks = yaml.safe_load(checks_yaml)

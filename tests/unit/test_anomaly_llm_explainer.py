@@ -14,7 +14,26 @@ import pytest
 from databricks.labs.dqx.anomaly import anomaly_llm_explainer as llm_explainer
 from databricks.labs.dqx.anomaly.anomaly_llm_explainer import ExplanationContext
 from databricks.labs.dqx.anomaly.scoring_config import ScoringConfig, ScoringOutputColumns
+from databricks.labs.dqx.config import LLMModelConfig
 from databricks.labs.dqx.errors import InvalidParameterError
+
+
+class _FakeSpark:
+    """Minimal Spark stand-in for ``probe_endpoint_reachable``: records SQL and either returns a
+    collectable result or raises, mirroring an endpoint that is reachable / unreachable."""
+
+    def __init__(self, *, fail: bool = False) -> None:
+        self.fail = fail
+        self.queries: list[str] = []
+
+    def sql(self, query: str) -> "_FakeSpark":
+        self.queries.append(query)
+        if self.fail:
+            raise RuntimeError("endpoint not entitled")
+        return self
+
+    def collect(self) -> list:
+        return []
 
 
 def test_ai_query_prompt_header_includes_instructions_and_field_descriptions():
@@ -186,3 +205,35 @@ def test_explanation_context_threads_pattern_col_from_scoring_config():
     )
     ctx = ExplanationContext.from_scoring_config(config)
     assert ctx.pattern_col == "__dq_anomaly_pattern_abc123"
+
+
+def test_probe_endpoint_reachable_true_resolves_endpoint_and_probes_once():
+    """A reachable endpoint returns True after exactly one ai_query probe against the resolved
+    (provider-prefix-stripped) endpoint name."""
+    spark = _FakeSpark()
+    assert llm_explainer.probe_endpoint_reachable(spark, LLMModelConfig(model_name="databricks/my-endpoint")) is True
+    assert len(spark.queries) == 1
+    assert "ai_query('my-endpoint'" in spark.queries[0]
+
+
+def test_probe_endpoint_reachable_false_on_probe_failure():
+    """An unreachable endpoint degrades to False (the caller then skips explanations) rather than
+    raising, so a missing/un-entitled endpoint doesn't break scoring."""
+    spark = _FakeSpark(fail=True)
+    assert llm_explainer.probe_endpoint_reachable(spark, LLMModelConfig(model_name="my-endpoint")) is False
+
+
+def test_probe_endpoint_reachable_defaults_to_config_default_model():
+    """None config falls back to LLMModelConfig() — the default Databricks endpoint, not an error."""
+    spark = _FakeSpark()
+    assert llm_explainer.probe_endpoint_reachable(spark, None) is True
+    assert len(spark.queries) == 1
+
+
+def test_probe_endpoint_reachable_rejects_non_databricks_provider():
+    """Endpoint resolution still guards the provider — a non-Databricks model raises before any
+    probe, so the misconfiguration surfaces instead of silently degrading."""
+    spark = _FakeSpark()
+    with pytest.raises(InvalidParameterError, match="require a Databricks serving endpoint"):
+        llm_explainer.probe_endpoint_reachable(spark, LLMModelConfig(model_name="openai/gpt-4"))
+    assert not spark.queries

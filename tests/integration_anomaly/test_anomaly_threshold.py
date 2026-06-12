@@ -43,11 +43,21 @@ def test_synthetic_generator_threshold_monotonicity(anomaly_engine, spark, make_
         columns=feature_cols,
     )
 
+    # This test only asserts on is_anomaly counts; disable SHAP contributions + AI explanations
+    # so it doesn't pay the SHAP cost or make ai_query (LLM) calls.
     _, apply_low, info_col_low = has_no_row_anomalies(
-        model_name=model_name, registry_table=registry_table, threshold=30.0
+        model_name=model_name,
+        registry_table=registry_table,
+        threshold=30.0,
+        enable_contributions=False,
+        enable_ai_explanation=False,
     )
     _, apply_high, info_col_high = has_no_row_anomalies(
-        model_name=model_name, registry_table=registry_table, threshold=90.0
+        model_name=model_name,
+        registry_table=registry_table,
+        threshold=90.0,
+        enable_contributions=False,
+        enable_ai_explanation=False,
     )
 
     low_count = apply_low(test_df).filter(F.col(f"{info_col_low}.anomaly.is_anomaly") == F.lit(True)).count()

@@ -618,12 +618,28 @@ def _endpoint_reachable(spark: object, endpoint: str) -> bool:
         return False
 
 
+def probe_endpoint_reachable(spark: object, llm_model_config: LLMModelConfig | None) -> bool:
+    """Resolve the serving endpoint from *llm_model_config* and probe its reachability once.
+
+    Public entry point so a caller that invokes ``add_explanation_column`` repeatedly within a
+    single scoring run (e.g. *score_segmented*, once per segment) can probe **once** up front and
+    pass the result down via ``add_explanation_column(..., endpoint_reachable=...)``, instead of
+    paying one billable 1-token ``ai_query`` probe per segment.
+
+    Raises:
+        InvalidParameterError: When *model_name* does not resolve to a Databricks serving endpoint.
+    """
+    endpoint = _resolve_ai_query_endpoint((llm_model_config or LLMModelConfig()).model_name)
+    return _endpoint_reachable(spark, endpoint)
+
+
 def _add_explanation_column_ai_query(
     df_with_pattern: DataFrame,
     ctx: ExplanationContext,
     segment_str: str,
     is_ensemble: bool,
     drift_summary: str,
+    endpoint_reachable: bool | None = None,
 ) -> DataFrame:
     """ai_query-path explainer: SQL ``ai_query`` on executors, results pinned once per run.
 
@@ -652,9 +668,13 @@ def _add_explanation_column_ai_query(
         )
     # Endpoint resolution is a config check (raises for a non-Databricks provider); reachability is
     # a runtime check — if the endpoint isn't available, degrade to null explanations + a warning
-    # rather than failing the scoring run (AI explanations are on by default).
-    endpoint = _resolve_ai_query_endpoint((ctx.llm_model_config or LLMModelConfig()).model_name)
-    if not _endpoint_reachable(df_with_pattern.sparkSession, endpoint):
+    # rather than failing the scoring run (AI explanations are on by default). *endpoint_reachable*
+    # is passed by callers that already probed once for the whole run (e.g. score_segmented across
+    # segments); when None we probe here, so direct single callers keep working unchanged.
+    if endpoint_reachable is None:
+        endpoint = _resolve_ai_query_endpoint((ctx.llm_model_config or LLMModelConfig()).model_name)
+        endpoint_reachable = _endpoint_reachable(df_with_pattern.sparkSession, endpoint)
+    if not endpoint_reachable:
         return df_with_pattern.withColumn(ctx.ai_explanation_col, _build_empty_explanation_column()).drop(
             ctx.pattern_col
         )
@@ -673,6 +693,7 @@ def add_explanation_column(
     segment_values: dict[str, str] | None,
     is_ensemble: bool,
     drift_summary: str = "none",
+    endpoint_reachable: bool | None = None,
 ) -> DataFrame:
     """Add the AI explanation column to df using the group-based algorithm.
 
@@ -685,10 +706,23 @@ def add_explanation_column(
     Preconditions (caller's responsibility):
       - df has ctx.score_std_col, ctx.severity_col, and ctx.contributions_col.
 
+    Args:
+        df: Scored DataFrame to annotate with the explanation column.
+        ctx: Explanation inputs (columns, threshold, model, redaction, budget).
+        segment_values: Segment key/value pairs for this run, or None for a global model.
+        is_ensemble: Whether the scoring model is an ensemble (drives the confidence label).
+        drift_summary: Baseline-drift summary string for the prompt, or "none".
+        endpoint_reachable: Pre-computed serving-endpoint reachability. When None (default) the
+            endpoint is probed here with a single 1-token ai_query call. Callers that invoke this
+            repeatedly in one scoring run (e.g. once per segment) should probe once via
+            probe_endpoint_reachable and pass the result to avoid one billable probe per call.
+
     Raises:
       InvalidParameterError: When *model_name* does not resolve to a Databricks serving endpoint.
     """
     redact_set = frozenset(ctx.redact_columns)
     segment_str = _format_segment(segment_values, redact_set)
     df_with_pattern = df.withColumn(ctx.pattern_col, _pattern_spark_expr(ctx.contributions_col, redact_set))
-    return _add_explanation_column_ai_query(df_with_pattern, ctx, segment_str, is_ensemble, drift_summary)
+    return _add_explanation_column_ai_query(
+        df_with_pattern, ctx, segment_str, is_ensemble, drift_summary, endpoint_reachable=endpoint_reachable
+    )
