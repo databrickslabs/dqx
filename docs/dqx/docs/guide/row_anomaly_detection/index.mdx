@@ -345,6 +345,8 @@ Set `enable_ai_explanation=True` (requires `enable_contributions=True`) to attac
 
 The call runs inside Spark via the SQL `ai_query` function against a Databricks Model Serving endpoint, so it needs no extra dependency and scales with the cluster. Anomalous rows are grouped by a deterministic `(segment, pattern)` key (pattern = sorted top-2 contributing features) and the LLM is called **once per group**, so cost stays predictable on large datasets.
 
+Because the pattern key is only the top-2 features, two groups whose full feature distributions differ but whose top-2 contributors match (e.g. `amount+quantity` for both) collapse into one group and share a single explanation built from their averaged contributions. This is intentional — it keeps the number of LLM calls (and cost) low; the trade-off is a slightly less specific narrative for those merged groups.
+
 ```python
 from databricks.labs.dqx.rule import DQDatasetRule
 from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies

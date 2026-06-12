@@ -529,10 +529,13 @@ def _call_llm_for_groups_ai_query(
     def _sanitize(col_name: str) -> Column:
         # Strip C0/DEL control chars (CWE-117) and length-cap each LLM output field. Treat the
         # response as untrusted (OWASP LLM06): a jailbroken model can return control chars or
-        # multi-KB strings.
+        # multi-KB strings. When the field overruns the cap, trim back to a word boundary
+        # (drop the trailing partial word) instead of cutting mid-word.
+        cleaned = f"regexp_replace(__parsed.{col_name}, '[\\\\x00-\\\\x1f\\\\x7f]', ' ')"
+        capped = f"substring({cleaned}, 1, {_LLM_FIELD_MAX_LEN})"
         return F.expr(
-            f"substring(regexp_replace(__parsed.{col_name}, '[\\\\x00-\\\\x1f\\\\x7f]', ' '), "
-            f"1, {_LLM_FIELD_MAX_LEN})"
+            f"case when length({cleaned}) > {_LLM_FIELD_MAX_LEN} "
+            f"then regexp_replace({capped}, '\\\\s\\\\S*$', '') else {cleaned} end"
         )
 
     return parsed.select(
