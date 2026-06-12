@@ -440,12 +440,16 @@ Databricks CLI will confirm a few options:
 
 [DQX Studio](/docs/guide/dqx_studio) is the no-code Databricks App that exposes DQX's profiling, rule authoring, approval workflow, scheduled runs, and results tracking through a browser. It is deployed to your Databricks workspace as a [Databricks App](https://docs.databricks.com/en/dev-tools/databricks-apps/index.html) using a [Declarative Automation Bundle](https://docs.databricks.com/aws/en/dev-tools/bundles/) (DAB, formerly known as Databricks Asset Bundle).
 
+<Admonition type="info" title="Coming soon: Databricks Marketplace">
+We plan to publish DQX Studio to the Databricks Marketplace for one-click installation. Until then, deploy it with the bundle steps below.
+</Admonition>
+
 ### Prerequisites
 
 - **Databricks CLI** v0.268 or later, authenticated against your workspace (see [Authenticate Databricks CLI](#authenticate-databricks-cli)). v0.268 is the minimum that supports `lifecycle.prevent_destroy` on bundle resources, which the studio's stateful schemas / volume / Lakebase instance rely on.
 - Sufficient workspace permissions to deploy the bundle. **Workspace admin** is the easiest shortcut, but not strictly required — granular per-permission needs (Databricks Apps Can Manage, Lakebase Manager, UC catalog `MANAGE`, service principal `User` role, etc.) are listed in the [DQX Studio deployment guide § Required permissions](https://github.com/databrickslabs/dqx/blob/v0.14.0/app/DEPLOYMENT.md#required-permissions). If you don't hold them yourself, ask an admin to grant them.
 - `jq` and `make` available locally (used by the deployment scripts).
-- `bun` (used by `make app-check`; install via `curl -fsSL https://bun.sh/install | bash` or `brew install oven-sh/bun/bun`).
+- **App build toolchain** — `make app-deploy` first builds the wheel via `make app-build`, which needs **uv**, **Node.js 18+** (provides `npm`; install via `brew install node`, [nvm](https://github.com/nvm-sh/nvm), or [nodejs.org](https://nodejs.org/en/download)), and **yarn** (`npm install -g yarn`). (`bun` is only required for the optional `make app-check` type-check — install via `curl -fsSL https://bun.sh/install | bash` or `brew install oven-sh/bun/bun`.)
 - **Databricks Apps** feature enabled on the workspace.
 - **User token passthrough** enabled for Databricks Apps — DQX Studio uses On-Behalf-Of (OBO) tokens to access Unity Catalog with the end user's identity.
 - **Serverless compute** enabled on the workspace — the `dqx-studio-task-runner` job is serverless-only.

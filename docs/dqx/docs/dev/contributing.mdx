@@ -169,7 +169,14 @@ Always use `make` targets instead of running `uv` commands directly. The Makefil
 
 The DQX Studio (under `app/`) is a FastAPI backend + React frontend packaged as a single Python wheel and deployed as a [Databricks App](https://docs.databricks.com/en/dev-tools/databricks-apps/index.html). See [app/README.md](https://github.com/databrickslabs/dqx/blob/v0.14.0/app/README.md) for architecture and local development, and [DQX Studio deployment](#dqx-studio-deployment) below for the end-to-end deployment guide.
 
-Install the app's JavaScript dependencies (using the committed `yarn.lock`):
+The Studio's frontend tooling requires **Node.js 18+** (which provides `npm`), **yarn** (classic v1), and **bun**. Install them before running any `make app-*` target:
+```shell
+brew install node                           # Node.js 18+ (provides npm); or use nvm, or https://nodejs.org/en/download
+npm install -g yarn                         # yarn classic v1 (used by make app-install / app-build)
+curl -fsSL https://bun.sh/install | bash    # bun (used by make app-check); or: brew install oven-sh/bun/bun
+```
+
+Then install the app's JavaScript dependencies (using the committed `yarn.lock`):
 ```shell
 make app-install
 ```

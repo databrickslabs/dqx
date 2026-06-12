@@ -25,6 +25,8 @@ git verify-commit <hash>   # verify after first commit
 
 The Studio is a separate uv sub-project with its own pyproject + lockfile under `app/`. Use these targets — never invoke `uv` / `yarn` / `bun` directly unless you know why:
 
+**Prerequisites:** before `make app-install` / `app-build` / `app-check` / `app-deploy` (deploy builds the wheel first), install the JS toolchain — Node.js 18+ (provides `npm`; `brew install node` / nvm / nodejs.org), **yarn** classic v1 (`npm install -g yarn`), and **bun** (`curl -fsSL https://bun.sh/install | bash`). See [`app/DEVELOPMENT.md`](app/DEVELOPMENT.md#prerequisites).
+
 ```bash
 make app-install              # yarn install --frozen-lockfile
 make app-build                # OpenAPI dump + orval + Vite build + wheels

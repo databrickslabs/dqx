@@ -57,8 +57,10 @@ class DQProfiler(DQEngineBase):
         "num_sigmas": 3,  # number of sigmas to use when remove_outliers is True
         "trim_strings": True,  # trim whitespace from strings
         "max_empty_ratio": 0.01,  # generate is_not_null_or_empty rule if we have less than 1 percent of empty strings
-        "sample_fraction": 0.3,  # fraction of data to sample (30%)
+        "sample_fraction": 0.3,  # fraction of data to sample. float for uniform sample, or dict for per-stratum sample (requires sample_by_column)
         "sample_seed": None,  # seed for sampling
+        "sample_by_column": None,  # column used to stratify the sample via DataFrame.sampleBy
+        "sample_by_values_limit": 1000,  # max distinct sample_by_column values collected when sampling uniformly
         "limit": 1000,  # limit the number of samples
         "filter": None,  # filter to apply to the dataset
         "llm_primary_key_detection": True,  # detect primary keys
@@ -340,17 +342,83 @@ class DQProfiler(DQEngineBase):
     def _sample(df: DataFrame, opts: dict[str, Any]) -> DataFrame:
         sample_fraction = opts.get("sample_fraction", None)
         sample_seed = opts.get("sample_seed", None)
+        sample_by_column = opts.get("sample_by_column", None)
+        sample_by_values_limit = opts.get("sample_by_values_limit", None)
         limit = opts.get("limit", None)
         filter_dataset = opts.get("filter", None)
 
         if filter_dataset:
             df = df.filter(filter_dataset)
-        if sample_fraction:
+
+        if isinstance(sample_fraction, dict) and not sample_by_column:
+            raise InvalidConfigError("sample_fraction must be of type float when sample_by_column is not set.")
+
+        if sample_by_column:
+            df = DQProfiler._stratified_sample(
+                df, sample_by_column, sample_fraction, sample_seed, sample_by_values_limit
+            )
+        elif sample_fraction is not None:
             df = df.sample(withReplacement=False, fraction=sample_fraction, seed=sample_seed)
         if limit:
             df = df.limit(limit)
 
         return df
+
+    @staticmethod
+    def _stratified_sample(
+        df: DataFrame,
+        sample_by_column: str,
+        sample_fraction: float | dict[Any, float] | None,
+        sample_seed: int | None,
+        sample_by_values_limit: int | None = None,
+    ) -> DataFrame:
+        """
+        Draw a stratified sample across the unique values of the specified *sample_by_column*.
+        Uses the *sample_fraction* to control the sampling rate:
+
+        * When *sample_fraction* is a dict, each value controls the sampling fraction for the slice key.
+          Strata not present in the dict are assigned a fraction of 0 and excluded from the sample.
+        * When *sample_fraction* is a float, the profiler samples uniformly across all slice values
+
+        When a uniform *sample_fraction* is used, the distinct values are collected. To bound this
+        collection on high-cardinality columns, at most *sample_by_values_limit* distinct values are
+        collected; rows whose *sample_by_column* value falls outside the limit are excluded from the sample.
+
+        Args:
+            df: Input DataFrame to sample.
+            sample_by_column: Name of the column to slice by.
+            sample_fraction: Per-slice dictionary of slice value and fraction or a uniform float applied
+                to every distinct value of *sample_by_column*.
+            sample_seed: Optional seed for reproducible sampling.
+            sample_by_values_limit: Maximum number of distinct *sample_by_column* values to collect when
+                *sample_fraction* is a uniform float. Ignored when *sample_fraction* is a dict.
+
+        Returns:
+            A stratified sample of the input DataFrame.
+
+        Raises:
+            InvalidConfigError: If *sample_by_column* is not a column of the DataFrame, or if
+                *sample_fraction* is missing.
+        """
+        if sample_by_column not in df.columns:
+            raise InvalidConfigError(f"sample_by_column '{sample_by_column}' is not a column of the input DataFrame.")
+
+        if isinstance(sample_fraction, dict):
+            sample_fractions = sample_fraction
+        else:
+            if sample_fraction is None:
+                raise InvalidConfigError("sample_fraction must be provided when sample_by_column is set.")
+            # Order before limiting so that *which* strata are kept is deterministic; otherwise
+            # ``distinct().limit()`` returns an arbitrary subset and the sample would not be
+            # reproducible across runs even when ``sample_seed`` is set.
+            distinct_values = df.select(sample_by_column).distinct().orderBy(sample_by_column)
+            if sample_by_values_limit is not None:
+                distinct_values = distinct_values.limit(sample_by_values_limit)
+            slice_values = [row[0] for row in distinct_values.toLocalIterator()]
+            sample_fractions = {slice_value: sample_fraction for slice_value in slice_values}
+
+        logger.info(f"Stratified sampling on column '{sample_by_column}'")
+        return df.sampleBy(sample_by_column, fractions=sample_fractions, seed=sample_seed)
 
     def _profile(
         self,
