@@ -111,7 +111,10 @@ def test_ai_query_explanation_populated_for_anomalous_row(
     for feat in explanation["top_features"].split("+"):
         assert feat in {"amount", "quantity", "discount"}
     assert explanation["group_size"] == 1
-    assert explanation["group_avg_severity"] == pytest.approx(anomaly_info["severity_percentile"], rel=1e-6)
+    # Single-row group: group_avg_severity is the row's severity. The struct's
+    # severity_percentile is rounded to 1 decimal while group_avg_severity is full precision,
+    # so compare with a tolerance that absorbs that rounding rather than exact equality.
+    assert explanation["group_avg_severity"] == pytest.approx(anomaly_info["severity_percentile"], abs=0.1)
 
 
 def test_ai_query_explanation_null_for_non_anomalous_row(
