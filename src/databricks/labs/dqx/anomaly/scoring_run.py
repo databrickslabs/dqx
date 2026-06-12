@@ -114,6 +114,7 @@ def score_global_model(
     if record.features.feature_metadata is None:
         raise InvalidParameterError(f"Model {record.identity.model_name} missing feature_metadata")
 
+    quantile_points = extract_quantile_points(record)
     if config.driver_only:
         scored_df = (
             score_ensemble_models_local(
@@ -124,6 +125,8 @@ def score_global_model(
                 config.merge_columns,
                 config.enable_contributions,
                 model_record=record,
+                quantile_points=quantile_points,
+                threshold=config.threshold,
             )
             if record.identity.is_ensemble
             else score_with_sklearn_model_local(
@@ -134,6 +137,8 @@ def score_global_model(
                 config.merge_columns,
                 enable_contributions=config.enable_contributions,
                 model_record=record,
+                quantile_points=quantile_points,
+                threshold=config.threshold,
             ).withColumn("anomaly_score_std", F.lit(0.0))
         )
     else:
@@ -146,6 +151,8 @@ def score_global_model(
                 config.merge_columns,
                 config.enable_contributions,
                 model_record=record,
+                quantile_points=quantile_points,
+                threshold=config.threshold,
             )
             if record.identity.is_ensemble
             else score_with_sklearn_model(
@@ -156,6 +163,8 @@ def score_global_model(
                 config.merge_columns,
                 enable_contributions=config.enable_contributions,
                 model_record=record,
+                quantile_points=quantile_points,
+                threshold=config.threshold,
             ).withColumn("anomaly_score_std", F.lit(0.0))
         )
 
@@ -164,7 +173,6 @@ def score_global_model(
     if config.enable_contributions and "anomaly_contributions" in scored_df.columns:
         scored_df = scored_df.withColumnRenamed("anomaly_contributions", config.contributions_col)
 
-    quantile_points = extract_quantile_points(record)
     scored_df = add_severity_percentile_column(
         scored_df,
         score_col=config.score_col,
@@ -256,6 +264,7 @@ def score_single_segment(
             f"Model '{segment_model.identity.model_name}' is missing feature_metadata required for scoring."
         )
 
+    quantile_points = extract_quantile_points(segment_model)
     if config.driver_only:
         segment_scored = score_with_sklearn_model_local(
             segment_model.identity.model_uri,
@@ -265,6 +274,8 @@ def score_single_segment(
             config.merge_columns,
             enable_contributions=config.enable_contributions,
             model_record=segment_model,
+            quantile_points=quantile_points,
+            threshold=config.threshold,
         )
     else:
         segment_scored = score_with_sklearn_model(
@@ -275,6 +286,8 @@ def score_single_segment(
             config.merge_columns,
             enable_contributions=config.enable_contributions,
             model_record=segment_model,
+            quantile_points=quantile_points,
+            threshold=config.threshold,
         )
 
     segment_scored = segment_scored.withColumn("anomaly_score_std", F.lit(0.0))
@@ -284,7 +297,6 @@ def score_single_segment(
     if config.enable_contributions and "anomaly_contributions" in segment_scored.columns:
         segment_scored = segment_scored.withColumnRenamed("anomaly_contributions", config.contributions_col)
 
-    quantile_points = extract_quantile_points(segment_model)
     segment_scored = add_severity_percentile_column(
         segment_scored,
         score_col=config.score_col,

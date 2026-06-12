@@ -86,6 +86,60 @@ def compute_shap_values(
     return shap_values, valid_indices
 
 
+# Severity-gating margin for in-UDF SHAP computation. The UDF recomputes severity from raw
+# scores with numpy while the authoritative severity is a Spark expression over the same
+# quantile points; the epsilon makes the UDF-side gate slightly over-inclusive so floating-point
+# drift between the two implementations can never leave an anomalous row without contributions.
+_SEVERITY_GATE_EPSILON = 1e-6
+
+
+def severity_from_scores(scores: np.ndarray, quantile_points: list[tuple[float, float]]) -> np.ndarray:
+    """Map raw anomaly scores to severity percentiles via piecewise linear interpolation.
+
+    Numpy counterpart of *add_severity_percentile_column* (same quantile points, same
+    clamping at both ends) for use inside scoring UDFs.
+    """
+    points = sorted(quantile_points, key=lambda p: p[0])
+    percentiles = np.array([float(p) for p, _ in points])
+    score_knots = np.array([float(q) for _, q in points])
+    return np.interp(scores, score_knots, percentiles)
+
+
+def compute_gated_shap_contributions(
+    model_local: Any,
+    feature_matrix: pd.DataFrame,
+    engineered_feature_cols: list[str],
+    scores: np.ndarray,
+    quantile_points: list[tuple[float, float]] | None,
+    threshold: float | None,
+) -> list[dict[str, float | None] | None]:
+    """Compute SHAP contributions only for rows whose severity reaches the anomaly threshold.
+
+    TreeSHAP costs an order of magnitude more than scoring itself, and contributions are only
+    surfaced for anomalous rows, so computing SHAP for the typically tiny anomalous subset
+    instead of every row removes most of the contributions cost. Rows below the threshold get
+    ``None`` (a null map). When *quantile_points* or *threshold* is unavailable, SHAP is
+    computed for all rows (previous behaviour).
+    """
+    num_rows = len(feature_matrix)
+    if not quantile_points or threshold is None:
+        shap_values, valid_indices = compute_shap_values(model_local, feature_matrix, engineered_feature_cols)
+        return list(format_shap_contributions(shap_values, valid_indices, num_rows, engineered_feature_cols))
+
+    severity = severity_from_scores(np.asarray(scores, dtype=float), quantile_points)
+    anomalous_positions = np.flatnonzero(severity >= (float(threshold) - _SEVERITY_GATE_EPSILON))
+    contributions: list[dict[str, float | None] | None] = [None] * num_rows
+    if anomalous_positions.size:
+        subset = feature_matrix.iloc[anomalous_positions]
+        shap_values, valid_indices = compute_shap_values(model_local, subset, engineered_feature_cols)
+        subset_contributions = format_shap_contributions(
+            shap_values, valid_indices, len(subset), engineered_feature_cols
+        )
+        for position, contribution in zip(anomalous_positions.tolist(), subset_contributions):
+            contributions[position] = contribution
+    return contributions
+
+
 def format_contributions_map(contributions_map: dict[str, float | None] | None, top_n: int) -> str:
     """Format contributions map as string for top N contributors.
 

@@ -245,7 +245,7 @@ However, when you run a row anomaly detection check, DQX also adds a `_dq_info` 
 
 The info column is an array of structs, with one element per anomaly detection check that was applied.
 
-Feature contributions are disabled by default for faster scoring. You can enable with `enable_contributions` parameter:
+Feature contributions are on by default and are computed only for anomalous rows (severity at or above the threshold) — non-anomalous rows carry a `null` contributions map, so the SHAP cost scales with the number of anomalies, not the table size. Set `enable_contributions=False` to skip them entirely for the fastest scoring. Severity percentiles are always computed for every row, so you can still count would-be anomalies at other thresholds after scoring; but if you want contributions (and AI explanations) for rows below your enforcement threshold, score with the lower exploration threshold and filter afterwards:
 
 ```python
 DQDatasetRule(
@@ -254,7 +254,7 @@ DQDatasetRule(
   check_func_kwargs={
     "model_name": "catalog.schema.orders_monitor",  # fully qualified name
     "registry_table": "catalog.schema.dqx_anomaly_models",   # fully qualified name
-    "enable_contributions": True,
+    # "enable_contributions": False,  # optional: skip SHAP (also disables AI explanations)
   }
 )
 ```
@@ -292,7 +292,7 @@ For full parameter and schema details, see [Row Anomaly Detection in Quality Che
 1. **Feature engineering** (automatic): DQX detects column types and creates features (numerical standardized, categorical one-hot or frequency-encoded, temporal expanded to hour/day/month/weekend).
 2. **Smart sampling and training**: DQX samples your data (default 30%, capped at 1M rows), trains an ensemble of Isolation Forest models, and captures baseline statistics for drift detection.
 3. **Model registry**: Models and metadata live in MLflow and a Delta table; segmented models use deterministic names (for example `__seg_region=US_tier=gold`).
-4. **Scoring and explanation**: Raw scores are normalized to a 0–100 severity percentile. Set `enable_contributions=True` for SHAP contributions (which features drove each score); default is `False` for faster scoring.
+4. **Scoring and explanation**: Raw scores are normalized to a 0–100 severity percentile. SHAP contributions (which features drove each score) are on by default and computed only for anomalous rows; set `enable_contributions=False` to skip them for the fastest scoring.
 5. **Auto-discovery of columns and segments**: When you call `train()` without `columns` or `segment_by`, DQX automatically discovers both. It selects numeric columns with enough variance as features and may **auto-segment** when it finds suitable segment columns: categorical or low-cardinality columns with 2–50 distinct values, low null rate, and enough rows per segment (for example region, product category). If your auto-trained model is segmented, that is expected. To force a single global model, pass `segment_by=[]` (or omit segment columns from the data used for discovery) or set `columns` and `segment_by` explicitly.
 
 ### Why Isolation Forest?
@@ -322,7 +322,7 @@ Each element is a **struct** with a shared “wide” schema. Currently, the onl
 | `threshold` | double | Severity percentile threshold used (e.g. 95.0). |
 | `model` | string | Full model name (e.g. Unity Catalog name). |
 | `segment` | map&lt;string, string&gt; | Segment key-value pairs for segmented models; `null` for global models. |
-| `contributions` | map&lt;string, double&gt; | Per-feature contribution percentages (0–100). On by default (`enable_contributions=True`); `null` if you set it `False`. |
+| `contributions` | map&lt;string, double&gt; | Per-feature contribution percentages (0–100). On by default (`enable_contributions=True`); populated only for anomalous rows — `null` for non-anomalous rows or if you set it `False`. |
 | `confidence_std` | double | Ensemble score standard deviation. Present when `enable_confidence_std=True`; `null` otherwise. |
 | `ai_explanation` | struct | LLM-generated explanation for the row's `(segment, pattern)` group. On by default (`enable_ai_explanation=True`); `null` for non-anomalous rows, when disabled, or when no serving endpoint is reachable. See [AI explanations](#ai-explanations) below. |
 

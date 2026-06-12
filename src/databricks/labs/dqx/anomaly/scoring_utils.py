@@ -112,9 +112,14 @@ def add_info_column(
     else:
         anomaly_info_fields["segment"] = F.lit(None).cast(MapType(StringType(), StringType()))
 
-    # Add contributions (null if not requested or not available)
+    # Add contributions (null if not requested or not available). Contributions are only
+    # surfaced for anomalous rows: SHAP is computed just for rows at or above the threshold
+    # (see compute_gated_shap_contributions) and this gate makes the observable contract
+    # exact — non-anomalous rows always carry a null map.
     if enable_contributions and contributions_col in df.columns:
-        anomaly_info_fields["contributions"] = F.col(contributions_col)
+        anomaly_info_fields["contributions"] = F.when(
+            F.col(severity_col) >= F.lit(threshold), F.col(contributions_col)
+        ).otherwise(F.lit(None).cast(MapType(StringType(), DoubleType())))
     else:
         anomaly_info_fields["contributions"] = F.lit(None).cast(MapType(StringType(), DoubleType()))
 

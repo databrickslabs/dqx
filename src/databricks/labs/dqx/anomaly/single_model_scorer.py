@@ -16,15 +16,13 @@ from pyspark.sql.types import (
 
 from databricks.labs.dqx.anomaly.feature_prep import (
     apply_feature_engineering_for_scoring,
+    apply_feature_engineering_with_row_passthrough,
     prepare_feature_metadata,
 )
 from databricks.labs.dqx.anomaly.model_loader import load_and_validate_model
 from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRecord
 from databricks.labs.dqx.anomaly.scoring_utils import create_udf_schema
-from databricks.labs.dqx.anomaly.explainability import (
-    compute_shap_values,
-    format_shap_contributions,
-)
+from databricks.labs.dqx.anomaly.explainability import compute_gated_shap_contributions
 
 
 def create_scoring_udf(
@@ -49,8 +47,15 @@ def create_scoring_udf_with_contributions(
     model_bytes: bytes,
     engineered_feature_cols: list[str],
     schema: StructType,
+    quantile_points: list[tuple[float, float]] | None = None,
+    threshold: float | None = None,
 ):
-    """Create pandas UDF for distributed scoring with SHAP contributions."""
+    """Create pandas UDF for distributed scoring with SHAP contributions.
+
+    When *quantile_points* and *threshold* are provided, SHAP runs only for rows whose
+    severity reaches the threshold (contributions are only surfaced for anomalous rows);
+    other rows get a null contributions map.
+    """
 
     @pandas_udf(schema)  # type: ignore[call-overload]
     def predict_with_shap_udf(*cols: pd.Series) -> pd.DataFrame:
@@ -59,13 +64,13 @@ def create_scoring_udf_with_contributions(
         feature_matrix.columns = engineered_feature_cols
         scores = -model_local.score_samples(feature_matrix)
 
-        shap_values, valid_indices = compute_shap_values(
+        contributions_list = compute_gated_shap_contributions(
             model_local,
             feature_matrix,
             engineered_feature_cols,
-        )
-        contributions_list = format_shap_contributions(
-            shap_values, valid_indices, len(feature_matrix), engineered_feature_cols
+            scores,
+            quantile_points,
+            threshold,
         )
 
         return pd.DataFrame({"anomaly_score": scores, "anomaly_contributions": contributions_list})
@@ -82,11 +87,18 @@ def score_with_sklearn_model(
     enable_contributions: bool = False,
     *,
     model_record: AnomalyModelRecord,
+    quantile_points: list[tuple[float, float]] | None = None,
+    threshold: float | None = None,
 ) -> DataFrame:
-    """Score DataFrame using scikit-learn model with distributed pandas UDF."""
+    """Score DataFrame using scikit-learn model with distributed pandas UDF.
+
+    The original row rides through feature engineering inside a struct column and is
+    restored after scoring, so scores are attached in the same pass — no join back onto
+    the caller's DataFrame (which would recompute the source and shuffle on the row id).
+    """
     sklearn_model = load_and_validate_model(model_uri, model_record)
     column_infos, feature_metadata = prepare_feature_metadata(feature_metadata_json)
-    engineered_df = apply_feature_engineering_for_scoring(
+    engineered_df, original_row_col = apply_feature_engineering_with_row_passthrough(
         df, feature_cols, merge_columns, column_infos, feature_metadata
     )
 
@@ -95,17 +107,19 @@ def score_with_sklearn_model(
 
     schema = create_udf_schema(enable_contributions)
     if enable_contributions:
-        predict_udf = create_scoring_udf_with_contributions(model_bytes, engineered_feature_cols, schema)
+        predict_udf = create_scoring_udf_with_contributions(
+            model_bytes, engineered_feature_cols, schema, quantile_points, threshold
+        )
     else:
         predict_udf = create_scoring_udf(model_bytes, engineered_feature_cols, schema)
 
     scored_df = engineered_df.withColumn("_scores", predict_udf(*[col(c) for c in engineered_feature_cols]))
 
-    cols_to_select = [*merge_columns, "_scores.anomaly_score"]
+    cols_to_select = [f"{original_row_col}.*", "_scores.anomaly_score"]
     if enable_contributions:
         cols_to_select.append("_scores.anomaly_contributions")
 
-    return df.join(scored_df.select(*cols_to_select), on=merge_columns, how="left")
+    return scored_df.select(*cols_to_select)
 
 
 def score_with_sklearn_model_local(
@@ -117,6 +131,8 @@ def score_with_sklearn_model_local(
     enable_contributions: bool = False,
     *,
     model_record: AnomalyModelRecord,
+    quantile_points: list[tuple[float, float]] | None = None,
+    threshold: float | None = None,
 ) -> DataFrame:
     """Score DataFrame using scikit-learn model locally on the driver."""
     sklearn_model = load_and_validate_model(model_uri, model_record)
@@ -135,13 +151,13 @@ def score_with_sklearn_model_local(
     result["anomaly_score"] = scores
 
     if enable_contributions:
-        shap_values, valid_indices = compute_shap_values(
+        result["anomaly_contributions"] = compute_gated_shap_contributions(
             sklearn_model,
             feature_matrix,
             engineered_feature_cols,
-        )
-        result["anomaly_contributions"] = format_shap_contributions(
-            shap_values, valid_indices, len(local_pdf), engineered_feature_cols
+            scores,
+            quantile_points,
+            threshold,
         )
 
     result_pdf = pd.DataFrame(result)

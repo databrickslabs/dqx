@@ -3395,7 +3395,7 @@ checks = [
 - `threshold`: Severity percentile threshold (0–100, default 95).
 - `row_filter`: Optional SQL expression to filter rows before scoring.
 - `drift_threshold`: Optional float (e.g. 3.0) to enable drift detection; default None (disabled). When set, a warning is emitted if the scoring distribution at check time deviates from training. A value of 3.0 corresponds to roughly 3-sigma deviation from training statistics. See the section below for more details.
-- `enable_contributions`: Include per-feature contributions in `_dq_info[0].anomaly.contributions` (default `True`). Adds scoring cost; set `False` to skip the SHAP computation (which also disables AI explanations). See the section below and [Schema of _dq_info](/docs/guide/row_anomaly_detection#schema-of-the-info-column-_dq_info) for field details.
+- `enable_contributions`: Include per-feature contributions in `_dq_info[0].anomaly.contributions` (default `True`). SHAP is computed only for anomalous rows (severity at or above the threshold), so the cost scales with the number of anomalies rather than the table size; non-anomalous rows get a `null` map. Set `False` to skip the SHAP computation entirely (which also disables AI explanations). See the section below and [Schema of _dq_info](/docs/guide/row_anomaly_detection#schema-of-the-info-column-_dq_info) for field details.
 - `enable_confidence_std`: Include `confidence_std` for ensembles (default `False`). Useful when using ensemble training.
 - `enable_ai_explanation`: Add an LLM-generated plain-language explanation in `_dq_info[0].anomaly.ai_explanation` (default `True`). Uses the SHAP contributions as input — if `enable_contributions=False`, explanations are disabled with a warning (not an error). The LLM call runs inside Spark via the SQL `ai_query` function against a Databricks Model Serving endpoint — no extra dependency, but it requires Databricks serverless compute or Databricks Runtime 15.4 LTS or above (where `ai_query` is available). If `ai_query` is unavailable or the endpoint isn't reachable, explanations are skipped with a warning and scoring still completes. See the **AI Explanations** section below.
 - `ai_explanation_llm_model_config`: `LLMModelConfig` (or a dict with keys `model_name`, `api_key`, `api_base`) used by `enable_ai_explanation`. `model_name` must resolve to a Databricks Model Serving endpoint (the `databricks/` prefix, if present, is stripped). Defaults to `databricks/databricks-claude-sonnet-4-5`.
@@ -3446,7 +3446,7 @@ checks = [
 ]
 ```
 
-When `enable_contributions=True`, the `_dq_info` column includes `contributions` (per-feature contribution percentages). For the full list of fields in `_dq_info` and the nested `anomaly` struct, see [Schema of the info column (_dq_info)](/docs/guide/row_anomaly_detection#schema-of-the-info-column-_dq_info).
+When `enable_contributions=True`, the `_dq_info` column includes `contributions` (per-feature contribution percentages) for anomalous rows; non-anomalous rows carry a `null` map. For the full list of fields in `_dq_info` and the nested `anomaly` struct, see [Schema of the info column (_dq_info)](/docs/guide/row_anomaly_detection#schema-of-the-info-column-_dq_info).
 
 Example: triage top anomalies and inspect contributions:
 ```python

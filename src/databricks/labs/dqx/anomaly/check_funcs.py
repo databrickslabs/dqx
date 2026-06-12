@@ -145,7 +145,8 @@ def has_no_row_anomalies(
       - _dq_info[0].anomaly.threshold: Severity percentile threshold used (0–100)
       - _dq_info[0].anomaly.model: Model name
       - _dq_info[0].anomaly.segment: Segment values (if segmented)
-      - _dq_info[0].anomaly.contributions: SHAP contributions as percentages (0–100)
+      - _dq_info[0].anomaly.contributions: SHAP contributions as percentages (0–100); populated
+        only for anomalous rows, null otherwise
       - _dq_info[0].anomaly.confidence_std: Ensemble std (if requested)
 
     Notes:
@@ -166,9 +167,11 @@ def has_no_row_anomalies(
             result. Auto-injected from the check filter.
         drift_threshold: Drift detection threshold (default 3.0, None to disable).
         enable_contributions: Include SHAP feature contributions for explainability (default True).
-            Per-feature contributions are added to _dq_info; adds scoring cost. Requires the SHAP
-            library (installed with the anomaly extra). Set False to skip the SHAP cost (this also
-            disables AI explanations, since they use contributions as input).
+            Per-feature contributions are added to _dq_info for anomalous rows only (severity at or
+            above the threshold; other rows get a null map), so the SHAP cost scales with the number
+            of anomalies rather than the table size. Requires the SHAP library (installed with the
+            anomaly extra). Set False to skip the SHAP cost entirely (this also disables AI
+            explanations, since they use contributions as input).
         enable_confidence_std: Include ensemble confidence scores in _dq_info and top-level (default False).
             Automatically available when training with ensemble_size > 1 (default is 3).
         enable_ai_explanation: Add a human-readable LLM explanation for each anomalous row
