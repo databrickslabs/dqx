@@ -12,7 +12,8 @@ from databricks.labs.dqx.config import (
     TableChecksStorageConfig,
 )
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.errors import InvalidConfigError
+from databricks.labs.dqx.errors import InvalidConfigError, InvalidParameterError
+from databricks.labs.dqx.metrics_observer import DQMetricsObserver
 from databricks.labs.dqx.rule import DQRowRule, DQDatasetRule
 from tests.integration.conftest import (
     EXTRA_PARAMS,
@@ -881,6 +882,17 @@ def test_apply_checks_and_save_in_table_streaming_write(ws, spark, make_schema, 
     assert_df_equality(actual_df.sort("a"), expected_df.sort("a"), ignore_nullable=True)
 
 
+def test_apply_checks_and_save_in_table_streaming_metrics_only_unsupported(ws, spark):
+    engine = DQEngine(ws, spark=spark, observer=DQMetricsObserver(), extra_params=EXTRA_PARAMS)
+
+    with pytest.raises(InvalidParameterError, match="Metrics-only writes are not supported for streaming input"):
+        engine.apply_checks_and_save_in_table(
+            checks=[],
+            input_config=InputConfig(location="catalog.schema.input", is_streaming=True),
+            metrics_config=OutputConfig(location="catalog.schema.metrics"),
+        )
+
+
 def test_apply_checks_and_save_in_tables(ws, spark, make_schema, make_random, make_directory):
     catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
@@ -1338,14 +1350,14 @@ def test_apply_checks_and_save_in_tables_missing_input_config(ws, spark):
         engine.apply_checks_and_save_in_tables(run_configs=[run_config])
 
 
-def test_apply_checks_and_save_in_tables_missing_output_and_quarantine_config(ws, spark):
+def test_apply_checks_and_save_in_tables_missing_destination_configs(ws, spark):
     engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
 
     run_config = RunConfig(input_config=InputConfig(location="some_table"))
 
     with pytest.raises(
         InvalidConfigError,
-        match="At least one of 'output_config' or 'quarantine_config' must be provided",
+        match="At least one of 'output_config', 'quarantine_config' or 'metrics_config' must be provided",
     ):
         engine.apply_checks_and_save_in_tables(run_configs=[run_config])
 
@@ -1691,6 +1703,75 @@ def test_apply_checks_and_save_in_tables_for_patterns_quarantine_only(
             spark.sql(f"SHOW TABLES FROM {catalog_name}.{schema.name} LIKE '{output_table.split('.')[-1]}'").count()
             == 0
         ), f"Output table {output_table} should not have been created"
+
+
+@pytest.mark.usefixtures("skip_if_classic_compute")
+def test_apply_checks_and_save_in_tables_for_patterns_metrics_only_without_output_suffix(
+    ws, spark, make_schema, make_random, make_directory
+):
+    catalog_name = TEST_CATALOG
+    schema = make_schema(catalog_name=catalog_name)
+
+    input_tables = [f"{catalog_name}.{schema.name}.{make_random(8).lower()}" for _ in range(2)]
+    metrics_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+
+    test_schema = "a: int, b: string"
+    test_df1 = spark.createDataFrame([[1, "valid"], [None, "invalid"]], test_schema)
+    test_df2 = spark.createDataFrame([[100, "test"], [200, None]], test_schema)
+
+    test_df1.write.format("delta").mode("overwrite").saveAsTable(input_tables[0])
+    test_df2.write.format("delta").mode("overwrite").saveAsTable(input_tables[1])
+
+    table1_checks = [
+        {
+            "name": "a_is_null",
+            "criticality": "error",
+            "check": {"function": "is_not_null", "arguments": {"column": "a"}},
+        }
+    ]
+    table2_checks = [
+        {
+            "name": "b_is_null",
+            "criticality": "warn",
+            "check": {"function": "is_not_null", "arguments": {"column": "b"}},
+        }
+    ]
+
+    engine = DQEngine(ws, spark=spark, observer=DQMetricsObserver(), extra_params=EXTRA_PARAMS)
+    workspace_folder = str(make_directory().absolute())
+    engine.save_checks(
+        table1_checks, config=WorkspaceFileChecksStorageConfig(location=f"{workspace_folder}/{input_tables[0]}.yml")
+    )
+    engine.save_checks(
+        table2_checks, config=WorkspaceFileChecksStorageConfig(location=f"{workspace_folder}/{input_tables[1]}.yml")
+    )
+
+    engine.apply_checks_and_save_in_tables_for_patterns(
+        patterns=input_tables,
+        checks_location=workspace_folder,
+        run_config_template=RunConfig(metrics_config=OutputConfig(location=metrics_table)),
+        output_table_suffix="",
+        max_parallelism=1,
+    )
+
+    metrics_rows = spark.table(metrics_table).collect()
+    input_locations = {row["input_location"] for row in metrics_rows}
+    assert input_locations == set(input_tables)
+
+    metric_names = {row["metric_name"] for row in metrics_rows}
+    assert metric_names == {
+        "input_row_count",
+        "error_row_count",
+        "warning_row_count",
+        "valid_row_count",
+        "check_metrics",
+    }
+
+    output_locations = {row["output_location"] for row in metrics_rows}
+    assert output_locations == {None}
+
+    quarantine_locations = {row["quarantine_location"] for row in metrics_rows}
+    assert quarantine_locations == {None}
 
 
 def test_apply_checks_and_save_in_tables_for_patterns_checks_in_table(ws, spark, make_schema, make_random):
