@@ -307,7 +307,9 @@ def test_ai_query_explanation_on_by_default(
         driver_only=True,
         ai_explanation_llm_model_config={"model_name": ai_query_endpoint},
     )
-    anomaly = apply_fn(test_df).collect()[0][info_col][0]["anomaly"]
+    # Direct apply (not via the normalizing helper), so info_col is a single struct<anomaly: ...>,
+    # not the _dq_info array — access the anomaly field directly.
+    anomaly = apply_fn(test_df).collect()[0][info_col]["anomaly"]
     assert anomaly["is_anomaly"] is True
     assert anomaly["contributions"] is not None, "contributions should be on by default"
     assert anomaly["ai_explanation"] is not None, "ai_explanation should be on by default"
