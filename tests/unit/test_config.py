@@ -260,13 +260,82 @@ def test_llm_model_config_defaults():
     assert config.api_base == ""
 
 
+def test_llm_model_config_max_retries_default():
+    assert LLMModelConfig().max_retries == 3
+
+
+def test_llm_model_config_max_retries_accepts_zero():
+    """0 disables retries entirely — useful for tests that want to surface failures fast."""
+    assert LLMModelConfig(max_retries=0).max_retries == 0
+
+
+def test_llm_model_config_rejects_negative_max_retries():
+    with pytest.raises(InvalidParameterError, match="max_retries must be a non-negative integer"):
+        LLMModelConfig(max_retries=-1)
+
+
+def test_llm_model_config_rejects_non_integer_max_retries():
+    with pytest.raises(InvalidParameterError, match="max_retries must be a non-negative integer"):
+        LLMModelConfig(max_retries=2.5)  # type: ignore[arg-type]
+
+
+def test_llm_model_config_rejects_bool_max_retries():
+    """``True``/``False`` are ints in Python but a clear typo in this context — reject explicitly."""
+    with pytest.raises(InvalidParameterError, match="max_retries must be a non-negative integer"):
+        LLMModelConfig(max_retries=True)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("bad", [0, -1, 2.5, True, None])
+def test_llm_model_config_rejects_invalid_max_tokens(bad):
+    # Must be a positive int — a clean InvalidParameterError instead of a raw TypeError at
+    # ai_query SQL-build time, and no non-positive value reaching the endpoint.
+    with pytest.raises(InvalidParameterError, match="max_tokens must be a positive integer"):
+        LLMModelConfig(max_tokens=bad)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("bad", [-0.1, -1, True, None])
+def test_llm_model_config_rejects_invalid_temperature(bad):
+    with pytest.raises(InvalidParameterError, match="temperature must be a non-negative number"):
+        LLMModelConfig(temperature=bad)  # type: ignore[arg-type]
+
+
+def test_llm_model_config_accepts_valid_budget_values():
+    config = LLMModelConfig(max_tokens=256, temperature=0.5)
+    assert config.max_tokens == 256
+    assert config.temperature == 0.5
+
+
 def test_llm_model_config_custom_values():
     config = LLMModelConfig(
-        model_name="custom-model", api_key="secret_scope/secret_key", api_base="https://api.example.com"
+        model_name="custom-model",
+        api_key="secret_scope/secret_key",
+        api_base="https://api.openai.com",
     )
     assert config.model_name == "custom-model"
     assert config.api_key == "secret_scope/secret_key"
-    assert config.api_base == "https://api.example.com"
+    assert config.api_base == "https://api.openai.com"
+    assert config.max_tokens == 1000
+    assert config.temperature == 0.0
+    assert config.timeout == 30.0
+
+
+def test_llm_model_config_budget_overrides():
+    config = LLMModelConfig(max_tokens=500, temperature=0.7, timeout=15.0)
+    assert config.model_name == "databricks/databricks-claude-sonnet-4-5"
+    assert config.api_key == ""
+    assert config.api_base == ""
+    assert config.max_tokens == 500
+    assert config.temperature == 0.7
+    assert config.timeout == 15.0
+
+
+def test_llm_model_config_api_base_stored_verbatim():
+    # api_base is consumed by the LLM rule-generation / profiler path (URL or a
+    # secret_scope/secret_key reference resolved downstream); the anomaly AI-explanation path
+    # uses model_name -> a Databricks Model Serving endpoint and ignores api_base. It is stored
+    # as-is with no validation here.
+    assert LLMModelConfig(api_base="my_scope/my_key").api_base == "my_scope/my_key"
+    assert LLMModelConfig(api_base="https://api.openai.com").api_base == "https://api.openai.com"
 
 
 # Test LLMConfig
