@@ -538,6 +538,11 @@ Here's a complete example showing contract-based rule generation with all three 
     name: IoT Sensor Readings
     version: 2.1.0
     status: active
+    description:
+      purpose: Quality contract for IoT sensor data
+    team:
+      - username: iot-platform-team
+        role: owner
 
     schema:
       - name: sensor_readings
@@ -772,6 +777,9 @@ id: urn:datacontract:marketing:customer_360
 name: Customer 360 View
 version: 1.2.0
 status: active
+team:
+  - username: marketing-analytics-team
+    role: owner
 
 schema:
   - name: customer_360
