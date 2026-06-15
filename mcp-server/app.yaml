@@ -3,6 +3,6 @@ env:
   - name: DQX_RUNNER_JOB_ID
     valueFrom: dqx-runner-job
   - name: DQX_CATALOG
-    value: ${var.catalog_name}
+    valueFrom: dqx-catalog-secret
   - name: DQX_TMP_SCHEMA
     value: "tmp"

@@ -5,8 +5,16 @@ import pytest
 
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.jobs import (
-    Job, JobSettings, Run, RunOutput, NotebookOutput, NotebookTask,
-    RunState, RunLifeCycleState, RunResultState, Task,
+    Job,
+    JobSettings,
+    Run,
+    RunOutput,
+    NotebookOutput,
+    NotebookTask,
+    RunState,
+    RunLifeCycleState,
+    RunResultState,
+    Task,
 )
 
 
@@ -55,6 +63,7 @@ _JOB_ID_ENV = {"DQX_RUNNER_JOB_ID": "42"}
 def _reset_notebook_path_cache():
     """Reset the cached notebook path between tests."""
     import server.utils as utils_module
+
     utils_module._notebook_path = None
 
 
@@ -137,8 +146,10 @@ class TestTempViews:
         ws.statement_execution.execute_statement.return_value = mock_result
 
         view_fqn = create_temp_view(
-            ws, "my_catalog.my_schema.my_table",
-            catalog="dqx_mcp", schema="tmp",
+            ws,
+            "my_catalog.my_schema.my_table",
+            catalog="dqx_mcp",
+            schema="tmp",
             warehouse_id="wh123",
         )
 
@@ -193,8 +204,7 @@ class TestSubmitNotebookJob:
         expected_result = {"columns": [], "row_count": 0}
         ws = _make_mock_ws(json.dumps(expected_result))
 
-        with patch("server.utils._get_sp_client", return_value=ws), \
-             patch.dict("os.environ", _JOB_ID_ENV):
+        with patch("server.utils._get_sp_client", return_value=ws), patch.dict("os.environ", _JOB_ID_ENV):
             result = submit_notebook_job("profile_table", {"view_name": "c.s.v_abc"})
 
         assert result == expected_result
@@ -208,8 +218,7 @@ class TestSubmitNotebookJob:
 
         ws = _make_mock_ws(json.dumps({"result": "ok"}))
 
-        with patch("server.utils._get_sp_client", return_value=ws), \
-             patch.dict("os.environ", _JOB_ID_ENV):
+        with patch("server.utils._get_sp_client", return_value=ws), patch.dict("os.environ", _JOB_ID_ENV):
             submit_notebook_job("profile_table", {"view_name": "c.s.v_abc", "columns": ["a"]})
 
         call_kwargs = ws.jobs.submit.call_args.kwargs
@@ -223,8 +232,7 @@ class TestSubmitNotebookJob:
 
         ws = _make_mock_ws(json.dumps({"ok": True}))
 
-        with patch("server.utils._get_sp_client", return_value=ws), \
-             patch.dict("os.environ", {}, clear=True):
+        with patch("server.utils._get_sp_client", return_value=ws), patch.dict("os.environ", {}, clear=True):
             with pytest.raises(RuntimeError, match="DQX_RUNNER_JOB_ID not set"):
                 submit_notebook_job("profile_table", {"view_name": "c.s.v_abc"})
 
@@ -245,8 +253,7 @@ class TestSubmitNotebookJob:
         output.error = "Something went wrong"
         ws.jobs.get_run_output.return_value = output
 
-        with patch("server.utils._get_sp_client", return_value=ws), \
-             patch.dict("os.environ", _JOB_ID_ENV):
+        with patch("server.utils._get_sp_client", return_value=ws), patch.dict("os.environ", _JOB_ID_ENV):
             with pytest.raises(RuntimeError, match="DQX job failed"):
                 submit_notebook_job("run_checks", {"view_name": "c.s.v_abc", "checks": []})
 
@@ -255,8 +262,7 @@ class TestSubmitNotebookJob:
 
         ws = _make_mock_ws(json.dumps({"ok": True}))
 
-        with patch("server.utils._get_sp_client", return_value=ws), \
-             patch.dict("os.environ", _JOB_ID_ENV):
+        with patch("server.utils._get_sp_client", return_value=ws), patch.dict("os.environ", _JOB_ID_ENV):
             submit_notebook_job("validate_checks", {"checks": []})
 
         ws.jobs.get.assert_called_once_with(42)
@@ -266,8 +272,7 @@ class TestSubmitNotebookJob:
 
         ws = _make_mock_ws(json.dumps({"ok": True}))
 
-        with patch("server.utils._get_sp_client", return_value=ws), \
-             patch.dict("os.environ", _JOB_ID_ENV):
+        with patch("server.utils._get_sp_client", return_value=ws), patch.dict("os.environ", _JOB_ID_ENV):
             submit_notebook_job("validate_checks", {"checks": []})
             submit_notebook_job("list_available_checks", {})
 

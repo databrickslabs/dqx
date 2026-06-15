@@ -6,6 +6,7 @@ Key patterns:
 - Extracts user identity from Databricks Apps proxy headers
 - User OBO token creates temp views (UC governance) and runs direct SQL
 - SP submits notebook jobs that read through definer's-rights views
+- Async job pattern: submit returns run_id, get_run_result fetches output
 - auth_type="pat" to avoid conflict with auto-injected SP env vars
 """
 
@@ -13,7 +14,6 @@ import contextvars
 import json
 import logging
 import os
-from datetime import timedelta
 from typing import Any
 
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -24,12 +24,8 @@ logger = logging.getLogger(__name__)
 # ── OBO Auth via contextvars ──────────────────────────────────────────
 
 # Store user identity per-request from Databricks Apps proxy headers
-_user_token_var: contextvars.ContextVar[tuple[str, str] | None] = contextvars.ContextVar(
-    "user_token", default=None
-)
-_user_email_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
-    "user_email", default=None
-)
+_user_token_var: contextvars.ContextVar[tuple[str, str] | None] = contextvars.ContextVar("user_token", default=None)
+_user_email_var: contextvars.ContextVar[str | None] = contextvars.ContextVar("user_email", default=None)
 
 # Service principal client singleton (fallback when no OBO token)
 _sp_client = None
@@ -105,8 +101,7 @@ def get_obo_client():
     token_info = _user_token_var.get(None)
     if token_info is None:
         raise RuntimeError(
-            "No OBO token available. This operation requires a user context "
-            "(X-Forwarded-Access-Token header)."
+            "No OBO token available. This operation requires a user context " "(X-Forwarded-Access-Token header)."
         )
 
     host, token = token_info
@@ -226,9 +221,7 @@ def create_temp_view(
 
     parts = table_name.split(".")
     if len(parts) != 3:
-        raise ValueError(
-            f"Table name '{table_name}' must be fully qualified (catalog.schema.table)"
-        )
+        raise ValueError(f"Table name '{table_name}' must be fully qualified (catalog.schema.table)")
 
     view_id = uuid.uuid4().hex[:12]
     view_fqn = f"{catalog}.{schema}.v_{view_id}"
@@ -257,90 +250,129 @@ def drop_view(ws: Any, view_fqn: str, warehouse_id: str) -> None:
         logger.warning(f"Failed to drop temp view {view_fqn}", exc_info=True)
 
 
-# ── Jobs API — SP submits notebook job ───────────────────────────────
+# ── Jobs API — async submit + poll ───────────────────────────────────
 
-# Cache the notebook path from the pre-deployed job definition
-_notebook_path: str | None = None
+# Track pending runs: run_id → metadata (view to clean up, table name, etc.)
+_pending_runs: dict[int, dict[str, Any]] = {}
 
 
-def _get_notebook_path(ws: Any) -> str:
-    """Resolve the runner notebook path from the pre-deployed job definition.
-
-    Reads the job once and caches the notebook path. This avoids hardcoding
-    the path, which varies by deployer (e.g. /Workspace/Users/<email>/.bundle/...).
-    """
-    global _notebook_path
-    if _notebook_path is not None:
-        return _notebook_path
-
+def _get_runner_job_id() -> int:
+    """Get the pre-deployed runner job ID from environment."""
     job_id = os.environ.get("DQX_RUNNER_JOB_ID")
     if not job_id:
-        raise RuntimeError(
-            "DQX_RUNNER_JOB_ID not set. Deploy the bundle first: databricks bundle deploy"
-        )
-
-    job = ws.jobs.get(int(job_id))
-    task = job.settings.tasks[0]
-    _notebook_path = task.notebook_task.notebook_path
-    logger.info(f"Resolved notebook path from job {job_id}: {_notebook_path}")
-    return _notebook_path
+        raise RuntimeError("DQX_RUNNER_JOB_ID not set. Deploy the bundle first: databricks bundle deploy")
+    return int(job_id)
 
 
-def submit_notebook_job(operation: str, params: dict[str, Any]) -> dict[str, Any]:
-    """Submit a DQX operation as a notebook job and wait for results.
-
-    The app's service principal submits the job. UC governance is enforced
-    before this call via temporary views created with the user's OBO token.
+def submit_job_async(operation: str, params: dict[str, Any], metadata: dict[str, Any] | None = None) -> int:
+    """Submit a DQX operation and return the run_id immediately (non-blocking).
 
     Args:
         operation: The DQX operation name (e.g. 'profile_table', 'run_checks').
         params: Dict of parameters to pass to the notebook as JSON.
+        metadata: Optional metadata to store with the run (e.g. view_fqn for cleanup).
 
     Returns:
-        Parsed JSON dict from dbutils.notebook.exit() output.
-
-    Raises:
-        RuntimeError: If the job fails, times out, or no job ID is configured.
+        The Databricks job run_id.
     """
-    from databricks.sdk.service.jobs import NotebookTask, SubmitTask
-
     ws = _get_sp_client()
-    notebook_path = _get_notebook_path(ws)
+    job_id = _get_runner_job_id()
 
-    logger.info(f"Submitting notebook job: operation={operation}, notebook={notebook_path}")
+    logger.info(f"Submitting async job {job_id}: operation={operation}")
 
-    notebook_task = NotebookTask(
-        notebook_path=notebook_path,
-        base_parameters={
+    wait = ws.jobs.run_now(
+        job_id=job_id,
+        notebook_params={
             "operation": operation,
             "params": json.dumps(params),
         },
     )
 
-    task = SubmitTask(
-        task_key="dqx_run",
-        notebook_task=notebook_task,
-    )
+    run_id = wait.run_id
+    logger.info(f"Job submitted: run_id={run_id}")
 
-    wait = ws.jobs.submit(
-        run_name=f"mcp-dqx-{operation}",
-        tasks=[task],
-    )
+    _pending_runs[run_id] = {
+        "operation": operation,
+        **(metadata or {}),
+    }
 
-    run = wait.result(timeout=timedelta(minutes=10))
-    logger.info(f"Job completed: run_id={run.run_id}, url={run.run_page_url}")
+    return run_id
 
+
+def get_run_status(run_id: int) -> dict[str, Any]:
+    """Check the status of a submitted job run, polling internally before returning.
+
+    Polls the job every 10 seconds for up to 90 seconds. If the job completes
+    within that window, returns results immediately. If still running after
+    90 seconds, returns 'running' so the caller can try again.
+
+    This internal polling prevents rapid-fire tool calls from MCP clients.
+
+    Args:
+        run_id: The Databricks job run_id from a prior submit call.
+
+    Returns:
+        Dict with 'status' ('running', 'completed', 'failed') and optionally 'result'.
+    """
+    import time
+
+    ws = _get_sp_client()
+
+    # Poll internally for up to 90 seconds before returning "running"
+    max_wait = 90
+    poll_interval = 10
+    elapsed = 0
+
+    while elapsed < max_wait:
+        run = ws.jobs.get_run(run_id)
+        life_cycle = run.state.life_cycle_state.value if run.state and run.state.life_cycle_state else "UNKNOWN"
+
+        if life_cycle not in ("PENDING", "RUNNING", "QUEUED", "BLOCKED"):
+            break
+
+        elapsed += poll_interval
+        if elapsed < max_wait:
+            time.sleep(poll_interval)
+    else:
+        return {"status": "running", "run_id": run_id, "message": "Job is still running. Call get_run_result again."}
+
+    # Run finished — clean up metadata and temp views
+    metadata = _pending_runs.pop(run_id, {})
+    view_fqn = metadata.get("view_fqn")
+    warehouse_id = metadata.get("warehouse_id")
+
+    if view_fqn and warehouse_id:
+        drop_view(ws, view_fqn, warehouse_id=warehouse_id)
+
+    # Check for failure
+    result_state = run.state.result_state.value if run.state and run.state.result_state else "UNKNOWN"
+    if result_state != "SUCCESS":
+        error_msg = run.state.state_message if run.state else "Unknown error"
+        run_url = run.run_page_url or ""
+        return {
+            "status": "failed",
+            "run_id": run_id,
+            "error": f"Job failed: {error_msg}. Debug at: {run_url}",
+        }
+
+    # Extract notebook output
     task_run_id = run.tasks[0].run_id if run.tasks else run.run_id
     output = ws.jobs.get_run_output(task_run_id)
 
     if output.notebook_output and output.notebook_output.result:
-        return json.loads(output.notebook_output.result)
+        result = json.loads(output.notebook_output.result)
+        # Re-attach table_name if stored in metadata
+        if "table_name" in metadata:
+            result["table_name"] = metadata["table_name"]
+        return {"status": "completed", "run_id": run_id, "result": result}
 
     error_msg = output.error or "No output from notebook"
     run_url = run.run_page_url or ""
-    raise RuntimeError(
-        f"DQX job failed (operation={operation}): {error_msg}. Debug at: {run_url}"
-    )
+    return {
+        "status": "failed",
+        "run_id": run_id,
+        "error": f"No output: {error_msg}. Debug at: {run_url}",
+    }
 
 
 # ── JSON serialization helpers ────────────────────────────────────────

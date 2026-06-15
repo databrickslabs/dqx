@@ -2,9 +2,6 @@ bundle:
   name: "mcp-dqx"
 
 variables:
-  catalog_name:
-    description: "UC catalog for DQX MCP temp views"
-    default: "dqx_mcp"
   users_group:
     description: "Group name for all workspace users (e.g. 'account users' or 'users')"
     default: "account users"
@@ -12,6 +9,7 @@ resources:
   jobs:
     dqx_runner:
       name: "mcp-dqx-runner"
+      max_concurrent_runs: 10
       tasks:
         - task_key: dqx_run
           notebook_task:
@@ -21,6 +19,8 @@ resources:
         - environment_key: default
           spec:
             environment_version: "2"
+            dependencies:
+              - databricks-labs-dqx
 
     # One-time setup job — grants USE CATALOG to users and app SP.
     # Run after first deploy: databricks bundle run dqx_setup --profile <profile>
@@ -31,7 +31,6 @@ resources:
           notebook_task:
             notebook_path: "./notebooks/setup.py"
             base_parameters:
-              catalog_name: ${var.catalog_name}
               app_name: "mcp-dqx"
               users_group: ${var.users_group}
           environment_key: default
@@ -55,6 +54,11 @@ resources:
           job:
             id: ${resources.jobs.dqx_runner.id}
             permission: "CAN_MANAGE_RUN"
+        - name: dqx-catalog-secret
+          secret:
+            scope: dqx-config
+            key: catalog_name
+            permission: "READ"
 
       permissions:
         - level: CAN_USE

@@ -1,7 +1,7 @@
 # Databricks notebook source
 
 # COMMAND ----------
-# %pip install databricks-labs-dqx
+# %pip install databricks-labs-dqx  # installed via environment spec in databricks.yml
 
 # COMMAND ----------
 
@@ -23,6 +23,7 @@ params = json.loads(dbutils.widgets.get("params"))
 logger.info(f"Running operation: {operation}, params keys: {list(params.keys())}")
 
 # COMMAND ----------
+
 
 def profile_table(params: dict) -> dict:
     """Profile a view and return summary stats + profiles."""
@@ -46,7 +47,9 @@ def profile_table(params: dict) -> dict:
         "profiles": _make_json_safe(profiles_dicts),
     }
 
+
 # COMMAND ----------
+
 
 def generate_rules(params: dict) -> dict:
     """Generate DQX rules from profiling output."""
@@ -77,13 +80,14 @@ def generate_rules(params: dict) -> dict:
         "count": len(rules),
     }
 
+
 # COMMAND ----------
+
 
 def run_checks(params: dict) -> dict:
     """Run DQX checks against a view."""
     from databricks.sdk import WorkspaceClient
     from databricks.labs.dqx.engine import DQEngine
-    import pyspark.sql.functions as F
 
     view_name = params["view_name"]
     checks = params["checks"]
@@ -112,7 +116,9 @@ def run_checks(params: dict) -> dict:
         "rule_summary": rule_summary,
     }
 
+
 # COMMAND ----------
+
 
 def _make_json_safe(value):
     """Recursively convert non-JSON-serializable values."""
@@ -129,7 +135,9 @@ def _make_json_safe(value):
         return [_make_json_safe(v) for v in value]
     return value
 
+
 # COMMAND ----------
+
 
 def _compute_rule_summary(invalid_df) -> list:
     """Aggregate per-rule error/warning counts."""
@@ -152,7 +160,9 @@ def _compute_rule_summary(invalid_df) -> list:
 
     return [{"rule_name": name, **counts} for name, counts in summary.items()]
 
+
 # COMMAND ----------
+
 
 def validate_checks(params: dict) -> dict:
     """Validate a list of DQX check definitions for correctness."""
@@ -165,7 +175,9 @@ def validate_checks(params: dict) -> dict:
         "errors": status.errors,
     }
 
+
 # COMMAND ----------
+
 
 def list_available_checks(params: dict) -> dict:
     """List all built-in DQX check functions with signatures and descriptions."""
@@ -185,15 +197,18 @@ def list_available_checks(params: dict) -> dict:
         ]
         doc = inspect.getdoc(func) or ""
         first_line = doc.split("\n")[0] if doc else ""
-        checks.append({
-            "name": name,
-            "type": func_type,
-            "signature": f"{name}{sig}",
-            "description": first_line,
-            "parameters": func_params,
-        })
+        checks.append(
+            {
+                "name": name,
+                "type": func_type,
+                "signature": f"{name}{sig}",
+                "description": first_line,
+                "parameters": func_params,
+            }
+        )
 
     return {"checks": checks, "count": len(checks)}
+
 
 # COMMAND ----------
 

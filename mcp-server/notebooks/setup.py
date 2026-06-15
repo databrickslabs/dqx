@@ -17,9 +17,11 @@ Grants:
     - app SP         → USE SCHEMA, SELECT (so SP job can read through views)
 
 Parameters:
-  - catalog_name: UC catalog for temp views (e.g. 'dqx_mcp')
+  - catalog_name: UC catalog for temp views (optional — reads from secret if not provided)
   - app_name: Databricks App name (e.g. 'mcp-dqx') — used to look up the app SP
   - users_group: Group name for all users (default: 'account users')
+  - secret_scope: Secret scope for catalog name (default: 'dqx-config')
+  - secret_key: Secret key for catalog name (default: 'catalog_name')
 """
 
 # COMMAND ----------
@@ -34,13 +36,21 @@ logger = logging.getLogger("dqx-mcp-setup")
 dbutils.widgets.text("catalog_name", "")
 dbutils.widgets.text("app_name", "mcp-dqx")
 dbutils.widgets.text("users_group", "account users")
+dbutils.widgets.text("secret_scope", "dqx-config")
+dbutils.widgets.text("secret_key", "catalog_name")
 
 catalog_name = dbutils.widgets.get("catalog_name")
 app_name = dbutils.widgets.get("app_name")
 users_group = dbutils.widgets.get("users_group")
 
+# Read catalog name from secret if not provided directly
 if not catalog_name:
-    raise ValueError("catalog_name parameter is required")
+    secret_scope = dbutils.widgets.get("secret_scope")
+    secret_key = dbutils.widgets.get("secret_key")
+    catalog_name = dbutils.secrets.get(scope=secret_scope, key=secret_key)
+
+if not catalog_name:
+    raise ValueError("catalog_name must be provided as a parameter or stored in the secret scope")
 
 logger.info(f"Setting up DQX MCP: catalog={catalog_name}, app={app_name}, users_group={users_group}")
 

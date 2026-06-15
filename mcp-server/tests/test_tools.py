@@ -1,9 +1,6 @@
-import json
-from unittest.mock import MagicMock, create_autospec, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
-
-from databricks.sdk import WorkspaceClient
 
 
 _ENV = {
@@ -40,10 +37,12 @@ class TestGetTableSchema:
             {"col_name": "name", "data_type": "string", "comment": ""},
         ]
 
-        with patch("server.tools.utils.get_obo_client") as mock_obo, \
-             patch("server.tools.utils.get_warehouse_id", return_value="wh123"), \
-             patch("server.tools.utils.execute_sql", return_value=describe_rows) as mock_sql, \
-             patch.dict("os.environ", _ENV):
+        with (
+            patch("server.tools.utils.get_obo_client") as mock_obo,
+            patch("server.tools.utils.get_warehouse_id", return_value="wh123"),
+            patch("server.tools.utils.execute_sql", return_value=describe_rows) as mock_sql,
+            patch.dict("os.environ", _ENV),
+        ):
             result = tools["get_table_schema"]("catalog.schema.table")
 
         mock_obo.assert_called_once()
@@ -61,10 +60,12 @@ class TestGetTableSchema:
             {"col_name": "# col_name", "data_type": "data_type", "comment": "comment"},
         ]
 
-        with patch("server.tools.utils.get_obo_client"), \
-             patch("server.tools.utils.get_warehouse_id", return_value="wh123"), \
-             patch("server.tools.utils.execute_sql", return_value=describe_rows), \
-             patch.dict("os.environ", _ENV):
+        with (
+            patch("server.tools.utils.get_obo_client"),
+            patch("server.tools.utils.get_warehouse_id", return_value="wh123"),
+            patch("server.tools.utils.execute_sql", return_value=describe_rows),
+            patch.dict("os.environ", _ENV),
+        ):
             result = tools["get_table_schema"]("catalog.schema.table")
 
         assert len(result["columns"]) == 1
@@ -77,13 +78,15 @@ class TestProfileTable:
     def test_creates_view_submits_job_drops_view(self):
         tools = _register_tools()
 
-        with patch("server.tools.utils.get_obo_client") as mock_obo, \
-             patch("server.tools.utils.get_warehouse_id", return_value="wh123"), \
-             patch("server.tools.utils.create_temp_view", return_value="dqx_mcp.tmp.v_abc") as mock_create, \
-             patch("server.tools.utils.submit_notebook_job", return_value={"profiles": []}) as mock_job, \
-             patch("server.tools.utils.drop_view") as mock_drop, \
-             patch("server.tools.utils._get_sp_client") as mock_sp, \
-             patch.dict("os.environ", _ENV):
+        with (
+            patch("server.tools.utils.get_obo_client") as mock_obo,
+            patch("server.tools.utils.get_warehouse_id", return_value="wh123"),
+            patch("server.tools.utils.create_temp_view", return_value="dqx_mcp.tmp.v_abc") as mock_create,
+            patch("server.tools.utils.submit_notebook_job", return_value={"profiles": []}) as mock_job,
+            patch("server.tools.utils.drop_view") as mock_drop,
+            patch("server.tools.utils._get_sp_client") as mock_sp,
+            patch.dict("os.environ", _ENV),
+        ):
             result = tools["profile_table"]("catalog.schema.table")
 
         mock_obo.assert_called_once()
@@ -97,13 +100,15 @@ class TestProfileTable:
     def test_drops_view_even_on_job_failure(self):
         tools = _register_tools()
 
-        with patch("server.tools.utils.get_obo_client"), \
-             patch("server.tools.utils.get_warehouse_id", return_value="wh123"), \
-             patch("server.tools.utils.create_temp_view", return_value="dqx_mcp.tmp.v_abc"), \
-             patch("server.tools.utils.submit_notebook_job", side_effect=RuntimeError("job failed")), \
-             patch("server.tools.utils.drop_view") as mock_drop, \
-             patch("server.tools.utils._get_sp_client") as mock_sp, \
-             patch.dict("os.environ", _ENV):
+        with (
+            patch("server.tools.utils.get_obo_client"),
+            patch("server.tools.utils.get_warehouse_id", return_value="wh123"),
+            patch("server.tools.utils.create_temp_view", return_value="dqx_mcp.tmp.v_abc"),
+            patch("server.tools.utils.submit_notebook_job", side_effect=RuntimeError("job failed")),
+            patch("server.tools.utils.drop_view") as mock_drop,
+            patch("server.tools.utils._get_sp_client"),
+            patch.dict("os.environ", _ENV),
+        ):
             with pytest.raises(RuntimeError, match="job failed"):
                 tools["profile_table"]("catalog.schema.table")
 
@@ -116,13 +121,18 @@ class TestRunChecks:
     def test_creates_view_submits_job_drops_view(self):
         tools = _register_tools()
 
-        with patch("server.tools.utils.get_obo_client"), \
-             patch("server.tools.utils.get_warehouse_id", return_value="wh123"), \
-             patch("server.tools.utils.create_temp_view", return_value="dqx_mcp.tmp.v_abc") as mock_create, \
-             patch("server.tools.utils.submit_notebook_job", return_value={"total_rows": 100, "valid_rows": 90, "invalid_rows": 10}) as mock_job, \
-             patch("server.tools.utils.drop_view") as mock_drop, \
-             patch("server.tools.utils._get_sp_client"), \
-             patch.dict("os.environ", _ENV):
+        with (
+            patch("server.tools.utils.get_obo_client"),
+            patch("server.tools.utils.get_warehouse_id", return_value="wh123"),
+            patch("server.tools.utils.create_temp_view", return_value="dqx_mcp.tmp.v_abc") as mock_create,
+            patch(
+                "server.tools.utils.submit_notebook_job",
+                return_value={"total_rows": 100, "valid_rows": 90, "invalid_rows": 10},
+            ) as mock_job,
+            patch("server.tools.utils.drop_view") as mock_drop,
+            patch("server.tools.utils._get_sp_client"),
+            patch.dict("os.environ", _ENV),
+        ):
             result = tools["run_checks"]("catalog.schema.table", [{"check": "foo"}])
 
         mock_create.assert_called_once()
@@ -135,13 +145,15 @@ class TestRunChecks:
     def test_drops_view_even_on_job_failure(self):
         tools = _register_tools()
 
-        with patch("server.tools.utils.get_obo_client"), \
-             patch("server.tools.utils.get_warehouse_id", return_value="wh123"), \
-             patch("server.tools.utils.create_temp_view", return_value="dqx_mcp.tmp.v_abc"), \
-             patch("server.tools.utils.submit_notebook_job", side_effect=RuntimeError("job failed")), \
-             patch("server.tools.utils.drop_view") as mock_drop, \
-             patch("server.tools.utils._get_sp_client"), \
-             patch.dict("os.environ", _ENV):
+        with (
+            patch("server.tools.utils.get_obo_client"),
+            patch("server.tools.utils.get_warehouse_id", return_value="wh123"),
+            patch("server.tools.utils.create_temp_view", return_value="dqx_mcp.tmp.v_abc"),
+            patch("server.tools.utils.submit_notebook_job", side_effect=RuntimeError("job failed")),
+            patch("server.tools.utils.drop_view") as mock_drop,
+            patch("server.tools.utils._get_sp_client"),
+            patch.dict("os.environ", _ENV),
+        ):
             with pytest.raises(RuntimeError, match="job failed"):
                 tools["run_checks"]("catalog.schema.table", [])
 
@@ -173,7 +185,7 @@ class TestJobOnlyTools:
         tools = _register_tools()
 
         with patch("server.tools.utils.submit_notebook_job", return_value={"checks": [], "count": 0}) as mock_job:
-            result = tools["list_available_checks"]()
+            tools["list_available_checks"]()
 
         mock_job.assert_called_once_with("list_available_checks", {})
 
