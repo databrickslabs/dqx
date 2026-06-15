@@ -60,7 +60,7 @@ dq_engine.save_checks(checks, config=TableChecksStorageConfig(location="catalog.
 dq_engine.save_checks(checks, config=VolumeFileChecksStorageConfig(location="/Volumes/dq/config/checks_volume/App1/checks.yml"))
 
 # save checks as a Lakebase table using a Databricks service principal
-dq_engine.save_checks(checks, config=LakebaseChecksStorageConfig(instance_name="my-instance", user="00000000-0000-0000-0000-000000000000", location="dqx.config.checks"))
+dq_engine.save_checks(checks, config=LakebaseChecksStorageConfig(instance_name="my-instance", client_id="00000000-0000-0000-0000-000000000000", location="dqx.config.checks"))
 
 # save checks as a YAML file or table defined in 'checks_location' of the run config
 # only works if DQX is installed in the workspace
@@ -187,10 +187,10 @@ checks: list[dict] = dq_engine.load_checks(config=TableChecksStorageConfig(locat
 checks: list[dict] = dq_engine.load_checks(config=VolumeFileChecksStorageConfig(location="/Volumes/dq/config/checks_volume/App1/checks.yml"))
 
 # load checks from a Lakebase table using a Databricks service principal
-checks: list[dict] = dq_engine.load_checks(config=LakebaseChecksStorageConfig(instance_name="my-instance", user="00000000-0000-0000-0000-000000000000", location="dqx.config.checks"))
+checks: list[dict] = dq_engine.load_checks(config=LakebaseChecksStorageConfig(instance_name="my-instance", client_id="00000000-0000-0000-0000-000000000000", location="dqx.config.checks"))
 
 # load checks from a Lakebase table using specific rule_set_fingerprint for filtering (it can be any rule_set_fingerprint from checks_table)
-checks: list[dict] = dq_engine.load_checks(config=LakebaseChecksStorageConfig(instance_name="my-instance", user="00000000-0000-0000-0000-000000000000", location="dqx.config.checks", rule_set_fingerprint="9664332437da274d921cefac60bd509e0aa383292ba695341e1f3fbc2a716e48"))
+checks: list[dict] = dq_engine.load_checks(config=LakebaseChecksStorageConfig(instance_name="my-instance", client_id="00000000-0000-0000-0000-000000000000", location="dqx.config.checks", rule_set_fingerprint="9664332437da274d921cefac60bd509e0aa383292ba695341e1f3fbc2a716e48"))
 
 # load checks from a file or table defined in the run config ('checks_location' field)
 # only works if DQX is installed in the workspace
@@ -240,7 +240,7 @@ The following backend configuration are currently supported:
   <!-- -->
 
   * `instance_name`: name of the Lakebase instance, e.g., "my-instance".
-  * `user`: user to connect to the Lakebase instance, e.g., "<user@domain.com>" or Databricks service principal client ID.
+  * `client_id`: ID of the Databricks service principal to use for the Lakebase connection.
   * `location`: fully-qualified table name in the format "database.schema.table".
   * `port`: (optional) port on which to connect to the Lakebase instance (use 5432 if not provided).
   * `run_config_name`: (optional) run configuration name to load (use "default" if not provided).

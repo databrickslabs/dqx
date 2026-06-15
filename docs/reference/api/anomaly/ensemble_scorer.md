@@ -21,17 +21,6 @@ def prepare_ensemble_scoring_schema(enable_contributions: bool) -> StructType
 
 Prepare schema for ensemble scoring UDF.
 
-### join\_ensemble\_scores[​](#join_ensemble_scores "Direct link to join_ensemble_scores")
-
-```python
-def join_ensemble_scores(df_filtered: DataFrame, scored_df: DataFrame,
-                         merge_columns: list[str],
-                         enable_contributions: bool) -> DataFrame
-
-```
-
-Join scores back to original DataFrame.
-
 ### create\_ensemble\_scoring\_udf[​](#create_ensemble_scoring_udf "Direct link to create_ensemble_scoring_udf")
 
 ```python
@@ -47,33 +36,53 @@ Create ensemble scoring UDF.
 
 ```python
 def create_ensemble_scoring_udf_with_contributions(
-        models_bytes: list[bytes], engineered_feature_cols: list[str],
-        schema: StructType)
+        models_bytes: list[bytes],
+        engineered_feature_cols: list[str],
+        schema: StructType,
+        quantile_points: list[tuple[float, float]] | None = None,
+        threshold: float | None = None)
 
 ```
 
 Create ensemble scoring UDF with SHAP contributions.
 
+When *quantile\_points* and *threshold* are provided, SHAP runs only for rows whose mean-score severity reaches the threshold; other rows get a null contributions map.
+
 ### score\_ensemble\_models[​](#score_ensemble_models "Direct link to score_ensemble_models")
 
 ```python
-def score_ensemble_models(model_uris: list[str], df_filtered: DataFrame,
-                          columns: list[str], feature_metadata_json: str,
-                          merge_columns: list[str], enable_contributions: bool,
-                          *, model_record: AnomalyModelRecord) -> DataFrame
+def score_ensemble_models(model_uris: list[str],
+                          df_filtered: DataFrame,
+                          columns: list[str],
+                          feature_metadata_json: str,
+                          merge_columns: list[str],
+                          enable_contributions: bool,
+                          *,
+                          model_record: AnomalyModelRecord,
+                          quantile_points: list[tuple[float, float]]
+                          | None = None,
+                          threshold: float | None = None) -> DataFrame
 
 ```
 
 Score DataFrame with multiple ensemble models and compute statistics.
 
+The original row rides through feature engineering inside a struct column and is restored after scoring, so scores are attached in the same pass — no join back onto the caller's DataFrame.
+
 ### score\_ensemble\_models\_local[​](#score_ensemble_models_local "Direct link to score_ensemble_models_local")
 
 ```python
-def score_ensemble_models_local(model_uris: list[str], df_filtered: DataFrame,
-                                columns: list[str], feature_metadata_json: str,
+def score_ensemble_models_local(model_uris: list[str],
+                                df_filtered: DataFrame,
+                                columns: list[str],
+                                feature_metadata_json: str,
                                 merge_columns: list[str],
-                                enable_contributions: bool, *,
-                                model_record: AnomalyModelRecord) -> DataFrame
+                                enable_contributions: bool,
+                                *,
+                                model_record: AnomalyModelRecord,
+                                quantile_points: list[tuple[float, float]]
+                                | None = None,
+                                threshold: float | None = None) -> DataFrame
 
 ```
 

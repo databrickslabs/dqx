@@ -31,6 +31,8 @@ def create_lm() -> dspy.LM
 
 Create an LM instance with current config for per-request override.
 
+Budget caps (max\_tokens, temperature, timeout) come from *LLMModelConfig* and are forwarded to litellm via dspy.LM kwargs to bound cost and latency on pathological prompts (OWASP LLM04).
+
 **Returns**:
 
 A new LM instance configured with the current model config.

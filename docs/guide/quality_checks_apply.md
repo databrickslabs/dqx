@@ -2,6 +2,7 @@
 
 You can apply quality checks to your data using the following approaches:
 
+* [DQX Studio (no-code UI)](/dqx/docs/guide/dqx_studio.md): for a no-code experience, DQX Studio is the recommended option. It lets you apply checks to data at-rest and review the results from a browser, without writing code or maintaining configuration files.
 * [Programmatic approach](#programmatic-approach): you can apply checks programmatically to a DataFrame or Tables. This method is required if you want to perform a data quality check for data in-transit.
 * [No-code approach (Workflows)](#no-code-approach-workflows): you can apply checks for data at-rest using workflows if DQX is installed in the workspace as a tool. This does not require code-level integration and is suitable for data already stored in Delta tables or files.
 
@@ -29,6 +30,10 @@ Checks can be applied to the input data by one of the following methods of the `
   * `apply_checks_and_save_in_tables_for_patterns`: apply quality checks to tables matching wildcard patterns.
 
 You can see the full list of `DQEngine` methods [here](/dqx/docs/reference/engine.md#dqx-engine-methods).
+
+Save destinations
+
+The end-to-end `apply_checks_and_save_in_table` and `apply_checks_by_metadata_and_save_in_table` methods accept `output_config`, `quarantine_config`, `metrics_config`, or combinations of these. If `output_config` is omitted and `quarantine_config` is provided, only the quarantined table is produced. If only `metrics_config` is provided for batch input, only summary metrics are written and no output or quarantine table is produced. Streaming metrics require an output or quarantine stream to emit the observed metrics. This applies to both `apply_checks_and_save_in_tables` and `apply_checks_and_save_in_tables_for_patterns`.
 
 The engine ensures that the specified `column`, `columns`, `filter`, or sql 'expression' fields can be resolved in the input DataFrame. If any of these fields are invalid, the check evaluation is skipped, and the results include the check failure with a message identifying the invalid fields and `skipped=True` in the result struct. You can suppress these entries entirely or identify them downstream — see [Suppressing skipped check entries](/dqx/docs/guide/additional_configuration.md#suppressing-skipped-check-entries). The engine will raise an error if you try to apply checks with invalid definition (e.g. wrong syntax). In addition, you can also perform a standalone syntax validation of the checks as described [here](/dqx/docs/guide/quality_checks_definition.md#validating-syntax-of-quality-checks).
 
@@ -116,7 +121,14 @@ dq_engine.apply_checks_and_save_in_table(
     output_config=OutputConfig(location="catalog.schema.output"),
 )
 
-# Option 5 End-to-End approach: load checks from a storage location and apply them to the entire input table
+# Option 5 End-to-End approach: apply checks and write only invalid rows to a quarantine table
+dq_engine.apply_checks_and_save_in_table(
+    checks=checks,
+    input_config=InputConfig(location="catalog.schema.input"),
+    quarantine_config=OutputConfig(location="catalog.schema.quarantine"),
+)
+
+# Option 6 End-to-End approach: load checks from a storage location and apply them to the entire input table
 dq_engine.apply_checks_and_save_in_table(
     input_config=InputConfig(location="catalog.schema.input"),
     output_config=OutputConfig(location="catalog.schema.valid"),
@@ -199,7 +211,15 @@ dq_engine.apply_checks_by_metadata_and_save_in_table(
     output_config=OutputConfig(location="catalog.schema.output"),
 )
 
-# Option 5 End-to-End approach: load checks from a storage location and apply them to the entire input table
+# Option 5 End-to-End approach: apply checks and write only invalid rows to a quarantine table
+# (valid rows are not written when output_config is omitted)
+dq_engine.apply_checks_by_metadata_and_save_in_table(
+    checks=checks,
+    input_config=InputConfig(location="catalog.schema.input"),
+    quarantine_config=OutputConfig(location="catalog.schema.quarantine"),
+)
+
+# Option 6 End-to-End approach: load checks from a storage location and apply them to the entire input table
 # By default, apply_checks_and_save_in_table method apply checks to the entire input table.
 # Incremental processing is supported using streaming with the AvailableNow trigger for batch-style execution, along with checkpointing to ensure consistency across runs.
 dq_engine.apply_checks_by_metadata_and_save_in_table(
@@ -611,6 +631,10 @@ dq_engine.apply_checks_and_save_in_table(
 
 You can apply quality checks to data at-rest using DQX Workflows without writing any code. This requires installation of DQX in the workspace as a tool (see [installation guide](/dqx/docs/installation.md)).
 
+Prefer a UI?
+
+[DQX Studio](/dqx/docs/guide/dqx_studio.md) is the recommended no-code option — it provides a browser-based UI to apply checks, review results, and monitor runs, without maintaining a configuration file.
+
 The workflows use [configuration file](/dqx/docs/installation.md#configuration-file) to specify input and output locations, and to apply sets of quality checks from a storage.
 
 You can open the configuration file (`.dqx/config.yml`) in the installation folder from Databricks UI or by executing the following Databricks CLI command:
@@ -1020,6 +1044,13 @@ dq_engine.apply_checks_and_save_in_table(
     metrics_config=OutputConfig(location="catalog.schema.metrics"),
 )
 
+# Option 5 End-to-End approach: apply quality checks to a batch table and save only summary metrics
+dq_engine.apply_checks_and_save_in_table(
+    checks=checks,  # or provide checks_location and run_config_name to auto-load from checks storage
+    input_config=InputConfig(location="catalog.schema.input"),
+    metrics_config=OutputConfig(location="catalog.schema.metrics"),
+)
+
 ```
 
 ### Enabling summary metrics in DQX workflows[​](#enabling-summary-metrics-in-dqx-workflows "Direct link to Enabling summary metrics in DQX workflows")
@@ -1057,7 +1088,7 @@ Below is a sample output of a check stored in a result column (error or warning)
 
 ```
 
-The structure of the result columns is an array of struct containing the following fields (see the exact structure [here](https://github.com/databrickslabs/dqx/blob/v0.14.0/src/databricks/labs/dqx/schema/dq_result_schema.py)):
+The structure of the result columns is an array of struct containing the following fields (see the exact structure [here](https://github.com/databrickslabs/dqx/blob/v0.15.0/src/databricks/labs/dqx/schema/dq_result_schema.py)):
 
 * `name`: name of the check (string type).
 * `message`: message describing the quality issue (string type).

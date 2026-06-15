@@ -52,6 +52,31 @@ Figuring out your role
 
 Open the **Profile** page (top-right user menu) at any time to see your primary role, whether the Runner privilege is granted, and which groups you belong to that mapped you to those roles.
 
+## Profile preferences[​](#profile-preferences "Direct link to Profile preferences")
+
+The **Profile** page (top-right user menu) is also where you manage personal preferences that affect only your own session.
+
+### Language[​](#language "Direct link to Language")
+
+DQX Studio is localized. Pick your preferred language from the **Preferences** card on the Profile page; the change applies immediately across every page in the studio.
+
+| Language            | Code    |
+| ------------------- | ------- |
+| English *(default)* | `en`    |
+| Português (Brasil)  | `pt-BR` |
+| Italiano            | `it`    |
+| Español             | `es`    |
+
+Your selection is stored in the browser's local storage, so it persists across reloads and is reapplied on your next visit. On first load — when no preference has been saved yet — the studio detects your browser language and falls back to English when none of the supported languages matches.
+
+Per-user setting
+
+Language is a personal preference — it does not change the language for other users, and it does not affect rule names, labels, comments, or data stored in workspace tables.
+
+AI-generated translations
+
+Most non-English translations were produced with the help of AI and have not yet been fully reviewed by native speakers. They may contain inaccuracies, awkward phrasing, or missing context. If you spot a problem, please [open an issue](https://github.com/databrickslabs/dqx/issues) or contribute a fix — see the [contributing guide](/dqx/docs/dev/contributing.md).
+
 ## The home page[​](#the-home-page "Direct link to The home page")
 
 The landing page is a quick overview with two primary calls to action:

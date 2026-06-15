@@ -108,7 +108,7 @@ In all cases, the full test suite is executed on code merged into `main` branch 
 
 This section provides a step-by-step guide for setting up your local environment and dependencies for efficient development.
 
-To start with, install the required python version on your computer (see `requires-python` field in [pyproject.toml](https://github.com/databrickslabs/dqx/blob/v0.14.0/pyproject.toml)). On MacOSX, run:
+To start with, install the required python version on your computer (see `requires-python` field in [pyproject.toml](https://github.com/databrickslabs/dqx/blob/v0.15.0/pyproject.toml)). On MacOSX, run:
 
 ```text
 # double check the required version in pyproject.toml
@@ -168,9 +168,18 @@ Always use `make` targets instead of running `uv` commands directly. The Makefil
 
 ### DQX Studio development[​](#dqx-studio-development "Direct link to DQX Studio development")
 
-The DQX Studio (under `app/`) is a FastAPI backend + React frontend packaged as a single Python wheel and deployed as a [Databricks App](https://docs.databricks.com/en/dev-tools/databricks-apps/index.html). See [app/README.md](https://github.com/databrickslabs/dqx/blob/v0.14.0/app/README.md) for architecture and local development, and [DQX Studio deployment](#dqx-studio-deployment) below for the end-to-end deployment guide.
+The DQX Studio (under `app/`) is a FastAPI backend + React frontend packaged as a single Python wheel and deployed as a [Databricks App](https://docs.databricks.com/en/dev-tools/databricks-apps/index.html). See [app/README.md](https://github.com/databrickslabs/dqx/blob/v0.15.0/app/README.md) for architecture and local development, and [DQX Studio deployment](#dqx-studio-deployment) below for the end-to-end deployment guide.
 
-Install the app's JavaScript dependencies (using the committed `yarn.lock`):
+The Studio's frontend tooling requires **Node.js 18+** (which provides `npm`), **yarn** (classic v1), and **bun**. Install them before running any `make app-*` target:
+
+```shell
+brew install node                           # Node.js 18+ (provides npm); or use nvm, or https://nodejs.org/en/download
+npm install -g yarn                         # yarn classic v1 (used by make app-install / app-build)
+curl -fsSL https://bun.sh/install | bash    # bun (used by make app-check); or: brew install oven-sh/bun/bun
+
+```
+
+Then install the app's JavaScript dependencies (using the committed `yarn.lock`):
 
 ```shell
 make app-install
@@ -191,10 +200,29 @@ make app-check
 
 ```
 
-Run the app locally for development (starts backend, frontend, and OpenAPI watcher — access at <http://localhost:9001>):
+Run the app locally for development (starts uvicorn backend on `:9002` and the Vite frontend on `:9001` — access at <http://localhost:9001>):
 
 ```shell
 make app-start-dev
+
+```
+
+Backgrounding the dev loop for troubleshooting
+
+`make app-start-dev` runs uvicorn and vite in the foreground and streams all logs to stdout. To run the dev loop in the background and tail the logs separately — useful for getting the terminal back, capturing logs across multiple iterations, or pointing the IDE at a single log file while reproducing an issue:
+
+```shell
+nohup make app-start-dev > /tmp/dqx-dev.log 2>&1 &
+tail -f /tmp/dqx-dev.log
+
+```
+
+Stop the backgrounded servers from any shell with `make app-stop-dev`. For the full local-development guide and additional logging tips, see [app/DEVELOPMENT.md](https://github.com/databrickslabs/dqx/blob/v0.15.0/app/DEVELOPMENT.md).
+
+After changing backend models or routes, regenerate the OpenAPI schema and the TypeScript client manually (there is no auto-watcher):
+
+```shell
+make app-regen-api
 
 ```
 
@@ -211,17 +239,27 @@ Before running `make app-start-dev`, configure authentication to a Databricks wo
 # app/.env
 DATABRICKS_CONFIG_PROFILE=<your-profile>        # from ~/.databrickscfg
 DATABRICKS_WAREHOUSE_ID=<your-warehouse-id>     # SQL Warehouses → connection details
+DQX_CATALOG=dqx                                 # Unity Catalog catalog name (default: dqx)
+DQX_SCHEMA=dqx_studio                           # schema inside the catalog (default: dqx_studio)
 DQX_JOB_ID=<task-runner-job-id>                 # optional locally; required for profiler / dry-run
+DQX_LAKEBASE_INSTANCE_NAME=                     # optional locally; empty = OLTP tables run on Delta
+DQX_ADMIN_GROUP=<a workspace group you belong to>  # grants you the Admin role in the app
 
 ```
 
-If you don't have a profile yet, run `databricks auth login --host <workspace-url> -p <your-profile>` first. See the [Development Mode](https://github.com/databrickslabs/dqx/blob/v0.14.0/app/README.md#development-mode) section of the app README for more detail.
+`DQX_CATALOG` and `DQX_SCHEMA` are the most common source of startup errors locally — the built-in defaults (`dqx` / `dqx_studio`) only resolve if a workspace happens to have those exact names, so point them at the catalog/schema your bundle deploy actually created (or at any pre-existing UC namespace your workspace admin set up).
+
+Set `DQX_ADMIN_GROUP` to a workspace group you're a member of to get the **Admin** role in the app — otherwise role resolution falls back to `VIEWER` and privileged actions (configure storage, approve rules, manage roles) return `403`. List your groups with `databricks current-user me -p <your-profile> | jq '.groups[].display'` and pick one.
+
+Leave `DQX_LAKEBASE_INSTANCE_NAME` empty for most local dev — the app falls back to Delta for the OLTP tables (rules catalog, app settings, RBAC, comments, schedules) so you don't need a Lakebase instance to iterate. To exercise the Lakebase path locally, deploy the bundle once and point the variable at the resulting instance. See [app/DEVELOPMENT.md](https://github.com/databrickslabs/dqx/blob/v0.15.0/app/DEVELOPMENT.md) for the full set of `DQX_LAKEBASE_*` variables.
+
+If you don't have a profile yet, run `databricks auth login --host <workspace-url> -p <your-profile>` first. See [app/DEVELOPMENT.md](https://github.com/databrickslabs/dqx/blob/v0.15.0/app/DEVELOPMENT.md) for the full local-development guide.
 
 Profiler and dry-run features require deployment
 
-The **profiler** and **dry-run** features rely on a Databricks Job (`dqx-app-task-runner`) that only exists after you deploy the app bundle to a workspace. For local UI and backend development (routes, components, auth wiring, config), you can skip this — `DQX_JOB_ID` is not required and the app will start without it. All other features will work locally.
+The **profiler** and **dry-run** features rely on the `dqx-studio-task-runner` Databricks Job that only exists after you deploy the app bundle to a workspace. For local UI and backend development (routes, components, auth wiring, config), you can skip this — `DQX_JOB_ID` is not required and the app will start without it. All other features will work locally.
 
-To exercise the profiler or dry-run flows, deploy DQX Studio once to a workspace (see [DQX Studio deployment](#dqx-studio-deployment) below) and test those features from the deployed app in the workspace (not from your local dev server).
+To exercise the profiler or dry-run flows, deploy DQX Studio once to a workspace (see [DQX Studio deployment](#dqx-studio-deployment) below) and test those features from the deployed app in the workspace (not from your local dev server). The task-runner job in the deployed bundle is named `dqx-studio-task-runner` — that's the value to put in `DQX_JOB_ID` if you want to point local dev at a deployed task runner.
 
 DQX Studio under `app/` has its own Python and JavaScript lockfiles (`app/uv.lock`, `app/yarn.lock`, `app/.build-constraints.txt`). To refresh them, use:
 
@@ -238,11 +276,11 @@ Only `app/yarn.lock` is committed for JavaScript dependencies — `app/bun.lock`
 
 Deploying DQX Studio to a workspace is required when you want to:
 
-* exercise the profiler or dry-run flows end-to-end (these depend on the `dqx-app-task-runner` Databricks Job and a UC volume that only exist after deploy),
+* exercise the profiler or dry-run flows end-to-end (these depend on the `dqx-studio-task-runner` Databricks Job and a UC volume that only exist after deploy),
 * verify a change behaves correctly under the production identity model (service principal + on-behalf-of), or
 * run a review pass against a deployed app before merging.
 
-For the full step-by-step (service principal creation, asset-bundle deploy, schema/volume permission grants, app start, troubleshooting) follow [app/DEPLOYMENT.md](https://github.com/databrickslabs/dqx/blob/v0.14.0/app/DEPLOYMENT.md).
+For the full step-by-step (service principal creation, choosing a SQL warehouse mode, adopting existing resources into the bundle, asset-bundle deploy, Lakebase opt-out, post-deploy grants, app start, troubleshooting) follow [app/DEPLOYMENT.md](https://github.com/databrickslabs/dqx/blob/v0.15.0/app/DEPLOYMENT.md).
 
 ### Running integration tests and code coverage[​](#running-integration-tests-and-code-coverage "Direct link to Running integration tests and code coverage")
 
@@ -597,4 +635,4 @@ The following skills are provided to cover the main capabilities of DQX:
 * Keep each `SKILL.md` file short. The full file is loaded into context when a skill fires.
 * Link to existing documentation instead of duplicating content. The skill's job is to tell the assistant when and how to use an API.
 * Limit skills to use only public methods and APIs of DQX.
-* Update the [documentation](https://github.com/databrickslabs/dqx/blob/v0.14.0/docs/dqx/docs/guide/ai_tools_skills.mdx) if you change install paths, the marketplace manifest, or the public list of skills.
+* Update the [documentation](https://github.com/databrickslabs/dqx/blob/v0.15.0/docs/dqx/docs/guide/ai_tools_skills.mdx) if you change install paths, the marketplace manifest, or the public list of skills.

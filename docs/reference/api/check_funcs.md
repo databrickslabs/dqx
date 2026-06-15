@@ -629,6 +629,34 @@ Checks whether the values in the input column have valid IPv4 address formats.
 
 Column object for condition
 
+### is\_valid\_email[​](#is_valid_email "Direct link to is_valid_email")
+
+```python
+@register_rule("row")
+def is_valid_email(column: str | Column) -> Column
+
+```
+
+Checks whether the values in the input column are valid email addresses.
+
+Validates against a pragmatic subset of RFC 5322:
+
+* Local part: dot-atom (RFC 5322 §3.2.3) or quoted-string (§3.2.4).
+* Domain: dot-atom hostname with LDH labels (RFC 1035 §2.3.4) and an alphabetic TLD, or an IP-literal (RFC 5321 §4.1.3) - bracketed IPv4 addresses will use octet validation while *\[IPv6:...] addresses* are only matched syntactically; Callers requiring semantic IPv6 domain validation should implement a custom Python check that uses a Pandas UDF to call *ipaddress.IPv6Address* methods.
+* Length caps (per RFC 5321 §4.5.3.1): 64 octets for local-parts, 254 octets for the full address.
+
+Comments and folding whitespace (CFWS), obsolete grammar (*obs-local-part*, *obs-domain*, *obs-qtext*, *obs-qp*), and internationalized addresses (RFC 6531 / SMTPUTF8) are not supported; a separate check would be needed for each. Numeric and single-character TLDs are rejected (ICANN policy + practical interoperability).
+
+Null values will pass the check with no violation reported.
+
+**Arguments**:
+
+* `column` - column to check; can be a string column name or a column expression
+
+**Returns**:
+
+Column object for condition
+
 ### is\_ipv4\_address\_in\_cidr[​](#is_ipv4_address_in_cidr "Direct link to is_ipv4_address_in_cidr")
 
 ```python

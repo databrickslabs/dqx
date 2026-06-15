@@ -118,7 +118,7 @@ print(f"Check metrics: {metrics['check_metrics']}")  # per-check error/warning c
 
 ### Writing Metrics to a Table[​](#writing-metrics-to-a-table "Direct link to Writing Metrics to a Table")
 
-End-to-end engine methods for applying checks (e.g. `apply_checks_and_save_in_table`, `apply_checks_by_metadata_and_save_in_table`, `save_results_in_table`, `apply_checks_and_save_in_tables`, `apply_checks_and_save_in_tables_for_patterns`) can write summary metrics into a table automatically using configuration. Metrics can be written to a table in batch or streaming. You can write metrics for different datasets or workloads into a common metrics table to track data quality over time centrally.
+End-to-end engine methods for applying checks (e.g. `apply_checks_and_save_in_table`, `apply_checks_by_metadata_and_save_in_table`, `save_results_in_table`, `apply_checks_and_save_in_tables`, `apply_checks_and_save_in_tables_for_patterns`) can write summary metrics into a table automatically using configuration. Metrics can be written to a table in batch or streaming. You can write metrics for different datasets or workloads into a common metrics table to track data quality over time centrally. For batch inputs, these methods can write summary metrics without writing output or quarantine tables by providing `metrics_config` only.
 
 The `name` specified in the `DQMetricsObserver` is recorded as the `run_name` column in the metrics table. It is recommended to assign a unique `name` to the observer for each job or table to enable efficient filtering when centralizing metrics in a single table.
 
@@ -128,7 +128,7 @@ Writing metrics directly to a results table is not supported for classic compute
 
 #### Writing Metrics to a Table in Batch[​](#writing-metrics-to-a-table-in-batch "Direct link to Writing Metrics to a Table in Batch")
 
-Summary metrics can be written to a table when calling `DQEngine` methods to apply checks and write output data. When the input data is read as a batch source, metrics will be collected and written in batch.
+Summary metrics can be written to a table when calling `DQEngine` methods to apply checks and write output data, quarantine data, or metrics only. When the input data is read as a batch source, metrics will be collected and written in batch.
 
 * Python
 
@@ -197,6 +197,13 @@ engine.apply_checks_and_save_in_table(
     metrics_config=metrics_config
 )
 
+# Option 3: Use End to End method to write summary metrics only for a batch input
+engine.apply_checks_and_save_in_table(
+    checks=checks,  # or provide checks_location and run_config_name to auto-load from checks storage
+    input_config=input_config,
+    metrics_config=metrics_config
+)
+
 ```
 
 #### Writing Metrics to a Table with Streaming[​](#writing-metrics-to-a-table-with-streaming "Direct link to Writing Metrics to a Table with Streaming")
@@ -205,7 +212,7 @@ Summary metrics can also be written in streaming. When the input data is read as
 
 Supported methods
 
-Metrics are not directly accessible from the returned Spark Observation when data is processed with streaming. You must use streaming metrics listener or end-to-end methods that persist the output in tables after quality checks are applied (e.g. e.g. `apply_checks_and_save_in_table`, `apply_checks_by_metadata_and_save_in_table`, `save_results_in_table`, `apply_checks_and_save_in_tables`, `apply_checks_and_save_in_tables_for_patterns`).
+Metrics are not directly accessible from the returned Spark Observation when data is processed with streaming. You must use streaming metrics listener or end-to-end methods that persist the output in tables after quality checks are applied (e.g. e.g. `apply_checks_and_save_in_table`, `apply_checks_by_metadata_and_save_in_table`, `save_results_in_table`, `apply_checks_and_save_in_tables`, `apply_checks_and_save_in_tables_for_patterns`). Metrics-only streaming writes are not supported because DQX needs an output or quarantine streaming query to emit observed metrics.
 
 * Python
 
@@ -290,7 +297,7 @@ engine.apply_checks_and_save_in_table(
 
 #### Saving Results and Metrics to a Table[​](#saving-results-and-metrics-to-a-table "Direct link to Saving Results and Metrics to a Table")
 
-Summary metrics can also be written to a table when calling `save_results_in_table`. After applying checks, pass the Spark Observation and output DataFrame(s) with the appropriate output configuration. This is supported for both batch and streaming.
+Summary metrics can also be written to a table when calling `save_results_in_table`. After applying checks, pass the Spark Observation and output DataFrame(s) with the appropriate output configuration. For batch results, you can pass only the Spark Observation and `metrics_config` to write summary metrics without writing row-level output. This is supported for both batch and streaming.
 
 * Python
 
@@ -347,6 +354,14 @@ engine.save_results_in_table(
     observation=observation,
     output_config=output_config,
     quarantine_config=quarantine_config,
+    metrics_config=metrics_config
+)
+
+# Write only summary metrics for batch results
+checked_df, observation = engine.apply_checks(df, checks)
+checked_df.count()  # Trigger the observation before saving metrics
+engine.save_results_in_table(
+    observation=observation,
     metrics_config=metrics_config
 )
 

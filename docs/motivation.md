@@ -52,7 +52,7 @@ Apply DQX checks before writing data to the target table, ensuring only valid da
 
 #### Post-factum monitoring[​](#post-factum-monitoring "Direct link to Post-factum monitoring")
 
-Run DQX checks on already persisted data as a background process to identify and flag invalid records. This does not require code-level integration with the data pipelines and can be implemented as a separate monitoring workflow.
+Run DQX checks on already persisted data as a background process to identify and flag invalid records. This does not require code-level integration with the data pipelines and can be implemented as a separate monitoring workflow. For a no-code experience, [DQX Studio](/dqx/docs/guide/dqx_studio.md) (recommended) provides a browser-based UI for this, or you can run the DQX workflows driven by a configuration file.
 
 ![Post-commit validation](/dqx/img/dqx_lakehouse_post_factum.png)
 

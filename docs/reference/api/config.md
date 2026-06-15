@@ -43,13 +43,17 @@ Configuration class for profiler.
 
 file containing profile summary statistics
 
-#### sample\_fraction[​](#sample_fraction "Direct link to sample_fraction")
-
-fraction of data to sample (30%)
-
 #### sample\_seed[​](#sample_seed "Direct link to sample_seed")
 
 seed for sampling
+
+#### sample\_by\_column[​](#sample_by_column "Direct link to sample_by_column")
+
+column with keys to sample by
+
+#### sample\_by\_values\_limit[​](#sample_by_values_limit "Direct link to sample_by_values_limit")
+
+max distinct sample\_by\_column values to collect when sampling uniformly
 
 #### limit[​](#limit "Direct link to limit")
 
@@ -212,10 +216,6 @@ class LLMModelConfig()
 Configuration for LLM model
 
 #### api\_key[​](#api_key "Direct link to api_key")
-
-when used with Profiler Workflow, this should be a secret: secret\_scope/secret\_key
-
-#### api\_base[​](#api_base "Direct link to api_base")
 
 when used with Profiler Workflow, this should be a secret: secret\_scope/secret\_key
 

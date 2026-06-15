@@ -44,6 +44,7 @@ def add_info_column(df: DataFrame,
                     segment_values: dict[str, str] | None = None,
                     enable_contributions: bool = False,
                     enable_confidence_std: bool = False,
+                    ai_explanation_col: str | None = None,
                     score_col: str = "anomaly_score",
                     score_std_col: str = "anomaly_score_std",
                     contributions_col: str = "anomaly_contributions",
@@ -62,10 +63,11 @@ Add info struct column with anomaly metadata.
 * `segment_values` - Segment values if model is segmented (None for global models).
 * `enable_contributions` - Whether anomaly\_contributions are available (0–100 percent).
 * `enable_confidence_std` - Whether anomaly\_score\_std is available.
+* `ai_explanation_col` - Optional column name carrying the pre-computed AI explanation struct. When provided and present on df, it is packaged into \_dq\_info.
 * `score_col` - Column name for anomaly scores (internal, collision-safe).
 * `score_std_col` - Column name for ensemble std scores (internal, collision-safe).
-* `contributions_col` - Column name for SHAP contributions (internal, collision-safe, 0–100 percent).
-* `model_name`0 - Column name for severity percentile (internal, collision-safe).
+* `model_name`0 - Column name for SHAP contributions (internal, collision-safe, 0–100 percent).
+* `model_name`1 - Column name for severity percentile (internal, collision-safe).
 
 **Returns**:
 

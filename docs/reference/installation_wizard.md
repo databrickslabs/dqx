@@ -1,0 +1,128 @@
+# DQX Installation Wizard
+
+When you install DQX as a tool in a Databricks workspace using `databricks labs install dqx`, the installer runs an interactive wizard to collect settings for the "default" run configuration. This page documents each installer prompt with its expected input, default value, and the behavior it controls.
+
+When you use DQX's installation wizard to install DQX:
+
+* Each prompt shows its default value in brackets. Press Enter to accept the default value.
+* Some prompts will only appear conditionally (for example, the streaming, quarantine, metrics, and job-cluster prompts).
+* When configuring locations (e.g. the input, output, or quarantine locations), the special value `skipped` instructs the installer not to configure the location.
+
+Changing settings after installation
+
+All responses map to fields in the generated [configuration file](/dqx/docs/installation.md#configuration-file). Add run configurations or change any of these settings by editing `config.yml` (open it with `databricks labs dqx open-remote-config`).
+
+## General settings[​](#general-settings "Direct link to General settings")
+
+Configures the logging settings used across DQX jobs installed using the installer.
+
+| Prompt      | Property    | What it configures                   | Default | Notes                                                             |
+| ----------- | ----------- | ------------------------------------ | ------- | ----------------------------------------------------------------- |
+| *Log level* | `log_level` | Logging verbosity for DQX workflows. | `INFO`  | Accepts standard levels such as `DEBUG`, `INFO`, `WARN`, `ERROR`. |
+
+## Input data[​](#input-data "Direct link to Input data")
+
+Defines an `input_config` where the source data is read. The input is optional during installation. Leave the location as `skipped` to omit it and configure it later.
+
+| Prompt                                                  | Property                    | What it configures                                                          | Default   | Notes                                                                                                  |
+| ------------------------------------------------------- | --------------------------- | --------------------------------------------------------------------------- | --------- | ------------------------------------------------------------------------------------------------------ |
+| *Should the input data be read using streaming?*        | `input_config.is_streaming` | Whether the input is read as a streaming source rather than a batch source. | `no`      | When enabled, additional streaming trigger options are requested for the output and quarantine tables. |
+| *Provide location for the input data*                   | `input_config.location`     | Source data, as a path or a `catalog.schema.table` / `schema.table` name.   | `skipped` | Use `skipped` to omit the input configuration.                                                         |
+| *Provide format for the input data*                     | `input_config.format`       | Input data format, e.g. `delta`, `parquet`, `csv`, `json`.                  | `delta`   | Only asked when an input location is provided.                                                         |
+| *Provide schema for the input data*                     | `input_config.schema`       | Optional explicit schema, e.g. `col1 int, col2 string`.                     | `skipped` | Only asked when an input location is provided. Use `skipped` to let the format infer the schema.       |
+| *Provide additional options for reading the input data* | `input_config.options`      | Reader options as a JSON object, e.g. `{"versionAsOf": "0"}`.               | `{}`      | Only asked when an input location is provided.                                                         |
+
+## Output data[​](#output-data "Direct link to Output data")
+
+Defines an `output_config` where checked data (with the `_errors` / `_warnings` reporting columns) is written. Leave the location as `skipped` to omit it and skip writing valid data (e.g. when you only want to write invalid rows to a quarantine table).
+
+| Prompt                                                                   | Property                 | What it configures                                               | Default   | Notes                                                                                                             |
+| ------------------------------------------------------------------------ | ------------------------ | ---------------------------------------------------------------- | --------- | ----------------------------------------------------------------------------------------------------------------- |
+| *Provide output table*                                                   | `output_config.location` | Output table, as `catalog.schema.table` / `schema.table`.        | `skipped` | Use `skipped` to omit writing valid data. The output table can only be skipped if a quarantine table is provided. |
+| *Provide write mode for output table*                                    | `output_config.mode`     | How results are written.                                         | `append`  | One of `append` or `overwrite`.                                                                                   |
+| *Provide format for the output data*                                     | `output_config.format`   | Output data format.                                              | `delta`   |                                                                                                                   |
+| *Provide additional options for writing the output data*                 | `output_config.options`  | Writer options as a JSON object, e.g. `{"mergeSchema": "true"}`. | `{}`      |                                                                                                                   |
+| *Provide additional options for writing the output data using streaming* | `output_config.trigger`  | Streaming trigger options, e.g. `{"availableNow": true}`.        | `{}`      | Only asked when streaming is enabled.                                                                             |
+
+## Quarantine data[​](#quarantine-data "Direct link to Quarantine data")
+
+Defines a `quarantine_config` where quarantined rows that fail 1 or more DQX checks are written. If the location is left as `skipped`, invalid rows are written to the output table instead.
+
+| Prompt                                                                       | Property                     | What it configures                                            | Default   | Notes                                                                                                          |
+| ---------------------------------------------------------------------------- | ---------------------------- | ------------------------------------------------------------- | --------- | -------------------------------------------------------------------------------------------------------------- |
+| *Provide quarantined table*                                                  | `quarantine_config.location` | Quarantine table, as `catalog.schema.table` / `schema.table`. | `skipped` | Use `skipped` to keep invalid rows in the output table. The remaining quarantine questions are then not asked. |
+| *Provide write mode for quarantine table*                                    | `quarantine_config.mode`     | How quarantined rows are written.                             | `append`  | Only asked when a quarantine table is provided. One of `append` or `overwrite`.                                |
+| *Provide format for the quarantine data*                                     | `quarantine_config.format`   | Quarantine data format.                                       | `delta`   | Only asked when a quarantine table is provided.                                                                |
+| *Provide additional options for writing the quarantine data*                 | `quarantine_config.options`  | Writer options as a JSON object.                              | `{}`      | Only asked when a quarantine table is provided.                                                                |
+| *Provide additional options for writing the quarantine data using streaming* | `quarantine_config.trigger`  | Streaming trigger options.                                    | `{}`      | Only asked when a quarantine table is provided and streaming is enabled.                                       |
+
+## Summary metrics[​](#summary-metrics "Direct link to Summary metrics")
+
+Defines the `metrics_config` and `custom_metrics` used to track and write per-run summary metrics produced by the quality checker.
+
+| Prompt                                                                        | Property                  | What it configures                                                                               | Default    | Notes                                                                                                |
+| ----------------------------------------------------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------ | ---------- | ---------------------------------------------------------------------------------------------------- |
+| *Do you want to store summary metrics from data quality checking in a table?* | `metrics_config`          | Whether summary metrics are persisted.                                                           | `no`       | When `no`, the remaining metrics questions are not asked.                                            |
+| *Provide table for storing summary metrics*                                   | `metrics_config.location` | Metrics table, as `catalog.schema.table` / `schema.table`.                                       | *required* | Only asked when storing summary metrics; must be provided.                                           |
+| *Provide write mode for metrics table*                                        | `metrics_config.mode`     | How metrics are written.                                                                         | `append`   | Only asked when storing summary metrics. One of `append` or `overwrite`.                             |
+| *Provide format for the metrics data*                                         | `metrics_config.format`   | Metrics data format.                                                                             | `delta`    | Only asked when storing summary metrics.                                                             |
+| *Provide additional options for writing the metrics data*                     | `metrics_config.options`  | Writer options as a JSON object.                                                                 | `{}`       | Only asked when storing summary metrics.                                                             |
+| *Provide custom metrics*                                                      | `custom_metrics`          | Optional list of Spark SQL aggregate expressions to track, e.g. `["avg(salary) as avg_salary"]`. | `[]`       | Only asked when storing summary metrics. Leave blank to track only the default data quality metrics. |
+
+## Quality checks location[​](#quality-checks-location "Direct link to Quality checks location")
+
+Defines a `checks_location` where quality check definitions are stored. The check definitions can be stored in a table or file.
+
+| Prompt                                               | Property          | What it configures                       | Default      | Notes                                                                                                                                             |
+| ---------------------------------------------------- | ----------------- | ---------------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| *Provide location of the quality checks definitions* | `checks_location` | Where quality checks (rules) are stored. | `checks.yml` | Accepts a file name (relative to the installation folder), a `catalog.schema.table` / `schema.table` table, or a full `/Volumes/.../<file>` path. |
+
+## Profiler[​](#profiler "Direct link to Profiler")
+
+Defines a file path where the DQX Profiler writes summary statistics about the profiled datasets.
+
+| Prompt                                                    | Property                             | What it configures                      | Default                     | Notes |
+| --------------------------------------------------------- | ------------------------------------ | --------------------------------------- | --------------------------- | ----- |
+| *Provide filename for storing profile summary statistics* | `profiler_config.summary_stats_file` | File produced by the profiler workflow. | `profile_summary_stats.yml` |       |
+
+## Compute[​](#compute "Direct link to Compute")
+
+Controls the compute used by the profiler, quality checker, and end-to-end workflows. Serverless is recommended; choosing job clusters unlocks per-workflow Spark configuration.
+
+| Prompt                                                                                   | Property                                                                                   | What it configures                                                                            | Default               | Notes                                                                                                                          |
+| ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| *Do you want to use standard job clusters for the workflows execution (not Serverless)?* | `serverless_clusters`                                                                      | Compute type for the workflows.                                                               | `no` (use Serverless) | Answer `no` to keep Serverless (recommended). Answer `yes` to use job clusters, which triggers the per-workflow prompts below. |
+| *Optional spark conf to use with the profiler / data quality / end-to-end workflow*      | `profiler_spark_conf`, `quality_checker_spark_conf`, `e2e_spark_conf`                      | Per-workflow Spark configuration as a JSON object, e.g. `{"spark.sql.ansi.enabled": "true"}`. | `{}`                  | Only asked when not using Serverless. Asked once per workflow.                                                                 |
+| *Optional Cluster ID to use for the profiler / data quality / end-to-end workflow*       | `profiler_override_clusters`, `quality_checker_override_clusters`, `e2e_override_clusters` | An existing cluster to reuse, e.g. `{"default": "<existing-cluster-id>"}`.                    | `{}`                  | Only asked when not using Serverless. If left empty, a job cluster is created automatically when the job runs.                 |
+
+## Reference tables[​](#reference-tables "Direct link to Reference tables")
+
+Configures reference tables used by DQX checks (e.g. for schema validation or dataset comparison checks).
+
+| Prompt                                       | Property           | What it configures                                                                                            | Default | Notes                                                                                                                                                                              |
+| -------------------------------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| *Provide reference tables to use for checks* | `reference_tables` | Reference datasets for checks such as referential integrity, as a JSON map of name to an input specification. | `{}`    | The specification accepts `location`, `format`, `schema`, `options`, and `is_streaming`. Example: `{"reference_vendor": {"location": "catalog.schema.table", "format": "delta"}}`. |
+
+## Custom check functions[​](#custom-check-functions "Direct link to Custom check functions")
+
+Configures a mapping used to reference custom check functions written in PySpark. Custom checks should be stored in your Databricks workspace as Python modules. Each key is a check function defined in the associated module.
+
+| Prompt                           | Property                 | What it configures                                                                                           | Default | Notes                                                     |
+| -------------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------ | ------- | --------------------------------------------------------- |
+| *Provide custom check functions* | `custom_check_functions` | Custom check functions, as a JSON map of function name to a Python module path in the workspace or a volume. | `{}`    | Example: `{"my_func": "/Workspace/Shared/my_module.py"}`. |
+
+## Dashboard SQL warehouse[​](#dashboard-sql-warehouse "Direct link to Dashboard SQL warehouse")
+
+Configures a Databricks SQL warehouse for serving DQX's built-in dashboard.
+
+| Prompt                                                                     | Property       | What it configures                           | Default            | Notes                                                                          |
+| -------------------------------------------------------------------------- | -------------- | -------------------------------------------- | ------------------ | ------------------------------------------------------------------------------ |
+| *Select PRO or SERVERLESS SQL warehouse to run data quality dashboards on* | `warehouse_id` | SQL warehouse used by the quality dashboard. | *select from list* | Choose an existing PRO or SERVERLESS warehouse, or create a new PRO warehouse. |
+
+## Dependencies[​](#dependencies "Direct link to Dependencies")
+
+Configures installation of DQX from files in the workspace instead of PyPI. Useful for installing DQX jobs in air-gapped environments with no access to PyPI.
+
+| Prompt                                            | Property              | What it configures                                                                                    | Default | Notes                                                             |
+| ------------------------------------------------- | --------------------- | ----------------------------------------------------------------------------------------------------- | ------- | ----------------------------------------------------------------- |
+| *Does the given workspace block Internet access?* | `upload_dependencies` | Whether DQX dependencies are uploaded to the workspace instead of being fetched from PyPI at runtime. | `no`    | Answer `yes` for workspaces without Internet egress (air-gapped). |

@@ -21,7 +21,7 @@ Schema validation requires every property to have physicalType set to a Unity Ca
 
 ```python
 def __init__(workspace_client: WorkspaceClient,
-             llm_engine: DQLLMEngine | None = None,
+             llm_engine: "DQLLMEngine | None" = None,
              custom_check_functions: dict[str, Callable] | None = None)
 
 ```

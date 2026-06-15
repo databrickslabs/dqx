@@ -26,6 +26,34 @@ def compute_shap_values(
 
 Compute SHAP values for a model and feature matrix.
 
+### severity\_from\_scores[​](#severity_from_scores "Direct link to severity_from_scores")
+
+```python
+def severity_from_scores(
+        scores: np.ndarray, quantile_points: list[tuple[float,
+                                                        float]]) -> np.ndarray
+
+```
+
+Map raw anomaly scores to severity percentiles via piecewise linear interpolation.
+
+Numpy counterpart of *add\_severity\_percentile\_column* (same quantile points, same clamping at both ends) for use inside scoring UDFs.
+
+### compute\_gated\_shap\_contributions[​](#compute_gated_shap_contributions "Direct link to compute_gated_shap_contributions")
+
+```python
+def compute_gated_shap_contributions(
+        model_local: Any, feature_matrix: pd.DataFrame,
+        engineered_feature_cols: list[str], scores: np.ndarray,
+        quantile_points: list[tuple[float, float]] | None,
+        threshold: float | None) -> list[dict[str, float | None] | None]
+
+```
+
+Compute SHAP contributions only for rows whose severity reaches the anomaly threshold.
+
+TreeSHAP costs an order of magnitude more than scoring itself, and contributions are only surfaced for anomalous rows, so computing SHAP for the typically tiny anomalous subset instead of every row removes most of the contributions cost. Rows below the threshold get `None` (a null map). When *quantile\_points* or *threshold* is unavailable, SHAP is computed for all rows (previous behaviour).
+
 ### format\_contributions\_map[​](#format_contributions_map "Direct link to format_contributions_map")
 
 ```python

@@ -29,11 +29,17 @@ Load all segment models for a base model from the registry.
 ```python
 def score_single_segment(segment_df: DataFrame,
                          segment_model: AnomalyModelRecord,
-                         config: ScoringConfig) -> DataFrame
+                         config: ScoringConfig,
+                         max_groups_override: int | None = None,
+                         endpoint_reachable: bool | None = None) -> DataFrame
 
 ```
 
 Score a single segment with its specific model.
+
+*max\_groups\_override*, when set, replaces *config.max\_groups* in the ExplanationContext for this segment only. Used by *score\_segmented* to enforce a *global* cap on LLM calls across segments — without it, *config.max\_groups* applies independently per segment and the worst-case total is `num_segments * max_groups`.
+
+*endpoint\_reachable* is the serving-endpoint reachability probed once by *score\_segmented* for the whole run; threading it through avoids one billable `ai_query` probe per segment.
 
 ### score\_segmented[​](#score_segmented "Direct link to score_segmented")
 

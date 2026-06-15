@@ -390,7 +390,7 @@ A tuple of two DataFrames: "good" (may include rows with warnings but no result 
 ```python
 @telemetry_logger("engine", "apply_checks_and_save_in_table")
 def apply_checks_and_save_in_table(input_config: InputConfig,
-                                   output_config: OutputConfig,
+                                   output_config: OutputConfig | None = None,
                                    checks: list[DQRule] | None = None,
                                    quarantine_config: OutputConfig
                                    | None = None,
@@ -403,20 +403,20 @@ def apply_checks_and_save_in_table(input_config: InputConfig,
 
 Apply data quality checks to input data and save results.
 
-If *quarantine\_config* is provided, split the data into valid and invalid records:
+If *quarantine\_config* is provided, the data is split into valid and invalid records:
 
-* valid records are written using *output\_config*.
+* valid records are written using *output\_config* (skipped when *output\_config* is not provided).
 * invalid records are written using *quarantine\_config*.
 
-If *quarantine\_config* is not provided, write all rows (including result columns) using *output\_config*.
+If *quarantine\_config* is not provided and *output\_config* is provided, all rows (including result columns) are written using *output\_config*.
 
-If *metrics\_config* is provided and the `DQEngine` has a valid `observer`, data quality summary metrics will be tracked and written using *metrics\_config*.
+If *metrics\_config* is provided and the `DQEngine` has a valid `observer`, data quality summary metrics are tracked and written using *metrics\_config*.
 
 **Arguments**:
 
 * `input_config` - Input configuration (e.g., table/view or file location and read options).
 
-* `output_config` - Output configuration (e.g., table name, mode, and write options).
+* `output_config` - Output configuration (e.g., table name, mode, and write options). Optional when *quarantine\_config* is provided, in which case valid records are not written, or when only *metrics\_config* is provided for batch summary metrics.
 
 * `checks` - Optional list of *DQRule* checks to apply. If not provided, checks\_location must be provided.
 
@@ -435,13 +435,17 @@ If *metrics\_config* is provided and the `DQEngine` has a valid `observer`, data
 
 * `run_config_name` - Name of the run configuration to use when loading checks from a table.
 
+**Raises**:
+
+* `observer`0 - If both *checks* and *checks\_location* are not specified, if none of *output\_config*, *quarantine\_config*, and *metrics\_config* are specified, if *metrics\_config* is provided while the engine has no observer to collect metrics, or if metrics-only is requested for streaming.
+
 ### apply\_checks\_by\_metadata\_and\_save\_in\_table[​](#apply_checks_by_metadata_and_save_in_table "Direct link to apply_checks_by_metadata_and_save_in_table")
 
 ```python
 @telemetry_logger("engine", "apply_checks_by_metadata_and_save_in_table")
 def apply_checks_by_metadata_and_save_in_table(
         input_config: InputConfig,
-        output_config: OutputConfig,
+        output_config: OutputConfig | None = None,
         checks: list[dict] | None = None,
         quarantine_config: OutputConfig | None = None,
         metrics_config: OutputConfig | None = None,
@@ -454,18 +458,20 @@ def apply_checks_by_metadata_and_save_in_table(
 
 Apply metadata-defined data quality checks to input data and save results.
 
-If *quarantine\_config* is provided, split the data into valid and invalid records:
+If *quarantine\_config* is provided, the data is split into valid and invalid records:
 
-* valid records are written using *output\_config*;
+* valid records are written using *output\_config* (skipped when *output\_config* is not provided).
 * invalid records are written using *quarantine\_config*.
 
-If *quarantine\_config* is not provided, write all rows (including result columns) using *output\_config*.
+If *quarantine\_config* is not provided and *output\_config* is provided, all rows (including result columns) are written using *output\_config*.
+
+If *metrics\_config* is provided and the `DQEngine` has a valid `observer`, data quality summary metrics are tracked and written using *metrics\_config*.
 
 **Arguments**:
 
 * `input_config` - Input configuration (e.g., table/view or file location and read options).
 
-* `output_config` - Output configuration (e.g., table name, mode, and write options).
+* `output_config` - Output configuration (e.g., table name, mode, and write options). Optional when *quarantine\_config* is provided, in which case valid records are not written, or when only *metrics\_config* is provided for batch summary metrics.
 
 * `checks` - Optional list of dicts containing checks to apply. If not provided, checks\_location must be provided. Each check dictionary must contain the following:
 
@@ -490,7 +496,11 @@ If *quarantine\_config* is not provided, write all rows (including result column
   * If 'checks' param is provided, the parameter is only used for reporting purposes.
   * If 'checks' param is not provided, the parameter is used for loading checks from the storage.
 
-* `run_config_name` - Name of the run configuration to use when loading checks from a table.
+* `observer`0 - Name of the run configuration to use when loading checks from a table.
+
+**Raises**:
+
+* `observer`1 - If both *checks* and *checks\_location* are not specified, if none of *output\_config*, *quarantine\_config*, and *metrics\_config* are specified, if *metrics\_config* is provided while the engine has no observer to collect metrics, or if metrics-only is requested for streaming.
 
 ### apply\_checks\_and\_save\_in\_tables[​](#apply_checks_and_save_in_tables "Direct link to apply_checks_and_save_in_tables")
 
@@ -502,13 +512,13 @@ def apply_checks_and_save_in_tables(
 
 ```
 
-Apply data quality checks to multiple tables or views and write the results to output table(s).
+Apply data quality checks to multiple tables or views and write the results to output and/or metrics table(s).
 
-If quarantine tables are provided in the run configuration, the data will be split into good and bad records, with good records written to the output table and bad records to the quarantine table. If quarantine tables are not provided, all records (with error/warning columns) will be written to the output table.
+If quarantine tables are provided in the run configuration, the data will be split into good and bad records, with good records written to the output table and bad records to the quarantine table. If quarantine tables are not provided and output tables are provided, all records (with error/warning columns) will be written to the output table. If only metrics tables are provided, only summary metrics will be written.
 
 **Arguments**:
 
-* `run_configs` *list\[RunConfig]* - List of run configurations containing input configs, output configs, quarantine configs, and a checks file location.
+* `run_configs` *list\[RunConfig]* - List of run configurations containing input configs, output configs, quarantine configs, metrics configs, and a checks file location.
 * `max_parallelism` *int, optional* - Maximum number of tables to check in parallel. Defaults to the number of CPU cores.
 
 **Returns**:
@@ -533,7 +543,7 @@ def apply_checks_and_save_in_tables_for_patterns(
 
 Apply data quality checks to tables or views matching a pattern and write the results to output table(s).
 
-If quarantine option is enabled the data will be split into good and bad records, with good records written to the output table (under the same name as input table and "\_dq" suffix) and bad records to the quarantine table (under the same name as input table and "\_quarantine" suffix). If quarantine is not enabled, all records (with error/warning columns) will be written to the output table.
+If quarantine option is enabled the data is split into good and bad records, with good records written to the output table (under the same name as input table and "\_dq" suffix) and bad records to the quarantine table (under the same name as input table and "\_quarantine" suffix). When *output\_config* is omitted on the template and *quarantine\_config* is provided, valid records are not written and only the quarantine table is produced per matched table. When only *metrics\_config* is provided on the template, only summary metrics are written. If quarantine is not enabled and metrics-only is not configured, all records (with error/warning columns) will be written to the output table.
 
 Checks are expected to be available under the same name as the table, with a .yml extension.
 
@@ -638,6 +648,7 @@ Behavior:
 * If *quarantine\_df* is provided and *quarantine\_config* is None, load the run config and use its *quarantine\_config*.
 * If *observation* is provided and *metrics\_config* is None, load the run config and use its *metrics\_config*
 * A write occurs only when both a DataFrame and its corresponding config are available.
+* If only *observation* and *metrics\_config* are provided, only summary metrics are written.
 
 **Arguments**:
 
@@ -752,7 +763,7 @@ def save_summary_metrics(observed_metrics: dict[str, Any],
 
 Save data quality summary metrics to a table.
 
-This method extracts observed metrics from a Spark Observation and persists them to a configured output destination. Metrics are only saved if an observer is configured on the engine.
+This method extracts observed metrics from a Spark Observation and persists them to a configured output destination.
 
 **Arguments**:
 

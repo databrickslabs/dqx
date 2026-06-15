@@ -10,6 +10,10 @@ DQX is a data quality framework for Apache Spark that enables you to define, mon
 
 ## Capabilities
 
+### DQX Studio (No-Code UI)
+
+Author, review, run, and monitor quality rules from a browser.
+
 ### Info of Failed Checks
 
 Get detailed insights into why a check has failed.

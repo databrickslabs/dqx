@@ -78,6 +78,16 @@ def has_invalid_filter() -> bool
 
 Returns a boolean indicating whether the filter is invalid in the input DataFrame.
 
+### has\_invalid\_custom\_message[​](#has_invalid_custom_message "Direct link to has_invalid_custom_message")
+
+```python
+@cached_property
+def has_invalid_custom_message() -> bool
+
+```
+
+Returns a boolean indicating whether the custom message expression is invalid in the input DataFrame.
+
 ### invalid\_sql\_expression[​](#invalid_sql_expression "Direct link to invalid_sql_expression")
 
 ```python

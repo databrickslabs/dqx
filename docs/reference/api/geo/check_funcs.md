@@ -608,3 +608,185 @@ A tuple of:
 **Notes**:
 
 This function requires Databricks runtime 17.1 or above. This check performs a self-join over all valid polygons in the input DataFrame, which is O(n²). Use `row_filter` to limit the rows evaluated on large tables. Photon activation is suggested to use optimised spatial computation.
+
+### is\_geo\_contains[​](#is_geo_contains "Direct link to is_geo_contains")
+
+```python
+@register_rule("row")
+def is_geo_contains(column: str | Column,
+                    reference_geometry: str | bytes | Column,
+                    convert_column: bool = False,
+                    convert_reference_geometry: bool = False) -> Column
+
+```
+
+Checks if the reference geometry contains the column geometry using `st_contains` with meter-level precision.
+
+A geometry A *contains* geometry B when B lies entirely within the interior of A, with no boundary points of B lying on the boundary of A. Points on the shared boundary are not considered contained; use *is\_geo\_covers* for boundary-inclusive coverage checks.
+
+Both the target column and the reference geometry are always handled as `GEOMETRY`. When conversion is requested (*convert\_column* or *convert\_reference\_geometry* set to True), *try\_to\_geometry* is applied to parse the value from any supported format (WKT, WKB, EWKT, EWKB). See <https://docs.databricks.com/aws/en/sql/language-manual/functions/try_to_geometry> for details. When conversion is not requested, the input is assumed to already hold a native `GEOMETRY` value.
+
+**Arguments**:
+
+* `column` - Column to check. Null values are skipped for validation.
+* `reference_geometry` - Reference geometry as a literal WKT/WKB/EWKT/EWKB string or bytes value, or a Column expression (e.g. *F.col('col\_name')*) to reference another column. A plain string is always treated as a literal, not a column name.
+* `convert_column` - When True, *try\_to\_geometry* is applied to convert the column values to GEOMETRY. When False (default), the column is assumed to already hold a native GEOMETRY value.
+* `convert_reference_geometry` - When True, *try\_to\_geometry* is applied to convert the reference geometry to GEOMETRY. When False (default), the reference geometry is assumed to already hold a native GEOMETRY value.
+
+**Returns**:
+
+Column object indicating whether values in the input column are not contained by the reference geometry.
+
+**Notes**:
+
+This function requires Databricks serverless compute or runtime 17.1 or above.
+
+### is\_geo\_covers[​](#is_geo_covers "Direct link to is_geo_covers")
+
+```python
+@register_rule("row")
+def is_geo_covers(column: str | Column,
+                  reference_geometry: str | bytes | Column,
+                  precise: bool = False,
+                  resolution: int | Column | None = None,
+                  convert_column: bool = False,
+                  convert_reference_geometry: bool = False) -> Column
+
+```
+
+Checks if the reference geometry covers the column geometry.
+
+When *precise* is True, uses `st_covers` for exact computation with meter-level precision. A geometry A *covers* geometry B when every point of B lies within A, including boundary points. This differs from `st_contains`, which excludes points on A's boundary.
+
+When *precise* is False (default), approximates coverage using H3 cell indexing: all hexagonal cells that represent the column geometry must also be present in the H3 cells of the reference geometry. Higher *resolution* values give finer precision at the cost of more cells. Because H3 cells are discrete approximations, boundary behaviour differs from the exact `st_covers` predicate and geometries near the boundary may be misclassified.
+
+Both the target column and the reference geometry are always handled as `GEOMETRY` in precise mode. When conversion is requested (*convert\_column* or *convert\_reference\_geometry* set to True), *try\_to\_geometry* is applied. These flags are ignored in approximate mode, where null and invalid (unparseable) geometries are skipped rather than flagged — use *is\_geometry* to flag invalid values.
+
+**Arguments**:
+
+* `column` - Column to check. Null values are skipped for validation.
+* `reference_geometry` - Reference geometry as a literal WKT/WKB/EWKT/EWKB string or bytes value, or a Column expression (e.g. *F.col('col\_name')*) to reference another column. A plain string is always treated as a literal, not a column name. Bytes (WKB) are only supported in precise mode.
+* `precise` - When True, uses exact `st_covers` computation. When False (default), uses the H3 approximate method which requires *resolution*.
+* `resolution` - H3 resolution integer (0–15) or column reference. Required when *precise* is False. Higher values give finer precision at the cost of more cells.
+* `convert_column` - When True, *try\_to\_geometry* is applied to convert column values to GEOMETRY. Only used in precise mode.
+* `st_contains`0 - When True, *try\_to\_geometry* is applied to convert the reference geometry to GEOMETRY. Only used in precise mode.
+
+**Returns**:
+
+Column object indicating whether values in the input column are not covered by the reference geometry.
+
+**Raises**:
+
+* `st_contains`1 - If *precise* is False and *resolution* is not provided or is outside 0–15.
+
+**Notes**:
+
+This function requires Databricks serverless compute or runtime 17.1 or above.
+
+### is\_geo\_intersects[​](#is_geo_intersects "Direct link to is_geo_intersects")
+
+```python
+@register_rule("row")
+def is_geo_intersects(column: str | Column,
+                      reference_geometry: str | bytes | Column,
+                      precise: bool = False,
+                      resolution: int | Column | None = None,
+                      convert_column: bool = False,
+                      convert_reference_geometry: bool = False) -> Column
+
+```
+
+Checks if the column geometry intersects the reference geometry.
+
+When *precise* is True, uses `st_intersects` for exact computation with meter-level precision. Two geometries intersect when they share at least one point, whether interior or boundary.
+
+When *precise* is False (default), approximates intersection using H3 cell indexing: at least one hexagonal cell must be shared between the H3 representations of the column and reference geometries. Higher *resolution* values give finer precision at the cost of more cells. Because H3 cells are discrete approximations, boundary behaviour differs from the exact `st_intersects` predicate.
+
+Both the target column and the reference geometry are always handled as `GEOMETRY` in precise mode. When conversion is requested (*convert\_column* or *convert\_reference\_geometry* set to True), *try\_to\_geometry* is applied. These flags are ignored in approximate mode, where null and invalid (unparseable) geometries are skipped rather than flagged — use *is\_geometry* to flag invalid values.
+
+**Arguments**:
+
+* `column` - Column to check. Null values are skipped for validation.
+* `reference_geometry` - Reference geometry as a literal WKT/WKB/EWKT/EWKB string or bytes value, or a Column expression (e.g. *F.col('col\_name')*) to reference another column. A plain string is always treated as a literal, not a column name. Bytes (WKB) are only supported in precise mode.
+* `precise` - When True, uses exact `st_intersects` computation. When False (default), uses the H3 approximate method which requires *resolution*.
+* `resolution` - H3 resolution integer (0–15) or column reference. Required when *precise* is False. Higher values give finer precision at the cost of more cells.
+* `convert_column` - When True, *try\_to\_geometry* is applied to convert column values to GEOMETRY. Only used in precise mode.
+* `convert_reference_geometry` - When True, *try\_to\_geometry* is applied to convert the reference geometry to GEOMETRY. Only used in precise mode.
+
+**Returns**:
+
+Column object indicating whether values in the input column do not intersect the reference geometry.
+
+**Raises**:
+
+* `st_intersects`0 - If *precise* is False and *resolution* is not provided or is outside 0–15.
+
+**Notes**:
+
+This function requires Databricks serverless compute or runtime 17.1 or above.
+
+### is\_geo\_touches[​](#is_geo_touches "Direct link to is_geo_touches")
+
+```python
+@register_rule("row")
+def is_geo_touches(column: str | Column,
+                   reference_geometry: str | bytes | Column,
+                   convert_column: bool = False,
+                   convert_reference_geometry: bool = False) -> Column
+
+```
+
+Checks if the column geometry touches the reference geometry using `st_touches` with meter-level precision.
+
+Two geometries *touch* when they share at least one boundary point but their interiors do not intersect. A point strictly inside a polygon does not touch it; a point on the polygon boundary does.
+
+Both the target column and the reference geometry are always handled as `GEOMETRY`. When conversion is requested (*convert\_column* or *convert\_reference\_geometry* set to True), *try\_to\_geometry* is applied to parse the value from any supported format (WKT, WKB, EWKT, EWKB). When conversion is not requested, the input is assumed to already hold a native `GEOMETRY` value.
+
+**Arguments**:
+
+* `column` - Column to check. Null values are skipped for validation.
+* `reference_geometry` - Reference geometry as a literal WKT/WKB/EWKT/EWKB string or bytes value, or a Column expression (e.g. *F.col('col\_name')*) to reference another column. A plain string is always treated as a literal, not a column name.
+* `convert_column` - When True, *try\_to\_geometry* is applied to convert column values to GEOMETRY. When False (default), the column is assumed to already hold a native GEOMETRY value.
+* `convert_reference_geometry` - When True, *try\_to\_geometry* is applied to convert the reference geometry to GEOMETRY. When False (default), the reference geometry is assumed to already hold a native GEOMETRY value.
+
+**Returns**:
+
+Column object indicating whether values in the input column do not touch the reference geometry.
+
+**Notes**:
+
+This function requires Databricks serverless compute or runtime 17.1 or above.
+
+### is\_geo\_within[​](#is_geo_within "Direct link to is_geo_within")
+
+```python
+@register_rule("row")
+def is_geo_within(column: str | Column,
+                  reference_geometry: str | bytes | Column,
+                  convert_column: bool = False,
+                  convert_reference_geometry: bool = False) -> Column
+
+```
+
+Checks if the reference geometry is within the column geometry using `st_within` with meter-level precision.
+
+*NOTE*: the column geometry is the OUTER container in this check; the reference is the inner test geometry. Contrast with is\_geo\_contains where the reference is the outer container.
+
+`st_within(reference, column)` returns true when the reference geometry lies entirely within the column geometry. This is the converse of `st_contains`: the column geometry must contain the reference, with the reference's boundary and interior both lying inside the column's interior.
+
+Both the target column and the reference geometry are always handled as `GEOMETRY`. When conversion is requested (*convert\_column* or *convert\_reference\_geometry* set to True), *try\_to\_geometry* is applied to parse the value from any supported format (WKT, WKB, EWKT, EWKB). When conversion is not requested, the input is assumed to already hold a native `GEOMETRY` value.
+
+**Arguments**:
+
+* `column` - Column to check. Null values are skipped for validation.
+* `reference_geometry` - Reference geometry as a literal WKT/WKB/EWKT/EWKB string or bytes value, or a Column expression (e.g. *F.col('col\_name')*) to reference another column. A plain string is always treated as a literal, not a column name.
+* `convert_column` - When True, *try\_to\_geometry* is applied to convert column values to GEOMETRY. When False (default), the column is assumed to already hold a native GEOMETRY value.
+* `convert_reference_geometry` - When True, *try\_to\_geometry* is applied to convert the reference geometry to GEOMETRY. When False (default), the reference geometry is assumed to already hold a native GEOMETRY value.
+
+**Returns**:
+
+Column object indicating whether the reference geometry is not within the values in the input column.
+
+**Notes**:
+
+This function requires Databricks serverless compute or runtime 17.1 or above.

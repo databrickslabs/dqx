@@ -41,7 +41,7 @@ The skill fires when its description matches your request. Use `@` to manually i
 
 See the [Databricks Genie Code Documentation](https://docs.databricks.com/aws/en/genie-code/skills) for more details.
 
-The DQX repo is a Claude Code plugin marketplace ([`.claude-plugin/marketplace.json`](https://github.com/databrickslabs/dqx/blob/v0.14.0/.claude-plugin/marketplace.json) at the repo root) containing the `dqx` plugin under [`skills/`](https://github.com/databrickslabs/dqx/tree/main/skills). Add the marketplace once, then install:
+The DQX repo is a Claude Code plugin marketplace ([`.claude-plugin/marketplace.json`](https://github.com/databrickslabs/dqx/blob/v0.15.0/.claude-plugin/marketplace.json) at the repo root) containing the `dqx` plugin under [`skills/`](https://github.com/databrickslabs/dqx/tree/main/skills). Add the marketplace once, then install:
 
 ```bash
 # Inside Claude Code
@@ -90,6 +90,22 @@ Load DQX checks from a Delta table and apply them to a streaming DataFrame.
 
 Agents will load the relevant skill into context, follow its patterns, and link back to the canonical documentation for anything outside the skill's scope.
 
+## LLM-friendly documentation[​](#llm-friendly-documentation "Direct link to LLM-friendly documentation")
+
+Beyond the skills, the entire DQX documentation site is published in an LLM-friendly Markdown format, so AI assistants can read the docs directly. This is useful when you want an agent to ground its answers in the full documentation rather than only the installed skills.
+
+| Resource                          | URL                                                                    | Use it for                                                                                                                                             |
+| --------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Index** (`llms.txt`)            | [`/llms.txt`](https://databrickslabs.github.io/dqx/llms.txt)           | A curated, sectioned list of every page with a one-line summary and a link to its Markdown version — point an agent here to discover what's available. |
+| **Full corpus** (`llms-full.txt`) | [`/llms-full.txt`](https://databrickslabs.github.io/dqx/llms-full.txt) | The entire documentation concatenated as Markdown, for ingesting everything in a single fetch.                                                         |
+| **Single page**                   | append `.md` to any docs URL                                           | Fetch one page as Markdown, e.g. [`/docs/reference/quality_checks.md`](https://databrickslabs.github.io/dqx/docs/reference/quality_checks.md).         |
+
+These files are generated automatically when the docs are built (via the [`@signalwire/docusaurus-plugin-llms-txt`](https://www.npmjs.com/package/@signalwire/docusaurus-plugin-llms-txt) plugin), so they always reflect the current documentation.
+
+Skills vs. llms.txt
+
+Use **skills** to teach an agent *how* to call DQX APIs correctly — they are loaded on every matching request, so they are kept short and token-cheap. Use **`llms.txt` / `.md` pages** when you want the agent to read the *full* documentation for a topic the skills intentionally keep brief.
+
 ## Extending DQX skills[​](#extending-dqx-skills "Direct link to Extending DQX skills")
 
 DQX's agent skills are scoped to DQX's public APIs. Follow these guidelines when extending them:
@@ -103,5 +119,5 @@ DQX's agent skills are scoped to DQX's public APIs. Follow these guidelines when
 ## Source[​](#source "Direct link to Source")
 
 * Skills: [`skills/`](https://github.com/databrickslabs/dqx/tree/main/skills)
-* Plugin manifest (Claude Code / generic): [`skills/.claude-plugin/plugin.json`](https://github.com/databrickslabs/dqx/blob/v0.14.0/skills/.claude-plugin/plugin.json)
-* Marketplace manifest (Claude Code): [`.claude-plugin/marketplace.json`](https://github.com/databrickslabs/dqx/blob/v0.14.0/.claude-plugin/marketplace.json)
+* Plugin manifest (Claude Code / generic): [`skills/.claude-plugin/plugin.json`](https://github.com/databrickslabs/dqx/blob/v0.15.0/skills/.claude-plugin/plugin.json)
+* Marketplace manifest (Claude Code): [`.claude-plugin/marketplace.json`](https://github.com/databrickslabs/dqx/blob/v0.15.0/.claude-plugin/marketplace.json)

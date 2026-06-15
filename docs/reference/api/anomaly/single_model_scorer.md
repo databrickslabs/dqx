@@ -15,13 +15,18 @@ Create pandas UDF for distributed scoring.
 ### create\_scoring\_udf\_with\_contributions[​](#create_scoring_udf_with_contributions "Direct link to create_scoring_udf_with_contributions")
 
 ```python
-def create_scoring_udf_with_contributions(model_bytes: bytes,
-                                          engineered_feature_cols: list[str],
-                                          schema: StructType)
+def create_scoring_udf_with_contributions(
+        model_bytes: bytes,
+        engineered_feature_cols: list[str],
+        schema: StructType,
+        quantile_points: list[tuple[float, float]] | None = None,
+        threshold: float | None = None)
 
 ```
 
 Create pandas UDF for distributed scoring with SHAP contributions.
+
+When *quantile\_points* and *threshold* are provided, SHAP runs only for rows whose severity reaches the threshold (contributions are only surfaced for anomalous rows); other rows get a null contributions map.
 
 ### score\_with\_sklearn\_model[​](#score_with_sklearn_model "Direct link to score_with_sklearn_model")
 
@@ -33,11 +38,16 @@ def score_with_sklearn_model(model_uri: str,
                              merge_columns: list[str],
                              enable_contributions: bool = False,
                              *,
-                             model_record: AnomalyModelRecord) -> DataFrame
+                             model_record: AnomalyModelRecord,
+                             quantile_points: list[tuple[float, float]]
+                             | None = None,
+                             threshold: float | None = None) -> DataFrame
 
 ```
 
 Score DataFrame using scikit-learn model with distributed pandas UDF.
+
+The original row rides through feature engineering inside a struct column and is restored after scoring, so scores are attached in the same pass — no join back onto the caller's DataFrame (which would recompute the source and shuffle on the row id).
 
 ### score\_with\_sklearn\_model\_local[​](#score_with_sklearn_model_local "Direct link to score_with_sklearn_model_local")
 
@@ -50,7 +60,9 @@ def score_with_sklearn_model_local(
         merge_columns: list[str],
         enable_contributions: bool = False,
         *,
-        model_record: AnomalyModelRecord) -> DataFrame
+        model_record: AnomalyModelRecord,
+        quantile_points: list[tuple[float, float]] | None = None,
+        threshold: float | None = None) -> DataFrame
 
 ```
 

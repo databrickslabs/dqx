@@ -1,6 +1,14 @@
 # Installation
 
-The framework can be installed on a Databricks workspace as a tool or used as a standalone library.
+DQX can be installed in three ways, depending on how you want to use it:
+
+* as a **standalone library** in a Databricks cluster or notebook, for code-level integration into pipelines (see [DQX installation as a Library](#dqx-installation-as-a-library))
+* as a **workspace tool** via the Databricks CLI, which deploys the configuration-driven profiling, quality-checker, and end-to-end workflows (see [DQX installation as a Tool](#dqx-installation-as-a-tool-in-a-databricks-workspace))
+* as **DQX Studio**, a web UI deployed as a Databricks App for authoring, reviewing, running, and monitoring quality rules through a browser (see [DQX Studio installation](#dqx-studio-installation))
+
+Recommended for a no-code experience
+
+If you want to use DQX without writing code, **DQX Studio is the recommended option** — it provides a full browser-based UI on top of DQX's profiling and quality-checking capabilities, with no configuration files to maintain.
 
 ## DQX installation as a Library[​](#dqx-installation-as-a-library "Direct link to DQX installation as a Library")
 
@@ -91,7 +99,7 @@ See the [Data Contract Quality Rules Generation Guide](/dqx/docs/guide/data_cont
 
 ### Installing DQX with company-hosted PyPI mirror[​](#installing-dqx-with-company-hosted-pypi-mirror "Direct link to Installing DQX with company-hosted PyPI mirror")
 
-Some enterprises block the public PyPI index and host a company-controlled PyPI mirror. To install DQX while using a company-hosted PyPI mirror for finding its dependencies, add all DQX dependencies to the company-hosted PyPI mirror (see "dependencies" in [`pyproject.toml`](https://github.com/databrickslabs/dqx/blob/v0.14.0/pyproject.toml)) and set the environment variable `PIP_INDEX_URL` to the company-hosted PyPI mirror URL while installing DQX:
+Some enterprises block the public PyPI index and host a company-controlled PyPI mirror. To install DQX while using a company-hosted PyPI mirror for finding its dependencies, add all DQX dependencies to the company-hosted PyPI mirror (see "dependencies" in [`pyproject.toml`](https://github.com/databrickslabs/dqx/blob/v0.15.0/pyproject.toml)) and set the environment variable `PIP_INDEX_URL` to the company-hosted PyPI mirror URL while installing DQX:
 
 ```commandline
 PIP_INDEX_URL="https://url-to-company-hosted-pypi.internal" pip install databricks-labs-dqx
@@ -100,7 +108,9 @@ PIP_INDEX_URL="https://url-to-company-hosted-pypi.internal" pip install databric
 
 ## DQX installation as a Tool in a Databricks Workspace[​](#dqx-installation-as-a-tool-in-a-databricks-workspace "Direct link to DQX installation as a Tool in a Databricks Workspace")
 
-If you install DQX via PyPI and use it purely as a library, you don’t need to pre-install DQX in the workspace. However, installing DQX in the workspace offers additional benefits such as profiling and quality checker workflows allowing for no-code quality checking, a pre-configured dashboard, and convenient configuration management.
+If you install DQX via PyPI and use it purely as a library, you don’t need to pre-install DQX in the workspace. However, installing DQX in the workspace offers additional benefits such as profiling and quality checker workflows allowing for no-code quality checking, a pre-configured dashboard, and convenient configuration management. For a fully no-code experience driven by a browser-based UI, [DQX Studio](#dqx-studio-installation) is the recommended option.
+
+See the [Installation Configuration reference](/dqx/docs/reference/installation_wizard.md) for a complete reference of the options available through the installation wizard.
 
 ### Prerequisites[​](#prerequisites-1 "Direct link to Prerequisites")
 
@@ -264,7 +274,7 @@ run_configs:                        # <- list of run configurations, each run co
     options:                        # <- additional options for reading from the input location (optional)
       versionAsOf: '0'
 
-  output_config:                    # <- output data configuration
+  output_config:                    # <- optional output data configuration (omit when only the quarantine table is desired)
     location: main.iot.silver       # <- output location (table), used as input for the quality dashboard if quarantine location is not provided
     format: delta                   # <- format of the output table
     mode: append                    # <- write mode for the output table (append or overwrite)
@@ -396,7 +406,7 @@ resources:
 
 ### Installing DQX with company-hosted PyPI mirror[​](#installing-dqx-with-company-hosted-pypi-mirror-1 "Direct link to Installing DQX with company-hosted PyPI mirror")
 
-Some enterprises block the public PyPI index and host a company-controlled PyPI mirror. To install DQX while using a company-hosted PyPI mirror for finding its dependencies, add all DQX dependencies to the company-hosted PyPI mirror (see "dependencies" in [`pyproject.toml`](https://github.com/databrickslabs/dqx/blob/v0.14.0/pyproject.toml)) and set the environment variable `PIP_INDEX_URL` to the company-hosted PyPI mirror URL while installing DQX:
+Some enterprises block the public PyPI index and host a company-controlled PyPI mirror. To install DQX while using a company-hosted PyPI mirror for finding its dependencies, add all DQX dependencies to the company-hosted PyPI mirror (see "dependencies" in [`pyproject.toml`](https://github.com/databrickslabs/dqx/blob/v0.15.0/pyproject.toml)) and set the environment variable `PIP_INDEX_URL` to the company-hosted PyPI mirror URL while installing DQX:
 
 ```commandline
 PIP_INDEX_URL="https://url-to-company-hosted-pypi.internal" databricks labs install dqx
@@ -449,28 +459,42 @@ Databricks CLI will confirm a few options:
 
 [DQX Studio](/dqx/docs/guide/dqx_studio.md) is the no-code Databricks App that exposes DQX's profiling, rule authoring, approval workflow, scheduled runs, and results tracking through a browser. It is deployed to your Databricks workspace as a [Databricks App](https://docs.databricks.com/en/dev-tools/databricks-apps/index.html) using a [Declarative Automation Bundle](https://docs.databricks.com/aws/en/dev-tools/bundles/) (DAB, formerly known as Databricks Asset Bundle).
 
+Coming soon: Databricks Marketplace
+
+We plan to publish DQX Studio to the Databricks Marketplace for one-click installation. Until then, deploy it with the bundle steps below.
+
 ### Prerequisites[​](#prerequisites-2 "Direct link to Prerequisites")
 
-* **Databricks CLI** v0.241 or later, authenticated against your workspace (see [Authenticate Databricks CLI](#authenticate-databricks-cli)).
-* **Workspace admin** access — required to create the task-runner service principal and grant catalog permissions.
+* **Databricks CLI** v0.268 or later, authenticated against your workspace (see [Authenticate Databricks CLI](#authenticate-databricks-cli)). v0.268 is the minimum that supports `lifecycle.prevent_destroy` on bundle resources, which the studio's stateful schemas / volume / Lakebase instance rely on.
+* Sufficient workspace permissions to deploy the bundle. **Workspace admin** is the easiest shortcut, but not strictly required — granular per-permission needs (Databricks Apps Can Manage, Lakebase Manager, UC catalog `MANAGE`, service principal `User` role, etc.) are listed in the [DQX Studio deployment guide § Required permissions](https://github.com/databrickslabs/dqx/blob/v0.15.0/app/DEPLOYMENT.md#required-permissions). If you don't hold them yourself, ask an admin to grant them.
 * `jq` and `make` available locally (used by the deployment scripts).
+* **App build toolchain** — `make app-deploy` first builds the wheel via `make app-build`, which needs **uv**, **Node.js 18+** (provides `npm`; install via `brew install node`, [nvm](https://github.com/nvm-sh/nvm), or [nodejs.org](https://nodejs.org/en/download)), and **yarn** (`npm install -g yarn`). (`bun` is only required for the optional `make app-check` type-check — install via `curl -fsSL https://bun.sh/install | bash` or `brew install oven-sh/bun/bun`.)
 * **Databricks Apps** feature enabled on the workspace.
 * **User token passthrough** enabled for Databricks Apps — DQX Studio uses On-Behalf-Of (OBO) tokens to access Unity Catalog with the end user's identity.
 * **Serverless compute** enabled on the workspace — the `dqx-studio-task-runner` job is serverless-only.
-* An **existing Unity Catalog catalog** where the studio's schemas and volumes will be created. The bundle does not create the catalog itself.
+* An **existing Unity Catalog catalog** where the studio's schemas and volumes will be provisioned. The bundle does not create the catalog itself; `make app-deploy` provisions the schemas and wheels volume *inside* the catalog automatically.
+* A **SQL warehouse**. You can either let the bundle create a dedicated X-Small serverless warehouse for the app (the default, "Mode A"), or point the app at an existing/shared warehouse you already have (`sql_warehouse_id: "<id>"`, "Mode B"). See [Choosing a SQL warehouse mode](https://github.com/databrickslabs/dqx/blob/v0.15.0/app/DEPLOYMENT.md#choosing-a-sql-warehouse-mode) in the deployment guide.
+* **Lakebase Postgres** enabled on the workspace if you keep the default backend layout. DQX Studio stores its OLTP state (rules catalog, app settings, RBAC, comments, schedule configs, scheduler bookkeeping) in a Lakebase instance for sub-millisecond reads. The bundle creates the instance for you. If your workspace doesn't have Lakebase, you can opt out and run everything on Delta — see the **Hybrid storage backend** admonition under the install steps below.
 
 ### Install DQX Studio using a Declarative Automation Bundle[​](#install-dqx-studio-using-a-declarative-automation-bundle "Direct link to Install DQX Studio using a Declarative Automation Bundle")
 
-1. Clone the DQX repository and change into the `app/` directory:
+1. Clone the DQX repository (all `make app-*` commands run from the repo root):
 
    ```commandline
    git clone https://github.com/databrickslabs/dqx.git
+   cd dqx
 
    ```
 
 2. Create a workspace service principal to run the task-runner job (separate from the app's auto-created SP, which cannot be used outside the Apps framework). In the Databricks workspace UI go to **Settings → Identity and Access → Service Principals**, create a new SP (for example `dqx-task-runner-sp`), and on its **Permissions** tab grant your deploying identity the **`User`** role. Note the SP's **Application ID** — you'll reference it as `dqx_service_principal_application_id` in the bundle.
 
-3. Update the deploy target in `app/databricks.yml`. Only `catalog_name` and `dqx_service_principal_application_id` are required — every other variable has a sensible default that you can override per target if needed:
+3. Update the deploy target in `app/databricks.yml`. Three variables are **required**:
+
+   * `catalog_name` — Unity Catalog catalog where the studio's schemas and volume live (must already exist).
+   * `dqx_service_principal_application_id` — the task-runner SP you created in step 2.
+   * `sql_warehouse_id` — the warehouse the app queries. Two ways to populate it: chain it to a bundle-managed warehouse (**Mode A**: bundle creates a dedicated X-Small serverless warehouse), or set it to an existing warehouse's ID (**Mode B**: bundle reuses a warehouse you already own and never mutates or destroys it). Pick one per target; see [Choosing a SQL warehouse mode](https://github.com/databrickslabs/dqx/blob/v0.15.0/app/DEPLOYMENT.md#choosing-a-sql-warehouse-mode).
+
+   Mode A example (bundle creates the warehouse):
 
    ```yaml
    targets:
@@ -481,35 +505,86 @@ Databricks CLI will confirm a few options:
          # Required
          catalog_name: <your-catalog>
          dqx_service_principal_application_id: <your-sp-application-id>
+         sql_warehouse_id: ${resources.sql_warehouses.dqx_sql_warehouse.id}
 
          # Optional — uncomment and override defaults per target as needed
          # admin_group: <your-admin-group>             # default: admins
          # app_name: <your-app-name>                   # default: dqx-studio
-         # sql_warehouse_name: <your-warehouse-name>   # default: dqx-studio-sql-warehouse
-         # schema_name: <your-schema-name>             # default: dqx_app
+         # sql_warehouse_name: <your-warehouse-name>   # default: dqx-studio-sql-warehouse (Mode A only)
+         # schema_name: <your-schema-name>             # default: dqx_studio
+
+         # Lakebase backend (default: enabled). Set lakebase_instance_name
+         # to "" to disable Lakebase and run all OLTP tables on Delta.
+         # lakebase_instance_name: dqx-studio-lakebase
+         # lakebase_database_name: databricks_postgres  # always-present admin DB
+         # lakebase_capacity: CU_1                     # CU_1 / CU_2 / CU_4 / CU_8
+       resources:
+         sql_warehouses:
+           dqx_sql_warehouse:
+             name: ${var.sql_warehouse_name}
+             cluster_size: "X-Small"
+             enable_serverless_compute: true
+             max_num_clusters: 1
+             min_num_clusters: 1
+             auto_stop_mins: 10
+             permissions:
+               - group_name: "users"
+                 level: "CAN_USE"
        presets:
          trigger_pause_status: PAUSED
 
    ```
 
-   See the [DQX Studio deployment guide](https://github.com/databrickslabs/dqx/blob/v0.14.0/app/DEPLOYMENT.md#step-3-configure-databricksyml) for the full reference of each variable, including security implications of `admin_group` and when to override per target.
+   Mode B example (reuse an existing warehouse — typical when sharing a workspace warehouse across apps):
 
-4. Build, deploy, grant permissions, and start the studio in a single command:
+   ```yaml
+   targets:
+     prod:
+       workspace:
+         profile: <your-profile>
+       variables:
+         catalog_name: <your-catalog>
+         dqx_service_principal_application_id: <your-sp-application-id>
+         sql_warehouse_id: "<existing-warehouse-id>"   # just the ID, nothing else
+       # No resources.sql_warehouses block — the bundle never touches the warehouse.
+       # post_deploy_grants.sh adds CAN_USE for the app SP, job SP, and `users` group
+       # via the warehouses permissions API after each deploy.
+
+   ```
+
+   See the [DQX Studio deployment guide](https://github.com/databrickslabs/dqx/blob/v0.15.0/app/DEPLOYMENT.md#step-4-configure-databricksyml) for the full reference of each variable, including security implications of `admin_group` and when to override per target.
+
+4. (One-time, only on a workspace whose schemas / volume / Lakebase instance were created out-of-band before adopting this layout) adopt them into bundle management:
+
+   ```commandline
+   make app-bind PROFILE=<your-profile> TARGET=<your-target>
+
+   ```
+
+5. Build, deploy, grant permissions, and start the studio in a single command:
 
    ```commandline
    make app-deploy PROFILE=<your-profile> TARGET=<your-target>
 
    ```
 
-   This runs `make app-build`, `databricks bundle deploy`, `app/scripts/post_deploy_grants.sh`, and `databricks bundle run` in sequence.
+   This runs `make app-build`, `databricks bundle deploy` (provisions the schemas, wheels volume, Lakebase Postgres instance, the SQL warehouse **in Mode A only**, the task-runner job, and the Databricks App in dependency order; the stateful resources — schemas, volume, and instance — carry `lifecycle.prevent_destroy: true`), `app/scripts/post_deploy_grants.sh` (which in Mode B also grants `CAN_USE` on the external warehouse to the app SP, job SP, and `users` group via the warehouses permissions API), and `databricks bundle run` in sequence. The app connects to the always-present `databricks_postgres` admin database on the instance and creates its own `dqx_studio` Postgres schema there on first start; no logical-database provisioning step is needed.
 
-5. Open the deployed app from the **Apps** page in your Databricks workspace.
+6. Open the deployed app from the **Apps** page in your Databricks workspace.
 
-For the full walkthrough — including step-by-step commands, manual `GRANT` statements, troubleshooting, and target-specific configuration — see the [DQX Studio deployment guide](https://github.com/databrickslabs/dqx/blob/v0.14.0/app/DEPLOYMENT.md).
+Stateful storage is destroy-protected
+
+The studio's schemas (`dqx_studio`, `dqx_studio_tmp`), wheels volume, and Lakebase Postgres instance are declared as bundle resources with `lifecycle.prevent_destroy: true` (Databricks CLI 0.268+). `databricks bundle destroy` is blocked from dropping them, so production data survives accidental destroy/replace operations. The app's `dqx_studio` Postgres schema (inside the `databricks_postgres` admin database on the Lakebase instance) is created at startup and is not itself a bundle resource, but it is protected transitively by the instance-level guard — as long as the instance survives, the schema and its tables survive. To intentionally tear something down, remove the flag, `databricks bundle deployment unbind <key>`, then destroy manually.
+
+For the full walkthrough — including step-by-step commands, manual `GRANT` statements, troubleshooting, target-specific configuration, and the bind workflow for adopting existing resources — see the [DQX Studio deployment guide](https://github.com/databrickslabs/dqx/blob/v0.15.0/app/DEPLOYMENT.md).
+
+Hybrid storage backend
+
+DQX Studio splits its data across two physical backends: high-volume append-mostly tables (`dq_validation_runs`, `dq_profiling_results`, `dq_quarantine_records`, `dq_metrics`) live in **Delta Lake** because they're written by Spark; transactional tables (rules catalog, app settings, RBAC, comments, schedule configs) live in **Lakebase Postgres** for fast row-level reads/writes from the FastAPI request handlers.
 
 First-run wheel upload
 
-On its first start, DQX Studio runs database migrations and uploads its DQX wheel files to the Unity Catalog volume. If the task-runner job is triggered before the app has fully started at least once, it will fail to find its wheels. Wait for `Uploaded databricks_labs_dqx-<version>...` in the app logs before triggering any profiler or dry-run jobs.
+On its first start, DQX Studio runs database migrations (Delta and, if enabled, Lakebase) and uploads its DQX wheel files to the Unity Catalog volume. If the task-runner job is triggered before the app has fully started at least once, it will fail to find its wheels. Wait for `Uploaded databricks_labs_dqx-<version>...` in the app logs before triggering any profiler or dry-run jobs. If Lakebase is enabled, also wait for `Lakebase OLTP routing enabled` before opening the UI — when Lakebase is configured (`DQX_LAKEBASE_INSTANCE_NAME` non-empty) and init fails, the app refuses to start and the Databricks Apps platform will restart it; silent fallback to Delta would split-brain OLTP writes across two physical stores and is not safe. To run on Delta only, unset `DQX_LAKEBASE_INSTANCE_NAME`.
 
 ### Upgrade DQX Studio[​](#upgrade-dqx-studio "Direct link to Upgrade DQX Studio")
 
@@ -521,18 +596,47 @@ make app-deploy PROFILE=<your-profile> TARGET=<your-target>
 
 ```
 
-Database migrations run automatically on app startup and preserve existing rules, runs, schedules, and configuration.
+Database migrations run automatically on app startup and preserve existing rules, runs, schedules, and configuration. All stateful resources are declared with `lifecycle.prevent_destroy: true`, so even an accidental `databricks bundle destroy` won't drop them.
 
 ### Uninstall DQX Studio[​](#uninstall-dqx-studio "Direct link to Uninstall DQX Studio")
 
-Destroy the bundle to remove the app, the task-runner job, and the SQL warehouse:
+`databricks bundle destroy` removes the app, the task-runner job, and — **only in Mode A** — the bundle-managed SQL warehouse. In Mode B the warehouse is referenced by ID, not owned by the bundle, so `bundle destroy` leaves it intact. The bundle is **blocked** from dropping the stateful resources (schemas, volume, Lakebase instance) by their `prevent_destroy` flag. The DQX `dqx_studio` Postgres schema inside `databricks_postgres` lives below the resource layer DABs models and is therefore unaffected by `bundle destroy` — drop it manually if you want a fully clean wipe. To fully uninstall:
 
-```commandline
-cd app && databricks bundle destroy -p <your-profile> -t <your-target>
+1. Edit `app/databricks.yml` and remove `lifecycle.prevent_destroy: true` from each of the stateful resources you want to drop.
+2. Unbind the resources so the bundle no longer tracks them, then destroy:
+   <!-- -->
+   ```bash
+   cd app
+   databricks bundle deployment unbind main_schema -t <your-target>
+   databricks bundle deployment unbind tmp_schema  -t <your-target>
+   databricks bundle deployment unbind wheels      -t <your-target>
+   databricks bundle deployment unbind lakebase    -t <your-target>
+   databricks bundle destroy -p <your-profile> -t <your-target>
 
-```
+   ```
+3. Drop the now-unbound UC resources manually if desired:
+   <!-- -->
+   ```sql
+   DROP VOLUME IF EXISTS <catalog>.dqx_studio.wheels;
+   DROP SCHEMA IF EXISTS <catalog>.dqx_studio CASCADE;
+   DROP SCHEMA IF EXISTS <catalog>.dqx_studio_tmp CASCADE;
 
-The Unity Catalog catalog and the studio's schemas (which contain historical rules and run results) are not removed by `bundle destroy` — drop them manually if you no longer need the data.
+   ```
+4. Drop the DQX Postgres schema and the Lakebase instance if desired:
+   <!-- -->
+   ```bash
+   # DQX schema inside ``databricks_postgres`` (connect to the
+   # Lakebase instance with psql via ``databricks_postgres``):
+   #   DROP SCHEMA IF EXISTS dqx_studio CASCADE;
+
+   # Lakebase instance:
+   databricks database delete-database-instance dqx-studio-lakebase -p <your-profile>
+
+   ```
+
+Destroy protection is intentional
+
+`prevent_destroy` is what stops a `databricks bundle destroy` (or a forced replace from a deploy) from wiping your rules, schedules, role mappings, and comments. The multi-step uninstall above is by design — silent data loss is the bigger risk to protect against.
 
 ## Installing Dashboard[​](#installing-dashboard "Direct link to Installing Dashboard")
 
@@ -542,7 +646,7 @@ You have two options to set up the dashboard:
 
 ### Option 1: Import directly in the workspace[​](#option-1-import-directly-in-the-workspace "Direct link to Option 1: Import directly in the workspace")
 
-You can import the dashboard directly from a file. The dashboard file (`DQX_Dashboard.lvdash.json`) is available in the [GitHub repository](https://github.com/databrickslabs/dqx/blob/v0.14.0/src/databricks/labs/dqx/dashboards/). To import it:
+You can import the dashboard directly from a file. The dashboard file (`DQX_Dashboard.lvdash.json`) is available in the [GitHub repository](https://github.com/databrickslabs/dqx/blob/v0.15.0/src/databricks/labs/dqx/dashboards/). To import it:
 
 1. Navigate to **Dashboards** in the Databricks UI
 2. Click **Import dashboard from file**

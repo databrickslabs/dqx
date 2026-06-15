@@ -11,6 +11,8 @@ When you apply quality checks with DQX:
 * **Checks table**: (optional) Stores the rule definitions. Used for loading checks and for traceability via `rule_fingerprint` and `rule_set_fingerprint`. For filtering `run_config_name` is used. See [Loading and Storing Quality Checks](/dqx/docs/guide/quality_checks_storage.md) for details.
 * **Summary metrics table** (optional): When enabled, stores aggregate metrics per run (e.g. `input_row_count`, `error_row_count`). Links to output/quarantine via `run_id` and to the checks table via `checks_location` and `rule_set_fingerprint`. See [Summary Metrics](/dqx/docs/guide/summary_metrics.md) for configuration.
 
+Once these tables are populated, see the [Query Results Cookbook](/dqx/docs/reference/query_results_cookbook.md) for ready-to-use SQL and PySpark recipes that trace errors and warnings across runs, rows, and check definitions.
+
 Output vs Quarantine
 
 When **quarantine is configured**: Rows with errors go to the quarantine table; rows with only warnings or no issues go to the output table. When **quarantine is not configured**: All rows (including those with errors) go to the output table. In both cases, **warnings are always included in the output** — rows with warnings appear in the output table, and if a row has both errors and warnings, it goes to quarantine (when configured) with both `_errors` and `_warnings` populated.

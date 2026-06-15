@@ -37,6 +37,7 @@
 - [Reference](/dqx/docs/reference.md): This section provides additional details and configuration of DQX.
 - [API Reference](/dqx/docs/reference/api.md): This section contains the API reference for the Databricks Labs DQX project.
 - [databricks.labs.dqx.anomaly.anomaly_engine](/dqx/docs/reference/api/anomaly/anomaly_engine.md): AnomalyEngine entrypoint for row anomaly detection.
+- [databricks.labs.dqx.anomaly.anomaly_llm_explainer](/dqx/docs/reference/api/anomaly/anomaly_llm_explainer.md): LLM-based group explanation for row anomaly detection.
 - [databricks.labs.dqx.anomaly.anomaly_workflow](/dqx/docs/reference/api/anomaly/anomaly_workflow.md): Workflow to train anomaly detection models on Databricks.
 - [databricks.labs.dqx.anomaly.check_funcs](/dqx/docs/reference/api/anomaly/check_funcs.md): Check functions for row anomaly detection.
 - [databricks.labs.dqx.anomaly.core](/dqx/docs/reference/api/anomaly/core.md): Core ML operations for row anomaly detection.
@@ -125,8 +126,10 @@
 - [Performance Benchmarks Report](/dqx/docs/reference/benchmarks.md): Specification
 - [CLI Reference](/dqx/docs/reference/cli.md): This page summarizes the available DQX commands exposed via the Databricks CLI for DQX.
 - [DQX Engine](/dqx/docs/reference/engine.md): To perform data quality checking with DQX, you must create a DQEngine object.
+- [DQX Installation Wizard](/dqx/docs/reference/installation_wizard.md): When you install DQX as a tool in a Databricks workspace using databricks labs install dqx, the installer runs an interactive wizard to collect settings for the "default" run configuration.
 - [DQX Profiler](/dqx/docs/reference/profiler.md): To profile data and generate candidate data quality rules with DQX, you can use the DQProfiler, DQGenerator, and DQDltGenerator classes.
 - [Quality Checks](/dqx/docs/reference/quality_checks.md): This page provides a reference for the quality check functions available in DQX. Checks are the core of DQX, allowing you to define and apply data quality rules to your datasets.
+- [Query Results Cookbook](/dqx/docs/reference/query_results_cookbook.md): This cookbook is a practical guide for querying DQX result tables - summary metrics, output, quarantine, and checks - to trace errors and warnings across runs, rows, and check definitions. It will help you go from a failing run to the rows that failed, link those rows back to the rules that flagged them, and monitor quality trends across runs. It assumes you've already run DQX at least once.
 - [Table Schemas and Relationships](/dqx/docs/reference/table_schemas.md): This page provides a reference for the table structures and relationships (EDR diagrams) used by DQX when applying quality checks, storing checks, and recording summary metrics. It describes the relationships between tables and the schema of result columns.
 - [Testing Applications Using DQX](/dqx/docs/reference/testing.md): Standard testing with DQEngine
 
@@ -146,5 +149,5 @@
 
 ## Dqx
 
-- [Installation](/dqx/docs/installation.md): The framework can be installed on a Databricks workspace as a tool or used as a standalone library.
+- [Installation](/dqx/docs/installation.md): DQX can be installed in three ways, depending on how you want to use it:
 - [Motivation](/dqx/docs/motivation.md): Current data quality frameworks often fall short of providing detailed explanations for specific row or column

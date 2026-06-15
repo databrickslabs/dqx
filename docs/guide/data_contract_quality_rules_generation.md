@@ -192,6 +192,7 @@ schema:
     properties:
       - name: order_id
         logicalType: string
+        physicalType: string
         required: true              # → is_not_null
         unique: true                # → is_unique
         logicalTypeOptions:
@@ -199,9 +200,10 @@ schema:
       
       - name: customer_email
         logicalType: string
+        physicalType: string
         required: true              # → is_not_null
         logicalTypeOptions:
-          pattern: '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$'  # → regex_match
+          pattern: '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'  # → regex_match
       
       - name: order_total
         logicalType: number
@@ -213,6 +215,7 @@ schema:
       
       - name: order_status
         logicalType: string
+        physicalType: string
         required: true              # → is_not_null
         logicalTypeOptions:
           pattern: '^(pending|confirmed|shipped|delivered|cancelled)$'  # → regex_match
@@ -231,6 +234,7 @@ rules = generator.generate_rules_from_contract(
 )
 
 # Generated rules will include:
+# - has_valid_schema (dataset-level, derived from the contract schema)
 # - is_not_null for order_id, customer_email, order_total, order_status
 # - is_unique for order_id
 # - regex_match for order_id (pattern validation)
@@ -306,11 +310,13 @@ schema:
     properties:
       - name: transaction_id
         logicalType: string
+        physicalType: string
         required: true
         unique: true
         
       - name: account_id
         logicalType: string
+        physicalType: string
         required: true
         quality:
           # Property-level explicit check
@@ -445,6 +451,7 @@ schema:
     properties:
       - name: email
         logicalType: string
+        physicalType: string
         required: true
         quality:
           # Field-level text expectation
@@ -456,6 +463,7 @@ schema:
       
       - name: consent_date
         logicalType: date
+        physicalType: date
         required: true
         quality:
           # Another text expectation
@@ -521,9 +529,12 @@ apiVersion: v3.0.2
 id: urn:datacontract:iot:sensor_readings
 name: IoT Sensor Readings
 version: 2.1.0
-description: Quality contract for IoT sensor data
 status: active
-owner: IoT Platform Team
+description:
+  purpose: Quality contract for IoT sensor data
+team:
+  - username: iot-platform-team
+    role: owner
 
 schema:
   - name: sensor_readings
@@ -557,6 +568,7 @@ schema:
     properties:
       - name: sensor_id
         logicalType: string
+        physicalType: string
         required: true           # Predefined: is_not_null
         unique: true             # Predefined: is_unique
         logicalTypeOptions:
@@ -564,6 +576,7 @@ schema:
       
       - name: temperature
         logicalType: decimal
+        physicalType: decimal(5,2)
         required: true           # Predefined: is_not_null
         logicalTypeOptions:
           minimum: -40.0           # Predefined: sql_expression (range check)
@@ -577,12 +590,10 @@ schema:
       
       - name: status
         logicalType: string
+        physicalType: string
         required: true           # Predefined: is_not_null
         logicalTypeOptions:
-          enum:                    # Predefined: regex_match
-            - active
-            - maintenance
-            - offline
+          pattern: '^(active|maintenance|offline)$'  # Predefined: regex_match
 
 ```
 
@@ -760,23 +771,28 @@ id: urn:datacontract:marketing:customer_360
 name: Customer 360 View
 version: 1.2.0
 status: active
-owner: Marketing Analytics Team
-  
+team:
+  - username: marketing-analytics-team
+    role: owner
+
 schema:
   - name: customer_360
     physicalType: table
     properties:
       - name: customer_id
         logicalType: string
+        physicalType: string
         required: true
         unique: true
       - name: email
         logicalType: string
+        physicalType: string
         required: true
         logicalTypeOptions:
           pattern: '^[a-zA-Z0-9._%+-]+@.+$'
       - name: lifetime_value
         logicalType: decimal
+        physicalType: decimal(18,2)
         logicalTypeOptions:
           minimum: 0
 """
@@ -808,9 +824,11 @@ schema:
     properties:
       - name: email
         logicalType: string
+        physicalType: string
         required: true
       - name: consent_date
         logicalType: date
+        physicalType: date
         required: true
         quality:
           - type: text
