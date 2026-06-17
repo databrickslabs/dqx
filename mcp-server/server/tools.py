@@ -41,9 +41,10 @@ def load_tools(mcp_server):
         obo_ws = utils.get_obo_client()
         warehouse_id = utils.get_warehouse_id(obo_ws)
 
+        safe_table = utils.validate_and_quote_table_name(table_name)
         rows = utils.execute_sql(
             obo_ws,
-            f"DESCRIBE TABLE {table_name}",
+            f"DESCRIBE TABLE {safe_table}",
             warehouse_id=warehouse_id,
         )
 

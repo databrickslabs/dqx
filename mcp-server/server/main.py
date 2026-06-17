@@ -14,6 +14,7 @@ logging.basicConfig(
     stream=sys.stdout,
     force=True,
 )
+logger = logging.getLogger(__name__)
 
 
 def main():
@@ -21,10 +22,10 @@ def main():
     parent = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if parent not in sys.path:
         sys.path.insert(0, parent)
-    print(f"sys.path[0]={parent}", flush=True)
-    print(f"cwd={os.getcwd()}", flush=True)
-    print(f"files in parent: {os.listdir(parent)}", flush=True)
-    print(f"files in server: {os.listdir(os.path.join(parent, 'server'))}", flush=True)
+    logger.debug(f"sys.path[0]={parent}")
+    logger.debug(f"cwd={os.getcwd()}")
+    logger.debug(f"files in parent: {os.listdir(parent)}")
+    logger.debug(f"files in server: {os.listdir(os.path.join(parent, 'server'))}")
 
     from server.app import combined_app
 

@@ -14,6 +14,7 @@ import contextvars
 import json
 import logging
 import os
+import re
 from typing import Any
 
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -190,6 +191,47 @@ def execute_sql(ws: Any, query: str, warehouse_id: str) -> list[dict[str, Any]]:
     return rows
 
 
+_SAFE_IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9_]+$")
+
+
+def _validate_sql_identifier(name: str, label: str) -> str:
+    """Validate and backtick-quote a SQL identifier to prevent injection.
+
+    Args:
+        name: Raw identifier (catalog, schema, or table name part).
+        label: Human-readable label for error messages (e.g. 'catalog').
+
+    Returns:
+        Backtick-quoted identifier safe for SQL interpolation.
+
+    Raises:
+        ValueError: If *name* contains characters outside ``[A-Za-z0-9_]``.
+    """
+    if not _SAFE_IDENTIFIER_RE.match(name):
+        raise ValueError(f"Invalid {label}: '{name}'. Only alphanumeric characters and underscores are allowed.")
+    return f"`{name}`"
+
+
+def validate_and_quote_table_name(table_name: str) -> str:
+    """Validate a fully qualified table name and return a backtick-quoted version.
+
+    Args:
+        table_name: Fully qualified table name (catalog.schema.table).
+
+    Returns:
+        Backtick-quoted table name safe for SQL interpolation.
+
+    Raises:
+        ValueError: If table_name is not fully qualified or contains unsafe characters.
+    """
+    parts = table_name.split(".")
+    if len(parts) != 3:
+        raise ValueError(f"Table name '{table_name}' must be fully qualified (catalog.schema.table)")
+
+    quoted = [_validate_sql_identifier(p, label) for p, label in zip(parts, ("catalog", "schema", "table"))]
+    return ".".join(quoted)
+
+
 def create_temp_view(
     ws: Any,
     table_name: str,
@@ -214,22 +256,23 @@ def create_temp_view(
         Fully qualified view name (catalog.schema.v_{uuid}).
 
     Raises:
-        ValueError: If table_name is not fully qualified.
+        ValueError: If table_name is not fully qualified or contains unsafe characters.
         RuntimeError: If view creation fails (e.g., user lacks SELECT on source table).
     """
     import uuid
 
-    parts = table_name.split(".")
-    if len(parts) != 3:
-        raise ValueError(f"Table name '{table_name}' must be fully qualified (catalog.schema.table)")
+    safe_source = validate_and_quote_table_name(table_name)
+    view_catalog = _validate_sql_identifier(catalog, "view catalog")
+    view_schema = _validate_sql_identifier(schema, "view schema")
 
     view_id = uuid.uuid4().hex[:12]
+    view_name = _validate_sql_identifier(f"v_{view_id}", "view name")
     view_fqn = f"{catalog}.{schema}.v_{view_id}"
 
     logger.info(f"Creating temp view {view_fqn} over {table_name}")
     execute_sql(
         ws,
-        f"CREATE VIEW {view_fqn} AS SELECT * FROM {table_name}",
+        f"CREATE VIEW {view_catalog}.{view_schema}.{view_name} AS SELECT * FROM {safe_source}",
         warehouse_id=warehouse_id,
     )
     return view_fqn
@@ -243,9 +286,22 @@ def drop_view(ws: Any, view_fqn: str, warehouse_id: str) -> None:
         view_fqn: Fully qualified view name to drop.
         warehouse_id: SQL warehouse ID.
     """
+    parts = view_fqn.split(".")
+    if len(parts) != 3:
+        logger.warning(f"Invalid view name '{view_fqn}', skipping drop")
+        return
+
+    quoted_parts = []
+    for part in parts:
+        if not _SAFE_IDENTIFIER_RE.match(part):
+            logger.warning(f"Invalid identifier in view name '{view_fqn}', skipping drop")
+            return
+        quoted_parts.append(f"`{part}`")
+
+    safe_fqn = ".".join(quoted_parts)
     logger.info(f"Dropping temp view {view_fqn}")
     try:
-        execute_sql(ws, f"DROP VIEW IF EXISTS {view_fqn}", warehouse_id=warehouse_id)
+        execute_sql(ws, f"DROP VIEW IF EXISTS {safe_fqn}", warehouse_id=warehouse_id)
     except Exception:
         logger.warning(f"Failed to drop temp view {view_fqn}", exc_info=True)
 

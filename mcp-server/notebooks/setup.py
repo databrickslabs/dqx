@@ -27,9 +27,19 @@ Parameters:
 # COMMAND ----------
 
 import logging
+import re
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("dqx-mcp-setup")
+
+_SAFE_IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9_ ]+$")
+
+
+def _validate_identifier(value, label):
+    """Validate a SQL identifier to prevent injection via backtick breakout."""
+    if not _SAFE_IDENTIFIER_RE.match(value):
+        raise ValueError(f"Invalid {label}: '{value}'. Only alphanumeric characters, underscores, and spaces are allowed.")
+    return value
 
 # COMMAND ----------
 
@@ -51,6 +61,8 @@ if not catalog_name:
 
 if not catalog_name:
     raise ValueError("catalog_name must be provided as a parameter or stored in the secret scope")
+
+_validate_identifier(catalog_name, "catalog_name")
 
 logger.info(f"Setting up DQX MCP: catalog={catalog_name}, app={app_name}, users_group={users_group}")
 

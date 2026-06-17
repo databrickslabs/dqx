@@ -157,7 +157,7 @@ class TestTempViews:
         call_args = ws.statement_execution.execute_statement.call_args
         sql = call_args.kwargs["statement"]
         assert "CREATE VIEW" in sql
-        assert "my_catalog.my_schema.my_table" in sql
+        assert "`my_catalog`.`my_schema`.`my_table`" in sql
 
     def test_drop_view(self):
         from server.utils import drop_view
@@ -174,7 +174,7 @@ class TestTempViews:
         call_args = ws.statement_execution.execute_statement.call_args
         sql = call_args.kwargs["statement"]
         assert "DROP VIEW IF EXISTS" in sql
-        assert "dqx_mcp.tmp.v_abc123" in sql
+        assert "`dqx_mcp`.`tmp`.`v_abc123`" in sql
 
     def test_create_temp_view_validates_table_name(self):
         from server.utils import create_temp_view
@@ -183,6 +183,41 @@ class TestTempViews:
 
         with pytest.raises(ValueError, match="must be fully qualified"):
             create_temp_view(ws, "just_a_table", catalog="c", schema="s", warehouse_id="wh")
+
+    @pytest.mark.parametrize(
+        "malicious_name",
+        [
+            "cat.sch.t; DROP TABLE x",
+            "cat.sch.t WHERE 1=1 UNION SELECT * FROM secrets",
+            "cat.sch.t`; --",
+            "cat.sch.t OR 1=1",
+            "cat`.`sch`.`t",
+            "cat.sch.t\nDROP TABLE x",
+        ],
+    )
+    def test_create_temp_view_rejects_sql_injection(self, malicious_name):
+        from server.utils import create_temp_view
+
+        ws = create_autospec(WorkspaceClient)
+
+        with pytest.raises(ValueError, match="Invalid|must be fully qualified"):
+            create_temp_view(ws, malicious_name, catalog="c", schema="s", warehouse_id="wh")
+
+    def test_create_temp_view_backtick_quotes_identifiers(self):
+        from server.utils import create_temp_view
+
+        ws = create_autospec(WorkspaceClient)
+        mock_result = MagicMock()
+        mock_result.status.state = "SUCCEEDED"
+        mock_result.manifest.schema.columns = []
+        mock_result.result = None
+        ws.statement_execution.execute_statement.return_value = mock_result
+
+        create_temp_view(ws, "my_cat.my_sch.my_table", catalog="dqx", schema="tmp", warehouse_id="wh")
+
+        sql = ws.statement_execution.execute_statement.call_args.kwargs["statement"]
+        assert "`my_cat`.`my_sch`.`my_table`" in sql
+        assert "`dqx`.`tmp`." in sql
 
     def test_drop_view_swallows_errors(self):
         from server.utils import drop_view
