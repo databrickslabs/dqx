@@ -4,11 +4,11 @@ import inspect
 import json
 import logging
 from enum import Enum
-from dataclasses import dataclass, field
 import functools as ft
 from collections.abc import Callable, Iterable
-from typing import Any
+from typing import Any, ClassVar
 
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pyspark.sql import Column
 import pyspark.sql.functions as F
 from databricks.labs.dqx.utils import get_column_name_or_alias, normalize_bound_args
@@ -150,8 +150,7 @@ class DQRuleTypeMixin:
         return CHECK_FUNC_REGISTRY.get(check_func.__name__, None)  # default to None
 
 
-@dataclass(frozen=True)
-class DQRule(abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleColumnsMixin):
+class DQRule(BaseModel, abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleColumnsMixin):
     """Represents a data quality rule that applies a quality check function to column(s) or
     column expression(s). This class includes the following attributes:
     * *check_func* - The function used to perform the quality check.
@@ -173,18 +172,21 @@ class DQRule(abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleColumnsMixin):
         rules generated from a ``DQForEachColRule``.
     """
 
+    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
+
     check_func: Callable
     name: str = ""
     criticality: str = Criticality.ERROR.value
     column: str | Column | None = None
-    columns: list[str | Column] | None = None  # some checks require list of columns instead of column
+    columns: list[str | Column | None] | None = None  # some checks require list of columns instead of column
     filter: str | None = None
-    check_func_args: list[Any] = field(default_factory=list)
-    check_func_kwargs: dict[str, Any] = field(default_factory=dict)
+    check_func_args: list[Any] = Field(default_factory=list)
+    check_func_kwargs: dict[str, Any] = Field(default_factory=dict)
     user_metadata: dict[str, str] | None = None
     message_expr: str | Column | None = None
 
-    def __post_init__(self):
+    @model_validator(mode='after')
+    def _validate_and_initialize(self) -> 'DQRule':
         self._validate_rule_type(self.check_func)
         self._initialize_column_if_missing()
         self._initialize_columns_if_missing()
@@ -193,6 +195,7 @@ class DQRule(abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleColumnsMixin):
         self._initialize_name_if_missing(check_condition)
         if isinstance(self.message_expr, str):
             self._validate_message_expression(self.message_expr)
+        return self
 
     @abc.abstractmethod
     def get_check_condition(self) -> Column:
@@ -278,15 +281,13 @@ class DQRule(abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleColumnsMixin):
 
     def _initialize_column_if_missing(self):
         """Handle scenarios where 'column' is provided in check_func_kwargs but not as an attribute."""
-        if "column" in self.check_func_kwargs:
-            if self.column is None:
-                object.__setattr__(self, "column", self.check_func_kwargs.get("column"))
+        if "column" in self.check_func_kwargs and self.column is None:
+            object.__setattr__(self, "column", self.check_func_kwargs.get("column"))
 
     def _initialize_columns_if_missing(self):
         """Handle scenarios where 'columns' is provided in check_func_kwargs but not as an attribute."""
-        if "columns" in self.check_func_kwargs:
-            if self.columns is None:
-                object.__setattr__(self, "columns", self.check_func_kwargs.get("columns"))
+        if "columns" in self.check_func_kwargs and self.columns is None:
+            object.__setattr__(self, "columns", self.check_func_kwargs.get("columns"))
 
     def _initialize_name_if_missing(self, check_condition: Column):
         """If name not provided directly, update it based on the condition."""
@@ -375,15 +376,14 @@ class DQRule(abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleColumnsMixin):
             ) from exc
 
 
-@dataclass(frozen=True)
 class DQRowRule(DQRule):
     """
     Represents a row-level data quality rule that applies a quality check function to a column or column expression.
     Works with check functions that take a single column or no column as input.
     """
 
-    _expected_rule_type: str = "row"
-    _alternative_rules: list[str] = field(default_factory=lambda: ["DQDatasetRule"])
+    _expected_rule_type: ClassVar[str] = "row"
+    _alternative_rules: ClassVar[list[str]] = ["DQDatasetRule"]
 
     def get_check_condition(self) -> Column:
         """
@@ -402,7 +402,6 @@ class DQRowRule(DQRule):
         return condition
 
 
-@dataclass(frozen=True)
 class DQDatasetRule(DQRule):
     """
     Represents a dataset-level data quality rule that applies a quality check function to a column or
@@ -411,8 +410,8 @@ class DQDatasetRule(DQRule):
     rather than individual rows. Failed checks are appended to the result columns in the same way as row-level rules.
     """
 
-    _expected_rule_type: str = "dataset"
-    _alternative_rules: list[str] = field(default_factory=lambda: ["DQRowRule"])
+    _expected_rule_type: ClassVar[str] = "dataset"
+    _alternative_rules: ClassVar[list[str]] = ["DQRowRule"]
 
     def get_check_condition(self) -> Column:
         """
@@ -436,8 +435,7 @@ class DQDatasetRule(DQRule):
         return condition, apply_func, None
 
 
-@dataclass(frozen=True)
-class DQForEachColRule(DQRuleTypeMixin):
+class DQForEachColRule(BaseModel, DQRuleTypeMixin):
     """Represents a data quality rule that applies to a quality check function
     repeatedly on each specified column of the provided list of columns.
     This class includes the following attributes:
@@ -453,13 +451,15 @@ class DQForEachColRule(DQRuleTypeMixin):
     * *user_metadata* (optional) - User-defined key-value pairs added to metadata generated by the check.
     """
 
+    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
+
     columns: list[str | Column | list[str | Column]]
     check_func: Callable
     name: str = ""
     criticality: str = Criticality.ERROR.value
     filter: str | None = None
-    check_func_args: list[Any] = field(default_factory=list)
-    check_func_kwargs: dict[str, Any] = field(default_factory=dict)
+    check_func_args: list[Any] = Field(default_factory=list)
+    check_func_kwargs: dict[str, Any] = Field(default_factory=dict)
     user_metadata: dict[str, str] | None = None
     message_expr: str | Column | None = None
 

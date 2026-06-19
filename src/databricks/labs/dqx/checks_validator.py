@@ -2,9 +2,10 @@ import logging
 import functools as ft
 import inspect
 from collections.abc import Callable
-from dataclasses import dataclass, field
 from types import UnionType
 from typing import Any, get_origin, get_args
+
+from pydantic import BaseModel, PrivateAttr
 
 from databricks.labs.dqx.checks_resolver import resolve_check_function
 from databricks.labs.dqx.rule import Criticality
@@ -12,11 +13,10 @@ from databricks.labs.dqx.rule import Criticality
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
-class ChecksValidationStatus:
+class ChecksValidationStatus(BaseModel):
     """Class to represent the validation status."""
 
-    _errors: list[str] = field(default_factory=list)
+    _errors: list[str] = PrivateAttr(default_factory=list)
 
     def add_error(self, error: str):
         """Add an error to the validation status."""

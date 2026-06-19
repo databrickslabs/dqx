@@ -1,6 +1,9 @@
 import abc
+from abc import ABC
 from dataclasses import asdict, dataclass, field
 from functools import cached_property
+
+from pydantic import BaseModel, model_validator
 
 from databricks.labs.dqx.checks_serializer import SerializerFactory
 from databricks.labs.dqx.errors import InvalidConfigError, InvalidParameterError
@@ -326,18 +329,16 @@ class WorkspaceConfig:
         raise InvalidConfigError("No run configurations available")
 
 
-@dataclass
-class BaseChecksStorageConfig(abc.ABC):
+class BaseChecksStorageConfig(BaseModel, ABC):
     """Marker base class for storage configuration.
 
     Args:
         location: The file path or table name where checks are stored.
     """
 
-    location: str
+    location: str | None
 
 
-@dataclass
 class FileChecksStorageConfig(BaseChecksStorageConfig):
     """
     Configuration class for storing checks in a file.
@@ -346,14 +347,13 @@ class FileChecksStorageConfig(BaseChecksStorageConfig):
         location: The file path where the checks are stored.
     """
 
-    location: str
-
-    def __post_init__(self):
-        if not self.location:
+    @model_validator(mode='after')
+    def validate_location(self) -> 'FileChecksStorageConfig':
+        if type(self) is FileChecksStorageConfig and not self.location:
             raise InvalidConfigError("The file path ('location' field) must not be empty or None.")
+        return self
 
 
-@dataclass
 class WorkspaceFileChecksStorageConfig(BaseChecksStorageConfig):
     """
     Configuration class for storing checks in a workspace file.
@@ -362,14 +362,13 @@ class WorkspaceFileChecksStorageConfig(BaseChecksStorageConfig):
         location: The workspace file path where the checks are stored.
     """
 
-    location: str
-
-    def __post_init__(self):
-        if not self.location:
+    @model_validator(mode='after')
+    def validate_location(self) -> 'WorkspaceFileChecksStorageConfig':
+        if type(self) is WorkspaceFileChecksStorageConfig and not self.location:
             raise InvalidConfigError("The workspace file path ('location' field) must not be empty or None.")
+        return self
 
 
-@dataclass
 class TableChecksStorageConfig(BaseChecksStorageConfig):
     """
     Configuration class for storing checks in a table.
@@ -387,17 +386,17 @@ class TableChecksStorageConfig(BaseChecksStorageConfig):
             When None (default), loads the latest batch.
     """
 
-    location: str
     run_config_name: str = "default"  # to filter checks by run config
     mode: str = "append"
     rule_set_fingerprint: str | None = None  # to filter checks by rule set fingerprint
 
-    def __post_init__(self):
-        if not self.location:
+    @model_validator(mode='after')
+    def validate_location(self) -> 'TableChecksStorageConfig':
+        if type(self) is TableChecksStorageConfig and not self.location:
             raise InvalidConfigError("The table name ('location' field) must not be empty or None.")
+        return self
 
 
-@dataclass
 class LakebaseChecksStorageConfig(BaseChecksStorageConfig):
     """
     Configuration class for storing checks in a Lakebase table.
@@ -418,7 +417,6 @@ class LakebaseChecksStorageConfig(BaseChecksStorageConfig):
             When None (default), loads the latest batch.
     """
 
-    location: str
     instance_name: str | None = None
     client_id: str | None = None
     port: str = "5432"
@@ -426,11 +424,15 @@ class LakebaseChecksStorageConfig(BaseChecksStorageConfig):
     mode: str = "append"
     rule_set_fingerprint: str | None = None
 
-    def __post_init__(self):
-        if not self.location or self.location == "":
+    @model_validator(mode='after')
+    def validate_lakebase_config(self) -> 'LakebaseChecksStorageConfig':
+        if type(self) is not LakebaseChecksStorageConfig:
+            return self
+
+        if not self.location:
             raise InvalidParameterError("Location must not be empty or None.")
 
-        if not self.instance_name or self.instance_name == "":
+        if not self.instance_name:
             raise InvalidParameterError("Instance name must not be empty or None.")
 
         if len(self.location.split(".")) != 3:
@@ -441,26 +443,27 @@ class LakebaseChecksStorageConfig(BaseChecksStorageConfig):
         if self.mode not in ("append", "overwrite"):
             raise InvalidConfigError(f"Invalid mode '{self.mode}'. Must be 'append' or 'overwrite'.")
 
+        return self
+
     def _split_location(self) -> tuple[str, ...]:
         """Splits 'database.schema.table' into components."""
         if not self.location:
             raise InvalidConfigError("location must be set before accessing database components.")
         return tuple(self.location.split("."))
 
-    @cached_property
+    @property
     def database_name(self) -> str:
         return self._split_location()[0]
 
-    @cached_property
+    @property
     def schema_name(self) -> str:
         return self._split_location()[1]
 
-    @cached_property
+    @property
     def table_name(self) -> str:
         return self._split_location()[2]
 
 
-@dataclass
 class VolumeFileChecksStorageConfig(BaseChecksStorageConfig):
     """
     Configuration class for storing checks in a Unity Catalog volume file.
@@ -469,9 +472,11 @@ class VolumeFileChecksStorageConfig(BaseChecksStorageConfig):
         location: The Unity Catalog volume file path where the checks are stored.
     """
 
-    location: str
+    @model_validator(mode='after')
+    def validate_location(self) -> 'VolumeFileChecksStorageConfig':
+        if type(self) is not VolumeFileChecksStorageConfig:
+            return self
 
-    def __post_init__(self):
         if not self.location:
             raise InvalidParameterError(
                 "The Unity Catalog volume file path ('location' field) must not be empty or None."
@@ -492,8 +497,9 @@ class VolumeFileChecksStorageConfig(BaseChecksStorageConfig):
         if len(parts) < 6 or not parts[-1].lower().endswith(SerializerFactory.get_supported_extensions()):
             raise InvalidParameterError("Invalid path: Path must include a file name after the volume")
 
+        return self
 
-@dataclass
+
 class InstallationChecksStorageConfig(
     WorkspaceFileChecksStorageConfig,
     TableChecksStorageConfig,
@@ -517,9 +523,15 @@ class InstallationChecksStorageConfig(
         overwrite_location: Whether to overwrite the location from run config if provided (default is False).
     """
 
-    location: str = "installation"  # retrieved from the installation config
+    location: str | None = "installation"  # retrieved from the installation config
     run_config_name: str = "default"  # to retrieve run config
     product_name: str = "dqx"
     assume_user: bool = True
     install_folder: str | None = None
     overwrite_location: bool = False
+
+    @model_validator(mode='after')
+    def validate_installation_location(self) -> 'InstallationChecksStorageConfig':
+        if not self.location:
+            raise InvalidConfigError("The workspace file path ('location' field) must not be empty or None.")
+        return self
