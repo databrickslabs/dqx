@@ -8,7 +8,7 @@ import functools as ft
 from collections.abc import Callable, Iterable
 from typing import Any, ClassVar
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, model_validator
 from pyspark.sql import Column
 import pyspark.sql.functions as F
 from databricks.labs.dqx.utils import get_column_name_or_alias, normalize_bound_args
@@ -116,8 +116,8 @@ class MultipleColumnsMixin:
 
 
 class DQRuleTypeMixin:
-    _expected_rule_type: str  # to be defined in subclasses
-    _alternative_rules: list[str]  # e.g., "DQRowRule" or "DQDatasetRule"
+    _expected_rule_type: ClassVar[str]  # to be defined in subclasses
+    _alternative_rules: ClassVar[list[str]]  # e.g., "DQRowRule" or "DQDatasetRule"
 
     def _validate_rule_type(self, check_func: Callable) -> None:
         """
@@ -178,12 +178,35 @@ class DQRule(BaseModel, abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleCol
     name: str = ""
     criticality: str = Criticality.ERROR.value
     column: str | Column | None = None
-    columns: list[str | Column | None] | None = None  # some checks require list of columns instead of column
+    columns: list[str | Column] | None = None  # some checks require list of columns instead of column
     filter: str | None = None
-    check_func_args: list[Any] = Field(default_factory=list)
-    check_func_kwargs: dict[str, Any] = Field(default_factory=dict)
+    check_func_args: list[Any] = []
+    check_func_kwargs: dict[str, Any] = {}
     user_metadata: dict[str, str] | None = None
     message_expr: str | Column | None = None
+
+    @model_validator(mode='before')
+    @classmethod
+    def _reject_none_columns(cls, data: Any) -> Any:
+        """Raise the DQX-specific error for None elements in *columns* before Pydantic type validation.
+
+        Pydantic would otherwise reject a None element with a generic ValidationError; callers expect
+        InvalidCheckError. Runs before field coercion so the raw input list is inspected as provided.
+
+        Args:
+            data: Raw input passed to the model (a mapping of field values when constructed with keywords).
+
+        Returns:
+            The unmodified input data.
+
+        Raises:
+            InvalidCheckError: If *columns* is a list containing a None element.
+        """
+        if isinstance(data, dict):
+            columns = data.get("columns")
+            if isinstance(columns, list) and any(column is None for column in columns):
+                raise InvalidCheckError("'columns' list contains a None element.")
+        return data
 
     @model_validator(mode='after')
     def _validate_and_initialize(self) -> 'DQRule':
@@ -458,8 +481,8 @@ class DQForEachColRule(BaseModel, DQRuleTypeMixin):
     name: str = ""
     criticality: str = Criticality.ERROR.value
     filter: str | None = None
-    check_func_args: list[Any] = Field(default_factory=list)
-    check_func_kwargs: dict[str, Any] = Field(default_factory=dict)
+    check_func_args: list[Any] = []
+    check_func_kwargs: dict[str, Any] = {}
     user_metadata: dict[str, str] | None = None
     message_expr: str | Column | None = None
 
