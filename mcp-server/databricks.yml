@@ -62,7 +62,7 @@ resources:
 
       permissions:
         - level: CAN_USE
-          group_name: users
+          group_name: ${var.users_group}
 
 sync:
   include:
