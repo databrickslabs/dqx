@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from .me import router as me_router
 from .check_functions import router as check_functions_router
 from .config import router as config_router
+from .contract import router as contract_router
 from .discovery import router as discovery_router
 from .generate import router as generate_router
 from .rules import router as rules_router
@@ -24,6 +25,7 @@ v1_router.include_router(schedules_router, prefix="/schedules", tags=["schedules
 v1_router.include_router(roles_router, prefix="/roles", tags=["roles"])
 v1_router.include_router(discovery_router, prefix="/discovery", tags=["discovery"])
 v1_router.include_router(generate_router, prefix="/ai", tags=["ai"])
+v1_router.include_router(contract_router, prefix="/contract", tags=["contract"])
 v1_router.include_router(rules_router, prefix="/rules", tags=["rules"])
 v1_router.include_router(import_rules_router, prefix="/rules", tags=["rules"])
 v1_router.include_router(check_functions_router, prefix="/check-functions", tags=["check-functions"])

@@ -1,6 +1,9 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState, Suspense, useMemo } from "react";
-import { PageBreadcrumb } from "@/components/apx/PageBreadcrumb";
+import { useTranslation } from "react-i18next";
+import { QueryErrorResetBoundary } from "@tanstack/react-query";
+import { ErrorBoundary } from "react-error-boundary";
+import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
 import {
   Card,
   CardContent,
@@ -19,11 +22,13 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  AlertCircle,
   ShieldCheck,
   Plus,
   ChevronDown,
   ChevronRight,
   Database,
+  RotateCcw,
   Trash2,
   Download,
 } from "lucide-react";
@@ -36,7 +41,7 @@ import {
 } from "@/lib/api";
 import { deleteRuleById } from "@/lib/api-custom";
 import { usePermissions } from "@/hooks/use-permissions";
-import { parseFqn, formatUser, getUserMetadata, labelToken } from "@/lib/format-utils";
+import { parseFqn, formatUser, getUserMetadata, isSchemaValidationRule, labelToken } from "@/lib/format-utils";
 import { LabelFilter, LabelsBadges, labelsMatchFilter } from "@/components/Labels";
 import {
   AlertDialog,
@@ -54,11 +59,32 @@ const CROSS_TABLE_CATALOG = "Cross-table rules";
 
 export const Route = createFileRoute("/_sidebar/rules/active")({
   component: () => (
-    <Suspense fallback={<ActiveRulesSkeleton />}>
-      <ActiveRulesPage />
-    </Suspense>
+    <QueryErrorResetBoundary>
+      {({ reset }) => (
+        <ErrorBoundary onReset={reset} fallbackRender={ActiveRulesError}>
+          <Suspense fallback={<ActiveRulesSkeleton />}>
+            <ActiveRulesPage />
+          </Suspense>
+        </ErrorBoundary>
+      )}
+    </QueryErrorResetBoundary>
   ),
 });
+
+function ActiveRulesError({ resetErrorBoundary }: { resetErrorBoundary: () => void }) {
+  const { t } = useTranslation();
+  return (
+    <div className="flex flex-col items-center justify-center py-16 text-center">
+      <AlertCircle className="h-12 w-12 text-destructive/30 mb-3" />
+      <p className="text-muted-foreground text-sm mb-1">{t("common.loadFailed")}</p>
+      <p className="text-muted-foreground/70 text-xs mb-3">{t("common.retryHint")}</p>
+      <Button variant="outline" size="sm" onClick={resetErrorBoundary} className="gap-2">
+        <RotateCcw className="h-3 w-3" />
+        {t("common.retry")}
+      </Button>
+    </div>
+  );
+}
 
 function ActiveRulesSkeleton() {
   return (
@@ -76,6 +102,7 @@ function ActiveRulesSkeleton() {
 type ViewMode = "by-table" | "by-rule" | "sql-checks";
 
 function ActiveRulesPage() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const [viewMode, setViewMode] = useState<ViewMode>("by-table");
   const [catalogFilter, setCatalogFilter] = useState("all");
@@ -215,10 +242,10 @@ function ActiveRulesPage() {
     setPendingDelete(ruleId);
     try {
       await deleteRuleById(ruleId);
-      toast.success("Rule deleted");
+      toast.success(t("rulesActive.ruleDeleted"));
       refetch();
     } catch {
-      toast.error("Failed to delete rule");
+      toast.error(t("rulesActive.failedDelete"));
     } finally {
       setPendingDelete(null);
     }
@@ -279,7 +306,7 @@ function ActiveRulesPage() {
     a.download = filename;
     a.click();
     URL.revokeObjectURL(url);
-    toast.success(`Exported ${rules.length} rule(s) as YAML`);
+    toast.success(t("rulesActive.exportedRulesCount", { count: rules.length }));
   };
 
   const handleExportAll = () => {
@@ -295,25 +322,25 @@ function ActiveRulesPage() {
   return (
     <div className="space-y-6">
       <div className="space-y-2">
-        <PageBreadcrumb items={[]} page="Active Rules" />
+        <PageBreadcrumb items={[]} page={t("rulesActive.breadcrumb")} />
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold tracking-tight">Active rules</h1>
+            <h1 className="text-2xl font-bold tracking-tight">{t("rulesActive.title")}</h1>
             <p className="text-muted-foreground">
-              Approved rules currently enforced on your tables.
+              {t("rulesActive.subtitle")}
             </p>
           </div>
           <div className="flex items-center gap-2">
             {canExportRules && filteredRules.length > 0 && (
               <Button variant="outline" onClick={handleExportAll} className="gap-2">
                 <Download className="h-4 w-4" />
-                Export YAML
+                {t("rulesActive.exportYaml")}
               </Button>
             )}
             {canCreateRules && (
               <Button onClick={() => navigate({ to: "/rules/create" })} className="gap-2">
                 <Plus className="h-4 w-4" />
-                Create rules
+                {t("rulesActive.createRules")}
               </Button>
             )}
           </div>
@@ -327,12 +354,15 @@ function ActiveRulesPage() {
               <div>
                 <CardTitle className="flex items-center gap-2">
                   <ShieldCheck className="h-5 w-5" />
-                  Approved rule sets
+                  {t("rulesActive.approvedRuleSets")}
                 </CardTitle>
                 <CardDescription>
                   {isLoading
-                    ? "Loading..."
-                    : `${filteredRules.length} table${filteredRules.length !== 1 ? "s" : ""} · ${totalCheckCount} total checks`}
+                    ? t("common.loading")
+                    : t("rulesActive.tablesAndChecks", {
+                        tables: t("rulesActive.tablesCount", { count: filteredRules.length }),
+                        checks: totalCheckCount,
+                      })}
                 </CardDescription>
               </div>
             </div>
@@ -340,10 +370,10 @@ function ActiveRulesPage() {
             <div className="flex items-center gap-2 flex-wrap">
               <Select value={catalogFilter} onValueChange={handleCatalogChange}>
                 <SelectTrigger className="w-[160px]">
-                  <SelectValue placeholder="All Catalogs" />
+                  <SelectValue placeholder={t("common.selectCatalog")} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All Catalogs</SelectItem>
+                  <SelectItem value="all">{t("common.selectCatalog")}</SelectItem>
                   {catalogs.map((cat) => (
                     <SelectItem key={cat} value={cat}>{cat}</SelectItem>
                   ))}
@@ -352,10 +382,10 @@ function ActiveRulesPage() {
 
               <Select value={schemaFilter} onValueChange={setSchemaFilter} disabled={catalogFilter === "all"}>
                 <SelectTrigger className="w-[160px]">
-                  <SelectValue placeholder="All Schemas" />
+                  <SelectValue placeholder={t("common.selectSchema")} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All Schemas</SelectItem>
+                  <SelectItem value="all">{t("common.selectSchema")}</SelectItem>
                   {availableSchemas.map((sch) => (
                     <SelectItem key={sch} value={sch}>{sch}</SelectItem>
                   ))}
@@ -364,13 +394,13 @@ function ActiveRulesPage() {
 
               <Select value={sourceFilter} onValueChange={setSourceFilter}>
                 <SelectTrigger className="w-[140px]">
-                  <SelectValue placeholder="All Sources" />
+                  <SelectValue placeholder={t("rulesActive.allSources")} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All Sources</SelectItem>
+                  <SelectItem value="all">{t("rulesActive.allSources")}</SelectItem>
                   {sources.map((src) => (
                     <SelectItem key={src} value={src}>
-                      {src === "imported" ? "Imported" : src === "ai" ? "AI" : "UI"}
+                      {src === "imported" ? t("rulesActive.imported") : src === "ai" ? t("rulesActive.ai") : t("rulesActive.ui")}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -394,16 +424,16 @@ function ActiveRulesPage() {
                     setLabelFilter(new Set());
                   }}
                 >
-                  Clear filters
+                  {t("common.clearFilters")}
                 </Button>
               )}
 
               <div className="ml-auto flex items-center gap-1 border rounded-md p-0.5">
                 {(
                   [
-                    { key: "by-table", label: "By table" },
-                    { key: "by-rule", label: "By rule" },
-                    { key: "sql-checks", label: "Cross-table" },
+                    { key: "by-table", label: t("rulesActive.byTable") },
+                    { key: "by-rule", label: t("rulesActive.byRule") },
+                    { key: "sql-checks", label: t("rulesActive.crossTableTab") },
                   ] as const
                 ).map((mode) => (
                   <button
@@ -432,7 +462,7 @@ function ActiveRulesPage() {
           )}
 
           {error && (
-            <p className="text-destructive text-sm">Failed to load rules: {(error as Error).message}</p>
+            <p className="text-destructive text-sm">{t("rulesActive.failedLoadRules", { error: (error as Error).message })}</p>
           )}
 
           {!isLoading && !error && filteredRules.length > 0 && (
@@ -442,11 +472,19 @@ function ActiveRulesPage() {
                   groups={groupedByTable}
                   expandedTables={expandedTables}
                   onToggle={toggleTable}
-                  onNavigate={(fqn) =>
-                    fqn.startsWith(SQL_CHECK_PREFIX)
-                      ? navigate({ to: "/rules/create-sql", search: { edit: fqn, from: "active" } })
-                      : navigate({ to: "/rules/single-table", search: { table: fqn, from: "active" } })
-                  }
+                  onNavigate={(fqn, rules) => {
+                    // Schema-validation rules share the ``__sql_check__/``
+                    // synthetic table_fqn with cross-table SQL rules but
+                    // round-trip through a different editor. Peek at the
+                    // group's rules to decide where to send the user.
+                    if (rules.some(isSchemaValidationRule)) {
+                      navigate({ to: "/rules/schema", search: { edit: fqn, from: "active" } });
+                    } else if (fqn.startsWith(SQL_CHECK_PREFIX)) {
+                      navigate({ to: "/rules/create-sql", search: { edit: fqn, from: "active" } });
+                    } else {
+                      navigate({ to: "/rules/single-table", search: { table: fqn, from: "active" } });
+                    }
+                  }}
                   canDelete={canApproveRules}
                   onDelete={requestDelete}
                   pendingDelete={pendingDelete}
@@ -472,22 +510,22 @@ function ActiveRulesPage() {
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete rule</AlertDialogTitle>
+            <AlertDialogTitle>{t("rulesActive.deleteTitle")}</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete this rule for{" "}
+              {t("rulesActive.deleteConfirm")}
               <span className="font-medium text-foreground">
                 {deleteTarget?.display_name || deleteTarget?.table_fqn}
               </span>
-              ? This action cannot be undone.
+              {t("rulesActive.deleteCannotUndo")}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
             <AlertDialogAction
               onClick={confirmDelete}
               className="bg-destructive text-white hover:bg-destructive/90"
             >
-              Delete
+              {t("common.delete")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -508,7 +546,13 @@ interface ByTableViewProps {
   groups: TableGroup[];
   expandedTables: Set<string>;
   onToggle: (fqn: string) => void;
-  onNavigate: (fqn: string) => void;
+  /**
+   * Called when the user clicks "View / edit rules" on a table group. The
+   * group's rules are forwarded so the caller can pick the right editor
+   * (schema validation vs. cross-table SQL vs. single-table) based on the
+   * check function, not just the synthetic ``__sql_check__/`` prefix.
+   */
+  onNavigate: (fqn: string, rules: RuleCatalogEntryOut[]) => void;
   canDelete: boolean;
   onDelete: (rule: RuleCatalogEntryOut) => void;
   pendingDelete: string | null;
@@ -517,6 +561,7 @@ interface ByTableViewProps {
 }
 
 function ByTableView({ groups, expandedTables, onToggle, onNavigate, canDelete, onDelete, pendingDelete, canExport, onExport }: ByTableViewProps) {
+  const { t } = useTranslation();
   return (
     <div className="space-y-2">
       {groups.map(({ fqn, displayName, rules }) => {
@@ -535,7 +580,7 @@ function ByTableView({ groups, expandedTables, onToggle, onNavigate, canDelete, 
               )}
               <code className="font-mono text-xs font-medium flex-1">{displayName}</code>
               <span className="text-xs text-muted-foreground">
-                {rules.length} rule{rules.length !== 1 ? "s" : ""}
+                {t("rulesActive.rulesCount", { count: rules.length })}
               </span>
             </button>
             {isOpen && (
@@ -543,12 +588,12 @@ function ByTableView({ groups, expandedTables, onToggle, onNavigate, canDelete, 
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="bg-muted/30">
-                      <th className="text-left p-2 px-4 font-medium text-xs text-muted-foreground">Function</th>
-                      <th className="text-left p-2 px-4 font-medium text-xs text-muted-foreground">Column(s)</th>
-                      <th className="text-left p-2 px-4 font-medium text-xs text-muted-foreground">Criticality</th>
-                      <th className="text-left p-2 px-4 font-medium text-xs text-muted-foreground">Labels</th>
-                      <th className="text-left p-2 px-4 font-medium text-xs text-muted-foreground">Source</th>
-                      <th className="text-left p-2 px-4 font-medium text-xs text-muted-foreground">Created by</th>
+                      <th className="text-left p-2 px-4 font-medium text-xs text-muted-foreground">{t("rulesActive.headerFunction")}</th>
+                      <th className="text-left p-2 px-4 font-medium text-xs text-muted-foreground">{t("rulesActive.headerColumns")}</th>
+                      <th className="text-left p-2 px-4 font-medium text-xs text-muted-foreground">{t("rulesActive.headerCriticality")}</th>
+                      <th className="text-left p-2 px-4 font-medium text-xs text-muted-foreground">{t("rulesActive.headerLabels")}</th>
+                      <th className="text-left p-2 px-4 font-medium text-xs text-muted-foreground">{t("rulesActive.headerSource")}</th>
+                      <th className="text-left p-2 px-4 font-medium text-xs text-muted-foreground">{t("rulesActive.headerCreatedBy")}</th>
                       {canDelete && (
                         <th className="text-right p-2 px-4 font-medium text-xs text-muted-foreground" />
                       )}
@@ -593,7 +638,7 @@ function ByTableView({ groups, expandedTables, onToggle, onNavigate, canDelete, 
                                     : "border-emerald-500 text-emerald-600"
                               }`}
                             >
-                              {rule.source === "imported" ? "Imported" : rule.source === "ai" ? "AI" : "UI"}
+                              {rule.source === "imported" ? t("rulesActive.imported") : rule.source === "ai" ? t("rulesActive.ai") : t("rulesActive.ui")}
                             </Badge>
                           </td>
                           <td className="p-2 px-4 text-xs text-muted-foreground">{formatUser(rule.created_by)}</td>
@@ -624,16 +669,16 @@ function ByTableView({ groups, expandedTables, onToggle, onNavigate, canDelete, 
                       onClick={() => onExport(fqn, rules)}
                     >
                       <Download className="h-3 w-3" />
-                      Export YAML
+                      {t("rulesActive.exportYaml")}
                     </Button>
                   )}
                   <Button
                     variant="ghost"
                     size="sm"
                     className="h-7 text-xs"
-                    onClick={() => onNavigate(fqn)}
+                    onClick={() => onNavigate(fqn, rules)}
                   >
-                    View / edit rules
+                    {t("rulesActive.viewEditRules")}
                   </Button>
                 </div>
               </div>
@@ -666,6 +711,7 @@ interface ParsedCheck {
 }
 
 function ByRuleView({ checks }: { checks: CheckWithMeta[] }) {
+  const { t } = useTranslation();
   const [expandedFns, setExpandedFns] = useState<Set<string>>(new Set());
 
   const grouped = useMemo(() => {
@@ -707,7 +753,7 @@ function ByRuleView({ checks }: { checks: CheckWithMeta[] }) {
   if (grouped.length === 0) {
     return (
       <div className="text-center py-12 text-muted-foreground text-sm">
-        No column / dataset rules found. Switch to &quot;Cross-table&quot; to view query-based rules.
+        {t("rulesActive.noColumnRules")}
       </div>
     );
   }
@@ -731,26 +777,29 @@ function ByRuleView({ checks }: { checks: CheckWithMeta[] }) {
               <span className="text-xs text-muted-foreground ml-auto flex items-center gap-3">
                 {errorCount > 0 && (
                   <Badge variant="outline" className="text-[10px] border-red-500 text-red-600">
-                    {errorCount} error{errorCount > 1 ? "s" : ""}
+                    {t("rulesActive.errorsCount", { count: errorCount })}
                   </Badge>
                 )}
                 {warnCount > 0 && (
                   <Badge variant="outline" className="text-[10px] border-amber-500 text-amber-600">
-                    {warnCount} warn{warnCount > 1 ? "s" : ""}
+                    {t("rulesActive.warnsCount", { count: warnCount })}
                   </Badge>
                 )}
-                <span>{items.length} check{items.length > 1 ? "s" : ""} across {tables.size} table{tables.size > 1 ? "s" : ""}</span>
+                <span>{t("rulesActive.checksAcrossTables", {
+                  checks: t("rulesActive.checksCount", { count: items.length }),
+                  tables: t("rulesActive.tablesCount", { count: tables.size }),
+                })}</span>
               </span>
             </button>
             {isOpen && (
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-t bg-muted/50">
-                    <th className="text-left p-3 font-medium text-xs">Table</th>
-                    <th className="text-left p-3 font-medium text-xs">Column(s)</th>
-                    <th className="text-left p-3 font-medium text-xs">Criticality</th>
-                    <th className="text-left p-3 font-medium text-xs">Name</th>
-                    <th className="text-left p-3 font-medium text-xs">Labels</th>
+                    <th className="text-left p-3 font-medium text-xs">{t("rulesActive.headerTable")}</th>
+                    <th className="text-left p-3 font-medium text-xs">{t("rulesActive.headerColumns")}</th>
+                    <th className="text-left p-3 font-medium text-xs">{t("rulesActive.headerCriticality")}</th>
+                    <th className="text-left p-3 font-medium text-xs">{t("rulesActive.headerName")}</th>
+                    <th className="text-left p-3 font-medium text-xs">{t("rulesActive.headerLabels")}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -791,6 +840,7 @@ function ByRuleView({ checks }: { checks: CheckWithMeta[] }) {
 // ── SQL checks view ─────────────────────────────────────────────────────────
 
 function SqlChecksView({ checks }: { checks: CheckWithMeta[] }) {
+  const { t } = useTranslation();
   const sqlChecks = checks.filter((c) => {
     const checkObj = (c.check as Record<string, unknown>) ?? {};
     return String(checkObj.function ?? "") === "sql_query";
@@ -800,8 +850,8 @@ function SqlChecksView({ checks }: { checks: CheckWithMeta[] }) {
     return (
       <div className="text-center py-12 text-muted-foreground">
         <Database className="h-10 w-10 mx-auto mb-3 opacity-40" />
-        <p className="text-sm font-medium">No cross-table rules</p>
-        <p className="text-xs mt-1">Cross-table SQL rules will appear here once created and approved.</p>
+        <p className="text-sm font-medium">{t("rulesActive.noCrossTable")}</p>
+        <p className="text-xs mt-1">{t("rulesActive.noCrossTableHint")}</p>
       </div>
     );
   }
@@ -811,11 +861,11 @@ function SqlChecksView({ checks }: { checks: CheckWithMeta[] }) {
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b bg-muted/50">
-            <th className="text-left p-3 font-medium">Name</th>
-            <th className="text-left p-3 font-medium">Mode</th>
-            <th className="text-left p-3 font-medium">Table</th>
-            <th className="text-left p-3 font-medium">Criticality</th>
-            <th className="text-left p-3 font-medium">Labels</th>
+            <th className="text-left p-3 font-medium">{t("rulesActive.headerName")}</th>
+            <th className="text-left p-3 font-medium">{t("rulesActive.headerMode")}</th>
+            <th className="text-left p-3 font-medium">{t("rulesActive.headerTable")}</th>
+            <th className="text-left p-3 font-medium">{t("rulesActive.headerCriticality")}</th>
+            <th className="text-left p-3 font-medium">{t("rulesActive.headerLabels")}</th>
           </tr>
         </thead>
         <tbody>
@@ -824,7 +874,7 @@ function SqlChecksView({ checks }: { checks: CheckWithMeta[] }) {
             const args = (checkObj.arguments as Record<string, unknown>) ?? {};
             const name = String(check.name ?? args.name ?? "sql_query");
             const mergeColumns = args.merge_columns as string[] | undefined;
-            const mode = mergeColumns && mergeColumns.length > 0 ? "Row-level" : "Dataset-level";
+            const mode = mergeColumns && mergeColumns.length > 0 ? t("rulesActive.rowLevel") : t("rulesActive.datasetLevel");
             const criticality = String(check.criticality ?? "warn");
             const labels = getUserMetadata(check as Record<string, unknown>);
             return (
@@ -861,21 +911,22 @@ function SqlChecksView({ checks }: { checks: CheckWithMeta[] }) {
 // ── Empty state ─────────────────────────────────────────────────────────────
 
 function EmptyState({ canCreate, onNavigate }: { canCreate: boolean; onNavigate: () => void }) {
+  const { t } = useTranslation();
   return (
     <div className="flex flex-col items-center justify-center py-16 text-center">
       <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center mb-6">
         <ShieldCheck className="h-8 w-8 text-muted-foreground" />
       </div>
-      <h3 className="text-lg font-medium text-muted-foreground">No active rules</h3>
+      <h3 className="text-lg font-medium text-muted-foreground">{t("rulesActive.noActiveRules")}</h3>
       <p className="text-muted-foreground/70 text-sm mt-1 max-w-md">
         {canCreate
-          ? "Create and approve rules to see them here. Active rules are enforced during quality runs."
-          : "No rules have been approved yet. Check Drafts & review for pending rule sets."}
+          ? t("rulesActive.noActiveRulesAuthor")
+          : t("rulesActive.noActiveRulesViewer")}
       </p>
       {canCreate && (
         <Button onClick={onNavigate} className="mt-4 gap-2">
           <Plus className="h-4 w-4" />
-          Create rules
+          {t("rulesActive.createRules")}
         </Button>
       )}
     </div>

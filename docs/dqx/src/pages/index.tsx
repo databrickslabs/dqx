@@ -1,7 +1,7 @@
 import Layout from '@theme/Layout';
 import { JSX } from 'react';
 import Button from '../components/Button';
-import { Info, FileText, Activity, AlertTriangle, CheckCircle, Grid, BarChart2, Code, PieChart, Radar, ScrollText } from 'lucide-react';
+import { Info, FileText, Activity, AlertTriangle, CheckCircle, Grid, BarChart2, Code, PieChart, Radar, ScrollText, AppWindow } from 'lucide-react';
 
 const CallToAction = () => {
   return (
@@ -26,6 +26,11 @@ const CallToAction = () => {
 const Capabilities = () => {
 
   const capabilities = [
+    {
+      title: 'DQX Studio (No-Code UI)',
+      description: 'Author, review, run, and monitor quality rules from a browser.',
+      icon: AppWindow,
+    },
     {
       title: 'Info of Failed Checks',
       description: 'Get detailed insights into why a check has failed.',

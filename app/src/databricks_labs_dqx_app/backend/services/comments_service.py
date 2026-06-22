@@ -4,7 +4,7 @@ import logging
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
+from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ class Comment:
 class CommentsService:
     VALID_ENTITY_TYPES = {"run", "rule"}
 
-    def __init__(self, sql: SqlExecutor) -> None:
+    def __init__(self, sql: OltpExecutorProtocol) -> None:
         self._sql = sql
         self._table = sql.fqn("dq_comments")
 

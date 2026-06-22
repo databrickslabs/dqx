@@ -77,7 +77,7 @@ On every cold start the FastAPI lifespan (`backend/app.py`) hashes the locally b
 
 The app uses a **hybrid storage architecture**: high-volume append/analytical tables stay on Delta in Unity Catalog, while OLTP tables (rules catalog, app settings, RBAC, comments, schedule configs) live in **Lakebase Postgres** for sub-millisecond reads (see [DEPLOYMENT.md → Lakebase backend](DEPLOYMENT.md#lakebase-backend)).
 
-All stateful resources — schemas, wheels volume, Lakebase instance, and Lakebase logical Postgres database — are declared as bundle resources in `databricks.yml` with `lifecycle.prevent_destroy: true`. The bundle creates them on first deploy; `databricks bundle destroy` is blocked from dropping them. For workspaces where these resources were created out-of-band, run `make app-bind` once per target to adopt them into bundle management before the first deploy (see [DEPLOYMENT.md → Migrating an existing workspace](DEPLOYMENT.md#migrating-an-existing-workspace)).
+The schemas, wheels volume, and Lakebase instance are declared as bundle resources in `databricks.yml` with `lifecycle.prevent_destroy: true`. The bundle creates them on first deploy; `databricks bundle destroy` is blocked from dropping them. The app's `dqx_studio` Postgres schema (inside the `databricks_postgres` admin database on the Lakebase instance) is created at startup and is not itself a bundle resource, but is protected transitively by the instance-level guard. For workspaces where these resources were created out-of-band, run `make app-bind` once per target to adopt them into bundle management before the first deploy (see [DEPLOYMENT.md → Migrating an existing workspace](DEPLOYMENT.md#migrating-an-existing-workspace)).
 
 ```
 {catalog} (Unity Catalog)
@@ -102,8 +102,8 @@ All stateful resources — schemas, wheels volume, Lakebase instance, and Lakeba
 
 Lakebase (Postgres) — when enabled (default):
  dqx-studio-lakebase (database_instance)
- └── dqx_studio (database)
-     └── public (schema)               ← provisioned by PgMigrationRunner on first start
+ └── databricks_postgres (database)    ← always-present admin DB; no per-app logical DB provisioned
+     └── dqx_studio (schema)           ← created by PgMigrationRunner on first start (DQX_LAKEBASE_SCHEMA)
          ├── dq_app_settings, dq_role_mappings, dq_quality_rules,
          ├── dq_quality_rules_history, dq_comments, dq_schedule_configs,
          ├── dq_schedule_configs_history, dq_schedule_runs

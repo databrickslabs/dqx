@@ -35,36 +35,51 @@ COLUMN IF NOT EXISTS`` natively so re-running is safe out of the box.
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from typing import Any, Protocol
+
+# Import directly from the psycopg-free helpers module — NOT from
+# :mod:`..pg_executor`, which would transitively pull in :mod:`psycopg`
+# at module load. The migration runner itself only needs the trust-
+# boundary wrappers; deferring the heavy psycopg import to the
+# executor's own users keeps this module importable in Delta-only
+# environments (e.g. the dqx-library integration test rig).
+from ..pg_cursor_helpers import run_parameterized_sql, run_trusted_sql
+from ..sql_executor import OltpExecutorProtocol
 
 logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Migration protocol — keeps this module decoupled from PgExecutor so the
-# unit tests can inject a mock with the same surface.
+# Migration protocol — extends the shared :class:`OltpExecutorProtocol`
+# rather than re-declaring ``schema`` / ``q`` / ``execute`` / ``query``
+# fresh. Keeps the executor surface single-sourced so a future addition
+# to the OLTP contract (e.g. a new ``upsert_*`` variant) doesn't drift
+# between callers.
+#
+# The migration runner needs ONE thing beyond the OLTP contract: a raw
+# :meth:`connection` context manager so it can wrap multiple DDL
+# statements + the meta-table INSERT in a single Postgres transaction
+# (the auto-committing :meth:`OltpExecutorProtocol.execute` would split
+# them across separate transactions and leave the meta row out of sync
+# on partial failure). Only :class:`PgExecutor` exposes that today —
+# Delta runs through its own :class:`MigrationRunner` because Spark SQL
+# DDL is not transactional anyway.
 # ---------------------------------------------------------------------------
 
 
-class _Executor(Protocol):
-    # Declared as properties so concrete classes are free to expose
-    # ``schema``/``database`` as either plain attributes or
-    # ``@property`` methods. Plain ``schema: str`` would have made
-    # property-based exposure incompatible (basedpyright treats the
-    # plain form as invariant write-able, while ``@property`` is
-    # readable-only).
-    @property
-    def schema(self) -> str: ...
-    @property
-    def database(self) -> str: ...
+class _Executor(OltpExecutorProtocol, Protocol):
+    """OLTP executor with transactional ``connection()`` access.
 
-    def execute(self, sql: str, *, timeout_seconds: int = 120) -> None: ...
-    def query(self, sql: str, *, timeout_seconds: int = 120) -> list[list[str]]: ...
+    Structurally satisfied only by :class:`backend.pg_executor.PgExecutor`
+    (and matching test doubles). The return type of :meth:`connection`
+    is typed loosely as ``AbstractContextManager[Any]`` so this Protocol
+    stays free of a psycopg dependency — Delta-only deployments can
+    import this module without dragging psycopg into the graph.
+    """
 
-    # Yields a psycopg Connection. Typed loosely so this Protocol stays
-    # free of a psycopg dependency.
     def connection(self) -> AbstractContextManager[Any]: ...
 
 
@@ -254,6 +269,39 @@ PG_MIGRATIONS: list[PgMigration] = [
             f"  ON {_S}.dq_run_review_status_history (run_id, changed_at DESC);"
         ),
     ),
+    PgMigration(
+        version=3,
+        description="Role mappings audit history (dq_role_mappings_history)",
+        sql=(
+            # ----------------------------------------------------------
+            # dq_role_mappings_history — append-only audit log for
+            # changes to dq_role_mappings. Mirrors the Delta v7 shape;
+            # see the corresponding _V7_ROLE_MAPPINGS_HISTORY comment in
+            # ``backend.migrations.__init__`` for the rationale.
+            #
+            # BIGSERIAL gives us a stable display order even if two
+            # admin actions land on the same TIMESTAMPTZ (rare but
+            # possible with millisecond resolution + bulk tooling).
+            # ----------------------------------------------------------
+            f"CREATE TABLE IF NOT EXISTS {_S}.dq_role_mappings_history ("
+            "  history_id BIGSERIAL PRIMARY KEY,"
+            "  role       TEXT NOT NULL,"
+            "  group_name TEXT NOT NULL,"
+            "  action     TEXT NOT NULL,"
+            "  changed_by TEXT,"
+            "  changed_at TIMESTAMPTZ NOT NULL"
+            ");"
+            # Two read patterns: full-history-for-mapping (compliance
+            # answer "show me every change to Approver→group_x") and
+            # recent-activity (admin Settings page "last 50 changes"). A
+            # single composite covers the first; the second is served by
+            # the second index on changed_at alone.
+            f"CREATE INDEX IF NOT EXISTS idx_dq_role_mappings_history_role_group_changed_at "
+            f"  ON {_S}.dq_role_mappings_history (role, group_name, changed_at DESC);"
+            f"CREATE INDEX IF NOT EXISTS idx_dq_role_mappings_history_changed_at "
+            f"  ON {_S}.dq_role_mappings_history (changed_at DESC);"
+        ),
+    ),
 ]
 
 
@@ -271,17 +319,50 @@ class PgMigrationRunner:
     ``public`` schema by default.
     """
 
-    def __init__(self, executor: _Executor) -> None:
+    def __init__(
+        self,
+        executor: _Executor,
+        *,
+        migrations: Sequence[PgMigration] | None = None,
+    ) -> None:
+        """Construct the runner.
+
+        Parameters
+        ----------
+        executor:
+            Postgres executor (PgExecutor in production, a mock in unit
+            tests) satisfying :class:`_Executor`.
+        migrations:
+            Optional migration list. Defaults to the module-level
+            :data:`PG_MIGRATIONS` catalogue that production deploys
+            use. Exposed as a constructor seam so tests can inject a
+            deterministic fake list without monkey-patching the
+            module-level constant — monkey-patching couples tests to
+            an import path and creates surprise interactions when two
+            tests run in the same process.
+        """
         self._exec = executor
         self._schema = executor.schema
-        self._meta_table = _META_TABLE.format(schema=self._schema)
+        # Pre-compute the executor-quoted schema once and feed it to
+        # every DDL/DML site (templates, meta-table reference,
+        # ``CREATE SCHEMA``). The Delta runner's
+        # :class:`MigrationRunner` does the same with backticks; this
+        # keeps the two backends symmetric and removes the previous
+        # foot-gun where ``_ensure_schema`` was the only quoted site
+        # while ``_meta_table`` and the migration templates raw-
+        # interpolated the schema name.
+        self._schema_q = executor.q(self._schema)
+        self._meta_table = _META_TABLE.format(schema=self._schema_q)
+        # Take a defensive tuple snapshot so callers can't mutate the
+        # runner's view of the catalogue after construction.
+        self._migrations: tuple[PgMigration, ...] = tuple(migrations if migrations is not None else PG_MIGRATIONS)
 
     def run_all(self) -> int:
         self._ensure_schema()
         self._ensure_meta_table()
         applied = self._applied_versions()
         count = 0
-        for migration in PG_MIGRATIONS:
+        for migration in self._migrations:
             if migration.version in applied:
                 logger.debug(
                     "Postgres migration v%d (%s) already applied",
@@ -299,18 +380,20 @@ class PgMigrationRunner:
         return count
 
     def _ensure_schema(self) -> None:
-        # Quoting the schema name keeps mixed-case names safe and is a
-        # no-op for plain identifiers.
-        self._exec.execute(f'CREATE SCHEMA IF NOT EXISTS "{self._schema}"')
+        # ``self._schema_q`` is already the quoted form (see __init__).
+        # Calling :meth:`_Executor.q` rather than hardcoding the ANSI
+        # double-quote keeps the dialect contract on the executor.
+        self._exec.execute(f"CREATE SCHEMA IF NOT EXISTS {self._schema_q}")
 
     def _ensure_meta_table(self) -> None:
+        # ``self._meta_table`` already embeds the quoted schema.
         sql = (
             f"CREATE TABLE IF NOT EXISTS {self._meta_table} ("
             "  version INTEGER PRIMARY KEY,"
             "  description TEXT NOT NULL,"
             "  applied_at TIMESTAMPTZ NOT NULL"
             ")"
-        ).format(schema=self._schema)
+        )
         self._exec.execute(sql)
 
     def _applied_versions(self) -> set[int]:
@@ -334,19 +417,31 @@ class PgMigrationRunner:
         failing DDL rather than a position inside a multi-kilobyte
         compound string.
         """
-        formatted = migration.sql.format(schema=self._schema)
-        escaped_desc = migration.description.replace("'", "''")
+        formatted = migration.sql.format(schema=self._schema_q)
         with self._exec.connection() as conn:
             with conn.cursor() as cur:
                 for stmt in formatted.split(";"):
                     stmt = stmt.strip()
                     if stmt:
-                        cur.execute(stmt)
+                        run_trusted_sql(cur, stmt)
                 # Same transaction: either the whole migration lands
                 # *and* its version row is recorded, or nothing does.
-                cur.execute(
+                #
+                # The template here is trusted (``self._meta_table`` is
+                # built via the executor's ``q()`` quoter at __init__),
+                # but ``migration.version`` / ``migration.description``
+                # are runtime values from a Python object — they MUST
+                # NOT be f-string-interpolated even with manual escaping.
+                # Routing them through ``run_parameterized_sql`` hands
+                # the binding to psycopg / libpq, which keeps the values
+                # out of the SQL string entirely. See the docstring on
+                # ``backend.pg_executor.run_trusted_sql`` for the full
+                # contract.
+                run_parameterized_sql(
+                    cur,
                     f"INSERT INTO {self._meta_table} (version, description, applied_at) "
-                    f"VALUES ({migration.version}, '{escaped_desc}', CURRENT_TIMESTAMP)"
+                    "VALUES (%s, %s, CURRENT_TIMESTAMP)",
+                    (migration.version, migration.description),
                 )
             conn.commit()
         logger.info("Postgres migration v%d applied", migration.version)

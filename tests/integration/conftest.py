@@ -121,6 +121,30 @@ def build_quality_violation(
     }
 
 
+def build_skipped_violation(
+    name: str,
+    message: str,
+    columns: list[str] | None,
+    *,
+    function: str = "is_not_null",
+    filter_expr: str | None = None,
+    user_metadata: dict | None = None,
+) -> dict[str, Any]:
+    """Helper for constructing expected entries for checks that were skipped during evaluation."""
+
+    return {
+        "name": name,
+        "message": message,
+        "columns": columns,
+        "filter": filter_expr,
+        "function": function,
+        "run_time": RUN_TIME,
+        "run_id": RUN_ID,
+        "user_metadata": user_metadata or {},
+        "skipped": True,
+    }
+
+
 def assert_check_and_split_results(
     checked: DataFrame,
     good_df: DataFrame,
@@ -227,16 +251,21 @@ def setup_workflows(ws, spark, installation_ctx, make_schema, make_table, make_r
     def create(_spark, **kwargs):
         installation_ctx.installation_service.run()
 
-        quarantine = False
-        if "quarantine" in kwargs and kwargs["quarantine"]:
-            quarantine = True
+        quarantine = kwargs.get("quarantine", False)
+        quarantine_only = kwargs.get("quarantine_only", False)
 
         checks_location = None
         if "checks" in kwargs and kwargs["checks"]:
             checks_location = _setup_quality_checks(installation_ctx, _spark, ws)
 
         run_config = _setup_workflows_deps(
-            installation_ctx, make_schema, make_table, make_random, checks_location, quarantine
+            installation_ctx,
+            make_schema,
+            make_table,
+            make_random,
+            checks_location,
+            quarantine,
+            quarantine_only=quarantine_only,
         )
         return installation_ctx, run_config
 
@@ -260,9 +289,8 @@ def setup_serverless_workflows(ws, spark, serverless_installation_ctx, make_sche
     def create(_spark, **kwargs):
         serverless_installation_ctx.installation_service.run()
 
-        quarantine = False
-        if "quarantine" in kwargs and kwargs["quarantine"]:
-            quarantine = True
+        quarantine = kwargs.get("quarantine", False)
+        quarantine_only = kwargs.get("quarantine_only", False)
 
         checks_location = None
         if "checks" in kwargs and kwargs["checks"]:
@@ -276,6 +304,7 @@ def setup_serverless_workflows(ws, spark, serverless_installation_ctx, make_sche
             checks_location,
             quarantine,
             is_streaming=kwargs.get("is_streaming", False),
+            quarantine_only=quarantine_only,
         )
         return serverless_installation_ctx, run_config
 
@@ -365,16 +394,21 @@ def setup_workflows_with_custom_folder(
     def create(_spark, **kwargs):
         installation_ctx_custom_install_folder.installation_service.run()
 
-        quarantine = False
-        if "quarantine" in kwargs and kwargs["quarantine"]:
-            quarantine = True
+        quarantine = kwargs.get("quarantine", False)
+        quarantine_only = kwargs.get("quarantine_only", False)
 
         checks_location = None
         if "checks" in kwargs and kwargs["checks"]:
             checks_location = _setup_quality_checks(installation_ctx_custom_install_folder, _spark, ws)
 
         run_config = _setup_workflows_deps(
-            installation_ctx_custom_install_folder, make_schema, make_table, make_random, checks_location, quarantine
+            installation_ctx_custom_install_folder,
+            make_schema,
+            make_table,
+            make_random,
+            checks_location,
+            quarantine,
+            quarantine_only=quarantine_only,
         )
         return installation_ctx_custom_install_folder, run_config
 
@@ -408,6 +442,7 @@ def _setup_workflows_deps(
     quarantine: bool = False,
     is_streaming: bool = False,
     is_continuous_streaming: bool = False,
+    quarantine_only: bool = False,
 ):
     # prepare test data
     catalog_name = TEST_CATALOG
@@ -440,23 +475,27 @@ def _setup_workflows_deps(
         else:
             trigger = {"availableNow": True}
 
-    output_table = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
-    run_config.output_config = OutputConfig(
-        location=output_table,
-        trigger=trigger,
-        options=({"checkpointLocation": f"/tmp/dqx_tests/{make_random(10)}_out_ckpt"} if is_streaming else {}),
-    )
+    # quarantine_only writes only invalid records (no output table); quarantine writes both.
+    if quarantine_only:
+        run_config.output_config = None
+    else:
+        output_table = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
+        run_config.output_config = OutputConfig(
+            location=output_table,
+            trigger=trigger,
+            options=({"checkpointLocation": f"/tmp/dqx_tests/{make_random(10)}_out_ckpt"} if is_streaming else {}),
+        )
 
-    if checks_location:
-        run_config.checks_location = checks_location
-
-    if quarantine:
+    if quarantine or quarantine_only:
         quarantine_table = f"{catalog_name}.{schema.name}.{make_random(10).lower()}_quarantine"
         run_config.quarantine_config = OutputConfig(
             location=quarantine_table,
             trigger=trigger,
             options=({"checkpointLocation": f"/tmp/dqx_tests/{make_random(10)}_qr_ckpt"} if is_streaming else {}),
         )
+
+    if checks_location:
+        run_config.checks_location = checks_location
 
     # ensure tests are deterministic
     run_config.profiler_config.sample_fraction = 1.0
@@ -593,6 +632,14 @@ def assert_quarantine_and_output_dfs(ws, spark, expected_output, output_config, 
 
     output_df = spark.table(output_config.location)
     assert_df_equality_ignore_fingerprints(output_df, expected_output_df, ignore_nullable=True)
+
+    quarantine_df = spark.table(quarantine_config.location)
+    assert_df_equality_ignore_fingerprints(quarantine_df, expected_quarantine_df, ignore_nullable=True)
+
+
+def assert_quarantine_df_only(ws, spark, expected_output, quarantine_config):
+    dq_engine = DQEngine(ws, spark)
+    expected_quarantine_df = dq_engine.get_invalid(expected_output)
 
     quarantine_df = spark.table(quarantine_config.location)
     assert_df_equality_ignore_fingerprints(quarantine_df, expected_quarantine_df, ignore_nullable=True)

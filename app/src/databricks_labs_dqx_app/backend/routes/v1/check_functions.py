@@ -8,10 +8,15 @@ matching frontend change.
 
 The list is built once per process by introspecting
 :data:`databricks.labs.dqx.rule.CHECK_FUNC_REGISTRY` plus
-:func:`inspect.signature` on each registered callable. We deliberately
-omit cross-table dataset checks (``foreign_key``, ``compare_datasets``,
-``sql_query``) because they require a reference dataset and therefore
-belong to the cross-table-rules editor, not the single-table editor.
+:func:`inspect.signature` on each registered callable.
+
+Reference-table checks that still validate a *single* target table
+(``foreign_key``, ``has_valid_schema``) ARE surfaced here: from the
+user's point of view the reference table is just another argument, so
+they live in the single-table editor alongside row checks. Only the
+genuinely multi-dataset checks (``compare_datasets``) and the raw SQL
+editor's ``sql_query`` are omitted — those belong to the cross-table
+editor.
 """
 
 from __future__ import annotations
@@ -39,15 +44,24 @@ router = APIRouter()
 
 
 # Functions that are intentionally hidden from the single-table-rules editor.
-# All three need a *reference* dataset (or are handled via the cross-table SQL
-# editor) and therefore don't fit the single-table flow.
+# ``compare_datasets`` genuinely compares two datasets row-for-row, and
+# ``sql_query`` is authored in the dedicated cross-table SQL editor — neither
+# fits the single-table flow. Reference-table checks that still target one
+# table (``foreign_key``, ``has_valid_schema``) are NOT hidden: the reference
+# table is surfaced as a normal argument in the single-table editor.
 _HIDDEN_FROM_SINGLE_TABLE: frozenset[str] = frozenset(
     {
-        "foreign_key",
         "compare_datasets",
         "sql_query",
     }
 )
+
+# Parameters the single-table editor can't populate and therefore drops:
+#   * ``row_filter`` — injected by the engine, not user-facing.
+#   * ``ref_df_name`` — names an in-memory reference DataFrame, which the
+#     stateless app never has; reference data is always addressed by
+#     ``ref_table`` instead.
+_HIDDEN_PARAMS: frozenset[str] = frozenset({"row_filter", "ref_df_name"})
 
 
 # Hand-curated mapping from function name to UX category. New DQX checks
@@ -106,6 +120,8 @@ _CATEGORIES: dict[str, str] = {
     "is_unique": "Uniqueness",
     # Schema
     "has_valid_schema": "Schema",
+    # Reference table
+    "foreign_key": "Reference Table",
     # Custom SQL
     "sql_expression": "Custom SQL",
     # Anomaly Detection (optional module)
@@ -160,6 +176,13 @@ def _classify_param_kind(name: str, annotation: object) -> str:
     has_list = "list" in lowered
     has_column = "column" in lowered  # captures pyspark Column
 
+    # Reference-table arguments (foreign_key / has_valid_schema). The UI
+    # renders ``ref_table`` as a catalog/table picker and ``ref_columns`` as a
+    # column CSV, so they get dedicated kinds rather than the generic ones.
+    if name == "ref_table":
+        return "ref_table"
+    if name == "ref_columns":
+        return "ref_columns"
     # Composite-key column input (e.g. ``is_unique(columns: list[str | Column])``).
     if name == "columns" and has_list and has_column:
         return "columns"
@@ -220,7 +243,18 @@ def _resolve_callable(name: str) -> Callable[..., Any] | None:
 
     try:
         return resolve_check_function(name, fail_on_missing=False)
-    except Exception as exc:  # noqa: BLE001 — defensive
+    except Exception as exc:
+        # Resolution can fail for reasons beyond "name not found":
+        # ``resolve_check_function`` triggers side-effect imports of
+        # optional check modules (PII, geo, etc.) that may not be
+        # installed on every deployment. A missing optional module
+        # raises ImportError; a syntactically-valid but broken module
+        # could raise AttributeError, TypeError, or anything its
+        # ``@register_rule`` evaluator throws. The contract here is
+        # "this endpoint must keep listing available functions even
+        # when one optional module misbehaves" — returning None lets
+        # the caller skip the broken entry without 500ing the whole
+        # registry endpoint. See the BLE001 policy in pyproject.toml.
         logger.warning("Failed to resolve DQX check function %r: %s", name, exc)
         return None
 
@@ -284,22 +318,13 @@ def _introspect_check_functions() -> tuple[CheckFunctionDef, ...]:
             logger.warning("inspect.signature failed for %r: %s", name, exc)
             continue
         params: list[CheckFunctionParam] = []
-        skip_function = False
         for param_name, param in sig.parameters.items():
-            # Filter out internal-only parameters that the engine injects
-            # (the rule editor doesn't know how to populate them).
-            if param_name in {"row_filter"}:
+            # Drop parameters the editor can't populate (engine-injected or
+            # in-memory-DataFrame references). Reference *tables* are kept and
+            # rendered as a picker — see ``_HIDDEN_PARAMS``.
+            if param_name in _HIDDEN_PARAMS:
                 continue
             params.append(_build_param(param))
-            # Cross-table dataset checks always carry a ref-table parameter;
-            # using the parameter name as a defensive escape hatch lets us
-            # auto-hide future ``foreign_key``-style additions even if we
-            # forget to add them to ``_HIDDEN_FROM_SINGLE_TABLE``.
-            if param_name.startswith("ref_") and param_name not in {"ref_columns"}:
-                skip_function = True
-                break
-        if skip_function:
-            continue
         out.append(
             CheckFunctionDef(
                 name=name,

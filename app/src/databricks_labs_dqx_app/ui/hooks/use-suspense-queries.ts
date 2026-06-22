@@ -1,5 +1,5 @@
 export {
   useCurrentUserSuspense,
   useCurrentUserRoleSuspense,
-  useConfigSuspense,
+  useGetConfigSuspense,
 } from "@/lib/api";

@@ -1,5 +1,6 @@
 import { Suspense, useMemo } from "react";
 import { Link, useLocation } from "@tanstack/react-router";
+import { useTranslation } from "react-i18next";
 import { SidebarMenuButton } from "@/components/ui/sidebar";
 import {
   useCurrentUserSuspense,
@@ -9,7 +10,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import selector from "@/lib/selector";
-import { type User, type UserRoleOut, useVersion } from "@/lib/api";
+import { type User, type UserRoleOut, useGetVersion } from "@/lib/api";
 import { Settings } from "lucide-react";
 
 function SidebarUserFooterSkeleton() {
@@ -27,6 +28,7 @@ function SidebarUserFooterSkeleton() {
 }
 
 function SidebarUserFooterContent() {
+  const { t } = useTranslation();
   const { data: user } = useCurrentUserSuspense(selector<User>());
   const { data: roleResp } = useCurrentUserRoleSuspense(selector<UserRoleOut>());
   const location = useLocation();
@@ -44,7 +46,7 @@ function SidebarUserFooterContent() {
   const isProfileActive = location.pathname === "/profile";
   const isConfigActive = location.pathname === "/config";
 
-  const { data: versionResp } = useVersion();
+  const { data: versionResp } = useGetVersion();
   const versionData = versionResp?.data;
 
   return (
@@ -61,7 +63,7 @@ function SidebarUserFooterContent() {
         >
           <Link to="/config" className="flex items-center gap-2">
             <Settings size={16} />
-            <span>Configuration</span>
+            <span>{t("sidebarUser.configuration")}</span>
           </Link>
         </SidebarMenuButton>
       )}

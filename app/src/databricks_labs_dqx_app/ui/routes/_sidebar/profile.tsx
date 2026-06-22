@@ -2,8 +2,10 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { Suspense } from "react";
 import { QueryErrorResetBoundary } from "@tanstack/react-query";
 import { ErrorBoundary } from "react-error-boundary";
+import { useTranslation } from "react-i18next";
 import { useCurrentUserSuspense } from "@/lib/api";
 import selector from "@/lib/selector";
+import LanguageSelector from "@/components/layout/LanguageSelector";
 import {
   Card,
   CardContent,
@@ -12,7 +14,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { PageBreadcrumb } from "@/components/apx/PageBreadcrumb";
+import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -25,6 +27,7 @@ import {
   AlertCircle,
   CheckCircle,
   XCircle,
+  Settings2,
 } from "lucide-react";
 
 export const Route = createFileRoute("/_sidebar/profile")({
@@ -33,6 +36,7 @@ export const Route = createFileRoute("/_sidebar/profile")({
 
 function ProfileContent() {
   const { data: user } = useCurrentUserSuspense(selector());
+  const { t } = useTranslation();
 
   const getInitials = () => {
     if (user.name?.given_name && user.name?.family_name) {
@@ -53,7 +57,7 @@ function ProfileContent() {
 
   return (
     <div className="space-y-4">
-      <PageBreadcrumb page="Profile" />
+      <PageBreadcrumb page={t("profile.breadcrumb")} />
       {/* Header Card */}
       <Card className="border-primary/20">
         <CardContent className="pt-4">
@@ -66,7 +70,7 @@ function ProfileContent() {
             <div className="flex-1 text-center md:text-left space-y-1.5">
               <div className="flex items-center gap-2 justify-center md:justify-start">
                 <h1 className="text-2xl font-bold">
-                  {user.display_name || user.user_name || "User"}
+                  {user.display_name || user.user_name || t("common.user")}
                 </h1>
                 {user.active !== null && (
                   <Badge
@@ -76,12 +80,12 @@ function ProfileContent() {
                     {user.active ? (
                       <>
                         <CheckCircle className="h-3 w-3" />
-                        Active
+                        {t("common.active")}
                       </>
                     ) : (
                       <>
                         <XCircle className="h-3 w-3" />
-                        Inactive
+                        {t("common.inactive")}
                       </>
                     )}
                   </Badge>
@@ -100,6 +104,20 @@ function ProfileContent() {
         </CardContent>
       </Card>
 
+      {/* Preferences */}
+      <Card className="border-primary/20">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Settings2 className="h-5 w-5" />
+            {t("profile.preferencesTitle")}
+          </CardTitle>
+          <CardDescription>{t("profile.preferencesDescription")}</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <LanguageSelector />
+        </CardContent>
+      </Card>
+
       {/* User Details Grid */}
       <div className="grid gap-4 md:grid-cols-2">
         {/* Personal Information */}
@@ -107,9 +125,9 @@ function ProfileContent() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <User className="h-5 w-5" />
-              Personal Information
+              {t("profile.personalInfoTitle")}
             </CardTitle>
-            <CardDescription>Basic user details</CardDescription>
+            <CardDescription>{t("profile.personalInfoDescription")}</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
             {user.name && (
@@ -117,7 +135,7 @@ function ProfileContent() {
                 {user.name.given_name && (
                   <div>
                     <p className="text-sm font-medium text-muted-foreground">
-                      First Name
+                      {t("profile.firstName")}
                     </p>
                     <p className="text-lg">{user.name.given_name}</p>
                   </div>
@@ -127,7 +145,7 @@ function ProfileContent() {
                     <Separator />
                     <div>
                       <p className="text-sm font-medium text-muted-foreground">
-                        Last Name
+                        {t("profile.lastName")}
                       </p>
                       <p className="text-lg">{user.name.family_name}</p>
                     </div>
@@ -140,7 +158,7 @@ function ProfileContent() {
                 <Separator />
                 <div>
                   <p className="text-sm font-medium text-muted-foreground">
-                    External ID
+                    {t("profile.externalId")}
                   </p>
                   <p className="text-sm font-mono">{user.external_id}</p>
                 </div>
@@ -154,9 +172,9 @@ function ProfileContent() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Mail className="h-5 w-5" />
-              Contact Information
+              {t("profile.contactInfoTitle")}
             </CardTitle>
-            <CardDescription>Email addresses</CardDescription>
+            <CardDescription>{t("profile.contactInfoDescription")}</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
             {user.emails && user.emails.length > 0 ? (
@@ -167,20 +185,20 @@ function ProfileContent() {
                     <p className="text-sm break-all">{email.value}</p>
                     {email.primary && (
                       <Badge variant="secondary" className="text-xs">
-                        Primary
+                        {t("common.primary")}
                       </Badge>
                     )}
                   </div>
                   {email.type && (
                     <p className="text-xs text-muted-foreground mt-1">
-                      Type: {email.type}
+                      {t("profile.emailType", { type: email.type })}
                     </p>
                   )}
                 </div>
               ))
             ) : (
               <p className="text-sm text-muted-foreground">
-                No email addresses available
+                {t("profile.noEmails")}
               </p>
             )}
           </CardContent>
@@ -192,10 +210,10 @@ function ProfileContent() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Shield className="h-5 w-5" />
-                Roles
+                {t("profile.rolesTitle")}
               </CardTitle>
               <CardDescription>
-                User roles and permissions ({user.roles.length})
+                {t("profile.rolesDescription", { count: user.roles.length })}
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -218,10 +236,10 @@ function ProfileContent() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Users className="h-5 w-5" />
-                Groups
+                {t("profile.groupsTitle")}
               </CardTitle>
               <CardDescription>
-                User group memberships ({user.groups.length})
+                {t("profile.groupsDescription", { count: user.groups.length })}
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -248,10 +266,10 @@ function ProfileContent() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Shield className="h-5 w-5" />
-                Entitlements
+                {t("profile.entitlementsTitle")}
               </CardTitle>
               <CardDescription>
-                User entitlements ({user.entitlements.length})
+                {t("profile.entitlementsDescription", { count: user.entitlements.length })}
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -308,6 +326,33 @@ function ProfileSkeleton() {
   );
 }
 
+function ProfileErrorFallback({
+  resetErrorBoundary,
+}: {
+  resetErrorBoundary: () => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <Card className="border-destructive/50">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-destructive">
+          <AlertCircle className="h-5 w-5" />
+          {t("profile.loadFailedTitle")}
+        </CardTitle>
+        <CardDescription>{t("profile.loadFailedDescription")}</CardDescription>
+      </CardHeader>
+      <CardContent className="flex gap-2">
+        <Button variant="outline" onClick={resetErrorBoundary}>
+          {t("common.tryAgain")}
+        </Button>
+        <Button variant="outline" asChild>
+          <Link to="/">{t("common.goHome")}</Link>
+        </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
 function Profile() {
   return (
     <QueryErrorResetBoundary>
@@ -315,26 +360,7 @@ function Profile() {
         <ErrorBoundary
           onReset={reset}
           fallbackRender={({ resetErrorBoundary }) => (
-            <Card className="border-destructive/50">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-destructive">
-                  <AlertCircle className="h-5 w-5" />
-                  Failed to Load Profile
-                </CardTitle>
-                <CardDescription>
-                  There was an error loading your profile information. Make sure
-                  the backend is running and you're authenticated.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="flex gap-2">
-                <Button variant="outline" onClick={resetErrorBoundary}>
-                  Try Again
-                </Button>
-                <Button variant="outline" asChild>
-                  <Link to="/">Go Home</Link>
-                </Button>
-              </CardContent>
-            </Card>
+            <ProfileErrorFallback resetErrorBoundary={resetErrorBoundary} />
           )}
         >
           <Suspense fallback={<ProfileSkeleton />}>

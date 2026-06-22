@@ -62,6 +62,27 @@ def _extract_sql_query(checks: list[dict[str, Any]]) -> str | None:
     return None
 
 
+def _extract_schema_check_target(checks: list[dict[str, Any]]) -> str | None:
+    """Return the real Unity Catalog target table for a ``has_valid_schema`` rule.
+
+    Schema-validation rules are dataset-level, so they're persisted under
+    the same ``__sql_check__/<name>`` synthetic table_fqn as cross-table
+    SQL rules. The actual table the check should run against is carried
+    on ``user_metadata.target_table`` (stamped by the schema-rule
+    builder). This helper returns the first such target so the runner
+    knows which table to materialise a view from.
+    """
+    for check in checks:
+        fn = (check.get("check") or {}).get("function", "")
+        if fn != "has_valid_schema":
+            continue
+        meta = check.get("user_metadata") or {}
+        target = meta.get("target_table")
+        if isinstance(target, str) and target.strip():
+            return target.strip()
+    return None
+
+
 def _catalog_of(fqn: str) -> str:
     """Extract the catalog part from a fully qualified table name."""
     if fqn.startswith(_SQL_CHECK_PREFIX):
@@ -117,7 +138,7 @@ async def list_validation_runs(
         candidate_run_ids = [row.get("run_id") or "" for row in candidates if row.get("run_id")]
         try:
             review_map = review_svc.bulk_get_effective(candidate_run_ids)
-        except Exception as exc:  # noqa: BLE001 - degrade gracefully if OLTP is hiccuping
+        except Exception as exc:
             logger.warning(
                 "Failed to bulk-fetch review statuses (rendering without): %s",
                 exc,
@@ -227,43 +248,82 @@ def batch_run_from_catalog(
                 continue
 
             run_id = uuid4().hex[:16]
-            is_sql_check = table_fqn.startswith(_SQL_CHECK_PREFIX)
-
-            if is_sql_check:
+            # Rules under ``__sql_check__/<name>`` are dataset-level, but
+            # the *kind* of dataset rule decides how we materialise the
+            # input view:
+            #   * ``sql_query``         → run the embedded query and use
+            #     the result rows as violations (existing path).
+            #   * ``has_valid_schema``  → the rule runs against a real UC
+            #     table. We snapshot the target table into a temp view
+            #     and execute the standard row-level engine (which
+            #     handles ``has_valid_schema`` natively as a dataset
+            #     check). ``is_sql_check`` stays ``False`` so the runner
+            #     uses the engine path, not the SQL-violation shortcut.
+            # ``source_table_fqn`` keeps the synthetic key so the rule's
+            # run history still groups by the catalog entry.
+            is_synthetic = table_fqn.startswith(_SQL_CHECK_PREFIX)
+            sql_query: str | None = None
+            schema_target: str | None = None
+            if is_synthetic:
                 sql_query = _extract_sql_query(approved_checks)
-                if not sql_query:
-                    errors.append(f"{table_fqn}: SQL check has no query")
-                    continue
-                view_fqn = view_svc.create_view_from_sql(sql_query)
+                if sql_query:
+                    view_fqn = view_svc.create_view_from_sql(sql_query)
+                else:
+                    schema_target = _extract_schema_check_target(approved_checks)
+                    if not schema_target:
+                        errors.append(
+                            f"{table_fqn}: dataset-level rule must provide either a sql_query "
+                            "or a has_valid_schema check with user_metadata.target_table"
+                        )
+                        continue
+                    view_fqn = view_svc.create_view(schema_target)
             else:
                 view_fqn = view_svc.create_view(table_fqn)
 
-            config: dict[str, Any] = {
-                "checks": approved_checks,
-                "sample_size": body.sample_size,
-                "source_table_fqn": table_fqn,
-                "is_sql_check": is_sql_check,
-            }
-            if custom_metrics:
-                config["custom_metrics"] = custom_metrics
-            job_run_id = job_svc.submit_run(
-                task_type="dryrun",
-                view_fqn=view_fqn,
-                config=config,
-                run_id=run_id,
-                requesting_user=requesting_user,
-            )
-            submitted.append(DryRunSubmitOut(run_id=run_id, job_run_id=job_run_id, view_fqn=view_fqn))
+            # See submit_dry_run: anything past this point must clean up
+            # ``view_fqn`` on failure or we leak a temp view.
+            try:
+                config: dict[str, Any] = {
+                    "checks": approved_checks,
+                    "sample_size": body.sample_size,
+                    "source_table_fqn": table_fqn,
+                    # Only true SQL queries take the SQL fast-path in the
+                    # runner — schema-validation rules go through the normal
+                    # row-level engine even though they share the synthetic
+                    # ``__sql_check__/`` prefix.
+                    "is_sql_check": sql_query is not None,
+                }
+                if custom_metrics:
+                    config["custom_metrics"] = custom_metrics
+                job_run_id = job_svc.submit_run(
+                    task_type="dryrun",
+                    view_fqn=view_fqn,
+                    config=config,
+                    run_id=run_id,
+                    requesting_user=requesting_user,
+                )
+                submitted.append(DryRunSubmitOut(run_id=run_id, job_run_id=job_run_id, view_fqn=view_fqn))
 
-            job_svc.record_dryrun_started(
-                table=runs_table,
-                run_id=run_id,
-                requesting_user=requesting_user,
-                source_table_fqn=table_fqn,
-                view_fqn=view_fqn,
-                sample_size=body.sample_size,
-                job_run_id=job_run_id,
-            )
+                job_svc.record_dryrun_started(
+                    table=runs_table,
+                    run_id=run_id,
+                    requesting_user=requesting_user,
+                    source_table_fqn=table_fqn,
+                    view_fqn=view_fqn,
+                    sample_size=body.sample_size,
+                    job_run_id=job_run_id,
+                )
+            except Exception:
+                try:
+                    view_svc.drop_view(view_fqn)
+                except Exception as cleanup_err:
+                    logger.warning(
+                        "Failed to drop temp view %s after submit failure for %s: %s",
+                        view_fqn,
+                        table_fqn,
+                        cleanup_err,
+                    )
+                raise
         except Exception as e:
             logger.error("Failed to submit run for %s: %s", table_fqn, e, exc_info=True)
             errors.append(f"{table_fqn}: {e}")
@@ -302,51 +362,86 @@ def submit_dry_run(
         user = obo_ws.current_user.me()
         requesting_user = user.user_name or "unknown"
 
-        # Create view using OBO token — inherits user's table permissions
-        is_sql_check = body.table_fqn.startswith(_SQL_CHECK_PREFIX)
-        if is_sql_check:
+        # Create view using OBO token — inherits user's table permissions.
+        # For the synthetic ``__sql_check__/<name>`` namespace we accept
+        # both real cross-table SQL checks (build a view from the SQL)
+        # and schema-validation checks (build a view from the real
+        # ``user_metadata.target_table`` so the row-level engine can run
+        # ``has_valid_schema``). See ``batch_run_from_catalog`` for the
+        # mirroring scheduled-run path.
+        is_synthetic = body.table_fqn.startswith(_SQL_CHECK_PREFIX)
+        sql_query: str | None = None
+        if is_synthetic:
             sql_query = _extract_sql_query(body.checks)
-            if not sql_query:
-                raise HTTPException(status_code=400, detail="SQL check has no query")
-            view_fqn = view_svc.create_view_from_sql(sql_query)
+            if sql_query:
+                view_fqn = view_svc.create_view_from_sql(sql_query)
+            else:
+                schema_target = _extract_schema_check_target(body.checks)
+                if not schema_target:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            "Dataset-level rule must provide either a sql_query or a "
+                            "has_valid_schema check with user_metadata.target_table"
+                        ),
+                    )
+                view_fqn = view_svc.create_view(schema_target)
         else:
             view_fqn = view_svc.create_view(body.table_fqn)
 
-        # Submit job using SP credentials
-        config: dict[str, Any] = {
-            "checks": body.checks,
-            "sample_size": body.sample_size,
-            "source_table_fqn": body.table_fqn,
-            "is_sql_check": is_sql_check,
-        }
-        if body.skip_history:
-            config["skip_history"] = True
-        # Skip custom metrics for preview runs — they're scoped to small
-        # samples and have no downstream dashboard consumers, so the
-        # extra observer columns just add noise.
-        if not body.skip_history:
-            custom_metrics = settings_svc.get_custom_metrics()
-            if custom_metrics:
-                config["custom_metrics"] = custom_metrics
-        job_run_id = job_svc.submit_run(
-            task_type="dryrun",
-            view_fqn=view_fqn,
-            config=config,
-            run_id=run_id,
-            requesting_user=requesting_user,
-        )
-
-        if not body.skip_history:
-            runs_table = f"{app_conf.catalog}.{app_conf.schema_name}.dq_validation_runs"
-            job_svc.record_dryrun_started(
-                table=runs_table,
+        # From here on, ``view_fqn`` is a side-effect on Unity Catalog
+        # that we own — if anything below raises, we MUST drop the view
+        # before propagating so we don't leak temp views in ``dqx_studio_tmp``.
+        # The terminal-status path in :func:`get_dry_run_status` handles
+        # cleanup for the happy case once the job finishes.
+        try:
+            config: dict[str, Any] = {
+                "checks": body.checks,
+                "sample_size": body.sample_size,
+                "source_table_fqn": body.table_fqn,
+                # SQL fast-path only fires for actual sql_query checks —
+                # schema-validation rules under the synthetic prefix still
+                # use the row-level engine.
+                "is_sql_check": sql_query is not None,
+            }
+            if body.skip_history:
+                config["skip_history"] = True
+            # Skip custom metrics for preview runs — they're scoped to small
+            # samples and have no downstream dashboard consumers, so the
+            # extra observer columns just add noise.
+            if not body.skip_history:
+                custom_metrics = settings_svc.get_custom_metrics()
+                if custom_metrics:
+                    config["custom_metrics"] = custom_metrics
+            job_run_id = job_svc.submit_run(
+                task_type="dryrun",
+                view_fqn=view_fqn,
+                config=config,
                 run_id=run_id,
                 requesting_user=requesting_user,
-                source_table_fqn=body.table_fqn,
-                view_fqn=view_fqn,
-                sample_size=body.sample_size,
-                job_run_id=job_run_id,
             )
+
+            if not body.skip_history:
+                runs_table = f"{app_conf.catalog}.{app_conf.schema_name}.dq_validation_runs"
+                job_svc.record_dryrun_started(
+                    table=runs_table,
+                    run_id=run_id,
+                    requesting_user=requesting_user,
+                    source_table_fqn=body.table_fqn,
+                    view_fqn=view_fqn,
+                    sample_size=body.sample_size,
+                    job_run_id=job_run_id,
+                )
+        except Exception:
+            try:
+                view_svc.drop_view(view_fqn)
+            except Exception as cleanup_err:
+                logger.warning(
+                    "Failed to drop temp view %s after submit failure: %s",
+                    view_fqn,
+                    cleanup_err,
+                )
+            raise
 
         return DryRunSubmitOut(run_id=run_id, job_run_id=job_run_id, view_fqn=view_fqn)
     except HTTPException:
@@ -379,14 +474,19 @@ def get_dry_run_status(
     for validation dry runs that are not recorded in the history table.
     Ownership of the *job_run_id* is verified against the OBO caller via the
     Databricks Jobs API so a client cannot use a guessed *view_fqn* to drop
-    another user's temporary view.
+    another user's temporary view. We **fail closed**: if the job's
+    requesting-user attribution is missing (older run, SDK shape drift),
+    only admins/approvers may proceed.
     """
     try:
         if job_run_id_param is not None:
             requesting_user = obo_ws.current_user.me().user_name or "unknown"
             run_owner = job_svc.get_run_creator(job_run_id_param)
-            if run_owner and run_owner != requesting_user:
-                raise HTTPException(status_code=403, detail="You can only check status of your own runs")
+            if run_owner != requesting_user:
+                raise HTTPException(
+                    status_code=403,
+                    detail="You can only check status of your own runs",
+                )
             resolved_job_run_id = job_run_id_param
             resolved_view_fqn = view_fqn_param
             has_history_row = False
@@ -504,13 +604,20 @@ def cancel_dry_run(
 
         if job_run_id_param is not None:
             run_owner = job_svc.get_run_creator(job_run_id_param)
-            if run_owner and run_owner != canceling_user and not can_cancel_others:
+            # Fail closed: missing ``run_owner`` (older run, SDK drift) is
+            # treated the same as a non-match — only admins/approvers may
+            # cancel runs we cannot positively attribute to the caller.
+            is_owner = run_owner is not None and run_owner == canceling_user
+            if not is_owner and not can_cancel_others:
                 raise HTTPException(status_code=403, detail="You can only cancel your own runs")
             job_svc.cancel_run(job_run_id_param)
             return {"status": "canceled", "run_id": run_id}
 
         meta = get_run_metadata(sql, app_conf, _DRYRUN_TABLE, run_id)
-        is_owner = not meta.requesting_user or meta.requesting_user == canceling_user
+        # Fail closed: an empty ``requesting_user`` (legacy row written
+        # before attribution was tracked) is treated as "not the caller",
+        # so admins/approvers are needed to cancel.
+        is_owner = bool(meta.requesting_user) and meta.requesting_user == canceling_user
         if not is_owner and not can_cancel_others:
             raise HTTPException(status_code=403, detail="You can only cancel your own runs")
         if meta.job_run_id is None:

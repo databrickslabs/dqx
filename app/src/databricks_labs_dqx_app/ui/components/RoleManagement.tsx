@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Card,
@@ -23,6 +24,16 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import {
   Users,
   Plus,
@@ -55,14 +66,14 @@ import { cn } from "@/lib/utils";
  * actually needs to see — the previous "Failed to create mapping.
  * Please try again." banner was hiding all of it.
  */
-function extractRoleMappingError(err: unknown): string {
+function extractRoleMappingError(err: unknown, fallback: string): string {
   if (isAxiosError(err)) {
     const detail = (err.response?.data as { detail?: unknown } | undefined)?.detail;
     if (typeof detail === "string" && detail.trim()) return detail;
     if (err.message) return err.message;
   }
   if (err instanceof Error && err.message) return err.message;
-  return "Failed to create role mapping. Check the backend logs for details.";
+  return fallback;
 }
 
 const GROUP_SEARCH_DEBOUNCE_MS = 250;
@@ -90,6 +101,7 @@ function GroupCombobox({
   value: string;
   onChange: (groupName: string) => void;
 }) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [searchInput, setSearchInput] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -151,7 +163,7 @@ function GroupCombobox({
           className="w-full justify-between font-normal"
         >
           <span className={cn(!value && "text-muted-foreground")}>
-            {value || "Select group..."}
+            {value || t("roleManagement.selectGroup")}
           </span>
           <ChevronsUpDown className="h-4 w-4 opacity-50 shrink-0" />
         </Button>
@@ -166,7 +178,7 @@ function GroupCombobox({
             ref={inputRef}
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
-            placeholder="Search groups..."
+            placeholder={t("roleManagement.groupSearchPlaceholder")}
             className="border-0 shadow-none focus-visible:ring-0 px-0 h-8"
           />
           {isFetching && !isLoading ? (
@@ -176,17 +188,17 @@ function GroupCombobox({
         <div className="max-h-64 overflow-y-auto py-1">
           {isLoading ? (
             <div className="px-3 py-6 text-center text-sm text-muted-foreground">
-              Loading...
+              {t("roleManagement.loading")}
             </div>
           ) : error ? (
             <div className="px-3 py-6 text-center text-sm text-destructive">
-              Failed to load groups
+              {t("roleManagement.failedLoadGroups")}
             </div>
           ) : groups.length === 0 ? (
             <div className="px-3 py-6 text-center text-sm text-muted-foreground">
               {debouncedSearch
-                ? "No groups match that search"
-                : "No groups found"}
+                ? t("roleManagement.noGroupsMatch")
+                : t("roleManagement.noGroupsFound")}
             </div>
           ) : (
             <>
@@ -216,8 +228,7 @@ function GroupCombobox({
               })}
               {reachedLimit ? (
                 <div className="px-3 py-2 text-xs text-muted-foreground border-t mt-1">
-                  Showing first {GROUP_SEARCH_LIMIT} matches — refine your
-                  search to narrow results.
+                  {t("roleManagement.showingFirst", { count: GROUP_SEARCH_LIMIT })}
                 </div>
               ) : null}
             </>
@@ -228,23 +239,27 @@ function GroupCombobox({
   );
 }
 
-const ROLE_LABELS: Record<string, string> = {
-  admin: "Admin",
-  rule_approver: "Approver",
-  rule_author: "Author",
-  viewer: "Viewer",
-  runner: "Runner",
-};
+function getRoleLabel(role: string, t: (key: string) => string): string {
+  switch (role) {
+    case "admin": return t("roleManagement.roleAdmin");
+    case "rule_approver": return t("roleManagement.roleApprover");
+    case "rule_author": return t("roleManagement.roleAuthor");
+    case "viewer": return t("roleManagement.roleViewer");
+    case "runner": return t("roleManagement.roleRunner");
+    default: return role;
+  }
+}
 
-const ROLE_DESCRIPTIONS: Record<string, string> = {
-  admin: "Full access including role management (admins are implicit runners)",
-  rule_approver: "Can approve/reject rules and all author permissions",
-  rule_author: "Can create, edit, and submit rules",
-  viewer: "Read-only access to rules",
-  // Runner is intentionally additive — assigning it does NOT grant author
-  // or approver privileges. It only unlocks the Run Rules page.
-  runner: "Can run approved rules from the Run Rules page (additive — independent of other roles)",
-};
+function getRoleDescription(role: string, t: (key: string) => string): string {
+  switch (role) {
+    case "admin": return t("roleManagement.roleAdminDescription");
+    case "rule_approver": return t("roleManagement.roleApproverDescription");
+    case "rule_author": return t("roleManagement.roleAuthorDescription");
+    case "viewer": return t("roleManagement.roleViewerDescription");
+    case "runner": return t("roleManagement.roleRunnerDescription");
+    default: return "";
+  }
+}
 
 function RoleMappingRow({
   mapping,
@@ -255,11 +270,12 @@ function RoleMappingRow({
   onDelete: () => void;
   isDeleting: boolean;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="flex items-center justify-between py-2 px-3 bg-muted/30 rounded-md">
       <div className="flex items-center gap-3">
         <Badge variant="outline" className="font-mono">
-          {ROLE_LABELS[mapping.role] || mapping.role}
+          {getRoleLabel(mapping.role, t)}
         </Badge>
         <span className="text-sm text-muted-foreground">→</span>
         <span className="font-medium">{mapping.group_name}</span>
@@ -269,6 +285,7 @@ function RoleMappingRow({
         size="sm"
         onClick={onDelete}
         disabled={isDeleting}
+        aria-label={t("roleManagement.deleteMappingAria", { role: getRoleLabel(mapping.role, t), group: mapping.group_name })}
         className="text-destructive hover:text-destructive hover:bg-destructive/10"
       >
         <Trash2 className="h-4 w-4" />
@@ -306,6 +323,7 @@ function AddRoleMappingForm({
   onAdd: (role: string, groupName: string) => void;
   isAdding: boolean;
 }) {
+  const { t } = useTranslation();
   const { data: rolesData } = useQuery({
     queryKey: ["availableRoles"],
     queryFn: () => listAvailableRoles(),
@@ -322,18 +340,18 @@ function AddRoleMappingForm({
   return (
     <div className="flex items-end gap-3 pt-4 border-t">
       <div className="flex-1 space-y-1">
-        <label className="text-sm font-medium">Role</label>
+        <label className="text-sm font-medium">{t("roleManagement.role")}</label>
         <Select value={selectedRole} onValueChange={setSelectedRole} disabled={isAdding}>
           <SelectTrigger>
-            <SelectValue placeholder="Select role..." />
+            <SelectValue placeholder={t("roleManagement.selectRole")} />
           </SelectTrigger>
           <SelectContent>
             {roles.map((role) => (
               <SelectItem key={role} value={role}>
                 <div className="flex flex-col">
-                  <span>{ROLE_LABELS[role] || role}</span>
+                  <span>{getRoleLabel(role, t)}</span>
                   <span className="text-xs text-muted-foreground">
-                    {ROLE_DESCRIPTIONS[role]}
+                    {getRoleDescription(role, t)}
                   </span>
                 </div>
               </SelectItem>
@@ -343,7 +361,7 @@ function AddRoleMappingForm({
       </div>
 
       <div className="flex-1 space-y-1">
-        <label className="text-sm font-medium">Databricks Group</label>
+        <label className="text-sm font-medium">{t("roleManagement.databricksGroup")}</label>
         <GroupCombobox value={selectedGroup} onChange={setSelectedGroup} />
       </div>
 
@@ -357,15 +375,19 @@ function AddRoleMappingForm({
         ) : (
           <Plus className="h-4 w-4 mr-1" />
         )}
-        {isAdding ? "Adding…" : "Add"}
+        {isAdding ? t("roleManagement.adding") : t("roleManagement.add")}
       </Button>
     </div>
   );
 }
 
 export function RoleManagement() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [deletingKey, setDeletingKey] = useState<string | null>(null);
+  // Delete is destructive — show a confirm dialog instead of mutating
+  // immediately when the trash icon is clicked.
+  const [pendingDelete, setPendingDelete] = useState<{ role: string; group: string } | null>(null);
   // Form values live up here so we can keep them across a slow/failed
   // mutation. They're cleared in the mutation's ``onSuccess`` handler.
   const [selectedRole, setSelectedRole] = useState<string>("");
@@ -391,16 +413,15 @@ export function RoleManagement() {
       await queryClient.refetchQueries({ queryKey: getListRoleMappingsQueryKey() });
       setSelectedRole("");
       setSelectedGroup("");
-      const roleLabel = ROLE_LABELS[variables.role] ?? variables.role;
-      toast.success(`Mapping added: ${roleLabel} → ${variables.groupName}`, {
-        description:
-          "Stored in dq_role_mappings. Active sessions pick up the new role within ~1 minute (or on next page navigation).",
+      const roleLabel = getRoleLabel(variables.role, t);
+      toast.success(t("roleManagement.mappingAdded", { role: roleLabel, group: variables.groupName }), {
+        description: t("roleManagement.mappingAddedDescription"),
         duration: 6000,
       });
     },
     onError: (err) => {
-      toast.error("Failed to create role mapping", {
-        description: extractRoleMappingError(err),
+      toast.error(t("roleManagement.failedCreate"), {
+        description: extractRoleMappingError(err, t("roleManagement.fallbackError")),
         duration: 8000,
       });
     },
@@ -412,16 +433,15 @@ export function RoleManagement() {
     onSuccess: async (_data, variables) => {
       await queryClient.refetchQueries({ queryKey: getListRoleMappingsQueryKey() });
       setDeletingKey(null);
-      toast.success(`Removed mapping: ${variables.role} → ${variables.groupName}`, {
-        description:
-          "Affected users may keep their previous role for up to ~1 minute until their session refreshes.",
+      toast.success(t("roleManagement.mappingRemoved", { role: variables.role, group: variables.groupName }), {
+        description: t("roleManagement.mappingRemovedDescription"),
         duration: 6000,
       });
     },
     onError: (err) => {
       setDeletingKey(null);
-      toast.error("Failed to delete role mapping", {
-        description: extractRoleMappingError(err),
+      toast.error(t("roleManagement.failedDelete"), {
+        description: extractRoleMappingError(err, t("roleManagement.fallbackError")),
         duration: 8000,
       });
     },
@@ -433,10 +453,17 @@ export function RoleManagement() {
     createMutation.mutate({ role, groupName });
   };
 
-  const handleDelete = (role: string, groupName: string) => {
-    const key = `${role}:${groupName}`;
+  const handleDeleteRequest = (role: string, groupName: string) => {
+    setPendingDelete({ role, group: groupName });
+  };
+
+  const confirmDelete = () => {
+    if (!pendingDelete) return;
+    const { role, group } = pendingDelete;
+    const key = `${role}:${group}`;
     setDeletingKey(key);
-    deleteMutation.mutate({ role, groupName });
+    setPendingDelete(null);
+    deleteMutation.mutate({ role, groupName: group });
   };
 
   if (isLoading) {
@@ -445,7 +472,7 @@ export function RoleManagement() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Shield className="h-5 w-5" />
-            Role Management
+            {t("roleManagement.title")}
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -465,13 +492,13 @@ export function RoleManagement() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Shield className="h-5 w-5" />
-            Role Management
+            {t("roleManagement.title")}
           </CardTitle>
         </CardHeader>
         <CardContent>
           <div className="flex items-center gap-2 text-destructive">
             <AlertCircle className="h-4 w-4" />
-            <span>Failed to load role mappings</span>
+            <span>{t("roleManagement.failedLoad")}</span>
           </div>
         </CardContent>
       </Card>
@@ -483,11 +510,10 @@ export function RoleManagement() {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Shield className="h-5 w-5" />
-          Role Management
+          {t("roleManagement.title")}
         </CardTitle>
         <CardDescription>
-          Map Databricks workspace groups to application roles. Users inherit
-          the highest-priority role from their group memberships.
+          {t("roleManagement.description")}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -507,14 +533,10 @@ export function RoleManagement() {
           <Info className="h-4 w-4 mt-0.5 shrink-0 text-foreground/70" />
           <div>
             <p className="text-foreground/90">
-              Role changes take up to <span className="font-medium">~1 minute</span> to
-              reach an active session.
+              {t("roleManagement.delayPrefix")}<span className="font-medium">{t("roleManagement.delayBoldDuration")}</span>{t("roleManagement.delaySuffix")}
             </p>
             <p className="text-xs mt-0.5">
-              Each user&apos;s resolved role is cached client-side for 60 seconds. After a
-              mapping is added or removed, the affected user keeps their previous role
-              until their session revalidates (which also happens immediately on any
-              page navigation). A hard refresh applies the new role straight away.
+              {t("roleManagement.delayBody")}
             </p>
           </div>
         </div>
@@ -522,9 +544,9 @@ export function RoleManagement() {
         {mappings.length === 0 ? (
           <div className="text-center py-6 text-muted-foreground">
             <Users className="h-8 w-8 mx-auto mb-2 opacity-50" />
-            <p>No role mappings configured.</p>
+            <p>{t("roleManagement.noMappings")}</p>
             <p className="text-sm">
-              Add a mapping below to assign roles to Databricks groups.
+              {t("roleManagement.addMappingHint")}
             </p>
           </div>
         ) : (
@@ -535,7 +557,7 @@ export function RoleManagement() {
                 <RoleMappingRow
                   key={key}
                   mapping={mapping}
-                  onDelete={() => handleDelete(mapping.role, mapping.group_name)}
+                  onDelete={() => handleDeleteRequest(mapping.role, mapping.group_name)}
                   isDeleting={deletingKey === key}
                 />
               );
@@ -552,6 +574,36 @@ export function RoleManagement() {
           isAdding={createMutation.isPending}
         />
       </CardContent>
+
+      <AlertDialog
+        open={pendingDelete !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingDelete(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("roleManagement.deleteMappingTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingDelete
+                ? t("roleManagement.deleteMappingBody", {
+                    role: getRoleLabel(pendingDelete.role, t),
+                    group: pendingDelete.group,
+                  })
+                : null}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmDelete}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {t("common.delete")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Card>
   );
 }

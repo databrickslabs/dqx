@@ -56,6 +56,68 @@ class GenerateChecksOut(BaseModel):
     validation_errors: list[str] = Field(default_factory=list, description="Validation errors if any")
 
 
+class GenerateRulesFromContractIn(BaseModel):
+    """Request body for generating DQX rules from an ODCS v3.x contract."""
+
+    contract_text: str = Field(description="Raw ODCS contract YAML or JSON content")
+    generate_predefined_rules: bool = Field(
+        default=True,
+        description="Generate rules from schema property constraints (required, pattern, min/max, etc.)",
+    )
+    process_text_rules: bool = Field(
+        default=False,
+        description="Process natural-language quality expectations via LLM (requires [llm] extras)",
+    )
+    generate_schema_validation: bool = Field(
+        default=True,
+        description="Emit a has_valid_schema dataset rule per ODCS schema",
+    )
+    strict_schema_validation: bool = Field(
+        default=True,
+        description="If true, schema check requires exact columns/order/types",
+    )
+    default_criticality: str = Field(
+        default="error",
+        description="Default criticality for predefined rules: 'error' or 'warn'",
+    )
+
+
+class ContractMetadataOut(BaseModel):
+    """Top-level metadata extracted from the source contract for UI display."""
+
+    contract_id: str | None = None
+    name: str | None = None
+    version: str | None = None
+    odcs_api_version: str | None = None
+    status: str | None = None
+    owner: str | None = None
+    domain: str | None = None
+    description: str | None = None
+
+
+class ContractSchemaRulesOut(BaseModel):
+    """Generated rules for one ODCS schema, plus the suggested UC target if any."""
+
+    schema_name: str = Field(description="ODCS schema name (typically the logical table name)")
+    physical_name: str | None = Field(
+        default=None,
+        description="physicalName from the contract, if present — a suggested UC target",
+    )
+    property_count: int = Field(default=0, description="Number of columns/properties in the schema")
+    rules: list[dict[str, Any]] = Field(description="Generated DQX rules belonging to this schema")
+
+
+class GenerateRulesFromContractOut(BaseModel):
+    metadata: ContractMetadataOut
+    schemas: list[ContractSchemaRulesOut]
+    unassigned_rules: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Rules with no schema metadata (rare; surfaced rather than dropped)",
+    )
+    total_rules: int = 0
+    warnings: list[str] = Field(default_factory=list)
+
+
 class RuleCatalogEntryOut(BaseModel):
     table_fqn: str
     display_name: str = ""
@@ -104,6 +166,19 @@ class CheckDuplicatesIn(BaseModel):
 
 class CheckDuplicatesOut(BaseModel):
     duplicates: list[dict[str, Any]] = Field(description="Checks that already exist for this table")
+
+
+class TableSchemaDdlOut(BaseModel):
+    """Spark-DDL snapshot of a UC table's current column list.
+
+    Used as a starting point for the schema-validation rule builder so
+    the user can fine-tune (drop extra columns, widen types) rather than
+    type everything from scratch.
+    """
+
+    table_fqn: str = Field(description="Fully qualified UC table name")
+    ddl: str = Field(description="Comma-separated 'col TYPE' string suitable for has_valid_schema")
+    column_count: int = Field(default=0, description="Number of columns included in the DDL")
 
 
 class FilterTablesByColumnsIn(BaseModel):
@@ -471,6 +546,30 @@ class RoleMappingOut(BaseModel):
 class CreateRoleMappingIn(BaseModel):
     role: str = Field(description="Role name (admin, rule_approver, rule_author, viewer)")
     group_name: str = Field(description="Databricks workspace group name")
+
+
+class RoleMappingHistoryOut(BaseModel):
+    """One row from the role-mapping audit log.
+
+    Read-only — populated only by service-side ``RoleService`` mutations
+    against ``dq_role_mappings_history``. Returned by ``GET /v1/roles/history``
+    (Admin only) for the admin Settings page audit panel.
+    """
+
+    role: str = Field(description="Role name affected by the change")
+    group_name: str = Field(description="Databricks workspace group name affected by the change")
+    action: str = Field(description="Mutation kind: 'create' or 'delete'")
+    changed_by: str | None = Field(
+        default=None,
+        description=(
+            "Email of the admin who performed the change. ``null`` for legacy "
+            "delete rows recorded before the deleter email was wired through."
+        ),
+    )
+    changed_at: str | None = Field(
+        default=None,
+        description="ISO-8601 timestamp of when the change was recorded.",
+    )
 
 
 class GroupOut(BaseModel):

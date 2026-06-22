@@ -384,9 +384,15 @@ class TestRouteWiring:
     def test_omits_cross_table_dataset_checks(self, client) -> None:
         resp = client.get("/api/v1/check-functions")
         names = {f["name"] for f in resp.json()["functions"]}
-        assert "foreign_key" not in names
+        # Genuinely multi-dataset checks and the raw cross-table SQL editor
+        # stay out of the single-table editor.
         assert "compare_datasets" not in names
         assert "sql_query" not in names
+        # Reference-table checks that still target a single table ARE surfaced
+        # here — the reference table is just another argument in the
+        # single-table editor (see the route's ``_HIDDEN_FROM_SINGLE_TABLE``).
+        assert "foreign_key" in names
+        assert "has_valid_schema" in names
 
     def test_response_includes_param_kind_and_required_flags(self, client) -> None:
         """The UI relies on ``kind`` to pick the right input widget and on

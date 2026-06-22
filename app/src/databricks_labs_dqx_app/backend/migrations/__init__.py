@@ -26,6 +26,64 @@ When Lakebase is enabled the same OLTP tables are created via
 :mod:`backend.migrations.postgres` against the Postgres schema and v2
 is skipped on the Delta side.
 
+Atomicity model — Delta vs Postgres asymmetry
+---------------------------------------------
+The two backends have **different** failure-recovery semantics. Read
+this before adding a new Delta migration:
+
+- **Postgres path** (:mod:`backend.migrations.postgres`) — every DDL
+  statement in a migration *and* the ``dq_migrations`` version-row
+  ``INSERT`` execute inside a **single transaction** (``BEGIN`` …
+  ``COMMIT``). If any statement fails the whole migration rolls back;
+  the next run retries cleanly from the beginning.
+- **Delta path** (this module) — the Databricks Statement Execution
+  API auto-commits **per call**; there is no ``BEGIN``/``COMMIT``
+  primitive for DDL on a SQL warehouse, so true atomicity is not
+  available. A mid-migration failure therefore leaves earlier
+  statements committed but the version row **uninserted**. Recovery
+  relies on every DDL statement being individually re-runnable.
+
+That recovery contract has three concrete invariants every Delta
+migration author MUST satisfy:
+
+1. **Idempotent DDL.** Use ``CREATE TABLE IF NOT EXISTS`` and
+   ``CREATE SCHEMA IF NOT EXISTS``; never plain ``CREATE``. Plain
+   ``ALTER TABLE ADD COLUMN`` and ``ALTER TABLE ADD CONSTRAINT`` are
+   OK because their "already-exists" error fragments are swallowed
+   (see ``_IDEMPOTENT_ERROR_FRAGMENTS``).
+2. **Every "already exists" error a statement can raise must appear in
+   ``_IDEMPOTENT_ERROR_FRAGMENTS``.** If you introduce a new DDL kind
+   (``CREATE INDEX``, ``CREATE VIEW``, ``CREATE FUNCTION`` …) and
+   half-applied recovery surfaces an unfamiliar error message, the
+   migration becomes un-replayable in production until someone
+   appends the fragment and ships a fix. Validate by checking the
+   error catalog for the DDL kind you're adding.
+3. **Template scanner invariants** — checked at module import by
+   ``_validate_template_safe`` against every entry in :data:`MIGRATIONS`,
+   so any violation crashes the app at boot rather than mid-deploy:
+
+   - **No ``;`` inside a single-quoted string literal.** The runner
+     splits compound migration bodies on ``;`` because the Statement
+     Execution API only accepts one statement per call. A ``;``
+     inside a CHECK constraint string, default value, or comment
+     would split a statement mid-literal and silently corrupt it.
+     If you ever genuinely need ``;`` in a literal, replace
+     ``str.split(";")`` inside ``_apply`` with a real SQL statement
+     splitter (e.g. ``sqlparse.split``).
+   - **No ``{catalog}`` / ``{schema}`` placeholder inside a single-
+     quoted string literal.** ``_apply`` substitutes the
+     :meth:`SqlExecutor.q`-quoted form into these placeholders so
+     hyphenated Databricks catalog names like ``prod-east`` parse
+     correctly when used as object identifiers. The quoted form
+     contains backticks, which would be nonsense inside a string
+     literal. If you need the raw identifier inside a literal,
+     introduce a separate placeholder rather than reusing
+     ``{catalog}`` / ``{schema}``.
+
+The Postgres runner does not need invariants 1 and 2 (the transaction
+guarantees it) but does still split on ``;`` and so applies invariant 3
+to its own templates.
+
 Status casing convention
 ------------------------
 Two status families intentionally use different casing:
@@ -77,6 +135,100 @@ from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
 logger = logging.getLogger(__name__)
+
+
+# Migration templates have two invariants that ``_apply`` relies on but
+# the language doesn't enforce. ``_validate_template_safe`` checks both
+# at module import time against every entry in :data:`MIGRATIONS` so a
+# future author hits an :class:`AssertionError` on app boot instead of
+# a half-applied or mis-quoted migration in production:
+#
+# 1. **No ``;`` inside a single-quoted string literal.**
+#    ``_apply`` splits the template on ``;`` to feed one statement per
+#    Statement Execution API call. A semicolon inside a string literal
+#    would split the literal in half and corrupt both halves.
+#
+# 2. **No ``{catalog}`` or ``{schema}`` placeholder inside a single-
+#    quoted string literal.** ``_apply`` substitutes the executor-
+#    *quoted* form into those placeholders (so hyphenated catalogs like
+#    ``prod-east`` parse correctly when used as identifiers). The
+#    quoted form contains backticks, which would be nonsense inside a
+#    string literal context. Today no migration uses placeholders in a
+#    literal — this guard prevents a future author from introducing one
+#    without adding a separate raw placeholder first.
+#
+# Doubled single-quotes (``''``) are the standard SQL escape for a
+# literal apostrophe inside a single-quoted string; the scanner handles
+# them correctly by keeping the in-literal flag set across the pair.
+_SINGLE_QUOTE = "'"
+_PLACEHOLDER_TOKENS = ("{catalog}", "{schema}")
+
+
+def _validate_template_safe(template: str) -> None:
+    """Assert *template* satisfies the runner's substitution invariants.
+
+    See the comment block above this function for the full list. In
+    short: no ``;`` and no ``{catalog}``/``{schema}`` placeholder may
+    appear inside a single-quoted string literal.
+
+    The scanner is a tiny state machine: it walks the template character
+    by character, flips an ``in_literal`` flag on each unescaped ``'``,
+    and asserts neither forbidden pattern is seen while the flag is set.
+
+    Raises:
+        AssertionError: if any forbidden pattern appears inside a
+            single-quoted string literal in *template*.
+    """
+    in_literal = False
+    i = 0
+    n = len(template)
+    while i < n:
+        ch = template[i]
+        if ch == _SINGLE_QUOTE:
+            # Doubled single-quote ('') inside a literal is the SQL
+            # escape for a literal apostrophe; keep the flag as-is and
+            # skip both characters.
+            if in_literal and i + 1 < n and template[i + 1] == _SINGLE_QUOTE:
+                i += 2
+                continue
+            in_literal = not in_literal
+            i += 1
+            continue
+        if in_literal:
+            if ch == ";":
+                _raise_template_violation(template, i, "';' inside a single-quoted string literal", split_hint=True)
+            for tok in _PLACEHOLDER_TOKENS:
+                if template.startswith(tok, i):
+                    _raise_template_violation(
+                        template,
+                        i,
+                        f"placeholder {tok!r} inside a single-quoted string literal",
+                        split_hint=False,
+                    )
+        i += 1
+
+
+def _raise_template_violation(template: str, offset: int, what: str, *, split_hint: bool) -> None:
+    """Raise an actionable :class:`AssertionError` for a template scanner failure."""
+    start = max(0, offset - 40)
+    end = min(len(template), offset + 40)
+    excerpt = template[start:end].replace("\n", " ")
+    msg = f"Migration template contains {what} at offset {offset} (... {excerpt!r} ...). "
+    if split_hint:
+        msg += (
+            "MigrationRunner._apply uses str.split(';') which would silently corrupt this "
+            "statement. Either move the ';' out of the literal, or replace the splitter in "
+            "_apply with a real SQL statement splitter (e.g. sqlparse.split)."
+        )
+    else:
+        msg += (
+            "MigrationRunner._apply substitutes the executor-quoted form (containing "
+            "backticks) into these placeholders so identifiers like 'prod-east' stay "
+            "parseable in object-name positions — but that quoted form would be nonsense "
+            "inside a string literal. Use a separate raw placeholder for literal contexts."
+        )
+    raise AssertionError(msg)
+
 
 # ---------------------------------------------------------------------------
 # Migration definitions
@@ -399,6 +551,37 @@ _V6_RUN_REVIEW_STATUS = (
 )
 
 
+# Append-only audit trail for role-to-group mapping changes. Mirrors
+# ``dq_quality_rules_history`` / ``dq_schedule_configs_history`` /
+# ``dq_run_review_status_history`` — the table only retains the *current*
+# set of (role, group) pairs in ``dq_role_mappings``, so without this
+# history table there is no way to answer "when was Approver→
+# dqx_app_approver added?" or "who removed Viewer→dqx_app_viewer last
+# Friday?".
+#
+# Same Delta shape conventions as the other history tables: no PK column
+# (BIGSERIAL is Postgres-only; Delta rows are ordered by ``changed_at``
+# for display), ``action`` is a free-form enum-by-convention ('create' |
+# 'delete' — there is no 'update' because the row has no mutable value
+# columns), and ``changed_by`` / ``changed_at`` carry the audit timestamp
+# pair.
+#
+# Marked ``oltp_fallback=True`` because the live mapping table is OLTP-
+# shaped (small, single-key lookups, frequent mutation) and lives on
+# Lakebase when enabled; this migration only runs against Delta when
+# Lakebase is off. The Postgres mirror lives in
+# :mod:`backend.migrations.postgres` (v3).
+_V7_ROLE_MAPPINGS_HISTORY = (
+    f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_role_mappings_history ("
+    "  role       STRING NOT NULL,"
+    "  group_name STRING NOT NULL,"
+    "  action     STRING NOT NULL,"
+    "  changed_by STRING,"
+    "  changed_at TIMESTAMP NOT NULL"
+    ") CLUSTER BY (role, group_name, changed_at)"
+)
+
+
 # OLTP fallback migration is identified by ``oltp_fallback=True`` so
 # the runner can skip it when Lakebase is enabled. Keeping the flag on
 # the migration itself (rather than e.g. a hard-coded version number)
@@ -453,7 +636,22 @@ MIGRATIONS: list[Migration] = [
         sql_template=_V6_RUN_REVIEW_STATUS,
         oltp_fallback=True,
     ),
+    DeltaMigration(
+        version=7,
+        description="Role mappings audit history (dq_role_mappings_history) — used only when Lakebase is disabled",
+        sql_template=_V7_ROLE_MAPPINGS_HISTORY,
+        oltp_fallback=True,
+    ),
 ]
+
+
+# Fail loudly at app import if any migration template violates the
+# scanner invariants (no ``;`` and no ``{catalog}``/``{schema}``
+# placeholder inside a string literal). Converts latent correctness
+# risks into deploy-time AssertionErrors; see the "Atomicity model"
+# section of the module docstring for the full recovery contract.
+for _m in MIGRATIONS:
+    _validate_template_safe(_m.sql_template)
 
 # ---------------------------------------------------------------------------
 # Runner
@@ -479,7 +677,17 @@ class MigrationRunner:
         self._sql = sql
         self._catalog = sql.catalog
         self._schema = sql.schema
-        self._meta_table = _META_TABLE.format(catalog=sql.catalog, schema=sql.schema)
+        # Pre-compute the executor-quoted forms once. Every place the
+        # catalog/schema appears in a SQL statement uses the quoted
+        # form so a hyphenated Databricks catalog name (``prod-east``,
+        # ``team-data-platform``) — which is parse-invalid raw — stays
+        # safe end-to-end. Templates use ``{catalog}``/``{schema}``
+        # placeholders in object-name positions only (never inside a
+        # string literal), so substituting the quoted form is always
+        # correct. See :meth:`SqlExecutor.q` for the dialect contract.
+        self._catalog_q = sql.q(sql.catalog)
+        self._schema_q = sql.q(sql.schema)
+        self._meta_table = _META_TABLE.format(catalog=self._catalog_q, schema=self._schema_q)
 
     # ------------------------------------------------------------------
     # Public API
@@ -567,8 +775,13 @@ class MigrationRunner:
         Must use the bootstrap executor (catalog-only context) because the
         schema does not exist yet and passing ``schema=<name>`` to the
         statement-execution API would cause it to fail before the DDL runs.
+
+        Catalog and schema are interpolated through :attr:`_catalog_q` /
+        :attr:`_schema_q` so a hyphenated catalog (``prod-east``) — which
+        is parse-invalid raw — gets correctly backtick-quoted by
+        :meth:`SqlExecutor.q`.
         """
-        sql = f"CREATE SCHEMA IF NOT EXISTS {self._catalog}.{self._schema}"
+        sql = f"CREATE SCHEMA IF NOT EXISTS {self._catalog_q}.{self._schema_q}"
         self._sql.execute_no_schema(sql)
         logger.debug("Ensured schema exists: %s.%s", self._catalog, self._schema)
 
@@ -624,7 +837,41 @@ class MigrationRunner:
     )
 
     def _apply(self, migration: Migration) -> None:
-        formatted = migration.sql_template.format(catalog=self._catalog, schema=self._schema)
+        """Apply *migration* statement-by-statement against the warehouse.
+
+        Unlike the Postgres runner, this method **cannot** wrap a
+        multi-statement migration + the ``dq_migrations`` version-row
+        ``INSERT`` in a single transaction: the Databricks Statement
+        Execution API auto-commits per call and there is no ``BEGIN``/
+        ``COMMIT`` primitive for DDL on a SQL warehouse. A mid-migration
+        failure therefore leaves earlier statements committed but the
+        version row uninserted, and the next ``run_all`` re-runs the
+        whole migration from the beginning.
+
+        Recovery is safe **only** because every DDL kind we currently
+        emit raises an "already exists"-style error that
+        ``_IDEMPOTENT_ERROR_FRAGMENTS`` swallows, letting the rerun
+        skip past committed statements and reach the
+        previously-failed one. See the module docstring's
+        "Atomicity model" section for the full contract that any new
+        migration author has to satisfy.
+
+        Templates are split on ``;`` so each statement reaches the API
+        as a single call (the API rejects compound statements). The
+        ``_validate_template_split_safe`` check at module import time
+        guarantees no template embeds a ``;`` inside a string literal,
+        which would otherwise silently corrupt the split.
+
+        ``{catalog}`` / ``{schema}`` placeholders receive the
+        :meth:`SqlExecutor.q`-quoted form so identifiers containing
+        characters outside ``[A-Za-z0-9_]`` (most commonly a hyphen
+        in a Databricks catalog name) stay parseable. Placeholders
+        are only used in object-name positions in the shipped
+        templates — substituting the quoted form would be incorrect
+        inside a string literal, but :func:`_validate_template_split_safe`
+        rules out the dangerous shape ahead of time.
+        """
+        formatted = migration.sql_template.format(catalog=self._catalog_q, schema=self._schema_q)
         for stmt in formatted.split(";"):
             stmt = stmt.strip()
             if stmt:

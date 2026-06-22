@@ -136,8 +136,28 @@ class AiRulesService:
         Returns:
             List of DQX rule dicts.
         """
-        system = SystemMessage(content=_SYSTEM_TEMPLATE.format(available_functions=self._get_available_functions()))
         schema_info = self._get_schema_info(table_fqn) if table_fqn else ""
+        return self.generate_from_schema_info(user_input=user_input, schema_info=schema_info)
+
+    def generate_from_schema_info(self, user_input: str, schema_info: str = "") -> list[dict[str, Any]]:
+        """Generate DQX rules from natural language with a pre-built schema_info.
+
+        Used by the data-contract importer for text/natural-language quality
+        expectations: the schema is already known from the contract, so there
+        is no UC table to look up. This reuses the same ChatDatabricks prompt
+        and few-shot context as :meth:`generate` — DQX's own contract text-rule
+        path needs ``dspy`` + a SparkSession, which the stateless app container
+        doesn't have, so we route contract text rules through this LLM leg
+        instead and tag the results with ``rule_type: text_llm`` upstream.
+
+        Args:
+            user_input: Natural language description of the quality expectation.
+            schema_info: JSON string describing the table columns (may be empty).
+
+        Returns:
+            List of DQX rule dicts.
+        """
+        system = SystemMessage(content=_SYSTEM_TEMPLATE.format(available_functions=self._get_available_functions()))
         human = HumanMessage(content=f"schema_info: {schema_info}\nbusiness_description: {user_input}")
         messages: list[BaseMessage] = [system, *self._get_few_shot_messages(), human]
 

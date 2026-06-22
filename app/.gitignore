@@ -32,6 +32,3 @@ node_modules/
 
 # DABs 
 .databricks
-
-# apx
-.apx/

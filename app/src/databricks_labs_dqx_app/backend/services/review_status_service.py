@@ -33,7 +33,7 @@ import logging
 from datetime import datetime, timezone
 
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
-from databricks_labs_dqx_app.backend.sql_executor import RawSql, SqlExecutor
+from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
 logger = logging.getLogger(__name__)
@@ -98,7 +98,7 @@ class ReviewStatusService:
     # cases where a script churns the status thousands of times.
     _HISTORY_LIMIT = 200
 
-    def __init__(self, sql: SqlExecutor, settings: AppSettingsService) -> None:
+    def __init__(self, sql: OltpExecutorProtocol, settings: AppSettingsService) -> None:
         self._sql = sql
         self._settings = settings
         self._table = sql.fqn("dq_run_review_status")

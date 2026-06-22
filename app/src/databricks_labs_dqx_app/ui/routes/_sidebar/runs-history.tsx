@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { PageBreadcrumb } from "@/components/apx/PageBreadcrumb";
+import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
 import {
   useListRules,
   type User as UserType,
@@ -61,6 +61,7 @@ import { FadeIn } from "@/components/anim/FadeIn";
 import { ArrowDown, ArrowUp, ArrowUpDown, CircleStop, ShieldAlert } from "lucide-react";
 import { parseFqn, formatDateTime as formatDate, getUserMetadata, labelToken } from "@/lib/format-utils";
 import { LabelFilter, labelsMatchFilter } from "@/components/Labels";
+import { useTranslation } from "react-i18next";
 
 export const Route = createFileRoute("/_sidebar/runs-history")({
   component: RunsHistoryPage,
@@ -72,41 +73,42 @@ function cleanFqn(fqn: string) {
   return fqn.startsWith(_SQL_CHECK_PREFIX) ? fqn.slice(_SQL_CHECK_PREFIX.length) : fqn;
 }
 
-function statusBadge(status: string | null) {
+function StatusBadge({ status }: { status: string | null }) {
+  const { t } = useTranslation();
   switch (status) {
     case "SUCCESS":
       return (
         <Badge variant="outline" className="gap-1 border-green-500 text-green-600">
           <CheckCircle2 className="h-3 w-3" />
-          Success
+          {t("runsHistory.successBadge")}
         </Badge>
       );
     case "FAILED":
       return (
         <Badge variant="outline" className="gap-1 border-red-500 text-red-600">
           <XCircle className="h-3 w-3" />
-          Failed
+          {t("runsHistory.failedBadge")}
         </Badge>
       );
     case "RUNNING":
       return (
         <Badge variant="outline" className="gap-1 border-blue-500 text-blue-600">
           <Loader2 className="h-3 w-3 animate-spin" />
-          Running
+          {t("runsHistory.runningBadge")}
         </Badge>
       );
     case "CANCELED":
       return (
         <Badge variant="outline" className="gap-1 border-gray-400 text-gray-500">
           <CircleStop className="h-3 w-3" />
-          Canceled
+          {t("runsHistory.canceledBadge")}
         </Badge>
       );
     default:
       return (
         <Badge variant="outline" className="gap-1 border-amber-500 text-amber-600">
           <Clock className="h-3 w-3" />
-          {status ?? "Pending"}
+          {status ?? t("runsHistory.pendingBadge")}
         </Badge>
       );
   }
@@ -300,9 +302,10 @@ function useSort<K extends string>(defaultKey: K, defaultDir: SortDir = "desc") 
 }
 
 function RunsHistoryPage() {
+  const { t } = useTranslation();
   return (
     <div className="flex flex-col h-full">
-      <PageBreadcrumb items={[]} page="Runs History" />
+      <PageBreadcrumb items={[]} page={t("runsHistory.breadcrumb")} />
       <div className="flex-1 overflow-hidden mt-4">
         <QueryErrorResetBoundary>
           {({ reset }) => (
@@ -321,6 +324,7 @@ function RunsHistoryPage() {
 type RunsSortKey = "table" | "type" | "status" | "requested_by" | "total" | "valid" | "errors" | "warnings" | "run_date";
 
 function RunHistoryContent() {
+  const { t } = useTranslation();
   const { data: currentUser } = useCurrentUserSuspense(selector<UserType>());
   const currentUserEmail = currentUser?.user_name ?? "";
 
@@ -579,14 +583,14 @@ function RunHistoryContent() {
     <div className="space-y-4 h-full overflow-y-auto">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Runs History</h1>
+          <h1 className="text-2xl font-bold tracking-tight">{t("runsHistory.title")}</h1>
           <p className="text-muted-foreground text-sm">
-            View past rule validation results.
+            {t("runsHistory.subtitle")}
           </p>
         </div>
         <Button variant="ghost" size="sm" onClick={() => refetch()} className="gap-1.5 text-xs">
           <RotateCcw className="h-3.5 w-3.5" />
-          Refresh
+          {t("common.refresh")}
         </Button>
       </div>
 
@@ -596,13 +600,13 @@ function RunHistoryContent() {
             <div>
               <CardTitle className="flex items-center gap-2 text-base">
                 <History className="h-4 w-4" />
-                Validation runs
+                {t("runsHistory.validationRuns")}
               </CardTitle>
               <CardDescription>
                 {isLoading
-                  ? "Loading..."
-                  : `${runs.length} run${runs.length !== 1 ? "s" : ""}${
-                      runs.length !== allRuns.length ? ` (filtered from ${allRuns.length})` : ""
+                  ? t("common.loading")
+                  : `${t("runsHistory.runsCount", { count: runs.length })}${
+                      runs.length !== allRuns.length ? t("runsHistory.filteredFrom", { total: allRuns.length }) : ""
                     }`}
               </CardDescription>
             </div>
@@ -611,10 +615,10 @@ function RunHistoryContent() {
           <div className="flex items-center gap-2 flex-wrap pt-2">
             <Select value={catalogFilter} onValueChange={handleCatalogChange}>
               <SelectTrigger className="w-[160px]">
-                <SelectValue placeholder="All Catalogs" />
+                <SelectValue placeholder={t("runsHistory.allCatalogs")} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Catalogs</SelectItem>
+                <SelectItem value="all">{t("runsHistory.allCatalogs")}</SelectItem>
                 {catalogs.map((cat) => (
                   <SelectItem key={cat} value={cat}>{cat}</SelectItem>
                 ))}
@@ -623,10 +627,10 @@ function RunHistoryContent() {
 
             <Select value={schemaFilter} onValueChange={handleSchemaChange} disabled={catalogFilter === "all"}>
               <SelectTrigger className="w-[160px]">
-                <SelectValue placeholder="All Schemas" />
+                <SelectValue placeholder={t("runsHistory.allSchemas")} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Schemas</SelectItem>
+                <SelectItem value="all">{t("runsHistory.allSchemas")}</SelectItem>
                 {availableSchemas.map((sch) => (
                   <SelectItem key={sch} value={sch}>{sch}</SelectItem>
                 ))}
@@ -635,10 +639,10 @@ function RunHistoryContent() {
 
             <Select value={tableFilter} onValueChange={setTableFilter} disabled={schemaFilter === "all"}>
               <SelectTrigger className="w-[180px]">
-                <SelectValue placeholder="All Tables" />
+                <SelectValue placeholder={t("runsHistory.allTables")} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Tables</SelectItem>
+                <SelectItem value="all">{t("runsHistory.allTables")}</SelectItem>
                 {availableTables.map((tbl) => (
                   <SelectItem key={tbl} value={tbl}>{tbl}</SelectItem>
                 ))}
@@ -647,24 +651,24 @@ function RunHistoryContent() {
 
             <Select value={statusFilter} onValueChange={setStatusFilter}>
               <SelectTrigger className="w-[140px]">
-                <SelectValue placeholder="All Statuses" />
+                <SelectValue placeholder={t("runsHistory.allStatuses")} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Statuses</SelectItem>
-                <SelectItem value="SUCCESS">Success</SelectItem>
-                <SelectItem value="FAILED">Failed</SelectItem>
-                <SelectItem value="RUNNING">Running</SelectItem>
+                <SelectItem value="all">{t("runsHistory.allStatuses")}</SelectItem>
+                <SelectItem value="SUCCESS">{t("runsHistory.successOption")}</SelectItem>
+                <SelectItem value="FAILED">{t("runsHistory.failedOption")}</SelectItem>
+                <SelectItem value="RUNNING">{t("runsHistory.runningOption")}</SelectItem>
               </SelectContent>
             </Select>
 
             <Select value={runTypeFilter} onValueChange={setRunTypeFilter}>
               <SelectTrigger className="w-[140px]">
-                <SelectValue placeholder="All Types" />
+                <SelectValue placeholder={t("runsHistory.allTypes")} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Types</SelectItem>
-                <SelectItem value="dryrun">Manual</SelectItem>
-                <SelectItem value="scheduled">Scheduled</SelectItem>
+                <SelectItem value="all">{t("runsHistory.allTypes")}</SelectItem>
+                <SelectItem value="dryrun">{t("runsHistory.manualOption")}</SelectItem>
+                <SelectItem value="scheduled">{t("runsHistory.scheduledOption")}</SelectItem>
               </SelectContent>
             </Select>
 
@@ -686,7 +690,7 @@ function RunHistoryContent() {
               onClick={() => setMyRunsOnly((prev) => !prev)}
             >
               <User className="h-3.5 w-3.5" />
-              My runs
+              {t("runsHistory.myRuns")}
             </Button>
 
             <LabelFilter
@@ -719,7 +723,7 @@ function RunHistoryContent() {
                   setReviewStatusFilter(new Set());
                 }}
               >
-                Clear filters
+                {t("common.clearFilters")}
               </Button>
             )}
           </div>
@@ -735,13 +739,13 @@ function RunHistoryContent() {
             isAxiosError(error) && error.response?.status === 403 ? (
               <div className="flex flex-col items-center justify-center py-16 text-center">
                 <ShieldAlert className="h-12 w-12 text-destructive/30 mb-3" />
-                <p className="text-destructive text-sm mb-1">Insufficient permissions</p>
+                <p className="text-destructive text-sm mb-1">{t("runsHistory.permissionsTitle")}</p>
                 <p className="text-muted-foreground/70 text-xs">
-                  You don't have permission to view run history. Please contact your administrator.
+                  {t("runsHistory.permissionsDescription")}
                 </p>
               </div>
             ) : (
-              <p className="text-destructive text-sm">Failed to load run history: {(error as Error).message}</p>
+              <p className="text-destructive text-sm">{t("runsHistory.loadFailed", { error: (error as Error).message })}</p>
             )
           )}
 
@@ -753,26 +757,26 @@ function RunHistoryContent() {
                     <tr className="border-b bg-muted/50">
                       <th className="w-8 p-3"></th>
                       <th className="text-left p-3 font-medium">
-                        <SortableHeader label="Table" sortKey="table" active={rSortKey === "table"} direction={rSortDir} onSort={handleRunsSort} />
+                        <SortableHeader label={t("runsHistory.headerTable")} sortKey="table" active={rSortKey === "table"} direction={rSortDir} onSort={handleRunsSort} />
                       </th>
                       <th className="text-left p-3 font-medium">
-                        <SortableHeader label="Type" sortKey="type" active={rSortKey === "type"} direction={rSortDir} onSort={handleRunsSort} />
+                        <SortableHeader label={t("runsHistory.headerType")} sortKey="type" active={rSortKey === "type"} direction={rSortDir} onSort={handleRunsSort} />
                       </th>
                       <th className="text-left p-3 font-medium">
-                        <SortableHeader label="Status" sortKey="status" active={rSortKey === "status"} direction={rSortDir} onSort={handleRunsSort} />
+                        <SortableHeader label={t("runsHistory.headerStatus")} sortKey="status" active={rSortKey === "status"} direction={rSortDir} onSort={handleRunsSort} />
                       </th>
                       <th className="text-left p-3 font-medium" title="Per-run review status set by reviewers on the expanded row">
                         Review
                       </th>
                       <th className="text-left p-3 font-medium">Rules</th>
                       <th className="text-left p-3 font-medium">
-                        <SortableHeader label="Requested by" sortKey="requested_by" active={rSortKey === "requested_by"} direction={rSortDir} onSort={handleRunsSort} />
+                        <SortableHeader label={t("runsHistory.headerRequestedBy")} sortKey="requested_by" active={rSortKey === "requested_by"} direction={rSortDir} onSort={handleRunsSort} />
                       </th>
                       <th className="text-right p-3 font-medium">
-                        <SortableHeader label="Total" sortKey="total" active={rSortKey === "total"} direction={rSortDir} onSort={handleRunsSort} align="right" />
+                        <SortableHeader label={t("runsHistory.headerTotal")} sortKey="total" active={rSortKey === "total"} direction={rSortDir} onSort={handleRunsSort} align="right" />
                       </th>
                       <th className="text-right p-3 font-medium">
-                        <SortableHeader label="Valid" sortKey="valid" active={rSortKey === "valid"} direction={rSortDir} onSort={handleRunsSort} align="right" />
+                        <SortableHeader label={t("runsHistory.headerValid")} sortKey="valid" active={rSortKey === "valid"} direction={rSortDir} onSort={handleRunsSort} align="right" />
                       </th>
                       <th className="text-right p-3 font-medium">
                         <SortableHeader label="Errors" sortKey="errors" active={rSortKey === "errors"} direction={rSortDir} onSort={handleRunsSort} align="right" />
@@ -781,7 +785,7 @@ function RunHistoryContent() {
                         <SortableHeader label="Warnings" sortKey="warnings" active={rSortKey === "warnings"} direction={rSortDir} onSort={handleRunsSort} align="right" />
                       </th>
                       <th className="text-left p-3 font-medium">
-                        <SortableHeader label="Run date" sortKey="run_date" active={rSortKey === "run_date"} direction={rSortDir} onSort={handleRunsSort} />
+                        <SortableHeader label={t("runsHistory.headerRunDate")} sortKey="run_date" active={rSortKey === "run_date"} direction={rSortDir} onSort={handleRunsSort} />
                       </th>
                     </tr>
                   </thead>
@@ -813,7 +817,7 @@ function RunHistoryContent() {
               {totalPages > 1 && (
                 <div className="flex items-center justify-between pt-3">
                   <p className="text-xs text-muted-foreground">
-                    Showing {(currentPage - 1) * PAGE_SIZE + 1}–{Math.min(currentPage * PAGE_SIZE, runs.length)} of {runs.length}
+                    {t("common.showing")} {(currentPage - 1) * PAGE_SIZE + 1}–{Math.min(currentPage * PAGE_SIZE, runs.length)} {t("common.of")} {runs.length}
                   </p>
                   <div className="flex items-center gap-1">
                     <Button
@@ -868,12 +872,12 @@ function RunHistoryContent() {
                 <History className="h-8 w-8 text-muted-foreground" />
               </div>
               <h3 className="text-lg font-medium text-muted-foreground">
-                {hasActiveFilters ? "No matching runs" : "No runs yet"}
+                {hasActiveFilters ? t("runsHistory.noMatching") : t("runsHistory.noRuns")}
               </h3>
               <p className="text-muted-foreground/70 text-sm mt-1 max-w-md">
                 {hasActiveFilters
-                  ? "Try adjusting your filters to find runs."
-                  : "Execute approved rules from the Run Rules page to see results here."}
+                  ? t("runsHistory.adjustFiltersHint")
+                  : t("runsHistory.executeRulesHint")}
               </p>
             </div>
           )}
@@ -899,6 +903,7 @@ function RunHistoryRow({
   // a neutral colour token in ``reviewStatusCell``.
   reviewStatusColorMap: Map<string, string>;
 }) {
+  const { t } = useTranslation();
   const { data: resultsResp, isLoading: isLoadingResults } = useGetDryRunResults(
     run.run_id,
     { query: { enabled: isExpanded && run.status === "SUCCESS" } },
@@ -924,15 +929,15 @@ function RunHistoryRow({
         <td className="p-3 font-mono text-xs">{cleanFqn(run.source_table_fqn)}</td>
         <td className="p-3">
           <Badge variant={(run.run_type ?? "dryrun") === "scheduled" ? "default" : "outline"} className="text-[10px]">
-            {(run.run_type ?? "dryrun") === "scheduled" ? "Scheduled" : "Manual"}
+            {(run.run_type ?? "dryrun") === "scheduled" ? t("runsHistory.scheduled") : t("runsHistory.manual")}
           </Badge>
         </td>
         <td className="p-3">
           <div className="flex flex-col gap-0.5">
-            {statusBadge(run.status)}
+            <StatusBadge status={run.status} />
             {run.status === "CANCELED" && run.canceled_by && (
-              <span className="text-[10px] text-muted-foreground" title={`Canceled by ${run.canceled_by}`}>
-                by {run.canceled_by.split("@")[0]}
+              <span className="text-[10px] text-muted-foreground" title={t("runsHistory.canceledByTitle", { user: run.canceled_by })}>
+                {t("runsHistory.canceledByPrefix")}{run.canceled_by.split("@")[0]}
               </span>
             )}
           </div>
@@ -957,7 +962,7 @@ function RunHistoryRow({
                   <span key={i} className="font-mono text-[11px] text-muted-foreground truncate">{label}</span>
                 ))}
                 {remaining > 0 && (
-                  <span className="text-[10px] text-muted-foreground/70">+{remaining} more</span>
+                  <span className="text-[10px] text-muted-foreground/70">{t("runsHistory.moreSuffix", { count: remaining })}</span>
                 )}
               </div>
             );
@@ -1011,25 +1016,25 @@ function RunHistoryRow({
                 <div className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950/30 p-3">
                   <AlertCircle className="h-4 w-4 text-red-600 shrink-0 mt-0.5" />
                   <div className="text-sm">
-                    <p className="font-medium text-red-700 dark:text-red-400">Run failed</p>
+                    <p className="font-medium text-red-700 dark:text-red-400">{t("runsHistory.runFailed")}</p>
                     <p className="text-red-600 dark:text-red-300 mt-0.5 whitespace-pre-wrap break-words font-mono text-xs">{run.error_message}</p>
                   </div>
                 </div>
               )}
               {run.status !== "SUCCESS" && !run.error_message && run.status !== "CANCELED" && (
                 <div className="text-sm text-muted-foreground">
-                  Detailed results are available for completed (SUCCESS) runs.
+                  {t("runsHistory.completedOnly")}
                 </div>
               )}
               {run.status === "CANCELED" && !run.error_message && (
                 <div className="text-sm text-muted-foreground">
-                  This run was canceled.
+                  {t("runsHistory.wasCanceled")}
                 </div>
               )}
               {run.status === "SUCCESS" && isLoadingResults && (
                 <div className="flex items-center gap-2 text-muted-foreground text-sm py-4">
                   <Loader2 className="h-4 w-4 animate-spin" />
-                  Loading results...
+                  {t("runsHistory.loadingResults")}
                 </div>
               )}
               {results && <DryRunResults result={results} />}
@@ -1065,16 +1070,17 @@ function RunHistorySkeleton() {
 }
 
 function RunHistoryError({ resetErrorBoundary }: { resetErrorBoundary: () => void }) {
+  const { t } = useTranslation();
   return (
     <div className="flex flex-col items-center justify-center py-16 text-center">
       <AlertCircle className="h-12 w-12 text-destructive/30 mb-3" />
-      <p className="text-muted-foreground text-sm mb-1">Failed to load run history</p>
+      <p className="text-muted-foreground text-sm mb-1">{t("runsHistory.skeletonFailedLoad")}</p>
       <p className="text-muted-foreground/70 text-xs mb-3">
-        The validation runs table may not exist yet. Run some rules first.
+        {t("runsHistory.skeletonFailedHint")}
       </p>
       <Button variant="outline" size="sm" onClick={resetErrorBoundary} className="gap-2">
         <RotateCcw className="h-3 w-3" />
-        Retry
+        {t("common.retry")}
       </Button>
     </div>
   );

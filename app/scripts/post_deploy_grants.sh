@@ -7,12 +7,19 @@
 # GRANT statements via the Statement Execution API.
 #
 # Usage:
-#   ./scripts/post_deploy_grants.sh -p <profile> [-t <bundle-target>]
+#   ./scripts/post_deploy_grants.sh -p <profile> [-t <bundle-target>] [-- <bundle-var-overrides...>]
 #
 # The bundle target is required when the bundle defines more than one
 # target and none is marked as default. Without it, ``databricks bundle
 # validate`` errors out and we have no way to discover the catalog name
 # or job SP from variables.
+#
+# Everything after a ``--`` separator is forwarded to ``bundle validate``
+# as extra ``--var key=value`` overrides. Pass the SAME overrides used
+# at ``bundle deploy`` time — otherwise the script reads the default
+# catalog/schema/volume names from the bundle and issues GRANTs on the
+# wrong objects (the overridden resources receive no permissions and
+# the app SP cannot read them).
 #
 # Requirements:
 #   - databricks CLI authenticated
@@ -21,11 +28,51 @@
 
 set -euo pipefail
 
+# Validate that a value is safe to interpolate into a backticked Unity
+# Catalog identifier in SQL. These are operator-controlled deploy-time
+# values, but the script runs with deploy privileges and a value
+# containing a backtick, quote, or backslash would either corrupt the
+# JSON envelope or escape the backticked identifier and execute
+# arbitrary SQL. Allow alphanumerics, underscores, and hyphens only.
+validate_uc_identifier() {
+  local name="$1" value="$2"
+  if [[ -z "$value" ]]; then
+    echo "ERROR: $name is empty." >&2
+    exit 1
+  fi
+  if [[ ! "$value" =~ ^[A-Za-z0-9_][A-Za-z0-9_-]*$ ]]; then
+    echo "ERROR: $name '$value' contains characters that are unsafe to interpolate into SQL." >&2
+    echo "       Allowed: [A-Za-z0-9_-], must start with a letter, digit, or underscore." >&2
+    exit 1
+  fi
+}
+
+# Service principal application/client IDs are UUIDs. The all-zero
+# UUID is a deployment misconfiguration and is rejected separately
+# upstream with a more specific error.
+validate_uuid() {
+  local name="$1" value="$2"
+  if [[ ! "$value" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
+    echo "ERROR: $name '$value' is not a valid UUID." >&2
+    exit 1
+  fi
+}
+
+# Warehouse IDs are short alphanumeric tokens; reject anything that
+# could be smuggled into a URL path segment.
+validate_warehouse_id() {
+  local name="$1" value="$2"
+  if [[ ! "$value" =~ ^[A-Za-z0-9]+$ ]]; then
+    echo "ERROR: $name '$value' is not a valid warehouse ID (expected alphanumeric)." >&2
+    exit 1
+  fi
+}
+
 PROFILE=""
 TARGET=""
 
 usage() {
-  echo "Usage: $0 -p <databricks-profile> [-t <bundle-target>]"
+  echo "Usage: $0 -p <databricks-profile> [-t <bundle-target>] [-- <bundle-var-overrides...>]"
   exit 1
 }
 
@@ -36,8 +83,17 @@ while getopts "p:t:" opt; do
     *) usage ;;
   esac
 done
+shift $((OPTIND - 1))
 
 [[ -z "$PROFILE" ]] && usage
+
+# Forwarded ``--var key=value`` overrides. Threading them into
+# ``bundle validate`` matters because that call produces the JSON we
+# parse below for catalog / schema / volume / job-SP names. Without
+# forwarding, a deploy-time override (e.g. ``--var=catalog_name=foo``)
+# would issue GRANTs on the bundle's default catalog instead of the
+# one actually deployed.
+EXTRA_VARS=("$@")
 
 CLI="databricks -p $PROFILE"
 # Bundle commands need the target unless one is marked default.
@@ -54,7 +110,10 @@ cd "$BUNDLE_DIR"
 # instead of an empty $BUNDLE_JSON and a confusing downstream error.
 BUNDLE_VALIDATE_STDERR=$(mktemp)
 trap 'rm -f "$BUNDLE_VALIDATE_STDERR"' EXIT
-if ! BUNDLE_JSON=$($CLI bundle validate "${BUNDLE_FLAGS[@]}" -o json 2>"$BUNDLE_VALIDATE_STDERR"); then
+# macOS bash 3.2 + ``set -u`` treats expansion of an empty array as
+# unbound. Guard with the ``${arr[@]+...}`` idiom so a run with no
+# extra ``--var`` overrides (or no ``-t``) does not abort here.
+if ! BUNDLE_JSON=$($CLI bundle validate ${BUNDLE_FLAGS[@]+"${BUNDLE_FLAGS[@]}"} ${EXTRA_VARS[@]+"${EXTRA_VARS[@]}"} -o json 2>"$BUNDLE_VALIDATE_STDERR"); then
   echo "ERROR: 'databricks bundle validate' failed:" >&2
   cat "$BUNDLE_VALIDATE_STDERR" >&2
   if [[ -z "$TARGET" ]]; then
@@ -95,6 +154,12 @@ SCHEMA=$(echo "$BUNDLE_JSON" | jq -r '.variables.schema_name.value // .variables
 TMP_SCHEMA=$(echo "$BUNDLE_JSON" | jq -r '.variables.tmp_schema_name.value // .variables.tmp_schema_name.default // "dqx_studio_tmp"')
 VOLUME=$(echo "$BUNDLE_JSON" | jq -r '.variables.wheels_volume_name.value // .variables.wheels_volume_name.default // "wheels"')
 JOB_SP=$(echo "$BUNDLE_JSON" | jq -r '.variables.dqx_service_principal_application_id.value // .variables.dqx_service_principal_application_id.default // empty')
+# External warehouse ID — set on targets that point the app at an existing
+# warehouse instead of the bundle-managed one. When non-empty, the bundle
+# does NOT own this warehouse, so we can't grant CAN_USE via the
+# ``databricks_permissions.sql_endpoint_*`` resource — we have to call
+# the warehouses permissions API directly post-deploy.
+EXTERNAL_WH_ID=$(echo "$BUNDLE_JSON" | jq -r '.variables.sql_warehouse_id.value // .variables.sql_warehouse_id.default // empty')
 
 if [[ -z "$CATALOG" ]]; then
   echo "ERROR: Could not determine catalog_name from bundle variables." >&2
@@ -106,58 +171,51 @@ if [[ -z "$JOB_SP" || "$JOB_SP" == "00000000-0000-0000-0000-000000000000" ]]; th
   exit 1
 fi
 
+# Reject anything that would either escape a backticked SQL identifier
+# or corrupt a JSON payload before we hand the values to the SQL or
+# permissions APIs. Failing fast here keeps the SQL/JSON construction
+# below safe even though we still interpolate via shell.
+validate_uc_identifier "catalog_name"      "$CATALOG"
+validate_uc_identifier "schema_name"       "$SCHEMA"
+validate_uc_identifier "tmp_schema_name"   "$TMP_SCHEMA"
+validate_uc_identifier "wheels_volume_name" "$VOLUME"
+validate_uuid          "app SP client_id"  "$APP_SP_ID"
+validate_uuid          "dqx_service_principal_application_id" "$JOB_SP"
+validate_warehouse_id  "warehouse_id"      "$WH_ID"
+
 echo "   Job SP: $JOB_SP"
 echo "   Catalog: $CATALOG"
 echo "   Schema: $SCHEMA"
 echo "   Tmp Schema: $TMP_SCHEMA"
 echo "   Volume: $VOLUME"
 
+# Counter for grants that did not succeed. Every call site that swallows
+# a non-zero result must bump this so the final summary can surface the
+# failure to CI/operators instead of exiting 0 with the app
+# half-provisioned. We deliberately do NOT abort on the first failure —
+# the remaining GRANTs are independent and we want to apply as many as
+# we can in a single run, then fail loudly at the end.
+FAILURES=0
+
 run_sql() {
   local stmt="$1"
   echo "   SQL: $stmt"
-  RESULT=$($CLI api post /api/2.0/sql/statements \
-    --json "{\"warehouse_id\": \"$WH_ID\", \"statement\": \"$stmt\", \"wait_timeout\": \"30s\"}" \
-    -o json 2>&1)
+  # Build the request body with jq -n --arg so any quote, backslash, or
+  # newline in $stmt is escaped per JSON rules. The SQL itself is safe
+  # because the identifier variables interpolated above were validated
+  # by validate_uc_identifier / validate_uuid.
+  local payload
+  payload=$(jq -n \
+    --arg warehouse_id "$WH_ID" \
+    --arg statement    "$stmt" \
+    --arg wait_timeout "30s" \
+    '{warehouse_id: $warehouse_id, statement: $statement, wait_timeout: $wait_timeout}')
+  RESULT=$($CLI api post /api/2.0/sql/statements --json "$payload" -o json 2>&1)
   STATUS=$(echo "$RESULT" | jq -r '.status.state // "UNKNOWN"')
   if [[ "$STATUS" != "SUCCEEDED" ]]; then
     ERROR_MSG=$(echo "$RESULT" | jq -r '.status.error.message // .message // "unknown error"')
-    echo "   WARNING: $STATUS — $ERROR_MSG"
-  fi
-}
-
-# Grant CAN_USE on the bound SQL warehouse to a service principal.
-#
-# Idempotent: the permissions API PATCH endpoint is additive — granting
-# the same permission twice is a no-op (returns 200). Works identically
-# whether the warehouse is bundle-managed or brought-your-own, because
-# we discover the ID from the deployed app's resource list, not from
-# the bundle definition.
-#
-# Required deployer permission: CAN_MANAGE on the warehouse. Without
-# it the call returns 403; we log a WARNING and continue so the rest
-# of the grants still apply.
-grant_warehouse_can_use() {
-  local principal="$1"
-  local label="$2"
-  echo "   Warehouse CAN_USE: $label ($principal)"
-  local payload
-  payload=$(jq -n --arg sp "$principal" '{
-    access_control_list: [
-      {service_principal_name: $sp, permission_level: "CAN_USE"}
-    ]
-  }')
-  RESULT=$($CLI api patch "/api/2.0/permissions/warehouses/$WH_ID" \
-    --json "$payload" 2>&1) || true
-  # The permissions API returns the full ACL on success, or an error
-  # object with ``error_code`` / ``message`` on failure. We treat anything
-  # with ``error_code`` as non-fatal and log it.
-  if echo "$RESULT" | jq -e '.error_code' > /dev/null 2>&1; then
-    ERR=$(echo "$RESULT" | jq -r '.message // "unknown error"')
-    CODE=$(echo "$RESULT" | jq -r '.error_code // "UNKNOWN"')
-    echo "   WARNING: $CODE — $ERR"
-    if [[ "$CODE" == "PERMISSION_DENIED" ]]; then
-      echo "            (deployer needs CAN_MANAGE on warehouse $WH_ID to apply this grant)"
-    fi
+    echo "   FAILED: $STATUS — $ERROR_MSG" >&2
+    FAILURES=$((FAILURES + 1))
   fi
 }
 
@@ -175,21 +233,80 @@ run_sql "GRANT ALL PRIVILEGES ON SCHEMA \`$CATALOG\`.\`$SCHEMA\` TO \`$JOB_SP\`"
 run_sql "GRANT ALL PRIVILEGES ON SCHEMA \`$CATALOG\`.\`$TMP_SCHEMA\` TO \`$JOB_SP\`"
 run_sql "GRANT ALL PRIVILEGES ON VOLUME \`$CATALOG\`.\`$SCHEMA\`.\`$VOLUME\` TO \`$JOB_SP\`"
 
-# Warehouse CAN_USE — needed regardless of whether the warehouse is
-# bundle-managed or BYO. The Apps binding (``permission: "CAN_USE"``)
-# only covers the app SP, and only when the deployer has CAN_MANAGE on
-# the warehouse at bundle-deploy time. The task-runner SP needs CAN_USE
-# explicitly for ``ws.statement_execution.execute_statement`` calls
-# (e.g. the temp-view cleanup in ``runner.py``). We grant both here so
-# the script is the single source of truth.
-echo ""
-echo "==> Granting CAN_USE on SQL warehouse ($WH_ID)..."
-grant_warehouse_can_use "$APP_SP_ID" "App SP"
-grant_warehouse_can_use "$JOB_SP" "Job SP"
+# Only run the warehouse-permissions PATCH when ``sql_warehouse_id``
+# resolved to a *literal* warehouse ID (Mode B). In Mode A the variable
+# is set to ``${resources.sql_warehouses.dqx_sql_warehouse.id}`` and
+# ``bundle validate`` leaves that as a deferred Terraform reference
+# string (the real ID isn't known until ``bundle deploy`` runs apply),
+# so the value starts with ``$``. Sending that to the warehouses
+# permissions API would produce a bogus URL like
+# ``/api/2.0/permissions/warehouses/${resources...}``. The Mode-A
+# permissions block under ``sql_warehouses.dqx_sql_warehouse`` handles
+# those grants via Terraform instead, so skipping here is correct.
+if [[ -n "$EXTERNAL_WH_ID" && "$EXTERNAL_WH_ID" != \$* ]]; then
+  # Validate before composing a URL path segment so a pathological value
+  # cannot redirect the PATCH at a different resource.
+  validate_warehouse_id "sql_warehouse_id" "$EXTERNAL_WH_ID"
+  echo ""
+  echo "==> Granting CAN_USE on external warehouse $EXTERNAL_WH_ID..."
+  # The warehouses permissions API takes a PATCH with the principals we
+  # want to ADD; existing grants are preserved. We grant CAN_USE to the
+  # app SP, the job SP, and the workspace ``users`` group so the OBO-
+  # token dry-run path also works.
+  # Note: the API expects the warehouse ID as a path segment and the
+  # principal as either ``user_name`` (for users), ``group_name`` (for
+  # workspace groups), or ``service_principal_name`` (for SPs, identified
+  # by their application ID UUID, NOT the numeric workspace ID). The UC
+  # ``account users`` group is account-scoped and rejected here — we use
+  # workspace ``users`` (which every workspace member is in by default)
+  # to match the original bundle-managed warehouse's permissions block.
+  PATCH_PAYLOAD=$(jq -n \
+    --arg app_sp "$APP_SP_ID" \
+    --arg job_sp "$JOB_SP" \
+    '{
+      access_control_list: [
+        {service_principal_name: $app_sp, permission_level: "CAN_USE"},
+        {service_principal_name: $job_sp, permission_level: "CAN_USE"},
+        {group_name: "users",             permission_level: "CAN_USE"}
+      ]
+    }')
+  # Track the patch+jq pipeline's outcome explicitly so a failure in
+  # either stage bumps FAILURES. PIPESTATUS gets reset by the next
+  # command, so snapshot it into a regular array on the very next line.
+  set +e
+  $CLI api patch "/api/2.0/permissions/warehouses/$EXTERNAL_WH_ID" --json "$PATCH_PAYLOAD" -o json \
+    | jq -r '.access_control_list[]? | "   granted \(.permission_level) to \(.user_name // .group_name // .service_principal_name)"'
+  PIPELINE_RCS=("${PIPESTATUS[@]}")
+  set -e
+  if (( PIPELINE_RCS[0] != 0 || PIPELINE_RCS[1] != 0 )); then
+    echo "   FAILED: warehouse permissions PATCH (api rc=${PIPELINE_RCS[0]}, jq rc=${PIPELINE_RCS[1]}) — grant CAN_USE manually via Databricks UI" >&2
+    FAILURES=$((FAILURES + 1))
+  fi
+fi
 
+# The starter Insights dashboard is configured with ``embed_credentials: true``,
+# so AI/BI runs every widget query under the bundle's deployer identity (the
+# principal authenticated to the CLI profile that ran ``databricks bundle deploy``).
+# That principal doesn't automatically inherit SELECT on the DQX tables: DABs
+# makes them schema-owner, but UC table-level reads need an explicit grant.
+# Without it the Insights page renders, then every tile shows
+# INSUFFICIENT_PERMISSIONS. Granting at the schema level covers existing and
+# future tables created by the migration runner.
+#
+# For SP-based deployers (CI/CD) ``current-user me`` returns the SP and
+# ``userName`` is the application ID — which is what UC expects in a GRANT.
+# For human deployers it's the email. Either way the GRANT line is identical.
 echo ""
-echo "==> Granting USE CATALOG to account users (for end-user tmp view creation)..."
+echo "==> Granting end-user permissions for tmp view creation..."
+# The app's dry-run / preview feature creates temp views via the user's
+# OBO token (see backend/services/view_service.py + dependencies.get_view_service)
+# so the user's source-table read permissions are enforced. The view
+# itself lives in $CATALOG.$TMP_SCHEMA, so end users need CREATE TABLE
+# and USE SCHEMA there in addition to USE CATALOG on the parent catalog.
+# Granting only USE CATALOG (the historical behavior) made every dry-run
+# fail with PERMISSION_DENIED on the CREATE OR REPLACE VIEW.
 run_sql "GRANT USE CATALOG ON CATALOG \`$CATALOG\` TO \`account users\`"
+run_sql "GRANT USE SCHEMA, CREATE TABLE ON SCHEMA \`$CATALOG\`.\`$TMP_SCHEMA\` TO \`account users\`"
 
 # The starter Insights dashboard is configured with ``embed_credentials: true``,
 # so AI/BI runs every widget query under the bundle's deployer identity (the
@@ -219,5 +336,14 @@ else
 fi
 
 echo ""
+if (( FAILURES > 0 )); then
+  # Exiting non-zero is what makes ``make app-deploy`` (and any CI
+  # wrapping it) actually fail. Without this the bundle deploys, the
+  # GRANTs silently fail, and the app starts up half-provisioned with
+  # PERMISSION_DENIED errors at first SQL request — which is much
+  # harder to diagnose than a loud failure here.
+  echo "==> FAILED: $FAILURES grant(s) did not succeed — see warnings above." >&2
+  exit 1
+fi
 echo "==> Done. All grants applied. Re-running this script is safe — every"
 echo "    grant above is idempotent."

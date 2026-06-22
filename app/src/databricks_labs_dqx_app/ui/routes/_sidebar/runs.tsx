@@ -5,7 +5,7 @@ import {
   useNavigate,
   useParams,
 } from "@tanstack/react-router";
-import { PageBreadcrumb } from "@/components/apx/PageBreadcrumb";
+import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
 import {
   useListRules,
   RunConfig,
@@ -33,6 +33,7 @@ import {
   RotateCcw,
   Loader2,
   Play,
+  Pause,
   History,
   CheckCircle2,
   XCircle,
@@ -75,11 +76,13 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { useState, useEffect, useRef, Suspense, useMemo, useCallback } from "react";
+import { useTranslation } from "react-i18next";
 import yaml from "js-yaml";
 import { useQueryClient, QueryErrorResetBoundary } from "@tanstack/react-query";
 import { ErrorBoundary } from "react-error-boundary";
@@ -186,6 +189,10 @@ interface ScheduleConfig {
   // YAML round-trips cleanly and values containing ``=`` don't collide.
   scope_labels?: { key: string; value: string }[];
   sample_size?: number;
+  // Soft kill switch. When true the scheduler tick keeps the row in
+  // ``dq_schedule_configs`` (and its tracker history) but skips it on
+  // every wake-up, so resuming does not retroactively fire missed runs.
+  paused?: boolean;
 }
 
 const DEFAULT_SCHEDULE: ScheduleConfig = {
@@ -234,18 +241,47 @@ async function deleteScheduleApi(name: string): Promise<void> {
   await axios.delete(`/api/v1/schedules/${encodeURIComponent(name)}`);
 }
 
-function cronPreview(cfg: ScheduleConfig): string {
+type Translator = (key: string, options?: Record<string, unknown>) => string;
+
+function cronPreview(cfg: ScheduleConfig, t: Translator): string {
   switch (cfg.frequency) {
-    case "manual": return "Manual only (no automatic schedule)";
-    case "hourly": return `Every hour at :${String(cfg.minute ?? 0).padStart(2, "0")} UTC`;
-    case "daily": return `Daily at ${String(cfg.hour ?? 6).padStart(2, "0")}:${String(cfg.minute ?? 0).padStart(2, "0")} UTC`;
+    case "manual":
+      return t("runs.cronManualOnly");
+    case "hourly":
+      return t("runs.cronHourly", { minute: String(cfg.minute ?? 0).padStart(2, "0") });
+    case "daily":
+      return t("runs.cronDaily", {
+        hour: String(cfg.hour ?? 6).padStart(2, "0"),
+        minute: String(cfg.minute ?? 0).padStart(2, "0"),
+      });
     case "weekly": {
-      const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-      return `Every ${days[cfg.day_of_week ?? 1]} at ${String(cfg.hour ?? 6).padStart(2, "0")}:${String(cfg.minute ?? 0).padStart(2, "0")} UTC`;
+      const dayKeys = [
+        "runs.dayShortSun",
+        "runs.dayShortMon",
+        "runs.dayShortTue",
+        "runs.dayShortWed",
+        "runs.dayShortThu",
+        "runs.dayShortFri",
+        "runs.dayShortSat",
+      ];
+      return t("runs.cronWeekly", {
+        day: t(dayKeys[cfg.day_of_week ?? 1]),
+        hour: String(cfg.hour ?? 6).padStart(2, "0"),
+        minute: String(cfg.minute ?? 0).padStart(2, "0"),
+      });
     }
-    case "monthly": return `Monthly on day ${cfg.day_of_month ?? 1} at ${String(cfg.hour ?? 6).padStart(2, "0")}:${String(cfg.minute ?? 0).padStart(2, "0")} UTC`;
-    case "cron": return cfg.cron_expression ? `Cron: ${cfg.cron_expression}` : "Custom cron (not set)";
-    default: return "";
+    case "monthly":
+      return t("runs.cronMonthly", {
+        day: cfg.day_of_month ?? 1,
+        hour: String(cfg.hour ?? 6).padStart(2, "0"),
+        minute: String(cfg.minute ?? 0).padStart(2, "0"),
+      });
+    case "cron":
+      return cfg.cron_expression
+        ? t("runs.cronCustom", { expression: cfg.cron_expression })
+        : t("runs.cronCustomNotSet");
+    default:
+      return "";
   }
 }
 
@@ -262,42 +298,53 @@ function ScheduleFrequencyPicker({
   onChange: (cfg: ScheduleConfig) => void;
   disabled?: boolean;
 }) {
+  const { t } = useTranslation();
   const update = (patch: Partial<ScheduleConfig>) => onChange({ ...config, ...patch });
+
+  const dayLongKeys = [
+    "runs.daySunday",
+    "runs.dayMonday",
+    "runs.dayTuesday",
+    "runs.dayWednesday",
+    "runs.dayThursday",
+    "runs.dayFriday",
+    "runs.daySaturday",
+  ];
 
   return (
     <div className="space-y-3">
       <div className="grid gap-2">
-        <Label>Frequency</Label>
+        <Label>{t("runs.frequency")}</Label>
         <Select value={config.frequency} onValueChange={(v) => update({ frequency: v as ScheduleConfig["frequency"] })} disabled={disabled}>
           <SelectTrigger><SelectValue /></SelectTrigger>
           <SelectContent>
-            <SelectItem value="manual">Manual only</SelectItem>
-            <SelectItem value="hourly">Hourly</SelectItem>
-            <SelectItem value="daily">Daily</SelectItem>
-            <SelectItem value="weekly">Weekly</SelectItem>
-            <SelectItem value="monthly">Monthly</SelectItem>
-            <SelectItem value="cron">Custom cron</SelectItem>
+            <SelectItem value="manual">{t("runs.freqManual")}</SelectItem>
+            <SelectItem value="hourly">{t("runs.freqHourly")}</SelectItem>
+            <SelectItem value="daily">{t("runs.freqDaily")}</SelectItem>
+            <SelectItem value="weekly">{t("runs.freqWeekly")}</SelectItem>
+            <SelectItem value="monthly">{t("runs.freqMonthly")}</SelectItem>
+            <SelectItem value="cron">{t("runs.freqCron")}</SelectItem>
           </SelectContent>
         </Select>
       </div>
 
       {config.frequency === "cron" && (
         <div className="grid gap-2">
-          <Label>Cron Expression</Label>
+          <Label>{t("runs.cronExpression")}</Label>
           <Input
             value={config.cron_expression || ""}
             onChange={(e) => update({ cron_expression: e.target.value })}
             disabled={disabled}
-            placeholder="e.g., 0 6 * * MON-FRI"
+            placeholder={t("runs.cronPlaceholder")}
             className="font-mono text-sm"
           />
-          <p className="text-xs text-muted-foreground">Standard 5-field cron (minute hour day month weekday)</p>
+          <p className="text-xs text-muted-foreground">{t("runs.cronHint")}</p>
         </div>
       )}
 
       {config.frequency === "hourly" && (
         <div className="grid gap-2">
-          <Label>Minute</Label>
+          <Label>{t("runs.minute")}</Label>
           <Select value={String(config.minute ?? 0)} onValueChange={(v) => update({ minute: Number(v) })} disabled={disabled}>
             <SelectTrigger className="w-24"><SelectValue /></SelectTrigger>
             <SelectContent>
@@ -312,7 +359,7 @@ function ScheduleFrequencyPicker({
       {(config.frequency === "daily" || config.frequency === "weekly" || config.frequency === "monthly") && (
         <div className="flex items-center gap-3">
           <div className="grid gap-2">
-            <Label>Hour <span className="text-muted-foreground font-normal">(UTC)</span></Label>
+            <Label>{t("runs.hour")} <span className="text-muted-foreground font-normal">{t("runs.utcSuffix")}</span></Label>
             <Select value={String(config.hour ?? 6)} onValueChange={(v) => update({ hour: Number(v) })} disabled={disabled}>
               <SelectTrigger className="w-20"><SelectValue /></SelectTrigger>
               <SelectContent>
@@ -323,7 +370,7 @@ function ScheduleFrequencyPicker({
             </Select>
           </div>
           <div className="grid gap-2">
-            <Label>Minute</Label>
+            <Label>{t("runs.minute")}</Label>
             <Select value={String(config.minute ?? 0)} onValueChange={(v) => update({ minute: Number(v) })} disabled={disabled}>
               <SelectTrigger className="w-20"><SelectValue /></SelectTrigger>
               <SelectContent>
@@ -338,12 +385,12 @@ function ScheduleFrequencyPicker({
 
       {config.frequency === "weekly" && (
         <div className="grid gap-2">
-          <Label>Day of week</Label>
+          <Label>{t("runs.dayOfWeek")}</Label>
           <Select value={String(config.day_of_week ?? 1)} onValueChange={(v) => update({ day_of_week: Number(v) })} disabled={disabled}>
             <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
             <SelectContent>
-              {["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"].map((d, i) => (
-                <SelectItem key={i} value={String(i)}>{d}</SelectItem>
+              {dayLongKeys.map((dKey, i) => (
+                <SelectItem key={i} value={String(i)}>{t(dKey)}</SelectItem>
               ))}
             </SelectContent>
           </Select>
@@ -352,7 +399,7 @@ function ScheduleFrequencyPicker({
 
       {config.frequency === "monthly" && (
         <div className="grid gap-2">
-          <Label>Day of month</Label>
+          <Label>{t("runs.dayOfMonth")}</Label>
           <Select value={String(config.day_of_month ?? 1)} onValueChange={(v) => update({ day_of_month: Number(v) })} disabled={disabled}>
             <SelectTrigger className="w-20"><SelectValue /></SelectTrigger>
             <SelectContent>
@@ -366,7 +413,7 @@ function ScheduleFrequencyPicker({
 
       {config.frequency !== "manual" && (
         <p className="text-xs text-muted-foreground flex items-center gap-1.5">
-          <Clock className="h-3 w-3" /> {cronPreview(config)}
+          <Clock className="h-3 w-3" /> {cronPreview(config, t)}
         </p>
       )}
     </div>
@@ -388,6 +435,7 @@ function ScopePicker({
   approvedRules: RuleCatalogEntryOut[];
   disabled?: boolean;
 }) {
+  const { t } = useTranslation();
   const update = (patch: Partial<ScheduleConfig>) => onChange({ ...config, ...patch });
 
   const allCatalogs = useMemo(() => {
@@ -447,14 +495,14 @@ function ScopePicker({
   return (
     <div className="space-y-3">
       <div className="grid gap-2">
-        <Label>Scope</Label>
+        <Label>{t("runs.scope")}</Label>
         <Select value={config.scope_mode} onValueChange={(v) => update({ scope_mode: v as ScheduleConfig["scope_mode"] })} disabled={disabled}>
           <SelectTrigger><SelectValue /></SelectTrigger>
           <SelectContent>
-            <SelectItem value="all"><span className="flex items-center gap-1.5"><Database className="h-3 w-3" /> All approved rules</span></SelectItem>
-            <SelectItem value="catalog"><span className="flex items-center gap-1.5"><Database className="h-3 w-3" /> By catalog</span></SelectItem>
-            <SelectItem value="schema"><span className="flex items-center gap-1.5"><Layers className="h-3 w-3" /> By schema</span></SelectItem>
-            <SelectItem value="tables"><span className="flex items-center gap-1.5"><Table2 className="h-3 w-3" /> Specific tables</span></SelectItem>
+            <SelectItem value="all"><span className="flex items-center gap-1.5"><Database className="h-3 w-3" /> {t("runs.scopeAll")}</span></SelectItem>
+            <SelectItem value="catalog"><span className="flex items-center gap-1.5"><Database className="h-3 w-3" /> {t("runs.scopeByCatalog")}</span></SelectItem>
+            <SelectItem value="schema"><span className="flex items-center gap-1.5"><Layers className="h-3 w-3" /> {t("runs.scopeBySchema")}</span></SelectItem>
+            <SelectItem value="tables"><span className="flex items-center gap-1.5"><Table2 className="h-3 w-3" /> {t("runs.scopeTables")}</span></SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -462,7 +510,7 @@ function ScopePicker({
       {config.scope_mode === "catalog" && (
         <div className="border rounded-lg overflow-hidden max-h-44 overflow-y-auto">
           {allCatalogs.length === 0 ? (
-            <p className="p-3 text-xs text-muted-foreground">No catalogs found in approved rules.</p>
+            <p className="p-3 text-xs text-muted-foreground">{t("runs.noCatalogsInRules")}</p>
           ) : allCatalogs.map((cat) => (
             <div
               key={cat}
@@ -480,7 +528,7 @@ function ScopePicker({
       {config.scope_mode === "schema" && (
         <div className="border rounded-lg overflow-hidden max-h-44 overflow-y-auto">
           {allSchemas.length === 0 ? (
-            <p className="p-3 text-xs text-muted-foreground">No schemas found in approved rules.</p>
+            <p className="p-3 text-xs text-muted-foreground">{t("runs.noSchemasInRules")}</p>
           ) : allSchemas.map((sch) => (
             <div
               key={sch}
@@ -498,7 +546,7 @@ function ScopePicker({
       {config.scope_mode === "tables" && (
         <div className="border rounded-lg overflow-hidden max-h-56 overflow-y-auto">
           {approvedRules.length === 0 ? (
-            <p className="p-3 text-xs text-muted-foreground">No approved rules available.</p>
+            <p className="p-3 text-xs text-muted-foreground">{t("runs.noApprovedRulesAvailable")}</p>
           ) : (
             <>
               <div className="flex items-center gap-3 p-2.5 bg-muted/40 border-b sticky top-0">
@@ -511,7 +559,9 @@ function ScopePicker({
                   disabled={disabled}
                 />
                 <span className="text-xs font-medium text-muted-foreground">
-                  {(config.scope_tables ?? []).length > 0 ? `${(config.scope_tables ?? []).length} of ${approvedRules.length} selected` : "Select all"}
+                  {(config.scope_tables ?? []).length > 0
+                    ? t("runs.selectedOf", { selected: (config.scope_tables ?? []).length, total: approvedRules.length })
+                    : t("runs.selectAll")}
                 </span>
               </div>
               {approvedRules.map((rule) => (
@@ -551,11 +601,11 @@ function ScopePicker({
       </div>
 
       <p className="text-xs text-muted-foreground">
-        {matchedCount} of {approvedRules.length} approved rule set{approvedRules.length !== 1 ? "s" : ""} matched
+        {t("runs.matchedOfApproved", { matched: matchedCount, total: approvedRules.length, count: approvedRules.length })}
       </p>
 
       <div className="grid gap-2">
-        <Label>Row scope</Label>
+        <Label>{t("runs.rowScope")}</Label>
         <Select
           value={config.sample_size === 0 ? "all" : "sample"}
           onValueChange={(v) => update({ sample_size: v === "all" ? 0 : 1000 })}
@@ -563,13 +613,13 @@ function ScopePicker({
         >
           <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All rows</SelectItem>
-            <SelectItem value="sample">Sample rows</SelectItem>
+            <SelectItem value="all">{t("runs.allRows")}</SelectItem>
+            <SelectItem value="sample">{t("runs.sampleRows")}</SelectItem>
           </SelectContent>
         </Select>
         {(config.sample_size ?? 1000) > 0 && (
           <div className="flex items-center gap-2">
-            <Label className="text-xs text-muted-foreground whitespace-nowrap">Sample size per table</Label>
+            <Label className="text-xs text-muted-foreground whitespace-nowrap">{t("runs.sampleSizePerTable")}</Label>
             <Input
               type="number"
               min={1}
@@ -620,18 +670,25 @@ function resolveScheduleScope(
 // ---------------------------------------------------------------------------
 
 function RunsPage() {
-  const navigate = useNavigate();
-  const { canRunRules, isAdmin } = usePermissions();
-  const params = useParams({ strict: false }) as { runName?: string };
-  const currentRunName = params.runName;
-
   // The Run Rules page is gated on the orthogonal RUNNER role (admins
   // are implicit runners). Anyone who lands here without the privilege —
   // whether by typing the URL or via a stale link — gets bounced to
-  // Runs History, which is universally readable.
+  // Runs History, which is universally readable. The guard lives in a
+  // thin wrapper so the inner component's hook count stays stable
+  // across permission-cache refreshes (see Rules of Hooks).
+  const { canRunRules } = usePermissions();
   if (!canRunRules) {
     return <Navigate to="/runs-history" replace />;
   }
+  return <RunsPageInner />;
+}
+
+function RunsPageInner() {
+  const { t } = useTranslation();
+  const navigate = useNavigate();
+  const { isAdmin } = usePermissions();
+  const params = useParams({ strict: false }) as { runName?: string };
+  const currentRunName = params.runName;
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isDeletingRun, setIsDeletingRun] = useState(false);
   const queryClient = useQueryClient();
@@ -643,31 +700,31 @@ function RunsPage() {
       setScheduleNames(entries.map((e) => e.schedule_name));
     }).catch((err) => {
       if (isAxiosError(err) && err.response?.status === 403) {
-        toast.error("Insufficient permissions to view schedules");
+        toast.error(t("runs.permissionsViewSchedules"));
       } else {
-        toast.error("Failed to load schedules");
+        toast.error(t("runs.failedLoadSchedules"));
       }
     });
-  }, []);
+  }, [t]);
 
   const handleCreateRun = async (name: string) => {
     try {
       await saveScheduleApi(name, { ...DEFAULT_SCHEDULE });
       await queryClient.refetchQueries({ queryKey: [...SCHEDULES_KEY] });
       setScheduleNames((prev) => [...prev, name]);
-      toast.success(`Schedule "${name}" created`);
+      toast.success(t("runs.scheduleCreated", { name }));
       navigate({ to: "/runs/$runName", params: { runName: name } });
       setIsCreateOpen(false);
     } catch (error: unknown) {
       if (isAxiosError(error) && error.response?.status === 403) {
-        toast.error("Insufficient permissions: only admins can create schedules.");
+        toast.error(t("runs.permissionsCreateSchedules"));
       } else {
         const detail =
           error instanceof Error ? error.message :
           typeof error === "object" && error !== null && "response" in error
             ? String((error as { response?: { data?: { detail?: string } } }).response?.data?.detail ?? "")
             : "";
-        toast.error(detail || "Failed to create new schedule");
+        toast.error(detail || t("runs.failedCreateSchedule"));
       }
       console.error(error);
       throw error;
@@ -685,8 +742,8 @@ function RunsPage() {
   return (
     <div className="flex flex-col h-full">
       <PageBreadcrumb
-        items={currentRunName ? [{ label: "Run Rules", to: "/runs" }] : []}
-        page={currentRunName || "Run Rules"}
+        items={currentRunName ? [{ label: t("runs.title"), to: "/runs" }] : []}
+        page={currentRunName || t("runs.title")}
       />
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col mt-4 overflow-hidden">
@@ -694,11 +751,11 @@ function RunsPage() {
           <TabsList>
             <TabsTrigger value="execute" className="gap-2">
               <Zap className="h-4 w-4" />
-              Execute
+              {t("runs.tabExecute")}
             </TabsTrigger>
             <TabsTrigger value="schedules" className="gap-2">
               <CalendarClock className="h-4 w-4" />
-              Schedules
+              {t("runs.tabSchedules")}
             </TabsTrigger>
           </TabsList>
         </div>
@@ -726,7 +783,7 @@ function RunsPage() {
                   onClick={() => navigate({ to: "/runs" })}
                 >
                   <ChevronRight className="h-4 w-4 rotate-180" />
-                  Back to schedules
+                  {t("runs.backToSchedules")}
                 </Button>
               </div>
               <div className="flex-1 overflow-hidden flex flex-col">
@@ -749,7 +806,7 @@ function RunsPage() {
           ) : (
             <div className="flex flex-col flex-1 overflow-hidden h-full">
               <div className="flex items-center justify-between mb-4 shrink-0">
-                <h2 className="font-semibold text-lg text-foreground">Scheduled Runs</h2>
+                <h2 className="font-semibold text-lg text-foreground">{t("runs.scheduledRuns")}</h2>
                 {isAdmin && (
                 <Button
                   variant="outline"
@@ -758,7 +815,7 @@ function RunsPage() {
                   className="gap-2"
                 >
                   <Plus className="h-4 w-4" />
-                  New Schedule
+                  {t("runs.newSchedule")}
                 </Button>
                 )}
               </div>
@@ -767,7 +824,10 @@ function RunsPage() {
                   {({ reset }) => (
                     <ErrorBoundary onReset={reset} fallbackRender={RunsListError}>
                       <Suspense fallback={<RunsListSkeleton />}>
-                        <SchedulesListView isDeleting={isDeletingRun} />
+                        <SchedulesListView
+                          isDeleting={isDeletingRun}
+                          isAdmin={isAdmin}
+                        />
                       </Suspense>
                     </ErrorBoundary>
                   )}
@@ -796,9 +856,15 @@ function RunsPage() {
 interface RunNotification {
   count: number;
   errors: number;
+  // Per-table error messages returned by the backend so the user can see
+  // *why* a submission failed (e.g. "dataset-level rule must provide
+  // either a sql_query or a has_valid_schema check with
+  // user_metadata.target_table") instead of just an aggregate count.
+  errorDetails?: string[];
 }
 
 function ExecuteTab({ onGoToHistory }: { onGoToHistory: () => void }) {
+  const { t } = useTranslation();
   const { data: rulesResp, isLoading: rulesLoading } = useListRules(
     { status: "approved" },
     { query: {} },
@@ -837,17 +903,19 @@ function ExecuteTab({ onGoToHistory }: { onGoToHistory: () => void }) {
   const batchRun = useBatchRunFromCatalog();
   const queryClient = useQueryClient();
 
+  const crossTableRulesLabel = t("runs.crossTableRules");
+
   const allCatalogs = useMemo(() => {
     const cats = new Set<string>();
     for (const r of approvedRules) {
       if (r.table_fqn.startsWith(_SQL_CHECK_PREFIX)) {
-        cats.add("Cross-table rules");
+        cats.add(crossTableRulesLabel);
       } else {
         cats.add(parseFqn(r.table_fqn).catalog);
       }
     }
     return Array.from(cats).sort();
-  }, [approvedRules]);
+  }, [approvedRules, crossTableRulesLabel]);
 
   const availableSchemas = useMemo(() => {
     const schemas = new Set<string>();
@@ -875,7 +943,7 @@ function ExecuteTab({ onGoToHistory }: { onGoToHistory: () => void }) {
     return approvedRules.filter((r) => {
       const isSqlCheck = r.table_fqn.startsWith(_SQL_CHECK_PREFIX);
       if (filterCatalog !== "__all__") {
-        if (filterCatalog === "Cross-table rules") {
+        if (filterCatalog === crossTableRulesLabel) {
           if (!isSqlCheck) return false;
         } else {
           if (isSqlCheck) return false;
@@ -894,7 +962,7 @@ function ExecuteTab({ onGoToHistory }: { onGoToHistory: () => void }) {
       if (!ruleMatchesLabels(r, labelFilter)) return false;
       return true;
     });
-  }, [approvedRules, filterCatalog, filterSchema, searchQuery, labelFilter]);
+  }, [approvedRules, filterCatalog, filterSchema, searchQuery, crossTableRulesLabel, labelFilter]);
 
   const grouped = useMemo(() => {
     const groups = new Map<string, RuleCatalogEntryOut[]>();
@@ -903,18 +971,18 @@ function ExecuteTab({ onGoToHistory }: { onGoToHistory: () => void }) {
       const isSqlCheck = rule.table_fqn.startsWith(_SQL_CHECK_PREFIX);
       let key: string;
       if (isSqlCheck) {
-        key = "Cross-table rules";
+        key = crossTableRulesLabel;
       } else {
         const { catalog, schema } = parseFqn(rule.table_fqn);
         switch (groupBy) {
           case "catalog":
-            key = catalog || "Unknown";
+            key = catalog || t("runs.unknown");
             break;
           case "schema":
-            key = `${catalog}.${schema}` || "Unknown";
+            key = `${catalog}.${schema}` || t("runs.unknown");
             break;
           default:
-            key = "All";
+            key = t("runs.all");
         }
       }
       if (!groups.has(key)) groups.set(key, []);
@@ -922,7 +990,7 @@ function ExecuteTab({ onGoToHistory }: { onGoToHistory: () => void }) {
     }
 
     return new Map([...groups.entries()].sort(([a], [b]) => a.localeCompare(b)));
-  }, [filteredRules, groupBy]);
+  }, [filteredRules, groupBy, crossTableRulesLabel, t]);
 
   const toggleTable = useCallback((tableFqn: string) => {
     setSelectedTables((prev) => {
@@ -982,10 +1050,11 @@ function ExecuteTab({ onGoToHistory }: { onGoToHistory: () => void }) {
       setRunNotification({
         count: result.submitted.length,
         errors: result.errors.length,
+        errorDetails: result.errors,
       });
       setSelectedTables(new Set());
     } catch (err) {
-      toast.error(`Batch run failed: ${err instanceof Error ? err.message : "Unknown error"}`);
+      toast.error(t("runs.batchRunFailed", { error: err instanceof Error ? err.message : t("common.unknownError") }));
     } finally {
       setIsRunning(false);
     }
@@ -997,59 +1066,72 @@ function ExecuteTab({ onGoToHistory }: { onGoToHistory: () => void }) {
     <div className="space-y-6 h-full overflow-y-auto">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-bold tracking-tight">Execute Rules</h2>
+          <h2 className="text-xl font-bold tracking-tight">{t("runs.executeRules")}</h2>
           <p className="text-muted-foreground text-sm">
-            Select approved rules and trigger manual validation runs.
+            {t("runs.executeRulesSubtitle")}
           </p>
         </div>
       </div>
 
       {runNotification && (
-        <div className="flex items-center justify-between rounded-lg border px-4 py-3 bg-muted/40">
-          <div className="flex items-center gap-2 text-sm">
-            {runNotification.count > 0 ? (
-              <>
-                <CheckCircle2 className="h-4 w-4 text-green-600 shrink-0" />
-                <span>
-                  Started {runNotification.count} validation run
-                  {runNotification.count !== 1 ? "s" : ""}
-                  {runNotification.errors > 0 && (
-                    <span className="text-destructive ml-1">
-                      ({runNotification.errors} failed to submit)
-                    </span>
-                  )}
-                </span>
-              </>
-            ) : (
-              <>
-                <XCircle className="h-4 w-4 text-destructive shrink-0" />
-                <span className="text-destructive">
-                  All {runNotification.errors} table{runNotification.errors !== 1 ? "s" : ""} failed to submit
-                </span>
-              </>
-            )}
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            {runNotification.count > 0 && (
+        <div className="rounded-lg border bg-muted/40">
+          <div className="flex items-center justify-between px-4 py-3">
+            <div className="flex items-center gap-2 text-sm">
+              {runNotification.count > 0 ? (
+                <>
+                  <CheckCircle2 className="h-4 w-4 text-green-600 shrink-0" />
+                  <span>
+                    {t("runs.startedRuns", { count: runNotification.count })}
+                    {runNotification.errors > 0 && (
+                      <span className="text-destructive ml-1">
+                        {t("runs.runsFailedToSubmit", { count: runNotification.errors })}
+                      </span>
+                    )}
+                  </span>
+                </>
+              ) : (
+                <>
+                  <XCircle className="h-4 w-4 text-destructive shrink-0" />
+                  <span className="text-destructive">
+                    {t("runs.allTablesFailedToSubmit", { count: runNotification.errors })}
+                  </span>
+                </>
+              )}
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              {runNotification.count > 0 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5 text-xs"
+                  onClick={onGoToHistory}
+                >
+                  <History className="h-3.5 w-3.5" />
+                  {t("runs.viewInHistory")}
+                </Button>
+              )}
               <Button
-                variant="outline"
+                variant="ghost"
                 size="sm"
-                className="gap-1.5 text-xs"
-                onClick={onGoToHistory}
+                className="h-7 w-7 p-0 text-muted-foreground"
+                onClick={() => setRunNotification(null)}
               >
-                <History className="h-3.5 w-3.5" />
-                View in History
+                <X className="h-3.5 w-3.5" />
               </Button>
-            )}
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 w-7 p-0 text-muted-foreground"
-              onClick={() => setRunNotification(null)}
-            >
-              <X className="h-3.5 w-3.5" />
-            </Button>
+            </div>
           </div>
+          {runNotification.errorDetails && runNotification.errorDetails.length > 0 && (
+            // Surface the per-table reason strings so users can self-diagnose
+            // (previously the aggregate count was the only signal — a schema-
+            // rule submission failure looked identical to a permission failure).
+            <ul className="border-t border-border/60 px-4 py-2 space-y-1 text-xs font-mono text-destructive max-h-32 overflow-y-auto">
+              {runNotification.errorDetails.map((err, idx) => (
+                <li key={idx} className="break-words">
+                  {err}
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
 
@@ -1061,13 +1143,13 @@ function ExecuteTab({ onGoToHistory }: { onGoToHistory: () => void }) {
                 <Play className="h-8 w-8 text-muted-foreground" />
               </div>
               <h3 className="text-lg font-medium text-muted-foreground">
-                No approved rules
+                {t("runs.noApprovedRules")}
               </h3>
               <p className="text-muted-foreground/70 text-sm mt-1 max-w-md">
-                Approve rules in Drafts & review first, then come back here to run them.
+                {t("runs.noApprovedRulesDescription")}
               </p>
               <Button variant="outline" className="mt-4" asChild>
-                <Link to="/rules/drafts">Go to Drafts & review</Link>
+                <Link to="/rules/drafts">{t("runs.goToDraftsReview")}</Link>
               </Button>
             </div>
           </CardContent>
@@ -1081,13 +1163,13 @@ function ExecuteTab({ onGoToHistory }: { onGoToHistory: () => void }) {
                 <div>
                   <CardTitle className="flex items-center gap-2 text-base">
                     <Zap className="h-4 w-4" />
-                    Table Selection
+                    {t("runs.tableSelection")}
                   </CardTitle>
                   <CardDescription>
-                    {approvedRules.length} approved rule set{approvedRules.length !== 1 ? "s" : ""} available
+                    {t("runs.approvedRuleSetsAvailable", { count: approvedRules.length })}
                     {selectedTables.size > 0 && (
                       <span className="text-primary font-medium ml-1">
-                        · {selectedTables.size} selected
+                        {t("runs.selectedSuffix", { count: selectedTables.size })}
                       </span>
                     )}
                   </CardDescription>
@@ -1100,8 +1182,8 @@ function ExecuteTab({ onGoToHistory }: { onGoToHistory: () => void }) {
                     >
                       <SelectTrigger className="w-32 h-8 text-xs"><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="all">All rows</SelectItem>
-                        <SelectItem value="sample">Sample rows</SelectItem>
+                        <SelectItem value="all">{t("runs.allRows")}</SelectItem>
+                        <SelectItem value="sample">{t("runs.sampleRows")}</SelectItem>
                       </SelectContent>
                     </Select>
                     {sampleSize > 0 && (
@@ -1127,8 +1209,10 @@ function ExecuteTab({ onGoToHistory }: { onGoToHistory: () => void }) {
                       <Play className="h-4 w-4" />
                     )}
                     {isRunning
-                      ? "Running..."
-                      : `Run ${selectedTables.size > 0 ? selectedTables.size : ""} selected`}
+                      ? t("runs.running")
+                      : selectedTables.size > 0
+                        ? t("runs.runNSelected", { count: selectedTables.size })
+                        : t("runs.runSelected")}
                   </Button>
                 </div>
               </div>
@@ -1136,20 +1220,20 @@ function ExecuteTab({ onGoToHistory }: { onGoToHistory: () => void }) {
               <div className="flex items-center gap-2 flex-wrap pt-3 border-t mt-3">
                 <div className="flex items-center gap-1.5">
                   <Layers className="h-3.5 w-3.5 text-muted-foreground" />
-                  <span className="text-xs text-muted-foreground">Group by:</span>
+                  <span className="text-xs text-muted-foreground">{t("runs.groupBy")}</span>
                   <Select value={groupBy} onValueChange={(v) => setGroupBy(v as GroupMode)}>
                     <SelectTrigger className="w-[120px] h-8 text-xs">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="catalog" className="text-xs">
-                        <span className="flex items-center gap-1.5"><Database className="h-3 w-3" /> Catalog</span>
+                        <span className="flex items-center gap-1.5"><Database className="h-3 w-3" /> {t("runs.groupByCatalog")}</span>
                       </SelectItem>
                       <SelectItem value="schema" className="text-xs">
-                        <span className="flex items-center gap-1.5"><Layers className="h-3 w-3" /> Schema</span>
+                        <span className="flex items-center gap-1.5"><Layers className="h-3 w-3" /> {t("runs.groupBySchema")}</span>
                       </SelectItem>
                       <SelectItem value="none" className="text-xs">
-                        <span className="flex items-center gap-1.5"><Table2 className="h-3 w-3" /> Flat list</span>
+                        <span className="flex items-center gap-1.5"><Table2 className="h-3 w-3" /> {t("runs.groupByFlat")}</span>
                       </SelectItem>
                     </SelectContent>
                   </Select>
@@ -1162,7 +1246,7 @@ function ExecuteTab({ onGoToHistory }: { onGoToHistory: () => void }) {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="__all__" className="text-xs">All catalogs</SelectItem>
+                      <SelectItem value="__all__" className="text-xs">{t("runs.allCatalogs")}</SelectItem>
                       {allCatalogs.map((c) => (
                         <SelectItem key={c} value={c} className="text-xs">{c}</SelectItem>
                       ))}
@@ -1177,7 +1261,7 @@ function ExecuteTab({ onGoToHistory }: { onGoToHistory: () => void }) {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="__all__" className="text-xs">All schemas</SelectItem>
+                      <SelectItem value="__all__" className="text-xs">{t("runs.allSchemas")}</SelectItem>
                       {availableSchemas.map((s) => (
                         <SelectItem key={s} value={s} className="text-xs">{s}</SelectItem>
                       ))}
@@ -1197,14 +1281,14 @@ function ExecuteTab({ onGoToHistory }: { onGoToHistory: () => void }) {
                   <Input
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Search tables..."
+                    placeholder={t("runs.searchTablesPlaceholder")}
                     className="h-8 pl-8 text-xs"
                   />
                 </div>
 
                 <div className="flex items-center gap-1.5 ml-auto">
                   <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={selectAll}>
-                    Select all
+                    {t("runs.selectAll")}
                   </Button>
                   <Button
                     variant="ghost"
@@ -1213,7 +1297,7 @@ function ExecuteTab({ onGoToHistory }: { onGoToHistory: () => void }) {
                     onClick={clearAll}
                     disabled={selectedTables.size === 0}
                   >
-                    Clear
+                    {t("runs.clear")}
                   </Button>
                 </div>
               </div>
@@ -1222,7 +1306,7 @@ function ExecuteTab({ onGoToHistory }: { onGoToHistory: () => void }) {
             <CardContent>
               {filteredRules.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground text-sm">
-                  No rules match your search.
+                  {t("runs.noRulesMatchSearch")}
                 </div>
               ) : groupBy === "none" ? (
                 <FadeIn duration={0.3}>
@@ -1252,7 +1336,7 @@ function ExecuteTab({ onGoToHistory }: { onGoToHistory: () => void }) {
                               <span className="text-sm font-medium">{group}</span>
                             </div>
                             <Badge variant="secondary" className="ml-auto text-xs">
-                              {rules.length} table{rules.length !== 1 ? "s" : ""}
+                              {t("runs.tablesCount", { count: rules.length })}
                             </Badge>
                           </div>
                           <RuleTable
@@ -1305,6 +1389,7 @@ function ActiveRunsCard({
   onRunComplete: (runId: string) => void;
   onDismissAll: () => void;
 }) {
+  const { t } = useTranslation();
   return (
     <Card>
       <CardHeader className="pb-3">
@@ -1312,15 +1397,15 @@ function ActiveRunsCard({
           <div>
             <CardTitle className="flex items-center gap-2 text-base">
               <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
-              Active Runs
+              {t("runs.activeRuns")}
               <Badge variant="secondary" className="text-xs">{runs.length}</Badge>
             </CardTitle>
             <CardDescription>
-              These validation runs are currently in progress. Status updates automatically.
+              {t("runs.activeRunsDescription")}
             </CardDescription>
           </div>
           <Button variant="ghost" size="sm" className="text-xs text-muted-foreground" onClick={onDismissAll}>
-            Dismiss all
+            {t("runs.dismissAll")}
           </Button>
         </div>
       </CardHeader>
@@ -1329,10 +1414,10 @@ function ActiveRunsCard({
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b bg-muted/50">
-                <th className="text-left p-3 font-medium">Table</th>
-                <th className="text-left p-3 font-medium">Run ID</th>
-                <th className="text-left p-3 font-medium">Status</th>
-                <th className="text-left p-3 font-medium">Elapsed</th>
+                <th className="text-left p-3 font-medium">{t("runs.headerTable")}</th>
+                <th className="text-left p-3 font-medium">{t("runs.headerRunId")}</th>
+                <th className="text-left p-3 font-medium">{t("runs.headerStatus")}</th>
+                <th className="text-left p-3 font-medium">{t("runs.headerElapsed")}</th>
                 <th className="w-10 p-3" />
               </tr>
             </thead>
@@ -1355,6 +1440,7 @@ function ActiveRunRow({
   run: ActiveRun;
   onComplete: (runId: string) => void;
 }) {
+  const { t } = useTranslation();
   const [status, setStatus] = useState<RunStatusOut | null>(null);
   const [pollError, setPollError] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
@@ -1376,13 +1462,13 @@ function ActiveRunRow({
         setPollError(false);
 
         if (TERMINAL_STATES.has(resp.data.state)) {
-          const tableName = cleanFqn(run.table_fqn).split(".").pop();
+          const tableName = cleanFqn(run.table_fqn).split(".").pop() ?? "";
           if (resp.data.state === "TERMINATED" && resp.data.result_state === "SUCCESS") {
-            toast.success(`Run for ${tableName} completed successfully`);
+            toast.success(t("runs.runCompleted", { table: tableName }));
           } else if (resp.data.state === "INTERNAL_ERROR") {
-            toast.error(`Run for ${tableName} failed with internal error`);
+            toast.error(t("runs.runFailedInternal", { table: tableName }));
           } else {
-            toast.info(`Run for ${tableName} finished (${resp.data.result_state ?? resp.data.state})`);
+            toast.info(t("runs.runFinished", { table: tableName, state: resp.data.result_state ?? resp.data.state }));
           }
           onCompleteRef.current(run.run_id);
           return;
@@ -1399,7 +1485,7 @@ function ActiveRunRow({
       cancelled = true;
       clearTimeout(timeoutId);
     };
-  }, [run.run_id, run.job_run_id, run.view_fqn, run.table_fqn]);
+  }, [run.run_id, run.job_run_id, run.view_fqn, run.table_fqn, t]);
 
   const stateLabel = status?.state ?? "PENDING";
   const isStillRunning = !TERMINAL_STATES.has(stateLabel);
@@ -1417,11 +1503,11 @@ function ActiveRunRow({
     setIsCancelling(true);
     try {
       await cancelDryRun(run.run_id, { job_run_id: run.job_run_id });
-      const tableName = cleanFqn(run.table_fqn).split(".").pop();
-      toast.info(`Run for ${tableName} canceled`);
+      const tableName = cleanFqn(run.table_fqn).split(".").pop() ?? "";
+      toast.info(t("runs.runCanceled", { table: tableName }));
       onCompleteRef.current(run.run_id);
     } catch {
-      toast.error("Failed to cancel run");
+      toast.error(t("runs.failedCancelRun"));
     } finally {
       setIsCancelling(false);
     }
@@ -1435,27 +1521,27 @@ function ActiveRunRow({
         {pollError ? (
           <Badge variant="secondary" className="gap-1 text-xs">
             <AlertCircle className="h-3 w-3" />
-            Polling error
+            {t("runs.statusPollingError")}
           </Badge>
         ) : stateLabel === "INTERNAL_ERROR" ? (
           <Badge variant="outline" className="gap-1 border-red-500 text-red-600 text-xs">
             <XCircle className="h-3 w-3" />
-            Internal Error
+            {t("runs.statusInternalError")}
           </Badge>
         ) : stateLabel === "RUNNING" ? (
           <Badge variant="outline" className="gap-1 border-amber-500 text-amber-600 text-xs">
             <Loader2 className="h-3 w-3 animate-spin" />
-            Running
+            {t("runs.statusRunning")}
           </Badge>
         ) : stateLabel === "PENDING" ? (
           <Badge variant="outline" className="gap-1 border-blue-500 text-blue-600 text-xs">
             <Clock className="h-3 w-3" />
-            Pending
+            {t("runs.statusPending")}
           </Badge>
         ) : stateLabel === "TERMINATED" ? (
           <Badge variant="outline" className="gap-1 border-green-500 text-green-600 text-xs">
             <CheckCircle2 className="h-3 w-3" />
-            {status?.result_state ?? "Done"}
+            {status?.result_state ?? t("runs.statusDone")}
           </Badge>
         ) : (
           <Badge variant="secondary" className="text-xs">{stateLabel}</Badge>
@@ -1471,14 +1557,14 @@ function ActiveRunRow({
               className="h-6 px-1.5 gap-1 text-red-600 hover:text-red-700 hover:bg-red-50"
               onClick={handleStop}
               disabled={isCancelling}
-              title="Stop run"
+              title={t("runs.stopRun")}
             >
               {isCancelling ? (
                 <Loader2 className="h-3 w-3 animate-spin" />
               ) : (
                 <CircleStop className="h-3.5 w-3.5" />
               )}
-              <span className="text-xs">Stop</span>
+              <span className="text-xs">{t("runs.stop")}</span>
             </Button>
           )}
           <Button
@@ -1486,7 +1572,7 @@ function ActiveRunRow({
             size="sm"
             className="h-6 w-6 p-0"
             onClick={() => onComplete(run.run_id)}
-            title="Dismiss"
+            title={t("runs.dismiss")}
           >
             <XCircle className="h-3.5 w-3.5 text-muted-foreground" />
           </Button>
@@ -1507,14 +1593,15 @@ function RuleTable({
   onToggle: (tableFqn: string) => void;
   runningFqns?: Set<string>;
 }) {
+  const { t } = useTranslation();
   return (
     <table className="w-full text-sm">
       <thead>
         <tr className="border-b bg-muted/30">
           <th className="w-10 p-3" />
-          <th className="text-left p-3 font-medium">Table</th>
-          <th className="text-right p-3 font-medium">Rules</th>
-          <th className="text-left p-3 font-medium">Status</th>
+          <th className="text-left p-3 font-medium">{t("runs.headerTable")}</th>
+          <th className="text-right p-3 font-medium">{t("runs.headerRules")}</th>
+          <th className="text-left p-3 font-medium">{t("runs.headerStatus")}</th>
         </tr>
       </thead>
       <tbody>
@@ -1547,12 +1634,12 @@ function RuleTable({
                 <div className="flex items-center gap-1.5">
                   <Badge variant="outline" className="gap-1 border-green-500 text-green-600 text-xs">
                     <CheckCircle2 className="h-3 w-3" />
-                    Approved
+                    {t("runs.approved")}
                   </Badge>
                   {isTableRunning && (
                     <Badge variant="outline" className="gap-1 border-amber-500 text-amber-600 text-xs">
                       <Loader2 className="h-3 w-3 animate-spin" />
-                      Running
+                      {t("runs.statusRunning")}
                     </Badge>
                   )}
                 </div>
@@ -1580,13 +1667,14 @@ function ExecuteTabSkeleton() {
 }
 
 function ExecuteTabError({ resetErrorBoundary }: { resetErrorBoundary: () => void }) {
+  const { t } = useTranslation();
   return (
     <div className="flex flex-col items-center justify-center py-16 text-center">
       <AlertCircle className="h-12 w-12 text-destructive/30 mb-3" />
-      <p className="text-muted-foreground text-sm mb-1">Failed to load rules</p>
+      <p className="text-muted-foreground text-sm mb-1">{t("runs.failedLoadRules")}</p>
       <Button variant="outline" size="sm" onClick={resetErrorBoundary} className="gap-2 mt-2">
         <RotateCcw className="h-3 w-3" />
-        Retry
+        {t("common.retry")}
       </Button>
     </div>
   );
@@ -1607,6 +1695,7 @@ function CreateRunDialog({
   existingNames: string[];
   onCreate: (name: string) => Promise<void>;
 }) {
+  const { t } = useTranslation();
   const [name, setName] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -1636,39 +1725,39 @@ function CreateRunDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[425px]">
         <DialogHeader>
-          <DialogTitle>Create Schedule</DialogTitle>
+          <DialogTitle>{t("runs.createSchedule")}</DialogTitle>
           <DialogDescription>
-            Enter a unique name for the new scheduled run configuration.
+            {t("runs.createScheduleDescription")}
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit}>
           <div className="grid gap-4 py-4">
             <div className="grid gap-2">
-              <Label htmlFor="name">Name</Label>
+              <Label htmlFor="name">{t("runs.name")}</Label>
               <Input
                 id="name"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 className={cn((isConflict || (name.length > 0 && !isFormatValid)) && "border-destructive focus-visible:ring-destructive")}
-                placeholder="e.g. daily_sales_check"
+                placeholder={t("runs.namePlaceholder")}
                 autoFocus
                 autoComplete="off"
               />
               {isConflict && (
-                <p className="text-xs text-destructive">This schedule name already exists.</p>
+                <p className="text-xs text-destructive">{t("runs.scheduleNameExists")}</p>
               )}
               {!isConflict && name.length > 0 && !isFormatValid && (
                 <p className="text-xs text-destructive">
-                  Name must be 1–64 characters using only letters, digits, underscores, or hyphens.
+                  {t("runs.scheduleNameInvalid")}
                 </p>
               )}
             </div>
           </div>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>{t("runs.cancel")}</Button>
             <Button type="submit" disabled={!isValid || isSubmitting}>
               {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-              Create
+              {t("runs.create")}
             </Button>
           </DialogFooter>
         </form>
@@ -1707,32 +1796,34 @@ function RunEditorSkeleton() {
 }
 
 function RunsListError({ resetErrorBoundary }: { resetErrorBoundary: () => void }) {
+  const { t } = useTranslation();
   return (
     <div className="flex flex-col items-center justify-center py-8 text-center">
       <AlertCircle className="h-12 w-12 text-destructive/30 mb-3" />
-      <p className="text-muted-foreground text-sm mb-1">Failed to load schedules</p>
+      <p className="text-muted-foreground text-sm mb-1">{t("runs.failedLoadSchedules")}</p>
       <p className="text-muted-foreground/70 text-xs mb-3">
-        Please check your configuration settings
+        {t("runs.failedLoadSchedulesHint")}
       </p>
       <Button variant="outline" size="sm" onClick={resetErrorBoundary} className="gap-2">
         <RotateCcw className="h-3 w-3" />
-        Retry
+        {t("common.retry")}
       </Button>
     </div>
   );
 }
 
 function RunEditorError({ resetErrorBoundary }: { resetErrorBoundary: () => void }) {
+  const { t } = useTranslation();
   return (
     <div className="flex flex-col items-center justify-center h-full text-center">
       <AlertCircle className="h-16 w-16 text-destructive/30 mb-4" />
-      <h3 className="text-lg font-semibold mb-2">Failed to load schedule editor</h3>
+      <h3 className="text-lg font-semibold mb-2">{t("runs.failedLoadEditor")}</h3>
       <p className="text-muted-foreground text-sm mb-4">
-        Please check your configuration settings
+        {t("runs.failedLoadEditorHint")}
       </p>
       <Button variant="outline" onClick={resetErrorBoundary} className="gap-2">
         <RotateCcw className="h-4 w-4" />
-        Retry
+        {t("common.retry")}
       </Button>
     </div>
   );
@@ -1742,18 +1833,18 @@ function RunEditorError({ resetErrorBoundary }: { resetErrorBoundary: () => void
 // Schedules List View — full-width table with metadata columns
 // ===========================================================================
 
-function scopeLabel(cfg: ScheduleConfig): string {
+function scopeLabel(cfg: ScheduleConfig, t: Translator): string {
   const base = (() => {
     switch (cfg.scope_mode) {
-      case "all": return "All approved rules";
-      case "catalog": return (cfg.scope_catalogs ?? []).join(", ") || "No catalogs";
-      case "schema": return (cfg.scope_schemas ?? []).join(", ") || "No schemas";
+      case "all": return t("runs.scopeAll");
+      case "catalog": return (cfg.scope_catalogs ?? []).join(", ") || t("runs.scopeNoCatalogs");
+      case "schema": return (cfg.scope_schemas ?? []).join(", ") || t("runs.scopeNoSchemas");
       case "tables": {
         const tables = cfg.scope_tables ?? [];
-        if (tables.length <= 2) return tables.join(", ") || "No tables";
-        return `${tables[0]}, ${tables[1]} +${tables.length - 2} more`;
+        if (tables.length <= 2) return tables.join(", ") || t("runs.scopeNoTables");
+        return t("runs.scopeMoreSummary", { a: tables[0], b: tables[1], count: tables.length - 2 });
       }
-      default: return "All";
+      default: return t("runs.scopeAllLabel");
     }
   })();
   const labels = cfg.scope_labels ?? [];
@@ -1762,11 +1853,38 @@ function scopeLabel(cfg: ScheduleConfig): string {
   return `${base} · labels: ${labelStr}`;
 }
 
-function SchedulesListView({ isDeleting }: { isDeleting?: boolean }) {
+function SchedulesListView({
+  isDeleting,
+  isAdmin,
+}: {
+  isDeleting?: boolean;
+  isAdmin?: boolean;
+}) {
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
   const [schedules, setSchedules] = useState<ScheduleConfigEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<"permission" | "other" | null>(null);
   const prevDeleting = useRef(isDeleting);
+
+  // Per-row mutation state. Keyed by ``schedule_name`` so concurrent
+  // pause/delete clicks on different rows don't trample each other.
+  const [pausingNames, setPausingNames] = useState<Set<string>>(new Set());
+  const [deletingNames, setDeletingNames] = useState<Set<string>>(new Set());
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+
+  const setBusy = (
+    setter: React.Dispatch<React.SetStateAction<Set<string>>>,
+    name: string,
+    busy: boolean,
+  ) => {
+    setter((prev) => {
+      const next = new Set(prev);
+      if (busy) next.add(name);
+      else next.delete(name);
+      return next;
+    });
+  };
 
   const handleFetchError = (err: unknown) => {
     setFetchError(isAxiosError(err) && err.response?.status === 403 ? "permission" : "other");
@@ -1788,6 +1906,59 @@ function SchedulesListView({ isDeleting }: { isDeleting?: boolean }) {
     }
   }, [isDeleting]);
 
+  const handleTogglePause = async (sched: ScheduleConfigEntry) => {
+    const willPause = !sched.config.paused;
+    setBusy(setPausingNames, sched.schedule_name, true);
+    try {
+      const updated = await saveScheduleApi(sched.schedule_name, {
+        ...sched.config,
+        paused: willPause,
+      });
+      setSchedules((prev) =>
+        prev.map((s) =>
+          s.schedule_name === sched.schedule_name ? updated : s,
+        ),
+      );
+      await queryClient.refetchQueries({ queryKey: [...SCHEDULES_KEY] });
+      toast.success(
+        willPause
+          ? t("runs.schedulePaused", { name: sched.schedule_name })
+          : t("runs.scheduleResumed", { name: sched.schedule_name }),
+      );
+    } catch (err) {
+      if (isAxiosError(err) && err.response?.status === 403) {
+        toast.error(t("runs.permissionsManageSchedules"));
+      } else {
+        toast.error(
+          willPause
+            ? t("runs.failedPauseSchedule")
+            : t("runs.failedResumeSchedule"),
+        );
+      }
+    } finally {
+      setBusy(setPausingNames, sched.schedule_name, false);
+    }
+  };
+
+  const handleDelete = async (name: string) => {
+    setBusy(setDeletingNames, name, true);
+    try {
+      await deleteScheduleApi(name);
+      setSchedules((prev) => prev.filter((s) => s.schedule_name !== name));
+      await queryClient.refetchQueries({ queryKey: [...SCHEDULES_KEY] });
+      toast.success(t("runs.scheduleDeleted", { name }));
+    } catch (err) {
+      if (isAxiosError(err) && err.response?.status === 403) {
+        toast.error(t("runs.permissionsManageSchedules"));
+      } else {
+        toast.error(t("runs.failedDeleteSchedule"));
+      }
+    } finally {
+      setBusy(setDeletingNames, name, false);
+      setDeleteTarget(null);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-16">
@@ -1800,10 +1971,9 @@ function SchedulesListView({ isDeleting }: { isDeleting?: boolean }) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-center">
         <ShieldAlert className="h-12 w-12 text-destructive/30 mb-3" />
-        <p className="text-destructive text-sm mb-1">Insufficient permissions</p>
+        <p className="text-destructive text-sm mb-1">{t("runs.permissionsViewSchedulesTitle")}</p>
         <p className="text-muted-foreground/70 text-xs">
-          You need Admin permissions to view and manage schedules.
-          Contact your workspace admin to request access.
+          {t("runs.permissionsViewSchedulesBody")}
         </p>
       </div>
     );
@@ -1813,9 +1983,9 @@ function SchedulesListView({ isDeleting }: { isDeleting?: boolean }) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-center">
         <AlertCircle className="h-12 w-12 text-destructive/30 mb-3" />
-        <p className="text-destructive text-sm mb-1">Failed to load schedules</p>
+        <p className="text-destructive text-sm mb-1">{t("runs.failedLoadSchedules")}</p>
         <p className="text-muted-foreground/70 text-xs">
-          Please try refreshing the page.
+          {t("runs.tryRefreshing")}
         </p>
       </div>
     );
@@ -1825,64 +1995,196 @@ function SchedulesListView({ isDeleting }: { isDeleting?: boolean }) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-center">
         <CalendarClock className="h-12 w-12 text-muted-foreground/30 mb-3" />
-        <p className="text-muted-foreground text-sm mb-1">No schedules configured</p>
+        <p className="text-muted-foreground text-sm mb-1">{t("runs.noSchedulesConfigured")}</p>
         <p className="text-muted-foreground/70 text-xs">
-          Click &ldquo;New Schedule&rdquo; to create your first schedule
+          {t("runs.clickNewScheduleHint")}
         </p>
       </div>
     );
   }
 
   return (
-    <div className="border rounded-lg overflow-hidden">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b bg-muted/50">
-            <th className="text-left font-medium text-muted-foreground px-4 py-3">Name</th>
-            <th className="text-left font-medium text-muted-foreground px-4 py-3">Frequency</th>
-            <th className="text-left font-medium text-muted-foreground px-4 py-3">Scope</th>
-            <th className="text-left font-medium text-muted-foreground px-4 py-3">Sample Size</th>
-            <th className="text-left font-medium text-muted-foreground px-4 py-3">Last Updated</th>
-            <th className="text-left font-medium text-muted-foreground px-4 py-3">Updated By</th>
-          </tr>
-        </thead>
-        <tbody>
-          {schedules.map((sched) => (
-            <tr key={sched.schedule_name} className="border-b last:border-b-0 hover:bg-muted/30 transition-colors">
-              <td className="px-4 py-3">
-                <Link
-                  to="/runs/$runName"
-                  params={{ runName: sched.schedule_name }}
-                  className="font-medium text-primary hover:underline flex items-center gap-2"
-                >
-                  <CalendarClock className="h-4 w-4 shrink-0" />
-                  {sched.schedule_name}
-                </Link>
-              </td>
-              <td className="px-4 py-3 text-muted-foreground">
-                <Badge variant="outline" className="font-normal capitalize">
-                  {sched.config.frequency === "manual" ? "Manual" : cronPreview(sched.config)}
-                </Badge>
-              </td>
-              <td className="px-4 py-3 text-muted-foreground">
-                <span className="truncate block max-w-[240px]" title={scopeLabel(sched.config)}>
-                  {scopeLabel(sched.config)}
-                </span>
-              </td>
-              <td className="px-4 py-3 text-muted-foreground">
-                {sched.config.sample_size ? sched.config.sample_size.toLocaleString() : "All rows"}
-              </td>
-              <td className="px-4 py-3 text-muted-foreground text-xs">
-                {sched.updated_at ? formatDate(sched.updated_at) : sched.created_at ? formatDate(sched.created_at) : "—"}
-              </td>
-              <td className="px-4 py-3 text-muted-foreground text-xs">
-                {sched.updated_by || sched.created_by || "—"}
-              </td>
+    <TooltipProvider delayDuration={150}>
+      <div className="border rounded-lg overflow-hidden">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b bg-muted/50">
+              <th className="text-left font-medium text-muted-foreground px-4 py-3">{t("runs.headerName")}</th>
+              <th className="text-left font-medium text-muted-foreground px-4 py-3">{t("runs.headerFrequency")}</th>
+              <th className="text-left font-medium text-muted-foreground px-4 py-3">{t("runs.headerScope")}</th>
+              <th className="text-left font-medium text-muted-foreground px-4 py-3">{t("runs.headerSampleSize")}</th>
+              <th className="text-left font-medium text-muted-foreground px-4 py-3">{t("runs.headerLastUpdated")}</th>
+              <th className="text-left font-medium text-muted-foreground px-4 py-3">{t("runs.headerUpdatedBy")}</th>
+              <th className="text-right font-medium text-muted-foreground px-4 py-3 w-[120px]">
+                <span className="sr-only">{t("runs.headerActions")}</span>
+              </th>
             </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+          </thead>
+          <tbody>
+            {schedules.map((sched) => {
+              const isPaused = !!sched.config.paused;
+              const pausing = pausingNames.has(sched.schedule_name);
+              const deleting = deletingNames.has(sched.schedule_name);
+              const rowBusy = pausing || deleting;
+              return (
+                <tr
+                  key={sched.schedule_name}
+                  className={cn(
+                    "border-b last:border-b-0 hover:bg-muted/30 transition-colors",
+                    isPaused && "bg-muted/20",
+                  )}
+                >
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-2">
+                      <Link
+                        to="/runs/$runName"
+                        params={{ runName: sched.schedule_name }}
+                        className="font-medium text-primary hover:underline flex items-center gap-2"
+                      >
+                        <CalendarClock className="h-4 w-4 shrink-0" />
+                        {sched.schedule_name}
+                      </Link>
+                      {isPaused && (
+                        <Badge variant="secondary" className="text-[10px] gap-1">
+                          <Pause className="h-3 w-3" />
+                          {t("runs.pausedBadge")}
+                        </Badge>
+                      )}
+                    </div>
+                  </td>
+                  <td className="px-4 py-3 text-muted-foreground">
+                    <Badge variant="outline" className="font-normal capitalize">
+                      {sched.config.frequency === "manual" ? t("runs.manual") : cronPreview(sched.config, t)}
+                    </Badge>
+                  </td>
+                  <td className="px-4 py-3 text-muted-foreground">
+                    <span className="truncate block max-w-[240px]" title={scopeLabel(sched.config, t)}>
+                      {scopeLabel(sched.config, t)}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-muted-foreground">
+                    {sched.config.sample_size != null ? sched.config.sample_size.toLocaleString() : t("runs.allRows")}
+                  </td>
+                  <td className="px-4 py-3 text-muted-foreground text-xs">
+                    {sched.updated_at ? formatDate(sched.updated_at) : sched.created_at ? formatDate(sched.created_at) : "—"}
+                  </td>
+                  <td className="px-4 py-3 text-muted-foreground text-xs">
+                    {sched.updated_by || sched.created_by || "—"}
+                  </td>
+                  <td className="px-2 py-2 text-right">
+                    {isAdmin ? (
+                      <div className="flex items-center justify-end gap-1">
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-8 w-8 p-0"
+                              onClick={() => handleTogglePause(sched)}
+                              disabled={rowBusy}
+                              aria-label={
+                                isPaused
+                                  ? t("runs.resumeSchedule")
+                                  : t("runs.pauseSchedule")
+                              }
+                            >
+                              {pausing ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : isPaused ? (
+                                <Play className="h-4 w-4" />
+                              ) : (
+                                <Pause className="h-4 w-4" />
+                              )}
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            {isPaused
+                              ? t("runs.resumeScheduleHint")
+                              : t("runs.pauseScheduleHint")}
+                          </TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-8 w-8 p-0 text-destructive hover:text-destructive hover:bg-destructive/10"
+                              onClick={() => setDeleteTarget(sched.schedule_name)}
+                              disabled={rowBusy}
+                              aria-label={t("runs.deleteSchedule")}
+                            >
+                              {deleting ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <Trash2 className="h-4 w-4" />
+                              )}
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            {t("runs.deleteScheduleHint")}
+                          </TooltipContent>
+                        </Tooltip>
+                      </div>
+                    ) : (
+                      <span className="text-[11px] text-muted-foreground/60 pr-2">
+                        {t("runs.adminOnly")}
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <AlertDialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeleteTarget(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t("runs.deleteScheduleConfirmTitle", { name: deleteTarget ?? "" })}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("runs.deleteScheduleConfirmBody")}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              disabled={
+                deleteTarget !== null && deletingNames.has(deleteTarget)
+              }
+            >
+              {t("runs.cancel")}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                // Don't let the dialog auto-close — we close it from
+                // ``handleDelete`` once the network round-trip resolves
+                // so the user sees the spinner.
+                e.preventDefault();
+                if (deleteTarget) handleDelete(deleteTarget);
+              }}
+              disabled={
+                deleteTarget !== null && deletingNames.has(deleteTarget)
+              }
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleteTarget !== null && deletingNames.has(deleteTarget) ? (
+                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+              ) : (
+                <Trash2 className="h-4 w-4 mr-2" />
+              )}
+              {t("runs.deleteSchedule")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </TooltipProvider>
   );
 }
 
@@ -1897,6 +2199,7 @@ function RunEditorContainer({
   onDeletingChange: (isDeleting: boolean) => void;
   isAdmin: boolean;
 }) {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { setRunContext } = useAIAssistant();
@@ -1918,17 +2221,29 @@ function RunEditorContainer({
       setEntryNotFound(false);
       return;
     }
+    // Guard against fast navigation between schedules: if the user
+    // switches before the previous fetch resolves we don't want the
+    // late response to overwrite the newer schedule's state.
+    let cancelled = false;
     setLoadingEntry(true);
     fetchSchedule(currentRunName)
       .then((entry) => {
+        if (cancelled) return;
         setScheduleEntry(entry);
         setEntryNotFound(false);
       })
       .catch(() => {
+        if (cancelled) return;
         setScheduleEntry(null);
         setEntryNotFound(true);
       })
-      .finally(() => setLoadingEntry(false));
+      .finally(() => {
+        if (cancelled) return;
+        setLoadingEntry(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [currentRunName]);
 
   const [yamlContent, setYamlContent] = useState("");
@@ -1946,13 +2261,13 @@ function RunEditorContainer({
         setIsDirty(false);
       } catch (e) {
         console.error("Error converting config to YAML", e);
-        toast.error("Error parsing schedule configuration");
+        toast.error(t("runs.errorParsingSchedule"));
       }
     } else {
       setYamlContent("");
       setIsDirty(false);
     }
-  }, [scheduleEntry]);
+  }, [scheduleEntry, t]);
 
   useEffect(() => {
     if (currentRunName && yamlContent) {
@@ -1974,7 +2289,7 @@ function RunEditorContainer({
       const schedName = _name || currentRunName;
       const saved = await saveScheduleApi(schedName, configPart as ScheduleConfig);
       setScheduleEntry(saved);
-      toast.success("Schedule configuration saved successfully");
+      toast.success(t("runs.scheduleSaved"));
       setIsDirty(false);
       if (schedName !== currentRunName) {
         navigate({ to: "/runs/$runName", params: { runName: schedName } });
@@ -1983,10 +2298,10 @@ function RunEditorContainer({
     } catch (error) {
       console.error("Save error", error);
       if (isAxiosError(error) && error.response?.status === 403) {
-        toast.error("Insufficient permissions: only admins can save schedules.");
+        toast.error(t("runs.permissionsSaveSchedules"));
       } else {
-        const message = error instanceof Error ? error.message : "Check YAML syntax or validation errors.";
-        toast.error(`Failed to save: ${message}`);
+        const message = error instanceof Error ? error.message : t("runs.yamlSyntaxOrValidation");
+        toast.error(t("runs.failedSave", { message }));
       }
     } finally {
       setIsSaving(false);
@@ -2000,14 +2315,14 @@ function RunEditorContainer({
 
     try {
       await deleteScheduleApi(currentRunName);
-      toast.success(`Schedule "${currentRunName}" deleted`);
+      toast.success(t("runs.scheduleDeleted", { name: currentRunName }));
       navigate({ to: "/runs" });
       queryClient.refetchQueries({ queryKey: [...SCHEDULES_KEY] });
     } catch (error) {
       if (isAxiosError(error) && error.response?.status === 403) {
-        toast.error("Insufficient permissions: only admins can delete schedules.");
+        toast.error(t("runs.permissionsDeleteSchedules"));
       } else {
-        toast.error("Failed to delete schedule");
+        toast.error(t("runs.failedDeleteSchedule"));
       }
     } finally {
       setIsDeleting(false);
@@ -2024,7 +2339,7 @@ function RunEditorContainer({
         const dump = yaml.dump(displayObj);
         setYamlContent(dump);
         setIsDirty(false);
-        toast.info("Changes discarded");
+        toast.info(t("runs.changesDiscarded"));
       } catch (e) {
         console.error("Error converting config to YAML", e);
       }
@@ -2046,7 +2361,7 @@ function RunEditorContainer({
 
       const resolvedFqns = resolveScheduleScope(cfg, allRules);
       if (resolvedFqns.length === 0) {
-        toast.error("No rule sets matched the schedule scope. Check that approved rules exist for the selected scope.");
+        toast.error(t("runs.noScopeMatched"));
         return;
       }
       const result = await batchRun.mutateAsync({
@@ -2054,10 +2369,10 @@ function RunEditorContainer({
       });
       const ok = result.data.submitted.length;
       const errs = result.data.errors.length;
-      if (ok > 0) toast.success(`Submitted ${ok} rule run${ok !== 1 ? "s" : ""}`);
-      if (errs > 0) toast.error(`${errs} table${errs !== 1 ? "s" : ""} failed to submit`);
+      if (ok > 0) toast.success(t("runs.submittedRuns", { count: ok }));
+      if (errs > 0) toast.error(t("runs.tablesFailedToSubmit", { count: errs }));
     } catch (err) {
-      toast.error(`Run failed: ${err instanceof Error ? err.message : "Unknown error"}`);
+      toast.error(t("runs.runFailed", { error: err instanceof Error ? err.message : t("common.unknownError") }));
     } finally {
       setIsRunningNow(false);
     }
@@ -2097,20 +2412,20 @@ function RunEditorContainer({
 }
 
 function EmptyState({ onAddRun, isAdmin }: { onAddRun: () => void; isAdmin: boolean }) {
+  const { t } = useTranslation();
   return (
     <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
       <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mb-6">
         <CalendarClock className="h-8 w-8 text-primary" />
       </div>
-      <h3 className="text-xl font-semibold mb-2">No Scheduled Runs</h3>
+      <h3 className="text-xl font-semibold mb-2">{t("runs.noScheduledRuns")}</h3>
       <p className="text-muted-foreground mb-6 max-w-md">
-        Scheduled runs define how DQX Studio automatically processes your data quality checks
-        on a recurring or time-based cadence.{isAdmin ? " Create your first schedule to get started." : ""}
+        {t("runs.noScheduledRunsDescription")}{isAdmin ? t("runs.noScheduledRunsAdminSuffix") : ""}
       </p>
       {isAdmin && (
       <Button onClick={onAddRun} className="gap-2">
         <Plus className="h-4 w-4" />
-        Create Your First Schedule
+        {t("runs.createFirstSchedule")}
       </Button>
       )}
     </div>
@@ -2118,25 +2433,26 @@ function EmptyState({ onAddRun, isAdmin }: { onAddRun: () => void; isAdmin: bool
 }
 
 function RunNotFoundState({ runName, onAddRun, isAdmin }: { runName: string; onAddRun: () => void; isAdmin: boolean }) {
+  const { t } = useTranslation();
   return (
     <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
       <div className="w-16 h-16 rounded-full bg-destructive/10 flex items-center justify-center mb-6">
         <AlertCircle className="h-8 w-8 text-destructive" />
       </div>
-      <h3 className="text-xl font-semibold mb-2">Schedule Not Found</h3>
+      <h3 className="text-xl font-semibold mb-2">{t("runs.scheduleNotFound")}</h3>
       <p className="text-muted-foreground mb-6 max-w-md">
-        The schedule configuration{" "}
-        <code className="px-1.5 py-0.5 bg-muted rounded text-sm font-mono">{runName}</code>{" "}
-        does not exist. It may have been deleted or renamed.
+        {t("runs.scheduleNotFoundDescriptionPrefix")}
+        <code className="px-1.5 py-0.5 bg-muted rounded text-sm font-mono">{runName}</code>
+        {t("runs.scheduleNotFoundDescriptionSuffix")}
       </p>
       <div className="flex gap-3">
         <Button variant="outline" asChild>
-          <Link to="/runs">View All Schedules</Link>
+          <Link to="/runs">{t("runs.viewAllSchedules")}</Link>
         </Button>
         {isAdmin && (
         <Button onClick={onAddRun} className="gap-2">
           <Plus className="h-4 w-4" />
-          Create New Schedule
+          {t("runs.createNewSchedule")}
         </Button>
         )}
       </div>
@@ -2145,14 +2461,15 @@ function RunNotFoundState({ runName, onAddRun, isAdmin }: { runName: string; onA
 }
 
 function SelectRunState() {
+  const { t } = useTranslation();
   return (
     <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
       <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center mb-6">
         <CalendarClock className="h-8 w-8 text-muted-foreground" />
       </div>
-      <h3 className="text-lg font-medium text-muted-foreground">Select a Schedule</h3>
+      <h3 className="text-lg font-medium text-muted-foreground">{t("runs.selectAScheduleTitle")}</h3>
       <p className="text-muted-foreground/70 text-sm mt-1">
-        Choose a schedule from the list to view and edit its configuration
+        {t("runs.selectAScheduleDescription")}
       </p>
     </div>
   );
@@ -2197,6 +2514,7 @@ function RunEditor({
   setIsDeleteOpen,
   isAdmin,
 }: RunEditorProps) {
+  const { t } = useTranslation();
   const isLocked = isSaving || isDeleting || !!isRunning || !isAdmin;
 
   return (
@@ -2205,47 +2523,47 @@ function RunEditor({
         <div className="flex-1">
           <h2 className="text-2xl font-bold tracking-tight">{runName}</h2>
           <p className="text-muted-foreground text-sm mt-0.5">
-            {isAdmin ? "Edit schedule configuration" : "View schedule configuration"}
-            {isDirty && isAdmin && <span className="text-amber-500 ml-2">• Unsaved changes</span>}
+            {isAdmin ? t("runs.editScheduleConfiguration") : t("runs.viewScheduleConfiguration")}
+            {isDirty && isAdmin && <span className="text-amber-500 ml-2">{t("runs.unsavedChangesIndicator")}</span>}
           </p>
         </div>
         {isAdmin && (
         <div className="flex items-center gap-2">
             {onRunNow && (
-              <Button variant="outline" size="sm" onClick={onRunNow} disabled={isDirty || isLocked} title={isDirty ? "Save changes before running" : "Run this schedule now"} className="gap-1.5">
+              <Button variant="outline" size="sm" onClick={onRunNow} disabled={isDirty || isLocked} title={isDirty ? t("runs.saveBeforeRun") : t("runs.runNowTooltip")} className="gap-1.5">
                 {isRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-                Run Now
+                {t("runs.runNow")}
               </Button>
             )}
-            <Button variant="ghost" size="icon" onClick={onReset} disabled={!isDirty || isLocked} title="Reset changes">
+            <Button variant="ghost" size="icon" onClick={onReset} disabled={!isDirty || isLocked} title={t("runs.resetChanges")}>
               <RotateCcw className="h-4 w-4" />
             </Button>
-            <Button onClick={onSave} variant="default" size="icon" disabled={!isDirty || isLocked} title="Save changes">
+            <Button onClick={onSave} variant="default" size="icon" disabled={!isDirty || isLocked} title={t("runs.saveChanges")}>
               {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
             </Button>
             <AlertDialog open={isDeleteOpen} onOpenChange={setIsDeleteOpen}>
               <AlertDialogTrigger asChild>
-                <Button variant="destructive" size="icon" disabled={isDeleting || isLocked} title="Delete Schedule">
+                <Button variant="destructive" size="icon" disabled={isDeleting || isLocked} title={t("runs.deleteSchedule")}>
                   <Trash2 className="h-4 w-4" />
                 </Button>
               </AlertDialogTrigger>
               <AlertDialogContent>
                 <AlertDialogHeader>
-                  <AlertDialogTitle>Delete Schedule</AlertDialogTitle>
+                  <AlertDialogTitle>{t("runs.deleteSchedule")}</AlertDialogTitle>
                   <AlertDialogDescription>
-                    Are you sure you want to delete the schedule{" "}
-                    <span className="font-mono font-medium">{runName}</span>? This action cannot be undone.
+                    {t("runs.deleteScheduleConfirmPrefix")}
+                    <span className="font-mono font-medium">{runName}</span>{t("runs.deleteScheduleConfirmSuffix")}
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
-                  <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+                  <AlertDialogCancel disabled={isDeleting}>{t("runs.cancel")}</AlertDialogCancel>
                   <AlertDialogAction
                     onClick={(e) => { e.preventDefault(); if (!isDeleting) onDelete(); }}
                     disabled={isDeleting}
                     className="bg-destructive text-foreground hover:bg-destructive/90"
                   >
                     {isDeleting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-                    Delete
+                    {t("runs.delete")}
                   </AlertDialogAction>
                 </AlertDialogFooter>
               </AlertDialogContent>
@@ -2263,6 +2581,7 @@ function RunEditor({
 function FormEditor({
   yamlContent, setYamlContent, setIsDirty, isLocked,
 }: { yamlContent: string; setYamlContent: (c: string) => void; setIsDirty: (d: boolean) => void; isLocked: boolean }) {
+  const { t } = useTranslation();
   const [formData, setFormData] = useState<RunConfig | null>(null);
   const [parseError, setParseError] = useState<string | null>(null);
   const [scheduleConfig, setScheduleConfig] = useState<ScheduleConfig>({ ...DEFAULT_SCHEDULE });
@@ -2336,10 +2655,10 @@ function FormEditor({
         setFormData(null);
       }
     } catch (e) {
-      setParseError(e instanceof Error ? e.message : "Failed to parse YAML");
+      setParseError(e instanceof Error ? e.message : t("runs.failedParseYaml"));
       setFormData(null);
     }
-  }, [yamlContent]);
+  }, [yamlContent, t]);
 
   const updateFormData = useCallback((updates: Partial<RunConfig>) => {
     setFormData((prev) => {
@@ -2351,11 +2670,11 @@ function FormEditor({
         setYamlContent(newYaml);
         setIsDirty(true);
       } catch {
-        toast.error("Failed to convert form data to YAML");
+        toast.error(t("runs.failedConvertYaml"));
       }
       return updated;
     });
-  }, [setYamlContent, setIsDirty]);
+  }, [setYamlContent, setIsDirty, t]);
 
   const handleScheduleChange = useCallback((cfg: ScheduleConfig) => {
     setScheduleConfig(cfg);
@@ -2368,20 +2687,20 @@ function FormEditor({
         setYamlContent(newYaml);
         setIsDirty(true);
       } catch {
-        toast.error("Failed to convert form data to YAML");
+        toast.error(t("runs.failedConvertYaml"));
       }
       return updated;
     });
-  }, [setYamlContent, setIsDirty]);
+  }, [setYamlContent, setIsDirty, t]);
 
   if (parseError) {
     return (
       <div className="h-full flex items-center justify-center">
         <div className="text-center">
           <AlertCircle className="h-12 w-12 text-destructive mx-auto mb-3" />
-          <p className="text-destructive font-medium mb-1">Invalid schedule configuration</p>
+          <p className="text-destructive font-medium mb-1">{t("runs.invalidScheduleConfig")}</p>
           <p className="text-muted-foreground text-sm">{parseError}</p>
-          <p className="text-muted-foreground text-xs mt-2">Please delete and recreate this schedule to fix the issue.</p>
+          <p className="text-muted-foreground text-xs mt-2">{t("runs.deleteRecreateHint")}</p>
         </div>
       </div>
     );
@@ -2399,35 +2718,36 @@ function FormEditor({
     <div className="h-full overflow-y-auto">
       <div className="max-w-4xl space-y-8 pr-4">
         <section>
-          <h3 className="text-lg font-semibold mb-4">Basic Configuration</h3>
+          <h3 className="text-lg font-semibold mb-4">{t("runs.basicConfiguration")}</h3>
           <div className="space-y-4">
             <div className="grid gap-2">
-              <Label htmlFor="name">Name</Label>
-              <Input id="name" value={formData.name || ""} onChange={(e) => updateFormData({ name: e.target.value })} disabled={isLocked} placeholder="e.g., daily_sales_check" />
+              <Label htmlFor="name">{t("runs.name")}</Label>
+              <Input id="name" value={formData.name || ""} onChange={(e) => updateFormData({ name: e.target.value })} disabled={isLocked} placeholder={t("runs.namePlaceholder")} />
             </div>
           </div>
         </section>
 
         <section>
           <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-            <CalendarClock className="h-5 w-5" /> Schedule
+            <CalendarClock className="h-5 w-5" /> {t("runs.schedule")}
           </h3>
           <p className="text-xs text-muted-foreground mb-3">
-            Configure when this schedule should automatically run. Choose "Manual only" to disable automatic execution.
+            {t("runs.scheduleSectionDescription")}
           </p>
           <ScheduleFrequencyPicker config={scheduleConfig} onChange={handleScheduleChange} disabled={isLocked} />
         </section>
 
         <section>
           <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-            <Database className="h-5 w-5" /> Rule Scope
+            <Database className="h-5 w-5" /> {t("runs.ruleScope")}
           </h3>
           <p className="text-xs text-muted-foreground mb-3">
-            Choose which approved rule sets to include. Select by catalog, schema, or specific tables.
-            Rules are read from the <code className="text-[10px] bg-muted px-1 py-0.5 rounded">dq_quality_rules</code> Delta table.
+            {t("runs.ruleScopeDescriptionPrefix")}
+            <code className="text-[10px] bg-muted px-1 py-0.5 rounded">dq_quality_rules</code>
+            {t("runs.ruleScopeDescriptionSuffix")}
           </p>
           {approvedTables.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No approved rules found. Approve rules in Drafts & review first.</p>
+            <p className="text-sm text-muted-foreground">{t("runs.noApprovedRulesFound")}</p>
           ) : (
             <ScopePicker
               config={scheduleConfig}

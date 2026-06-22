@@ -1,8 +1,9 @@
 import { createFileRoute, useNavigate, Navigate } from "@tanstack/react-router";
 import { useUnsavedGuard } from "@/hooks/use-unsaved-guard";
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import { useTranslation, Trans } from "react-i18next";
 import { usePermissions } from "@/hooks/use-permissions";
-import { PageBreadcrumb } from "@/components/apx/PageBreadcrumb";
+import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
 import {
   Card,
   CardContent,
@@ -104,7 +105,14 @@ type SearchParams = { table?: string; rule_id?: string; from?: string };
  * filled when the user picks the function so the input doesn't render as
  * blank.
  */
-type ArgType = "column" | "list_csv" | "number" | "string" | "boolean";
+type ArgType =
+  | "column"
+  | "list_csv"
+  | "number"
+  | "string"
+  | "boolean"
+  | "ref_table"
+  | "ref_columns";
 
 interface CheckFunctionArg {
   /** Local key under ``CheckDraft.args``. ``col_name`` is mapped to the
@@ -114,6 +122,11 @@ interface CheckFunctionArg {
   label: string;
   type: ArgType;
   required: boolean;
+  /** True when this single ``col_name`` input actually maps to the
+   *  engine's ``columns`` *list* (e.g. ``is_unique``, ``foreign_key``).
+   *  Drives both serialization (CSV → list under ``columns``) and the
+   *  column-extraction used for target-table filtering. */
+  isColumnsList?: boolean;
   /** Default to inject when the function is selected (used for booleans
    *  so the dropdown shows DQX's documented default). */
   defaultValue?: string;
@@ -149,88 +162,100 @@ interface CheckFunctionDef {
  * out of the box; we only add an entry when the default is wrong or
  * confusing.
  */
+type TFunc = (key: string, options?: Record<string, unknown>) => string;
+
 type ArgOverride = Partial<Pick<CheckFunctionArg, "label" | "hint" | "help">>;
 interface CheckFunctionOverride {
   /** Cross-argument validator (e.g. ``is_in_range`` requires at least one bound). */
-  crossArgValidate?: (args: Record<string, string>) => string | null;
+  crossArgValidate?: (args: Record<string, string>, t: TFunc) => string | null;
   /** Per-argument label/hint/help overrides keyed by *engine* parameter name. */
   args?: Record<string, ArgOverride>;
 }
 
-const CHECK_FUNCTION_OVERRIDES: Record<string, CheckFunctionOverride> = {
-  // ``is_in_range`` — each bound is individually optional in DQX, but a
-  // check with neither bound is meaningless. Demand at least one.
-  is_in_range: {
-    crossArgValidate: (args) => {
-      const hasMin = (args.min_limit ?? "").trim() !== "";
-      const hasMax = (args.max_limit ?? "").trim() !== "";
-      if (!hasMin && !hasMax) return "Provide at least one of Min Limit or Max Limit.";
-      return null;
-    },
-  },
-  is_not_in_range: {
-    crossArgValidate: (args) => {
-      const hasMin = (args.min_limit ?? "").trim() !== "";
-      const hasMax = (args.max_limit ?? "").trim() !== "";
-      if (!hasMin && !hasMax) return "Provide at least one of Min Limit or Max Limit.";
-      return null;
-    },
-  },
-  // ``is_unique`` accepts a list of columns. The UI captures them as a
-  // CSV under ``col_name``; surface that intent in the placeholder.
-  is_unique: {
-    args: {
-      columns: { label: "Column Name(s)", hint: "comma-separated, e.g. id or col1, col2" },
-      nulls_distinct: {
-        help: "When true (default), NULL values are treated as distinct from each other.",
+function buildCheckFunctionOverrides(t: TFunc): Record<string, CheckFunctionOverride> {
+  return {
+    is_in_range: {
+      crossArgValidate: (args) => {
+        const hasMin = (args.min_limit ?? "").trim() !== "";
+        const hasMax = (args.max_limit ?? "").trim() !== "";
+        if (!hasMin && !hasMax) return t("rulesSingleTable.crossArgRangeNeedsBound");
+        return null;
       },
     },
-  },
-  is_not_empty: {
-    args: { trim_strings: { help: "When true, treat whitespace-only values as empty." } },
-  },
-  is_not_null_and_not_empty: {
-    args: { trim_strings: { help: "When true, treat whitespace-only values as empty." } },
-  },
-  is_empty: {
-    args: { trim_strings: { help: "When true, treat whitespace-only values as empty." } },
-  },
-  is_null_or_empty: {
-    args: { trim_strings: { help: "When true, treat whitespace-only values as empty." } },
-  },
-  is_in_list: {
-    args: {
-      case_sensitive: { help: "When false, the comparison is case-insensitive." },
+    is_not_in_range: {
+      crossArgValidate: (args) => {
+        const hasMin = (args.min_limit ?? "").trim() !== "";
+        const hasMax = (args.max_limit ?? "").trim() !== "";
+        if (!hasMin && !hasMax) return t("rulesSingleTable.crossArgRangeNeedsBound");
+        return null;
+      },
     },
-  },
-  is_not_in_list: {
-    args: {
-      case_sensitive: { help: "When false, the comparison is case-insensitive." },
+    is_unique: {
+      args: {
+        columns: {
+          label: t("rulesSingleTable.overrideColumnsLabel"),
+          hint: t("rulesSingleTable.argHintIsUniqueColumns"),
+        },
+        nulls_distinct: { help: t("rulesSingleTable.overrideHelpNullsDistinct") },
+      },
     },
-  },
-  is_valid_date: {
-    args: {
-      date_format: { help: "Optional. Leave blank to use DQX's default ISO date parser." },
+    foreign_key: {
+      args: {
+        columns: {
+          label: t("rulesSingleTable.overrideColumnsLabel"),
+          hint: t("rulesSingleTable.argHintIsUniqueColumns"),
+        },
+      },
     },
-  },
-  is_valid_timestamp: {
-    args: {
-      timestamp_format: { help: "Optional. Leave blank to use DQX's default ISO timestamp parser." },
+    has_valid_schema: {
+      // ``columns`` here is NOT the column being checked — it optionally
+      // restricts the schema comparison to a subset of the table's columns.
+      // Relabel so it isn't confused with the per-row "Column Name" input or
+      // with the expected-schema column list.
+      args: {
+        columns: {
+          label: t("rulesSingleTable.overrideSchemaColumnsLabel"),
+          hint: t("rulesSingleTable.overrideSchemaColumnsHint"),
+          help: t("rulesSingleTable.overrideSchemaColumnsHelp"),
+        },
+      },
     },
-  },
-  sql_expression: {
-    args: {
-      negate: { help: "When true, the rule fails when the expression evaluates to true." },
-      msg: { hint: "Optional error message override" },
-      name: { hint: "Optional custom name" },
+    is_not_empty: {
+      args: { trim_strings: { help: t("rulesSingleTable.overrideHelpTrimStrings") } },
     },
-  },
-  regex_match: {
-    args: {
-      negate: { help: "When true, the rule fails when the value matches the pattern." },
+    is_not_null_and_not_empty: {
+      args: { trim_strings: { help: t("rulesSingleTable.overrideHelpTrimStrings") } },
     },
-  },
-};
+    is_empty: {
+      args: { trim_strings: { help: t("rulesSingleTable.overrideHelpTrimStrings") } },
+    },
+    is_null_or_empty: {
+      args: { trim_strings: { help: t("rulesSingleTable.overrideHelpTrimStrings") } },
+    },
+    is_in_list: {
+      args: { case_sensitive: { help: t("rulesSingleTable.overrideHelpCaseSensitive") } },
+    },
+    is_not_in_list: {
+      args: { case_sensitive: { help: t("rulesSingleTable.overrideHelpCaseSensitive") } },
+    },
+    is_valid_date: {
+      args: { date_format: { help: t("rulesSingleTable.overrideHelpDateFormat") } },
+    },
+    is_valid_timestamp: {
+      args: { timestamp_format: { help: t("rulesSingleTable.overrideHelpTimestampFormat") } },
+    },
+    sql_expression: {
+      args: {
+        negate: { help: t("rulesSingleTable.overrideHelpNegateExpression") },
+        msg: { hint: t("rulesSingleTable.overrideHintMsg") },
+        name: { hint: t("rulesSingleTable.overrideHintName") },
+      },
+    },
+    regex_match: {
+      args: { negate: { help: t("rulesSingleTable.overrideHelpNegateRegex") } },
+    },
+  };
+}
 
 /**
  * Module-level mutable registry, populated from
@@ -258,6 +283,7 @@ function apiParamToArg(
   param: ApiCheckFunctionParam,
   overrides: Record<string, ArgOverride> | undefined,
   fnName: string,
+  t: TFunc,
 ): CheckFunctionArg {
   const isColumnParam = param.kind === "column" || param.kind === "columns";
   const localName = isColumnParam ? "col_name" : param.name;
@@ -266,7 +292,7 @@ function apiParamToArg(
   // ``columns`` list-of-columns is rendered through the same column
   // input but with a multi-column hint; honour any explicit override
   // first, then fall back to the generic per-arg hint.
-  const defaultHint = argHint(localName, fnName) || (param.kind === "columns" ? "comma-separated, e.g. id or col1, col2" : undefined);
+  const defaultHint = argHint(localName, fnName, t) || (param.kind === "columns" ? t("rulesSingleTable.argHintIsUniqueColumns") : undefined);
   const type: ArgType =
     param.kind === "boolean"
       ? "boolean"
@@ -274,15 +300,23 @@ function apiParamToArg(
       ? "number"
       : param.kind === "list"
       ? "list_csv"
+      : param.kind === "ref_table"
+      ? "ref_table"
+      : param.kind === "ref_columns"
+      ? "ref_columns"
       : isColumnParam
       ? "column"
       : "string";
   const arg: CheckFunctionArg = {
     name: localName,
-    label: ov.label ?? argLabel(localName),
+    label: ov.label ?? argLabel(localName, t),
     type,
     required: param.required,
   };
+  // Remember when the single ``col_name`` input feeds the engine's
+  // ``columns`` list so serialization + column extraction handle it
+  // generically (not just for ``is_unique``).
+  if (param.kind === "columns") arg.isColumnsList = true;
   const hint = ov.hint ?? defaultHint;
   if (hint) arg.hint = hint;
   const help = ov.help;
@@ -291,10 +325,12 @@ function apiParamToArg(
   return arg;
 }
 
-function apiToCheckFunctions(apiList: ApiCheckFunctionDef[]): CheckFunctionDef[] {
+function apiToCheckFunctions(apiList: ApiCheckFunctionDef[], t: TFunc): CheckFunctionDef[] {
+  const overridesByFn = buildCheckFunctionOverrides(t);
   return apiList.map((api) => {
-    const overrides = CHECK_FUNCTION_OVERRIDES[api.name];
-    const args = (api.params ?? []).map((p) => apiParamToArg(p, overrides?.args, api.name));
+    const overrides = overridesByFn[api.name];
+    const args = (api.params ?? []).map((p) => apiParamToArg(p, overrides?.args, api.name, t));
+    const crossValidator = overrides?.crossArgValidate;
     return {
       value: api.name,
       label: api.name,
@@ -302,8 +338,8 @@ function apiToCheckFunctions(apiList: ApiCheckFunctionDef[]): CheckFunctionDef[]
       category: api.category,
       ruleType: api.rule_type,
       args,
-      ...(overrides?.crossArgValidate
-        ? { crossArgValidate: overrides.crossArgValidate }
+      ...(crossValidator
+        ? { crossArgValidate: (args: Record<string, string>) => crossValidator(args, t) }
         : {}),
     };
   });
@@ -316,10 +352,11 @@ function apiToCheckFunctions(apiList: ApiCheckFunctionDef[]): CheckFunctionDef[]
  * helpers read the mirrored variable directly.
  */
 function useCheckFunctionsRegistry(): CheckFunctionDef[] {
+  const { t } = useTranslation();
   const { data } = useListCheckFunctions();
   const fns = useMemo(
-    () => apiToCheckFunctions(data?.data?.functions ?? []),
-    [data],
+    () => apiToCheckFunctions(data?.data?.functions ?? [], t),
+    [data, t],
   );
   useEffect(() => {
     CHECK_FUNCTIONS = fns;
@@ -385,9 +422,10 @@ function checkToDict(c: CheckDraft): Record<string, unknown> {
     // Drop UI-only ``col_name`` for known functions that don't take it.
     if (k === "col_name" && isKnownFn && !argDefByName.has("col_name")) continue;
 
-    // ``is_unique`` is special: the UI captures one or more columns under
-    // ``col_name`` (CSV) but DQX expects a ``columns`` list.
-    if (c.fn === "is_unique" && k === "col_name") {
+    // Functions whose ``col_name`` input maps to the engine's ``columns``
+    // *list* (``is_unique``, ``foreign_key``, …): the UI captures one or
+    // more columns under ``col_name`` (CSV) but DQX expects a list.
+    if (k === "col_name" && argDefByName.get("col_name")?.isColumnsList) {
       args["columns"] = v.split(",").map((s) => s.trim()).filter(Boolean);
       continue;
     }
@@ -397,6 +435,7 @@ function checkToDict(c: CheckDraft): Record<string, unknown> {
 
     if (argDef) {
       switch (argDef.type) {
+        case "ref_columns":
         case "list_csv":
           args[engineKey] = v.split(",").map((s) => s.trim()).filter(Boolean);
           break;
@@ -408,6 +447,7 @@ function checkToDict(c: CheckDraft): Record<string, unknown> {
         case "boolean":
           args[engineKey] = v.toLowerCase() === "true";
           break;
+        case "ref_table":
         default:
           args[engineKey] = v;
       }
@@ -452,7 +492,9 @@ function checkToDict(c: CheckDraft): Record<string, unknown> {
 function getCheckColumns(c: CheckDraft): string[] {
   const colName = c.args["col_name"];
   if (!colName || colName.trim() === "*") return [];
-  if (c.fn === "is_unique") {
+  const fnDef = CHECK_FUNCTIONS.find((f) => f.value === c.fn);
+  const colArg = fnDef?.args.find((a) => a.name === "col_name");
+  if (colArg?.isColumnsList || c.fn === "is_unique") {
     return colName.split(",").map((s) => s.trim()).filter(Boolean);
   }
   return [colName];
@@ -529,9 +571,15 @@ export const Route = createFileRoute("/_sidebar/rules/single-table")({
 // ──────────────────────────────────────────────────────────────────────────────
 
 function UnifiedRulesPage() {
+  // Thin guard so the inner component's hook count stays stable across
+  // permission-cache refreshes (see Rules of Hooks).
   const { canCreateRules } = usePermissions();
   if (!canCreateRules) return <Navigate to="/rules/active" replace />;
+  return <UnifiedRulesPageInner />;
+}
 
+function UnifiedRulesPageInner() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const { table: initialTable, rule_id: editRuleId, from: fromPage } = Route.useSearch();
   const isTableFqn = (initialTable ?? "").split(".").length === 3;
@@ -590,7 +638,7 @@ function UnifiedRulesPage() {
           draft.ruleId = editRuleId;
           draft.originalTable = target.table_fqn;
           setChecks([draft]);
-          toast.info(`Editing rule for ${target.table_fqn.split(".").pop()}`);
+          toast.info(t("rulesSingleTable.editingRuleFor", { table: target.table_fqn.split(".").pop() }));
         }
       }
     } else {
@@ -610,7 +658,7 @@ function UnifiedRulesPage() {
         }
         if (drafts.length > 0) {
           setChecks(drafts);
-          toast.info(`Loaded ${drafts.length} existing rule${drafts.length > 1 ? "s" : ""} for ${initialTable!.split(".").pop()}`);
+          toast.info(t("rulesSingleTable.loadedExistingRules", { count: drafts.length, table: initialTable!.split(".").pop() }));
         }
       }
     }
@@ -656,18 +704,18 @@ function UnifiedRulesPage() {
           const resp = await dryRunResultsQuery.refetch();
           if (resp.data?.data) {
             setDryRunResult(resp.data.data);
-            toast.success("Dry run complete");
+            toast.success(t("rulesSingleTable.toastDryRunComplete"));
           }
         } catch {
-          toast.error("Failed to fetch dry run results");
+          toast.error(t("rulesSingleTable.toastDryRunFetchFailed"));
         }
       } else {
-        toast.error(`Dry run failed: ${status.message || "Unknown error"}`);
+        toast.error(t("rulesSingleTable.toastDryRunFailed", { message: status.message || t("rulesSingleTable.toastUnknownError") }));
       }
       setDryRunJobRunId(null);
     },
     onError: () => {
-      toast.error("Failed to check dry run status");
+      toast.error(t("rulesSingleTable.toastFailedCheckStatus"));
     },
   });
 
@@ -700,20 +748,20 @@ function UnifiedRulesPage() {
       if (empties.length === 0) {
         // Every check already has a target — surface a hint so the user
         // knows the discovery selection is intentional but not applied.
-        toast.info("All checks already have a target table.", {
-          description: `Use a check's "Target tables" panel to add ${fqn} explicitly.`,
+        toast.info(t("rulesSingleTable.toastAllChecksHaveTarget"), {
+          description: t("rulesSingleTable.toastAllChecksHaveTargetDescription", { table: fqn }),
         });
         return prev;
       }
-      toast.success(`Targeted ${empties.length} check${empties.length === 1 ? "" : "s"} at ${fqn}`, {
-        description: "Checks with explicit targets were left unchanged.",
+      toast.success(t("rulesSingleTable.toastTargetedChecks", { count: empties.length, table: fqn }), {
+        description: t("rulesSingleTable.toastTargetedChecksDescription"),
         duration: 2500,
       });
       return prev.map((c) =>
         c.targetTables.length === 0 ? { ...c, targetTables: [fqn] } : c,
       );
     });
-  }, []);
+  }, [t]);
 
   const hasRefTable = aiReferenceTable.split(".").length === 3;
   const effectiveTable = hasRefTable ? aiReferenceTable : (isTableFqn ? initialTable : undefined);
@@ -737,15 +785,15 @@ function UnifiedRulesPage() {
         }
       }
       if (drafts.length === 0) {
-        toast.error("AI did not generate any valid checks. Try a different description.");
+        toast.error(t("rulesSingleTable.toastAiNoChecks"));
         return;
       }
       const hasOnlyEmptyDefault = checks.length === 1 && checks[0].fn === "";
       setChecks(hasOnlyEmptyDefault ? drafts : [...checks, ...drafts]);
-      toast.success(`${drafts.length} check${drafts.length > 1 ? "s" : ""} generated by AI`);
+      toast.success(t("rulesSingleTable.toastAiGenerated", { count: drafts.length }));
       setAiPrompt("");
     } catch {
-      toast.error("AI generation failed. Please try again.");
+      toast.error(t("rulesSingleTable.toastAiFailed"));
     } finally {
       setAiGenerating(false);
     }
@@ -779,30 +827,46 @@ function UnifiedRulesPage() {
           if (def.crossArgValidate && def.crossArgValidate(c.args) !== null) {
             return false;
           }
+          // Mutually-exclusive groups must have exactly one member filled
+          // (e.g. has_valid_schema needs expected_schema OR ref_table — never
+          // neither, never both). Both are individually optional, so the
+          // required-arg check above can't catch an empty group.
+          for (const group of MUTUALLY_EXCLUSIVE_ARGS[c.fn] ?? []) {
+            const filled = group.filter((g) => (c.args[g] ?? "").trim() !== "");
+            if (filled.length !== 1) return false;
+          }
           // Per-arg syntax must pass.
-          return def.args.every((a) => validateArg(a.name, c.args[a.name] ?? "", c.fn) === null);
+          return def.args.every((a) => validateArg(a.name, c.args[a.name] ?? "", c.fn, t) === null);
         }
         // Custom/unknown function: valid as long as all populated args are non-empty.
         return Object.values(c.args).every((v) => (v ?? "").trim() !== "");
       }) &&
       totalTargetPairs > 0
     );
-  }, [checks, totalTargetPairs, checkFunctions]);
+  }, [checks, totalTargetPairs, checkFunctions, t]);
 
   const validationMessage = useMemo(() => {
-    if (checks.some((c) => c.fn === "")) return "Select a function for every check";
-    if (totalTargetPairs === 0) return "Assign at least one target table to a check";
+    if (checks.some((c) => c.fn === "")) return t("rulesSingleTable.selectFunctionForEvery");
+    if (totalTargetPairs === 0) return t("rulesSingleTable.assignAtLeastOneTable");
     // Surface the first incomplete required arg so the user knows what's missing.
     for (const c of checks) {
       const def = checkFunctions.find((f) => f.value === c.fn);
       if (!def) continue;
       const missing = def.args.find((a) => a.required && (c.args[a.name] ?? "").trim() === "");
-      if (missing) return `"${missing.label}" is required for ${def.label}`;
+      if (missing) return t("rulesSingleTable.argRequiredFor", { label: missing.label, fn: def.label });
       const crossErr = def.crossArgValidate?.(c.args);
       if (crossErr) return crossErr;
+      // Mutually-exclusive groups: surface "provide one of …" / "only one of …".
+      for (const group of MUTUALLY_EXCLUSIVE_ARGS[c.fn] ?? []) {
+        const labelOf = (g: string) => def.args.find((a) => a.name === g)?.label ?? g;
+        const options = group.map(labelOf).join(" / ");
+        const filled = group.filter((g) => (c.args[g] ?? "").trim() !== "");
+        if (filled.length === 0) return t("rulesSingleTable.mutexRequireOneFor", { fn: def.label, options });
+        if (filled.length > 1) return t("rulesSingleTable.mutexTooManyFor", { fn: def.label, options });
+      }
     }
     return null;
-  }, [checks, totalTargetPairs, checkFunctions]);
+  }, [checks, totalTargetPairs, checkFunctions, t]);
 
   // ── Real-time duplicate detection ──────────────────────────────────
   const [dupCheckIds, setDupCheckIds] = useState<Set<string>>(new Set());
@@ -893,12 +957,12 @@ function UnifiedRulesPage() {
 
   const handleDryRun = async () => {
     if (!dryRunTable) {
-      toast.error("Select a table to run a dry run against");
+      toast.error(t("rulesSingleTable.toastSelectTable"));
       return;
     }
     const checksForTable = buildChecksForTable(checks, dryRunTable);
     if (checksForTable.length === 0) {
-      toast.error("No checks target the selected table");
+      toast.error(t("rulesSingleTable.toastNoChecksTargetTable"));
       return;
     }
     try {
@@ -909,11 +973,11 @@ function UnifiedRulesPage() {
       setDryRunRunId(resp.data.run_id);
       setDryRunJobRunId(resp.data.job_run_id);
       setDryRunViewFqn(resp.data.view_fqn ?? null);
-      toast.info("Dry run submitted — waiting for results...");
+      toast.info(t("rulesSingleTable.toastDryRunSubmitted"));
     } catch (err) {
       const axErr = err as { response?: { data?: { detail?: string } } };
       const detail = axErr?.response?.data?.detail;
-      toast.error(detail ? `Dry run failed: ${detail}` : "Failed to submit dry run");
+      toast.error(detail ? t("rulesSingleTable.toastDryRunSubmitFailedDetail", { detail }) : t("rulesSingleTable.toastDryRunSubmitFailed"));
       console.error("Dry run error:", err);
     }
   };
@@ -923,7 +987,7 @@ function UnifiedRulesPage() {
       const fnDef = checkFunctions.find((f) => f.value === c.fn);
       if (fnDef) {
         // Per-arg syntax errors.
-        if (fnDef.args.some((a) => validateArg(a.name, c.args[a.name] ?? "", c.fn) !== null)) {
+        if (fnDef.args.some((a) => validateArg(a.name, c.args[a.name] ?? "", c.fn, t) !== null)) {
           return true;
         }
         // Cross-arg constraints.
@@ -933,14 +997,14 @@ function UnifiedRulesPage() {
         return false;
       }
       // Custom/unknown function — best-effort syntax check on every populated arg.
-      return Object.keys(c.args).some((arg) => validateArg(arg, c.args[arg] ?? "", c.fn) !== null);
+      return Object.keys(c.args).some((arg) => validateArg(arg, c.args[arg] ?? "", c.fn, t) !== null);
     });
-  }, [checks, checkFunctions]);
+  }, [checks, checkFunctions, t]);
 
   // Save handlers
   const handleSave = async (andSubmit: boolean) => {
     if (hasArgErrors) {
-      toast.error("Fix validation errors before saving.");
+      toast.error(t("rulesSingleTable.toastFixValidationErrors"));
       return;
     }
     setIsSaving(true);
@@ -977,23 +1041,23 @@ function UnifiedRulesPage() {
               if (r.rule_id) {
                 try { await submitRuleForApproval(r.rule_id); } catch (submitErr) {
                   const detail = (submitErr as { body?: { detail?: string } })?.body?.detail ?? String(submitErr);
-                  toast.warning(`Rule updated but submission failed: ${detail}`, { duration: 6000 });
+                  toast.warning(t("rulesSingleTable.toastUpdatedSubmissionFailed", { detail }), { duration: 6000 });
                 }
               }
             }
           }
         } catch (e) {
           const detail = (e as { body?: { detail?: string } })?.body?.detail ?? String(e);
-          failedMessages.push(`Update failed: ${detail}`);
+          failedMessages.push(t("rulesSingleTable.toastUpdateFailed", { detail }));
         }
         // Queue any *added* tables as fresh rules.
-        for (const t of c.targetTables) {
-          if (t === orig) continue;
-          additionalRuleSpecs.push({ check: c, table: t });
+        for (const tbl of c.targetTables) {
+          if (tbl === orig) continue;
+          additionalRuleSpecs.push({ check: c, table: tbl });
         }
         if (!stillTargetsOriginal) {
           toast.warning(
-            `${orig.split(".").pop()}: original target was removed in the editor but the rule was kept. Delete it from Drafts if you no longer want it.`,
+            t("rulesSingleTable.toastOriginalTargetRemoved", { table: orig.split(".").pop() }),
             { duration: 7000 },
           );
         }
@@ -1036,7 +1100,7 @@ function UnifiedRulesPage() {
         }
         if (dupMessages.length > 0) {
           toast.error(
-            `Duplicate rules already exist and cannot be saved:\n${dupMessages.join("\n")}`,
+            t("rulesSingleTable.toastDuplicatesExist", { messages: dupMessages.join("\n") }),
             { duration: 8000 },
           );
           if (updatedCount === 0) { setIsSaving(false); return; }
@@ -1051,7 +1115,7 @@ function UnifiedRulesPage() {
                   if (r.rule_id) {
                     try { await submitRuleForApproval(r.rule_id); } catch (submitErr) {
                       const detail = (submitErr as { body?: { detail?: string } })?.body?.detail ?? String(submitErr);
-                      toast.warning(`Rule saved but submission failed: ${detail}`, { duration: 6000 });
+                      toast.warning(t("rulesSingleTable.toastSavedSubmissionFailed", { detail }), { duration: 6000 });
                     }
                   }
                 }
@@ -1068,12 +1132,12 @@ function UnifiedRulesPage() {
       const totalSuccess = updatedCount + createdCount;
       if (totalSuccess > 0) {
         const parts: string[] = [];
-        if (updatedCount > 0) parts.push(`${updatedCount} updated`);
-        if (createdCount > 0) parts.push(`${createdCount} created`);
+        if (updatedCount > 0) parts.push(t("rulesSingleTable.toastUpdatedCount", { count: updatedCount }));
+        if (createdCount > 0) parts.push(t("rulesSingleTable.toastCreatedCount", { count: createdCount }));
         toast.success(
           andSubmit
-            ? `Rules ${parts.join(", ")} and submitted`
-            : `Rules ${parts.join(", ")} as drafts`,
+            ? t("rulesSingleTable.toastRulesSavedAndSubmitted", { parts: parts.join(", ") })
+            : t("rulesSingleTable.toastRulesSavedAsDrafts", { parts: parts.join(", ") }),
         );
       }
       if (failedMessages.length > 0) {
@@ -1084,7 +1148,7 @@ function UnifiedRulesPage() {
         navigate({ to: "/rules/drafts" });
       }
     } catch {
-      toast.error("Failed to save rules");
+      toast.error(t("rulesSingleTable.toastFailedSaveRules"));
     } finally {
       setIsSaving(false);
     }
@@ -1097,7 +1161,7 @@ function UnifiedRulesPage() {
     return (
       <div className="flex items-center justify-center py-20 gap-3 text-muted-foreground">
         <Loader2 className="h-5 w-5 animate-spin" />
-        <span>Loading rules for {initialTable?.split(".").pop()}...</span>
+        <span>{t("rulesSingleTable.loadingRulesFor", { table: initialTable?.split(".").pop() })}</span>
       </div>
     );
   }
@@ -1107,17 +1171,17 @@ function UnifiedRulesPage() {
       {/* Header */}
       <div className="space-y-2">
         <PageBreadcrumb
-          items={[{ label: "Create Rules", to: "/rules/create" }]}
-          page={isEditMode ? "Edit rules" : "Single table rules"}
+          items={[{ label: t("rulesSingleTable.createRulesBreadcrumb"), to: "/rules/create" }]}
+          page={isEditMode ? t("rulesSingleTable.editTitle") : t("rulesSingleTable.title")}
         />
         <div>
           <h1 className="text-2xl font-bold tracking-tight">
-            {isEditMode ? "Edit rules" : "Single table rules"}
+            {isEditMode ? t("rulesSingleTable.editTitle") : t("rulesSingleTable.title")}
           </h1>
           <p className="text-muted-foreground">
             {isEditMode
-              ? `Editing rules for ${initialTable}. Run a dry run or save changes.`
-              : "Define rules with AI or manually, assign tables, then validate and save."}
+              ? t("rulesSingleTable.editSubtitle", { table: initialTable })
+              : t("rulesSingleTable.createSubtitle")}
           </p>
         </div>
       </div>
@@ -1127,7 +1191,7 @@ function UnifiedRulesPage() {
         <CardHeader>
           <CardTitle className="text-base flex items-center gap-2">
             <span className="inline-flex items-center justify-center h-6 w-6 rounded-full bg-primary text-primary-foreground text-xs font-bold">1</span>
-            Define Rules
+            {t("rulesSingleTable.defineRulesStep")}
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-5">
@@ -1135,11 +1199,11 @@ function UnifiedRulesPage() {
           <div className="border border-violet-200 dark:border-violet-800 rounded-lg p-4 bg-violet-50/50 dark:bg-violet-950/30 space-y-3">
             <div className="flex items-center gap-2 mb-1">
               <Sparkles className="h-4 w-4 text-violet-600 dark:text-violet-400" />
-              <span className="text-sm font-medium text-violet-900 dark:text-violet-200">Generate with AI</span>
+              <span className="text-sm font-medium text-violet-900 dark:text-violet-200">{t("rulesSingleTable.generateWithAi")}</span>
             </div>
             <div className="space-y-2">
               <Label className="text-xs text-muted-foreground">
-                Reference table (optional — provides column context to AI)
+                {t("rulesSingleTable.referenceTableLabel")}
               </Label>
               <CatalogBrowser
                 value={aiReferenceTable}
@@ -1151,7 +1215,7 @@ function UnifiedRulesPage() {
               <Textarea
                 value={aiPrompt}
                 onChange={(e) => setAiPrompt(e.target.value)}
-                placeholder="e.g. All ID columns must not be null, email must be valid format, amounts must be positive"
+                placeholder={t("rulesSingleTable.aiPromptPlaceholder")}
                 className="min-h-[52px] resize-none text-sm"
                 disabled={aiGenerating}
                 onKeyDown={(e) => {
@@ -1172,7 +1236,7 @@ function UnifiedRulesPage() {
                 ) : (
                   <Sparkles className="h-3.5 w-3.5" />
                 )}
-                {aiGenerating ? "Generating..." : "Generate"}
+                {aiGenerating ? t("rulesSingleTable.generating") : t("rulesSingleTable.generate")}
               </Button>
             </div>
           </div>
@@ -1198,7 +1262,7 @@ function UnifiedRulesPage() {
               ))}
               <Button variant="outline" size="sm" onClick={addCheck} className="gap-1" disabled={isBusy}>
                 <Plus className="h-3 w-3" />
-                Add check
+                {t("rulesSingleTable.addCheck")}
               </Button>
             </div>
             <div className="order-1 xl:order-2 min-w-0">
@@ -1218,10 +1282,10 @@ function UnifiedRulesPage() {
         <CardHeader>
           <CardTitle className="text-base flex items-center gap-2">
             <span className="inline-flex items-center justify-center h-6 w-6 rounded-full bg-primary text-primary-foreground text-xs font-bold">2</span>
-            Validate & Save
+            {t("rulesSingleTable.validateSaveStep")}
           </CardTitle>
           <CardDescription>
-            Run a dry run against a specific table to validate, then save rules.
+            {t("rulesSingleTable.validateSaveDescription")}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
@@ -1231,30 +1295,29 @@ function UnifiedRulesPage() {
               <div className="flex items-center gap-3 flex-wrap">
                 <Select value={dryRunTable} onValueChange={setDryRunTable}>
                   <SelectTrigger className="h-9 text-xs max-w-xs">
-                    <SelectValue placeholder="Select table for dry run..." />
+                    <SelectValue placeholder={t("rulesSingleTable.selectTableForDryRun")} />
                   </SelectTrigger>
                   <SelectContent>
-                    {allTargetTables.map((t) => (
-                      <SelectItem key={t} value={t} className="text-xs font-mono">
-                        {t}
+                    {allTargetTables.map((tbl) => (
+                      <SelectItem key={tbl} value={tbl} className="text-xs font-mono">
+                        {tbl}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
                 <div className="flex items-center gap-1.5">
                   <Label className="text-xs text-muted-foreground whitespace-nowrap flex items-center gap-1">
-                    Sample rows
+                    {t("rulesSingleTable.sampleRows")}
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <Info className="h-3 w-3 cursor-help" />
                       </TooltipTrigger>
                       <TooltipContent className="max-w-xs">
                         <p className="text-xs leading-relaxed">
-                          Dry-run validates only the first <strong>1–10,000 rows</strong>{" "}
-                          of the selected table — it&apos;s a fast preview, not a
-                          full validation. To run rules against every row, go to{" "}
-                          <strong>Run Rules</strong> and pick{" "}
-                          <strong>&quot;All rows&quot;</strong>.
+                          <Trans
+                            i18nKey="rulesSingleTable.sampleRowsTooltip"
+                            components={{ strong: <strong /> }}
+                          />
                         </p>
                       </TooltipContent>
                     </Tooltip>
@@ -1269,7 +1332,7 @@ function UnifiedRulesPage() {
                     className="w-24 h-9 text-xs"
                   />
                   <span className="text-[10px] text-muted-foreground whitespace-nowrap">
-                    max 10,000
+                    {t("rulesSingleTable.maxRows")}
                   </span>
                 </div>
                 <Button
@@ -1284,7 +1347,7 @@ function UnifiedRulesPage() {
                   ) : (
                     <Play className="h-4 w-4" />
                   )}
-                  {isDryRunning ? "Running..." : "Dry Run"}
+                  {isDryRunning ? t("rulesSingleTable.running") : t("rulesSingleTable.dryRun")}
                 </Button>
               </div>
 
@@ -1292,7 +1355,7 @@ function UnifiedRulesPage() {
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   <Loader2 className="h-4 w-4 animate-spin" />
                   <span>
-                    Job status: <span className="font-medium">{dryRunPolling.status.state}</span>
+                    {t("rulesSingleTable.jobStatus")} <span className="font-medium">{dryRunPolling.status.state}</span>
                   </span>
                 </div>
               )}
@@ -1319,14 +1382,19 @@ function UnifiedRulesPage() {
                 <>
                   <AlertCircle className="h-4 w-4 text-red-500" />
                   <span className="text-red-600">
-                    {dupCheckIds.size} check{dupCheckIds.size !== 1 ? "s" : ""} already exist for the selected table{allTargetTables.length !== 1 ? "s" : ""}
+                    {t("rulesSingleTable.duplicateChecksExist", {
+                      count: dupCheckIds.size,
+                      tables: t("rulesSingleTable.selectedTable", { count: allTargetTables.length }),
+                    })}
                   </span>
                 </>
               ) : (
                 <span>
-                  {checks.filter((c) => c.fn !== "").length} check{checks.filter((c) => c.fn !== "").length !== 1 ? "s" : ""} &rarr;{" "}
-                  <strong>{totalTargetPairs}</strong> rule{totalTargetPairs !== 1 ? "s" : ""} across{" "}
-                  <strong>{allTargetTables.length}</strong> table{allTargetTables.length !== 1 ? "s" : ""}
+                  {t("rulesSingleTable.summary", {
+                    checks: t("rulesSingleTable.summaryChecks", { count: checks.filter((c) => c.fn !== "").length }),
+                    rules: t("rulesSingleTable.summaryRules", { count: totalTargetPairs }),
+                    tables: t("rulesSingleTable.summaryTables", { count: allTargetTables.length }),
+                  })}
                   {dupChecking && <Loader2 className="inline h-3 w-3 animate-spin ml-2" />}
                 </span>
               )}
@@ -1337,7 +1405,7 @@ function UnifiedRulesPage() {
                 onClick={() => navigate({ to: cancelTarget })}
                 disabled={isBusy}
               >
-                Cancel
+                {t("common.cancel")}
               </Button>
               <Button
                 variant="outline"
@@ -1350,7 +1418,7 @@ function UnifiedRulesPage() {
                 ) : (
                   <Save className="h-4 w-4" />
                 )}
-                {isSingleRuleEdit ? "Update rule" : "Save as drafts"}
+                {isSingleRuleEdit ? t("rulesSingleTable.updateRule") : t("rulesSingleTable.saveAsDrafts")}
               </Button>
               <Button
                 onClick={() => handleSave(true)}
@@ -1362,7 +1430,7 @@ function UnifiedRulesPage() {
                 ) : (
                   <SendHorizonal className="h-4 w-4" />
                 )}
-                {isSingleRuleEdit ? "Update & submit" : "Submit for Review"}
+                {isSingleRuleEdit ? t("rulesSingleTable.updateAndSubmit") : t("rulesSingleTable.submitForReview")}
               </Button>
             </div>
           </div>
@@ -1373,18 +1441,18 @@ function UnifiedRulesPage() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {isDryRunning ? "Dry run in progress" : "Unsaved changes"}
+              {isDryRunning ? t("rulesSingleTable.dryRunInProgressTitle") : t("rulesSingleTable.unsavedChangesTitle")}
             </AlertDialogTitle>
             <AlertDialogDescription>
               {isDryRunning
-                ? "A dry run is currently running. Leaving will cancel it and discard any results."
-                : "You have unsaved rule changes. Leaving will discard your edits."}
+                ? t("rulesSingleTable.dryRunInProgressDescription")
+                : t("rulesSingleTable.unsavedChangesDescription")}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => blocker.reset?.()}>Stay on page</AlertDialogCancel>
+            <AlertDialogCancel onClick={() => blocker.reset?.()}>{t("rulesSingleTable.stayOnPage")}</AlertDialogCancel>
             <AlertDialogAction onClick={handleConfirmLeave} className="bg-destructive text-white hover:bg-destructive/90">
-              {isDryRunning ? "Leave & cancel dry run" : "Discard & leave"}
+              {isDryRunning ? t("rulesSingleTable.leaveCancelDryRun") : t("rulesSingleTable.discardLeave")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -1409,16 +1477,20 @@ function buildChecksForTable(
 const COLUMN_NAME_REGEX = /^[a-zA-Z_][a-zA-Z0-9_.]*$/;
 const SQL_KEYWORD_PATTERN = /\b(DROP|DELETE|INSERT|UPDATE|ALTER|TRUNCATE|CREATE|GRANT|REVOKE|MERGE)\b/i;
 
-function validateArg(arg: string, value: string, fn?: string): string | null {
+function validateArg(arg: string, value: string, fn: string | undefined, t: TFunc): string | null {
   if (!value.trim()) return null;
   switch (arg) {
     case "col_name": {
-      const names = fn === "is_unique"
+      const colArg = CHECK_FUNCTIONS.find((f) => f.value === fn)?.args.find(
+        (a) => a.name === "col_name",
+      );
+      const isList = colArg?.isColumnsList || fn === "is_unique";
+      const names = isList
         ? value.split(",").map((s) => s.trim()).filter(Boolean)
         : [value.trim()];
       for (const name of names) {
         if (!COLUMN_NAME_REGEX.test(name)) {
-          return `"${name}" is not a valid column name. Use letters, numbers, underscores, and dots only.`;
+          return t("rulesSingleTable.argInvalidColumnName", { name });
         }
       }
       return null;
@@ -1426,12 +1498,12 @@ function validateArg(arg: string, value: string, fn?: string): string | null {
     case "allowed":
     case "forbidden": {
       if (value.includes(";")) {
-        return "Semicolons are not allowed in list values.";
+        return t("rulesSingleTable.argSemicolonsListNotAllowed");
       }
       const items = value.split(",").map((s) => s.trim());
       for (const item of items) {
         if (SQL_KEYWORD_PATTERN.test(item)) {
-          return `"${item}" contains a prohibited SQL keyword.`;
+          return t("rulesSingleTable.argProhibitedSqlKeyword", { item });
         }
       }
       return null;
@@ -1440,16 +1512,16 @@ function validateArg(arg: string, value: string, fn?: string): string | null {
     case "min_limit":
     case "max_limit": {
       if (value.trim() !== "" && isNaN(Number(value.trim()))) {
-        return "Must be a numeric value.";
+        return t("rulesSingleTable.argMustBeNumeric");
       }
       return null;
     }
     case "expression": {
       if (value.includes(";")) {
-        return "Semicolons are not allowed in expressions.";
+        return t("rulesSingleTable.argSemicolonsExpressionNotAllowed");
       }
       if (SQL_KEYWORD_PATTERN.test(value)) {
-        return "Expression contains a prohibited SQL keyword (DROP, DELETE, INSERT, etc.).";
+        return t("rulesSingleTable.argExpressionProhibitedKeyword");
       }
       return null;
     }
@@ -1464,37 +1536,37 @@ function validateArg(arg: string, value: string, fn?: string): string | null {
  * when we don't have an explicit label, so newly surfaced DQX arguments
  * still render reasonably without requiring a UI change.
  */
-function argLabel(arg: string): string {
+function argLabel(arg: string, t: TFunc): string {
   switch (arg) {
-    case "col_name": return "Column Name";
-    case "allowed": return "Allowed Values";
-    case "forbidden": return "Not Allowed Values";
-    case "limit": return "Limit";
-    case "min_limit": return "Min Limit";
-    case "max_limit": return "Max Limit";
-    case "regex": return "Regex Pattern";
-    case "date_format": return "Date Format";
-    case "timestamp_format": return "Timestamp Format";
-    case "expression": return "Expression";
-    case "msg": return "Error Message";
-    case "name": return "Check Name";
-    case "cidr_block": return "CIDR Block";
-    case "value": return "Value";
-    case "days": return "Days";
-    case "offset": return "Offset (seconds)";
-    case "max_age_minutes": return "Max Age (minutes)";
-    case "keys": return "Required Keys";
-    case "schema": return "Expected Schema";
-    case "dimension": return "Dimension";
-    case "trim_strings": return "Trim Strings";
-    case "case_sensitive": return "Case Sensitive";
-    case "nulls_distinct": return "Nulls Distinct";
-    case "negate": return "Negate";
-    case "require_all": return "Require All Keys";
-    case "abs_tolerance": return "Absolute Tolerance";
-    case "rel_tolerance": return "Relative Tolerance";
-    case "min_value": return "Min Value";
-    case "max_value": return "Max Value";
+    case "col_name": return t("rulesSingleTable.argLabelColumnName");
+    case "allowed": return t("rulesSingleTable.argLabelAllowed");
+    case "forbidden": return t("rulesSingleTable.argLabelForbidden");
+    case "limit": return t("rulesSingleTable.argLabelLimit");
+    case "min_limit": return t("rulesSingleTable.argLabelMinLimit");
+    case "max_limit": return t("rulesSingleTable.argLabelMaxLimit");
+    case "regex": return t("rulesSingleTable.argLabelRegex");
+    case "date_format": return t("rulesSingleTable.argLabelDateFormat");
+    case "timestamp_format": return t("rulesSingleTable.argLabelTimestampFormat");
+    case "expression": return t("rulesSingleTable.argLabelExpression");
+    case "msg": return t("rulesSingleTable.argLabelMsg");
+    case "name": return t("rulesSingleTable.argLabelName");
+    case "cidr_block": return t("rulesSingleTable.argLabelCidrBlock");
+    case "value": return t("rulesSingleTable.argLabelValue");
+    case "days": return t("rulesSingleTable.argLabelDays");
+    case "offset": return t("rulesSingleTable.argLabelOffset");
+    case "max_age_minutes": return t("rulesSingleTable.argLabelMaxAgeMinutes");
+    case "keys": return t("rulesSingleTable.argLabelKeys");
+    case "schema": return t("rulesSingleTable.argLabelSchema");
+    case "dimension": return t("rulesSingleTable.argLabelDimension");
+    case "trim_strings": return t("rulesSingleTable.argLabelTrimStrings");
+    case "case_sensitive": return t("rulesSingleTable.argLabelCaseSensitive");
+    case "nulls_distinct": return t("rulesSingleTable.argLabelNullsDistinct");
+    case "negate": return t("rulesSingleTable.argLabelNegate");
+    case "require_all": return t("rulesSingleTable.argLabelRequireAll");
+    case "abs_tolerance": return t("rulesSingleTable.argLabelAbsTolerance");
+    case "rel_tolerance": return t("rulesSingleTable.argLabelRelTolerance");
+    case "min_value": return t("rulesSingleTable.argLabelMinValue");
+    case "max_value": return t("rulesSingleTable.argLabelMaxValue");
     default:
       return arg
         .split("_")
@@ -1504,29 +1576,29 @@ function argLabel(arg: string): string {
   }
 }
 
-function argHint(arg: string, fn?: string): string {
+function argHint(arg: string, fn: string | undefined, t: TFunc): string {
   if (arg === "col_name" && fn === "is_unique") {
-    return "comma-separated, e.g. id or col1, col2";
+    return t("rulesSingleTable.argHintIsUniqueColumns");
   }
   switch (arg) {
-    case "col_name": return "e.g. id";
-    case "allowed": return "comma-separated, e.g. A,B,C";
-    case "forbidden": return "comma-separated";
-    case "limit": return "numeric value";
-    case "min_limit": return "min value";
-    case "max_limit": return "max value";
-    case "regex": return "e.g. ^[A-Z]+$";
-    case "date_format": return "e.g. yyyy-MM-dd";
-    case "timestamp_format": return "e.g. yyyy-MM-dd HH:mm:ss";
-    case "expression": return "SQL expression, e.g. col > 0";
-    case "msg": return "Error message";
-    case "cidr_block": return "e.g. 192.168.1.0/24";
-    case "value": return "comparison value";
-    case "days": return "number of days";
-    case "offset": return "seconds";
-    case "max_age_minutes": return "maximum age in minutes";
-    case "keys": return "comma-separated keys";
-    case "dimension": return "0, 1, or 2";
+    case "col_name": return t("rulesSingleTable.argHintColumnName");
+    case "allowed": return t("rulesSingleTable.argHintAllowed");
+    case "forbidden": return t("rulesSingleTable.argHintForbidden");
+    case "limit": return t("rulesSingleTable.argHintLimit");
+    case "min_limit": return t("rulesSingleTable.argHintMinLimit");
+    case "max_limit": return t("rulesSingleTable.argHintMaxLimit");
+    case "regex": return t("rulesSingleTable.argHintRegex");
+    case "date_format": return t("rulesSingleTable.argHintDateFormat");
+    case "timestamp_format": return t("rulesSingleTable.argHintTimestampFormat");
+    case "expression": return t("rulesSingleTable.argHintExpression");
+    case "msg": return t("rulesSingleTable.argHintMsg");
+    case "cidr_block": return t("rulesSingleTable.argHintCidrBlock");
+    case "value": return t("rulesSingleTable.argHintValue");
+    case "days": return t("rulesSingleTable.argHintDays");
+    case "offset": return t("rulesSingleTable.argHintOffset");
+    case "max_age_minutes": return t("rulesSingleTable.argHintMaxAgeMinutes");
+    case "keys": return t("rulesSingleTable.argHintKeys");
+    case "dimension": return t("rulesSingleTable.argHintDimension");
     default: return "";
   }
 }
@@ -1547,11 +1619,48 @@ interface CheckCardProps {
   checkFunctions: CheckFunctionDef[];
 }
 
+// Arguments that are mutually exclusive for a given function — the user must
+// supply exactly one of the group. ``has_valid_schema`` accepts the expected
+// schema EITHER as a DDL string (``expected_schema``) OR by copying it from a
+// reference table (``ref_table``); supplying both fails at run time with
+// "Must specify one of 'expected_schema', 'ref_df_name', or 'ref_table'".
+const MUTUALLY_EXCLUSIVE_ARGS: Record<string, string[][]> = {
+  has_valid_schema: [["expected_schema", "ref_table"]],
+};
+
 function CheckCard({ check, index, onUpdate, onRemove, canRemove, disabled, isDuplicate, labelDefinitions, checkFunctions }: CheckCardProps) {
+  const { t } = useTranslation();
   const fnDef = checkFunctions.find((f) => f.value === check.fn);
   const argFields = fnDef?.args ?? [];
   const isUnknownFn = check.fn !== "" && !fnDef;
   const columns = getCheckColumns(check);
+
+  // Mutual-exclusion state for a given argument. When exactly one sibling in
+  // the group is filled, the empty siblings are disabled (with a hint to clear
+  // the chosen one). When two or more are filled it's a conflict — nothing is
+  // disabled so the user can clear one, and both show an error hint.
+  const exclusiveGroups = MUTUALLY_EXCLUSIVE_ARGS[check.fn] ?? [];
+  const argLabelOf = (name: string) =>
+    argFields.find((a) => a.name === name)?.label ?? name;
+  const mutexStateFor = (
+    argName: string,
+  ): { disabled: boolean; conflict: boolean; otherLabel: string } => {
+    for (const group of exclusiveGroups) {
+      if (!group.includes(argName)) continue;
+      const filled = group.filter((g) => (check.args[g] ?? "").trim() !== "");
+      if (filled.length >= 2) {
+        return {
+          disabled: false,
+          conflict: filled.includes(argName),
+          otherLabel: group.filter((g) => g !== argName).map(argLabelOf).join(" / "),
+        };
+      }
+      if (filled.length === 1 && !filled.includes(argName)) {
+        return { disabled: true, conflict: false, otherLabel: argLabelOf(filled[0]) };
+      }
+    }
+    return { disabled: false, conflict: false, otherLabel: "" };
+  };
 
   const [tablesOpen, setTablesOpen] = useState(check.fn !== "" && check.targetTables.length === 0);
   const [browsedTables, setBrowsedTables] = useState<string[]>([]);
@@ -1595,16 +1704,16 @@ function CheckCard({ check, index, onUpdate, onRemove, canRemove, disabled, isDu
       {/* Header */}
       <div className={`flex items-center justify-between px-4 py-2.5 border-b ${isDuplicate ? "bg-red-50/60" : "bg-muted/30"}`}>
         <div className="flex items-center gap-2">
-          <span className="text-xs font-semibold text-muted-foreground">Check {index + 1}</span>
+          <span className="text-xs font-semibold text-muted-foreground">{t("rulesSingleTable.checkLabel", { index: index + 1 })}</span>
           {columns.length > 0 && (
             <Badge variant="outline" className="text-[10px] font-mono gap-1">
-              col: {columns.join(", ")}
+              {t("rulesSingleTable.colBadge", { columns: columns.join(", ") })}
             </Badge>
           )}
           {check.targetTables.length > 0 && (
             <Badge variant="secondary" className="text-[10px] gap-1">
               <Table2 className="h-2.5 w-2.5" />
-              {check.targetTables.length} table{check.targetTables.length !== 1 ? "s" : ""}
+              {t("rulesSingleTable.tablesBadge", { count: check.targetTables.length })}
             </Badge>
           )}
           {isDuplicate && (
@@ -1613,11 +1722,11 @@ function CheckCard({ check, index, onUpdate, onRemove, canRemove, disabled, isDu
                 <TooltipTrigger asChild>
                   <Badge variant="destructive" className="text-[10px] gap-1">
                     <AlertCircle className="h-2.5 w-2.5" />
-                    Duplicate
+                    {t("rulesSingleTable.duplicateBadge")}
                   </Badge>
                 </TooltipTrigger>
                 <TooltipContent>
-                  <p>This check already exists for the selected table(s). Remove or modify it.</p>
+                  <p>{t("rulesSingleTable.duplicateTooltip")}</p>
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
@@ -1634,7 +1743,7 @@ function CheckCard({ check, index, onUpdate, onRemove, canRemove, disabled, isDu
       <div className="p-4 space-y-3">
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1.5">
-            <Label className="text-xs">Function</Label>
+            <Label className="text-xs">{t("rulesSingleTable.function")}</Label>
             <FunctionCombobox
               value={check.fn}
               functions={checkFunctions}
@@ -1658,7 +1767,7 @@ function CheckCard({ check, index, onUpdate, onRemove, canRemove, disabled, isDu
             />
           </div>
           <div className="space-y-1.5">
-            <Label className="text-xs">Criticality</Label>
+            <Label className="text-xs">{t("rulesSingleTable.criticality")}</Label>
             <Select
               value={check.criticality}
               onValueChange={(v) => onUpdate(check.id, { criticality: v as "warn" | "error" })}
@@ -1668,8 +1777,8 @@ function CheckCard({ check, index, onUpdate, onRemove, canRemove, disabled, isDu
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="warn" className="text-xs">warn</SelectItem>
-                <SelectItem value="error" className="text-xs">error</SelectItem>
+                <SelectItem value="warn" className="text-xs">{t("rulesSingleTable.criticalityWarn")}</SelectItem>
+                <SelectItem value="error" className="text-xs">{t("rulesSingleTable.criticalityError")}</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -1681,9 +1790,47 @@ function CheckCard({ check, index, onUpdate, onRemove, canRemove, disabled, isDu
               {argFields.map((argDef) => {
                 const val = check.args[argDef.name] ?? "";
                 const isEmpty = val.trim() === "";
-                const validationErr = validateArg(argDef.name, val, check.fn);
+                const validationErr = validateArg(argDef.name, val, check.fn, t);
                 const hasError = !!validationErr;
                 const showRequiredHint = argDef.required && isEmpty;
+
+                if (argDef.type === "ref_table") {
+                  // Reference-table argument (foreign_key / has_valid_schema):
+                  // render the same catalog/table picker used everywhere else
+                  // so the user selects a fully-qualified UC table.
+                  const mutex = mutexStateFor(argDef.name);
+                  return (
+                    <div key={argDef.name} className="space-y-1 sm:col-span-2">
+                      <Label className="text-[11px] text-muted-foreground">
+                        {argDef.label}
+                        {showRequiredHint && ` ${t("rulesSingleTable.required")}`}
+                        {!argDef.required && isEmpty && !mutex.disabled && (
+                          <span className="ml-1 text-muted-foreground/60">{t("rulesSingleTable.optional")}</span>
+                        )}
+                      </Label>
+                      <CatalogBrowser
+                        value={val}
+                        onChange={(fqn) =>
+                          onUpdate(check.id, { args: { ...check.args, [argDef.name]: fqn } })
+                        }
+                        disabled={disabled || mutex.disabled}
+                      />
+                      {mutex.disabled ? (
+                        <p className="text-[10px] text-muted-foreground/80">
+                          {t("rulesSingleTable.mutexUsingOther", { other: mutex.otherLabel })}
+                        </p>
+                      ) : mutex.conflict ? (
+                        <p className="text-[10px] text-red-500">
+                          {t("rulesSingleTable.mutexConflict", { other: mutex.otherLabel })}
+                        </p>
+                      ) : (
+                        argDef.help && (
+                          <p className="text-[10px] text-muted-foreground/80">{argDef.help}</p>
+                        )
+                      )}
+                    </div>
+                  );
+                }
 
                 if (argDef.type === "boolean") {
                   // Boolean inputs render as a yes/no select. We always
@@ -1694,7 +1841,7 @@ function CheckCard({ check, index, onUpdate, onRemove, canRemove, disabled, isDu
                     <div key={argDef.name} className="space-y-1">
                       <Label className="text-[11px] text-muted-foreground">
                         {argDef.label}
-                        {!argDef.required && <span className="ml-1 text-muted-foreground/60">(optional)</span>}
+                        {!argDef.required && <span className="ml-1 text-muted-foreground/60">{t("rulesSingleTable.optional")}</span>}
                       </Label>
                       <Select
                         value={current}
@@ -1718,6 +1865,7 @@ function CheckCard({ check, index, onUpdate, onRemove, canRemove, disabled, isDu
                   );
                 }
 
+                const mutex = mutexStateFor(argDef.name);
                 return (
                   <div key={argDef.name} className="space-y-1">
                     <Label
@@ -1730,9 +1878,9 @@ function CheckCard({ check, index, onUpdate, onRemove, canRemove, disabled, isDu
                       }`}
                     >
                       {argDef.label}
-                      {showRequiredHint && " (required)"}
-                      {!argDef.required && isEmpty && (
-                        <span className="ml-1 text-muted-foreground/60">(optional)</span>
+                      {showRequiredHint && ` ${t("rulesSingleTable.required")}`}
+                      {!argDef.required && isEmpty && !mutex.disabled && (
+                        <span className="ml-1 text-muted-foreground/60">{t("rulesSingleTable.optional")}</span>
                       )}
                     </Label>
                     <Input
@@ -1743,21 +1891,30 @@ function CheckCard({ check, index, onUpdate, onRemove, canRemove, disabled, isDu
                             ? "border-amber-400 focus-visible:ring-amber-400"
                             : ""
                       }`}
-                      placeholder={argDef.hint || argHint(argDef.name, check.fn)}
+                      placeholder={argDef.hint || argHint(argDef.name, check.fn, t)}
                       value={val}
                       onChange={(e) =>
                         onUpdate(check.id, { args: { ...check.args, [argDef.name]: e.target.value } })
                       }
-                      disabled={disabled}
+                      disabled={disabled || mutex.disabled}
                     />
-                    {hasError && (
+                    {hasError ? (
                       <p className="text-[10px] text-red-500 flex items-center gap-1">
                         <AlertCircle className="h-2.5 w-2.5 shrink-0" />
                         {validationErr}
                       </p>
-                    )}
-                    {!hasError && argDef.help && (
-                      <p className="text-[10px] text-muted-foreground/80">{argDef.help}</p>
+                    ) : mutex.conflict ? (
+                      <p className="text-[10px] text-red-500">
+                        {t("rulesSingleTable.mutexConflict", { other: mutex.otherLabel })}
+                      </p>
+                    ) : mutex.disabled ? (
+                      <p className="text-[10px] text-muted-foreground/80">
+                        {t("rulesSingleTable.mutexUsingOther", { other: mutex.otherLabel })}
+                      </p>
+                    ) : (
+                      argDef.help && (
+                        <p className="text-[10px] text-muted-foreground/80">{argDef.help}</p>
+                      )
                     )}
                   </div>
                 );
@@ -1779,12 +1936,12 @@ function CheckCard({ check, index, onUpdate, onRemove, canRemove, disabled, isDu
           <div className="grid gap-2 sm:grid-cols-2">
             {Object.entries(check.args).map(([key, val]) => {
               const isEmpty = val.trim() === "";
-              const validationErr = validateArg(key, val, check.fn);
+              const validationErr = validateArg(key, val, check.fn, t);
               const hasError = !!validationErr;
               return (
                 <div key={key} className="space-y-1">
                   <Label className={`text-[11px] ${hasError ? "text-red-500" : isEmpty ? "text-amber-500" : "text-muted-foreground"}`}>
-                    {argLabel(key)}{isEmpty && " (required)"}
+                    {argLabel(key, t)}{isEmpty && ` ${t("rulesSingleTable.required")}`}
                   </Label>
                   <Input
                     className={`h-7 text-xs ${hasError ? "border-red-400 focus-visible:ring-red-400" : isEmpty ? "border-amber-400 focus-visible:ring-amber-400" : ""}`}
@@ -1828,19 +1985,19 @@ function CheckCard({ check, index, onUpdate, onRemove, canRemove, disabled, isDu
           <div className="flex items-center gap-2">
             <Table2 className="h-3.5 w-3.5 text-muted-foreground" />
             <span className="text-xs font-medium">
-              Target tables
+              {t("rulesSingleTable.targetTables")}
               {check.targetTables.length > 0 && (
                 <span className="text-muted-foreground ml-1">
-                  ({check.targetTables.length} selected)
+                  {t("rulesSingleTable.selectedSuffix", { count: check.targetTables.length })}
                 </span>
               )}
               {check.fn !== "" && check.targetTables.length === 0 && (
-                <span className="text-amber-500 ml-1">(none selected)</span>
+                <span className="text-amber-500 ml-1">{t("rulesSingleTable.noneSelected")}</span>
               )}
             </span>
             {check.fn !== "" && columns.length > 0 && (
               <span className="text-[10px] text-muted-foreground">
-                — filtered by column: <code className="bg-muted px-1 py-0.5 rounded">{columns.join(", ")}</code>
+                {t("rulesSingleTable.filteredByColumn")} <code className="bg-muted px-1 py-0.5 rounded">{columns.join(", ")}</code>
               </span>
             )}
           </div>
@@ -1852,7 +2009,7 @@ function CheckCard({ check, index, onUpdate, onRemove, canRemove, disabled, isDu
             {isFiltering && (
               <div className="flex items-center gap-2 text-xs text-muted-foreground py-1">
                 <Loader2 className="h-3 w-3 animate-spin" />
-                Checking column compatibility...
+                {t("rulesSingleTable.checkingColumnCompatibility")}
               </div>
             )}
             <CatalogBrowser
@@ -1918,6 +2075,7 @@ interface FunctionComboboxProps {
 }
 
 function FunctionCombobox({ value, functions, onChange, disabled }: FunctionComboboxProps) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
 
@@ -1945,7 +2103,7 @@ function FunctionCombobox({ value, functions, onChange, disabled }: FunctionComb
   }, [functions, query]);
 
   const isUnknownFn = value !== "" && !functions.some((f) => f.value === value);
-  const displayValue = value === "" ? "Select function" : isUnknownFn ? `${value} (custom)` : value;
+  const displayValue = value === "" ? t("rulesSingleTable.selectFunction") : isUnknownFn ? t("rulesSingleTable.customSuffix", { name: value }) : value;
 
   // Reset the search box every time the popover closes so a re-open
   // shows the full list rather than a stale filtered slice.
@@ -1977,7 +2135,7 @@ function FunctionCombobox({ value, functions, onChange, disabled }: FunctionComb
             <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground" />
             <Input
               autoFocus
-              placeholder="Search functions..."
+              placeholder={t("rulesSingleTable.searchFunctions")}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               className="h-8 text-xs pl-7"
@@ -1986,9 +2144,9 @@ function FunctionCombobox({ value, functions, onChange, disabled }: FunctionComb
         </div>
         <div className="max-h-72 overflow-y-auto py-1">
           {functions.length === 0 ? (
-            <div className="px-3 py-2 text-xs text-muted-foreground">Loading functions...</div>
+            <div className="px-3 py-2 text-xs text-muted-foreground">{t("rulesSingleTable.loadingFunctions")}</div>
           ) : grouped.length === 0 ? (
-            <div className="px-3 py-2 text-xs text-muted-foreground">No matches</div>
+            <div className="px-3 py-2 text-xs text-muted-foreground">{t("rulesSingleTable.noMatches")}</div>
           ) : (
             grouped.map(([category, fns]) => (
               <div key={category}>

@@ -4,7 +4,7 @@ import asyncio
 import hashlib
 import os
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Annotated, Any, Union, cast
+from typing import TYPE_CHECKING, Annotated, Any
 
 if TYPE_CHECKING:
     from .common.connectors.sql import SQLConnector
@@ -22,6 +22,7 @@ from .migrations import MigrationRunner
 from .runtime import rt
 from .services.ai_rules_service import AiRulesService
 from .services.app_settings_service import AppSettingsService
+from .services.contract_rules_service import ContractRulesService
 from .services.discovery import DiscoveryService
 from .services.job_service import JobService
 from .services.role_service import RoleService
@@ -30,26 +31,22 @@ from .services.comments_service import CommentsService
 from .services.review_status_service import ReviewStatusService
 from .services.schedule_config_service import ScheduleConfigService
 from .services.view_service import ViewService
-from .sql_executor import SqlExecutor
-
-if TYPE_CHECKING:
-    from .pg_executor import PgExecutor
-
-# Union of the two executors that share the OLTP service surface
-# (``execute``, ``query``, ``query_dicts``, ``upsert``, ``q``,
-# ``json_literal_expr``, ``ts_text``, ``dialect``). String forward refs
-# because ``PgExecutor`` is TYPE_CHECKING-only to avoid importing psycopg
-# at module load when Lakebase isn't configured.
-OltpExecutor = Union["SqlExecutor", "PgExecutor"]
+from .sql_executor import OltpExecutorProtocol, SqlExecutor
 
 # Process-wide OLTP executor. Constructed once at app startup by
 # ``app.lifespan`` and reused across all requests so the psycopg pool
 # isn't rebuilt per call. ``None`` means Lakebase is not configured and
 # the legacy Delta executor handles OLTP traffic instead.
-_pg_executor: OltpExecutor | None = None
+#
+# Annotated with :class:`OltpExecutorProtocol` so neither this module
+# nor downstream callers need to import :class:`PgExecutor` directly
+# — the Protocol is the only contract the OLTP plumbing depends on.
+# Avoids dragging psycopg into the import graph for Delta-only
+# deployments.
+_pg_executor: OltpExecutorProtocol | None = None
 
 
-def set_oltp_executor(executor: OltpExecutor | None) -> None:
+def set_oltp_executor(executor: OltpExecutorProtocol | None) -> None:
     """Register (or clear) the process-wide OLTP executor.
 
     Called from :func:`backend.app.lifespan` after the connection pool
@@ -61,7 +58,7 @@ def set_oltp_executor(executor: OltpExecutor | None) -> None:
     _pg_executor = executor
 
 
-def get_oltp_executor() -> OltpExecutor | None:
+def get_oltp_executor() -> OltpExecutorProtocol | None:
     """Return the registered OLTP executor or ``None`` if Lakebase is off."""
     return _pg_executor
 
@@ -100,8 +97,24 @@ async def get_obo_ws(
     header is automatically injected with the logged-in user's access token.
     The token is hashed before use as a cache key so raw tokens are never
     stored in the key space.
+
+    Local-dev fallback: the platform always injects the header and authenticates
+    the app via DATABRICKS_CLIENT_ID/SECRET — it never has a CLI profile or PAT.
+    So when the header is absent but a profile/token is configured (loaded from
+    app/.env for local dev), we are running locally and fall back to the SDK
+    default auth (that same profile) so OBO endpoints work without a header. This
+    cannot trigger in production, where no profile/PAT is present.
     """
     if not token:
+        profile = os.environ.get("DATABRICKS_CONFIG_PROFILE")
+        if profile or os.environ.get("DATABRICKS_TOKEN"):
+            logger.warning(
+                "X-Forwarded-Access-Token missing — falling back to local default auth "
+                "(profile=%s) for OBO. Local dev only: runs as your CLI identity, not an "
+                "arbitrary end user.",
+                profile or "(env)",
+            )
+            return WorkspaceClient()  # default auth chain: app/.env profile / token
         logger.warning("OBO token is not provided in the header X-Forwarded-Access-Token")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -153,7 +166,7 @@ async def get_obo_sql_executor(
 
 async def get_sp_oltp_executor(
     sp_sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
-) -> SqlExecutor:
+) -> OltpExecutorProtocol:
     """Return the executor that owns the OLTP tables.
 
     When Lakebase is configured the lifespan handler registers a
@@ -162,19 +175,18 @@ async def get_sp_oltp_executor(
     to the legacy Delta executor (``get_sp_sql_executor``) so existing
     deployments keep working with no code changes on their side.
 
-    The return type is annotated as :class:`SqlExecutor` so every
-    downstream service can keep its existing ``sql: SqlExecutor``
-    parameter.  :class:`PgExecutor` deliberately mirrors the public
-    surface (``execute``, ``query``, ``query_dicts``, ``upsert``,
-    ``q``, ``json_literal_expr``, ``ts_text``, ``dialect``) so the
-    cast is safe at the call sites we exercise — services only touch
-    that surface.  See ``sql_executor.py`` and ``pg_executor.py`` for
-    the parity contract.
+    The return type is :class:`OltpExecutorProtocol` so every
+    downstream service annotation type-checks against the structural
+    surface shared by both executors. No ``cast`` is needed: both
+    :class:`SqlExecutor` and :class:`PgExecutor` structurally satisfy
+    the Protocol, so the type-checker validates every ``.execute()``,
+    ``.query()`` etc. call against a single source of truth instead
+    of being muted by a Delta-class cast around the Postgres path.
     """
     pg = get_oltp_executor()
     if pg is None:
         return sp_sql
-    return cast(SqlExecutor, pg)
+    return pg
 
 
 # ---------------------------------------------------------------------------
@@ -195,14 +207,14 @@ async def get_migration_runner(
 
 
 async def get_app_settings_service(
-    sql: Annotated[SqlExecutor, Depends(get_sp_oltp_executor)],
+    sql: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
 ) -> AppSettingsService:
     """Create an AppSettingsService routed at the OLTP executor."""
     return AppSettingsService(sql=sql)
 
 
 async def get_role_service(
-    sql: Annotated[SqlExecutor, Depends(get_sp_oltp_executor)],
+    sql: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
 ) -> RoleService:
     """Create a RoleService routed at the OLTP executor."""
     return RoleService(sql=sql)
@@ -220,8 +232,24 @@ async def get_ai_rules_service(
     return AiRulesService(obo_ws=obo_ws, sp_ws=sp_ws)
 
 
+async def get_contract_rules_service(
+    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
+    ai_service: Annotated[AiRulesService, Depends(get_ai_rules_service)],
+) -> ContractRulesService:
+    """Create a ContractRulesService.
+
+    Contract parsing is local and the generator doesn't touch UC, so we
+    use the SP client — same pattern as the AI generator's LLM call leg.
+    The AI service is injected so natural-language (``type: text``) quality
+    expectations can be converted through the same ChatDatabricks leg the
+    AI-Assisted Generation page uses (DQX's own text path needs dspy + Spark,
+    which the app container lacks).
+    """
+    return ContractRulesService(sp_ws=sp_ws, ai_service=ai_service)
+
+
 async def get_rules_catalog_service(
-    sql: Annotated[SqlExecutor, Depends(get_sp_oltp_executor)],
+    sql: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
 ) -> RulesCatalogService:
     """Create a RulesCatalogService routed at the OLTP executor."""
     return RulesCatalogService(sql=sql)
@@ -250,14 +278,14 @@ async def get_view_service(
 
 
 async def get_comments_service(
-    sql: Annotated[SqlExecutor, Depends(get_sp_oltp_executor)],
+    sql: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
 ) -> CommentsService:
     """Create a CommentsService routed at the OLTP executor."""
     return CommentsService(sql=sql)
 
 
 async def get_review_status_service(
-    sql: Annotated[SqlExecutor, Depends(get_sp_oltp_executor)],
+    sql: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
     settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
 ) -> ReviewStatusService:
     """Create a ReviewStatusService routed at the OLTP executor.
@@ -270,7 +298,7 @@ async def get_review_status_service(
 
 
 async def get_schedule_config_service(
-    sql: Annotated[SqlExecutor, Depends(get_sp_oltp_executor)],
+    sql: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
 ) -> ScheduleConfigService:
     """Create a ScheduleConfigService routed at the OLTP executor."""
     return ScheduleConfigService(sql=sql)
@@ -460,6 +488,7 @@ __all__ = [
     "get_app_settings_service",
     "get_role_service",
     "get_ai_rules_service",
+    "get_contract_rules_service",
     "get_rules_catalog_service",
     "get_discovery_service",
     "get_view_service",

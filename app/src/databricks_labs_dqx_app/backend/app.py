@@ -13,6 +13,15 @@ from .config import conf
 from .dependencies import get_sp_ws, set_oltp_executor
 from .logger import logger
 from .migrations import MigrationRunner
+
+# ``PgMigrationRunner`` is safe to import at module load: its module
+# (``migrations.postgres``) now imports the trust-boundary helpers
+# from the psycopg-free :mod:`backend.pg_cursor_helpers` module
+# rather than from :mod:`backend.pg_executor`, so loading it does
+# NOT transitively pull in :mod:`psycopg`. The remaining lazy import
+# (``build_pg_executor``) inside :func:`lifespan` is the one that
+# genuinely needs psycopg at runtime, and stays lazy for the
+# Delta-only test environments that don't install it.
 from .migrations.postgres import PgMigrationRunner
 from .routes import api_router
 from .services.scheduler_service import SchedulerService
@@ -22,21 +31,45 @@ from .utils import add_not_found_handler
 
 _SCHEDULER_LOCK_PATH = Path("/tmp/.dqx_scheduler.lock")  # noqa: S108
 
+# Module-level reference that pins the lock file descriptor for the
+# process lifetime. The fd MUST stay live as long as we hold the
+# advisory lock — letting it get garbage-collected would silently
+# close the fd and release the flock, after which a second uvicorn
+# worker could grab the lease and we'd end up with two schedulers
+# fighting over the same job. Stored as a plain module global rather
+# than via ``globals()[...]`` so the dependency is greppable and the
+# type-checker can see it.
+_scheduler_lock_fd: int | None = None
+
 
 def _try_acquire_scheduler_lease() -> bool:
     """Use an exclusive file lock so only one uvicorn worker runs the scheduler.
 
     The lock file is held for the lifetime of the process; when the worker
     exits the OS releases it automatically.
+
+    .. WARNING::
+       This lease is **process-local**: ``fcntl.flock`` only excludes other
+       processes on the same host. If DQX Studio is ever scaled to more
+       than one Databricks App replica/container, every replica will
+       acquire its own lock and run ``_tick()`` independently — the same
+       due schedule will be submitted N times. The current deployment
+       relies on Databricks Apps running a single container; if that ever
+       changes, replace this with a cross-replica lease (e.g. a Postgres
+       advisory lock on ``DQX_LAKEBASE_SCHEMA_NAME`` keyed by
+       ``hashtext('dqx-scheduler')`` with ``pg_try_advisory_lock``, or a
+       lease row in ``dq_app_settings`` with TTL + ``FOR UPDATE
+       SKIP LOCKED``). See backend audit finding B1. The file lock is
+       still needed as a fallback for multi-worker uvicorn within one
+       container.
     """
     import fcntl
 
+    global _scheduler_lock_fd
     try:
         fd = os.open(str(_SCHEDULER_LOCK_PATH), os.O_CREAT | os.O_RDWR)
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        # Keep fd open (and thus the lock held) for the process lifetime.
-        # Store on module so it isn't garbage-collected.
-        globals()["_scheduler_lock_fd"] = fd
+        _scheduler_lock_fd = fd
         return True
     except OSError:
         return False
@@ -48,8 +81,9 @@ def _find_wheels() -> list[Path]:
     Databricks Apps sets the working directory to the source code directory, but
     we also walk up from this file's location as a fallback (handles the case
     where the package is installed in a venv inside the source tree).
-    For local dev (apx dev start), the DAB build places DQX wheels in .build/
-    relative to the app source root rather than in the cwd itself.
+    For local dev (``make app-start-dev`` / ``scripts/dev.py``), the DAB build
+    places DQX wheels in .build/ relative to the app source root rather than
+    in the cwd itself.
     """
     cwd = Path.cwd()
     search_roots: list[Path] = [cwd]
@@ -179,15 +213,35 @@ async def lifespan(app: FastAPI):
     # Lakebase (optional) — open the pool, run Postgres migrations, and
     # register the executor as the OLTP backend used by service DI.
     #
-    # The block is entirely best-effort: if Lakebase is configured but
-    # the instance is misconfigured/down, we log loudly and fall back
-    # to UC-only mode so the app still serves. This matches how the
-    # rest of startup degrades (volume sync, scheduler) — partial
-    # functionality beats a hard crash loop.
+    # When ``lakebase_enabled`` is true the operator has explicitly
+    # chosen Lakebase as the OLTP store: rules, schedules, RBAC,
+    # comments, and app settings live in the Postgres schema, NOT in
+    # Delta. Silently falling back to Delta on a transient init
+    # failure (network blip, OAuth issuance, momentary
+    # CAN_CONNECT_AND_CREATE drop) would split-brain the deployment —
+    # writes during the flap land in the empty Delta fallback tables
+    # while the canonical Postgres rows become invisible, and prior
+    # data reappears after the next restart with anything written in
+    # the interim orphaned. That's silent data loss, not graceful
+    # degradation, so we follow the same fail-loud-and-let-the-
+    # platform-restart-us pattern as the SP/migrations block above:
+    # raise, let the Databricks Apps platform restart the container,
+    # and surface the underlying problem via restart-loop alerting.
+    # The opt-out is intentional and explicit (unset
+    # ``DQX_LAKEBASE_INSTANCE_NAME``); a flap is not an opt-out.
+    # The legitimate Delta-only path runs in the ``else`` branch below.
     # ------------------------------------------------------------------
     pg_executor = None
     if conf.lakebase_enabled:
         try:
+            # ``build_pg_executor`` lives in :mod:`backend.pg_executor`,
+            # which imports :mod:`psycopg` at module load. That import
+            # is fine in production (the Lakebase-enabled path) but
+            # would break Delta-only test environments that don't
+            # install psycopg, so we defer it to this branch.
+            # ``PgMigrationRunner`` itself is already imported at
+            # module load — it routes through the psycopg-free
+            # :mod:`backend.pg_cursor_helpers` module.
             from .pg_executor import build_pg_executor
 
             pg_executor = await asyncio.to_thread(
@@ -197,6 +251,9 @@ async def lifespan(app: FastAPI):
                 database=conf.lakebase_database_name,
                 schema=conf.lakebase_schema_name,
                 token_refresh_minutes=conf.lakebase_token_refresh_minutes,
+                token_refresh_retry_seconds=conf.lakebase_token_refresh_retry_seconds,
+                token_refresh_retry_jitter=conf.lakebase_token_refresh_retry_jitter,
+                token_refresh_max_failures=conf.lakebase_token_refresh_max_failures,
                 pool_min_size=conf.lakebase_pool_min_size,
                 pool_max_size=conf.lakebase_pool_max_size,
             )
@@ -214,27 +271,39 @@ async def lifespan(app: FastAPI):
                 conf.lakebase_schema_name,
             )
         except Exception:
-            logger.exception(
-                "Lakebase initialisation failed — falling back to Delta for OLTP tables. "
-                "Verify the database_instance is provisioned and the app SP has CAN_CONNECT_AND_CREATE."
-            )
-            # Hard-to-spot data divergence: previously-written rules /
-            # settings / RBAC / schedules in Lakebase remain on Postgres
-            # but every read now hits the (empty or stale) Delta fallback.
-            # Surface this loudly so operators don't conclude data was
-            # *lost* when really it's just unreachable until Lakebase
-            # comes back. Restart once Lakebase is healthy to reattach.
-            logger.warning(
-                "Previously-written Lakebase data (rules, app settings, RBAC, "
-                "comments, schedule configs, schedule runs) will be INACCESSIBLE "
-                "until Lakebase recovers and the app is restarted. Any writes "
-                "performed in this Delta-fallback session will diverge from the "
-                "Lakebase state until reconciled manually."
-            )
-            pg_executor = None
+            # Close any partially-built pool before re-raising so a
+            # restart loop doesn't accumulate orphaned server-side
+            # Postgres connections on every flap. ``close()`` is
+            # idempotent and best-effort (see pg_executor.close).
+            if pg_executor is not None:
+                try:
+                    await asyncio.to_thread(pg_executor.close)
+                except Exception:
+                    # Best-effort cleanup inside the OUTER ``except`` —
+                    # we're already about to re-raise the init failure,
+                    # so a close-time exception here would mask the real
+                    # root cause from the operator. Log and let the
+                    # outer raise propagate. (Same resilience contract
+                    # as :meth:`pg_executor.PgExecutor.close`; see the
+                    # BLE001 policy in pyproject.toml.)
+                    logger.warning("Error closing Lakebase pool during init failure", exc_info=True)
             set_oltp_executor(None)
+            logger.exception(
+                "Lakebase initialisation failed (instance=%s, database=%s, schema=%s). "
+                "Refusing to start — silent fallback to Delta would split OLTP writes across "
+                "two physical stores and orphan prior Lakebase data on every flap. "
+                "Common causes: the database_instance is not provisioned, the app SP lacks "
+                "CAN_CONNECT_AND_CREATE on the bound database, OAuth token issuance is failing, "
+                "or the Lakebase endpoint is transiently unreachable. Fix the underlying issue "
+                "and the platform will restart this container automatically. To intentionally "
+                "run on Delta only, unset DQX_LAKEBASE_INSTANCE_NAME.",
+                conf.lakebase_instance_name,
+                conf.lakebase_database_name,
+                conf.lakebase_schema_name,
+            )
+            raise
     else:
-        logger.info("Lakebase not configured (DQX_LAKEBASE_INSTANCE_NAME is empty). " "OLTP tables will live on Delta.")
+        logger.info("Lakebase not configured (DQX_LAKEBASE_INSTANCE_NAME is empty). OLTP tables will live on Delta.")
         set_oltp_executor(None)
 
     # Delta migrations always run, but the OLTP fallback DDL is
@@ -268,7 +337,21 @@ async def lifespan(app: FastAPI):
         )
 
     if not (conf.wheels_volume and conf.job_id):
-        logger.warning("DQX_WHEELS_VOLUME or DQX_JOB_ID not set — task-runner job wheels will not be synced")
+        msg = (
+            "DQX_WHEELS_VOLUME or DQX_JOB_ID is not set — profiler, dry-run, "
+            "and scheduler features will be unavailable"
+        )
+        if conf.require_task_runner:
+            # Production-style deploy (bundle sets DQX_REQUIRE_TASK_RUNNER=1):
+            # treat a missing binding as a fatal misconfiguration so we
+            # crash loop with an actionable error instead of silently
+            # serving a half-broken app.
+            raise RuntimeError(
+                f"{msg}. Both env vars are required when DQX_REQUIRE_TASK_RUNNER=1. "
+                "Check the bundle resource bindings (dqx-task-runner-job, dqx-wheels) "
+                "and re-run `databricks bundle deploy`."
+            )
+        logger.warning("%s (set DQX_REQUIRE_TASK_RUNNER=1 in production to fail fast)", msg)
     else:
         wheel_volume_paths: list[str] = []
         try:
@@ -326,7 +409,14 @@ async def lifespan(app: FastAPI):
         try:
             await asyncio.to_thread(pg_executor.close)
             logger.info("Lakebase connection pool closed")
-        except Exception:  # noqa: BLE001
+        except Exception:
+            # Lifespan shutdown: same resilience contract as
+            # :meth:`pg_executor.PgExecutor.close` itself. A raise here
+            # would prevent the ``set_oltp_executor(None)`` reset below
+            # from running, leaving a closed pool wired in for the next
+            # request and producing a confusing "operation on closed
+            # pool" error instead of the underlying close failure.
+            # See the BLE001 policy block in pyproject.toml.
             logger.warning("Error closing Lakebase pool", exc_info=True)
         set_oltp_executor(None)
 

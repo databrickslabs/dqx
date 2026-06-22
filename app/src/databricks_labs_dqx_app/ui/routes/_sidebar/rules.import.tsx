@@ -1,7 +1,8 @@
 import { createFileRoute, useNavigate, Navigate } from "@tanstack/react-router";
 import { useState, useRef, useCallback, useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { usePermissions } from "@/hooks/use-permissions";
-import { PageBreadcrumb } from "@/components/apx/PageBreadcrumb";
+import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
 import {
   Card,
   CardContent,
@@ -21,6 +22,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   Upload,
   Loader2,
@@ -32,6 +34,9 @@ import {
   Play,
   Square,
   Info,
+  FileCode2,
+  FileText,
+  ExternalLink,
 } from "lucide-react";
 import { toast } from "sonner";
 import yaml from "js-yaml";
@@ -54,6 +59,10 @@ import { CatalogBrowser } from "@/components/CatalogBrowser";
 import { LabelsBadges } from "@/components/Labels";
 import { DryRunResults } from "@/components/DryRunResults";
 import { getUserMetadata } from "@/lib/format-utils";
+import {
+  ContractWorkspace,
+  DOCS_URL as CONTRACT_DOCS_URL,
+} from "./rules.from-contract";
 
 /**
  * Naming convention for cross-table (a.k.a. dataset-level) SQL rules.
@@ -65,38 +74,117 @@ import { getUserMetadata } from "@/lib/format-utils";
  */
 const SQL_CHECK_PREFIX = "__sql_check__/";
 
+// ``tab`` controls which import flow is shown by default. The two tabs
+// share a single landing because both are "bulk import" workflows — one
+// from a DQX YAML file, the other from an ODCS v3 data contract — and
+// the user's mental model is "I want to import a bunch of rules from a
+// file" regardless of file format. Old ``/rules/from-contract`` bookmarks
+// redirect to ``?tab=contract``.
+type ImportTab = "yaml" | "contract";
+
 interface ImportSearchParams {
   from?: string;
+  tab?: ImportTab;
+}
+
+function _coerceTab(value: unknown): ImportTab | undefined {
+  return value === "yaml" || value === "contract" ? value : undefined;
 }
 
 export const Route = createFileRoute("/_sidebar/rules/import")({
   component: ImportRulesPage,
   validateSearch: (search: Record<string, unknown>): ImportSearchParams => ({
     from: typeof search.from === "string" ? search.from : undefined,
+    tab: _coerceTab(search.tab),
   }),
 });
 
 function ImportRulesPage() {
+  // Thin guard so the inner component's hook count is stable across
+  // permission-cache refreshes — otherwise a mid-session role change
+  // would alter the post-guard hook sequence and violate Rules of
+  // Hooks.
   const { canCreateRules } = usePermissions();
   if (!canCreateRules) return <Navigate to="/rules/active" replace />;
+  return <ImportRulesPageInner />;
+}
 
+function ImportRulesPageInner() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
+  const { tab: tabParam } = Route.useSearch();
+  // Drive the tab from the URL so browser back/forward (and any
+  // external deep link) always agrees with what's rendered. Previously
+  // ``useState(tabParam ?? "yaml")`` only seeded once and went stale on
+  // history navigation.
+  const tab: ImportTab = tabParam ?? "yaml";
+
+  // Track explicit user navigation back to /rules/drafts after the flow
+  // finishes so both tabs share the same exit affordance.
+  const onDone = () => navigate({ to: "/rules/drafts" });
+
   return (
     <div className="space-y-6">
       <PageBreadcrumb
-        items={[{ label: "Create Rules", to: "/rules/create" }]}
-        page="Import rules"
+        items={[{ label: t("rulesCreate.breadcrumb"), to: "/rules/create" }]}
+        page={t("rulesImport.breadcrumb")}
       />
-      <div className="flex items-center justify-between">
+      <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Import rules</h1>
+          <h1 className="text-2xl font-bold tracking-tight">{t("rulesImport.title")}</h1>
           <p className="text-muted-foreground">
-            Import data quality rules from a YAML file.
+            {tab === "contract"
+              ? t("rulesImport.subtitleContract")
+              : t("rulesImport.subtitleYaml")}
           </p>
         </div>
+        {tab === "contract" && (
+          <a
+            href={CONTRACT_DOCS_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1.5 mt-1"
+          >
+            {t("rulesFromContract.viewDocs")}
+            <ExternalLink className="h-3 w-3" />
+          </a>
+        )}
       </div>
 
-      <YamlImportCard onDone={() => navigate({ to: "/rules/drafts" })} />
+      <Tabs
+        value={tab}
+        onValueChange={(value) => {
+          const next = _coerceTab(value) ?? "yaml";
+          // Reflect the current tab in the URL so deep links / back-
+          // forward navigation land on the same flow the user was on.
+          // ``replace`` keeps history clean — tab switches aren't
+          // semantically distinct navigation events. The tab variable
+          // is derived from the URL on the next render.
+          navigate({
+            to: "/rules/import",
+            search: (prev) => ({ ...prev, tab: next }),
+            replace: true,
+          });
+        }}
+      >
+        <TabsList>
+          <TabsTrigger value="yaml" className="gap-2">
+            <FileCode2 className="h-3.5 w-3.5" />
+            {t("rulesImport.tabYaml")}
+          </TabsTrigger>
+          <TabsTrigger value="contract" className="gap-2">
+            <FileText className="h-3.5 w-3.5" />
+            {t("rulesImport.tabContract")}
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="yaml" className="mt-4">
+          <YamlImportCard onDone={onDone} />
+        </TabsContent>
+        <TabsContent value="contract" className="mt-4">
+          <ContractWorkspace onDone={onDone} />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
@@ -106,6 +194,7 @@ function ImportRulesPage() {
 // ──────────────────────────────────────────────────────────────────────────────
 
 function YamlImportCard({ onDone }: { onDone: () => void }) {
+  const { t } = useTranslation();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [yamlText, setYamlText] = useState("");
   const [parsedChecks, setParsedChecks] = useState<Record<string, unknown>[] | null>(null);
@@ -151,18 +240,18 @@ function YamlImportCard({ onDone }: { onDone: () => void }) {
           const resp = await dryRunResultsQuery.refetch();
           if (resp.data?.data) {
             setDryRunResult(resp.data.data);
-            toast.success("Dry run complete");
+            toast.success(t("rulesImport.dryRunComplete"));
           }
         } catch {
-          toast.error("Failed to fetch dry run results");
+          toast.error(t("rulesImport.failedFetchDryRun"));
         }
       } else {
-        toast.error(`Dry run failed: ${status.message || "Unknown error"}`);
+        toast.error(t("rulesImport.dryRunFailed", { message: status.message || t("common.unknownError") }));
       }
       setDryRunJobRunId(null);
     },
     onError: () => {
-      toast.error("Failed to check dry run status");
+      toast.error(t("rulesImport.failedCheckDryRunStatus"));
     },
   });
 
@@ -182,11 +271,11 @@ function YamlImportCard({ onDone }: { onDone: () => void }) {
 
   const handleDryRun = async () => {
     if (!targetTable) {
-      toast.error("Select a target table to dry-run against");
+      toast.error(t("rulesImport.selectTargetTable"));
       return;
     }
     if (dryRunnableChecks.length === 0) {
-      toast.error("No table-bound checks to dry-run (cross-table SQL checks are skipped)");
+      toast.error(t("rulesImport.noBoundChecks"));
       return;
     }
     try {
@@ -202,10 +291,10 @@ function YamlImportCard({ onDone }: { onDone: () => void }) {
       setDryRunRunId(resp.data.run_id);
       setDryRunJobRunId(resp.data.job_run_id);
       setDryRunViewFqn(resp.data.view_fqn ?? null);
-      toast.info("Dry run submitted — waiting for results...");
+      toast.info(t("rulesImport.dryRunSubmitted"));
     } catch (err) {
       const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      toast.error(detail ? `Dry run failed: ${detail}` : "Failed to submit dry run");
+      toast.error(detail ? t("rulesImport.dryRunFailedDetail", { detail }) : t("rulesImport.failedSubmitDryRun"));
     }
   };
 
@@ -213,9 +302,9 @@ function YamlImportCard({ onDone }: { onDone: () => void }) {
     if (!dryRunRunId || dryRunJobRunId === null) return;
     try {
       await cancelDryRun(dryRunRunId, { job_run_id: dryRunJobRunId });
-      toast.info("Dry run canceled");
+      toast.info(t("rulesImport.dryRunCanceled"));
     } catch {
-      toast.error("Failed to cancel dry run");
+      toast.error(t("rulesImport.failedCancelDryRun"));
     } finally {
       dryRunPolling.stopPolling();
       setDryRunJobRunId(null);
@@ -253,14 +342,7 @@ function YamlImportCard({ onDone }: { onDone: () => void }) {
       const parsed = yaml.load(text);
       if (parsed == null) return;
       if (!Array.isArray(parsed)) {
-        setParseError(
-          "YAML must be a list of check definitions, for example:\n" +
-          "- criticality: error\n" +
-          "  check:\n" +
-          "    function: is_not_null\n" +
-          "    arguments:\n" +
-          "      column: id",
-        );
+        setParseError(t("rulesImport.yamlMustBeList"));
         return;
       }
       if (parsed.some((item) => item == null || typeof item !== "object")) {
@@ -298,12 +380,12 @@ function YamlImportCard({ onDone }: { onDone: () => void }) {
       const resp = await validateMutation.mutateAsync({ data: { checks: parsedChecks } });
       setValidationResult(resp.data);
       if (resp.data.valid) {
-        toast.success("All checks are valid");
+        toast.success(t("rulesImport.allValid"));
       } else {
-        toast.error(`Validation found ${resp.data.errors.length} error(s)`);
+        toast.error(t("rulesImport.validationFoundErrors", { count: resp.data.errors.length }));
       }
     } catch {
-      toast.error("Failed to validate checks");
+      toast.error(t("rulesImport.failedValidate"));
     }
   };
 
@@ -314,10 +396,10 @@ function YamlImportCard({ onDone }: { onDone: () => void }) {
     setIsSaving(true);
     try {
       await saveRules({ table_fqn: targetTable, checks: parsedChecks, source: "imported" } as SaveRulesIn);
-      toast.success(`Saved ${parsedChecks.length} check(s) as drafts`);
+      toast.success(t("rulesImport.savedDrafts", { count: parsedChecks.length }));
       onDone();
     } catch {
-      toast.error("Failed to save rules");
+      toast.error(t("rulesImport.failedSaveRules"));
     } finally {
       setIsSaving(false);
     }
@@ -342,11 +424,11 @@ function YamlImportCard({ onDone }: { onDone: () => void }) {
         }
       }
 
-      if (submitted > 0) toast.success(`Submitted ${submitted} rule(s) for review`);
-      if (failed > 0) toast.error(`${failed} rule(s) failed to submit — saved as drafts instead`);
+      if (submitted > 0) toast.success(t("rulesImport.submittedReview", { count: submitted }));
+      if (failed > 0) toast.error(t("rulesImport.submitFailed", { count: failed }));
       onDone();
     } catch {
-      toast.error("Failed to save rules");
+      toast.error(t("rulesImport.failedSaveRules"));
     } finally {
       setIsSubmitting(false);
     }
@@ -357,16 +439,16 @@ function YamlImportCard({ onDone }: { onDone: () => void }) {
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base">
           <Upload className="h-4 w-4" />
-          Import from YAML
+          {t("rulesImport.importFromYaml")}
         </CardTitle>
         <CardDescription>
-          Upload a YAML file or paste YAML content. Each entry should follow the DQX check format.
+          {t("rulesImport.importDescription")}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
         {/* File upload */}
         <div className="space-y-2">
-          <Label>Upload YAML file</Label>
+          <Label>{t("rulesImport.uploadYamlFile")}</Label>
           <div className="flex items-center gap-3">
             <Button
               variant="outline"
@@ -375,7 +457,7 @@ function YamlImportCard({ onDone }: { onDone: () => void }) {
               className="gap-2"
             >
               <Upload className="h-4 w-4" />
-              Choose file
+              {t("rulesImport.chooseFile")}
             </Button>
             <input
               ref={fileInputRef}
@@ -384,13 +466,13 @@ function YamlImportCard({ onDone }: { onDone: () => void }) {
               onChange={handleFileUpload}
               className="hidden"
             />
-            <span className="text-xs text-muted-foreground">or paste below</span>
+            <span className="text-xs text-muted-foreground">{t("rulesImport.orPasteBelow")}</span>
           </div>
         </div>
 
         {/* YAML editor */}
         <div className="space-y-2">
-          <Label>YAML content</Label>
+          <Label>{t("rulesImport.yamlContent")}</Label>
           <Textarea
             value={yamlText}
             onChange={(e) => {
@@ -418,24 +500,24 @@ function YamlImportCard({ onDone }: { onDone: () => void }) {
         {parsedChecks && (
           <div className="flex items-center gap-2 p-3 rounded-lg bg-green-50 dark:bg-green-950/30 text-green-700 dark:text-green-400 text-sm">
             <CheckCircle2 className="h-4 w-4 shrink-0" />
-            Loaded {parsedChecks.length} check{parsedChecks.length !== 1 ? "s" : ""} from YAML
+            {t("rulesImport.loadedChecks", { count: parsedChecks.length })}
           </div>
         )}
 
         {/* Preview */}
         {parsedChecks && parsedChecks.length > 0 && (
           <div className="space-y-2">
-            <Label>Preview</Label>
+            <Label>{t("rulesImport.preview")}</Label>
             <div className="border rounded-lg overflow-auto max-h-[200px]">
               <table className="w-full text-xs">
                 <thead>
                   <tr className="border-b bg-muted/50">
-                    <th className="text-left p-2 font-medium">#</th>
-                    <th className="text-left p-2 font-medium">Name</th>
-                    <th className="text-left p-2 font-medium">Function</th>
-                    <th className="text-left p-2 font-medium">Arguments</th>
-                    <th className="text-left p-2 font-medium">Criticality</th>
-                    <th className="text-left p-2 font-medium">Labels</th>
+                    <th className="text-left p-2 font-medium">{t("rulesImport.headerHash")}</th>
+                    <th className="text-left p-2 font-medium">{t("rulesImport.headerName")}</th>
+                    <th className="text-left p-2 font-medium">{t("rulesImport.headerFunction")}</th>
+                    <th className="text-left p-2 font-medium">{t("rulesImport.headerArguments")}</th>
+                    <th className="text-left p-2 font-medium">{t("rulesImport.headerCriticality")}</th>
+                    <th className="text-left p-2 font-medium">{t("rulesImport.headerLabels")}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -500,7 +582,7 @@ function YamlImportCard({ onDone }: { onDone: () => void }) {
           <div className="space-y-1 p-3 rounded-lg bg-amber-50 dark:bg-amber-950/30">
             <div className="flex items-center gap-2 text-amber-700 dark:text-amber-400 text-sm font-medium">
               <AlertTriangle className="h-4 w-4" />
-              Validation errors
+              {t("rulesImport.validationErrors")}
             </div>
             <ul className="text-xs text-amber-600 dark:text-amber-400/80 list-disc pl-5 space-y-0.5">
               {validationResult.errors.map((err, i) => (
@@ -514,7 +596,7 @@ function YamlImportCard({ onDone }: { onDone: () => void }) {
 
         {/* Target table + actions */}
         <div className="space-y-3">
-          <Label>Target table</Label>
+          <Label>{t("rulesImport.targetTable")}</Label>
           <CatalogBrowser
             value={targetTable}
             onChange={setTargetTable}
@@ -534,7 +616,7 @@ function YamlImportCard({ onDone }: { onDone: () => void }) {
             ) : (
               <CheckCircle2 className="h-4 w-4" />
             )}
-            Validate
+            {t("rulesImport.validate")}
           </Button>
 
           <div className="flex items-center gap-1.5">
@@ -546,11 +628,11 @@ function YamlImportCard({ onDone }: { onDone: () => void }) {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="100">100 rows</SelectItem>
-                <SelectItem value="500">500 rows</SelectItem>
-                <SelectItem value="1000">1,000 rows</SelectItem>
-                <SelectItem value="5000">5,000 rows</SelectItem>
-                <SelectItem value="10000">10,000 rows</SelectItem>
+                <SelectItem value="100">{t("rulesImport.rowsOption", { count: 100 })}</SelectItem>
+                <SelectItem value="500">{t("rulesImport.rowsOption", { count: 500 })}</SelectItem>
+                <SelectItem value="1000">{t("rulesImport.thousandRows")}</SelectItem>
+                <SelectItem value="5000">{t("rulesImport.fiveThousandRows")}</SelectItem>
+                <SelectItem value="10000">{t("rulesImport.tenThousandRows")}</SelectItem>
               </SelectContent>
             </Select>
             <Tooltip>
@@ -559,11 +641,7 @@ function YamlImportCard({ onDone }: { onDone: () => void }) {
               </TooltipTrigger>
               <TooltipContent className="max-w-xs">
                 <p className="text-xs leading-relaxed">
-                  Dry-run validates only the first <strong>1–10,000 rows</strong>{" "}
-                  of the target table — it&apos;s a fast preview, not a full
-                  validation. To run imported rules against every row after
-                  approval, go to <strong>Run Rules</strong> and pick{" "}
-                  <strong>&quot;All rows&quot;</strong>.
+                  {t("rulesImport.dryRunTooltip")}
                 </p>
               </TooltipContent>
             </Tooltip>
@@ -584,7 +662,7 @@ function YamlImportCard({ onDone }: { onDone: () => void }) {
               size="sm"
             >
               <Play className="h-4 w-4" />
-              Dry run
+              {t("rulesImport.dryRun")}
             </Button>
           ) : (
             <Button
@@ -594,7 +672,7 @@ function YamlImportCard({ onDone }: { onDone: () => void }) {
               size="sm"
             >
               <Square className="h-4 w-4" />
-              Cancel dry run
+              {t("rulesImport.cancelDryRun")}
             </Button>
           )}
 
@@ -611,7 +689,7 @@ function YamlImportCard({ onDone }: { onDone: () => void }) {
               ) : (
                 <Save className="h-4 w-4" />
               )}
-              Save as drafts
+              {t("rulesImport.saveAsDrafts")}
             </Button>
             <Button
               onClick={handleSubmitForReview}
@@ -624,7 +702,7 @@ function YamlImportCard({ onDone }: { onDone: () => void }) {
               ) : (
                 <Send className="h-4 w-4" />
               )}
-              Submit for review
+              {t("rulesImport.submitForReview")}
             </Button>
           </div>
         </div>
@@ -632,16 +710,13 @@ function YamlImportCard({ onDone }: { onDone: () => void }) {
         {isDryRunning && (
           <div className="flex items-center gap-2 p-3 rounded-lg bg-muted/40 text-sm text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" />
-            Dry run in progress on{" "}
+            {t("rulesImport.dryRunInProgress")}
             <span className="font-mono text-foreground">{targetTable}</span>
             {" — "}
-            sampling {dryRunSampleSize.toLocaleString()} row
-            {dryRunSampleSize !== 1 ? "s" : ""}
+            {t("rulesImport.samplingRows", { count: dryRunSampleSize })}
             {parsedChecks && dryRunnableChecks.length < parsedChecks.length && (
               <span>
-                {" "}
-                · {parsedChecks.length - dryRunnableChecks.length} cross-table check
-                {parsedChecks.length - dryRunnableChecks.length !== 1 ? "s" : ""} skipped
+                {t("rulesImport.crossTableSkipped", { count: parsedChecks.length - dryRunnableChecks.length })}
               </span>
             )}
           </div>

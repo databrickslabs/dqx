@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import re
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -18,6 +19,30 @@ router = APIRouter()
 
 _APPROVERS_AND_ABOVE = [UserRole.ADMIN, UserRole.RULE_APPROVER]
 
+# Match DQX check identifiers exactly: leading letter / underscore,
+# letters / digits / underscores after that. Validating up front keeps
+# the value safe to inline into a Spark SQL literal further down without
+# needing additional escaping.
+_CHECK_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
+
+
+def _check_name_predicate(check_name: str) -> str:
+    """Build a Spark SQL predicate that matches quarantine rows whose
+    ``errors`` or ``warnings`` VARIANT array contains a struct with the
+    given ``name``.
+
+    We project the VARIANT to a typed ``array<struct<name:string>>`` via
+    ``from_json(to_json(...))`` so the higher-order ``exists`` can run.
+    The ``or`` covers warning-level rules (which DQX writes to the
+    sibling ``warnings`` column starting in migration v4).
+    """
+    return (
+        "(EXISTS(from_json(to_json(errors), 'array<struct<name:string>>'), "
+        f"e -> e.name = '{check_name}') "
+        "OR EXISTS(from_json(to_json(warnings), 'array<struct<name:string>>'), "
+        f"w -> w.name = '{check_name}'))"
+    )
+
 
 def _query_quarantine(
     sql: SqlExecutor,
@@ -25,14 +50,29 @@ def _query_quarantine(
     run_id: str,
     offset: int = 0,
     limit: int = 50,
+    check_name: str | None = None,
 ) -> tuple[list[dict[str, Any]], int]:
-    """Query quarantine records for a given run_id with pagination."""
+    """Query quarantine records for a given run_id with pagination.
+
+    When ``check_name`` is supplied, only rows where that DQX check
+    appears in the ``errors`` or ``warnings`` VARIANT payload are
+    returned.  Both the COUNT and the data query apply the filter so
+    pagination stays consistent.
+    """
     from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
     table = f"{app_conf.catalog}.{app_conf.schema_name}.dq_quarantine_records"
     er = escape_sql_string(run_id)
 
-    count_sql = f"SELECT COUNT(*) AS cnt FROM {table} WHERE run_id = '{er}'"  # noqa: S608
+    where = f"run_id = '{er}'"
+    if check_name:
+        if not _CHECK_NAME_RE.match(check_name):
+            # Caller-controlled input; refuse anything that doesn't look
+            # like a normal DQX identifier rather than risk injection.
+            raise ValueError(f"Invalid check_name: '{check_name}'")
+        where = f"{where} AND {_check_name_predicate(check_name)}"
+
+    count_sql = f"SELECT COUNT(*) AS cnt FROM {table} WHERE {where}"  # noqa: S608
     count_rows = sql.query(count_sql)
     total_count = int(count_rows[0][0] or 0) if count_rows and count_rows[0] else 0
 
@@ -44,7 +84,7 @@ def _query_quarantine(
         f"to_json(row_data) AS row_data, to_json(errors) AS errors, "
         f"to_json(warnings) AS warnings, "
         f"CAST(created_at AS STRING) AS created_at "
-        f"FROM {table} WHERE run_id = '{er}' "
+        f"FROM {table} WHERE {where} "  # noqa: S608
         f"ORDER BY created_at DESC LIMIT {limit} OFFSET {offset}"
     )
     rows = sql.query_dicts(data_sql)
@@ -115,11 +155,19 @@ def list_quarantine_records(
     app_conf: Annotated[AppConfig, Depends(get_conf)],
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=500),
+    check_name: str | None = Query(
+        None,
+        description="Filter to rows that failed only this DQX check (matches either errors or warnings).",
+        max_length=128,
+    ),
 ) -> QuarantineListOut:
     try:
-        rows, total_count = _query_quarantine(sql, app_conf, run_id, offset, limit)
+        rows, total_count = _query_quarantine(sql, app_conf, run_id, offset, limit, check_name)
         records = [_row_to_record(r) for r in rows]
         return QuarantineListOut(records=records, total_count=total_count, offset=offset, limit=limit)
+    except ValueError as exc:
+        # _query_quarantine raises ValueError for malformed check_name.
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -133,10 +181,17 @@ def get_quarantine_count(
     run_id: str,
     sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
     app_conf: Annotated[AppConfig, Depends(get_conf)],
+    check_name: str | None = Query(
+        None,
+        description="Filter to rows that failed only this DQX check (matches either errors or warnings).",
+        max_length=128,
+    ),
 ) -> dict[str, int]:
     try:
-        _, total_count = _query_quarantine(sql, app_conf, run_id, 0, 0)
+        _, total_count = _query_quarantine(sql, app_conf, run_id, 0, 0, check_name)
         return {"count": total_count}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -155,6 +210,11 @@ def export_quarantine_records(
     app_conf: Annotated[AppConfig, Depends(get_conf)],
     format: str = Query("csv", pattern="^(csv|json|xlsx)$"),
     max_rows: int = Query(_EXPORT_MAX_ROWS, ge=1, le=_EXPORT_MAX_ROWS),
+    check_name: str | None = Query(
+        None,
+        description="Filter the export to rows that failed only this DQX check.",
+        max_length=128,
+    ),
 ) -> StreamingResponse:
     """Export quarantine records for a run as CSV or JSON download (capped)."""
     from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
@@ -162,15 +222,25 @@ def export_quarantine_records(
     table = f"{app_conf.catalog}.{app_conf.schema_name}.dq_quarantine_records"
     er = escape_sql_string(run_id)
 
+    where = f"run_id = '{er}'"
+    if check_name:
+        if not _CHECK_NAME_RE.match(check_name):
+            raise HTTPException(status_code=400, detail=f"Invalid check_name: '{check_name}'")
+        where = f"{where} AND {_check_name_predicate(check_name)}"
+
     stmt = (
         f"SELECT quarantine_id, run_id, source_table_fqn, requesting_user, "
         f"to_json(row_data) AS row_data, to_json(errors) AS errors, "
         f"to_json(warnings) AS warnings, "
         f"CAST(created_at AS STRING) AS created_at "
-        f"FROM {table} WHERE run_id = '{er}' ORDER BY created_at DESC "  # noqa: S608
+        f"FROM {table} WHERE {where} ORDER BY created_at DESC "  # noqa: S608
         f"LIMIT {int(max_rows)}"
     )
     rows = sql.query_dicts(stmt)
+
+    # Reflect the filter in the downloaded filename so an exported file
+    # is self-describing once it's left the UI.
+    filename_suffix = f"_check_{check_name}" if check_name else ""
 
     if format == "json":
         records = [_row_to_record(r).model_dump() for r in rows]
@@ -178,7 +248,7 @@ def export_quarantine_records(
         return StreamingResponse(
             io.BytesIO(content.encode("utf-8")),
             media_type="application/json",
-            headers={"Content-Disposition": f'attachment; filename="quarantine_{run_id}.json"'},
+            headers={"Content-Disposition": (f'attachment; filename="quarantine_{run_id}{filename_suffix}.json"')},
         )
 
     if format == "xlsx":
@@ -226,7 +296,7 @@ def export_quarantine_records(
         return StreamingResponse(
             xlsx_buf,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": f'attachment; filename="quarantine_{run_id}.xlsx"'},
+            headers={"Content-Disposition": (f'attachment; filename="quarantine_{run_id}{filename_suffix}.xlsx"')},
         )
 
     buf = io.StringIO()
@@ -265,5 +335,5 @@ def export_quarantine_records(
     return StreamingResponse(
         io.BytesIO(buf.getvalue().encode("utf-8")),
         media_type="text/csv",
-        headers={"Content-Disposition": f'attachment; filename="quarantine_{run_id}.csv"'},
+        headers={"Content-Disposition": (f'attachment; filename="quarantine_{run_id}{filename_suffix}.csv"')},
     )

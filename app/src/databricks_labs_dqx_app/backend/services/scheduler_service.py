@@ -16,16 +16,13 @@ import asyncio
 import json
 import re
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any
 from uuid import uuid4
 
 from databricks.sdk import WorkspaceClient
 
 from databricks_labs_dqx_app.backend.logger import get_logger
-from databricks_labs_dqx_app.backend.sql_executor import RawSql, SqlExecutor
-
-if TYPE_CHECKING:
-    from databricks_labs_dqx_app.backend.pg_executor import PgExecutor
+from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql, SqlExecutor
 
 logger = get_logger("scheduler")
 
@@ -119,7 +116,7 @@ class SchedulerService:
         schema: str,
         tmp_schema: str,
         job_id: str,
-        oltp_sql: "SqlExecutor | PgExecutor | None" = None,
+        oltp_sql: OltpExecutorProtocol | None = None,
     ) -> None:
         """Construct the scheduler.
 
@@ -131,10 +128,10 @@ class SchedulerService:
             When ``None`` (legacy mode, no Lakebase) the same Delta
             executor is used for everything.  When Lakebase is enabled,
             callers pass a :class:`backend.pg_executor.PgExecutor` so
-            the high-frequency reads/writes hit Postgres.  Internally
-            we cast to :class:`SqlExecutor` because :class:`PgExecutor`
-            mirrors that public surface — it's the same trick used at
-            the FastAPI dependency boundary.
+            the high-frequency reads/writes hit Postgres.  Typed as
+            :class:`OltpExecutorProtocol` so both concrete executors
+            are accepted without a runtime cast — the Protocol is the
+            structural contract every OLTP call site relies on.
         """
         self._ws = ws
         self._job_id = job_id
@@ -144,10 +141,15 @@ class SchedulerService:
         self._sql = SqlExecutor(ws=ws, warehouse_id=warehouse_id, catalog=catalog, schema=schema)
         self._tmp_sql = SqlExecutor(ws=ws, warehouse_id=warehouse_id, catalog=catalog, schema=tmp_schema)
         # OLTP executor — either a PgExecutor (Lakebase) or the same
-        # Delta executor (legacy mode).  All schedule / settings /
+        # Delta executor (legacy mode). All schedule / settings /
         # rule access goes through this; only analytical table
         # operations (retention sweep, orphan view GC) use ``self._sql``.
-        self._oltp_sql: SqlExecutor = cast(SqlExecutor, oltp_sql) if oltp_sql is not None else self._sql
+        # No cast: ``SqlExecutor`` structurally satisfies
+        # :class:`OltpExecutorProtocol`, so basedpyright validates
+        # every ``self._oltp_sql.foo()`` call against the same
+        # Protocol surface regardless of which concrete executor was
+        # injected.
+        self._oltp_sql: OltpExecutorProtocol = oltp_sql if oltp_sql is not None else self._sql
         self._task: asyncio.Task[None] | None = None
         self._reload_event = asyncio.Event()
         self._force_recalc = False
@@ -242,6 +244,13 @@ class SchedulerService:
         for name, cfg in configs.items():
             freq = cfg.get("frequency", "manual")
             if freq == "manual":
+                continue
+            # ``paused`` is a soft kill switch toggled from the Schedules
+            # list. Skipping here (rather than at config-save time) means a
+            # paused schedule keeps its existing ``next_run_at`` tracker, so
+            # resuming it does not retroactively fire any missed runs — the
+            # next tick simply picks the schedule back up.
+            if cfg.get("paused"):
                 continue
 
             try:
@@ -445,20 +454,42 @@ class SchedulerService:
                     continue
 
                 run_id = f"{run_id_prefix}_{i}"
-                is_sql_check = table_fqn.startswith(_SQL_CHECK_PREFIX)
-
+                # Dataset-level rules (``__sql_check__/<name>``) come in
+                # two flavours that need different runner inputs:
+                #   * ``sql_query`` checks      → the task runner creates
+                #     a Spark temp view from the embedded query, so
+                #     ``view_fqn`` can stay as the synthetic key.
+                #   * ``has_valid_schema`` checks → the rule operates
+                #     against a real UC table. We pass the real target as
+                #     ``view_fqn`` so the runner's standard row-level
+                #     path (``is_sql_check=False``) can read it.
+                # ``source_table_fqn`` keeps the synthetic key in either
+                # case so the run history still groups under the rule.
+                is_synthetic = table_fqn.startswith(_SQL_CHECK_PREFIX)
                 sql_query: str | None = None
-                if is_sql_check:
+                runner_view_fqn = table_fqn
+
+                if is_synthetic:
                     sql_query = self._extract_sql_query(entry["checks"])
-                    if not sql_query:
-                        errors.append(f"{table_fqn}: SQL check has no query")
-                        continue
+                    if sql_query is None:
+                        schema_target = self._extract_schema_check_target(entry["checks"])
+                        if not schema_target:
+                            errors.append(
+                                f"{table_fqn}: dataset-level rule must provide either a "
+                                "sql_query or a has_valid_schema check with "
+                                "user_metadata.target_table"
+                            )
+                            continue
+                        runner_view_fqn = schema_target
 
                 config = {
                     "checks": entry["checks"],
                     "sample_size": sample_size,
                     "source_table_fqn": table_fqn,
-                    "is_sql_check": is_sql_check,
+                    # Only true SQL queries take the SQL fast-path in the
+                    # runner. Schema-validation rules go through the
+                    # row-level engine like any other check.
+                    "is_sql_check": sql_query is not None,
                 }
 
                 if custom_metrics:
@@ -471,7 +502,7 @@ class SchedulerService:
                     job_id=int(self._job_id),
                     job_parameters={
                         "task_type": "scheduled",
-                        "view_fqn": table_fqn,
+                        "view_fqn": runner_view_fqn,
                         "result_catalog": self._catalog,
                         "result_schema": self._schema,
                         "config_json": json.dumps(config),
@@ -607,17 +638,13 @@ class SchedulerService:
 
         e_fqn = escape_sql_string(table_fqn)
         check_col = self._oltp_sql.q("check")
-        # Project the VARIANT/JSONB column as JSON text.  Delta needs
-        # ``to_json`` to serialise the VARIANT through the JSON_ARRAY
-        # response format; Postgres returns JSONB cells as Python
-        # dicts which :func:`PgExecutor._to_text` already JSON-encodes,
-        # so a plain projection is enough there.
-        if getattr(self._oltp_sql, "dialect", "delta") == "postgres":
-            check_proj = f"{check_col} AS check_json"
-        else:
-            check_proj = f"to_json({check_col}) AS check_json"
+        # Dialect-agnostic JSON projection via the executor's
+        # :meth:`select_json_text` — ``to_json(col)`` on Delta,
+        # bare column on Postgres (PgExecutor._to_text JSON-encodes
+        # JSONB cells on the way out).
+        check_text = self._oltp_sql.select_json_text(check_col)
         sql = (
-            f"SELECT table_fqn, {check_proj} FROM {self._rules_table} "
+            f"SELECT table_fqn, {check_text} AS check_json FROM {self._rules_table} "
             f"WHERE table_fqn = '{e_fqn}' AND status = 'approved'"
         )
         rows = self._oltp_sql.query(sql)
@@ -672,6 +699,27 @@ class SchedulerService:
             fn = (check.get("check") or {}).get("function", "")
             if fn == "sql_query":
                 return (check.get("check") or {}).get("arguments", {}).get("query")
+        return None
+
+    @staticmethod
+    def _extract_schema_check_target(checks: list[dict[str, Any]]) -> str | None:
+        """Return the real Unity Catalog target table for a ``has_valid_schema`` rule.
+
+        Mirrors ``dryrun._extract_schema_check_target`` — kept here as a
+        static helper to avoid the scheduler depending on the route
+        module. Schema-validation rules live under the synthetic
+        ``__sql_check__/<name>`` table_fqn so we look up the *real*
+        target on ``user_metadata.target_table`` and run the row-level
+        engine against that table.
+        """
+        for check in checks:
+            fn = (check.get("check") or {}).get("function", "")
+            if fn != "has_valid_schema":
+                continue
+            meta = check.get("user_metadata") or {}
+            target = meta.get("target_table")
+            if isinstance(target, str) and target.strip():
+                return target.strip()
         return None
 
     # ------------------------------------------------------------------
@@ -907,15 +955,11 @@ class SchedulerService:
             except Exception as exc:
                 logger.warning("Retention sweep: %s failed (%s); continuing", table_name, exc)
 
-        # OLTP tables — quoted by the executor's q() helper so
-        # backticks/double-quotes follow the dialect.
-        is_postgres = getattr(self._oltp_sql, "dialect", "delta") == "postgres"
+        # OLTP tables — fqn(), q(), and the INTERVAL literal are all
+        # delegated to the executor so the body stays dialect-agnostic.
+        interval = self._oltp_sql.interval_days_expr(days)
         for table_name, time_col in _OLTP_RETENTION_TABLES:
             table = self._oltp_sql.fqn(table_name)
-            if is_postgres:
-                interval = f"INTERVAL '{days} days'"
-            else:
-                interval = f"INTERVAL {days} DAY"
             stmt = f"DELETE FROM {table} " f"WHERE {time_col} < CURRENT_TIMESTAMP - {interval}"
             try:
                 self._oltp_sql.execute(stmt)

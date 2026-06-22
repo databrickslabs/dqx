@@ -1,7 +1,7 @@
 import asyncio
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from databricks_labs_dqx_app.backend.dependencies import get_discovery_service
 from databricks_labs_dqx_app.backend.logger import logger
@@ -12,6 +12,7 @@ from databricks_labs_dqx_app.backend.models import (
     FilterTablesByColumnsOut,
     SchemaOut,
     TableOut,
+    TableSchemaDdlOut,
     TableTagsOut,
 )
 from databricks_labs_dqx_app.backend.services.discovery import DiscoveryService
@@ -22,7 +23,7 @@ from databricks_labs_dqx_app.backend.services.discovery import DiscoveryService
 router = APIRouter()
 
 
-@router.get("/catalogs", response_model=list[CatalogOut], operation_id="list_catalogs")
+@router.get("/catalogs", response_model=list[CatalogOut], operation_id="listCatalogs")
 async def list_catalogs(
     discovery: Annotated[DiscoveryService, Depends(get_discovery_service)],
 ) -> list[CatalogOut]:
@@ -37,7 +38,7 @@ async def list_catalogs(
 @router.get(
     "/catalogs/{catalog}/schemas",
     response_model=list[SchemaOut],
-    operation_id="list_schemas",
+    operation_id="listSchemas",
 )
 async def list_schemas(
     catalog: str,
@@ -56,7 +57,7 @@ async def list_schemas(
 @router.get(
     "/catalogs/{catalog}/schemas/{schema}/tables",
     response_model=list[TableOut],
-    operation_id="list_tables",
+    operation_id="listTables",
 )
 async def list_tables(
     catalog: str,
@@ -83,7 +84,7 @@ async def list_tables(
 @router.get(
     "/catalogs/{catalog}/schemas/{schema}/all-table-fqns",
     response_model=list[str],
-    operation_id="list_all_table_fqns",
+    operation_id="listAllTableFqns",
 )
 async def list_all_table_fqns(
     catalog: str,
@@ -102,7 +103,7 @@ async def list_all_table_fqns(
 @router.get(
     "/catalogs/{catalog}/schemas/{schema}/tables/{table}/columns",
     response_model=list[ColumnOut],
-    operation_id="get_table_columns",
+    operation_id="getTableColumns",
 )
 async def get_table_columns(
     catalog: str,
@@ -130,7 +131,7 @@ async def get_table_columns(
 @router.get(
     "/catalogs/{catalog}/schemas/{schema}/tables/{table}/tags",
     response_model=TableTagsOut,
-    operation_id="get_table_tags",
+    operation_id="getTableTags",
 )
 async def get_table_tags(
     catalog: str,
@@ -151,10 +152,40 @@ async def get_table_tags(
         raise HTTPException(status_code=500, detail=f"Failed to get table tags: {e}")
 
 
+@router.get(
+    "/schema-ddl",
+    response_model=TableSchemaDdlOut,
+    operation_id="getTableSchemaDdl",
+)
+async def get_table_schema_ddl(
+    discovery: Annotated[DiscoveryService, Depends(get_discovery_service)],
+    table_fqn: Annotated[str, Query(description="Fully qualified table name (catalog.schema.table)")],
+) -> TableSchemaDdlOut:
+    """Snapshot the current schema of a UC table as a Spark DDL string.
+
+    Powers the "snapshot from table" affordance in the schema-validation
+    rule builder.  Returned shape is the canonical
+    ``has_valid_schema`` ``expected_schema`` argument.
+    """
+    fqn = (table_fqn or "").strip()
+    if fqn.count(".") != 2 or not all(p.strip() for p in fqn.split(".")):
+        raise HTTPException(
+            status_code=400,
+            detail="table_fqn must be a three-part name (catalog.schema.table)",
+        )
+    try:
+        ddl = await discovery.get_table_schema_ddl_async(fqn)
+    except Exception as e:
+        logger.error("Failed to snapshot schema DDL for %s: %s", fqn, e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to snapshot schema: {e}")
+    column_count = sum(1 for piece in ddl.split(",") if piece.strip())
+    return TableSchemaDdlOut(table_fqn=fqn, ddl=ddl, column_count=column_count)
+
+
 @router.post(
     "/filter-tables-by-columns",
     response_model=FilterTablesByColumnsOut,
-    operation_id="filter_tables_by_columns",
+    operation_id="filterTablesByColumns",
 )
 async def filter_tables_by_columns(
     body: FilterTablesByColumnsIn,

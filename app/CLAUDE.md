@@ -12,7 +12,7 @@ The DQX Studio is a **UI for authoring and managing data quality rules**. It low
 
 - Deploys as a **Databricks App** (FastAPI backend + React frontend in a single Python wheel)
 - Must be publishable to **Databricks Marketplace**
-- Uses **On-Behalf-Of (OBO)** authentication — all operations run as the logged-in user
+- Uses a **hybrid auth model**: data-plane reads (catalog/schema/table browse, dry-run preview, query execution against the user's tables) run as the logged-in user via **On-Behalf-Of (OBO)** tokens so Unity Catalog perms are enforced. Control-plane writes (rules CRUD, RBAC mappings, migrations, wheel sync, task-runner job submission) run as the app's **service principal** so they don't require every end user to hold those workspace permissions. See `README.md` for the full split.
 
 ## Target Personas
 
@@ -32,17 +32,30 @@ RBAC is enforced — routes use `require_role(*roles)` from `backend/dependencie
 2. **Business user adjusts existing rules** — load → edit → optional dry-run → save (creates new version + approval request)
 3. **Engineer reviews and approves rules** — review GUI/YAML → optional dry-run → configure checks storage → approve → export to Delta table
 4. **Engineer generates rules via profiler** — select table → configure sampling → run profiler → review candidates → save
-5. **User browses and discovers rules** — filter by table/domain/owner/status → view versions → compare → import/export
+5. **Engineer pins a schema contract** — open Schema validation flow → pick target table → DDL (snapshot or hand-write) or reference table → strict/compatible mode → dry-run → save
+6. **Data product owner imports rules** — Import rules page → pick **From DQX YAML** or **From data contract** tab → review preview → save drafts
+7. **User browses and discovers rules** — filter by table/domain/owner/status → view versions → compare → import/export
+
+### Dataset-level rule convention (`__sql_check__/<name>`)
+
+Single-table rules carry a real `table_fqn`. Dataset-level rules (cross-table SQL checks and `has_valid_schema` schema-validation rules) instead use the synthetic prefix `__sql_check__/<name>` so they all bucket under the **Cross-table rules** group in the UI catalog and edit-router.
+
+- **SQL checks** store their query body inline; the runner reads it from `arguments.sql_query`.
+- **`has_valid_schema` checks** store the real table FQN in `user_metadata.target_table`; the runner creates the input view from *that* table while keeping the synthetic FQN for history grouping, and dispatches through the standard row-level engine (NOT the SQL fast-path).
+
+Both code paths live in `backend/routes/v1/dryrun.py` and `backend/services/scheduler_service.py`. If you add another dataset-level rule kind, follow the same convention and update both dispatchers in lock-step.
 
 ## Internal Storage
 
 App uses a **hybrid backend** — analytical/append tables in Delta, OLTP
 tables in Lakebase Postgres. Both backends are managed by their own
-migration runner in `backend/migrations/`. Schemas, volume, Lakebase
-instance, and Lakebase logical Postgres database are all declared as
-bundle resources in `databricks.yml` with `lifecycle.prevent_destroy:
-true`, so `databricks bundle destroy` cannot drop them — see "Bundle
-conventions" below.
+migration runner in `backend/migrations/`. Schemas, volume, and Lakebase
+instance are declared as bundle resources in `databricks.yml` with
+`lifecycle.prevent_destroy: true`, so `databricks bundle destroy` cannot
+drop them — see "Bundle conventions" below. The app's `dqx_studio`
+Postgres schema (inside the `databricks_postgres` admin database on the
+Lakebase instance) is created at startup, not provisioned by the bundle,
+but is protected transitively by the instance-level guard.
 
 ```
 {user_catalog}
@@ -63,9 +76,9 @@ conventions" below.
  ├── dqx_studio_tmp                   ← temp views created via OBO for profiler/dryrun jobs
  └── dqx_studio.wheels (volume)       ← DQX + task-runner wheels uploaded at app startup
 
-Lakebase database (when enabled, default = `dqx-studio-lakebase`):
- └── dqx_studio                       (database)
-     └── public                        (schema, configurable via DQX_LAKEBASE_SCHEMA)
+Lakebase instance (when enabled, default name = `dqx-studio-lakebase`):
+ └── databricks_postgres              (database — always-present admin DB; no per-app DB provisioned)
+     └── dqx_studio                   (schema — created by PgMigrationRunner on first start; configurable via DQX_LAKEBASE_SCHEMA)
          ├── dq_app_settings, dq_role_mappings, dq_quality_rules,
          │   dq_quality_rules_history, dq_comments, dq_schedule_configs,
          │   dq_schedule_configs_history, dq_schedule_runs

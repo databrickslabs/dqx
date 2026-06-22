@@ -89,7 +89,7 @@ router = APIRouter()
 @router.get(
     "",
     response_model=ConfigOut,
-    operation_id="config",
+    operation_id="getConfig",
     dependencies=[require_role(UserRole.ADMIN)],
 )
 def get_config(
@@ -358,7 +358,18 @@ def _load_label_definitions(svc: AppSettingsService) -> list[LabelDefinition]:
             continue
         try:
             out.append(LabelDefinition.model_validate(item))
-        except Exception as e:  # noqa: BLE001 — best-effort migration of legacy shapes
+        except Exception as e:
+            # Per-item resilience: settings stored before the v1 label-
+            # definition schema may carry legacy keys or extra fields
+            # that ``LabelDefinition.model_validate`` rejects. Skipping
+            # the malformed entry preserves the rest of the user's
+            # configured labels; failing the whole list would 500 the
+            # label-definitions endpoint over a single bad row. Logged
+            # so the operator can fix the source row at their leisure.
+            # ValidationError alone would be too narrow — older payload
+            # shapes can trip TypeError / AttributeError inside the
+            # validator before Pydantic's own error wrapping fires.
+            # See the BLE001 policy block in pyproject.toml.
             logger.warning("Skipping malformed label definition %r: %s", item, e)
     return out
 

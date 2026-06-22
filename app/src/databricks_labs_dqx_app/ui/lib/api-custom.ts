@@ -179,6 +179,10 @@ export interface ValidationRunSummaryOut {
   created_at: string | null;
   error_message: string | null;
   checks: Record<string, unknown>[];
+  review_status?: string | null;
+  review_status_is_default?: boolean;
+  review_status_updated_by?: string | null;
+  review_status_updated_at?: string | null;
 }
 
 export const listValidationRuns = (
@@ -580,9 +584,16 @@ export interface QuarantineListOut {
   limit: number;
 }
 
+export interface QuarantineQueryParams {
+  offset?: number;
+  limit?: number;
+  /** Filter to rows that failed only this check (matches errors or warnings). */
+  check_name?: string;
+}
+
 export const listQuarantineRecords = (
   runId: string,
-  params?: { offset?: number; limit?: number },
+  params?: QuarantineQueryParams,
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<QuarantineListOut>> => {
   return axios.default.get(`/api/v1/quarantine/runs/${runId}`, {
@@ -591,15 +602,19 @@ export const listQuarantineRecords = (
   });
 };
 
-export const getQuarantineRecordsQueryKey = (runId: string, offset?: number, limit?: number) =>
-  [`/api/v1/quarantine/runs`, runId, offset, limit] as const;
+export const getQuarantineRecordsQueryKey = (
+  runId: string,
+  offset?: number,
+  limit?: number,
+  checkName?: string,
+) => [`/api/v1/quarantine/runs`, runId, offset, limit, checkName ?? null] as const;
 
 export const useListQuarantineRecords = <
   TData = Awaited<ReturnType<typeof listQuarantineRecords>>,
   TError = AxiosError<unknown>,
 >(
   runId: string,
-  params?: { offset?: number; limit?: number },
+  params?: QuarantineQueryParams,
   options?: {
     query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof listQuarantineRecords>>, TError, TData>>;
     axios?: AxiosRequestConfig;
@@ -607,7 +622,13 @@ export const useListQuarantineRecords = <
 ): UseQueryResult<TData, TError> => {
   const { query: queryOptions, axios: axiosOptions } = options ?? {};
   const queryKey =
-    queryOptions?.queryKey ?? getQuarantineRecordsQueryKey(runId, params?.offset, params?.limit);
+    queryOptions?.queryKey ??
+    getQuarantineRecordsQueryKey(
+      runId,
+      params?.offset,
+      params?.limit,
+      params?.check_name,
+    );
 
   const queryFn = () => listQuarantineRecords(runId, params, axiosOptions);
 
@@ -621,27 +642,33 @@ export const useListQuarantineRecords = <
 
 export const getQuarantineCount = (
   runId: string,
+  params?: { check_name?: string },
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<{ count: number }>> => {
-  return axios.default.get(`/api/v1/quarantine/runs/${runId}/count`, options);
+  return axios.default.get(`/api/v1/quarantine/runs/${runId}/count`, {
+    ...options,
+    params,
+  });
 };
 
-export const getQuarantineCountQueryKey = (runId: string) =>
-  [`/api/v1/quarantine/runs/count`, runId] as const;
+export const getQuarantineCountQueryKey = (runId: string, checkName?: string) =>
+  [`/api/v1/quarantine/runs/count`, runId, checkName ?? null] as const;
 
 export const useQuarantineCount = <
   TData = Awaited<ReturnType<typeof getQuarantineCount>>,
   TError = AxiosError<unknown>,
 >(
   runId: string,
+  params?: { check_name?: string },
   options?: {
     query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof getQuarantineCount>>, TError, TData>>;
     axios?: AxiosRequestConfig;
   },
 ): UseQueryResult<TData, TError> => {
   const { query: queryOptions, axios: axiosOptions } = options ?? {};
-  const queryKey = queryOptions?.queryKey ?? getQuarantineCountQueryKey(runId);
-  const queryFn = () => getQuarantineCount(runId, axiosOptions);
+  const queryKey =
+    queryOptions?.queryKey ?? getQuarantineCountQueryKey(runId, params?.check_name);
+  const queryFn = () => getQuarantineCount(runId, params, axiosOptions);
   return useQuery({
     queryKey,
     queryFn,
@@ -653,9 +680,11 @@ export const useQuarantineCount = <
 export const exportQuarantineRecords = (
   runId: string,
   format: "csv" | "json" | "xlsx" = "csv",
+  checkName?: string,
 ): void => {
-  const url = `/api/v1/quarantine/runs/${runId}/export?format=${format}`;
-  window.open(url, "_blank");
+  const params = new URLSearchParams({ format });
+  if (checkName) params.set("check_name", checkName);
+  window.open(`/api/v1/quarantine/runs/${runId}/export?${params.toString()}`, "_blank");
 };
 
 // ---------------------------------------------------------------------------

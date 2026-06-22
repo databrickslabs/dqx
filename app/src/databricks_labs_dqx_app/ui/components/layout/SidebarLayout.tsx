@@ -1,5 +1,6 @@
-import { Outlet } from "@tanstack/react-router";
+import { Outlet, useLocation } from "@tanstack/react-router";
 import type { ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import {
   Sidebar,
   SidebarContent,
@@ -8,19 +9,28 @@ import {
   SidebarRail,
   SidebarTrigger,
 } from "@/components/ui/sidebar";
-import { ModeToggle } from "@/components/apx/mode-toggle";
+import { ModeToggle } from "@/components/layout/mode-toggle";
 import { AIAssistantTrigger } from "@/components/AIAssistantProvider";
-import Logo from "@/components/apx/Logo";
-import HeaderUserMenu from "@/components/apx/HeaderUserMenu";
-import { useVersion } from "@/lib/api";
+import Logo from "@/components/layout/Logo";
+import HeaderUserMenu from "@/components/layout/HeaderUserMenu";
+import { InsightsDashboardHost } from "@/components/insights/InsightsDashboard";
+import { cn } from "@/lib/utils";
+import { useGetVersion } from "@/lib/api";
 
 interface SidebarLayoutProps {
   children?: ReactNode;
 }
 
 function SidebarLayout({ children }: SidebarLayoutProps) {
-  const { data: resp } = useVersion();
+  const { t } = useTranslation();
+  const { data: resp } = useGetVersion();
   const appVersion = resp?.data?.version;
+  // The Insights dashboard iframe is hosted persistently (see
+  // ``InsightsDashboardHost``) so it doesn't reload on every navigation.
+  // While Insights is active we hide the empty route ``<Outlet/>`` wrapper
+  // and show the persistent host instead.
+  const location = useLocation();
+  const onInsights = location.pathname.startsWith("/insights");
 
   return (
     <div className="flex flex-col h-screen">
@@ -51,14 +61,15 @@ function SidebarLayout({ children }: SidebarLayoutProps) {
             <SidebarTrigger className="-ml-1 cursor-pointer" />
           </div>
           <div className="flex-1 overflow-auto">
-            <div className="flex flex-col gap-4 p-6 pt-0 max-w-7xl mx-auto">
+            <div className={cn("flex flex-col gap-4 p-6 pt-0 max-w-7xl mx-auto", onInsights && "hidden")}>
               <Outlet />
             </div>
+            <InsightsDashboardHost />
           </div>
           <footer className="shrink-0 border-t bg-background py-2 px-6">
             <div className="max-w-7xl mx-auto flex items-center justify-between text-[11px] text-muted-foreground">
               <span>
-                DQX Studio — Data Quality Explorer
+                {t("footer.tagline")}
                 {appVersion ? ` · v${appVersion}` : ""}
               </span>
               <a

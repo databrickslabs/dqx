@@ -137,8 +137,10 @@ _SAMPLE_ROW = [
 class TestGetOboWs:
     """Unit tests for the get_obo_ws dependency function."""
 
-    def test_raises_when_no_token(self):
+    def test_raises_when_no_token(self, monkeypatch):
         """Should raise HTTPException when no token is provided."""
+        monkeypatch.delenv("DATABRICKS_CONFIG_PROFILE", raising=False)
+        monkeypatch.delenv("DATABRICKS_TOKEN", raising=False)
 
         async def _() -> None:
             with pytest.raises(HTTPException) as exc_info:
@@ -148,8 +150,10 @@ class TestGetOboWs:
 
         asyncio.run(_())
 
-    def test_raises_when_empty_token(self):
+    def test_raises_when_empty_token(self, monkeypatch):
         """Should raise HTTPException when empty token is provided."""
+        monkeypatch.delenv("DATABRICKS_CONFIG_PROFILE", raising=False)
+        monkeypatch.delenv("DATABRICKS_TOKEN", raising=False)
 
         async def _() -> None:
             with pytest.raises(HTTPException) as exc_info:

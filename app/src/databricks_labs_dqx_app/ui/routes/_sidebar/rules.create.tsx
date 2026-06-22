@@ -1,52 +1,70 @@
 import { createFileRoute, Link, Navigate } from "@tanstack/react-router";
+import { useTranslation } from "react-i18next";
 import { usePermissions } from "@/hooks/use-permissions";
-import { PageBreadcrumb } from "@/components/apx/PageBreadcrumb";
+import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Sparkles, Database, BarChart3, Upload, ArrowRight } from "lucide-react";
+import {
+  Sparkles,
+  Database,
+  BarChart3,
+  Upload,
+  ArrowRight,
+} from "lucide-react";
 
 export const Route = createFileRoute("/_sidebar/rules/create")({
   component: CreateRulesLanding,
 });
 
-const OPTIONS = [
-  {
-    to: "/rules/single-table",
-    icon: Sparkles,
-    title: "Single table rules",
-    description: "Define column-level checks for individual tables, with optional AI assistance.",
-  },
-  {
-    to: "/rules/create-sql",
-    icon: Database,
-    title: "Cross-table rules",
-    description: "Write SQL queries that validate data across multiple tables or run dataset-level aggregation checks.",
-  },
-  {
-    to: "/profiler",
-    icon: BarChart3,
-    title: "Profile & generate",
-    description: "Profile your data to auto-generate quality rules based on column statistics.",
-  },
-  {
-    to: "/rules/import",
-    icon: Upload,
-    title: "Import rules",
-    description: "Import rules from a YAML file.",
-  },
-] as const;
-
 function CreateRulesLanding() {
+  const { t } = useTranslation();
   const { canCreateRules } = usePermissions();
   if (!canCreateRules) return <Navigate to="/rules/active" replace />;
+
+  // ``/rules/import`` is now a tabbed landing that hosts both DQX YAML
+  // imports and ODCS data-contract generation — the standalone "From
+  // data contract" tile was removed to keep this grid focused on
+  // distinct *kinds* of rule sources rather than file formats.
+  //
+  // The standalone "Validate table schema" tile was also removed: schema
+  // validation and other reference-table checks (foreign_key, …) are now
+  // authored inside the single-table editor, so users have one place to
+  // build per-table rules. The ``/rules/schema`` route is kept for editing
+  // existing dataset-level schema rules linked from Active/Drafts.
+  const OPTIONS = [
+    {
+      to: "/rules/single-table",
+      icon: Sparkles,
+      title: t("rulesCreate.singleTableTitle"),
+      description: t("rulesCreate.singleTableDescription"),
+    },
+    {
+      to: "/rules/create-sql",
+      icon: Database,
+      title: t("rulesCreate.crossTableTitle"),
+      description: t("rulesCreate.crossTableDescription"),
+    },
+    {
+      to: "/profiler",
+      icon: BarChart3,
+      title: t("rulesCreate.profileTitle"),
+      description: t("rulesCreate.profileDescription"),
+    },
+    {
+      to: "/rules/import",
+      icon: Upload,
+      title: t("rulesCreate.importTitle"),
+      description: t("rulesCreate.importDescription"),
+    },
+  ] as const;
 
   return (
     <div className="space-y-6">
       <div className="space-y-2">
-        <PageBreadcrumb items={[]} page="Create Rules" />
+        <PageBreadcrumb items={[]} page={t("rulesCreate.breadcrumb")} />
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Create Rules</h1>
+          <h1 className="text-2xl font-bold tracking-tight">{t("rulesCreate.title")}</h1>
           <p className="text-muted-foreground">
-            Choose how you want to create data quality rules.
+            {t("rulesCreate.subtitle")}
           </p>
         </div>
       </div>
