@@ -514,7 +514,9 @@ def test_run_dqx_row_anomaly_detection_demo(ws, make_notebook, make_schema, make
     )
     job = make_job(tasks=[Task(task_key="dqx_row_anomaly_detection_demo", notebook_task=notebook_task)])
 
-    waiter = ws.jobs.run_now_and_wait(job.job_id)
+    # This demo trains two IsolationForest models and scores with contributions + AI explanations
+    # (on by default), so it runs past run_now_and_wait's 20-minute SDK default
+    waiter = ws.jobs.run_now_and_wait(job.job_id, timeout=timedelta(minutes=30))
     run = ws.jobs.wait_get_run_job_terminated_or_skipped(
         run_id=waiter.run_id,
         timeout=timedelta(minutes=30),

@@ -68,6 +68,8 @@ def test_missing_columns_error(
             model_name=qualify_model_name(model_name, registry_table),
             registry_table=registry_table,
             threshold=DEFAULT_SCORE_THRESHOLD,
+            enable_contributions=False,
+            enable_ai_explanation=False,
         )
         result_df = apply_fn(test_df)
         result_df.collect()
@@ -187,6 +189,8 @@ def test_missing_registry_table_for_scoring_error(
             model_name=qualify_model_name(model_name, registry_table),
             registry_table=registry_table,
             threshold=DEFAULT_SCORE_THRESHOLD,
+            enable_contributions=False,
+            enable_ai_explanation=False,
         )
         result_df = apply_fn(df)
         result_df.collect()
@@ -230,6 +234,8 @@ def test_model_not_found_error(spark: SparkSession, make_random, test_df_factory
             model_name=qualify_model_name(model_name, registry_table),
             registry_table=registry_table,
             threshold=DEFAULT_SCORE_THRESHOLD,
+            enable_contributions=False,
+            enable_ai_explanation=False,
         )
         result_df = apply_fn(df)
         result_df.collect()
@@ -330,6 +336,7 @@ def test_row_filter_scores_only_matching_rows(
         threshold=DEFAULT_SCORE_THRESHOLD,
         row_filter="amount > 150",
         enable_contributions=False,
+        enable_ai_explanation=False,
     )
     result = apply_fn(df).select("amount", F.col(f"{info_col}.anomaly.score").alias("score")).collect()
 

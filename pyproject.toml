@@ -205,7 +205,7 @@ exclude = ['venv', '.venv', 'demos/*', 'tests/e2e/*', 'app/*']
 
 [[tool.mypy.overrides]]
 # External packages without PEP 561 type stubs (unavoidable - these are third-party optional dependencies)
-module = ["google", "google.*", "pandas", "sklearn.*", "shap", "cloudpickle", "mlflow", "mlflow.*", "urllib3.*", "aiohttp.*", "openpyxl", "openpyxl.*"]
+module = ["google", "google.*", "pandas", "sklearn.*", "shap", "cloudpickle", "mlflow", "mlflow.*", "urllib3.*", "aiohttp.*", "openpyxl", "openpyxl.*", "websockets", "websockets.*"]
 ignore_missing_imports = true
 
 
@@ -215,6 +215,7 @@ cache_dir = ".venv/pytest-cache"
 filterwarnings = ["ignore::DeprecationWarning"]
 markers = [
     "anomaly: marks tests as anomaly detection tests",
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
 ]
 pythonpath = ["src", "app/src"]
 
@@ -883,6 +884,10 @@ redefining-builtins-modules = ["six.moves", "past.builtins", "future.builtins", 
 "tests/integration/test_app_backend.py" = "import-outside-toplevel"
 "src/databricks/labs/dqx/anomaly/anomaly_workflow.py" = "import-outside-toplevel"
 "src/databricks/labs/dqx/check_funcs.py" = "protected-access"
+"tests/unit/test_anomaly_llm_explainer.py" = "protected-access"
+"tests/unit/test_anomaly_check_funcs_validation.py" = "protected-access"
+"tests/unit/test_anomaly_scoring_run.py" = "protected-access"
+"tests/integration_anomaly/test_anomaly_ai_explanation.py" = "protected-access"
 
 # This plugin is used to generate correct links in README showed on PyPi
 [tool.hatch.metadata.hooks.fancy-pypi-readme]

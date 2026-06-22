@@ -17,14 +17,12 @@ from pyspark.sql.types import (
 
 from databricks.labs.dqx.anomaly.feature_prep import (
     apply_feature_engineering_for_scoring,
+    apply_feature_engineering_with_row_passthrough,
     prepare_feature_metadata,
 )
 from databricks.labs.dqx.anomaly.model_loader import load_and_validate_model
 from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRecord
-from databricks.labs.dqx.anomaly.explainability import (
-    compute_shap_values,
-    format_shap_contributions,
-)
+from databricks.labs.dqx.anomaly.explainability import compute_gated_shap_contributions
 
 
 def serialize_ensemble_models(
@@ -48,20 +46,6 @@ def prepare_ensemble_scoring_schema(enable_contributions: bool) -> StructType:
     if enable_contributions:
         schema_fields.append(StructField("anomaly_contributions", MapType(StringType(), DoubleType()), True))
     return StructType(schema_fields)
-
-
-def join_ensemble_scores(
-    df_filtered: DataFrame,
-    scored_df: DataFrame,
-    merge_columns: list[str],
-    enable_contributions: bool,
-) -> DataFrame:
-    """Join scores back to original DataFrame."""
-    cols_to_select = [*merge_columns, "_scores.anomaly_score", "_scores.anomaly_score_std"]
-    if enable_contributions:
-        cols_to_select.append("_scores.anomaly_contributions")
-
-    return df_filtered.join(scored_df.select(*cols_to_select), on=merge_columns, how="left")
 
 
 def create_ensemble_scoring_udf(
@@ -90,8 +74,14 @@ def create_ensemble_scoring_udf_with_contributions(
     models_bytes: list[bytes],
     engineered_feature_cols: list[str],
     schema: StructType,
+    quantile_points: list[tuple[float, float]] | None = None,
+    threshold: float | None = None,
 ):
-    """Create ensemble scoring UDF with SHAP contributions."""
+    """Create ensemble scoring UDF with SHAP contributions.
+
+    When *quantile_points* and *threshold* are provided, SHAP runs only for rows whose
+    mean-score severity reaches the threshold; other rows get a null contributions map.
+    """
 
     @pandas_udf(schema)  # type: ignore[call-overload]
     def ensemble_scoring_udf(*cols: pd.Series) -> pd.DataFrame:
@@ -103,17 +93,18 @@ def create_ensemble_scoring_udf_with_contributions(
         mean_scores = scores_matrix.mean(axis=0)
         std_scores = scores_matrix.std(axis=0, ddof=1)
 
-        result = {"anomaly_score": mean_scores, "anomaly_score_std": std_scores}
-
-        model_local = models[0]
-        shap_values, valid_indices = compute_shap_values(
-            model_local,
-            feature_matrix,
-            engineered_feature_cols,
-        )
-        result["anomaly_contributions"] = format_shap_contributions(
-            shap_values, valid_indices, len(feature_matrix), engineered_feature_cols
-        )
+        result = {
+            "anomaly_score": mean_scores,
+            "anomaly_score_std": std_scores,
+            "anomaly_contributions": compute_gated_shap_contributions(
+                models[0],
+                feature_matrix,
+                engineered_feature_cols,
+                mean_scores,
+                quantile_points,
+                threshold,
+            ),
+        }
 
         return pd.DataFrame(result)
 
@@ -129,12 +120,19 @@ def score_ensemble_models(
     enable_contributions: bool,
     *,
     model_record: AnomalyModelRecord,
+    quantile_points: list[tuple[float, float]] | None = None,
+    threshold: float | None = None,
 ) -> DataFrame:
-    """Score DataFrame with multiple ensemble models and compute statistics."""
+    """Score DataFrame with multiple ensemble models and compute statistics.
+
+    The original row rides through feature engineering inside a struct column and is
+    restored after scoring, so scores are attached in the same pass — no join back onto
+    the caller's DataFrame.
+    """
     models_bytes = serialize_ensemble_models(model_uris, model_record)
 
     column_infos, feature_metadata = prepare_feature_metadata(feature_metadata_json)
-    engineered_df = apply_feature_engineering_for_scoring(
+    engineered_df, original_row_col = apply_feature_engineering_with_row_passthrough(
         df_filtered, columns, merge_columns, column_infos, feature_metadata
     )
     engineered_feature_cols = feature_metadata.engineered_feature_names
@@ -142,7 +140,7 @@ def score_ensemble_models(
     schema = prepare_ensemble_scoring_schema(enable_contributions)
     if enable_contributions:
         ensemble_scoring_udf = create_ensemble_scoring_udf_with_contributions(
-            models_bytes, engineered_feature_cols, schema
+            models_bytes, engineered_feature_cols, schema, quantile_points, threshold
         )
     else:
         ensemble_scoring_udf = create_ensemble_scoring_udf(models_bytes, engineered_feature_cols, schema)
@@ -150,7 +148,11 @@ def score_ensemble_models(
     input_cols = [col(c) for c in engineered_feature_cols]
     scored_df = engineered_df.withColumn("_scores", ensemble_scoring_udf(*input_cols))
 
-    return join_ensemble_scores(df_filtered, scored_df, merge_columns, enable_contributions)
+    cols_to_select = [f"{original_row_col}.*", "_scores.anomaly_score", "_scores.anomaly_score_std"]
+    if enable_contributions:
+        cols_to_select.append("_scores.anomaly_contributions")
+
+    return scored_df.select(*cols_to_select)
 
 
 def score_ensemble_models_local(
@@ -162,6 +164,8 @@ def score_ensemble_models_local(
     enable_contributions: bool,
     *,
     model_record: AnomalyModelRecord,
+    quantile_points: list[tuple[float, float]] | None = None,
+    threshold: float | None = None,
 ) -> DataFrame:
     """Score ensemble models locally on the driver."""
     models = [load_and_validate_model(uri, model_record) for uri in model_uris]
@@ -174,19 +178,20 @@ def score_ensemble_models_local(
 
     feature_matrix = local_pdf[engineered_feature_cols]
     scores_matrix = np.array([-model.score_samples(feature_matrix) for model in models])
+    mean_scores = scores_matrix.mean(axis=0)
 
     result = {col_name: local_pdf[col_name] for col_name in merge_columns}
-    result["anomaly_score"] = scores_matrix.mean(axis=0)
+    result["anomaly_score"] = mean_scores
     result["anomaly_score_std"] = scores_matrix.std(axis=0, ddof=1)
 
     if enable_contributions:
-        shap_values, valid_indices = compute_shap_values(
+        result["anomaly_contributions"] = compute_gated_shap_contributions(
             models[0],
             feature_matrix,
             engineered_feature_cols,
-        )
-        result["anomaly_contributions"] = format_shap_contributions(
-            shap_values, valid_indices, len(local_pdf), engineered_feature_cols
+            mean_scores,
+            quantile_points,
+            threshold,
         )
 
     result_pdf = pd.DataFrame(result)

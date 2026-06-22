@@ -245,7 +245,7 @@ However, when you run a row anomaly detection check, DQX also adds a `_dq_info` 
 
 The info column is an array of structs, with one element per anomaly detection check that was applied.
 
-Feature contributions are disabled by default for faster scoring. You can enable with `enable_contributions` parameter:
+Feature contributions are on by default and are computed only for anomalous rows (severity at or above the threshold) — non-anomalous rows carry a `null` contributions map, so the SHAP cost scales with the number of anomalies, not the table size. Set `enable_contributions=False` to skip them entirely for the fastest scoring. Severity percentiles are always computed for every row, so you can still count would-be anomalies at other thresholds after scoring; but if you want contributions (and AI explanations) for rows below your enforcement threshold, score with the lower exploration threshold and filter afterwards:
 
 ```python
 DQDatasetRule(
@@ -254,7 +254,7 @@ DQDatasetRule(
   check_func_kwargs={
     "model_name": "catalog.schema.orders_monitor",  # fully qualified name
     "registry_table": "catalog.schema.dqx_anomaly_models",   # fully qualified name
-    "enable_contributions": True,
+    # "enable_contributions": False,  # optional: skip SHAP (also disables AI explanations)
   }
 )
 ```
@@ -292,7 +292,7 @@ For full parameter and schema details, see [Row Anomaly Detection in Quality Che
 1. **Feature engineering** (automatic): DQX detects column types and creates features (numerical standardized, categorical one-hot or frequency-encoded, temporal expanded to hour/day/month/weekend).
 2. **Smart sampling and training**: DQX samples your data (default 30%, capped at 1M rows), trains an ensemble of Isolation Forest models, and captures baseline statistics for drift detection.
 3. **Model registry**: Models and metadata live in MLflow and a Delta table; segmented models use deterministic names (for example `__seg_region=US_tier=gold`).
-4. **Scoring and explanation**: Raw scores are normalized to a 0–100 severity percentile. Set `enable_contributions=True` for SHAP contributions (which features drove each score); default is `False` for faster scoring.
+4. **Scoring and explanation**: Raw scores are normalized to a 0–100 severity percentile. SHAP contributions (which features drove each score) are on by default and computed only for anomalous rows; set `enable_contributions=False` to skip them for the fastest scoring.
 5. **Auto-discovery of columns and segments**: When you call `train()` without `columns` or `segment_by`, DQX automatically discovers both. It selects numeric columns with enough variance as features and may **auto-segment** when it finds suitable segment columns: categorical or low-cardinality columns with 2–50 distinct values, low null rate, and enough rows per segment (for example region, product category). If your auto-trained model is segmented, that is expected. To force a single global model, pass `segment_by=[]` (or omit segment columns from the data used for discovery) or set `columns` and `segment_by` explicitly.
 
 ### Why Isolation Forest?
@@ -322,10 +322,57 @@ Each element is a **struct** with a shared “wide” schema. Currently, the onl
 | `threshold` | double | Severity percentile threshold used (e.g. 95.0). |
 | `model` | string | Full model name (e.g. Unity Catalog name). |
 | `segment` | map&lt;string, string&gt; | Segment key-value pairs for segmented models; `null` for global models. |
-| `contributions` | map&lt;string, double&gt; | Per-feature contribution percentages (0–100). Present when `enable_contributions=True`; `null` by default. |
+| `contributions` | map&lt;string, double&gt; | Per-feature contribution percentages (0–100). On by default (`enable_contributions=True`); populated only for anomalous rows — `null` for non-anomalous rows or if you set it `False`. |
 | `confidence_std` | double | Ensemble score standard deviation. Present when `enable_confidence_std=True`; `null` otherwise. |
+| `ai_explanation` | struct | LLM-generated explanation for the row's `(segment, pattern)` group. On by default (`enable_ai_explanation=True`); `null` for non-anomalous rows, when disabled, or when no serving endpoint is reachable. See [AI explanations](#ai-explanations) below. |
+
+The nested `ai_explanation` struct (populated when AI explanations are on — the default):
+
+| Field | Type | Description |
+|--------|------|-------------|
+| `narrative` | string | Plain-language description of why the group was flagged. |
+| `business_impact` | string | Likely downstream impact if the rows are processed unchanged. |
+| `action` | string | What an analyst should investigate. |
+| `top_features` | string | Deterministic top-2 contributing features (e.g. `amount+quantity`) — the group's pattern key. |
+| `group_size` | long | Number of anomalous rows in this `(segment, pattern)` group. |
+| `group_avg_severity` | double | Mean `severity_percentile` across the group. |
 
 **Access in PySpark:** use `F.element_at(F.col("_dq_info"), 1)` for the first element (1-based), then `.getField("anomaly").getField("severity_percentile")` etc. Alternatively `F.col("_dq_info").getItem(0)` for 0-based index (see [Troubleshooting](/docs/guide/row_anomaly_detection/troubleshooting) for Spark Connect–friendly patterns).
+
+### AI explanations
+
+AI explanations are **on by default**: each anomalous row gets a plain-language, LLM-generated explanation in `_dq_info[0].anomaly.ai_explanation` answering *why was this flagged, what's the impact, and what should I do* — without anyone reading raw SHAP percentages. Set `enable_ai_explanation=False` to turn it off (or `enable_contributions=False`, which disables explanations too, since they use the SHAP contributions as input). The explanation is AI-generated from the anomaly signal (feature names + SHAP + severity); it is **not** grounded in your catalog's table/column descriptions, so treat the business-impact and action as a starting point, not authoritative.
+
+The call runs inside Spark via the SQL `ai_query` function against a Databricks Model Serving endpoint, so it needs no extra setup and scales with the cluster. This requires **Databricks serverless compute or Databricks Runtime 15.4 LTS or above** (where `ai_query` is available); on older runtimes explanations are skipped with a warning and scoring still completes. Similar anomalous rows are grouped together and the model is called **once per group** rather than once per row, so cost stays predictable on large datasets.
+
+Rows are grouped by their top two contributing features, so occasionally two different kinds of anomaly that share the same top two features land in the same group and get one shared explanation. That's intentional — it keeps the number of AI calls (and the cost) low, at the price of a slightly more general explanation for those rows.
+
+```python
+from databricks.labs.dqx.rule import DQDatasetRule
+from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies
+
+# Contributions + AI explanations are on by default — this is all you need:
+checks = [
+  DQDatasetRule(
+    criticality="error",
+    check_func=has_no_row_anomalies,
+    check_func_kwargs={
+      "model_name": "catalog.schema.orders_monitor",
+      "registry_table": "catalog.schema.dqx_anomaly_models",
+      "threshold": 95.0,
+      # Optional: override the serving endpoint (defaults to databricks-claude-sonnet-4-5)
+      # "ai_explanation_llm_model_config": {"model_name": "databricks-claude-sonnet-4-5"},
+      # Optional: turn explanations off -> "enable_ai_explanation": False
+    },
+  )
+]
+```
+
+<Admonition type="note" title="Cost and privacy">
+* Explanations are **on by default** and call a Model Serving endpoint, so they add per-run LLM cost. `max_groups` (default 500) caps how many groups the model is called for per run. For segmented models the cap is shared across segments (at least one call each), so if you set `max_groups` lower than the number of segments you still get one call per segment — a warning is logged when that happens. Set `enable_ai_explanation=False` to turn explanations off.
+* No serving endpoint? If the configured endpoint isn't reachable (e.g. Foundation Model APIs aren't enabled in the workspace), explanations are skipped with a warning and scoring still completes — nothing breaks.
+* `redact_columns` keeps the listed feature and segment names out of the prompt. Segment **values** for non-redacted keys are sent verbatim — avoid segmenting on sensitive columns, or list them in `redact_columns`.
+</Admonition>
 
 ## Practical examples (non-technical)
 

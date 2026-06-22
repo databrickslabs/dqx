@@ -113,7 +113,6 @@ def test_all_segments_skipped_raises_invalid_parameter_error(
     make_schema,
     make_random,
     anomaly_engine,
-    caplog,
 ):
     schema = make_schema(catalog_name=TEST_CATALOG)
     suffix = make_random(8).lower()
@@ -277,6 +276,9 @@ def test_segment_scoring(
             "model_name": model_name,
             "registry_table": registry_table,
             "threshold": DQENGINE_SCORE_THRESHOLD,  # Lowered from 0.7 to account for IsolationForest scoring characteristics
+            # Only scores are asserted; skip SHAP contributions + AI explanations (no LLM call).
+            "enable_contributions": False,
+            "enable_ai_explanation": False,
         },
     )
 
@@ -395,6 +397,9 @@ def test_unknown_segment_handling(
         check_func_kwargs={
             "model_name": model_name,
             "registry_table": registry_table,
+            # Only scores are asserted; skip SHAP contributions + AI explanations (no LLM call).
+            "enable_contributions": False,
+            "enable_ai_explanation": False,
         },
     )
 
@@ -456,6 +461,8 @@ def test_all_unknown_segments_yield_null_scores(
             "registry_table": registry_table,
             "enable_contributions": True,
             "enable_confidence_std": True,
+            # This test asserts contributions/null scores, not explanations; skip the LLM call.
+            "enable_ai_explanation": False,
         },
     )
 

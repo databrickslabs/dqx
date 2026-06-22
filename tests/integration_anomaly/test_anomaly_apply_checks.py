@@ -300,8 +300,11 @@ def test_apply_anomaly_check_with_contributions(ws, spark: SparkSession, shared_
     registry_table = shared_3d_model["registry_table"]
     columns = shared_3d_model["columns"]
 
+    # Use an extreme anomaly: SHAP contributions are computed/surfaced only for rows at or above
+    # the severity threshold (see compute_gated_shap_contributions), so the row must be flagged for
+    # contributions to be populated.
     test_df = spark.createDataFrame(
-        [(1, 150.0, 20.0, 0.2)],  # Normal data
+        [(1, OUTLIER_AMOUNT, OUTLIER_QUANTITY, 0.95)],  # Extreme anomaly (far outside training range)
         "transaction_id int, amount double, quantity double, discount double",
     )
 
@@ -321,8 +324,10 @@ def test_apply_anomaly_check_with_contributions(ws, spark: SparkSession, shared_
     row = result_df.collect()[0]
     anomaly = row["_dq_info"][0].anomaly
 
+    # Contributions are only surfaced for anomalous rows, so the row must be flagged.
+    assert anomaly.is_anomaly is True, "expected the extreme outlier to be flagged as anomalous"
     # Verify contributions field is populated
-    assert anomaly.contributions is not None, "contributions should not be None when requested"
+    assert anomaly.contributions is not None, "contributions should not be None for an anomalous row"
 
     # Verify contributions is a map with column names as keys
     assert isinstance(anomaly.contributions, dict), "contributions should be a dict/map"

@@ -11,6 +11,7 @@ Before you start, confirm you have **all** of the items below. The single most c
 - **Databricks CLI** v1.4.0+ installed and authenticated against your workspace (`databricks auth login -p <profile>`). `make app-deploy` and `make app-bind` enforce this via a preflight `app-check-cli` step (`databricks --version`) and abort before building if the CLI is older. v1.4.0 is required because the one-button `postgres_roles` resource (used to provision a fresh Lakebase) is only accepted by CLI ≥ 1.4.0; `lifecycle.prevent_destroy` itself needs only v0.268+.
 - **`jq`** (used by the post-deploy grants script and the resource-bind helper)
 - **`make`** (drives the one-command deploy target)
+- **App build toolchain** — `make app-deploy` first runs `make app-build` to produce the wheel, which needs **uv**, **Node.js 18+** (provides `npm`; `brew install node` / nvm / [nodejs.org](https://nodejs.org/en/download)), **yarn** (`npm install -g yarn`), and **bun** (`curl -fsSL https://bun.sh/install | bash`). See [DEVELOPMENT.md → Prerequisites](DEVELOPMENT.md#prerequisites).
 
 ### Required permissions
 

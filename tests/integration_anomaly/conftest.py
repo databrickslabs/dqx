@@ -117,6 +117,11 @@ def create_anomaly_apply_fn(
     **check_kwargs,
 ):
     """Create apply function from has_no_row_anomalies check. Default driver_only=True for tests."""
+    # Production defaults enable_contributions / enable_ai_explanation to True, but the broad
+    # anomaly suite shouldn't pay the SHAP + ai_query (LLM) cost on every test — so this scaffold
+    # defaults them OFF. Tests that exercise contributions/explanations pass the flags explicitly.
+    check_kwargs.setdefault("enable_contributions", False)
+    check_kwargs.setdefault("enable_ai_explanation", False)
     _, apply_fn, info_col = has_no_row_anomalies(
         model_name=qualify_model_name(model_name, registry_table),
         registry_table=registry_table,
@@ -176,6 +181,10 @@ def create_anomaly_check_rule(
         "driver_only": driver_only,
     }
     check_kwargs.update(kwargs)
+    # See create_anomaly_apply_fn: default the (now production-on) contributions/explanation flags
+    # OFF in tests to avoid SHAP + ai_query cost; tests that need them pass the flags explicitly.
+    check_kwargs.setdefault("enable_contributions", False)
+    check_kwargs.setdefault("enable_ai_explanation", False)
     return DQDatasetRule(
         criticality=criticality,
         check_func=has_no_row_anomalies,
@@ -193,6 +202,10 @@ def apply_anomaly_check_direct(
     **kwargs: Any,
 ) -> Any:
     """Apply anomaly detection directly (without DQEngine) to get anomaly_score column."""
+    # See create_anomaly_apply_fn: default the (now production-on) contributions/explanation flags
+    # OFF in tests to avoid SHAP + ai_query (LLM) cost; tests that need them pass the flags explicitly.
+    kwargs.setdefault("enable_contributions", False)
+    kwargs.setdefault("enable_ai_explanation", False)
     _, apply_fn, info_col = has_no_row_anomalies(
         model_name=qualify_model_name(model_name, registry_table),
         registry_table=registry_table,
@@ -357,6 +370,10 @@ def create_anomaly_dataset_rule(
     **kwargs: Any,
 ) -> DQDatasetRule:
     """Create DQDatasetRule for anomaly detection. Default driver_only=True for tests."""
+    # See create_anomaly_apply_fn: default the (now production-on) contributions/explanation flags
+    # OFF in tests to avoid SHAP + ai_query (LLM) cost; tests that need them pass the flags explicitly.
+    kwargs.setdefault("enable_contributions", False)
+    kwargs.setdefault("enable_ai_explanation", False)
     return DQDatasetRule(
         criticality=criticality,
         check_func=has_no_row_anomalies,
@@ -527,6 +544,54 @@ def configure_mlflow_tracking(mlflow_worker_experiment):
         os.environ["MLFLOW_EXPERIMENT_ID"] = experiment_id
     os.environ["MLFLOW_EXPERIMENT_NAME"] = experiment_path
     logger.debug(f"MLflow configured: experiment={experiment_path}")
+
+
+def _drop_registered_models_in_schema(ws, catalog_name: str, schema_name: str) -> None:
+    """Delete every UC registered model (and its versions) in a schema.
+
+    Anomaly training registers models inside the test schema. A forced schema delete does NOT
+    cascade registered models, so without this they (a) block the schema teardown and (b) pile up
+    toward the metastore registered-model quota across runs. Best-effort: logs and continues on
+    error (missing schema, permission, concurrent delete) so teardown never fails a test.
+    """
+    try:
+        models = list(ws.registered_models.list(catalog_name=catalog_name, schema_name=schema_name))
+    except Exception as exc:  # best-effort teardown
+        logger.warning(f"Could not list registered models in {catalog_name}.{schema_name}: {exc}")
+        return
+    for model in models:
+        try:
+            for version in ws.model_versions.list(full_name=model.full_name):
+                ws.model_versions.delete(full_name=model.full_name, version=version.version)
+            ws.registered_models.delete(full_name=model.full_name)
+            logger.debug(f"Deleted registered model {model.full_name}")
+        except Exception as exc:  # best-effort teardown
+            logger.warning(f"Could not delete registered model {model.full_name}: {exc}")
+
+
+@pytest.fixture
+def make_schema(make_schema, ws):
+    """Wrap pytester's ``make_schema`` so registered models in each schema are dropped at teardown.
+
+    Anomaly training registers UC models inside the test schema, and a forced schema delete does
+    not cascade them — pytester's own teardown leaves them behind, so they accumulate toward the
+    metastore registered-model quota and can block the schema drop. This override records every
+    schema handed out during the test and drops its registered models *before* pytester deletes the
+    schema (this fixture depends on pytester's, so its finalizer runs first). Covers both the model
+    fixtures and inline ``make_schema`` + train calls, and is scoped to schemas this test created
+    (xdist-safe — never touches another worker's schema).
+    """
+    pytester_make_schema = make_schema
+    created = []
+
+    def _make(**kwargs):
+        schema = pytester_make_schema(**kwargs)
+        created.append(schema)
+        return schema
+
+    yield _make
+    for schema in created:
+        _drop_registered_models_in_schema(ws, schema.catalog_name, schema.name)
 
 
 @pytest.fixture

@@ -18,7 +18,7 @@ import cloudpickle
 import numpy as np
 import pandas as pd
 import pyspark.sql.functions as F
-from pyspark.sql import DataFrame
+from pyspark.sql import Column, DataFrame
 from pyspark.sql.functions import col, pandas_udf
 from pyspark.sql.types import DoubleType, IntegerType, StructField, StructType
 from sklearn.ensemble import IsolationForest
@@ -316,38 +316,50 @@ def compute_baseline_statistics(train_df: DataFrame, columns: list[str]) -> dict
     Returns:
         Dictionary mapping column names to their baseline statistics
     """
-    baseline_stats = {}
     col_types = dict(train_df.dtypes)
+    numeric_compatible_types = ["int", "long", "float", "double", "short", "byte", "boolean", "decimal"]
+    eligible = [
+        col_name
+        for col_name in columns
+        if col_types.get(col_name) and any(t in col_types[col_name].lower() for t in numeric_compatible_types)
+    ]
+    if not eligible:
+        return {}
 
-    for col_name in columns:
-        col_type = col_types.get(col_name)
-        if not col_type:
-            continue
+    # Two passes total regardless of column count: one combined aggregate select for
+    # mean/std/min/max of every column, and one multi-column approxQuantile — instead of
+    # two separate actions (full table scans) per column.
+    def _col_expr(col_name: str) -> Column:
+        return F.col(col_name).cast("double") if col_types[col_name] == "boolean" else F.col(col_name)
 
-        numeric_compatible_types = ["int", "long", "float", "double", "short", "byte", "boolean", "decimal"]
-        if not any(t in col_type.lower() for t in numeric_compatible_types):
-            continue
+    agg_exprs = []
+    for i, col_name in enumerate(eligible):
+        expr = _col_expr(col_name)
+        agg_exprs.extend(
+            [
+                F.mean(expr).alias(f"__mean_{i}"),
+                F.stddev(expr).alias(f"__std_{i}"),
+                F.min(expr).alias(f"__min_{i}"),
+                F.max(expr).alias(f"__max_{i}"),
+            ]
+        )
+    stats_row = train_df.select(*agg_exprs).first()
+    if stats_row is None:
+        raise ComputationError(f"Failed to compute stats for {eligible}")
 
-        col_expr = F.col(col_name).cast("double") if col_type == "boolean" else F.col(col_name)
+    casted_df = train_df.select(*[_col_expr(c).alias(c) for c in eligible])
+    all_quantiles = casted_df.approxQuantile(eligible, [0.25, 0.5, 0.75], 0.01)
 
-        col_stats = train_df.select(
-            F.mean(col_expr).alias("mean"),
-            F.stddev(col_expr).alias("std"),
-            F.min(col_expr).alias("min"),
-            F.max(col_expr).alias("max"),
-        ).first()
-
-        quantiles = train_df.select(col_expr.alias(col_name)).approxQuantile(col_name, [0.25, 0.5, 0.75], 0.01)
-
-        if col_stats is None:
-            raise ComputationError(f"Failed to compute stats for {col_name}")
+    baseline_stats = {}
+    for i, col_name in enumerate(eligible):
+        quantiles = all_quantiles[i]
         if len(quantiles) != 3:
             raise ComputationError(f"Failed to compute quantiles for {col_name}")
         baseline_stats[col_name] = {
-            "mean": col_stats["mean"],
-            "std": col_stats["std"],
-            "min": col_stats["min"],
-            "max": col_stats["max"],
+            "mean": stats_row[f"__mean_{i}"],
+            "std": stats_row[f"__std_{i}"],
+            "min": stats_row[f"__min_{i}"],
+            "max": stats_row[f"__max_{i}"],
             "p25": quantiles[0],
             "p50": quantiles[1],
             "p75": quantiles[2],

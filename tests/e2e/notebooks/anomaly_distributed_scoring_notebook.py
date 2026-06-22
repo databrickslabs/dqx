@@ -72,6 +72,8 @@ def test_apply_checks_by_metadata_distributed():
           model_name: {model_name}
           registry_table: {registry_table}
           threshold: {DEFAULT_SCORE_THRESHOLD}
+          enable_contributions: false
+          enable_ai_explanation: false
     """
 
     checks = yaml.safe_load(checks_yaml)
@@ -126,6 +128,8 @@ def test_apply_checks_distributed():
                 "model_name": model_name,
                 "registry_table": registry_table,
                 "threshold": DEFAULT_SCORE_THRESHOLD,
+                "enable_contributions": False,
+                "enable_ai_explanation": False,
             },
         ),
         DQDatasetRule(
@@ -135,6 +139,8 @@ def test_apply_checks_distributed():
                 "model_name": model_name,
                 "registry_table": registry_table,
                 "threshold": DEFAULT_SCORE_THRESHOLD,
+                "enable_contributions": False,
+                "enable_ai_explanation": False,
             },
         )
     ]

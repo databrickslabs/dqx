@@ -1,3 +1,1 @@
-import os
-
-TEST_CATALOG = os.environ.get("TEST_CATALOG", "dqx")
+TEST_CATALOG = "dqx"

@@ -75,8 +75,12 @@ class ProfilerConfig:
     """Configuration class for profiler."""
 
     summary_stats_file: str = "profile_summary_stats.yml"  # file containing profile summary statistics
-    sample_fraction: float = 0.3  # fraction of data to sample (30%)
+    # fraction of data to sample; can be a uniform proportion or a mapping of
+    # sample_by_column values to their respective proportions
+    sample_fraction: float | dict[object, float] | None = 0.3
     sample_seed: int | None = None  # seed for sampling
+    sample_by_column: str | None = None  # column with keys to sample by
+    sample_by_values_limit: int = 1000  # max distinct sample_by_column values to collect when sampling uniformly
     limit: int = 1000  # limit the number of records to profile
     filter: str | None = None  # filter to apply to the data before profiling
     criticality: str = "error"  # default criticality for generated rules ("error" or "warn")
@@ -194,12 +198,41 @@ class RunConfig:
 class LLMModelConfig:
     """Configuration for LLM model"""
 
-    # The model to use for the DSPy language model
+    # The model to use. For AI explanations this resolves to a Databricks Model Serving endpoint
+    # name (the ``databricks/`` provider prefix, if present, is stripped before the ai_query call).
     model_name: str = "databricks/databricks-claude-sonnet-4-5"
-    # Optional API key for the model as text or secret scope/key. Not required by foundational models
+    # Optional API key for the model as text or secret scope/key. Not required by foundational models.
     api_key: str = ""  # when used with Profiler Workflow, this should be a secret: secret_scope/secret_key
-    # Optional API base URL for the model. Not required by foundational models
-    api_base: str = ""  # when used with Profiler Workflow, this should be a secret: secret_scope/secret_key
+    # Optional API base URL for the model. Not required by foundational models. Used by the LLM
+    # rule-generation / profiler path; the anomaly AI-explanation path runs via Spark SQL
+    # ``ai_query`` against a Databricks Model Serving endpoint resolved from *model_name* and does
+    # not use *api_base*. When used with Profiler Workflow, this can be a secret scope/key reference.
+    #
+    # This URL is passed to the outbound LLM client (litellm via DSPy) on
+    # the rule-generation path, so it must be a trusted, admin-controlled endpoint — a Databricks
+    # Model Serving / AI Gateway URL or a known OpenAI-compatible host — supplied via deployment
+    # config or a secret reference. Do NOT populate it from untrusted or end-user input, and do not
+    # point it at arbitrary internal hosts; doing so lets the profiler job issue requests to that
+    # target. Prefer HTTPS endpoints.
+    api_base: str = ""
+    # Per-call output token cap. Bounds cost and latency for pathological prompts (OWASP LLM04).
+    max_tokens: int = 1000
+    # Sampling temperature. 0.0 is deterministic; raise for more creative narratives.
+    temperature: float = 0.0
+    # Per-call wall-clock timeout in seconds.
+    timeout: float = 30.0
+    # Number of retries on transient LLM-call failures (used by the LLM rule-generation path). The
+    # AI-explanation path runs through Spark SQL ``ai_query`` against Databricks Model Serving, which
+    # handles retries internally and does not expose the count.
+    max_retries: int = 3
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.max_retries, int) or isinstance(self.max_retries, bool) or self.max_retries < 0:
+            raise InvalidParameterError(f"max_retries must be a non-negative integer, got {self.max_retries!r}")
+        if not isinstance(self.max_tokens, int) or isinstance(self.max_tokens, bool) or self.max_tokens <= 0:
+            raise InvalidParameterError(f"max_tokens must be a positive integer, got {self.max_tokens!r}")
+        if not isinstance(self.temperature, (int, float)) or isinstance(self.temperature, bool) or self.temperature < 0:
+            raise InvalidParameterError(f"temperature must be a non-negative number, got {self.temperature!r}")
 
 
 @dataclass(frozen=True)
