@@ -1,7 +1,5 @@
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 
 _ENV = {
     "DQX_RUNNER_JOB_ID": "42",
@@ -73,121 +71,106 @@ class TestGetTableSchema:
 
 
 class TestProfileTable:
-    """Test that profile_table creates a view, submits job, then cleans up."""
+    """Test that profile_table creates a view and submits a job, returning a run_id."""
 
-    def test_creates_view_submits_job_drops_view(self):
+    def test_creates_view_and_submits_job(self):
         tools = _register_tools()
 
         with (
             patch("server.tools.utils.get_obo_client") as mock_obo,
             patch("server.tools.utils.get_warehouse_id", return_value="wh123"),
             patch("server.tools.utils.create_temp_view", return_value="dqx_mcp.tmp.v_abc") as mock_create,
-            patch("server.tools.utils.submit_notebook_job", return_value={"profiles": []}) as mock_job,
-            patch("server.tools.utils.drop_view") as mock_drop,
-            patch("server.tools.utils._get_sp_client") as mock_sp,
+            patch("server.tools.utils.submit_job_async", return_value=999) as mock_submit,
             patch.dict("os.environ", _ENV),
         ):
             result = tools["profile_table"]("catalog.schema.table")
 
         mock_obo.assert_called_once()
         mock_create.assert_called_once()
-        mock_job.assert_called_once()
-        job_params = mock_job.call_args[0][1]
+        assert mock_submit.call_args[0][0] == "profile_table"
+        job_params = mock_submit.call_args[0][1]
         assert job_params["view_name"] == "dqx_mcp.tmp.v_abc"
-        assert result["table_name"] == "catalog.schema.table"
-        mock_drop.assert_called_once_with(mock_sp.return_value, "dqx_mcp.tmp.v_abc", warehouse_id="wh123")
-
-    def test_drops_view_even_on_job_failure(self):
-        tools = _register_tools()
-
-        with (
-            patch("server.tools.utils.get_obo_client"),
-            patch("server.tools.utils.get_warehouse_id", return_value="wh123"),
-            patch("server.tools.utils.create_temp_view", return_value="dqx_mcp.tmp.v_abc"),
-            patch("server.tools.utils.submit_notebook_job", side_effect=RuntimeError("job failed")),
-            patch("server.tools.utils.drop_view") as mock_drop,
-            patch("server.tools.utils._get_sp_client"),
-            patch.dict("os.environ", _ENV),
-        ):
-            with pytest.raises(RuntimeError, match="job failed"):
-                tools["profile_table"]("catalog.schema.table")
-
-        mock_drop.assert_called_once()
+        metadata = mock_submit.call_args.kwargs["metadata"]
+        assert metadata["view_fqn"] == "dqx_mcp.tmp.v_abc"
+        assert metadata["warehouse_id"] == "wh123"
+        assert metadata["table_name"] == "catalog.schema.table"
+        assert result["status"] == "submitted"
+        assert result["run_id"] == 999
 
 
 class TestRunChecks:
-    """Test that run_checks creates a view, submits job, then cleans up."""
+    """Test that run_checks creates a view and submits a job, returning a run_id."""
 
-    def test_creates_view_submits_job_drops_view(self):
+    def test_creates_view_and_submits_job(self):
         tools = _register_tools()
 
         with (
             patch("server.tools.utils.get_obo_client"),
             patch("server.tools.utils.get_warehouse_id", return_value="wh123"),
             patch("server.tools.utils.create_temp_view", return_value="dqx_mcp.tmp.v_abc") as mock_create,
-            patch(
-                "server.tools.utils.submit_notebook_job",
-                return_value={"total_rows": 100, "valid_rows": 90, "invalid_rows": 10},
-            ) as mock_job,
-            patch("server.tools.utils.drop_view") as mock_drop,
-            patch("server.tools.utils._get_sp_client"),
+            patch("server.tools.utils.submit_job_async", return_value=999) as mock_submit,
             patch.dict("os.environ", _ENV),
         ):
             result = tools["run_checks"]("catalog.schema.table", [{"check": "foo"}])
 
         mock_create.assert_called_once()
-        job_params = mock_job.call_args[0][1]
+        assert mock_submit.call_args[0][0] == "run_checks"
+        job_params = mock_submit.call_args[0][1]
         assert job_params["view_name"] == "dqx_mcp.tmp.v_abc"
         assert job_params["checks"] == [{"check": "foo"}]
-        assert result["table_name"] == "catalog.schema.table"
-        mock_drop.assert_called_once()
+        assert job_params["sample_size"] == 50
+        assert result["status"] == "submitted"
+        assert result["run_id"] == 999
 
-    def test_drops_view_even_on_job_failure(self):
+
+class TestGetRunResult:
+    """Test that get_run_result delegates to utils.get_run_status."""
+
+    def test_delegates_to_get_run_status(self):
         tools = _register_tools()
 
-        with (
-            patch("server.tools.utils.get_obo_client"),
-            patch("server.tools.utils.get_warehouse_id", return_value="wh123"),
-            patch("server.tools.utils.create_temp_view", return_value="dqx_mcp.tmp.v_abc"),
-            patch("server.tools.utils.submit_notebook_job", side_effect=RuntimeError("job failed")),
-            patch("server.tools.utils.drop_view") as mock_drop,
-            patch("server.tools.utils._get_sp_client"),
-            patch.dict("os.environ", _ENV),
-        ):
-            with pytest.raises(RuntimeError, match="job failed"):
-                tools["run_checks"]("catalog.schema.table", [])
+        with patch(
+            "server.tools.utils.get_run_status",
+            return_value={"status": "completed", "run_id": 5, "result": {}},
+        ) as mock_status:
+            result = tools["get_run_result"](5)
 
-        mock_drop.assert_called_once()
+        mock_status.assert_called_once_with(5)
+        assert result["status"] == "completed"
 
 
 class TestJobOnlyTools:
-    """Test tools that just delegate to submit_notebook_job without views."""
+    """Test tools that just submit a job (no view) and return a run_id."""
 
     def test_generate_rules(self):
         tools = _register_tools()
 
-        with patch("server.tools.utils.submit_notebook_job", return_value={"rules": [], "count": 0}) as mock_job:
+        with patch("server.tools.utils.submit_job_async", return_value=7) as mock_submit:
             result = tools["generate_rules"]([{"name": "p1"}], "warn")
 
-        mock_job.assert_called_once_with("generate_rules", {"profiles": [{"name": "p1"}], "criticality": "warn"})
-        assert result == {"rules": [], "count": 0}
+        mock_submit.assert_called_once_with("generate_rules", {"profiles": [{"name": "p1"}], "criticality": "warn"})
+        assert result["status"] == "submitted"
+        assert result["run_id"] == 7
 
     def test_validate_checks(self):
         tools = _register_tools()
 
-        with patch("server.tools.utils.submit_notebook_job", return_value={"valid": True, "errors": []}) as mock_job:
+        with patch("server.tools.utils.submit_job_async", return_value=8) as mock_submit:
             result = tools["validate_checks"]([{"check": "foo"}])
 
-        mock_job.assert_called_once_with("validate_checks", {"checks": [{"check": "foo"}]})
-        assert result["valid"] is True
+        mock_submit.assert_called_once_with("validate_checks", {"checks": [{"check": "foo"}]})
+        assert result["status"] == "submitted"
+        assert result["run_id"] == 8
 
     def test_list_available_checks(self):
         tools = _register_tools()
 
-        with patch("server.tools.utils.submit_notebook_job", return_value={"checks": [], "count": 0}) as mock_job:
-            tools["list_available_checks"]()
+        with patch("server.tools.utils.submit_job_async", return_value=9) as mock_submit:
+            result = tools["list_available_checks"]()
 
-        mock_job.assert_called_once_with("list_available_checks", {})
+        mock_submit.assert_called_once_with("list_available_checks", {})
+        assert result["status"] == "submitted"
+        assert result["run_id"] == 9
 
     def test_get_workflow_returns_steps(self):
         tools = _register_tools()

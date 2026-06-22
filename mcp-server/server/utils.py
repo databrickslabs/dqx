@@ -22,6 +22,22 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 logger = logging.getLogger(__name__)
 
 
+def sanitize_for_log(value: object) -> str:
+    """Strip CR/LF from a value before logging to prevent log injection (CWE-117).
+
+    User-supplied values (table names, view names) may contain newlines or carriage
+    returns that could forge log entries or corrupt log pipelines. Replace them with
+    spaces before interpolating into a log message.
+
+    Args:
+        value: Any value to be logged.
+
+    Returns:
+        String form of *value* with newlines and carriage returns replaced by spaces.
+    """
+    return str(value).replace("\n", " ").replace("\r", " ")
+
+
 # ── OBO Auth via contextvars ──────────────────────────────────────────
 
 # Store user identity per-request from Databricks Apps proxy headers
@@ -269,7 +285,7 @@ def create_temp_view(
     view_name = _validate_sql_identifier(f"v_{view_id}", "view name")
     view_fqn = f"{catalog}.{schema}.v_{view_id}"
 
-    logger.info(f"Creating temp view {view_fqn} over {table_name}")
+    logger.info(f"Creating temp view {sanitize_for_log(view_fqn)} over {sanitize_for_log(table_name)}")
     execute_sql(
         ws,
         f"CREATE VIEW {view_catalog}.{view_schema}.{view_name} AS SELECT * FROM {safe_source}",
@@ -288,22 +304,22 @@ def drop_view(ws: Any, view_fqn: str, warehouse_id: str) -> None:
     """
     parts = view_fqn.split(".")
     if len(parts) != 3:
-        logger.warning(f"Invalid view name '{view_fqn}', skipping drop")
+        logger.warning(f"Invalid view name '{sanitize_for_log(view_fqn)}', skipping drop")
         return
 
     quoted_parts = []
     for part in parts:
         if not _SAFE_IDENTIFIER_RE.match(part):
-            logger.warning(f"Invalid identifier in view name '{view_fqn}', skipping drop")
+            logger.warning(f"Invalid identifier in view name '{sanitize_for_log(view_fqn)}', skipping drop")
             return
         quoted_parts.append(f"`{part}`")
 
     safe_fqn = ".".join(quoted_parts)
-    logger.info(f"Dropping temp view {view_fqn}")
+    logger.info(f"Dropping temp view {sanitize_for_log(view_fqn)}")
     try:
         execute_sql(ws, f"DROP VIEW IF EXISTS {safe_fqn}", warehouse_id=warehouse_id)
     except Exception:
-        logger.warning(f"Failed to drop temp view {view_fqn}", exc_info=True)
+        logger.warning(f"Failed to drop temp view {sanitize_for_log(view_fqn)}", exc_info=True)
 
 
 # ── Jobs API — async submit + poll ───────────────────────────────────

@@ -37,7 +37,7 @@ def load_tools(mcp_server):
             - 'table_name': the input table name
             - 'columns': list of {name, type, comment} for each column
         """
-        logger.info(f"Getting schema for table: {table_name}")
+        logger.info(f"Getting schema for table: {utils.sanitize_for_log(table_name)}")
         obo_ws = utils.get_obo_client()
         warehouse_id = utils.get_warehouse_id(obo_ws)
 
@@ -76,7 +76,7 @@ def load_tools(mcp_server):
             - 'status': 'submitted'
             - 'run_id': job run ID to pass to get_run_result
         """
-        logger.info(f"Profiling table: {table_name}")
+        logger.info(f"Profiling table: {utils.sanitize_for_log(table_name)}")
         obo_ws = utils.get_obo_client()
         warehouse_id = utils.get_warehouse_id(obo_ws)
         catalog, schema = _get_tmp_view_config()
@@ -163,7 +163,7 @@ def load_tools(mcp_server):
             - 'status': 'submitted'
             - 'run_id': job run ID to pass to get_run_result
         """
-        logger.info(f"Running {len(checks)} checks on table: {table_name}")
+        logger.info(f"Running {len(checks)} checks on table: {utils.sanitize_for_log(table_name)}")
         obo_ws = utils.get_obo_client()
         warehouse_id = utils.get_warehouse_id(obo_ws)
         catalog, schema = _get_tmp_view_config()

@@ -177,6 +177,18 @@ app-test: ## Run app backend pytest suite (K=<expr> filter, COV=1 for coverage)
 	  $(if $(K),-k "$(K)") \
 	  $(if $(COV),--cov=src/databricks_labs_dqx_app/backend --cov-report=term-missing --cov-report=xml:coverage-app.xml)
 
+# Run the MCP server's unit-test suite (pytest, no Databricks/Spark dependencies).
+# Usage:  make mcp-test           # run everything
+#         make mcp-test K=expr    # forward -k filter to pytest
+#
+# pytest is not declared in mcp-server's pyproject/uv.lock — the suite only
+# needs anyio, which ships transitively. With UV_FROZEN=1 we can't add pytest
+# to the lock from here, so inject it ephemerally with ``uv run --with pytest``
+# over the synced runtime env (anyio's pytest plugin handles the async tests).
+mcp-test: ## Run MCP server pytest suite (K=<expr> filter)
+	cd mcp-server && uv run --with pytest pytest tests/ \
+	  $(if $(K),-k "$(K)")
+
 ##@ App deploy (require PROFILE=<databricks-profile>; most also need TARGET=<bundle-target>)
 
 # Grant Unity Catalog permissions after bundle deploy.
@@ -272,6 +284,14 @@ lock-app-dependencies: ## Regenerate app/uv.lock, app/yarn.lock, app/.build-cons
 	$(UV_RUN) --group yq tomlq -r '.["build-system"].requires[]' app/pyproject.toml | \
 	  uv pip compile --generate-hashes --universal --no-header - > app/build-constraints-new.txt
 	mv app/build-constraints-new.txt app/.build-constraints.txt
+
+# Regenerate the MCP server lockfile and scrub private-proxy URLs so the
+# committed file resolves against whatever registry the install environment
+# is configured for (JFrog in CI, public in fork PRs).
+lock-mcp-dependencies: export UV_FROZEN := 0
+lock-mcp-dependencies: ## Regenerate mcp-server/uv.lock
+	cd mcp-server && uv lock --exclude-newer "7 days"
+	perl -pi -e 's|registry = "https://[^"]*"|registry = "https://pypi.org/simple"|g' mcp-server/uv.lock
 
 lock-dependencies: export UV_FROZEN := 0
 lock-dependencies: ## Regenerate top-level uv.lock and .build-constraints.txt

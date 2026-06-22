@@ -38,8 +38,11 @@ _SAFE_IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9_ ]+$")
 def _validate_identifier(value, label):
     """Validate a SQL identifier to prevent injection via backtick breakout."""
     if not _SAFE_IDENTIFIER_RE.match(value):
-        raise ValueError(f"Invalid {label}: '{value}'. Only alphanumeric characters, underscores, and spaces are allowed.")
+        raise ValueError(
+            f"Invalid {label}: '{value}'. Only alphanumeric characters, underscores, and spaces are allowed."
+        )
     return value
+
 
 # COMMAND ----------
 

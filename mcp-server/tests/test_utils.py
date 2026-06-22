@@ -5,66 +5,38 @@ import pytest
 
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.jobs import (
-    Job,
-    JobSettings,
     Run,
     RunOutput,
     NotebookOutput,
-    NotebookTask,
     RunState,
     RunLifeCycleState,
     RunResultState,
-    Task,
 )
-
-
-def _make_mock_ws(notebook_output_json: str, run_id: int = 123) -> MagicMock:
-    """Create a mock WorkspaceClient that simulates a successful submit() call."""
-    ws = create_autospec(WorkspaceClient)
-
-    # Mock jobs.get() to return the pre-deployed job definition
-    job = MagicMock(spec=Job)
-    job.settings = MagicMock(spec=JobSettings)
-    task = MagicMock(spec=Task)
-    task.notebook_task = MagicMock(spec=NotebookTask)
-    task.notebook_task.notebook_path = "/Workspace/Users/user@co.com/.bundle/mcp-dqx/dev/files/notebooks/runner"
-    job.settings.tasks = [task]
-    ws.jobs.get.return_value = job
-
-    # Mock the run object returned by .result()
-    run = MagicMock(spec=Run)
-    run.run_id = run_id
-    run.run_page_url = f"https://workspace.databricks.com/jobs/{run_id}"
-    run.state = MagicMock(spec=RunState)
-    run.state.life_cycle_state = RunLifeCycleState.TERMINATED
-    run.state.result_state = RunResultState.SUCCESS
-
-    # Mock submit() -> Wait -> .result() -> Run
-    wait_obj = MagicMock()
-    wait_obj.result.return_value = run
-    ws.jobs.submit.return_value = wait_obj
-
-    # Mock get_run_output()
-    output = MagicMock(spec=RunOutput)
-    output.notebook_output = MagicMock(spec=NotebookOutput)
-    output.notebook_output.result = notebook_output_json
-    output.notebook_output.truncated = False
-    task_run = MagicMock()
-    task_run.run_id = 456
-    run.tasks = [task_run]
-    ws.jobs.get_run_output.return_value = output
-
-    return ws
 
 
 _JOB_ID_ENV = {"DQX_RUNNER_JOB_ID": "42"}
 
 
-def _reset_notebook_path_cache():
-    """Reset the cached notebook path between tests."""
+def _clear_pending_runs():
+    """Clear the module-level pending-runs registry between tests."""
     import server.utils as utils_module
 
-    utils_module._notebook_path = None
+    utils_module._pending_runs.clear()
+
+
+def _make_terminated_run(result_state: RunResultState, run_id: int = 123) -> MagicMock:
+    """Build a mock Run that has finished, with a single task."""
+    run = MagicMock(spec=Run)
+    run.run_id = run_id
+    run.run_page_url = f"https://workspace.databricks.com/jobs/{run_id}"
+    run.state = MagicMock(spec=RunState)
+    run.state.life_cycle_state = RunLifeCycleState.TERMINATED
+    run.state.result_state = result_state
+    run.state.state_message = "boom"
+    task_run = MagicMock()
+    task_run.run_id = 456
+    run.tasks = [task_run]
+    return run
 
 
 class TestGetOboClient:
@@ -229,89 +201,137 @@ class TestTempViews:
         drop_view(ws, "dqx_mcp.tmp.v_abc123", warehouse_id="wh123")
 
 
-class TestSubmitNotebookJob:
+class TestSubmitJobAsync:
     def setup_method(self):
-        _reset_notebook_path_cache()
+        _clear_pending_runs()
 
-    def test_successful_submission(self):
-        from server.utils import submit_notebook_job
+    def test_returns_run_id_and_triggers_runner_job(self):
+        from server.utils import submit_job_async, _pending_runs
 
-        expected_result = {"columns": [], "row_count": 0}
-        ws = _make_mock_ws(json.dumps(expected_result))
-
-        with patch("server.utils._get_sp_client", return_value=ws), patch.dict("os.environ", _JOB_ID_ENV):
-            result = submit_notebook_job("profile_table", {"view_name": "c.s.v_abc"})
-
-        assert result == expected_result
-        ws.jobs.submit.assert_called_once()
-        # No run_as in the call
-        call_kwargs = ws.jobs.submit.call_args.kwargs
-        assert "run_as" not in call_kwargs
-
-    def test_passes_operation_and_params_to_notebook(self):
-        from server.utils import submit_notebook_job
-
-        ws = _make_mock_ws(json.dumps({"result": "ok"}))
+        ws = create_autospec(WorkspaceClient)
+        ws.jobs.run_now.return_value = MagicMock(run_id=123)
 
         with patch("server.utils._get_sp_client", return_value=ws), patch.dict("os.environ", _JOB_ID_ENV):
-            submit_notebook_job("profile_table", {"view_name": "c.s.v_abc", "columns": ["a"]})
+            run_id = submit_job_async("profile_table", {"view_name": "c.s.v_abc"})
 
-        call_kwargs = ws.jobs.submit.call_args.kwargs
-        tasks = call_kwargs["tasks"]
-        base_params = tasks[0].notebook_task.base_parameters
-        assert base_params["operation"] == "profile_table"
-        assert json.loads(base_params["params"]) == {"view_name": "c.s.v_abc", "columns": ["a"]}
+        assert run_id == 123
+        ws.jobs.run_now.assert_called_once()
+        assert ws.jobs.run_now.call_args.kwargs["job_id"] == 42
+        assert _pending_runs[123]["operation"] == "profile_table"
+
+    def test_passes_operation_and_params_as_notebook_params(self):
+        from server.utils import submit_job_async
+
+        ws = create_autospec(WorkspaceClient)
+        ws.jobs.run_now.return_value = MagicMock(run_id=123)
+
+        with patch("server.utils._get_sp_client", return_value=ws), patch.dict("os.environ", _JOB_ID_ENV):
+            submit_job_async("profile_table", {"view_name": "c.s.v_abc", "columns": ["a"]})
+
+        notebook_params = ws.jobs.run_now.call_args.kwargs["notebook_params"]
+        assert notebook_params["operation"] == "profile_table"
+        assert json.loads(notebook_params["params"]) == {"view_name": "c.s.v_abc", "columns": ["a"]}
+
+    def test_stores_metadata_for_cleanup(self):
+        from server.utils import submit_job_async, _pending_runs
+
+        ws = create_autospec(WorkspaceClient)
+        ws.jobs.run_now.return_value = MagicMock(run_id=123)
+
+        with patch("server.utils._get_sp_client", return_value=ws), patch.dict("os.environ", _JOB_ID_ENV):
+            submit_job_async(
+                "run_checks",
+                {"view_name": "c.s.v_abc", "checks": []},
+                metadata={"view_fqn": "c.s.v_abc", "warehouse_id": "wh123", "table_name": "c.s.t"},
+            )
+
+        assert _pending_runs[123]["view_fqn"] == "c.s.v_abc"
+        assert _pending_runs[123]["warehouse_id"] == "wh123"
+        assert _pending_runs[123]["table_name"] == "c.s.t"
 
     def test_raises_when_no_job_id(self):
-        from server.utils import submit_notebook_job
+        from server.utils import submit_job_async
 
-        ws = _make_mock_ws(json.dumps({"ok": True}))
+        ws = create_autospec(WorkspaceClient)
 
         with patch("server.utils._get_sp_client", return_value=ws), patch.dict("os.environ", {}, clear=True):
             with pytest.raises(RuntimeError, match="DQX_RUNNER_JOB_ID not set"):
-                submit_notebook_job("profile_table", {"view_name": "c.s.v_abc"})
+                submit_job_async("profile_table", {"view_name": "c.s.v_abc"})
+        ws.jobs.run_now.assert_not_called()
 
-    def test_job_failure_raises_error(self):
-        from server.utils import submit_notebook_job
 
-        ws = _make_mock_ws("{}")
-        run = MagicMock(spec=Run)
-        run.run_id = 999
-        run.run_page_url = "https://workspace.databricks.com/jobs/999"
-        run.tasks = [MagicMock(run_id=1000)]
-        wait_obj = MagicMock()
-        wait_obj.result.return_value = run
-        ws.jobs.submit.return_value = wait_obj
+class TestGetRunStatus:
+    def setup_method(self):
+        _clear_pending_runs()
 
+    def test_completed_returns_result_with_table_name(self):
+        from server.utils import get_run_status, _pending_runs
+
+        ws = create_autospec(WorkspaceClient)
+        ws.jobs.get_run.return_value = _make_terminated_run(RunResultState.SUCCESS)
         output = MagicMock(spec=RunOutput)
-        output.notebook_output = None
-        output.error = "Something went wrong"
+        output.notebook_output = MagicMock(spec=NotebookOutput)
+        output.notebook_output.result = json.dumps({"profiles": []})
         ws.jobs.get_run_output.return_value = output
+        _pending_runs[123] = {"operation": "profile_table", "table_name": "c.s.t"}
 
-        with patch("server.utils._get_sp_client", return_value=ws), patch.dict("os.environ", _JOB_ID_ENV):
-            with pytest.raises(RuntimeError, match="DQX job failed"):
-                submit_notebook_job("run_checks", {"view_name": "c.s.v_abc", "checks": []})
+        with patch("server.utils._get_sp_client", return_value=ws):
+            result = get_run_status(123)
 
-    def test_resolves_notebook_path_from_job(self):
-        from server.utils import submit_notebook_job
+        assert result["status"] == "completed"
+        assert result["run_id"] == 123
+        assert result["result"]["profiles"] == []
+        assert result["result"]["table_name"] == "c.s.t"
+        ws.jobs.get_run_output.assert_called_once_with(456)
 
-        ws = _make_mock_ws(json.dumps({"ok": True}))
+    def test_drops_temp_view_on_completion(self):
+        from server.utils import get_run_status, _pending_runs
 
-        with patch("server.utils._get_sp_client", return_value=ws), patch.dict("os.environ", _JOB_ID_ENV):
-            submit_notebook_job("validate_checks", {"checks": []})
+        ws = create_autospec(WorkspaceClient)
+        ws.jobs.get_run.return_value = _make_terminated_run(RunResultState.SUCCESS)
+        output = MagicMock(spec=RunOutput)
+        output.notebook_output = MagicMock(spec=NotebookOutput)
+        output.notebook_output.result = json.dumps({"ok": True})
+        ws.jobs.get_run_output.return_value = output
+        _pending_runs[123] = {"view_fqn": "c.s.v_abc", "warehouse_id": "wh123"}
 
-        ws.jobs.get.assert_called_once_with(42)
+        with (
+            patch("server.utils._get_sp_client", return_value=ws),
+            patch("server.utils.drop_view") as mock_drop,
+        ):
+            get_run_status(123)
 
-    def test_caches_notebook_path(self):
-        from server.utils import submit_notebook_job
+        mock_drop.assert_called_once_with(ws, "c.s.v_abc", warehouse_id="wh123")
+        assert 123 not in _pending_runs
 
-        ws = _make_mock_ws(json.dumps({"ok": True}))
+    def test_failed_run_returns_error(self):
+        from server.utils import get_run_status, _pending_runs
 
-        with patch("server.utils._get_sp_client", return_value=ws), patch.dict("os.environ", _JOB_ID_ENV):
-            submit_notebook_job("validate_checks", {"checks": []})
-            submit_notebook_job("list_available_checks", {})
+        ws = create_autospec(WorkspaceClient)
+        ws.jobs.get_run.return_value = _make_terminated_run(RunResultState.FAILED)
+        _pending_runs[123] = {"operation": "run_checks"}
 
-        ws.jobs.get.assert_called_once()
+        with patch("server.utils._get_sp_client", return_value=ws):
+            result = get_run_status(123)
+
+        assert result["status"] == "failed"
+        assert "boom" in result["error"]
+        ws.jobs.get_run_output.assert_not_called()
+
+    def test_still_running_returns_running(self):
+        from server.utils import get_run_status
+
+        ws = create_autospec(WorkspaceClient)
+        run = MagicMock(spec=Run)
+        run.state = MagicMock(spec=RunState)
+        run.state.life_cycle_state = RunLifeCycleState.RUNNING
+        ws.jobs.get_run.return_value = run
+
+        with patch("server.utils._get_sp_client", return_value=ws), patch("time.sleep"):
+            result = get_run_status(123)
+
+        assert result["status"] == "running"
+        assert result["run_id"] == 123
 
 
 class TestOBOAuthMiddleware:
