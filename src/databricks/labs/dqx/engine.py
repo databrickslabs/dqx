@@ -4,7 +4,6 @@ import logging
 import os
 from concurrent import futures
 from collections.abc import Callable
-from dataclasses import replace
 from datetime import datetime
 from functools import cached_property
 from typing import Any
@@ -421,7 +420,7 @@ class DQEngineCore(DQEngineCoreBase):
         # preselect original columns
         rule_kwargs = check.check_func_kwargs.copy()
         rule_kwargs["columns"] = [col for col in df.columns if col not in set(self._result_column_names.values())]
-        return replace(check, check_func_kwargs=rule_kwargs)
+        return check.replace(check_func_kwargs=rule_kwargs)
 
     def _append_empty_checks(self, df: DataFrame) -> DataFrame:
         """Append empty checks at the end of DataFrame.

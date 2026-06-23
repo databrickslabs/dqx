@@ -254,6 +254,25 @@ class DQRule(BaseModel, abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleCol
 
         return args, kwargs
 
+    def replace(self, **changes: Any) -> "DQRule":
+        """Return a new rule instance with the given field overrides.
+
+        Unlike *model_copy*, this rebuilds the instance through the constructor so validation
+        re-runs and cached derived state (e.g. the compiled *check* condition) is recomputed
+        from the updated fields rather than copied stale. *model_copy(update=...)* shallow-copies
+        the instance dict, which carries over already-cached *functools.cached_property* values and
+        would therefore ignore the updated fields.
+
+        Args:
+            **changes: Field values to override on the new instance.
+
+        Returns:
+            A new, fully validated rule of the same concrete type.
+        """
+        fields = {name: getattr(self, name) for name in type(self).model_fields}
+        fields.update(changes)
+        return type(self)(**fields)
+
     @ft.cached_property
     def rule_fingerprint(self) -> str:
         """Compute a deterministic SHA-256 hash of a single rule definition.

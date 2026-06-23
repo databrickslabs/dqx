@@ -5,7 +5,7 @@ from collections.abc import Callable
 from types import UnionType
 from typing import Any, get_origin, get_args
 
-from pydantic import BaseModel, PrivateAttr
+from pydantic import BaseModel, ConfigDict, Field
 
 from databricks.labs.dqx.checks_resolver import resolve_check_function
 from databricks.labs.dqx.rule import Criticality
@@ -16,30 +16,27 @@ logger = logging.getLogger(__name__)
 class ChecksValidationStatus(BaseModel):
     """Class to represent the validation status."""
 
-    _errors: list[str] = PrivateAttr(default_factory=list)
+    model_config = ConfigDict(populate_by_name=True)
+
+    errors: list[str] = Field(default_factory=list, alias="_errors")
 
     def add_error(self, error: str):
         """Add an error to the validation status."""
-        self._errors.append(error)
+        self.errors.append(error)
 
     def add_errors(self, errors: list[str]):
         """Add an error to the validation status."""
-        self._errors.extend(errors)
+        self.errors.extend(errors)
 
     @property
     def has_errors(self) -> bool:
         """Check if there are any errors in the validation status."""
-        return bool(self._errors)
-
-    @property
-    def errors(self) -> list[str]:
-        """Get the list of errors in the validation status."""
-        return self._errors
+        return bool(self.errors)
 
     def to_string(self) -> str:
         """Convert the validation status to a string."""
         if self.has_errors:
-            return "\n".join(self._errors)
+            return "\n".join(self.errors)
         return "No errors found"
 
     def __str__(self) -> str:

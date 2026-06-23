@@ -1,4 +1,3 @@
-import dataclasses
 import os
 import re
 import time
@@ -508,8 +507,8 @@ def test_save_append_then_overwrite_same_run_config(ws, spark, make_lakebase_ins
 
     config = LakebaseChecksStorageConfig(location=location, client_id=lakebase_client_id, instance_name=instance.name)
 
-    dq_engine.save_checks(checks=TEST_CHECKS[:1], config=dataclasses.replace(config, mode="append"))
-    dq_engine.save_checks(checks=TEST_CHECKS[1:], config=dataclasses.replace(config, mode="overwrite"))
+    dq_engine.save_checks(checks=TEST_CHECKS[:1], config=config.model_copy(update={"mode": "append"}))
+    dq_engine.save_checks(checks=TEST_CHECKS[1:], config=config.model_copy(update={"mode": "overwrite"}))
 
     checks = dq_engine.load_checks(config=config)
     compare_checks(checks, TEST_CHECKS[1:])
