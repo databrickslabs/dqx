@@ -41,10 +41,19 @@ combined_app.routes.insert(0, Route("/", health_check))
 # Add OBO middleware (pure ASGI — no BaseHTTPMiddleware to avoid streaming timeouts)
 combined_app.add_middleware(OBOAuthMiddleware)
 
-# Add CORS middleware — Genie Code sends OPTIONS preflight from workspace origin
+# Allowed cross-origin callers (browser-based Genie Code). Region-agnostic: the
+# subdomain wildcard matches any Databricks workspace host regardless of deploy region.
+# Server-to-server callers (e.g. Claude) are not subject to CORS and are unaffected.
+CORS_ALLOWED_ORIGIN_REGEX = (
+    r"https://.*\.(databricks\.com|databricksapps\.com|azuredatabricks\.net|gcp\.databricks\.com)"
+)
+
+# Add CORS middleware — Genie Code sends OPTIONS preflight from workspace origin.
+# Use allow_origin_regex (not allow_origins=["*"]) so that allow_credentials=True stays
+# spec-compliant: Starlette reflects the matched origin instead of the forbidden "*".
 combined_app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origin_regex=CORS_ALLOWED_ORIGIN_REGEX,
     allow_methods=["*"],
     allow_headers=["*"],
     allow_credentials=True,
