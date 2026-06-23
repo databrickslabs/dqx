@@ -337,6 +337,25 @@ class BaseChecksStorageConfig(BaseModel, ABC):
 
     location: str
 
+    def replace(self, **changes: Any) -> "BaseChecksStorageConfig":
+        """Return a new config instance with the given field overrides, fully re-validated.
+
+        Unlike *model_copy(update=...)*, which shallow-copies the instance and skips all
+        validators, this rebuilds the config through the constructor so the *model_validator*
+        checks (e.g. *mode* and *location* format) re-run against the updated fields. Use this
+        instead of *model_copy* when overriding fields, so an invalid override is rejected at
+        the point of the change rather than failing later during a save/load operation.
+
+        Args:
+            **changes: Field values to override on the new instance.
+
+        Returns:
+            A new, fully validated config of the same concrete type.
+        """
+        fields = {name: getattr(self, name) for name in type(self).model_fields}
+        fields.update(changes)
+        return type(self)(**fields)
+
 
 class FileChecksStorageConfig(BaseChecksStorageConfig):
     """
