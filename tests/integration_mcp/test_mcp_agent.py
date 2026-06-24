@@ -10,7 +10,6 @@ on the tool-use trajectory and structural output, not exact text.
 """
 
 import json
-import os
 
 import pytest
 import requests
@@ -18,19 +17,15 @@ import requests
 from tests.integration_mcp.conftest import AI_QUERY_ENDPOINT, CATALOG
 
 
-def _host() -> str:
-    return os.environ["DATABRICKS_HOST"].rstrip("/")
+def _headers(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
 
-def _headers() -> dict[str, str]:
-    return {"Authorization": f"Bearer {os.environ['DATABRICKS_TOKEN']}", "Content-Type": "application/json"}
-
-
-def _endpoint_reachable() -> bool:
+def _endpoint_reachable(host: str, token: str) -> bool:
     try:
         resp = requests.post(
-            f"{_host()}/serving-endpoints/{AI_QUERY_ENDPOINT}/invocations",
-            headers=_headers(),
+            f"{host}/serving-endpoints/{AI_QUERY_ENDPOINT}/invocations",
+            headers=_headers(token),
             json={"messages": [{"role": "user", "content": "reply ok"}], "max_tokens": 5, "temperature": 0.0},
             timeout=30,
         )
@@ -39,10 +34,10 @@ def _endpoint_reachable() -> bool:
         return False
 
 
-def _chat(messages: list[dict], tools: list[dict]) -> dict:
+def _chat(host: str, token: str, messages: list[dict], tools: list[dict]) -> dict:
     resp = requests.post(
-        f"{_host()}/serving-endpoints/{AI_QUERY_ENDPOINT}/invocations",
-        headers=_headers(),
+        f"{host}/serving-endpoints/{AI_QUERY_ENDPOINT}/invocations",
+        headers=_headers(token),
         json={"messages": messages, "tools": tools, "max_tokens": 1024, "temperature": 0.0},
         timeout=120,
     )
@@ -50,10 +45,10 @@ def _chat(messages: list[dict], tools: list[dict]) -> dict:
     return resp.json()["choices"][0]
 
 
-def _mcp(url: str, method: str, params: dict) -> dict:
+def _mcp(url: str, token: str, method: str, params: dict) -> dict:
     resp = requests.post(
         f"{url}/mcp",
-        headers={**_headers(), "Accept": "application/json, text/event-stream"},
+        headers={**_headers(token), "Accept": "application/json, text/event-stream"},
         json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
         timeout=120,
     )
@@ -89,10 +84,11 @@ def _create_orders_table(ws, table: str) -> None:
     )
 
 
-def test_agent_discovers_and_uses_tools(ws, make_schema, deployed_mcp):
+def test_agent_discovers_and_uses_tools(ws, make_schema, workspace_auth, deployed_mcp):
     """An arbitrary tool-calling model must pick get_table_schema and report the real columns."""
     assert ws.current_user.me() is not None  # fail-fast if workspace auth is broken
-    if not _endpoint_reachable():
+    host, token = workspace_auth
+    if not _endpoint_reachable(host, token):
         pytest.skip(f"serving endpoint {AI_QUERY_ENDPOINT} not reachable")
 
     url = deployed_mcp  # session-scoped: the app is deployed once and shared across tests
@@ -110,7 +106,7 @@ def test_agent_discovers_and_uses_tools(ws, make_schema, deployed_mcp):
                 "parameters": t["inputSchema"],
             },
         }
-        for t in _mcp(url, "tools/list", {})["tools"]
+        for t in _mcp(url, token, "tools/list", {})["tools"]
     ]
 
     messages: list[dict] = [
@@ -125,14 +121,16 @@ def test_agent_discovers_and_uses_tools(ws, make_schema, deployed_mcp):
     called_tools: list[str] = []
     final_text = ""
     for _turn in range(6):
-        choice = _chat(messages, oai_tools)
+        choice = _chat(host, token, messages, oai_tools)
         msg = choice["message"]
         messages.append(msg)
         if choice.get("finish_reason") == "tool_calls" and msg.get("tool_calls"):
             for call in msg["tool_calls"]:
                 called_tools.append(call["function"]["name"])
                 args = json.loads(call["function"]["arguments"] or "{}")
-                result = _tool_result(_mcp(url, "tools/call", {"name": call["function"]["name"], "arguments": args}))
+                result = _tool_result(
+                    _mcp(url, token, "tools/call", {"name": call["function"]["name"], "arguments": args})
+                )
                 messages.append(
                     {"role": "tool", "tool_call_id": call["id"], "content": json.dumps(result, default=str)[:4000]}
                 )
