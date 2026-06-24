@@ -20,11 +20,12 @@ resources:
           spec:
             environment_version: "2"
             dependencies:
-              # [datacontract] extra pulls in datacontract-cli for generate_rules_from_contract.
-              # NOTE: unpinned for development. Pin to an explicit version in production
-              # (e.g. databricks-labs-dqx[datacontract]==<version>) so runner job environments
-              # are reproducible and a new DQX release cannot silently change runner behaviour.
-              - databricks-labs-dqx[datacontract]
+              # Install the DQX library wheel built from THIS repo (see artifacts.dqx_library_wheel),
+              # not a published PyPI release, so the runner exercises in-repo (possibly unreleased)
+              # source and never drifts from what the PR actually changes. The [datacontract] extra's
+              # dependency is listed explicitly because pip extras can't be applied to a wheel path.
+              - ./.build/databricks_labs_dqx-*.whl
+              - datacontract-cli>=0.11.1,<1.0
 
     # One-time setup job — grants USE CATALOG to users and app SP.
     # Run after first deploy: databricks bundle run dqx_setup --profile <profile>
@@ -71,6 +72,14 @@ resources:
 sync:
   include:
     - "notebooks/**"
+    - ".build/**"
+
+# Build the DQX library wheel from the repo root (../) so the runner job installs
+# this branch's source rather than a published PyPI release. Mirrors the app/ bundle,
+# which also builds the parent wheel via `uv build ../ --wheel`.
+artifacts:
+  dqx_library_wheel:
+    build: uv build ../ --wheel --out-dir ./.build
 
 targets:
   dev:
