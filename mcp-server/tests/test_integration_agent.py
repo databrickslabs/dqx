@@ -7,19 +7,26 @@ and INVOKES the right tools — i.e. the tools are usable by an arbitrary agent,
 own code. Assertions are on the tool-use trajectory and structural output (not exact text),
 following the DQX anomaly AI-explanation test style.
 
-Gated: skips unless a deployed server + workspace LLM endpoint are configured. Mirrors the
-`ai_query_endpoint` probe-and-skip pattern in tests/integration_anomaly.
+Scaffold & teardown: the `dq_test_table` fixture creates its OWN isolated table and drops it
+afterwards (a yield-fixture, so teardown runs even if the test fails) — replicating the DQX
+pytester `factory(create, delete)` guarantee. The mcp-server test env does not have the root
+project's pytester fixtures, so we build the equivalent with the Databricks SDK.
+
+Gated: skips unless a deployed server + workspace LLM endpoint + a writable test catalog are
+configured. Probe-and-skip on the LLM endpoint mirrors the anomaly `ai_query_endpoint` fixture.
 
 Env to run against a live deployment:
-  DQX_MCP_SERVER_URL   - base URL of the deployed app (e.g. https://mcp-dqx-vb-....databricksapps.com)
-  DATABRICKS_HOST      - workspace URL (for the serving endpoint)
-  DATABRICKS_TOKEN     - user OAuth/PAT (bearer for the app's OBO proxy and the serving endpoint)
-  DQX_MCP_LLM_ENDPOINT - optional model-serving endpoint name (default databricks-claude-sonnet-4-5)
-  DQX_MCP_TEST_TABLE   - optional fully-qualified table to ask about (default samples.nyctaxi.trips)
+  DQX_MCP_SERVER_URL    - base URL of the deployed app (e.g. https://mcp-dqx-vb-....databricksapps.com)
+  DATABRICKS_HOST       - workspace URL (serving endpoint + SDK)
+  DATABRICKS_TOKEN      - user OAuth/PAT (bearer for the app's OBO proxy, the serving endpoint, the SDK)
+  DQX_MCP_TEST_CATALOG  - catalog the test may create/drop a schema+table in
+  DQX_MCP_LLM_ENDPOINT  - optional model-serving endpoint name (default databricks-claude-sonnet-4-5)
+  DQX_MCP_TEST_WAREHOUSE- optional SQL warehouse id (else auto-discovered)
 """
 
 import json
 import os
+import uuid
 
 import pytest
 import requests
@@ -27,19 +34,70 @@ import requests
 SERVER_URL = os.environ.get("DQX_MCP_SERVER_URL", "").rstrip("/")
 HOST = os.environ.get("DATABRICKS_HOST", "").rstrip("/")
 TOKEN = os.environ.get("DATABRICKS_TOKEN", "")
+TEST_CATALOG = os.environ.get("DQX_MCP_TEST_CATALOG", "")
 LLM_ENDPOINT = os.environ.get("DQX_MCP_LLM_ENDPOINT", "databricks-claude-sonnet-4-5")
-TEST_TABLE = os.environ.get("DQX_MCP_TEST_TABLE", "samples.nyctaxi.trips")
 
-_MISSING = not (SERVER_URL and HOST and TOKEN)
+_MISSING = not (SERVER_URL and HOST and TOKEN and TEST_CATALOG)
 pytestmark = [
     pytest.mark.integration,
-    pytest.mark.skipif(_MISSING, reason="set DQX_MCP_SERVER_URL/DATABRICKS_HOST/DATABRICKS_TOKEN to run"),
+    pytest.mark.skipif(
+        _MISSING, reason="set DQX_MCP_SERVER_URL/DATABRICKS_HOST/DATABRICKS_TOKEN/DQX_MCP_TEST_CATALOG to run"
+    ),
 ]
 
 
 @pytest.fixture
 def anyio_backend():
     return "asyncio"
+
+
+def _warehouse_id(ws) -> str:
+    override = os.environ.get("DQX_MCP_TEST_WAREHOUSE")
+    if override:
+        return override
+    warehouses = list(ws.warehouses.list())
+    if not warehouses:
+        pytest.skip("no SQL warehouse available for the test scaffold")
+    running = [w for w in warehouses if w.state and w.state.value == "RUNNING"]
+    return (running[0] if running else warehouses[0]).id
+
+
+@pytest.fixture
+def dq_test_table():
+    """Create an isolated test table, yield its FQN, and drop it on teardown.
+
+    Replicates the DQX pytester `factory` create/delete guarantee: teardown runs even if
+    the test body fails, so the scaffold never leaks.
+    """
+    from databricks.sdk import WorkspaceClient
+
+    ws = WorkspaceClient(host=HOST, token=TOKEN)
+    warehouse_id = _warehouse_id(ws)
+    schema = "dqx_mcp_it"
+    table = f"agent_{uuid.uuid4().hex[:8]}"
+    fqn = f"{TEST_CATALOG}.{schema}.{table}"
+
+    def sql(query: str) -> None:
+        result = ws.statement_execution.execute_statement(
+            statement=query, warehouse_id=warehouse_id, wait_timeout="50s"
+        )
+        state = result.status.state.value if result.status and result.status.state else "?"
+        if state != "SUCCEEDED":
+            raise RuntimeError(f"scaffold SQL failed ({state}): {query[:80]}")
+
+    sql(f"CREATE SCHEMA IF NOT EXISTS `{TEST_CATALOG}`.`{schema}`")
+    sql(
+        f"CREATE OR REPLACE TABLE {fqn} AS SELECT * FROM VALUES "
+        f"(1, 100, 'NEW', 5.0), (2, 101, 'SHIPPED', 3.5), (3, 102, 'CANCELLED', 9.0) "
+        f"AS t(order_id, customer_id, status, amount)"
+    )
+    try:
+        yield fqn
+    finally:
+        try:
+            sql(f"DROP TABLE IF EXISTS {fqn}")
+        except Exception:  # teardown must not mask a test failure
+            pass
 
 
 def _llm_endpoint_reachable() -> bool:
@@ -68,7 +126,7 @@ def _chat(messages, tools):
 
 
 @pytest.mark.anyio
-async def test_agent_discovers_and_uses_tools():
+async def test_agent_discovers_and_uses_tools(dq_test_table):
     if not _llm_endpoint_reachable():
         pytest.skip(f"serving endpoint {LLM_ENDPOINT} not reachable")
 
@@ -94,7 +152,10 @@ async def test_agent_discovers_and_uses_tools():
                 "content": "You are a data quality assistant. Use the available tools to answer the "
                 "user. When you have enough information, give a short final answer.",
             },
-            {"role": "user", "content": f"What columns does the table {TEST_TABLE} have? Use the tools to find out."},
+            {
+                "role": "user",
+                "content": f"What columns does the table {dq_test_table} have? Use the tools to find out.",
+            },
         ]
 
         called_tools = []
@@ -122,12 +183,11 @@ async def test_agent_discovers_and_uses_tools():
         print(f"tool-use trajectory: {called_tools}")
         print(f"final answer: {final_text[:300]}")
 
-        # The agent must have discovered and invoked at least one DQX tool...
+        # The agent must have discovered and invoked the schema tool for this instruction...
         assert called_tools, "the model did not call any tool"
-        # ...and specifically the schema tool for this schema-discovery instruction.
         assert "get_table_schema" in called_tools, f"expected get_table_schema; got {called_tools}"
-        # ...and produced a sensible final answer that references a real column.
+        # ...and produced a sensible final answer referencing a column from OUR scaffolded table.
         assert final_text.strip(), "no final answer produced"
         assert any(
-            col in final_text.lower() for col in ("trip", "fare", "pickup", "amount", "distance", "column")
+            col in final_text.lower() for col in ("order_id", "customer_id", "status", "amount", "column")
         ), f"final answer does not look schema-related: {final_text[:200]}"
