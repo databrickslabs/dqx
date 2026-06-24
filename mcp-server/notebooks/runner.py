@@ -84,6 +84,126 @@ def generate_rules(params: dict) -> dict:
 # COMMAND ----------
 
 
+def load_checks(params: dict) -> dict:
+    """Load DQX checks from a storage backend (table, UC volume, or workspace file).
+
+    The backend is inferred from the location string by DQX's storage factory:
+    a 'catalog.schema.table' name -> Delta table, a '/Volumes/...' path -> UC volume
+    file, any other '/...' path -> workspace file.
+    """
+    from databricks.sdk import WorkspaceClient
+    from databricks.labs.dqx.engine import DQEngine
+    from databricks.labs.dqx.checks_storage import ChecksStorageHandlerFactory
+
+    location = params["location"]
+    run_config_name = params.get("run_config_name", "default")
+
+    ws = WorkspaceClient()
+    engine = DQEngine(workspace_client=ws, spark=spark)
+    _handler, config = ChecksStorageHandlerFactory(ws, spark).create_for_location(location, run_config_name)
+    checks = engine.load_checks(config)
+
+    return {"checks": _make_json_safe(checks), "count": len(checks), "location": location}
+
+
+# COMMAND ----------
+
+
+def save_checks(params: dict) -> dict:
+    """Save DQX checks to a storage backend (table, UC volume, or workspace file).
+
+    The backend is inferred from the location string. For table backends, *mode*
+    ('append' or 'overwrite') controls write semantics; it is ignored for file backends.
+    """
+    from databricks.sdk import WorkspaceClient
+    from databricks.labs.dqx.engine import DQEngine
+    from databricks.labs.dqx.checks_storage import ChecksStorageHandlerFactory
+
+    checks = params["checks"]
+    location = params["location"]
+    run_config_name = params.get("run_config_name", "default")
+    mode = params.get("mode", "append")
+
+    ws = WorkspaceClient()
+    engine = DQEngine(workspace_client=ws, spark=spark)
+    _handler, config = ChecksStorageHandlerFactory(ws, spark).create_for_location(location, run_config_name)
+    # Table/Lakebase configs expose a write mode; file backends do not.
+    if hasattr(config, "mode"):
+        config.mode = mode
+    engine.save_checks(checks, config)
+
+    return {"saved": True, "count": len(checks), "location": location}
+
+
+# COMMAND ----------
+
+
+def apply_checks_and_save_to_table(params: dict) -> dict:
+    """Apply checks to a view and persist results to output (and optional quarantine) tables."""
+    from databricks.sdk import WorkspaceClient
+    from databricks.labs.dqx.engine import DQEngine
+    from databricks.labs.dqx.config import InputConfig, OutputConfig
+
+    view_name = params["view_name"]
+    checks = params["checks"]
+    output_table = params["output_table"]
+    quarantine_table = params.get("quarantine_table")
+    mode = params.get("mode", "append")
+
+    ws = WorkspaceClient()
+    engine = DQEngine(workspace_client=ws, spark=spark)
+
+    input_config = InputConfig(location=view_name)
+    output_config = OutputConfig(location=output_table, mode=mode)
+    quarantine_config = OutputConfig(location=quarantine_table, mode=mode) if quarantine_table else None
+
+    engine.apply_checks_by_metadata_and_save_in_table(
+        input_config=input_config,
+        output_config=output_config,
+        checks=checks,
+        quarantine_config=quarantine_config,
+    )
+
+    result = {"output_table": output_table, "output_rows": spark.table(output_table).count()}
+    if quarantine_table:
+        result["quarantine_table"] = quarantine_table
+        result["quarantine_rows"] = spark.table(quarantine_table).count()
+    return result
+
+
+# COMMAND ----------
+
+
+def generate_rules_from_contract(params: dict) -> dict:
+    """Generate DQX rules from an ODCS data contract file.
+
+    Deterministic by default: schema/quality rules are derived from the contract.
+    Set process_text_rules=True to also process free-text expectations via the LLM
+    (requires the [llm] extra).
+    """
+    from databricks.sdk import WorkspaceClient
+    from databricks.labs.dqx.profiler.generator import DQGenerator
+
+    contract_file = params["contract_file"]
+    contract_format = params.get("contract_format", "odcs")
+    process_text_rules = params.get("process_text_rules", False)
+    default_criticality = params.get("default_criticality", "error")
+
+    ws = WorkspaceClient()
+    generator = DQGenerator(workspace_client=ws, spark=spark)
+    rules = generator.generate_rules_from_contract(
+        contract_file=contract_file,
+        contract_format=contract_format,
+        process_text_rules=process_text_rules,
+        default_criticality=default_criticality,
+    )
+
+    return {"rules": _make_json_safe(rules), "count": len(rules)}
+
+
+# COMMAND ----------
+
+
 def run_checks(params: dict) -> dict:
     """Run DQX checks against a view."""
     from databricks.sdk import WorkspaceClient
@@ -216,7 +336,11 @@ def list_available_checks(params: dict) -> dict:
 OPERATIONS = {
     "profile_table": profile_table,
     "generate_rules": generate_rules,
+    "generate_rules_from_contract": generate_rules_from_contract,
+    "load_checks": load_checks,
+    "save_checks": save_checks,
     "run_checks": run_checks,
+    "apply_checks_and_save_to_table": apply_checks_and_save_to_table,
     "validate_checks": validate_checks,
     "list_available_checks": list_available_checks,
 }

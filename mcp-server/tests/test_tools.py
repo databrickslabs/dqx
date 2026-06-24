@@ -177,3 +177,82 @@ class TestJobOnlyTools:
         result = tools["get_workflow"]()
         assert "steps" in result
         assert len(result["steps"]) == 5
+
+    def test_generate_rules_from_contract(self):
+        tools = _register_tools()
+
+        with patch("server.tools.utils.submit_job_async", return_value=21) as mock_submit:
+            result = tools["generate_rules_from_contract"]("/Volumes/c/s/v/contract.yml")
+
+        mock_submit.assert_called_once_with(
+            "generate_rules_from_contract",
+            {
+                "contract_file": "/Volumes/c/s/v/contract.yml",
+                "contract_format": "odcs",
+                "default_criticality": "error",
+                "process_text_rules": False,
+            },
+        )
+        assert result["run_id"] == 21
+
+    def test_load_checks(self):
+        tools = _register_tools()
+
+        with patch("server.tools.utils.submit_job_async", return_value=22) as mock_submit:
+            result = tools["load_checks"]("catalog.schema.checks")
+
+        mock_submit.assert_called_once_with(
+            "load_checks", {"location": "catalog.schema.checks", "run_config_name": "default"}
+        )
+        assert result["run_id"] == 22
+
+    def test_save_checks(self):
+        tools = _register_tools()
+
+        with patch("server.tools.utils.submit_job_async", return_value=23) as mock_submit:
+            result = tools["save_checks"]([{"check": "foo"}], "/Workspace/checks.yml", mode="overwrite")
+
+        mock_submit.assert_called_once_with(
+            "save_checks",
+            {
+                "checks": [{"check": "foo"}],
+                "location": "/Workspace/checks.yml",
+                "run_config_name": "default",
+                "mode": "overwrite",
+            },
+        )
+        assert result["run_id"] == 23
+
+
+class TestApplyChecksAndSaveToTable:
+    """Test that apply_checks_and_save_to_table creates a view and submits a job."""
+
+    def test_creates_view_and_submits_job(self):
+        tools = _register_tools()
+
+        with (
+            patch("server.tools.utils.get_obo_client"),
+            patch("server.tools.utils.get_warehouse_id", return_value="wh123"),
+            patch("server.tools.utils.create_temp_view", return_value="dqx_mcp.tmp.v_abc") as mock_create,
+            patch("server.tools.utils.submit_job_async", return_value=24) as mock_submit,
+            patch.dict("os.environ", _ENV),
+        ):
+            result = tools["apply_checks_and_save_to_table"](
+                "catalog.schema.orders",
+                [{"check": "foo"}],
+                "catalog.schema.orders_out",
+                quarantine_table="catalog.schema.orders_quarantine",
+            )
+
+        mock_create.assert_called_once()
+        assert mock_submit.call_args[0][0] == "apply_checks_and_save_to_table"
+        job_params = mock_submit.call_args[0][1]
+        assert job_params["view_name"] == "dqx_mcp.tmp.v_abc"
+        assert job_params["checks"] == [{"check": "foo"}]
+        assert job_params["output_table"] == "catalog.schema.orders_out"
+        assert job_params["quarantine_table"] == "catalog.schema.orders_quarantine"
+        assert job_params["mode"] == "append"
+        # The temp view must be cleaned up after the run.
+        metadata = mock_submit.call_args.kwargs["metadata"]
+        assert metadata["view_fqn"] == "dqx_mcp.tmp.v_abc"
+        assert result["run_id"] == 24

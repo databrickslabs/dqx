@@ -20,7 +20,8 @@ resources:
           spec:
             environment_version: "2"
             dependencies:
-              - databricks-labs-dqx
+              # [datacontract] extra pulls in datacontract-cli for generate_rules_from_contract
+              - databricks-labs-dqx[datacontract]
 
     # One-time setup job — grants USE CATALOG to users and app SP.
     # Run after first deploy: databricks bundle run dqx_setup --profile <profile>
