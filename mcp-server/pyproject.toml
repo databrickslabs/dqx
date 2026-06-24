@@ -21,6 +21,11 @@ mcp-dqx = "server.main:main"
 # [tool.uv.sources]
 # databricks-labs-dqx = { path = "../", editable = true }
 
+[tool.pytest.ini_options]
+markers = [
+    "integration: live tests against a deployed MCP server + workspace (skipped unless env is set)",
+]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
