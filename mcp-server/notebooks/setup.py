@@ -15,6 +15,8 @@ Grants:
   Schema level (catalog.tmp):
     - users          → USE SCHEMA, CREATE TABLE (so OBO token can create views)
     - app SP         → USE SCHEMA, SELECT (so SP job can read through views)
+    - app SP         → OWNER of the schema (so it can drop temp views created by
+                       any user — only the owner / parent-schema owner can DROP in UC)
 
 Parameters:
   - catalog_name: UC catalog for temp views (optional — reads from secret if not provided)
@@ -110,4 +112,19 @@ for sql in grants:
     logger.info(f"Executing: {sql}")
     spark.sql(sql)
 
-logger.info("Setup complete — all grants applied.")
+# COMMAND ----------
+
+# Transfer ownership of the temp schema to the app SP so it can manage the
+# lifecycle of the temp views (drop them after a run / sweep stale ones).
+# Temp views are created by the OBO user and are owned by that user; in Unity
+# Catalog only the view owner, a principal with MANAGE, the parent-schema owner,
+# or a metastore admin can DROP a view. Making the SP the schema owner lets the
+# app clean up views created by any user. Data governance is unaffected: the
+# views are definer's-rights, so the SP still reads source data *as the creating
+# user*, never directly. Run last so the GRANTs above are issued while the
+# setup principal still owns the schema. Idempotent.
+alter_owner_sql = f"ALTER SCHEMA `{catalog_name}`.`{schema_name}` OWNER TO `{sp_principal}`"
+logger.info(f"Executing: {alter_owner_sql}")
+spark.sql(alter_owner_sql)
+
+logger.info("Setup complete — all grants applied and schema ownership assigned to the app SP.")
