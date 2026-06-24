@@ -20,7 +20,10 @@ resources:
           spec:
             environment_version: "2"
             dependencies:
-              # [datacontract] extra pulls in datacontract-cli for generate_rules_from_contract
+              # [datacontract] extra pulls in datacontract-cli for generate_rules_from_contract.
+              # NOTE: unpinned for development. Pin to an explicit version in production
+              # (e.g. databricks-labs-dqx[datacontract]==<version>) so runner job environments
+              # are reproducible and a new DQX release cannot silently change runner behaviour.
               - databricks-labs-dqx[datacontract]
 
     # One-time setup job — grants USE CATALOG to users and app SP.
