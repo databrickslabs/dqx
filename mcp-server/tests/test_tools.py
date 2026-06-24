@@ -90,10 +90,9 @@ class TestProfileTable:
         assert mock_submit.call_args[0][0] == "profile_table"
         job_params = mock_submit.call_args[0][1]
         assert job_params["view_name"] == "dqx_mcp.tmp.v_abc"
-        metadata = mock_submit.call_args.kwargs["metadata"]
-        assert metadata["view_fqn"] == "dqx_mcp.tmp.v_abc"
-        assert metadata["warehouse_id"] == "wh123"
-        assert metadata["table_name"] == "catalog.schema.table"
+        # table_name travels in params (echoed back by the runner), not in server-side state.
+        assert job_params["table_name"] == "catalog.schema.table"
+        assert "metadata" not in mock_submit.call_args.kwargs
         assert result["status"] == "submitted"
         assert result["run_id"] == 999
 
@@ -117,8 +116,10 @@ class TestRunChecks:
         assert mock_submit.call_args[0][0] == "run_checks"
         job_params = mock_submit.call_args[0][1]
         assert job_params["view_name"] == "dqx_mcp.tmp.v_abc"
+        assert job_params["table_name"] == "catalog.schema.table"
         assert job_params["checks"] == [{"check": "foo"}]
         assert job_params["sample_size"] == 50
+        assert "metadata" not in mock_submit.call_args.kwargs
         assert result["status"] == "submitted"
         assert result["run_id"] == 999
 
@@ -252,7 +253,7 @@ class TestApplyChecksAndSaveToTable:
         assert job_params["output_table"] == "catalog.schema.orders_out"
         assert job_params["quarantine_table"] == "catalog.schema.orders_quarantine"
         assert job_params["mode"] == "append"
-        # The temp view must be cleaned up after the run.
-        metadata = mock_submit.call_args.kwargs["metadata"]
-        assert metadata["view_fqn"] == "dqx_mcp.tmp.v_abc"
+        # table_name travels in params; the runner drops the temp view itself (no server metadata).
+        assert job_params["table_name"] == "catalog.schema.orders"
+        assert "metadata" not in mock_submit.call_args.kwargs
         assert result["run_id"] == 24

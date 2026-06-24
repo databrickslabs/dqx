@@ -17,13 +17,6 @@ from databricks.sdk.service.jobs import (
 _JOB_ID_ENV = {"DQX_RUNNER_JOB_ID": "42"}
 
 
-def _clear_pending_runs():
-    """Clear the module-level pending-runs registry between tests."""
-    import server.utils as utils_module
-
-    utils_module._pending_runs.clear()
-
-
 def _make_terminated_run(result_state: RunResultState, run_id: int = 123) -> MagicMock:
     """Build a mock Run that has finished, with a single task."""
     run = MagicMock(spec=Run)
@@ -202,22 +195,22 @@ class TestTempViews:
 
 
 class TestSubmitJobAsync:
-    def setup_method(self):
-        _clear_pending_runs()
-
     def test_returns_run_id_and_triggers_runner_job(self):
-        from server.utils import submit_job_async, _pending_runs
+        from server.utils import submit_job_async
 
         ws = create_autospec(WorkspaceClient)
         ws.jobs.run_now.return_value = MagicMock(run_id=123)
 
-        with patch("server.utils._get_sp_client", return_value=ws), patch.dict("os.environ", _JOB_ID_ENV):
+        with (
+            patch("server.utils._get_sp_client", return_value=ws),
+            patch("server.utils._maybe_sweep_stale_views"),
+            patch.dict("os.environ", _JOB_ID_ENV),
+        ):
             run_id = submit_job_async("profile_table", {"view_name": "c.s.v_abc"})
 
         assert run_id == 123
         ws.jobs.run_now.assert_called_once()
         assert ws.jobs.run_now.call_args.kwargs["job_id"] == 42
-        assert _pending_runs[123]["operation"] == "profile_table"
 
     def test_passes_operation_and_params_as_notebook_params(self):
         from server.utils import submit_job_async
@@ -225,55 +218,43 @@ class TestSubmitJobAsync:
         ws = create_autospec(WorkspaceClient)
         ws.jobs.run_now.return_value = MagicMock(run_id=123)
 
-        with patch("server.utils._get_sp_client", return_value=ws), patch.dict("os.environ", _JOB_ID_ENV):
+        with (
+            patch("server.utils._get_sp_client", return_value=ws),
+            patch("server.utils._maybe_sweep_stale_views"),
+            patch.dict("os.environ", _JOB_ID_ENV),
+        ):
             submit_job_async("profile_table", {"view_name": "c.s.v_abc", "columns": ["a"]})
 
         notebook_params = ws.jobs.run_now.call_args.kwargs["notebook_params"]
         assert notebook_params["operation"] == "profile_table"
         assert json.loads(notebook_params["params"]) == {"view_name": "c.s.v_abc", "columns": ["a"]}
 
-    def test_stores_metadata_for_cleanup(self):
-        from server.utils import submit_job_async, _pending_runs
-
-        ws = create_autospec(WorkspaceClient)
-        ws.jobs.run_now.return_value = MagicMock(run_id=123)
-
-        with patch("server.utils._get_sp_client", return_value=ws), patch.dict("os.environ", _JOB_ID_ENV):
-            submit_job_async(
-                "run_checks",
-                {"view_name": "c.s.v_abc", "checks": []},
-                metadata={"view_fqn": "c.s.v_abc", "warehouse_id": "wh123", "table_name": "c.s.t"},
-            )
-
-        assert _pending_runs[123]["view_fqn"] == "c.s.v_abc"
-        assert _pending_runs[123]["warehouse_id"] == "wh123"
-        assert _pending_runs[123]["table_name"] == "c.s.t"
-
     def test_raises_when_no_job_id(self):
         from server.utils import submit_job_async
 
         ws = create_autospec(WorkspaceClient)
 
-        with patch("server.utils._get_sp_client", return_value=ws), patch.dict("os.environ", {}, clear=True):
+        with (
+            patch("server.utils._get_sp_client", return_value=ws),
+            patch("server.utils._maybe_sweep_stale_views"),
+            patch.dict("os.environ", {}, clear=True),
+        ):
             with pytest.raises(RuntimeError, match="DQX_RUNNER_JOB_ID not set"):
                 submit_job_async("profile_table", {"view_name": "c.s.v_abc"})
         ws.jobs.run_now.assert_not_called()
 
 
 class TestGetRunStatus:
-    def setup_method(self):
-        _clear_pending_runs()
-
     def test_completed_returns_result_with_table_name(self):
-        from server.utils import get_run_status, _pending_runs
+        from server.utils import get_run_status
 
         ws = create_autospec(WorkspaceClient)
         ws.jobs.get_run.return_value = _make_terminated_run(RunResultState.SUCCESS)
         output = MagicMock(spec=RunOutput)
         output.notebook_output = MagicMock(spec=NotebookOutput)
-        output.notebook_output.result = json.dumps({"profiles": []})
+        # table_name is echoed by the runner into its result; get_run_status returns it as-is.
+        output.notebook_output.result = json.dumps({"profiles": [], "table_name": "c.s.t"})
         ws.jobs.get_run_output.return_value = output
-        _pending_runs[123] = {"operation": "profile_table", "table_name": "c.s.t"}
 
         with patch("server.utils._get_sp_client", return_value=ws):
             result = get_run_status(123)
@@ -284,8 +265,9 @@ class TestGetRunStatus:
         assert result["result"]["table_name"] == "c.s.t"
         ws.jobs.get_run_output.assert_called_once_with(456)
 
-    def test_drops_temp_view_on_completion(self):
-        from server.utils import get_run_status, _pending_runs
+    def test_does_not_drop_view_or_keep_state(self):
+        # Cleanup moved into the runner job; get_run_status must not attempt any view drop.
+        from server.utils import get_run_status
 
         ws = create_autospec(WorkspaceClient)
         ws.jobs.get_run.return_value = _make_terminated_run(RunResultState.SUCCESS)
@@ -293,23 +275,21 @@ class TestGetRunStatus:
         output.notebook_output = MagicMock(spec=NotebookOutput)
         output.notebook_output.result = json.dumps({"ok": True})
         ws.jobs.get_run_output.return_value = output
-        _pending_runs[123] = {"view_fqn": "c.s.v_abc", "warehouse_id": "wh123"}
 
         with (
             patch("server.utils._get_sp_client", return_value=ws),
             patch("server.utils.drop_view") as mock_drop,
         ):
-            get_run_status(123)
+            result = get_run_status(123)
 
-        mock_drop.assert_called_once_with(ws, "c.s.v_abc", warehouse_id="wh123")
-        assert 123 not in _pending_runs
+        assert result["status"] == "completed"
+        mock_drop.assert_not_called()
 
     def test_failed_run_returns_error(self):
-        from server.utils import get_run_status, _pending_runs
+        from server.utils import get_run_status
 
         ws = create_autospec(WorkspaceClient)
         ws.jobs.get_run.return_value = _make_terminated_run(RunResultState.FAILED)
-        _pending_runs[123] = {"operation": "run_checks"}
 
         with patch("server.utils._get_sp_client", return_value=ws):
             result = get_run_status(123)
@@ -317,6 +297,42 @@ class TestGetRunStatus:
         assert result["status"] == "failed"
         assert "boom" in result["error"]
         ws.jobs.get_run_output.assert_not_called()
+
+
+class TestSweepStaleViews:
+    def test_drops_only_views_older_than_ttl(self):
+        import time
+        from server.utils import sweep_stale_views
+
+        now = int(time.time())
+        ws = create_autospec(WorkspaceClient)
+        rows = [
+            {"viewName": f"v_{now - 100000}_abc123"},  # stale -> drop
+            {"viewName": f"v_{now}_def456"},  # fresh -> keep
+            {"viewName": "some_other_table"},  # not a temp view -> ignore
+        ]
+
+        with (
+            patch("server.utils.execute_sql", return_value=rows),
+            patch("server.utils.drop_view") as mock_drop,
+        ):
+            dropped = sweep_stale_views(ws, "cat", "tmp", "wh", ttl_seconds=3600)
+
+        assert dropped == 1
+        mock_drop.assert_called_once_with(ws, f"cat.tmp.v_{now - 100000}_abc123", warehouse_id="wh")
+
+    def test_returns_zero_when_listing_fails(self):
+        from server.utils import sweep_stale_views
+
+        ws = create_autospec(WorkspaceClient)
+        with (
+            patch("server.utils.execute_sql", side_effect=RuntimeError("no warehouse")),
+            patch("server.utils.drop_view") as mock_drop,
+        ):
+            dropped = sweep_stale_views(ws, "cat", "tmp", "wh")
+
+        assert dropped == 0
+        mock_drop.assert_not_called()
 
     def test_still_running_returns_running(self):
         from server.utils import get_run_status

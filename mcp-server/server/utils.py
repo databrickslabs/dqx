@@ -254,15 +254,19 @@ def create_temp_view(
         ValueError: If table_name is not fully qualified or contains unsafe characters.
         RuntimeError: If view creation fails (e.g., user lacks SELECT on source table).
     """
+    import time
     import uuid
 
     safe_source = validate_and_quote_table_name(table_name)
     view_catalog = _validate_sql_identifier(catalog, "view catalog")
     view_schema = _validate_sql_identifier(schema, "view schema")
 
-    view_id = uuid.uuid4().hex[:12]
-    view_name = _validate_sql_identifier(f"v_{view_id}", "view name")
-    view_fqn = f"{catalog}.{schema}.v_{view_id}"
+    # Encode the creation epoch in the name (v_<epoch>_<uuid>) so the sweeper can drop
+    # stale views by age. The UUID keeps it unique; the whole name stays within the
+    # identifier-safety charset.
+    view_basename = f"v_{int(time.time())}_{uuid.uuid4().hex[:12]}"
+    view_name = _validate_sql_identifier(view_basename, "view name")
+    view_fqn = f"{catalog}.{schema}.{view_basename}"
 
     logger.info(f"Creating temp view {sanitize_for_log(view_fqn)} over {sanitize_for_log(table_name)}")
     execute_sql(
@@ -301,10 +305,72 @@ def drop_view(ws: Any, view_fqn: str, warehouse_id: str) -> None:
         logger.warning(f"Failed to drop temp view {sanitize_for_log(view_fqn)}", exc_info=True)
 
 
-# ── Jobs API — async submit + poll ───────────────────────────────────
+# ── Temp-view sweeper (backstop cleanup) ─────────────────────────────
 
-# Track pending runs: run_id → metadata (view to clean up, table name, etc.)
-_pending_runs: dict[int, dict[str, Any]] = {}
+# View names are v_<epoch>_<uuid>. The runner job drops its own view in a finally,
+# so this sweeper only catches orphans: views whose job never started or was killed
+# before cleanup. It runs as the SP, which owns the temp schema (see setup.py).
+_VIEW_NAME_RE = re.compile(r"^v_(\d+)_[0-9a-f]+$")
+_VIEW_TTL_SECONDS = 3600  # drop views older than 1 hour
+_SWEEP_INTERVAL_SECONDS = 600  # sweep at most once per 10 minutes per replica
+_last_sweep_at = 0.0
+
+
+def sweep_stale_views(ws: Any, catalog: str, schema: str, warehouse_id: str, ttl_seconds: int = _VIEW_TTL_SECONDS) -> int:
+    """Drop temp views in *catalog.schema* older than *ttl_seconds*. Best-effort.
+
+    Identifies age from the v_<epoch>_<uuid> name. Returns the number of views dropped.
+    Never raises — logs and moves on so cleanup can't break request handling.
+    """
+    import time
+
+    safe_catalog = _validate_sql_identifier(catalog, "catalog")
+    safe_schema = _validate_sql_identifier(schema, "schema")
+    now = int(time.time())
+    dropped = 0
+    try:
+        rows = execute_sql(ws, f"SHOW VIEWS IN {safe_catalog}.{safe_schema}", warehouse_id=warehouse_id)
+    except Exception:
+        logger.warning(f"View sweep: failed to list views in {sanitize_for_log(f'{catalog}.{schema}')}", exc_info=True)
+        return 0
+
+    for row in rows:
+        view_name = row.get("viewName") or row.get("tableName") or ""
+        match = _VIEW_NAME_RE.match(view_name)
+        if not match:
+            continue
+        age = now - int(match.group(1))
+        if age > ttl_seconds:
+            drop_view(ws, f"{catalog}.{schema}.{view_name}", warehouse_id=warehouse_id)
+            dropped += 1
+    if dropped:
+        logger.info(f"View sweep: dropped {dropped} stale view(s) in {sanitize_for_log(f'{catalog}.{schema}')}")
+    return dropped
+
+
+def _maybe_sweep_stale_views() -> None:
+    """Run the stale-view sweep at most once per interval. Never raises."""
+    import time
+
+    global _last_sweep_at
+    now = time.time()
+    if now - _last_sweep_at < _SWEEP_INTERVAL_SECONDS:
+        return
+    _last_sweep_at = now
+
+    catalog = os.environ.get("DQX_CATALOG", "")
+    schema = os.environ.get("DQX_TMP_SCHEMA", "tmp")
+    if not catalog:
+        return
+    try:
+        ws = _get_sp_client()
+        warehouse_id = get_warehouse_id(ws)
+        sweep_stale_views(ws, catalog, schema, warehouse_id)
+    except Exception:
+        logger.warning("View sweep: skipped due to error", exc_info=True)
+
+
+# ── Jobs API — async submit + poll ───────────────────────────────────
 
 
 def _get_runner_job_id() -> int:
@@ -315,17 +381,27 @@ def _get_runner_job_id() -> int:
     return int(job_id)
 
 
-def submit_job_async(operation: str, params: dict[str, Any], metadata: dict[str, Any] | None = None) -> int:
+def submit_job_async(operation: str, params: dict[str, Any]) -> int:
     """Submit a DQX operation and return the run_id immediately (non-blocking).
+
+    Stateless by design: the runner job drops its own temp view (params['view_name'])
+    in a finally and echoes params['table_name'] into its result, so no per-run state
+    is kept in the server process. This means a restart or a poll landing on a
+    different app replica does not leak views or lose context.
 
     Args:
         operation: The DQX operation name (e.g. 'profile_table', 'run_checks').
-        params: Dict of parameters to pass to the notebook as JSON.
-        metadata: Optional metadata to store with the run (e.g. view_fqn for cleanup).
+        params: Dict of parameters to pass to the notebook as JSON. For table-backed
+            operations, include 'view_name' (dropped by the runner) and 'table_name'
+            (echoed back in the result).
 
     Returns:
         The Databricks job run_id.
     """
+    # Opportunistically reap orphaned temp views (throttled). Backstop for views whose
+    # job never started or was killed before its own cleanup ran.
+    _maybe_sweep_stale_views()
+
     ws = _get_sp_client()
     job_id = _get_runner_job_id()
 
@@ -341,12 +417,6 @@ def submit_job_async(operation: str, params: dict[str, Any], metadata: dict[str,
 
     run_id = wait.run_id
     logger.info(f"Job submitted: run_id={run_id}")
-
-    _pending_runs[run_id] = {
-        "operation": operation,
-        **(metadata or {}),
-    }
-
     return run_id
 
 
@@ -387,13 +457,8 @@ def get_run_status(run_id: int) -> dict[str, Any]:
     else:
         return {"status": "running", "run_id": run_id, "message": "Job is still running. Call get_run_result again."}
 
-    # Run finished — clean up metadata and temp views
-    metadata = _pending_runs.pop(run_id, {})
-    view_fqn = metadata.get("view_fqn")
-    warehouse_id = metadata.get("warehouse_id")
-
-    if view_fqn and warehouse_id:
-        drop_view(ws, view_fqn, warehouse_id=warehouse_id)
+    # No local cleanup here: the runner job drops its own temp view, and any orphans are
+    # reaped by the sweeper. This keeps get_run_status stateless and replica-independent.
 
     # Check for failure
     result_state = run.state.result_state.value if run.state and run.state.result_state else "UNKNOWN"
@@ -412,9 +477,7 @@ def get_run_status(run_id: int) -> dict[str, Any]:
 
     if output.notebook_output and output.notebook_output.result:
         result = json.loads(output.notebook_output.result)
-        # Re-attach table_name if stored in metadata
-        if "table_name" in metadata:
-            result["table_name"] = metadata["table_name"]
+        # table_name is echoed by the runner into the result, so nothing to re-attach here.
         return {"status": "completed", "run_id": run_id, "result": result}
 
     error_msg = output.error or "No output from notebook"

@@ -332,6 +332,33 @@ def list_available_checks(params: dict) -> dict:
 
 # COMMAND ----------
 
+
+def _drop_view_safe(view_name) -> None:
+    """Drop the OBO-created temp view for this run. Best-effort: logs, never raises.
+
+    Runs as the job's service principal, which owns the temp schema (see setup.py),
+    so it can drop views created by any user via their OBO token. Doing this here —
+    in the job that is guaranteed to run — means view cleanup no longer depends on the
+    user polling get_run_result or on which app replica handles the poll.
+    """
+    import re
+
+    if not view_name:
+        return
+    parts = str(view_name).split(".")
+    if len(parts) != 3 or not all(re.match(r"^[A-Za-z0-9_]+$", p) for p in parts):
+        logger.warning(f"Skipping drop of invalid view name: {view_name!r}")
+        return
+    safe_fqn = ".".join(f"`{p}`" for p in parts)
+    try:
+        spark.sql(f"DROP VIEW IF EXISTS {safe_fqn}")
+        logger.info(f"Dropped temp view {view_name}")
+    except Exception:
+        logger.warning(f"Failed to drop temp view {view_name}", exc_info=True)
+
+
+# COMMAND ----------
+
 # Operation dispatch
 OPERATIONS = {
     "profile_table": profile_table,
@@ -352,9 +379,16 @@ try:
         result = {"error": f"Unknown operation: {operation}. Valid: {list(OPERATIONS.keys())}"}
     else:
         result = OPERATIONS[operation](params)
+        # Echo the source table name so the client knows which table the result is for.
+        # Done here (instead of re-attaching in the server) so the server needs no per-run state.
+        if isinstance(result, dict) and params.get("table_name") and "table_name" not in result:
+            result["table_name"] = params["table_name"]
 except Exception as e:
     logger.error(f"Operation '{operation}' failed: {e}", exc_info=True)
     result = {"error": f"{type(e).__name__}: {str(e)}"}
+finally:
+    # Always drop the run's temp view, on success or failure.
+    _drop_view_safe(params.get("view_name"))
 
 # Check output size before exit (5MB limit)
 output_json = json.dumps(result)

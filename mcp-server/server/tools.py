@@ -85,8 +85,7 @@ def load_tools(mcp_server):
 
         run_id = utils.submit_job_async(
             "profile_table",
-            {"view_name": view_fqn, "columns": columns, "options": options},
-            metadata={"view_fqn": view_fqn, "warehouse_id": warehouse_id, "table_name": table_name},
+            {"view_name": view_fqn, "table_name": table_name, "columns": columns, "options": options},
         )
 
         return {
@@ -288,8 +287,7 @@ def load_tools(mcp_server):
 
         run_id = utils.submit_job_async(
             "run_checks",
-            {"view_name": view_fqn, "checks": checks, "sample_size": sample_size},
-            metadata={"view_fqn": view_fqn, "warehouse_id": warehouse_id, "table_name": table_name},
+            {"view_name": view_fqn, "table_name": table_name, "checks": checks, "sample_size": sample_size},
         )
 
         return {
@@ -342,12 +340,12 @@ def load_tools(mcp_server):
             "apply_checks_and_save_to_table",
             {
                 "view_name": view_fqn,
+                "table_name": table_name,
                 "checks": checks,
                 "output_table": output_table,
                 "quarantine_table": quarantine_table,
                 "mode": mode,
             },
-            metadata={"view_fqn": view_fqn, "warehouse_id": warehouse_id},
         )
 
         return {
