@@ -4,13 +4,14 @@ version = "0.1.0"
 description = "DQX MCP Server - AI agent tools for data quality checks"
 requires-python = ">=3.11"
 dependencies = [
-    "fastapi>=0.115.12",
-    "mcp[cli]>=1.14.0",
+    # Runtime deps the server imports directly. Keep in sync with requirements.txt
+    # (the manifest the Databricks App installs). mcp/pydantic come in via fastmcp;
+    # databricks-labs-dqx is NOT a server dep — only the runner notebook uses it, and
+    # it is installed via the job environment spec in databricks.yml.
+    "fastmcp>=2.12.5",
+    "starlette",
     "uvicorn>=0.34.2",
     "databricks-sdk>=0.60.0",
-    "pydantic>=2",
-    "fastmcp>=2.12.5",
-    "databricks-labs-dqx",
 ]
 
 [project.scripts]

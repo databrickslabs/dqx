@@ -82,27 +82,6 @@ class OBOAuthMiddleware:
         await self.app(scope, receive, send)
 
 
-def get_workspace_client():
-    """Get a WorkspaceClient for the current request.
-
-    Returns an OBO client (user's identity) if running in a Databricks App
-    with a forwarded token, otherwise falls back to the service principal.
-    """
-    from databricks.sdk import WorkspaceClient
-    from databricks.sdk.config import Config
-
-    token_info = _user_token_var.get(None)
-    if token_info is not None:
-        host, token = token_info
-        cfg = Config(host=host, token=token, auth_type="pat")
-        return WorkspaceClient(config=cfg)
-
-    global _sp_client
-    if _sp_client is None:
-        _sp_client = WorkspaceClient()
-    return _sp_client
-
-
 def get_obo_client():
     """Get a WorkspaceClient authenticated with the user's OBO token.
 
@@ -445,22 +424,3 @@ def get_run_status(run_id: int) -> dict[str, Any]:
         "run_id": run_id,
         "error": f"No output: {error_msg}. Debug at: {run_url}",
     }
-
-
-# ── JSON serialization helpers ────────────────────────────────────────
-
-
-def make_json_safe(value: Any) -> Any:
-    """Recursively convert values that are not JSON-serializable (e.g. Decimal, datetime)."""
-    import datetime
-    from decimal import Decimal
-
-    if isinstance(value, Decimal):
-        return float(value)
-    if isinstance(value, (datetime.datetime, datetime.date)):
-        return value.isoformat()
-    if isinstance(value, dict):
-        return {k: make_json_safe(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [make_json_safe(v) for v in value]
-    return value
