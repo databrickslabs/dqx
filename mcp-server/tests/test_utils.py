@@ -343,11 +343,13 @@ class TestSweepStaleViews:
         run.state.life_cycle_state = RunLifeCycleState.RUNNING
         ws.jobs.get_run.return_value = run
 
-        with patch("server.utils._get_sp_client", return_value=ws), patch("time.sleep"):
+        with patch("server.utils._get_sp_client", return_value=ws):
             result = get_run_status(123)
 
         assert result["status"] == "running"
         assert result["run_id"] == 123
+        # Single non-blocking poll — exactly one get_run call, no internal wait.
+        ws.jobs.get_run.assert_called_once_with(123)
 
 
 class TestOBOAuthMiddleware:

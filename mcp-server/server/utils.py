@@ -421,13 +421,14 @@ def submit_job_async(operation: str, params: dict[str, Any]) -> int:
 
 
 def get_run_status(run_id: int) -> dict[str, Any]:
-    """Check the status of a submitted job run, polling internally before returning.
+    """Check the status of a submitted job run with a single, non-blocking poll.
 
-    Polls the job every 10 seconds for up to 90 seconds. If the job completes
-    within that window, returns results immediately. If still running after
-    90 seconds, returns 'running' so the caller can try again.
-
-    This internal polling prevents rapid-fire tool calls from MCP clients.
+    Performs one status check and returns immediately as 'completed' (with result),
+    'failed', or 'running'. When 'running', the caller polls again — the client drives
+    the cadence. We deliberately do NOT wait/sleep internally: holding the HTTP
+    connection (and an anyio worker thread, since the tools are sync) open for the whole
+    job would risk client/proxy timeouts and saturate the thread pool under concurrent
+    polls.
 
     Args:
         run_id: The Databricks job run_id from a prior submit call.
@@ -435,26 +436,11 @@ def get_run_status(run_id: int) -> dict[str, Any]:
     Returns:
         Dict with 'status' ('running', 'completed', 'failed') and optionally 'result'.
     """
-    import time
-
     ws = _get_sp_client()
 
-    # Poll internally for up to 90 seconds before returning "running"
-    max_wait = 90
-    poll_interval = 10
-    elapsed = 0
-
-    while elapsed < max_wait:
-        run = ws.jobs.get_run(run_id)
-        life_cycle = run.state.life_cycle_state.value if run.state and run.state.life_cycle_state else "UNKNOWN"
-
-        if life_cycle not in ("PENDING", "RUNNING", "QUEUED", "BLOCKED"):
-            break
-
-        elapsed += poll_interval
-        if elapsed < max_wait:
-            time.sleep(poll_interval)
-    else:
+    run = ws.jobs.get_run(run_id)
+    life_cycle = run.state.life_cycle_state.value if run.state and run.state.life_cycle_state else "UNKNOWN"
+    if life_cycle in ("PENDING", "RUNNING", "QUEUED", "BLOCKED"):
         return {"status": "running", "run_id": run_id, "message": "Job is still running. Call get_run_result again."}
 
     # No local cleanup here: the runner job drops its own temp view, and any orphans are
