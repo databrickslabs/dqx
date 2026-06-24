@@ -19,7 +19,10 @@ set -euo pipefail
 NAME_PREFIX="${NAME_PREFIX:-mcp-dqx-ci}"
 CONFIG_SECRET_SCOPE="${CONFIG_SECRET_SCOPE:-dqx-config-ci}"
 BUNDLE_TARGET="${BUNDLE_TARGET:-dev}"
-: "${DQX_MCP_TEST_CATALOG:?set DQX_MCP_TEST_CATALOG to a catalog the deployer can create schemas in}"
+# Required CI config — names the GitHub secret/var to set when missing.
+: "${DATABRICKS_HOST:?set the DQX_MCP_CI_HOST secret (CI workspace URL)}"
+: "${DATABRICKS_TOKEN:?set the DQX_MCP_CI_TOKEN secret (token able to deploy apps/jobs + create schemas)}"
+: "${DQX_MCP_TEST_CATALOG:?set the DQX_MCP_CI_CATALOG var (a catalog the deployer can create schemas in)}"
 PROFILE_ARG=()
 [ -n "${DATABRICKS_PROFILE:-}" ] && PROFILE_ARG=(--profile "$DATABRICKS_PROFILE")
 

@@ -43,6 +43,9 @@ jobs:
 
   mcp-integration:
     needs: not-a-fork
+    # Skip cleanly until a maintainer configures the CI workspace (vars.DQX_MCP_CI_CATALOG +
+    # the DQX_MCP_CI_HOST/TOKEN secrets). Deterministic MCP tests still run in push.yml's `mcp` job.
+    if: ${{ vars.DQX_MCP_CI_CATALOG != '' }}
     environment: tool
     runs-on:
       group: databrickslabs-protected-runner-group
