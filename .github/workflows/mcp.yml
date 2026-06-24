@@ -1,0 +1,78 @@
+# MCP server integration tests.
+#
+# Runs the tests/integration_mcp suite via the shared acceptance harness (same workspace,
+# auth, and Model Serving endpoint as the anomaly/integration suites). The suite deploys an
+# isolated MCP app from the bundle, drives it as an agent would, and tears it down — see
+# tests/integration_mcp/conftest.py. No MCP-specific secrets are needed; auth comes from the
+# acceptance action exactly like the other integration workflows.
+name: mcp
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+    paths:
+      - "mcp-server/**"
+      - "src/databricks/labs/dqx/**" # the runner installs the in-repo DQX wheel
+      - "tests/integration_mcp/**"
+      - ".github/workflows/mcp.yml"
+  merge_group:
+    types: [checks_requested]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false # let teardown finish so the isolated app/bundle is removed
+
+jobs:
+  # Gate downstream work: fork PRs (no access to the tool environment) and drafts do not run.
+  not-a-fork:
+    runs-on:
+      group: databrickslabs-protected-runner-group
+      labels: linux-ubuntu-latest
+    if: github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork
+    steps:
+      - run: echo "Not a fork PR, proceeding"
+
+  mcp-tests:
+    needs: not-a-fork
+    environment: tool
+    runs-on:
+      group: larger-runners
+      labels: larger
+    permissions:
+      id-token: write
+      pull-requests: write
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Setup environment
+        uses: ./.github/actions/setup-env
+
+      - name: Pre-build DQX wheel
+        uses: ./.github/actions/prebuild-wheel
+
+      - name: Prepare code coverage configuration for MCP tests
+        run: |
+          cat > tests/integration_mcp/.coveragerc << EOF
+          [run]
+          source = ../../src
+          relative_files = true
+          parallel = true
+          EOF
+
+      - name: Run MCP integration tests
+        uses: databrickslabs/sandbox/acceptance@83461e5dd7021feabb1a9ca3ee10d6f46b72092a # acceptance/v0.4.6
+        with:
+          vault_uri: ${{ secrets.VAULT_URI }}
+          timeout: 1h
+          codegen_path: tests/integration_mcp/.codegen.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage

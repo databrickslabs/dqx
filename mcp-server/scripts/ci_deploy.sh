@@ -19,10 +19,10 @@ set -euo pipefail
 NAME_PREFIX="${NAME_PREFIX:-mcp-dqx-ci}"
 CONFIG_SECRET_SCOPE="${CONFIG_SECRET_SCOPE:-dqx-config-ci}"
 BUNDLE_TARGET="${BUNDLE_TARGET:-dev}"
-# Required CI config — names the GitHub secret/var to set when missing.
-: "${DATABRICKS_HOST:?set the DQX_MCP_CI_HOST secret (CI workspace URL)}"
-: "${DATABRICKS_TOKEN:?set the DQX_MCP_CI_TOKEN secret (token able to deploy apps/jobs + create schemas)}"
-: "${DQX_MCP_TEST_CATALOG:?set the DQX_MCP_CI_CATALOG var (a catalog the deployer can create schemas in)}"
+# Required config (CI: provided by the acceptance harness env + the deploy fixture).
+: "${DATABRICKS_HOST:?DATABRICKS_HOST is not set (workspace URL)}"
+: "${DATABRICKS_TOKEN:?DATABRICKS_TOKEN is not set (workspace auth)}"
+: "${DQX_MCP_TEST_CATALOG:?DQX_MCP_TEST_CATALOG is not set (a catalog the deployer can create schemas in)}"
 PROFILE_ARG=()
 [ -n "${DATABRICKS_PROFILE:-}" ] && PROFILE_ARG=(--profile "$DATABRICKS_PROFILE")
 
@@ -48,6 +48,16 @@ echo "::endgroup::"
 
 echo "::group::start + deploy app code"
 databricks apps start "${NAME_PREFIX}" "${PROFILE_ARG[@]}" || true
+# `apps deploy` requires the app COMPUTE to be ACTIVE. A brand-new app's app_status stays
+# "UNAVAILABLE" until code is deployed, so we wait on compute_status (which `start` brings up),
+# not app_status.
+for _ in $(seq 1 60); do
+  state="$(databricks apps get "${NAME_PREFIX}" "${PROFILE_ARG[@]}" -o json \
+    | python3 -c 'import sys,json; print(json.load(sys.stdin).get("compute_status",{}).get("state",""))')"
+  [ "${state}" = "ACTIVE" ] && break
+  echo "waiting for app compute to become ACTIVE (state=${state:-unknown})..."
+  sleep 10
+done
 # The app deploys from the bundle's synced files dir (workspace.file_path).
 FILE_PATH="$(databricks bundle summary -t "${BUNDLE_TARGET}" "${VARS[@]}" "${PROFILE_ARG[@]}" -o json \
   | python3 -c 'import sys,json; print(json.load(sys.stdin)["workspace"]["file_path"])')"
@@ -57,5 +67,7 @@ echo "::endgroup::"
 APP_URL="$(databricks apps get "${NAME_PREFIX}" "${PROFILE_ARG[@]}" -o json \
   | python3 -c 'import sys,json; print(json.load(sys.stdin)["url"])')"
 echo "DQX_MCP_SERVER_URL=${APP_URL}"
-[ -n "${GITHUB_OUTPUT:-}" ] && echo "server_url=${APP_URL}" >> "$GITHUB_OUTPUT"
-[ -n "${GITHUB_ENV:-}" ] && echo "DQX_MCP_SERVER_URL=${APP_URL}" >> "$GITHUB_ENV"
+# Use if-blocks (not `[ ] && echo`): the latter returns non-zero when the var is unset (local
+# runs), which would make this script exit 1 on an otherwise successful deploy.
+if [ -n "${GITHUB_OUTPUT:-}" ]; then echo "server_url=${APP_URL}" >> "$GITHUB_OUTPUT"; fi
+if [ -n "${GITHUB_ENV:-}" ]; then echo "DQX_MCP_SERVER_URL=${APP_URL}" >> "$GITHUB_ENV"; fi
