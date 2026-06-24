@@ -518,6 +518,8 @@ export interface GenerateRulesFromContractOut {
   unassigned_rules?: GenerateRulesFromContractOutUnassignedRulesItem[];
   total_rules?: number;
   warnings?: string[];
+  /** DQEngine.validate_checks errors for the generated rules. Non-blocking — surfaced so the UI can flag rules that would fail at execution time (mirrors the AI-assisted generation endpoint). */
+  validation_errors?: string[];
 }
 
 /**
@@ -569,6 +571,10 @@ export interface LLMModelConfig {
   model_name?: string;
   api_key?: string;
   api_base?: string;
+  max_tokens?: number;
+  temperature?: number;
+  timeout?: number;
+  max_retries?: number;
 }
 
 export type LabelDefinitionDescription = string | null;
@@ -781,7 +787,13 @@ export interface ProfileRunSummaryOut {
   created_at?: ProfileRunSummaryOutCreatedAt;
 }
 
+export type ProfilerConfigSampleFractionAnyOf = {[key: string]: number};
+
+export type ProfilerConfigSampleFraction = number | ProfilerConfigSampleFractionAnyOf | null;
+
 export type ProfilerConfigSampleSeed = number | null;
+
+export type ProfilerConfigSampleByColumn = string | null;
 
 export type ProfilerConfigFilter = string | null;
 
@@ -794,8 +806,10 @@ export type ProfilerConfigMaxEmptyRatio = number | null;
  */
 export interface ProfilerConfig {
   summary_stats_file?: string;
-  sample_fraction?: number;
+  sample_fraction?: ProfilerConfigSampleFraction;
   sample_seed?: ProfilerConfigSampleSeed;
+  sample_by_column?: ProfilerConfigSampleByColumn;
+  sample_by_values_limit?: number;
   limit?: number;
   filter?: ProfilerConfigFilter;
   criticality?: string;

@@ -2,13 +2,13 @@
 
 Background
 ----------
-``apx build`` post-processes the freshly-built application wheel by
-injecting a build timestamp into the **filename** (e.g. renaming
+A build step that injects a build timestamp into the wheel **filename**
+(e.g. renaming
 ``databricks_labs_dqx_app-0.13.0.post38.dev0+65c9602-py3-none-any.whl``
 to
 ``databricks_labs_dqx_app-0.13.0.post38.dev0+65c9602.post20260506102508-py3-none-any.whl``)
-but does **not** update the wheel's internal ``METADATA``, ``RECORD`` or
-``*.dist-info`` directory name.
+without also updating the wheel's internal ``METADATA``, ``RECORD`` or
+``*.dist-info`` directory name produces a mismatched wheel.
 
 The result is a wheel whose filename advertises a new version each
 build but whose package metadata still reports the unchanged
@@ -17,7 +17,7 @@ is already installed, and silently skips reinstall — so a Databricks
 App container's persistent venv keeps running stale code on every
 redeploy.
 
-This script repairs the wheel produced by ``apx build`` by:
+This script repairs such a wheel by:
 
 1. parsing the version segment out of the filename
 2. unpacking the wheel
@@ -63,8 +63,8 @@ def _filename_version(wheel: Path) -> tuple[str, str]:
 
     Uses a regex rather than ``packaging.utils.parse_wheel_filename``
     because the latter normalises the distribution name and rejects
-    local versions that contain dots — both of which are present in the
-    wheels apx produces.
+    local versions that contain dots — both of which can be present in
+    such wheels.
     """
     m = _WHEEL_FILENAME_RE.match(wheel.name)
     if not m:
@@ -103,8 +103,8 @@ def align(wheel_path: Path) -> None:
         existing_prefix = stem.rsplit("-", 1)[0]
         new_dist_info = tmp / f"{existing_prefix}-{filename_version}.dist-info"
         # Skip the rename when the dist-info dir is already correctly
-        # named (e.g. apx didn't inject a build tag on this rebuild so
-        # the filename version matches what's already inside the
+        # named (e.g. no build tag was injected on this rebuild so the
+        # filename version matches what's already inside the
         # wheel). Without this guard, the ``rmtree`` below would delete
         # the source directory — both paths point at the same dir — and
         # the subsequent ``rename`` would crash with FileNotFoundError.

@@ -162,7 +162,15 @@
     "removeValueAria": "Remover valor {{value}}",
     "weightValuePlaceholder": "adicionar valor de peso (ex: 1)",
     "addValuePlaceholder": "adicionar valor… (pressione Enter)",
-    "keyPlaceholder": "ex: equipe"
+    "keyPlaceholder": "ex: equipe",
+    "retentionSaved": "Configurações de retenção salvas.",
+    "failedSaveRetention": "Falha ao salvar as configurações de retenção.",
+    "dashboardSaved": "Configurações do dashboard salvas.",
+    "failedSaveDashboard": "Falha ao salvar as configurações do dashboard.",
+    "clearedDashboardOverride": "Substituição do dashboard removida.",
+    "failedClearDashboardOverride": "Falha ao remover a substituição do dashboard.",
+    "reviewStatusesSaved": "Status de revisão salvos.",
+    "failedSaveReviewStatuses": "Falha ao salvar os status de revisão."
   },
   "discovery": {
     "breadcrumb": "Descoberta",
@@ -1506,5 +1514,29 @@
     "openInDbxTooltip": "Abre o dashboard completo em uma nova aba",
     "configure": "Configurar",
     "configureTooltip": "Altere o dashboard fixado nesta página"
+  },
+  "runReviewPanel": {
+    "loading": "Carregando status de revisão…",
+    "label": "Status de revisão",
+    "auto": "auto",
+    "none": "(nenhum)",
+    "orphanPrefix": "O valor atual",
+    "orphanSuffix": "não está mais no catálogo. Escolha um substituto.",
+    "revert": "Reverter",
+    "revertTitle": "Reverter para o padrão exibido para execuções não revisadas",
+    "byPrefix": "por",
+    "defaultForUnreviewed": "(padrão para execuções não revisadas)",
+    "showHistory": "Mostrar histórico",
+    "hideHistory": "Ocultar histórico",
+    "loadingHistory": "Carregando histórico…",
+    "noExplicitChanges": "Ainda não há alterações explícitas. A execução está no padrão do catálogo.",
+    "changedStatus": "alterou o status",
+    "from": "de",
+    "to": "para",
+    "orphanWarning": "Esta execução tem um valor que não está mais no catálogo atual. Escolha um substituto acima para manter o registro de auditoria limpo.",
+    "markedAs": "Marcado como \"{{value}}\"",
+    "failedUpdate": "Falha ao atualizar o status de revisão",
+    "revertedToDefault": "Revertido para o padrão",
+    "failedRevert": "Falha ao reverter o status de revisão"
   }
 }

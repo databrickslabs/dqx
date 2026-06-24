@@ -162,7 +162,15 @@
     "removeValueAria": "Rimuovi valore {{value}}",
     "weightValuePlaceholder": "aggiungi valore peso (es. 1)",
     "addValuePlaceholder": "aggiungi valore… (premi Invio)",
-    "keyPlaceholder": "es. team"
+    "keyPlaceholder": "es. team",
+    "retentionSaved": "Impostazioni di conservazione salvate.",
+    "failedSaveRetention": "Impossibile salvare le impostazioni di conservazione.",
+    "dashboardSaved": "Impostazioni della dashboard salvate.",
+    "failedSaveDashboard": "Impossibile salvare le impostazioni della dashboard.",
+    "clearedDashboardOverride": "Override della dashboard rimosso.",
+    "failedClearDashboardOverride": "Impossibile rimuovere l'override della dashboard.",
+    "reviewStatusesSaved": "Stati di revisione salvati.",
+    "failedSaveReviewStatuses": "Impossibile salvare gli stati di revisione."
   },
   "discovery": {
     "breadcrumb": "Esplorazione",
@@ -1506,5 +1514,29 @@
     "openInDbxTooltip": "Apri la dashboard completa in una nuova scheda",
     "configure": "Configura",
     "configureTooltip": "Cambia la dashboard ancorata a questa pagina"
+  },
+  "runReviewPanel": {
+    "loading": "Caricamento stato di revisione…",
+    "label": "Stato di revisione",
+    "auto": "auto",
+    "none": "(nessuno)",
+    "orphanPrefix": "Il valore attuale",
+    "orphanSuffix": "non è più nel catalogo. Scegli un sostituto.",
+    "revert": "Ripristina",
+    "revertTitle": "Ripristina il valore predefinito mostrato per le esecuzioni non revisionate",
+    "byPrefix": "da",
+    "defaultForUnreviewed": "(predefinito per le esecuzioni non revisionate)",
+    "showHistory": "Mostra cronologia",
+    "hideHistory": "Nascondi cronologia",
+    "loadingHistory": "Caricamento cronologia…",
+    "noExplicitChanges": "Ancora nessuna modifica esplicita. L'esecuzione è al valore predefinito del catalogo.",
+    "changedStatus": "ha cambiato lo stato",
+    "from": "da",
+    "to": "a",
+    "orphanWarning": "Questa esecuzione ha un valore non più presente nel catalogo attuale. Scegli un sostituto sopra per mantenere pulito il registro di audit.",
+    "markedAs": "Contrassegnato come \"{{value}}\"",
+    "failedUpdate": "Impossibile aggiornare lo stato di revisione",
+    "revertedToDefault": "Ripristinato al valore predefinito",
+    "failedRevert": "Impossibile ripristinare lo stato di revisione"
   }
 }

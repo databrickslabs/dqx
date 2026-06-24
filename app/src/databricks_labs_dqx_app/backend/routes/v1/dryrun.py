@@ -531,13 +531,18 @@ def get_dry_run_status(
                 logger.warning("Failed to clean up view %s: %s", resolved_view_fqn, cleanup_err)
 
         if has_history_row and is_terminal and status.state != "TERMINATED":
+            # INTERNAL_ERROR / SKIPPED are terminal lifecycle states that fall
+            # outside the run-history status vocabulary (SUCCESS/FAILED/CANCELED/
+            # RUNNING). Writing them verbatim leaves rows downstream UI/queries
+            # don't recognise, so map them to FAILED (the synthesized-terminal
+            # path above already normalises to SUCCESS/FAILED).
             update_run_status(
                 sql,
                 app_conf,
                 _DRYRUN_TABLE,
                 run_id,
-                status=status.state,
-                error_message=status.message,
+                status="FAILED",
+                error_message=status.message or f"Run finished with state: {status.state}",
             )
         elif has_history_row and is_terminal and status.result_state and status.result_state == "CANCELED":
             update_run_status(

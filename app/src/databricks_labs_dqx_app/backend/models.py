@@ -116,6 +116,14 @@ class GenerateRulesFromContractOut(BaseModel):
     )
     total_rules: int = 0
     warnings: list[str] = Field(default_factory=list)
+    validation_errors: list[str] = Field(
+        default_factory=list,
+        description=(
+            "DQEngine.validate_checks errors for the generated rules. Non-blocking — "
+            "surfaced so the UI can flag rules that would fail at execution time "
+            "(mirrors the AI-assisted generation endpoint)."
+        ),
+    )
 
 
 class RuleCatalogEntryOut(BaseModel):

@@ -623,6 +623,7 @@ function DefinitionEditorCard({
 // ─────────────────────────────────────────────────────────────────────────────
 
 function RetentionSettings() {
+  const { t } = useTranslation();
   const { data, isLoading } = useRetentionSettings();
   const queryClient = useQueryClient();
   const saveMutation = useSaveRetentionSettings();
@@ -685,11 +686,11 @@ function RetentionSettings() {
           queryClient.invalidateQueries({ queryKey: getRetentionSettingsQueryKey() });
           setGlobal(String(resp.data.retention_days));
           setQuarantine(String(resp.data.quarantine_retention_days));
-          toast.success("Retention settings saved.");
+          toast.success(t("config.retentionSaved"));
         },
         onError: (err: unknown) => {
           const axErr = err as AxiosError<{ detail?: string }>;
-          toast.error(axErr?.response?.data?.detail ?? "Failed to save retention settings.");
+          toast.error(axErr?.response?.data?.detail ?? t("config.failedSaveRetention"));
         },
       },
     );
@@ -832,6 +833,7 @@ function RetentionSettings() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function EmbeddedDashboardSettings() {
+  const { t } = useTranslation();
   const { data, isLoading } = useEmbeddedDashboard();
   const queryClient = useQueryClient();
   const saveMutation = useSaveEmbeddedDashboard();
@@ -890,11 +892,11 @@ function EmbeddedDashboardSettings() {
       {
         onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: getEmbeddedDashboardQueryKey() });
-          toast.success("Dashboard settings saved.");
+          toast.success(t("config.dashboardSaved"));
         },
         onError: (err: unknown) => {
           const axErr = err as AxiosError<{ detail?: string }>;
-          toast.error(axErr?.response?.data?.detail ?? "Failed to save dashboard settings.");
+          toast.error(axErr?.response?.data?.detail ?? t("config.failedSaveDashboard"));
         },
       },
     );
@@ -912,9 +914,9 @@ function EmbeddedDashboardSettings() {
         setTitle("");
         setHydrated(false);
         queryClient.invalidateQueries({ queryKey: getEmbeddedDashboardQueryKey() });
-        toast.success("Cleared dashboard override.");
+        toast.success(t("config.clearedDashboardOverride"));
       },
-      onError: () => toast.error("Failed to clear dashboard override."),
+      onError: () => toast.error(t("config.failedClearDashboardOverride")),
     });
   };
 
@@ -1144,6 +1146,7 @@ export function reviewStatusBadgeClasses(color: string) {
 export { REVIEW_STATUS_COLOR_TOKENS };
 
 function RunReviewStatusesSettings() {
+  const { t } = useTranslation();
   const { data, isLoading } = useRunReviewStatuses();
   const queryClient = useQueryClient();
   const saveMutation = useSaveRunReviewStatuses();
@@ -1240,11 +1243,11 @@ function RunReviewStatusesSettings() {
         onSuccess: (resp) => {
           queryClient.invalidateQueries({ queryKey: getRunReviewStatusesQueryKey() });
           setDraft(resp.data.statuses.map((s) => ({ ...s })));
-          toast.success("Review statuses saved.");
+          toast.success(t("config.reviewStatusesSaved"));
         },
         onError: (err: unknown) => {
           const axErr = err as AxiosError<{ detail?: string }>;
-          toast.error(axErr?.response?.data?.detail ?? "Failed to save review statuses.");
+          toast.error(axErr?.response?.data?.detail ?? t("config.failedSaveReviewStatuses"));
         },
       },
     );

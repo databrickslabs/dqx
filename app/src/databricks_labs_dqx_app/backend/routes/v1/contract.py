@@ -65,8 +65,10 @@ def generate_rules_from_contract(
         logger.error("Contract generation runtime error: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:  # pragma: no cover - defensive guard
+        # Don't relay the raw exception text — it may carry LLM/SDK detail or
+        # internal structure (AGENTS.md LLM06 / CWE-209). Log it server-side.
         logger.error("Failed to generate rules from contract: %s", e, exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to generate rules: {e}")
+        raise HTTPException(status_code=500, detail="Failed to generate rules from contract.")
 
 
 def _to_out(result: ContractGenerationResult) -> GenerateRulesFromContractOut:
@@ -93,4 +95,5 @@ def _to_out(result: ContractGenerationResult) -> GenerateRulesFromContractOut:
         unassigned_rules=result.unassigned_rules,
         total_rules=result.total_rules,
         warnings=result.warnings,
+        validation_errors=result.validation_errors,
     )

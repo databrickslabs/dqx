@@ -84,6 +84,32 @@ def service():
     return ContractRulesService(sp_ws=MagicMock(name="SpWorkspaceClient"))
 
 
+# Contract carrying a single property-level ``type: text`` quality
+# expectation so ``_extract_text_expectations`` yields work for the LLM leg.
+_TEXT_CONTRACT = """
+kind: DataContract
+apiVersion: v3.0.2
+id: urn:datacontract:demo:orders
+name: Demo Orders
+version: 1.0.0
+schema:
+  - name: orders
+    physicalName: main.demo.orders
+    properties:
+      - name: order_total
+        logicalType: number
+        quality:
+          - type: text
+            description: order_total must always be positive
+"""
+
+
+def _ai_service_returning(rules):
+    ai = MagicMock(name="AiRulesService")
+    ai.generate_from_schema_info.return_value = rules
+    return ai
+
+
 def _rule(schema: str | None, name: str, **extra: Any) -> dict[str, Any]:
     meta: dict[str, Any] = {"field": "x", "rule_type": "predefined"}
     if schema is not None:
@@ -194,6 +220,94 @@ class TestGenerate:
     def test_non_mapping_top_level_raises(self, service, patched_generator):
         with pytest.raises(ValueError):
             service.generate(contract_text="- just\n- a\n- list")
+
+
+class TestValidationGate:
+    def test_valid_rules_have_no_validation_errors(self, service, patched_generator):
+        _, gen = patched_generator
+        gen.generate_rules_from_contract.return_value = [
+            {
+                "name": "orders_id_not_null",
+                "criticality": "error",
+                "check": {"function": "is_not_null", "arguments": {"column": "order_id"}},
+                "user_metadata": {"schema": "orders"},
+            }
+        ]
+        result = service.generate(contract_text=_VALID_CONTRACT)
+        assert result.validation_errors == []
+
+    def test_malformed_rule_surfaces_validation_error(self, service, patched_generator):
+        _, gen = patched_generator
+        # Rule missing the ``check`` block — DQEngine.validate_checks flags it
+        # but generation still succeeds (non-blocking).
+        gen.generate_rules_from_contract.return_value = [_rule("orders", "broken_rule")]
+        result = service.generate(contract_text=_VALID_CONTRACT)
+        assert result.validation_errors  # at least one error reported
+        # Generation is not aborted by validation failures.
+        assert result.total_rules == 1
+
+
+class TestLlmRuleSafetyGate:
+    def test_drops_rule_with_unknown_function(self, patched_generator):
+        _, gen = patched_generator
+        gen.generate_rules_from_contract.return_value = []
+        ai = _ai_service_returning(
+            [{"check": {"function": "totally_made_up_fn", "arguments": {"column": "order_total"}}}]
+        )
+        svc = ContractRulesService(sp_ws=MagicMock(), ai_service=ai)
+
+        result = svc.generate(contract_text=_TEXT_CONTRACT, process_text_rules=True)
+
+        assert result.total_rules == 0
+        assert any("discarded" in w for w in result.warnings)
+
+    def test_drops_rule_with_unsafe_sql(self, patched_generator):
+        _, gen = patched_generator
+        gen.generate_rules_from_contract.return_value = []
+        ai = _ai_service_returning(
+            [
+                {
+                    "check": {
+                        "function": "sql_expression",
+                        "arguments": {"expression": "order_total > 0; DROP TABLE orders"},
+                    }
+                }
+            ]
+        )
+        svc = ContractRulesService(sp_ws=MagicMock(), ai_service=ai)
+
+        result = svc.generate(contract_text=_TEXT_CONTRACT, process_text_rules=True)
+
+        assert result.total_rules == 0
+        assert any("discarded" in w for w in result.warnings)
+
+    def test_keeps_safe_llm_rule(self, patched_generator):
+        _, gen = patched_generator
+        gen.generate_rules_from_contract.return_value = []
+        ai = _ai_service_returning(
+            [{"check": {"function": "sql_expression", "arguments": {"expression": "order_total > 0"}}}]
+        )
+        svc = ContractRulesService(sp_ws=MagicMock(), ai_service=ai)
+
+        result = svc.generate(contract_text=_TEXT_CONTRACT, process_text_rules=True)
+
+        assert result.total_rules == 1
+        kept = result.schemas[0].rules[0]
+        assert kept["user_metadata"]["rule_type"] == "text_llm"
+
+    def test_llm_failure_warning_excludes_raw_exception(self, patched_generator):
+        _, gen = patched_generator
+        gen.generate_rules_from_contract.return_value = []
+        ai = MagicMock(name="AiRulesService")
+        ai.generate_from_schema_info.side_effect = RuntimeError("secret-internal-endpoint-detail")
+        svc = ContractRulesService(sp_ws=MagicMock(), ai_service=ai)
+
+        result = svc.generate(contract_text=_TEXT_CONTRACT, process_text_rules=True)
+
+        assert result.total_rules == 0
+        # The raw exception text must not leak into the user-facing warnings.
+        assert all("secret-internal-endpoint-detail" not in w for w in result.warnings)
+        assert any("Could not generate a rule" in w for w in result.warnings)
 
 
 class TestMetadataExtraction:

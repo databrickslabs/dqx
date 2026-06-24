@@ -161,6 +161,14 @@ class AiRulesService:
         human = HumanMessage(content=f"schema_info: {schema_info}\nbusiness_description: {user_input}")
         messages: list[BaseMessage] = [system, *self._get_few_shot_messages(), human]
 
-        llm = ChatDatabricks(endpoint=conf.llm_endpoint, workspace_client=self._sp_ws)
+        # ``max_tokens`` caps the per-call output budget (AGENTS.md / OWASP
+        # LLM04): rule generation returns small JSON payloads, so a bounded
+        # cap protects against pathological prompts triggering runaway,
+        # expensive inference without truncating legitimate responses.
+        llm = ChatDatabricks(
+            endpoint=conf.llm_endpoint,
+            workspace_client=self._sp_ws,
+            max_tokens=conf.llm_max_tokens,
+        )
         response = llm.invoke(messages)
         return self._parse_response(str(response.content))

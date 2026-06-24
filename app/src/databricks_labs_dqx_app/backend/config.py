@@ -44,6 +44,15 @@ class AppConfig(BaseSettings):
         description="Require DQX_JOB_ID and DQX_WHEELS_VOLUME at startup (production deploys).",
     )
     llm_endpoint: str = Field(default="databricks-claude-sonnet-4-5", validation_alias="DQX_LLM_ENDPOINT")
+    # Hard cap on tokens generated per LLM call. Bounds cost/latency and
+    # mitigates LLM denial-of-service from pathological prompts (OWASP LLM04);
+    # rule-generation responses are small JSON payloads, so this is generous.
+    llm_max_tokens: int = Field(
+        default=4096,
+        validation_alias="DQX_LLM_MAX_TOKENS",
+        gt=0,
+        description="Maximum output tokens per ChatDatabricks call (LLM budget cap).",
+    )
     admin_group: str | None = Field(
         default=None,
         validation_alias="DQX_ADMIN_GROUP",

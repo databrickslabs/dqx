@@ -21,6 +21,7 @@
  */
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import {
   AlertCircle,
@@ -60,6 +61,7 @@ interface RunReviewStatusPanelProps {
 }
 
 export function RunReviewStatusPanel({ runId }: RunReviewStatusPanelProps) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [historyOpen, setHistoryOpen] = useState(false);
 
@@ -91,11 +93,11 @@ export function RunReviewStatusPanel({ runId }: RunReviewStatusPanelProps) {
       {
         onSuccess: () => {
           refresh();
-          toast.success(`Marked as "${value}"`);
+          toast.success(t("runReviewPanel.markedAs", { value }));
         },
         onError: (err: unknown) => {
           const axErr = err as AxiosError<{ detail?: string }>;
-          toast.error(axErr?.response?.data?.detail ?? "Failed to update review status");
+          toast.error(axErr?.response?.data?.detail ?? t("runReviewPanel.failedUpdate"));
         },
       },
     );
@@ -107,9 +109,9 @@ export function RunReviewStatusPanel({ runId }: RunReviewStatusPanelProps) {
       {
         onSuccess: () => {
           refresh();
-          toast.success("Reverted to default");
+          toast.success(t("runReviewPanel.revertedToDefault"));
         },
-        onError: () => toast.error("Failed to revert review status"),
+        onError: () => toast.error(t("runReviewPanel.failedRevert")),
       },
     );
   };
@@ -118,7 +120,7 @@ export function RunReviewStatusPanel({ runId }: RunReviewStatusPanelProps) {
     return (
       <div className="flex items-center gap-2 text-xs text-muted-foreground py-1">
         <Loader2 className="h-3 w-3 animate-spin" />
-        Loading review status…
+        {t("runReviewPanel.loading")}
       </div>
     );
   }
@@ -139,7 +141,7 @@ export function RunReviewStatusPanel({ runId }: RunReviewStatusPanelProps) {
       <div className="flex flex-wrap items-center gap-2">
         <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
           <ShieldCheck className="h-4 w-4" />
-          Review status
+          {t("runReviewPanel.label")}
         </span>
 
         <Popover>
@@ -157,11 +159,11 @@ export function RunReviewStatusPanel({ runId }: RunReviewStatusPanelProps) {
                 variant="outline"
                 className={cn("text-[10px] font-normal", reviewStatusBadgeClasses(badgeColor))}
               >
-                {current.status || "(none)"}
+                {current.status || t("runReviewPanel.none")}
               </Badge>
               {current.is_default && (
                 <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                  auto
+                  {t("runReviewPanel.auto")}
                 </span>
               )}
               <ChevronDown className="h-3 w-3 opacity-60" />
@@ -171,8 +173,9 @@ export function RunReviewStatusPanel({ runId }: RunReviewStatusPanelProps) {
             <div className="space-y-0.5">
               {isOrphan && (
                 <div className="px-2 py-1.5 text-[11px] text-muted-foreground border-b mb-1">
-                  Current value <code className="font-mono">{current.status}</code> is no
-                  longer in the catalogue. Pick a replacement.
+                  {t("runReviewPanel.orphanPrefix")}{" "}
+                  <code className="font-mono">{current.status}</code>{" "}
+                  {t("runReviewPanel.orphanSuffix")}
                 </div>
               )}
               {options.map((opt) => (
@@ -216,10 +219,10 @@ export function RunReviewStatusPanel({ runId }: RunReviewStatusPanelProps) {
             onClick={handleClear}
             disabled={busy}
             className="h-7 gap-1.5 text-xs text-muted-foreground"
-            title="Revert to the default surfaced for unreviewed runs"
+            title={t("runReviewPanel.revertTitle")}
           >
             <RotateCcw className="h-3 w-3" />
-            Revert
+            {t("runReviewPanel.revert")}
           </Button>
         )}
 
@@ -228,14 +231,15 @@ export function RunReviewStatusPanel({ runId }: RunReviewStatusPanelProps) {
             null and showing them would be misleading. */}
         {!current.is_default && current.updated_by && (
           <span className="text-[11px] text-muted-foreground">
-            by <span className="font-medium text-foreground">{current.updated_by}</span>
+            {t("runReviewPanel.byPrefix")}{" "}
+            <span className="font-medium text-foreground">{current.updated_by}</span>
             {current.updated_at && <> · {formatDateTime(current.updated_at)}</>}
           </span>
         )}
 
         {current.is_default && (
           <span className="text-[11px] text-muted-foreground italic">
-            (default for unreviewed runs)
+            {t("runReviewPanel.defaultForUnreviewed")}
           </span>
         )}
       </div>
@@ -247,7 +251,7 @@ export function RunReviewStatusPanel({ runId }: RunReviewStatusPanelProps) {
         className="flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
       >
         <History className="h-3 w-3" />
-        {historyOpen ? "Hide history" : "Show history"}
+        {historyOpen ? t("runReviewPanel.hideHistory") : t("runReviewPanel.showHistory")}
       </button>
 
       {historyOpen && (
@@ -255,12 +259,12 @@ export function RunReviewStatusPanel({ runId }: RunReviewStatusPanelProps) {
           {historyLoading && (
             <div className="flex items-center gap-2 text-[11px] text-muted-foreground py-1">
               <Loader2 className="h-3 w-3 animate-spin" />
-              Loading history…
+              {t("runReviewPanel.loadingHistory")}
             </div>
           )}
           {!historyLoading && (history?.history.length ?? 0) === 0 && (
             <p className="text-[11px] text-muted-foreground py-1">
-              No explicit changes yet. The run is at the catalogue default.
+              {t("runReviewPanel.noExplicitChanges")}
             </p>
           )}
           {history?.history.map((entry, i) => (
@@ -273,16 +277,16 @@ export function RunReviewStatusPanel({ runId }: RunReviewStatusPanelProps) {
               </span>
               <span className="text-muted-foreground">·</span>
               <span className="font-medium">{entry.changed_by}</span>
-              <span className="text-muted-foreground">changed status</span>
+              <span className="text-muted-foreground">{t("runReviewPanel.changedStatus")}</span>
               {entry.previous_status ? (
                 <>
-                  <span className="text-muted-foreground">from</span>
+                  <span className="text-muted-foreground">{t("runReviewPanel.from")}</span>
                   <code className="rounded bg-muted px-1 font-mono">
                     {entry.previous_status}
                   </code>
                 </>
               ) : null}
-              <span className="text-muted-foreground">to</span>
+              <span className="text-muted-foreground">{t("runReviewPanel.to")}</span>
               <code className="rounded bg-muted px-1 font-mono">{entry.status}</code>
             </div>
           ))}
@@ -292,8 +296,7 @@ export function RunReviewStatusPanel({ runId }: RunReviewStatusPanelProps) {
       {isOrphan && (
         <p className="flex items-center gap-1 text-[11px] text-amber-700 dark:text-amber-300">
           <AlertCircle className="h-3 w-3" />
-          This run carries a value not in the current catalogue. Choose a
-          replacement above to keep the audit trail clean.
+          {t("runReviewPanel.orphanWarning")}
         </p>
       )}
     </div>

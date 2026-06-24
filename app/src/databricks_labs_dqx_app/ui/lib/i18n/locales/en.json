@@ -162,7 +162,15 @@
     "removeValueAria": "Remove value {{value}}",
     "weightValuePlaceholder": "add weight value (e.g. 1)",
     "addValuePlaceholder": "add value… (press Enter)",
-    "keyPlaceholder": "e.g. team"
+    "keyPlaceholder": "e.g. team",
+    "retentionSaved": "Retention settings saved.",
+    "failedSaveRetention": "Failed to save retention settings.",
+    "dashboardSaved": "Dashboard settings saved.",
+    "failedSaveDashboard": "Failed to save dashboard settings.",
+    "clearedDashboardOverride": "Cleared dashboard override.",
+    "failedClearDashboardOverride": "Failed to clear dashboard override.",
+    "reviewStatusesSaved": "Review statuses saved.",
+    "failedSaveReviewStatuses": "Failed to save review statuses."
   },
   "discovery": {
     "breadcrumb": "Discovery",
@@ -1508,5 +1516,29 @@
     "openInDbxTooltip": "Open the full dashboard in a new tab",
     "configure": "Configure",
     "configureTooltip": "Change the dashboard pinned to this page"
+  },
+  "runReviewPanel": {
+    "loading": "Loading review status…",
+    "label": "Review status",
+    "auto": "auto",
+    "none": "(none)",
+    "orphanPrefix": "Current value",
+    "orphanSuffix": "is no longer in the catalogue. Pick a replacement.",
+    "revert": "Revert",
+    "revertTitle": "Revert to the default surfaced for unreviewed runs",
+    "byPrefix": "by",
+    "defaultForUnreviewed": "(default for unreviewed runs)",
+    "showHistory": "Show history",
+    "hideHistory": "Hide history",
+    "loadingHistory": "Loading history…",
+    "noExplicitChanges": "No explicit changes yet. The run is at the catalogue default.",
+    "changedStatus": "changed status",
+    "from": "from",
+    "to": "to",
+    "orphanWarning": "This run carries a value not in the current catalogue. Choose a replacement above to keep the audit trail clean.",
+    "markedAs": "Marked as \"{{value}}\"",
+    "failedUpdate": "Failed to update review status",
+    "revertedToDefault": "Reverted to default",
+    "failedRevert": "Failed to revert review status"
   }
 }

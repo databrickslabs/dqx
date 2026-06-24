@@ -17,8 +17,9 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from databricks.sdk import WorkspaceClient
 
@@ -59,6 +60,7 @@ class ContractGenerationResult:
     unassigned_rules: list[dict[str, Any]]
     total_rules: int
     warnings: list[str]
+    validation_errors: list[str]
 
 
 @dataclass(frozen=True)
@@ -149,6 +151,14 @@ class ContractRulesService:
             rules.extend(text_rules)
             warnings.extend(text_warnings)
 
+        # Gate every generated rule (DQX-native predefined/schema rules *and*
+        # LLM-produced text rules) through the same DQEngine.validate_checks
+        # used by the AI-assisted ``/generate`` endpoint, so malformed or
+        # unresolvable rules are surfaced here instead of only failing later
+        # at execution time. Non-blocking: errors are returned for the UI to
+        # flag, mirroring the AI page's behaviour.
+        validation_errors = self._validate_rules(rules)
+
         buckets, unassigned = self._bucket_rules_by_schema(rules, schema_index)
         return ContractGenerationResult(
             metadata=metadata,
@@ -156,7 +166,26 @@ class ContractRulesService:
             unassigned_rules=unassigned,
             total_rules=len(rules),
             warnings=warnings,
+            validation_errors=validation_errors,
         )
+
+    @staticmethod
+    def _validate_rules(rules: list[dict[str, Any]]) -> list[str]:
+        """Run ``DQEngine.validate_checks`` over the generated rules.
+
+        Returns a flat list of validation error strings (empty when all
+        rules are valid). Validation failures are reported, not raised, so a
+        single bad rule doesn't sink an otherwise-usable contract import.
+        """
+        if not rules:
+            return []
+        try:
+            from databricks.labs.dqx.engine import DQEngine
+        except ImportError:  # pragma: no cover - core dep, defensive only
+            logger.warning("DQEngine is unavailable; skipping contract rule validation.")
+            return []
+        status = DQEngine.validate_checks(rules)
+        return list(status.errors) if status.has_errors else []
 
     # ------------------------------------------------------------------
     # Text / natural-language expectations
@@ -194,20 +223,40 @@ class ContractRulesService:
                     user_input=exp.description,
                     schema_info=exp.schema_info,
                 )
-            except Exception as exc:  # pragma: no cover - defensive guard
+            except Exception:  # pragma: no cover - defensive guard
+                # Log full detail server-side (with newline-scrubbed,
+                # untrusted contract values) but never relay the raw LLM/SDK
+                # exception text back to the caller — it can echo prompt
+                # content or internal structure (AGENTS.md LLM06 / CWE-209).
                 logger.warning(
-                    "Failed to generate text rule for schema '%s' field '%s': %s",
-                    exp.schema_name,
-                    exp.field,
-                    exc,
+                    "Failed to generate text rule for schema '%s' field '%s'.",
+                    _scrub_for_log(exp.schema_name),
+                    _scrub_for_log(exp.field),
                     exc_info=True,
                 )
                 warnings.append(
-                    f"Could not generate a rule for the text expectation on " f"'{exp.field or exp.schema_name}': {exc}"
+                    "Could not generate a rule for the text expectation on "
+                    f"'{exp.field or exp.schema_name}'. See server logs for details."
                 )
                 continue
             for rule in generated:
                 if not isinstance(rule, dict):
+                    continue
+                # LLM output is untrusted (AGENTS.md): drop any rule whose
+                # check function does not resolve through CHECK_FUNC_REGISTRY
+                # or whose generated SQL fails is_sql_query_safe(), before it
+                # can flow to the UI / be saved / executed.
+                if not self._is_llm_rule_safe(rule):
+                    logger.warning(
+                        "Discarded unsafe/unresolved LLM-generated rule for schema '%s' field '%s'.",
+                        _scrub_for_log(exp.schema_name),
+                        _scrub_for_log(exp.field),
+                    )
+                    warnings.append(
+                        "An AI-generated rule for "
+                        f"'{exp.field or exp.schema_name}' was discarded because it "
+                        "referenced an unknown check function or unsafe SQL."
+                    )
                     continue
                 user_metadata = {
                     "contract_id": metadata.contract_id or "unknown",
@@ -226,6 +275,47 @@ class ContractRulesService:
         if not rules and not warnings:
             warnings.append("No rules were generated from the contract's text expectations.")
         return rules, warnings
+
+    # SQL-bearing fields an LLM could populate with unsafe statements: the
+    # rule's top-level ``filter`` plus the arguments used by SQL-based check
+    # functions (sql_expression → ``expression``, sql_query → ``query``,
+    # several checks → ``row_filter``).
+    _SQL_BEARING_KEYS: ClassVar[tuple[str, ...]] = ("expression", "query", "row_filter", "filter")
+
+    @classmethod
+    def _is_llm_rule_safe(cls, rule: dict[str, Any]) -> bool:
+        """Validate an LLM-produced rule before it reaches the UI.
+
+        Per AGENTS.md, LLM-generated output is untrusted: the check function
+        name must resolve through ``CHECK_FUNC_REGISTRY`` and any generated
+        SQL fragment must pass ``is_sql_query_safe()``. Returns ``False`` for
+        hallucinated function names or unsafe SQL so the caller drops the rule.
+        """
+        # Local imports keep module import cheap and ensure the check-function
+        # registry is populated (importing ``check_funcs`` runs the
+        # ``@register_rule`` decorators).
+        from databricks.labs.dqx import check_funcs  # noqa: F401  pylint: disable=unused-import
+        from databricks.labs.dqx.rule import CHECK_FUNC_REGISTRY
+        from databricks.labs.dqx.utils import is_sql_query_safe
+
+        check = rule.get("check")
+        if not isinstance(check, dict):
+            return False
+        function = check.get("function")
+        if not isinstance(function, str) or function not in CHECK_FUNC_REGISTRY:
+            return False
+
+        sql_fragments: list[str] = []
+        top_filter = rule.get("filter")
+        if isinstance(top_filter, str):
+            sql_fragments.append(top_filter)
+        arguments = check.get("arguments")
+        if isinstance(arguments, dict):
+            for key in cls._SQL_BEARING_KEYS:
+                value = arguments.get(key)
+                if isinstance(value, str):
+                    sql_fragments.append(value)
+        return all(is_sql_query_safe(sql) for sql in sql_fragments if sql.strip())
 
     @staticmethod
     def _extract_text_expectations(contract_text: str) -> list[_TextExpectation]:
@@ -394,6 +484,18 @@ class ContractRulesService:
                 )
             )
         return result, unassigned
+
+
+def _scrub_for_log(value: str | None) -> str:
+    """Strip newlines/control chars from untrusted strings before logging.
+
+    Contract-supplied identifiers (schema/field names) are user-controlled;
+    embedding them verbatim in log messages risks log forging/injection
+    (CWE-117). Collapse control characters and bound the length.
+    """
+    if not value:
+        return ""
+    return re.sub(r"[\x00-\x1f\x7f]+", " ", value)[:200]
 
 
 def _first_str(*values: Any) -> str | None:

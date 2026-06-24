@@ -162,7 +162,15 @@
     "removeValueAria": "Quitar valor {{value}}",
     "weightValuePlaceholder": "agregar valor de peso (ej. 1)",
     "addValuePlaceholder": "agregar valor… (presiona Enter)",
-    "keyPlaceholder": "ej. equipo"
+    "keyPlaceholder": "ej. equipo",
+    "retentionSaved": "Configuración de retención guardada.",
+    "failedSaveRetention": "Error al guardar la configuración de retención.",
+    "dashboardSaved": "Configuración del panel guardada.",
+    "failedSaveDashboard": "Error al guardar la configuración del panel.",
+    "clearedDashboardOverride": "Anulación del panel eliminada.",
+    "failedClearDashboardOverride": "Error al eliminar la anulación del panel.",
+    "reviewStatusesSaved": "Estados de revisión guardados.",
+    "failedSaveReviewStatuses": "Error al guardar los estados de revisión."
   },
   "discovery": {
     "breadcrumb": "Descubrimiento",
@@ -1506,5 +1514,29 @@
     "openInDbxTooltip": "Abre el panel completo en una pestaña nueva",
     "configure": "Configurar",
     "configureTooltip": "Cambia el panel fijado en esta página"
+  },
+  "runReviewPanel": {
+    "loading": "Cargando estado de revisión…",
+    "label": "Estado de revisión",
+    "auto": "auto",
+    "none": "(ninguno)",
+    "orphanPrefix": "El valor actual",
+    "orphanSuffix": "ya no está en el catálogo. Elige un reemplazo.",
+    "revert": "Revertir",
+    "revertTitle": "Revertir al valor predeterminado mostrado para ejecuciones sin revisar",
+    "byPrefix": "por",
+    "defaultForUnreviewed": "(predeterminado para ejecuciones sin revisar)",
+    "showHistory": "Mostrar historial",
+    "hideHistory": "Ocultar historial",
+    "loadingHistory": "Cargando historial…",
+    "noExplicitChanges": "Aún no hay cambios explícitos. La ejecución está en el valor predeterminado del catálogo.",
+    "changedStatus": "cambió el estado",
+    "from": "de",
+    "to": "a",
+    "orphanWarning": "Esta ejecución tiene un valor que ya no está en el catálogo actual. Elige un reemplazo arriba para mantener limpio el registro de auditoría.",
+    "markedAs": "Marcado como \"{{value}}\"",
+    "failedUpdate": "Error al actualizar el estado de revisión",
+    "revertedToDefault": "Revertido al valor predeterminado",
+    "failedRevert": "Error al revertir el estado de revisión"
   }
 }
