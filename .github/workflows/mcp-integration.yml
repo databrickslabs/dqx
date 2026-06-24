@@ -1,0 +1,80 @@
+# MCP server integration tests.
+#
+# Unlike the library's acceptance/anomaly suites (which run pytest against an ephemeral
+# workspace via the sandbox/acceptance action), the MCP integration test needs a *deployed
+# Databricks App*. So this workflow deploys an isolated copy of the MCP bundle (runner job +
+# setup + app) to a persistent CI workspace, runs the test suite against it, then tears it down.
+#
+# Required configuration (GitHub "tool" environment), set by a maintainer:
+#   secrets.DQX_MCP_CI_HOST   - workspace URL of a CI workspace with Databricks Apps enabled
+#   secrets.DQX_MCP_CI_TOKEN  - token (PAT or SP OAuth) able to deploy apps/jobs and create schemas
+#   vars.DQX_MCP_CI_CATALOG   - a catalog in that workspace the deployer may create/drop a schema in
+#   vars.DQX_MCP_LLM_ENDPOINT - (optional) serving endpoint for the agent test
+#                               (default databricks-claude-sonnet-4-5; the agent test skips if absent)
+name: mcp-integration
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+    paths:
+      - "mcp-server/**"
+      - "src/databricks/labs/dqx/**" # the runner installs the in-repo DQX wheel
+      - ".github/workflows/mcp-integration.yml"
+  merge_group:
+    types: [checks_requested]
+
+permissions:
+  contents: read
+
+concurrency:
+  # One CI deployment at a time (fixed app name); don't cancel so teardown always completes.
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  # Gate downstream work: fork PRs (no access to the tool environment) and drafts do not deploy.
+  not-a-fork:
+    runs-on:
+      group: databrickslabs-protected-runner-group
+      labels: linux-ubuntu-latest
+    if: github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork
+    steps:
+      - run: echo "Not a fork PR, proceeding"
+
+  mcp-integration:
+    needs: not-a-fork
+    environment: tool
+    runs-on:
+      group: databrickslabs-protected-runner-group
+      labels: linux-ubuntu-latest
+    permissions:
+      id-token: write
+    env:
+      DATABRICKS_HOST: ${{ secrets.DQX_MCP_CI_HOST }}
+      DATABRICKS_TOKEN: ${{ secrets.DQX_MCP_CI_TOKEN }}
+      NAME_PREFIX: mcp-dqx-ci
+      CONFIG_SECRET_SCOPE: dqx-config-ci
+      BUNDLE_TARGET: dev
+      DQX_MCP_TEST_CATALOG: ${{ vars.DQX_MCP_CI_CATALOG }}
+      DQX_MCP_LLM_ENDPOINT: ${{ vars.DQX_MCP_LLM_ENDPOINT || 'databricks-claude-sonnet-4-5' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Setup environment
+        uses: ./.github/actions/setup-env
+
+      - name: Install Databricks CLI
+        uses: databricks/setup-cli@f01853f8d6b12678ab0fab76ffad726c460be1a5 # v1.5.0
+
+      - name: Deploy isolated MCP server (bundle + setup + app)
+        run: bash mcp-server/scripts/ci_deploy.sh
+
+      - name: Run MCP server tests (unit + protocol + HTTP + live agent integration)
+        run: make mcp-test
+
+      - name: Tear down isolated MCP server
+        if: always()
+        run: bash mcp-server/scripts/ci_destroy.sh

@@ -5,10 +5,21 @@ variables:
   users_group:
     description: "Group name for all workspace users (e.g. 'account users' or 'users')"
     default: "account users"
+  # Resource name prefix. Override (e.g. --var name_prefix=mcp-dqx-ci) to deploy an
+  # isolated copy alongside an existing deployment — used by the CI integration workflow.
+  name_prefix:
+    default: "mcp-dqx"
+  # Catalog for temp views. Empty => the setup job reads it from the secret scope (the
+  # default production behaviour). CI passes an explicit catalog it can create/drop in.
+  catalog_name:
+    default: ""
+  # Secret scope holding the catalog name (and any other config). Override per deployment.
+  config_secret_scope:
+    default: "dqx-config"
 resources:
   jobs:
     dqx_runner:
-      name: "mcp-dqx-runner"
+      name: "${var.name_prefix}-runner"
       max_concurrent_runs: 10
       tasks:
         - task_key: dqx_run
@@ -30,13 +41,15 @@ resources:
     # One-time setup job — grants USE CATALOG to users and app SP.
     # Run after first deploy: databricks bundle run dqx_setup --profile <profile>
     dqx_setup:
-      name: "mcp-dqx-setup"
+      name: "${var.name_prefix}-setup"
       tasks:
         - task_key: setup
           notebook_task:
             notebook_path: "./notebooks/setup.py"
             base_parameters:
-              app_name: "mcp-dqx"
+              app_name: "${var.name_prefix}"
+              catalog_name: "${var.catalog_name}"
+              secret_scope: "${var.config_secret_scope}"
               users_group: ${var.users_group}
           environment_key: default
       environments:
@@ -46,7 +59,7 @@ resources:
 
   apps:
     mcp-dqx:
-      name: "mcp-dqx"
+      name: "${var.name_prefix}"
       description: "DQX MCP Server - AI agent tools for data quality checks"
       source_code_path: "."
 
@@ -61,7 +74,7 @@ resources:
             permission: "CAN_MANAGE_RUN"
         - name: dqx-catalog-secret
           secret:
-            scope: dqx-config
+            scope: ${var.config_secret_scope}
             key: catalog_name
             permission: "READ"
 
