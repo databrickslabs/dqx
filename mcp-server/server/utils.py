@@ -316,7 +316,9 @@ _SWEEP_INTERVAL_SECONDS = 600  # sweep at most once per 10 minutes per replica
 _last_sweep_at = 0.0
 
 
-def sweep_stale_views(ws: Any, catalog: str, schema: str, warehouse_id: str, ttl_seconds: int = _VIEW_TTL_SECONDS) -> int:
+def sweep_stale_views(
+    ws: Any, catalog: str, schema: str, warehouse_id: str, ttl_seconds: int = _VIEW_TTL_SECONDS
+) -> int:
     """Drop temp views in *catalog.schema* older than *ttl_seconds*. Best-effort.
 
     Identifies age from the v_<epoch>_<uuid> name. Returns the number of views dropped.

@@ -31,7 +31,10 @@ LLM_ENDPOINT = os.environ.get("DQX_MCP_LLM_ENDPOINT", "databricks-claude-sonnet-
 TEST_TABLE = os.environ.get("DQX_MCP_TEST_TABLE", "samples.nyctaxi.trips")
 
 _MISSING = not (SERVER_URL and HOST and TOKEN)
-pytestmark = [pytest.mark.integration, pytest.mark.skipif(_MISSING, reason="set DQX_MCP_SERVER_URL/DATABRICKS_HOST/DATABRICKS_TOKEN to run")]
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.skipif(_MISSING, reason="set DQX_MCP_SERVER_URL/DATABRICKS_HOST/DATABRICKS_TOKEN to run"),
+]
 
 
 @pytest.fixture
@@ -78,14 +81,19 @@ async def test_agent_discovers_and_uses_tools():
         mcp_tools = await mcp.list_tools()
         # Expose the server's tools to the LLM in OpenAI function-calling format.
         oai_tools = [
-            {"type": "function", "function": {"name": t.name, "description": t.description or t.name,
-                                              "parameters": t.inputSchema}}
+            {
+                "type": "function",
+                "function": {"name": t.name, "description": t.description or t.name, "parameters": t.inputSchema},
+            }
             for t in mcp_tools
         ]
 
         messages = [
-            {"role": "system", "content": "You are a data quality assistant. Use the available tools to answer the "
-                                          "user. When you have enough information, give a short final answer."},
+            {
+                "role": "system",
+                "content": "You are a data quality assistant. Use the available tools to answer the "
+                "user. When you have enough information, give a short final answer.",
+            },
             {"role": "user", "content": f"What columns does the table {TEST_TABLE} have? Use the tools to find out."},
         ]
 
@@ -101,10 +109,12 @@ async def test_agent_discovers_and_uses_tools():
                     args = json.loads(tc["function"]["arguments"] or "{}")
                     called_tools.append(name)
                     result = await mcp.call_tool(name, args)
-                    payload = result.data if result.data is not None else (
-                        result.content[0].text if result.content else "")
-                    messages.append({"role": "tool", "tool_call_id": tc["id"],
-                                     "content": json.dumps(payload, default=str)[:4000]})
+                    payload = (
+                        result.data if result.data is not None else (result.content[0].text if result.content else "")
+                    )
+                    messages.append(
+                        {"role": "tool", "tool_call_id": tc["id"], "content": json.dumps(payload, default=str)[:4000]}
+                    )
             else:
                 final_text = msg.get("content") or ""
                 break
@@ -118,5 +128,6 @@ async def test_agent_discovers_and_uses_tools():
         assert "get_table_schema" in called_tools, f"expected get_table_schema; got {called_tools}"
         # ...and produced a sensible final answer that references a real column.
         assert final_text.strip(), "no final answer produced"
-        assert any(col in final_text.lower() for col in ("trip", "fare", "pickup", "amount", "distance", "column")), \
-            f"final answer does not look schema-related: {final_text[:200]}"
+        assert any(
+            col in final_text.lower() for col in ("trip", "fare", "pickup", "amount", "distance", "column")
+        ), f"final answer does not look schema-related: {final_text[:200]}"

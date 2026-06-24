@@ -97,6 +97,7 @@ class TestToolInvocation:
                     "save_checks", {"checks": [{"check": "foo"}], "location": "c.s.checks", "mode": "overwrite"}
                 )
         mock_submit.assert_called_once_with(
-            "save_checks", {"checks": [{"check": "foo"}], "location": "c.s.checks", "run_config_name": "default", "mode": "overwrite"}
+            "save_checks",
+            {"checks": [{"check": "foo"}], "location": "c.s.checks", "run_config_name": "default", "mode": "overwrite"},
         )
         assert res.data["run_id"] == 23
