@@ -155,10 +155,10 @@ The API docs are generated in the `docs/dqx/docs/reference/api` directory.
 
 To generate API docs, run the following command:
 ```shell
-hatch run docs:pydoc-markdown
+uv run --group docs pydoc-markdown
 ```
 
-This command is run also as part of make docs build and server.
+This is the same invocation that `make docs-build` and `make docs-serve-dev` run, so the recommended way is simply `make docs-build`.
 The command will generate the API documentation from the Python codebase using pydoc-markdown.
 
 For best practices on writing docstrings, refer to this [guidance](/docs/dev/contributing#writing-docstrings).
