@@ -645,15 +645,9 @@ def is_equal_to(
         column (str | Column): Column to check. Can be a string column name or a column expression.
         value: The value to compare with. Can be a number, date, timestamp literal or a Spark Column. Defaults to None.
         abs_tolerance: Values are considered equal if the absolute difference is less than or equal to the tolerance. This is applicable to numeric columns.
-                Example: abs(a - b) <= tolerance
-                With tolerance=0.01:
-                    2.001 and 2.0099 → equal (diff = 0.0089)
-                    2.001 and 2.02 → not equal (diff = 0.019)
+            For example, abs(a - b) <= tolerance. With abs_tolerance=0.01, values 2.001 and 2.0099 are equal (diff=0.0089), but 2.001 and 2.02 are not (diff=0.019).
         rel_tolerance: Relative tolerance for numeric comparisons. Differences within this relative tolerance are ignored. Useful if numbers vary in scale.
-                Example: abs(a - b) <= rel_tolerance * max(abs(a), abs(b))
-                With tolerance=0.01 (1%):
-                    100 vs 101 → equal (diff = 1, tolerance = 1)
-                    100 vs 102 → not equal (diff = 2, tolerance = 1)
+            For example, abs(a - b) <= rel_tolerance * max(abs(a), abs(b)). With rel_tolerance=0.01 (1%), values 100 and 101 are equal (diff=1), but 100 and 102 are not (diff=2).
     Returns:
         Column: A Spark Column condition that fails if the column value is not equal to the given value.
 
@@ -706,15 +700,9 @@ def is_not_equal_to(
         column (str | Column): Column to check. Can be a string column name or a column expression.
         value: The value to compare with. Can be a number, date, timestamp literal or a Spark Column. Defaults to None.
         abs_tolerance: Values are considered equal if the absolute difference is less than or equal to the tolerance. This is applicable to numeric columns.
-                Example: abs(a - b) <= tolerance
-                With tolerance=0.01:
-                    2.001 and 2.0099 → equal (diff = 0.0089)
-                    2.001 and 2.02 → not equal (diff = 0.019)
+            For example, abs(a - b) <= tolerance. With abs_tolerance=0.01, values 2.001 and 2.0099 are equal (diff=0.0089), but 2.001 and 2.02 are not (diff=0.019).
         rel_tolerance: Relative tolerance for numeric comparisons. Differences within this relative tolerance are ignored. Useful if numbers vary in scale.
-                Example: abs(a - b) <= rel_tolerance * max(abs(a), abs(b))
-                With tolerance=0.01 (1%):
-                    100 vs 101 → equal (diff = 1, tolerance = 1)
-                    100 vs 102 → not equal (diff = 2, tolerance = 1)
+            For example, abs(a - b) <= rel_tolerance * max(abs(a), abs(b)). With rel_tolerance=0.01 (1%), values 100 and 101 are equal (diff=1), but 100 and 102 are not (diff=2).
 
     Returns:
         Column: A Spark Column condition that fails if the column value is equal to the given value.
@@ -2134,15 +2122,9 @@ def compare_datasets(
         If enabled, (NULL, NULL) column values are equal and matching.
       row_filter: Optional SQL expression to filter rows in the input DataFrame. Auto-injected from the check filter.
       abs_tolerance: Values are considered equal if the absolute difference is less than or equal to the tolerance. This is applicable to numeric columns.
-            Example: abs(a - b) <= tolerance
-            With tolerance=0.01:
-            2.001 and 2.0099 → equal (diff = 0.0089)
-            2.001 and 2.02 → not equal (diff = 0.019)
+        For example, abs(a - b) <= tolerance. With abs_tolerance=0.01, values 2.001 and 2.0099 are equal (diff=0.0089), but 2.001 and 2.02 are not (diff=0.019).
       rel_tolerance: Relative tolerance for numeric comparisons. Differences within this relative tolerance are ignored. Useful if numbers vary in scale.
-            Example: abs(a - b) <= rel_tolerance * max(abs(a), abs(b))
-            With tolerance=0.01 (1%):
-            100 vs 101 → equal (diff = 1, tolerance = 1)
-            2.001 vs 2.0099 → equal
+        For example, abs(a - b) <= rel_tolerance * max(abs(a), abs(b)). With rel_tolerance=0.01 (1%), values 100 and 101 are equal (diff=1), but 100 and 102 are not (diff=2).
 
 
     Returns:
@@ -3073,9 +3055,9 @@ def _add_column_diffs(
             If enabled (NULL, NULL) column values are equal and matching.
             If False, uses a standard inequality comparison (`!=`), where (NULL, NULL) values are not considered equal.
         abs_tolerance: Absolute tolerance for numeric comparisons. Differences within this absolute tolerance are ignored.
-            Example: abs(a - b) <= abs_tolerance
+            For example, abs(a - b) <= abs_tolerance
         rel_tolerance: Relative tolerance for numeric comparisons. Differences within this relative tolerance are ignored.
-            Example: abs(a - b) <= rel_tolerance * max(abs(a), abs(b))
+            For example, abs(a - b) <= rel_tolerance * max(abs(a), abs(b))
     Returns:
         A DataFrame with the added *columns_changed_col* containing the map of changed columns and differences.
     """
