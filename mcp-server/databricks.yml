@@ -1,5 +1,9 @@
 bundle:
   name: "mcp-dqx"
+  # Deploy without Terraform. The direct engine avoids the `terraform init` provider download
+  # from registry.terraform.io (blocked on some networks/CI runners). Requires Databricks CLI
+  # 0.279.0+. See https://docs.databricks.com/aws/en/dev-tools/bundles/direct
+  engine: direct
 
 variables:
   users_group:

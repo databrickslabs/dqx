@@ -70,21 +70,6 @@ jobs:
       - name: Install Databricks CLI
         uses: databricks/setup-cli@596b0a354ba14aa59921aca1b02bd67c2b0a81a5 # v0.297.2
 
-      # Direct access to registry.terraform.io is blocked org-wide (supply-chain hardening);
-      # `bundle deploy` -> `terraform init` must fetch the databricks provider through the
-      # sanctioned proxy instead. ~/.terraformrc redirects registry service discovery to it
-      # (downloads still go direct). See go/terraform-registry-access.
-      - name: Configure Terraform registry proxy
-        run: |
-          cat > "$HOME/.terraformrc" << 'EOF'
-          host "registry.terraform.io" {
-            services = {
-              "modules.v1"   = "https://terraform-proxy.cloud.databricks.com/v1/modules/"
-              "providers.v1" = "https://terraform-proxy.cloud.databricks.com/v1/providers/"
-            }
-          }
-          EOF
-
       - name: Run MCP integration tests
         uses: databrickslabs/sandbox/acceptance@83461e5dd7021feabb1a9ca3ee10d6f46b72092a # acceptance/v0.4.6
         with:
