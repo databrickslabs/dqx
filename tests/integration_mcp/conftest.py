@@ -11,6 +11,7 @@ OIDC auth and under a local profile alike.
 
 import os
 import subprocess
+import sys
 from collections.abc import Iterator
 from pathlib import Path
 from uuid import uuid4
@@ -78,10 +79,15 @@ def deployed_mcp(workspace_auth) -> Iterator[str]:
             ["bash", str(_MCP_SCRIPTS / "ci_deploy.sh")], env=env, capture_output=True, text=True, check=True
         )
     except subprocess.CalledProcessError as exc:
-        # Clean up any partially-created resources before skipping (the yield/finally below
-        # never runs if we skip here).
+        # Surface the FULL deploy output (both streams) so the real failure is visible in the
+        # CI log — the CLI's bundle errors land on stdout, while stderr often only carries a
+        # benign trailing warning. Then clean up partial resources (the yield/finally below
+        # never runs when the fixture fails here).
+        sys.stderr.write(f"\n===== ci_deploy.sh STDOUT =====\n{exc.stdout}\n")
+        sys.stderr.write(f"===== ci_deploy.sh STDERR =====\n{exc.stderr}\n")
         subprocess.run(["bash", str(_MCP_SCRIPTS / "ci_destroy.sh")], env=env, check=False)
-        pytest.skip(f"MCP app deploy failed (workspace may not support Databricks Apps): {exc.stderr[-1000:]}")
+        detail = f"STDOUT(tail):\n{(exc.stdout or '')[-2500:]}\n\nSTDERR(tail):\n{(exc.stderr or '')[-2500:]}"
+        pytest.fail(f"MCP app deploy failed:\n{detail}")
 
     url = next(
         (
