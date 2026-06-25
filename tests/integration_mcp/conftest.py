@@ -1,21 +1,24 @@
-"""Fixtures for the DQX MCP server integration tests.
+"""Helpers for the DQX MCP server integration test.
 
-These run via the same acceptance harness as the other integration suites, so they reuse
-its workspace, authentication, the shared ``TEST_CATALOG``, and ``make_schema`` (create +
-automatic teardown). A ``deployed_mcp`` fixture stands up an isolated MCP app from the bundle
-and tears it down. Auth is resolved by the SDK from the ambient credentials (see
-``workspace_auth``) and handed to the deploy/teardown scripts and HTTP calls, so no
-DATABRICKS_TOKEN needs to be set in the environment — it works under the acceptance action's
-OIDC auth and under a local profile alike.
+The acceptance harness runs each test in its **own** pytest session (xdist workers on the first
+pass, per-test re-runs on retry), so a ``scope="session"`` "deploy once" fixture is re-run per
+test — deploying the app many times and colliding on the shared bundle state path. Following the
+repo's e2e bundle test (``test_run_dqx_demo_asset_bundle``), the integration test instead OWNS its
+deploy + teardown through the context managers below, so a single test == a single deploy.
+
+Auth is resolved by the SDK from the ambient credentials (see ``workspace_auth``) and handed to
+the deploy/teardown scripts and HTTP calls, so no DATABRICKS_TOKEN needs to be set in the env —
+it works under the acceptance action's OIDC auth and under a local profile alike.
 """
 
+import contextlib
 import io
 import json
 import os
 import subprocess
 import sys
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from uuid import uuid4
 
@@ -36,22 +39,28 @@ AI_QUERY_ENDPOINT = os.environ.get("DQX_AI_QUERY_TEST_ENDPOINT", "databricks-cla
 CATALOG = os.environ.get("DQX_MCP_TEST_CATALOG") or TEST_CATALOG
 
 
-@pytest.fixture(scope="session")
-def workspace_auth() -> tuple[str, str]:
-    """(host, bearer token) resolved by the SDK from the ambient auth.
-
-    Builds its own session-scoped client (pytester's ``ws`` is function-scoped, so a
-    session fixture can't depend on it) using the SDK's default config resolution — the
-    same auth the harness provides: acceptance-action OIDC env in CI, a profile or env
-    vars locally. The token is minted via ``config.authenticate()``, so no DATABRICKS_TOKEN
-    needs to be set anywhere. It's needed for the CLI deploy and for raw HTTP to the serving
-    endpoint and the app's /mcp endpoint (a separate *.databricksapps.com host the SDK
-    can't proxy).
-    """
-    config = WorkspaceClient().config
+def _bearer_from(config) -> str:
+    """Mint a fresh bearer from an SDK config (refreshes OAuth/metadata tokens as needed)."""
     token = (config.authenticate() or {}).get("Authorization", "").removeprefix("Bearer ").strip()
     assert token, "could not obtain a workspace bearer token from the SDK config"
-    return config.host.rstrip("/"), token
+    return token
+
+
+@pytest.fixture(scope="session")
+def workspace_auth() -> "tuple[str, Callable[[], str]]":
+    """(host, get_token) resolved by the SDK from the ambient auth.
+
+    Uses the SDK's default config resolution — the same auth the harness provides:
+    acceptance-action OIDC env in CI, a profile or env vars locally. ``get_token()`` mints a
+    **fresh** bearer on each call via ``config.authenticate()`` (the SDK refreshes OAuth /
+    metadata-service tokens), so the single long end-to-end test never reuses an expired token.
+    No DATABRICKS_TOKEN needs to be set anywhere. The bearer is needed for the CLI deploy and for
+    raw HTTP to the serving endpoint and the app's /mcp endpoint (a separate
+    *.databricksapps.com host the SDK can't proxy).
+    """
+    config = WorkspaceClient().config
+    _bearer_from(config)  # fail fast if auth is broken
+    return config.host.rstrip("/"), lambda: _bearer_from(config)
 
 
 def _script_env(name_prefix: str, secret_scope: str, host: str, token: str) -> dict[str, str]:
@@ -73,47 +82,46 @@ def _emitted(stdout: str, key: str) -> str:
     )
 
 
-@pytest.fixture(scope="session")
-def deployed_mcp(workspace_auth) -> Iterator[dict[str, str]]:
-    """Deploy ONE isolated MCP app for the whole test session and tear it down at the end.
+@contextlib.contextmanager
+def deploy_mcp_app(host: str, get_token: Callable[[], str]) -> Iterator[dict[str, str]]:
+    """Deploy ONE isolated MCP app, yield {url, service_principal}, and tear it down.
 
-    Session-scoped so the (slow) app deploy happens once and is shared across all tests, rather
-    than redeploying per test. Teardown runs even if a test fails. If the workspace cannot host a
-    Databricks App, the deploy fails and the suite is skipped with the underlying error rather
-    than reporting a false failure.
+    A context manager (not a fixture) so a single test owns exactly one deploy — the acceptance
+    harness's per-test sessions defeat session-scoped fixtures (see the module docstring).
+    Teardown always runs. ``service_principal`` is the app SP's application id (the identity the
+    runner job runs as; the test grants it write access for the persisting tools).
 
-    Yields a dict with ``url`` (the app's base URL) and ``service_principal`` (the app SP's
-    application id — the identity the runner job runs as; tests grant it write access for the
-    persisting tools).
+    A fresh bearer is minted (``get_token()``) for both deploy and teardown — teardown runs after
+    the long test, so a token minted at deploy time would be expired by then.
     """
-    host, token = workspace_auth
     name_prefix = f"mcp-dqx-it-{uuid4().hex[:6]}"
     secret_scope = f"dqx-config-{name_prefix}"
-    env = _script_env(name_prefix, secret_scope, host, token)
+
+    def env() -> dict[str, str]:
+        return _script_env(name_prefix, secret_scope, host, get_token())
+
     try:
         result = subprocess.run(
-            ["bash", str(_MCP_SCRIPTS / "ci_deploy.sh")], env=env, capture_output=True, text=True, check=True
+            ["bash", str(_MCP_SCRIPTS / "ci_deploy.sh")], env=env(), capture_output=True, text=True, check=True
         )
     except subprocess.CalledProcessError as exc:
-        # Surface the FULL deploy output (both streams) so the real failure is visible in the
-        # CI log — the CLI's bundle errors land on stdout, while stderr often only carries a
-        # benign trailing warning. Then clean up partial resources (the yield/finally below
-        # never runs when the fixture fails here).
+        # Surface the FULL deploy output so the real failure is visible (the CLI's errors land on
+        # stdout; stderr often only carries a benign warning), then clean up partial resources.
         sys.stderr.write(f"\n===== ci_deploy.sh STDOUT =====\n{exc.stdout}\n")
         sys.stderr.write(f"===== ci_deploy.sh STDERR =====\n{exc.stderr}\n")
-        subprocess.run(["bash", str(_MCP_SCRIPTS / "ci_destroy.sh")], env=env, check=False)
+        subprocess.run(["bash", str(_MCP_SCRIPTS / "ci_destroy.sh")], env=env(), check=False)
         detail = f"STDOUT(tail):\n{(exc.stdout or '')[-2500:]}\n\nSTDERR(tail):\n{(exc.stderr or '')[-2500:]}"
-        pytest.fail(f"MCP app deploy failed:\n{detail}")
+        raise AssertionError(f"MCP app deploy failed:\n{detail}") from exc
 
     url = _emitted(result.stdout, "DQX_MCP_SERVER_URL")
     assert url, "ci_deploy.sh did not emit DQX_MCP_SERVER_URL"
     try:
         yield {"url": url, "service_principal": _emitted(result.stdout, "DQX_MCP_APP_SERVICE_PRINCIPAL")}
     finally:
-        subprocess.run(["bash", str(_MCP_SCRIPTS / "ci_destroy.sh")], env=env, check=False)
+        subprocess.run(["bash", str(_MCP_SCRIPTS / "ci_destroy.sh")], env=env(), check=False)
 
 
-# --- MCP-over-HTTP client used by the tool integration tests ---------------------------------
+# --- MCP-over-HTTP client used by the integration test ---------------------------------------
 
 
 def _mcp_request(url: str, token: str, method: str, params: dict) -> dict:
@@ -149,22 +157,22 @@ def _tool_payload(call_result: dict) -> dict:
 class McpClient:
     """Thin MCP client for tests: calls tools and resolves the async submit→poll pattern.
 
-    Most DQX tools return ``{"status": "submitted", "run_id": ...}`` immediately; ``call`` polls
-    ``get_run_result`` until the run is terminal and returns the inner ``result``, so a test just
-    sees the final value. Synchronous tools (e.g. ``get_table_schema``, ``get_workflow``) return
-    their payload directly.
+    Tools that submit a job return ``{"status": "submitted", "run_id": ...}``; ``call`` polls
+    ``get_run_result`` until the run is terminal and returns the inner ``result``. Tools that
+    answer in-process (e.g. ``get_table_schema``, ``get_workflow``) return their payload directly
+    — ``call`` handles both.
     """
 
-    def __init__(self, url: str, token: str):
+    def __init__(self, url: str, get_token: Callable[[], str]):
         self._url = url
-        self._token = token
+        self._get_token = get_token  # mint a fresh bearer per request (no expiry over a long run)
 
     def list_tools(self) -> list[dict]:
-        return _mcp_request(self._url, self._token, "tools/list", {})["tools"]
+        return _mcp_request(self._url, self._get_token(), "tools/list", {})["tools"]
 
     def call(self, name: str, arguments: dict | None = None, *, poll: bool = True, timeout: float = 300.0) -> dict:
         payload = _tool_payload(
-            _mcp_request(self._url, self._token, "tools/call", {"name": name, "arguments": arguments or {}})
+            _mcp_request(self._url, self._get_token(), "tools/call", {"name": name, "arguments": arguments or {}})
         )
         if poll and payload.get("status") == "submitted" and payload.get("run_id"):
             return self.wait(payload["run_id"], timeout=timeout)
@@ -176,7 +184,10 @@ class McpClient:
         while True:
             status = _tool_payload(
                 _mcp_request(
-                    self._url, self._token, "tools/call", {"name": "get_run_result", "arguments": {"run_id": run_id}}
+                    self._url,
+                    self._get_token(),
+                    "tools/call",
+                    {"name": "get_run_result", "arguments": {"run_id": run_id}},
                 )
             )
             last = status.get("status", "unknown")
@@ -189,14 +200,26 @@ class McpClient:
             time.sleep(interval)
 
 
-@pytest.fixture
-def mcp(workspace_auth, deployed_mcp) -> McpClient:
-    """An McpClient bound to the deployed app and the calling user's bearer token."""
-    _host, token = workspace_auth
-    return McpClient(deployed_mcp["url"], token)
+def wait_until_ready(client: McpClient, *, timeout: float = 180.0, interval: float = 5.0) -> None:
+    """Poll tools/list until the freshly-deployed app is serving.
+
+    A just-deployed app needs a moment before its server answers; until then /mcp can return
+    401/404/5xx. Retry until it lists tools (or time out with the last error).
+    """
+    deadline = time.monotonic() + timeout
+    last: Exception | None = None
+    while True:
+        try:
+            client.list_tools()
+            return
+        except (requests.RequestException, RuntimeError) as exc:  # HTTP errors + MCP error bodies
+            last = exc
+            if time.monotonic() >= deadline:
+                raise AssertionError(f"MCP app not ready within {timeout:.0f}s: {last}") from last
+            time.sleep(interval)
 
 
-# --- Sample "dirty customers" dataset + ODCS contract, shared across the tool tests ----------
+# --- Sample "dirty customers" dataset + ODCS contract ----------------------------------------
 
 # Mirrors the docs' "Try it with sample data": 10 rows with deliberate quality issues — a null
 # id, a duplicate id (3), a null name, an invalid email, two out-of-range ages, a null country,
@@ -269,22 +292,23 @@ def _resolve_warehouse_id(client: WorkspaceClient) -> str:
     return warehouse_id
 
 
-@pytest.fixture(scope="session")
-def demo_data(workspace_auth, deployed_mcp) -> Iterator[dict[str, str]]:
-    """Seed the dirty 'customers' table + an ODCS contract once for the whole session.
+@contextlib.contextmanager
+def seed_demo_data(app_sp: str) -> Iterator[dict[str, str]]:
+    """Seed the dirty 'customers' table + an ODCS contract, then drop everything on exit.
 
-    Creates a throwaway schema under ``CATALOG``, the sample table, and a workspace-file contract;
+    Creates a throwaway schema under ``CATALOG``, the sample table, and a UC-volume contract;
     grants the app service principal write access on the schema (so ``save_checks`` /
-    ``apply_checks_and_save_to_table``, which run as the SP, can write); and drops everything on
-    teardown. Yields the fully-qualified names the tool tests use.
+    ``apply_checks_and_save_to_table``, which run as the SP, can write) and read on the contract
+    volume. Yields the fully-qualified names the test uses.
+
+    Builds its own ambient ``WorkspaceClient`` (rather than a static-token one) so its SDK calls —
+    including the teardown that runs after the long test — refresh the bearer and don't expire.
     """
-    host, token = workspace_auth
-    client = WorkspaceClient(host=host, token=token)
+    client = WorkspaceClient()
     warehouse_id = _resolve_warehouse_id(client)
     schema = f"dqx_mcp_it_{uuid4().hex[:8]}"
     fq_schema = f"{CATALOG}.{schema}"
     table = f"{fq_schema}.customers"
-    app_sp = deployed_mcp["service_principal"]
 
     def run_sql(statement: str) -> None:
         resp = client.statement_execution.execute_statement(
@@ -307,8 +331,7 @@ def demo_data(workspace_auth, deployed_mcp) -> Iterator[dict[str, str]]:
         run_sql(f"GRANT USE SCHEMA, CREATE TABLE, MODIFY, SELECT ON SCHEMA {fq_schema} TO `{app_sp}`")
 
     # The contract is read by the runner job (as the app SP), so it must live somewhere the SP
-    # can read — a UC volume in the same schema, with READ VOLUME granted to the SP. A workspace
-    # file under the user's home would not be readable by the SP.
+    # can read — a UC volume in the same schema, with READ VOLUME granted to the SP.
     run_sql(f"CREATE VOLUME IF NOT EXISTS {fq_schema}.contracts")
     if app_sp:
         run_sql(f"GRANT READ VOLUME ON VOLUME {fq_schema}.contracts TO `{app_sp}`")
