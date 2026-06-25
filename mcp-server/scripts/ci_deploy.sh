@@ -84,9 +84,13 @@ FILE_PATH="$(databricks bundle summary -t "${BUNDLE_TARGET}" "${VARS[@]}" "${PRO
 databricks apps deploy "${NAME_PREFIX}" --source-code-path "${FILE_PATH}" "${PROFILE_ARG[@]}"
 echo "::endgroup::"
 
-APP_URL="$(databricks apps get "${NAME_PREFIX}" "${PROFILE_ARG[@]}" -o json \
-  | python3 -c 'import sys,json; print(json.load(sys.stdin)["url"])')"
+# Emit the app URL and the app's service principal (application id). The SP is the identity
+# the runner job runs as, so tests that exercise the writing tools (save_checks /
+# apply_checks_and_save_to_table) grant it write access on their throwaway schema.
+read -r APP_URL APP_SP < <(databricks apps get "${NAME_PREFIX}" "${PROFILE_ARG[@]}" -o json \
+  | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d["url"], d.get("service_principal_client_id",""))')
 echo "DQX_MCP_SERVER_URL=${APP_URL}"
+echo "DQX_MCP_APP_SERVICE_PRINCIPAL=${APP_SP}"
 # Use if-blocks (not `[ ] && echo`): the latter returns non-zero when the var is unset (local
 # runs), which would make this script exit 1 on an otherwise successful deploy.
 if [ -n "${GITHUB_OUTPUT:-}" ]; then echo "server_url=${APP_URL}" >> "$GITHUB_OUTPUT"; fi

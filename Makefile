@@ -68,6 +68,9 @@ perf: ## Run performance benchmarks (long timeout)
 anomaly: ## Run anomaly integration tests (long timeout, with reruns)
 	$(UV_RUN) pytest tests/integration_anomaly/ -v -n 10 --timeout 1200 --durations 20 --reruns 2 --reruns-delay 5
 
+mcp-integration: ## Run MCP server integration tests (deploys an isolated app; requires workspace auth + Databricks CLI)
+	$(UV_RUN) pytest tests/integration_mcp/ -v --timeout 1800 --durations 10
+
 coverage: ## Run all tests (excl. e2e/perf) and open HTML coverage report
 	$(UV_TEST) --ignore=tests/e2e --ignore=tests/perf --cov --cov-report=html tests/
 	open htmlcov/index.html

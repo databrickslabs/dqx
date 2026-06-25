@@ -14,7 +14,8 @@ import json
 import pytest
 import requests
 
-from tests.integration_mcp.conftest import AI_QUERY_ENDPOINT, CATALOG
+# Reuse the shared MCP-over-HTTP helpers so the protocol/transport logic lives in one place.
+from tests.integration_mcp.conftest import AI_QUERY_ENDPOINT, CATALOG, _mcp_request, _tool_payload
 
 
 def _headers(token: str) -> dict[str, str]:
@@ -45,30 +46,6 @@ def _chat(host: str, token: str, messages: list[dict], tools: list[dict]) -> dic
     return resp.json()["choices"][0]
 
 
-def _mcp(url: str, token: str, method: str, params: dict) -> dict:
-    resp = requests.post(
-        f"{url}/mcp",
-        headers={**_headers(token), "Accept": "application/json, text/event-stream"},
-        json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
-        timeout=120,
-    )
-    resp.raise_for_status()
-    text = resp.text
-    if "data:" in text[:32]:
-        text = text.split("data:", 1)[1].strip()
-    body = json.loads(text)
-    if "error" in body:
-        raise RuntimeError(f"MCP error: {body['error']}")
-    return body["result"]
-
-
-def _tool_result(result: dict):
-    if result.get("structuredContent"):
-        return result["structuredContent"]
-    content = result.get("content") or []
-    return json.loads(content[0]["text"]) if content else result
-
-
 def _create_orders_table(ws, table: str) -> None:
     """Create the source table via a SQL warehouse (no Spark/Connect dependency)."""
     warehouses = list(ws.warehouses.list())
@@ -91,7 +68,7 @@ def test_agent_discovers_and_uses_tools(ws, make_schema, workspace_auth, deploye
     if not _endpoint_reachable(host, token):
         pytest.skip(f"serving endpoint {AI_QUERY_ENDPOINT} not reachable")
 
-    url = deployed_mcp  # session-scoped: the app is deployed once and shared across tests
+    url = deployed_mcp["url"]  # session-scoped: the app is deployed once and shared across tests
 
     schema = make_schema(catalog_name=CATALOG)
     table = f"{CATALOG}.{schema.name}.orders"
@@ -106,7 +83,7 @@ def test_agent_discovers_and_uses_tools(ws, make_schema, workspace_auth, deploye
                 "parameters": t["inputSchema"],
             },
         }
-        for t in _mcp(url, token, "tools/list", {})["tools"]
+        for t in _mcp_request(url, token, "tools/list", {})["tools"]
     ]
 
     messages: list[dict] = [
@@ -128,8 +105,8 @@ def test_agent_discovers_and_uses_tools(ws, make_schema, workspace_auth, deploye
             for call in msg["tool_calls"]:
                 called_tools.append(call["function"]["name"])
                 args = json.loads(call["function"]["arguments"] or "{}")
-                result = _tool_result(
-                    _mcp(url, token, "tools/call", {"name": call["function"]["name"], "arguments": args})
+                result = _tool_payload(
+                    _mcp_request(url, token, "tools/call", {"name": call["function"]["name"], "arguments": args})
                 )
                 messages.append(
                     {"role": "tool", "tool_call_id": call["id"], "content": json.dumps(result, default=str)[:4000]}
