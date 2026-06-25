@@ -1,9 +1,5 @@
 # Version changelog
 
-## 0.15.0
-
-* Added semantic validation for DQ rule SQL expressions ([#1169](https://github.com/databrickslabs/dqx/issues/1169)). A new `SemanticValidator` class checks SQL expressions used in DQ rules for forbidden destructive keywords (DROP, TRUNCATE, DELETE, UPDATE, INSERT, ALTER) before rules are applied. Validation errors are collected into `ChecksValidationStatus`, consistent with the existing validation contract.
-
 ## 0.14.0
 
 * ML-based row-level anomaly detection ([#990](https://github.com/databrickslabs/dqx/issues/990), [#1055](https://github.com/databrickslabs/dqx/issues/1055), [#1062](https://github.com/databrickslabs/dqx/issues/1062)). DQX now offers ML-based row anomaly detection that automatically identifies unusual rows in data without requiring manually specified thresholds, enabling the detection of issues missed by rule-based checks. Users provide recent representative data, and DQX trains an Isolation Forest model that flags rows deviating from typical patterns at scoring time, with auto-discovery of relevant columns and segmentation where appropriate, plus per-row explanations of why a record was flagged. The feature integrates with MLflow for model registry, supports both training and scoring workflows, and complements existing rule-based and aggregate checks.
