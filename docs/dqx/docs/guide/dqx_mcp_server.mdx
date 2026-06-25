@@ -24,34 +24,44 @@ For code-level integration into pipelines or notebooks, see the [Programmatic ap
 ```
 User (via MCP client)
   |
-  +- get_table_schema ----> Direct SQL (DESCRIBE TABLE) via user's OBO token
+  +- get_table_schema --------------> Direct SQL (DESCRIBE TABLE) via user's OBO token
   |
-  +- profile_table -------> OBO creates temp view -> SP triggers runner job -> returns run_id
-  +- run_checks ----------> OBO creates temp view -> SP triggers runner job -> returns run_id
+  +- profile_table -----------------> OBO temp view -> SP runner job -> run_id
+  +- run_checks --------------------> OBO temp view -> SP runner job -> run_id
+  +- apply_checks_and_save_to_table > OBO temp view -> SP runner job (writes Delta) -> run_id
   |
-  +- generate_rules ------> SP triggers runner job -> returns run_id
-  +- validate_checks -----> SP triggers runner job -> returns run_id
-  +- list_available_checks > SP triggers runner job -> returns run_id
+  +- generate_rules ----------------> SP runner job -> run_id
+  +- generate_rules_from_contract --> SP runner job -> run_id
+  +- validate_checks ---------------> SP runner job -> run_id
+  +- list_available_checks ---------> SP runner job -> run_id
+  +- load_checks -------------------> SP runner job (reads as SP) -> run_id
+  +- save_checks -------------------> SP runner job (writes as SP) -> run_id
   |
-  +- get_run_result ------> Polls job status, returns result when done, cleans up temp views
+  +- get_run_result ----------------> Polls job status, returns result when done
 ```
 
-**Async pattern:** Long-running tools (profiling, checks, rule generation) submit a Databricks job and return a `run_id` immediately. The client then calls `get_run_result(run_id)` to poll for results. This avoids HTTP timeouts in clients like Genie Code. The `get_run_result` tool polls internally for up to 90 seconds before returning, so most jobs complete in a single call.
+**Async pattern:** Long-running tools (profiling, rule generation, validation, running/applying checks, save/load) submit a Databricks job and return a `run_id` immediately — this avoids HTTP timeouts in clients like Genie Code. The client then calls `get_run_result(run_id)` to fetch the outcome. If the job is still running, `get_run_result` returns `{"status": "running"}` and the client should poll again after a short pause. Pace your polling (a brief wait between calls) rather than calling in a tight loop.
 
-**UC governance:** Tools that read data create a temporary view using the user's OBO token. If the user cannot read the source table, view creation fails (UC enforced). The SP job reads through the view using definer's rights. Views are cleaned up automatically when results are retrieved.
+**UC governance:** Tools that read data (`profile_table`, `run_checks`, `apply_checks_and_save_to_table`) create a temporary view using the **user's** OBO token. If the user cannot read the source table, view creation fails — Unity Catalog is enforced end to end. The SP runner job then reads through that view. Each view is dropped by the runner job itself when the operation finishes (a periodic sweeper reaps any orphans as a backstop), so cleanup does not depend on the client polling for results.
 
 ## Available tools
 
 | Tool | Description | Execution | Returns |
 |------|-------------|-----------|---------|
+| `get_workflow` | Get the recommended tool-call sequence | In-process | Workflow JSON |
 | `get_table_schema` | Get column names, types, and comments | Direct SQL via OBO | Result directly |
-| `profile_table` | Profile data patterns (nulls, ranges, distributions) | View + runner job | `run_id` |
-| `generate_rules` | Generate DQX check rules from profiles | Runner job | `run_id` |
-| `validate_checks` | Validate check definitions for correctness | Runner job | `run_id` |
-| `run_checks` | Execute checks and get quality results | View + runner job | `run_id` |
+| `profile_table` | Profile data patterns (nulls, ranges, distributions) | OBO view + runner job | `run_id` |
+| `generate_rules` | Generate DQX check rules from a profile | Runner job | `run_id` |
+| `generate_rules_from_contract` | Generate DQX checks from an ODCS data contract | Runner job | `run_id` |
 | `list_available_checks` | List all 68+ built-in check functions | Runner job | `run_id` |
-| `get_run_result` | Poll for job results (blocks up to 90s internally) | Job status check | Result or status |
-| `get_workflow` | Get the recommended tool call sequence | In-process | Workflow JSON |
+| `validate_checks` | Validate check definitions for correctness | Runner job | `run_id` |
+| `run_checks` | Execute checks and return a sample of results | OBO view + runner job | `run_id` |
+| `save_checks` | Persist checks to a table, UC volume, or workspace file&nbsp;† | Runner job (writes as SP) | `run_id` |
+| `load_checks` | Load previously saved checks | Runner job (reads as SP) | `run_id` |
+| `apply_checks_and_save_to_table` | Apply checks and write valid / quarantine rows to Delta&nbsp;† | OBO view + runner job (writes as SP) | `run_id` |
+| `get_run_result` | Fetch the result (or `running`/`failed` status) of a submitted run | Job status check | Result or status |
+
+† These tools **write** as the app service principal, so the SP needs write access to the target location — see [Write access for the persisting tools](#write-access).
 
 ## Prerequisites
 
@@ -152,6 +162,21 @@ databricks bundle deploy \
 3. **SQL warehouse:** Auto-discovered at runtime from the user's available warehouses. No configuration needed.
 4. **App SP permissions:** Granted automatically by the setup job and the bundle's resource bindings.
 
+### Write access for the persisting tools {#write-access}
+
+<Admonition type="warning" title="save_checks and apply_checks_and_save_to_table write as the app service principal">
+Most tools read through the calling user's OBO token, but the two tools that **persist** data — `save_checks` and `apply_checks_and_save_to_table` — write as the **app service principal**. The setup job only grants the SP read access on the temp schema, so writes to your own catalogs/schemas will fail with a permission error until you grant the SP write access to the target location:
+
+```sql
+-- Replace <app_sp_application_id> with the app service principal's application ID
+-- (Compute > Apps > your app > Authorization), and <catalog>.<schema> with your target.
+GRANT USE CATALOG ON CATALOG `<catalog>` TO `<app_sp_application_id>`;
+GRANT USE SCHEMA, CREATE TABLE, MODIFY ON SCHEMA `<catalog>`.`<schema>` TO `<app_sp_application_id>`;
+```
+
+For a UC **volume** or **workspace file** target, grant the SP the equivalent write permission on that volume/folder instead. If you only ever use the read/analyze tools (profile, generate, validate, run), no extra grant is needed.
+</Admonition>
+
 ## Usage
 
 ### With Genie Code / Mosaic AI Agent
@@ -167,14 +192,95 @@ Call `get_workflow` first to get the recommended sequence:
 1. `get_table_schema` — Understand the table structure (returns result directly)
 2. `profile_table` — Profile data to discover patterns (returns `run_id`)
 3. `get_run_result(run_id)` — Retrieve profiling results
-4. `generate_rules` — Convert profiles into check rules (returns `run_id`)
+4. `generate_rules` — Convert the profile into check rules (returns `run_id`)
 5. `get_run_result(run_id)` — Retrieve generated rules
 6. `validate_checks` — Validate rules before execution (optional, returns `run_id`)
 7. `get_run_result(run_id)` — Retrieve validation status
-8. `run_checks` — Execute rules and get quality results (returns `run_id`)
+8. `run_checks` — Execute rules and get a sample of results (returns `run_id`)
 9. `get_run_result(run_id)` — Retrieve check results
 
-`get_run_result` polls internally for up to 90 seconds, so most jobs complete in a single call without the client needing to retry.
+Each long-running tool returns a `run_id` immediately; you then poll `get_run_result(run_id)` until `status` is `completed` (or `failed`). A good agent waits briefly between polls instead of calling in a tight loop.
+
+**Alternative entry points:**
+- If an [ODCS data contract](/docs/guide/data_contract_quality_rules_generation) already exists, use `generate_rules_from_contract` instead of profiling + `generate_rules` — it derives checks deterministically from the contract's schema and quality expectations.
+- To reuse rules across sessions, `save_checks` to persist them and `load_checks` to retrieve them later.
+- To operationalize (write results to Delta instead of returning a sample), use `apply_checks_and_save_to_table` instead of `run_checks`.
+
+### Example prompts
+
+These are natural-language prompts you can give any connected agent. Replace `<catalog>.<schema>.<table>` with your own fully qualified table.
+
+| Tool | Example prompt |
+|------|----------------|
+| `get_workflow` | "What's the recommended workflow for running DQX data quality checks on a table?" |
+| `get_table_schema` | "What columns does `<catalog>.<schema>.<table>` have?" |
+| `profile_table` | "Profile `<catalog>.<schema>.<table>` using all rows (pass options `{"sample_fraction": 1.0}`) and show the column statistics." |
+| `generate_rules` | "From that profile, generate DQX rules with `error` criticality." |
+| `list_available_checks` | "What built-in DQX check functions can I use in rules?" |
+| `generate_rules_from_contract` | "Generate DQX checks from the data contract at `/Volumes/<catalog>/<schema>/<volume>/contract.yaml`." |
+| `validate_checks` | "Validate these checks before I run them." |
+| `run_checks` | "Run those checks against `<catalog>.<schema>.<table>` and show which rows fail and why." |
+| `save_checks` | "Save those checks to `<catalog>.<schema>.<table>_checks` so the team can reuse them." |
+| `load_checks` | "Load the data quality rules we saved earlier from `<catalog>.<schema>.<table>_checks` and run them on today's data." |
+| `apply_checks_and_save_to_table` | "Apply the checks to `<catalog>.<schema>.<table>`, writing valid rows to `<catalog>.<schema>.<table>_clean` and invalid rows to `<catalog>.<schema>.<table>_quarantine`." |
+| `get_run_result` | "Get the result for run_id `<id>`." |
+
+<Admonition type="note" title="Profiling samples by default">
+`profile_table` samples the data by default (good for large tables, but on a tiny table it can miss issues). Pass `{"sample_fraction": 1.0}` in the tool's `options` to profile every row.
+</Admonition>
+
+### Run the whole workflow in one prompt
+
+You don't need to name the tools — a good agent picks them from a plain-English goal. The request below is the kind of thing an analyst onboarding a new table would actually ask, and it naturally drives the full chain: schema inspection, profiling, rule generation (from both the data and a contract), validation, running checks, persisting the rules, reloading them the way a pipeline would, and writing clean/quarantine tables. It assumes the sample table from [Try it with sample data](#try-it-with-sample-data); swap in your own table, contract path, and output tables.
+
+```text
+I've just been handed the table <catalog>.<schema>.customers and I need to get a handle on
+its data quality before the team starts using it — I'm fairly new to DQX. Can you:
+
+- take a look at the table and tell me what kinds of quality checks DQX could enforce on it;
+- scan the whole table (don't just sample it) and find where the data is actually dirty;
+- set up a sensible set of rules to catch those problems — we also have a data contract for
+  this table at /Volumes/<catalog>/<schema>/<volume>/customers_contract.yaml, so use that
+  too if it helps;
+- run the rules and show me which records fail and why;
+- once the rules look right, save them somewhere the team can reuse them;
+- then, the way our nightly pipeline would, load those saved rules back and use them to
+  produce a clean table and a separate quarantine table of the rejected rows;
+- and finally, summarise in plain English how bad the data is and what I should fix first.
+```
+
+This reuse framing is also the point of `load_checks`: the MCP server is stateless, so saved checks live only in whatever durable location you write them to. A fresh session (or a scheduled pipeline) starts with no checks in context — `load_checks` pulls a previously-saved set back so `run_checks` / `apply_checks_and_save_to_table` can use it without re-profiling.
+
+<Admonition type="info" title="The save and apply steps write data">
+Saving the rules and producing the clean/quarantine tables run as the app service principal. If they fail with a permission error, grant the SP write access on the target schema — see [Write access for the persisting tools](#write-access).
+</Admonition>
+
+### Try it with sample data
+
+To follow the example above end to end, create a small table with deliberate data-quality issues (NULL/duplicate id, empty name, invalid email, out-of-range age, negative amount). Run this in a SQL editor or notebook against a catalog/schema you can write to:
+
+```sql
+CREATE SCHEMA IF NOT EXISTS <catalog>.<schema>;
+
+CREATE OR REPLACE TABLE <catalog>.<schema>.customers (
+  customer_id INT, name STRING, email STRING, age INT,
+  country STRING, signup_date DATE, amount DOUBLE
+);
+
+INSERT INTO <catalog>.<schema>.customers VALUES
+ (1,    'Alice',   'alice@example.com',   34,  'US', DATE'2023-01-15', 120.50),
+ (2,    'Bob',     'bob@example.com',     41,  'UK', DATE'2023-02-20',  88.00),
+ (3,    'Charlie', 'charlie@example.com', 29,  'DE', DATE'2023-03-10',  45.25),
+ (4,    NULL,      'dora@example.com',    52,  'US', DATE'2023-04-01', 200.00),  -- null name
+ (5,    'Eve',     'not-an-email',        38,  'FR', DATE'2023-05-05',  60.00),  -- bad email
+ (7,    'Grace',   'grace@example.com',   -3,  'IN', DATE'2023-07-08',  30.00),  -- negative age
+ (8,    'Heidi',   'heidi@example.com',   210, 'US', DATE'2023-08-19',  95.00),  -- impossible age
+ (9,    'Ivan',    'ivan@example.com',    33,  NULL, DATE'2023-09-22', -15.00),  -- null country, negative amount
+ (3,    'Charlie', 'charlie@example.com', 29,  'DE', DATE'2023-03-10',  45.25),  -- duplicate id
+ (NULL, 'Peggy',   'peggy@example.com',   39,  'US', DATE'2024-01-05', 180.00);  -- null id
+```
+
+Optionally, to try `generate_rules_from_contract`, save an [ODCS data contract](/docs/guide/data_contract_quality_rules_generation) describing this table to a UC volume or workspace path and reference it in the prompt.
 
 ### With Cursor / Claude Desktop (local development)
 
