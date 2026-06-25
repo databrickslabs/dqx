@@ -65,6 +65,11 @@ jobs:
           parallel = true
           EOF
 
+      # Required for the DAB (Databricks Asset Bundle) deploy the MCP suite runs (ci_deploy.sh).
+      # The CLI lands on PATH (via GITHUB_PATH) for the acceptance action's test subprocess.
+      - name: Install Databricks CLI
+        uses: databricks/setup-cli@596b0a354ba14aa59921aca1b02bd67c2b0a81a5 # v0.297.2
+
       - name: Run MCP integration tests
         uses: databrickslabs/sandbox/acceptance@83461e5dd7021feabb1a9ca3ee10d6f46b72092a # acceptance/v0.4.6
         with:
