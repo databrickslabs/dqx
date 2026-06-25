@@ -32,6 +32,25 @@ VARS=(--var "name_prefix=${NAME_PREFIX}"
 
 cd "$(dirname "$0")/.."  # mcp-server/
 
+# `bundle deploy` runs `terraform init`, which downloads the databricks/databricks provider
+# from registry.terraform.io. On CI runners that fetch is intermittently reset ("EOF") — the
+# repo's own e2e demo-bundle test hits the same flakiness and relies on the harness retrying
+# it. Our deploy runs in a session-scoped fixture that is NOT retried, so retry here instead.
+retry() {
+  local attempts="$1" delay="$2"
+  shift 2
+  local n=1
+  until "$@"; do
+    if [ "${n}" -ge "${attempts}" ]; then
+      echo "command failed after ${attempts} attempts: $*" >&2
+      return 1
+    fi
+    echo "attempt ${n}/${attempts} failed, retrying in ${delay}s: $*" >&2
+    sleep "${delay}"
+    n=$((n + 1))
+  done
+}
+
 echo "::group::Configure catalog secret (${CONFIG_SECRET_SCOPE})"
 databricks secrets create-scope "${CONFIG_SECRET_SCOPE}" "${PROFILE_ARG[@]}" 2>/dev/null || true
 databricks secrets put-secret "${CONFIG_SECRET_SCOPE}" catalog_name \
@@ -39,7 +58,8 @@ databricks secrets put-secret "${CONFIG_SECRET_SCOPE}" catalog_name \
 echo "::endgroup::"
 
 echo "::group::bundle deploy (${NAME_PREFIX}, target ${BUNDLE_TARGET})"
-databricks bundle deploy -t "${BUNDLE_TARGET}" "${VARS[@]}" "${PROFILE_ARG[@]}"
+# --force-lock: a previous, retried attempt may hold the deployment lock (matches the e2e demo).
+retry 3 15 databricks bundle deploy -t "${BUNDLE_TARGET}" --force-lock "${VARS[@]}" "${PROFILE_ARG[@]}"
 echo "::endgroup::"
 
 echo "::group::run setup job (UC grants + temp-schema ownership)"
