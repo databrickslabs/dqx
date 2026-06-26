@@ -27,7 +27,7 @@ def ai_generate_checks(
 ) -> GenerateChecksOut:
     """Generate data quality checks from natural language using AI-assisted generation."""
     try:
-        checks = service.generate(user_input=body.user_input, table_fqn=body.table_fqn)
+        checks = service.generate(user_input=body.user_input, table_fqn=body.table_fqn, table_fqns=body.table_fqns)
         yaml_output = yaml.dump(checks, default_flow_style=False, sort_keys=False)
 
         validation_errors: list[str] = []

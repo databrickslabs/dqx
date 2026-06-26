@@ -38,6 +38,30 @@ Guidelines:
 Available check functions:
 {available_functions}"""
 
+_SQL_CHECK_SYSTEM_TEMPLATE = """\
+You are a data quality SQL rule generator for Databricks. Given schemas for one or more tables \
+and a business description, generate cross-table or aggregation data quality rules.
+
+Return ONLY a JSON object with two fields:
+  - "quality_rules": a valid JSON array of rule objects
+  - "reasoning": a short explanation of why these rules were chosen
+
+Each rule MUST follow this exact format:
+  {{"name": "<snake_case_name>", "criticality": "error"|"warn", "check": {{"function": "sql_query", "arguments": {{"query": "<SQL>"}}}}}}
+
+SQL query rules:
+1. The query must return rows that VIOLATE the check — zero rows means the check passes.
+2. Use fully qualified table names (catalog.schema.table) in all queries.
+3. ONLY reference column names that appear in the provided schemas below — never guess.
+4. Do not end the query with a semicolon.
+5. Do not use DROP, DELETE, INSERT, UPDATE, ALTER, TRUNCATE, CREATE, GRANT, REVOKE, or MERGE.
+6. The "name" must be snake_case, start with a letter, and use only letters/digits/underscores.
+
+Table schemas:
+{table_schemas}"""
+
+_FQN_PATTERN = re.compile(r"\b([a-zA-Z_][a-zA-Z0-9_]*)\.([a-zA-Z_][a-zA-Z0-9_]*)\.([a-zA-Z_][a-zA-Z0-9_]*)\b")
+
 
 class AiRulesService:
     """Generates DQX rules using ChatDatabricks with the OBO WorkspaceClient.
@@ -97,6 +121,22 @@ class AiRulesService:
         columns = [{"name": col.name or "", "type": col.type_text or ""} for col in (table_info.columns or [])]
         return json.dumps({"columns": columns})
 
+    def _get_multi_table_schema_info(self, table_fqns: list[str]) -> str:
+        """Fetch column schemas for multiple tables and format as JSON for the prompt."""
+        schemas: dict[str, list[dict[str, str]]] = {}
+        for fqn in table_fqns:
+            try:
+                info = self._obo_ws.tables.get(fqn)
+                schemas[fqn] = [{"name": col.name or "", "type": col.type_text or ""} for col in (info.columns or [])]
+            except Exception as e:
+                logger.warning("Could not fetch schema for %s: %s", fqn, e)
+        return json.dumps(schemas, indent=2)
+
+    @staticmethod
+    def _extract_table_fqns(text: str) -> list[str]:
+        """Return unique catalog.schema.table FQNs found in text, preserving order."""
+        return list(dict.fromkeys(m.group(0) for m in _FQN_PATTERN.finditer(text)))
+
     def _parse_response(self, content: str) -> list[dict[str, Any]]:
         for text in self._extract_json_candidates(content):
             try:
@@ -126,21 +166,47 @@ class AiRulesService:
     # Public API
     # ------------------------------------------------------------------
 
-    def generate(self, user_input: str, table_fqn: str | None = None) -> list[dict[str, Any]]:
+    def generate(
+        self,
+        user_input: str,
+        table_fqn: str | None = None,
+        table_fqns: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
         """Generate DQX quality rules from natural language.
+
+        When multiple tables are involved (either via table_fqns or FQNs detected in
+        user_input), a SQL-oriented prompt is used so the model returns sql_query checks
+        that reference the actual column names from each table's schema.
 
         Args:
             user_input: Natural language description of data quality requirements.
-            table_fqn: Optional fully-qualified table name for schema context.
+            table_fqn: Optional single fully-qualified table name for schema context.
+            table_fqns: Optional list of FQNs for multi-table / cross-table context.
 
         Returns:
             List of DQX rule dicts.
         """
-        system = SystemMessage(content=_SYSTEM_TEMPLATE.format(available_functions=self._get_available_functions()))
-        schema_info = self._get_schema_info(table_fqn) if table_fqn else ""
-        human = HumanMessage(content=f"schema_info: {schema_info}\nbusiness_description: {user_input}")
-        messages: list[BaseMessage] = [system, *self._get_few_shot_messages(), human]
+        # Build a deduplicated list of tables to look up, starting with explicit inputs,
+        # then supplemented by FQNs detected in the prompt text itself.
+        all_fqns: list[str] = list(dict.fromkeys(
+            (table_fqns or []) + ([table_fqn] if table_fqn else []) + self._extract_table_fqns(user_input)
+        ))
 
         llm = ChatDatabricks(endpoint=conf.llm_endpoint, workspace_client=self._sp_ws)
+
+        if len(all_fqns) != 1:
+            # Cross-table (or no table): use SQL-oriented prompt so the model generates
+            # sql_query checks with real column names from each table's schema.
+            table_schemas = self._get_multi_table_schema_info(all_fqns) if all_fqns else "{}"
+            system = SystemMessage(content=_SQL_CHECK_SYSTEM_TEMPLATE.format(table_schemas=table_schemas))
+            human = HumanMessage(content=f"business_description: {user_input}")
+            messages: list[BaseMessage] = [system, human]
+        else:
+            # Single table: use standard DQX column-level check prompt with few-shot examples.
+            schema_info = self._get_schema_info(all_fqns[0])
+            system = SystemMessage(content=_SYSTEM_TEMPLATE.format(available_functions=self._get_available_functions()))
+            human = HumanMessage(content=f"schema_info: {schema_info}\nbusiness_description: {user_input}")
+            messages = [system, *self._get_few_shot_messages(), human]
+
         response = llm.invoke(messages)
         return self._parse_response(str(response.content))

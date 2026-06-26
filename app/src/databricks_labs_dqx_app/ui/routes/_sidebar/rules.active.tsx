@@ -27,6 +27,7 @@ import {
   Database,
   Trash2,
   Download,
+  Upload,
 } from "lucide-react";
 import { FadeIn } from "@/components/anim/FadeIn";
 import { toast } from "sonner";
@@ -35,7 +36,7 @@ import {
   useListRules,
   type RuleCatalogEntryOut,
 } from "@/lib/api";
-import { deleteRuleById } from "@/lib/api-custom";
+import { deleteRuleById, pushRulesToTable, type PushToTableIn } from "@/lib/api-custom";
 import { usePermissions } from "@/hooks/use-permissions";
 import { parseFqn, formatUser, getUserMetadata, labelToken } from "@/lib/format-utils";
 import { LabelFilter, LabelsBadges, labelsMatchFilter } from "@/components/Labels";
@@ -49,6 +50,16 @@ import {
   AlertDialogCancel,
   AlertDialogAction,
 } from "@/components/ui/alert-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 const SQL_CHECK_PREFIX = "__sql_check__/";
 const CROSS_TABLE_CATALOG = "Cross-table rules";
@@ -88,6 +99,42 @@ function ActiveRulesPage() {
   const { canCreateRules, canApproveRules, canExportRules } = usePermissions();
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const [labelFilter, setLabelFilter] = useState<Set<string>>(new Set());
+
+  // Push to table dialog state
+  const [pushTarget, setPushTarget] = useState<{ fqn: string; rules: RuleCatalogEntryOut[] } | null>(null);
+  const [pushTableFqn, setPushTableFqn] = useState("");
+  const [pushRunConfig, setPushRunConfig] = useState("");
+  const [pushMode, setPushMode] = useState<"append" | "overwrite">("append");
+  const [isPushing, setIsPushing] = useState(false);
+
+  const openPushDialog = (fqn: string, rules: RuleCatalogEntryOut[]) => {
+    setPushTarget({ fqn, rules });
+    setPushTableFqn("");
+    setPushRunConfig(fqn);
+    setPushMode("append");
+  };
+
+  const handlePushToTable = async () => {
+    if (!pushTarget || !pushTableFqn.trim()) return;
+    const allChecks = pushTarget.rules.flatMap((r) => r.checks as Array<Record<string, unknown>>);
+    const body: PushToTableIn = {
+      checks: allChecks,
+      target_table: pushTableFqn.trim(),
+      run_config_name: pushRunConfig.trim() || pushTarget.fqn,
+      mode: pushMode,
+    };
+    setIsPushing(true);
+    try {
+      const resp = await pushRulesToTable(body);
+      toast.success(t("rulesActive.pushSuccess", { count: resp.data.pushed_count, table: pushTableFqn.trim() }));
+      setPushTarget(null);
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? t("rulesActive.pushFailed");
+      toast.error(msg);
+    } finally {
+      setIsPushing(false);
+    }
+  };
 
   const { data: rulesResp, isLoading, error, refetch } = useListRules({ status: "approved" });
   const allRules: RuleCatalogEntryOut[] = Array.isArray(rulesResp?.data) ? rulesResp.data : [];
@@ -457,6 +504,8 @@ function ActiveRulesPage() {
                   pendingDelete={pendingDelete}
                   canExport={canExportRules}
                   onExport={handleExportTable}
+                  canPush={canExportRules}
+                  onPush={openPushDialog}
                 />
               )}
               {viewMode === "by-rule" && (
@@ -497,6 +546,74 @@ function ActiveRulesPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <Dialog open={!!pushTarget} onOpenChange={(open) => !open && setPushTarget(null)}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Upload className="h-4 w-4" />
+              {t("rulesActive.pushDialogTitle")}
+            </DialogTitle>
+            <DialogDescription>
+              {t("rulesActive.pushDialogDesc", { table: pushTarget?.fqn ?? "" })}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="push-target-table">{t("rulesActive.pushTargetTableLabel")}</Label>
+              <Input
+                id="push-target-table"
+                placeholder="catalog.schema.checks_table"
+                value={pushTableFqn}
+                onChange={(e) => setPushTableFqn(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">{t("rulesActive.pushTargetTableHint")}</p>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="push-run-config">{t("rulesActive.pushRunConfigLabel")}</Label>
+              <Input
+                id="push-run-config"
+                placeholder="my_run_config"
+                value={pushRunConfig}
+                onChange={(e) => setPushRunConfig(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">{t("rulesActive.pushRunConfigHint")}</p>
+            </div>
+            <div className="space-y-1.5">
+              <Label>{t("rulesActive.pushModeLabel")}</Label>
+              <div className="flex gap-3">
+                {(["append", "overwrite"] as const).map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    onClick={() => setPushMode(m)}
+                    className={`flex-1 rounded-md border px-3 py-2 text-sm transition-colors ${
+                      pushMode === m
+                        ? "border-primary bg-primary/10 text-primary font-medium"
+                        : "border-border text-muted-foreground hover:bg-muted"
+                    }`}
+                  >
+                    {t(`rulesActive.pushMode_${m}`)}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPushTarget(null)} disabled={isPushing}>
+              {t("common.cancel")}
+            </Button>
+            <Button
+              onClick={handlePushToTable}
+              disabled={isPushing || !pushTableFqn.trim()}
+              className="gap-2"
+            >
+              <Upload className="h-4 w-4" />
+              {isPushing ? t("rulesActive.pushing") : t("rulesActive.pushConfirm")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -519,9 +636,11 @@ interface ByTableViewProps {
   pendingDelete: string | null;
   canExport: boolean;
   onExport: (fqn: string, rules: RuleCatalogEntryOut[]) => void;
+  canPush: boolean;
+  onPush: (fqn: string, rules: RuleCatalogEntryOut[]) => void;
 }
 
-function ByTableView({ groups, expandedTables, onToggle, onNavigate, canDelete, onDelete, pendingDelete, canExport, onExport }: ByTableViewProps) {
+function ByTableView({ groups, expandedTables, onToggle, onNavigate, canDelete, onDelete, pendingDelete, canExport, onExport, canPush, onPush }: ByTableViewProps) {
   const { t } = useTranslation();
   return (
     <div className="space-y-2">
@@ -631,6 +750,17 @@ function ByTableView({ groups, expandedTables, onToggle, onNavigate, canDelete, 
                     >
                       <Download className="h-3 w-3" />
                       {t("rulesActive.exportYaml")}
+                    </Button>
+                  )}
+                  {canPush && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 text-xs gap-1"
+                      onClick={() => onPush(fqn, rules)}
+                    >
+                      <Upload className="h-3 w-3" />
+                      {t("rulesActive.pushToTable")}
                     </Button>
                   )}
                   <Button

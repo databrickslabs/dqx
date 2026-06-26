@@ -1,5 +1,4 @@
 import { ModeToggle } from "@/components/layout/mode-toggle";
-import { AIAssistantTrigger } from "@/components/AIAssistantProvider";
 import Logo from "@/components/layout/Logo";
 import { ReactNode } from "react";
 
@@ -15,7 +14,6 @@ function Navbar({ leftContent, rightContent }: NavbarProps) {
         {leftContent || <Logo />}
         <div className="flex-1" />
         <div className="flex items-center gap-2">
-          <AIAssistantTrigger />
           {rightContent || <ModeToggle />}
         </div>
       </div>

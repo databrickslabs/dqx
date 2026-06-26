@@ -471,5 +471,35 @@ __all__ = [
     "CurrentUserRunner",
     "get_user_runner_flag",
     "get_user_catalog_names",
+    "get_spark",
+    "get_dq_engine",
     "rt",
 ]
+
+
+async def get_spark(
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+):
+    """Return a Databricks Connect SparkSession authenticated as the calling user (OBO).
+
+    Uses serverless compute — no cluster ID required. Unity Catalog row
+    filters and column masks are enforced at the Spark layer via the OBO token.
+    """
+    from databricks.connect import DatabricksSession
+
+    token = obo_ws.config.token
+    host = obo_ws.config.host
+    try:
+        return DatabricksSession.builder.remote(host=host, token=token, serverless=True).getOrCreate()
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Failed to start Spark session: {e}") from e
+
+
+async def get_dq_engine(
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    spark=Depends(get_spark),
+):
+    """Return a DQEngine backed by the OBO Spark session."""
+    from databricks.labs.dqx.engine import DQEngine
+
+    return DQEngine(workspace_client=obo_ws, spark=spark)

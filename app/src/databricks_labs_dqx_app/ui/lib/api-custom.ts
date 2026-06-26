@@ -109,6 +109,100 @@ export const useBatchRunFromCatalog = <
 };
 
 // ---------------------------------------------------------------------------
+// Table preview — sample rows for the Preview Data block
+// ---------------------------------------------------------------------------
+
+export interface TablePreviewOut {
+  columns: string[];
+  rows: Record<string, string | null>[];
+  row_count: number;
+}
+
+export const getTablePreview = (
+  catalog: string,
+  schema: string,
+  table: string,
+  limit = 10,
+  filterQuery?: string,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<TablePreviewOut>> => {
+  const params: Record<string, unknown> = { limit };
+  if (filterQuery && filterQuery.trim()) params.filter_query = filterQuery.trim();
+  return axios.default.get(
+    `/api/v1/discovery/catalogs/${encodeURIComponent(catalog)}/schemas/${encodeURIComponent(schema)}/tables/${encodeURIComponent(table)}/preview`,
+    { ...options, params },
+  );
+};
+
+// ---------------------------------------------------------------------------
+// Preview dry run — run checks inline against preview rows (no job submission)
+// ---------------------------------------------------------------------------
+
+export interface PreviewDryRunIn {
+  table_fqn: string;
+  checks: Array<Record<string, unknown>>;
+  rows: Record<string, unknown>[];
+}
+
+export interface PreviewRowResult {
+  row: Record<string, unknown>;
+  errors: string[];
+  warnings: string[];
+}
+
+export interface PreviewDryRunOut {
+  table_fqn: string;
+  total_rows: number;
+  error_rows: number;
+  warning_rows: number;
+  pass_rows: number;
+  rows: PreviewRowResult[];
+}
+
+export const runDryRunOnPreview = (
+  body: PreviewDryRunIn,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<PreviewDryRunOut>> => {
+  return axios.default.post(`/api/v1/dryrun/run-on-preview`, body, options);
+};
+
+export interface TableDryRunIn {
+  table_fqn: string;
+  checks: Array<Record<string, unknown>>;
+  sample_size?: number;
+}
+
+export const runDryRunOnTable = (
+  body: TableDryRunIn,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<PreviewDryRunOut>> => {
+  return axios.default.post(`/api/v1/dryrun/run-on-table`, body, options);
+};
+
+// ---------------------------------------------------------------------------
+// Push rules to Delta table
+// ---------------------------------------------------------------------------
+
+export interface PushToTableIn {
+  checks: Array<Record<string, unknown>>;
+  target_table: string;
+  run_config_name: string;
+  mode?: "append" | "overwrite";
+}
+
+export interface PushToTableOut {
+  message: string;
+  pushed_count: number;
+}
+
+export const pushRulesToTable = (
+  body: PushToTableIn,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<PushToTableOut>> => {
+  return axios.default.post(`/api/v1/rules/push-to-table`, body, options);
+};
+
+// ---------------------------------------------------------------------------
 // Filter tables by required columns
 // ---------------------------------------------------------------------------
 

@@ -13,8 +13,23 @@ from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 
 logger = logging.getLogger(__name__)
 
-
 _tmp_schema_ready = False
+
+# Map Unity Catalog ColumnTypeName values to SQL CAST targets for VALUES views.
+# Anything not listed falls back to STRING.
+_UC_TYPE_TO_SQL: dict[str, str] = {
+    "LONG": "BIGINT",
+    "INT": "INT",
+    "SHORT": "SMALLINT",
+    "BYTE": "TINYINT",
+    "DOUBLE": "DOUBLE",
+    "FLOAT": "FLOAT",
+    "DECIMAL": "DECIMAL",
+    "BOOLEAN": "BOOLEAN",
+    "DATE": "DATE",
+    "TIMESTAMP": "TIMESTAMP",
+    "TIMESTAMP_NTZ": "TIMESTAMP_NTZ",
+}
 
 
 def mark_tmp_schema_ready() -> None:
@@ -163,6 +178,78 @@ class ViewService:
             raise RuntimeError(f"View creation succeeded but view not found: {view_name}")
 
         logger.info("SQL-check view created and verified: %s", view_name)
+        return view_name
+
+    def create_view_from_rows(
+        self,
+        columns: list[str],
+        rows: list[dict[str, str | None]],
+        col_types: dict[str, str],
+    ) -> str:
+        """Create a temporary view over inline preview rows using a VALUES clause.
+
+        All values arrive as strings from the preview API; each column is
+        TRY_CAST to its Unity Catalog type so DQX numeric/date checks still work.
+        Returns the fully qualified view name.
+        """
+        from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, quote_fqn
+
+        self._ensure_schema()
+
+        view_id = uuid4().hex[:12]
+        view_name = f"{self._sql.catalog}.{self._sql.schema}.tmp_view_{view_id}"
+        quoted_view = quote_fqn(view_name)
+
+        pos_aliases = [f"_c{i}" for i in range(len(columns))]
+
+        def _literal(val: str | None) -> str:
+            if val is None:
+                return "NULL"
+            return f"'{escape_sql_string(val)}'"
+
+        def _row_sql(row: dict[str, str | None]) -> str:
+            return "(" + ", ".join(_literal(row.get(col)) for col in columns) + ")"
+
+        rows_sql = ",\n    ".join(_row_sql(r) for r in rows)
+
+        select_parts: list[str] = []
+        for i, col in enumerate(columns):
+            pos = pos_aliases[i]
+            uc_type = col_types.get(col, "STRING").upper()
+            sql_type = _UC_TYPE_TO_SQL.get(uc_type, "STRING")
+            quoted_col = "`" + col.replace("`", "``") + "`"
+            if sql_type == "STRING":
+                select_parts.append(f"CAST({pos} AS STRING) AS {quoted_col}")
+            else:
+                select_parts.append(f"TRY_CAST({pos} AS {sql_type}) AS {quoted_col}")
+
+        aliases_csv = ", ".join(pos_aliases)
+        select_csv = ", ".join(select_parts)
+
+        sql = (
+            f"CREATE OR REPLACE VIEW {quoted_view} AS\n"
+            f"SELECT {select_csv}\n"
+            f"FROM (\n  VALUES\n    {rows_sql}\n) AS _t({aliases_csv})"
+        )
+
+        logger.info("Creating VALUES view %s (%d rows, %d cols)", view_name, len(rows), len(columns))
+        self._sql.execute(sql)
+
+        grant_sql = f"GRANT SELECT ON VIEW {quoted_view} TO `account users`"
+        try:
+            self._sql.execute(grant_sql)
+        except Exception as e:
+            logger.error("GRANT SELECT failed on VALUES view %s: %s", view_name, e)
+            raise RuntimeError(
+                f"Cannot grant SELECT on VALUES view to account users. "
+                f"Ensure the user has ownership or GRANT privilege on "
+                f"schema {self._sql.catalog}.{self._sql.schema}: {e}"
+            ) from e
+
+        if not self._view_exists(view_name):
+            raise RuntimeError(f"VALUES view creation succeeded but view not found: {view_name}")
+
+        logger.info("VALUES view created and verified: %s", view_name)
         return view_name
 
     def drop_view(self, view_fqn: str) -> None:
