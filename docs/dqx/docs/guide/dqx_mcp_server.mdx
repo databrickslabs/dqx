@@ -11,7 +11,7 @@ It runs as a [Databricks App](https://docs.databricks.com/en/dev-tools/databrick
 
 <Admonition type="tip" title="When to use the MCP server">
 The MCP server is the recommended integration point for:
-- AI agents (Mosaic AI Agent, Genie Code) that need to profile tables, generate rules, and run quality checks programmatically.
+- AI agents ([Agent Bricks](https://www.databricks.com/product/artificial-intelligence/agent-bricks), Genie Code) that need to profile tables, generate rules, and run quality checks programmatically.
 - IDE-based workflows (Cursor, Claude Desktop) where you want DQX tools available as MCP tools.
 - Any MCP-compatible client that needs data quality capabilities without writing DQX code directly.
 
@@ -21,26 +21,41 @@ For code-level integration into pipelines or notebooks, see the [Programmatic ap
 
 ## Architecture
 
-```
-User (via MCP client)
-  |
-  +- get_table_schema --------------> Direct SQL (DESCRIBE TABLE) via user's OBO token
-  |
-  +- profile_table -----------------> OBO temp view -> SP runner job -> run_id
-  +- run_checks --------------------> OBO temp view -> SP runner job -> run_id
-  +- apply_checks_and_save_to_table > OBO temp view -> SP runner job (writes Delta) -> run_id
-  |
-  +- generate_rules ----------------> SP runner job -> run_id
-  +- generate_rules_from_contract --> SP runner job -> run_id
-  +- validate_checks ---------------> SP runner job -> run_id
-  +- list_available_checks ---------> SP runner job -> run_id
-  +- load_checks -------------------> SP runner job (reads as SP) -> run_id
-  +- save_checks -------------------> SP runner job (writes as SP) -> run_id
-  |
-  +- get_run_result ----------------> Polls job status, returns result when done
+```mermaid
+sequenceDiagram
+    actor Client as MCP client
+    participant App as DQX MCP app
+    participant WH as SQL warehouse
+    participant Job as Runner job
+
+    Note over Client: Genie Code · Cursor · Claude Code
+    Client->>App: Connect to /mcp via OAuth (user token forwarded for OBO)
+
+    Note over Client,Job: Direct & synchronous
+    Client->>App: get_table_schema
+    App->>WH: DESCRIBE TABLE (as the user)
+    WH-->>App: columns
+    App-->>Client: result
+
+    Note over Client,Job: Data tools — async<br/>profile_table · run_checks · apply_checks_and_save_to_table
+    Client->>App: call a data tool
+    App->>WH: create temp view as the user (UC enforced)
+    App->>Job: submit run (serverless, as the app SP)
+    App-->>Client: run_id
+
+    Note over Client,Job: Metadata tools — async<br/>generate_rules · generate_rules_from_contract · validate_checks<br/>list_available_checks · load_checks · save_checks
+    Client->>App: call a metadata tool
+    App->>Job: submit run (as the app SP)
+    App-->>Client: run_id
+
+    Note over Client,Job: Poll until complete
+    Client->>App: get_run_result(run_id)
+    App->>Job: check status
+    Job-->>App: running… then result
+    App-->>Client: status / result
 ```
 
-**Async pattern:** Long-running tools (profiling, rule generation, validation, running/applying checks, save/load) submit a Databricks job and return a `run_id` immediately — this avoids HTTP timeouts in clients like Genie Code. The client then calls `get_run_result(run_id)` to fetch the outcome. If the job is still running, `get_run_result` returns `{"status": "running"}` and the client should poll again after a short pause. Pace your polling (a brief wait between calls) rather than calling in a tight loop.
+**Async pattern:** Long-running tools (profiling, rule generation, validation, running/applying checks, save/load) submit a Databricks job and return a `run_id` immediately — this avoids HTTP timeouts in clients like Genie Code. The client then calls `get_run_result(run_id)` to fetch the outcome. If the job is still running, `get_run_result` returns `{"status": "running"}` and the client calls it again until the run is terminal.
 
 **UC governance:** Tools that read data (`profile_table`, `run_checks`, `apply_checks_and_save_to_table`) create a temporary view using the **user's** OBO token. If the user cannot read the source table, view creation fails — Unity Catalog is enforced end to end. The SP runner job then reads through that view. Each view is dropped by the runner job itself when the operation finishes (a periodic sweeper reaps any orphans as a backstop), so cleanup does not depend on the client polling for results.
 
@@ -65,11 +80,44 @@ User (via MCP client)
 
 ## Prerequisites
 
-- [Databricks CLI](https://docs.databricks.com/dev-tools/cli/install.html) **0.279.0+** (the bundle uses the [direct deployment engine](https://docs.databricks.com/aws/en/dev-tools/bundles/direct), which needs this version)
-- A Databricks workspace with Apps enabled
-- An existing Unity Catalog catalog (the setup job creates the schema and grants)
+Tooling:
+
+- [Databricks CLI](https://docs.databricks.com/dev-tools/cli/install.html) **0.279.0+** (the bundle uses the [direct deployment engine](https://docs.databricks.com/aws/en/dev-tools/bundles/direct), which needs this version). Check with `databricks --version`.
+
+Workspace features (ask a workspace admin to enable any that are missing):
+
+| Feature | Why it's needed |
+|---|---|
+| **Databricks Apps** | The MCP server runs as a Databricks App. |
+| **Serverless compute** | The app and the runner/setup jobs run on serverless. |
+| **Unity Catalog** | All data access and grants are UC-governed (OBO). |
+
+Permissions for the **deploying** user (typical names; exact entitlements vary by workspace — if a step is rejected, this table tells you which grant is missing):
+
+| Permission | On | Used by | Symptom if missing |
+|---|---|---|---|
+| Allow to **create/manage Apps** | workspace | `bundle deploy` (the app) | app creation rejected |
+| **Allow cluster create** / serverless entitlement | workspace | runner + setup jobs | job creation rejected |
+| **Manage** a secret scope (or an existing one) | workspace | the `catalog_name` secret | `secrets put-secret` rejected |
+| **USE CATALOG** + **CREATE SCHEMA** | the target catalog | setup job (creates `<catalog>.tmp`) | `User does not have CREATE SCHEMA` |
+| **MANAGE** (or owner) on the catalog | the target catalog | setup job's `GRANT` / `ALTER SCHEMA OWNER` | grant rejected |
+
+An existing Unity Catalog **catalog** must already exist (the setup job creates a schema inside it, not the catalog itself).
 
 ## Deploy
+
+### What gets deployed
+
+Deploying the bundle creates four things in your workspace (all prefixed by `name_prefix`, default `mcp-dqx`):
+
+| Resource | Name | Purpose |
+|---|---|---|
+| Databricks App | `mcp-dqx` | The MCP server (serves `/mcp`); runs as its own app service principal. |
+| Job | `mcp-dqx-runner` | Serverless job with `databricks-labs-dqx` installed; tools submit work to it. |
+| Job | `mcp-dqx-setup` | One-time setup: creates the temp schema + UC grants. |
+| Secret | `dqx-config/catalog_name` | The catalog the app/runner use for temp views (you set this). |
+
+The runner and setup jobs are idempotent and safe to re-run. Nothing here is destroy-protected, so `databricks bundle destroy` removes it all — see [Upgrade and uninstall](#upgrade-and-uninstall).
 
 ### 1. Authenticate
 
@@ -91,47 +139,44 @@ databricks secrets put-secret dqx-config catalog_name --string-value "<your_cata
 
 To change the catalog later, update the secret and restart the app.
 
-### 3. Deploy the bundle
+### 3. Deploy
+
+**One command** (parity with the Studio app's `make app-deploy`):
+
+```bash
+make mcp-deploy PROFILE=<profile>
+```
+
+This runs `bundle deploy`, the one-time setup job, and then deploys + starts the app. Add `BUNDLE_VARS='--var catalog_name=<catalog>'` to override the catalog, or `TARGET=<target>` for a non-default bundle target.
+
+**Or step by step** (what `make mcp-deploy` runs):
 
 ```bash
 cd mcp-server
+
+# Deploy the bundle (app + runner job + setup job)
 databricks bundle deploy --profile <profile>
-```
 
-This deploys:
-- The MCP server app (`mcp-dqx`)
-- A runner notebook job (`mcp-dqx-runner`) with `databricks-labs-dqx` pre-installed
-- A one-time setup job (`mcp-dqx-setup`)
-
-### 4. Run the setup job (one-time)
-
-```bash
+# Run the one-time setup job (idempotent)
 databricks bundle run dqx_setup --profile <profile>
+
+# Deploy and start the app
+databricks bundle run mcp-dqx --profile <profile>
 ```
 
-This reads the catalog name from the secret and automatically:
+The **setup job** reads the catalog name from the secret and:
 - Creates the `<catalog>.tmp` schema for temporary views
 - Grants `USE CATALOG` on the catalog to all users and the app SP
 - Grants `USE SCHEMA` + `CREATE TABLE` on the tmp schema to all users
-- Grants `USE SCHEMA` + `SELECT` on the tmp schema to the app SP
+- Grants `USE SCHEMA` + `SELECT` on the tmp schema to the app SP, and makes the SP the schema owner (so it can drop the OBO-created temp views)
 
-Safe to re-run (all statements are idempotent).
+### 4. Find your MCP endpoint
 
-### 5. Restart the app
+The MCP endpoint is `https://<app-url>/mcp`. Find `<app-url>` in the Databricks UI under **Compute → Apps → mcp-dqx** (the **App URL**), or via the CLI:
 
 ```bash
-databricks apps deploy mcp-dqx --profile <profile>
+databricks apps get mcp-dqx --profile <profile> -o json | jq -r .url
 ```
-
-### 6. Find your MCP endpoint
-
-The MCP endpoint is at:
-
-```
-https://<app-url>/mcp
-```
-
-Find the app URL in the Databricks UI under **Compute > Apps > mcp-dqx**.
 
 ## Configuration
 
@@ -145,15 +190,26 @@ Find the app URL in the Databricks UI under **Compute > Apps > mcp-dqx**.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `users_group` | Group name for all workspace users | `account users` |
+| `name_prefix` | Prefix for all resource names (app + jobs). Override to deploy an isolated second copy. | `mcp-dqx` |
+| `catalog_name` | Catalog for temp views. Empty ⇒ read from the secret scope (the normal case). | `""` |
+| `config_secret_scope` | Secret scope holding `catalog_name`. | `dqx-config` |
+| `users_group` | Group granted `CAN_USE` on the app and access to the temp schema. | `account users` |
 
-Override at deploy time:
+Override at deploy time (or via `BUNDLE_VARS=` with `make mcp-deploy`):
 
 ```bash
-databricks bundle deploy \
-  --var users_group="account users" \
-  --profile <profile>
+databricks bundle deploy --var users_group="users" --profile <profile>
 ```
+
+### Monitoring
+
+```bash
+databricks apps get mcp-dqx --profile <profile>      # status (compute + app state, URL)
+databricks apps logs mcp-dqx --profile <profile>     # tail app logs
+databricks apps stop mcp-dqx --profile <profile>     # stop the app (e.g. to pause cost)
+```
+
+The runner job's per-operation runs are visible under **Workflows → Jobs → mcp-dqx-runner**, which is where tool failures (a failed `run_id`) show their full stack trace.
 
 ### How it works
 
@@ -177,13 +233,37 @@ GRANT USE SCHEMA, CREATE TABLE, MODIFY ON SCHEMA `<catalog>`.`<schema>` TO `<app
 For a UC **volume** or **workspace file** target, grant the SP the equivalent write permission on that volume/folder instead. If you only ever use the read/analyze tools (profile, generate, validate, run), no extra grant is needed.
 </Admonition>
 
+## Connect an MCP client
+
+The app exposes a standard MCP endpoint over Streamable HTTP at `https://<app-url>/mcp`. **Genie Code** (inside Databricks) is the recommended client — it authenticates to the app for you. External IDE clients such as Cursor and Claude Code point at the same URL and complete the Databricks OAuth login; follow each tool's own MCP documentation to add a remote server.
+
+<Admonition type="warning" title="Authentication is OAuth, not PATs">
+The Databricks Apps front-door authenticates the caller with **OAuth** and forwards the user's token to the server (on-behalf-of). A **personal access token (PAT) is rejected** by the OBO front-door. Genie Code supplies an OAuth token automatically; external clients complete the Databricks OAuth login flow on first use. Every tool then runs as **you**, so it only sees data your Unity Catalog grants allow.
+</Admonition>
+
+### Genie Code (recommended)
+
+Genie Code runs inside your Databricks workspace and authenticates to the app automatically. Follow the Databricks guide [Add MCP servers to Genie Code](https://docs.databricks.com/aws/en/genie-code/mcp) to add a **custom MCP server**, using the DQX server endpoint `https://<app-url>/mcp`.
+
+Once added, the DQX server appears under **Settings → MCP Servers** with its tools enabled. You can then ask questions in plain English (see [Example prompts](#example-prompts)).
+
+![Genie Code Settings showing the deployed DQX MCP server with its tools enabled](/img/mcp-genie-settings.png)
+
+#### Approving tool actions
+
+The **Actions** setting sets the approval mode for new conversations (you can also override it per conversation). With **Ask first**, you approve each tool before it runs; with **Auto-approve**, tools run automatically (Databricks blocks potentially risky actions). The DQX workflow polls `get_run_result` repeatedly while jobs run, so **Auto-approve** avoids repeated approval prompts for those status checks. See the Databricks guide [Approve tool actions](https://docs.databricks.com/aws/en/genie-code/use-genie-code#approve-tool-actions).
+
+![A Genie Code conversation calling a DQX tool, showing the per-conversation approval control](/img/mcp-genie-auto-approve.png)
+
+### Cursor
+
+Add a remote (HTTP) MCP server pointing at `https://<app-url>/mcp`, following [Cursor's MCP documentation](https://cursor.com/docs/mcp#installing-mcp-servers). On first use Cursor runs the Databricks OAuth login for the app (a PAT will not work — see the note above).
+
+### Claude Code
+
+Add a remote (HTTP) MCP server pointing at `https://<app-url>/mcp`, following [Claude Code's MCP documentation](https://code.claude.com/docs/en/mcp#installing-mcp-servers). Authenticate to the app via the Databricks OAuth login on first use.
+
 ## Usage
-
-### With Genie Code / Mosaic AI Agent
-
-The app exposes a standard MCP HTTP endpoint. Connect any MCP-compatible client to `https://<app-url>/mcp`.
-
-Steps to add MCP server to Genie Code: https://docs.databricks.com/aws/en/genie-code/mcp#add-mcp-servers-to-genie-code-manually
 
 ### Recommended workflow
 
@@ -199,7 +279,7 @@ Call `get_workflow` first to get the recommended sequence:
 8. `run_checks` — Execute rules and get a sample of results (returns `run_id`)
 9. `get_run_result(run_id)` — Retrieve check results
 
-Each long-running tool returns a `run_id` immediately; you then poll `get_run_result(run_id)` until `status` is `completed` (or `failed`). A good agent waits briefly between polls instead of calling in a tight loop.
+Each long-running tool returns a `run_id` immediately; the client then polls `get_run_result(run_id)` until `status` is `completed` or `failed`. Several `get_run_result` calls per run are expected while a job runs — see [Troubleshooting](#troubleshooting).
 
 **Alternative entry points:**
 - If an [ODCS data contract](/docs/guide/data_contract_quality_rules_generation) already exists, use `generate_rules_from_contract` instead of profiling + `generate_rules` — it derives checks deterministically from the contract's schema and quality expectations.
@@ -282,53 +362,52 @@ INSERT INTO <catalog>.<schema>.customers VALUES
 
 Optionally, to try `generate_rules_from_contract`, save an [ODCS data contract](/docs/guide/data_contract_quality_rules_generation) describing this table to a UC volume or workspace path and reference it in the prompt.
 
-### With Cursor / Claude Desktop (local development)
+## Troubleshooting
 
-Add to your MCP config (`.cursor/mcp.json` or Claude Desktop config):
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `bundle deploy`: `databricks: command not found` | CLI missing / too old | Install Databricks CLI 0.279.0+ (`databricks --version`). |
+| Deploy fails creating the app | Apps not enabled, or you lack app-create permission | Ask an admin to enable Apps / grant app-create (see [Prerequisites](#prerequisites)). |
+| Setup job: `CREATE SCHEMA` or `GRANT` denied | Missing catalog permissions | Grant the deploying user `USE CATALOG` + `CREATE SCHEMA` + `MANAGE` on the catalog. |
+| MCP client gets **401** on `/mcp` | Using a PAT, or not authenticated | Connect with **OAuth** — Genie Code does this automatically; external clients run the Databricks OAuth login. PATs are rejected by the OBO front-door. |
+| A read tool fails "cannot read table" | Your UC grants don't allow it (OBO is enforced) | Grant yourself `SELECT` on the source table. |
+| `save_checks` / `apply_checks_and_save_to_table` fail with a permission error | The **app SP** can't write to the target | Grant the SP write access — see [Write access](#write-access). |
+| A tool's `run_id` returns `failed` | The runner job errored | Open **Workflows → Jobs → mcp-dqx-runner** and read the failed run's logs. |
+| `get_run_result` keeps returning `running` | Job still executing (serverless cold start ≈ 1 min) | Poll again after a short pause. |
 
-```json
-{
-  "mcpServers": {
-    "dqx": {
-      "command": "uv",
-      "args": ["--directory", "/path/to/dqx/mcp-server", "run", "python", "server/main.py"],
-      "env": {
-        "MCP_TRANSPORT": "stdio"
-      }
-    }
-  }
-}
+### Managing the server's tools
+
+In Genie Code, open the DQX server from **Settings → MCP Servers** to enable or disable individual tools. After the server is upgraded to a new version, use **Refresh tools list** so the client picks up any added or changed tools.
+
+![The DQX MCP server's available tools in Genie Code, with per-tool toggles and the Refresh tools list button](/img/mcp-genie-tools.png)
+
+### Repeated `get_run_result` calls are expected
+
+Most DQX tools run asynchronously: a tool returns a `run_id`, and the client calls `get_run_result` until the run is complete. It is normal to see several `get_run_result` calls for a single operation while the job runs.
+
+![A Genie Code conversation showing repeated get_run_result calls while a job completes](/img/mcp-genie-polling.png)
+
+Once the run completes, these steps collapse into a single summary badge with the result:
+
+![The completed conversation with the tool-call steps collapsed into a summary badge](/img/mcp-genie-steps-collapsed.png)
+
+## Upgrade and uninstall
+
+**Upgrade** — pull the latest code and re-deploy; the bundle updates the app and jobs in place:
+
+```bash
+git pull
+make mcp-deploy PROFILE=<profile>
 ```
 
-## Development
-
-### Run tests
+**Uninstall** — none of the resources are destroy-protected:
 
 ```bash
 cd mcp-server
-pip install -e ".[dev]"
-python -m pytest tests/ -v
+databricks bundle destroy --profile <profile>     # removes the app + both jobs
 ```
 
-### Project structure
-
-```
-mcp-server/
-  +-- server/
-  |   +-- main.py          # Entry point (uvicorn)
-  |   +-- app.py           # FastMCP app + middleware setup
-  |   +-- tools.py         # MCP tool definitions (async submit + poll pattern)
-  |   +-- utils.py         # OBO auth, SQL helpers, temp views, async job submission
-  +-- notebooks/
-  |   +-- runner.py        # Notebook job: profile, check, validate, generate
-  |   +-- setup.py         # One-time setup: schema + grants
-  +-- tests/
-  |   +-- test_utils.py    # Unit tests for utils
-  |   +-- test_tools.py    # Unit tests for tools
-  +-- databricks.yml       # Bundle config (jobs, app, variables)
-  +-- app.yaml             # App command + env vars
-  +-- requirements.txt     # App dependencies (no pyspark/dqx - runs in notebook)
-```
+The `<catalog>.tmp` schema and the `dqx-config` secret scope are **not** part of the bundle — remove them manually if desired (`databricks secrets delete-scope dqx-config` and `DROP SCHEMA <catalog>.tmp`).
 
 ## Getting help
 

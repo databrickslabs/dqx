@@ -192,6 +192,20 @@ mcp-test: ## Run MCP server pytest suite (K=<expr> filter)
 	cd mcp-server && uv run --with pytest pytest tests/ \
 	  $(if $(K),-k "$(K)")
 
+# One-command MCP server deploy (parity with app-deploy). Deploys the bundle (app + runner
+# job + setup job), runs the one-time setup job (UC grants + temp-schema ownership), then
+# deploys & starts the app via ``bundle run``. The catalog-name secret must already be set
+# (see the deploy guide) — the setup job and app read it from the secret scope.
+#
+# Usage: make mcp-deploy PROFILE=my-profile
+#        make mcp-deploy PROFILE=my-profile BUNDLE_VARS='--var catalog_name=main'
+# TARGET defaults to the bundle's default target (dev); override with TARGET=<t>.
+mcp-deploy: ## Deploy the MCP server bundle, run setup, and (re)deploy + start the app
+	@test -n "$(PROFILE)" || (echo "Usage: make mcp-deploy PROFILE=<databricks-profile> [TARGET=<bundle-target>] [BUNDLE_VARS=...]"; exit 1)
+	cd mcp-server && databricks bundle deploy -p $(PROFILE) $(if $(TARGET),-t $(TARGET)) $(BUNDLE_VARS)
+	cd mcp-server && databricks bundle run dqx_setup -p $(PROFILE) $(if $(TARGET),-t $(TARGET)) $(BUNDLE_VARS)
+	cd mcp-server && databricks bundle run mcp-dqx -p $(PROFILE) $(if $(TARGET),-t $(TARGET)) $(BUNDLE_VARS)
+
 ##@ App deploy (require PROFILE=<databricks-profile>; most also need TARGET=<bundle-target>)
 
 # Grant Unity Catalog permissions after bundle deploy.
