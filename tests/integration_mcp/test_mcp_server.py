@@ -71,8 +71,14 @@ def _endpoint_reachable(host: str, get_token: Callable[[], str]) -> bool:
         return False
 
 
-def _assert_agent_discovers_tools(host: str, get_token: Callable[[], str], url: str, table: str) -> None:
-    """Hand a tool-calling model the MCP tool schemas and assert it picks get_table_schema."""
+def _assert_agent_discovers_tools(
+    host: str, get_token: Callable[[], str], get_app_token: Callable[[], str], url: str, table: str
+) -> None:
+    """Hand a tool-calling model the MCP tool schemas and assert it picks get_table_schema.
+
+    *get_token* authenticates the Model Serving endpoint (workspace host); *get_app_token*
+    authenticates the app's /mcp front-door (which only accepts OAuth tokens — see app_auth).
+    """
     oai_tools = [
         {
             "type": "function",
@@ -82,7 +88,7 @@ def _assert_agent_discovers_tools(host: str, get_token: Callable[[], str], url: 
                 "parameters": t["inputSchema"],
             },
         }
-        for t in _mcp_request(url, get_token(), "tools/list", {})["tools"]
+        for t in _mcp_request(url, get_app_token(), "tools/list", {})["tools"]
     ]
     messages: list[dict] = [
         {"role": "system", "content": "You are a data quality assistant. Use the tools, then give a short answer."},
@@ -106,7 +112,9 @@ def _assert_agent_discovers_tools(host: str, get_token: Callable[[], str], url: 
                 called_tools.append(call["function"]["name"])
                 args = json.loads(call["function"]["arguments"] or "{}")
                 result = _tool_payload(
-                    _mcp_request(url, get_token(), "tools/call", {"name": call["function"]["name"], "arguments": args})
+                    _mcp_request(
+                        url, get_app_token(), "tools/call", {"name": call["function"]["name"], "arguments": args}
+                    )
                 )
                 messages.append(
                     {"role": "tool", "tool_call_id": call["id"], "content": json.dumps(result, default=str)[:4000]}
@@ -120,12 +128,13 @@ def _assert_agent_discovers_tools(host: str, get_token: Callable[[], str], url: 
     assert any(col in final_text.lower() for col in ("order_id", "customer_id", "status", "amount", "column"))
 
 
-def test_mcp_server_end_to_end(workspace_auth):
+def test_mcp_server_end_to_end(workspace_auth, app_auth):
     """Deploy the MCP app once and exercise every tool end-to-end against the seeded table."""
-    host, get_token = workspace_auth
+    host, get_token = workspace_auth  # control-plane bearer: CLI deploy + Model Serving
+    get_app_token = app_auth  # OAuth bearer the app's /mcp front-door accepts
 
     with deploy_mcp_app(host, get_token) as app, seed_demo_data(app["service_principal"]) as data:
-        client = McpClient(app["url"], get_token)
+        client = McpClient(app["url"], get_app_token)
         wait_until_ready(client)  # a freshly-deployed app needs a moment before /mcp serves
         table = data["table"]
 
@@ -203,4 +212,4 @@ def test_mcp_server_end_to_end(workspace_auth):
 
         # 11. Agent-in-the-loop — a real model must discover + invoke a tool (skip if unreachable).
         if _endpoint_reachable(host, get_token):
-            _assert_agent_discovers_tools(host, get_token, app["url"], table)
+            _assert_agent_discovers_tools(host, get_token, get_app_token, app["url"], table)

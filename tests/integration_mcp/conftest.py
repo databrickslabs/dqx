@@ -25,6 +25,7 @@ from uuid import uuid4
 import pytest
 import requests
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.config import Config
 
 from tests.constants import TEST_CATALOG
 
@@ -48,19 +49,43 @@ def _bearer_from(config) -> str:
 
 @pytest.fixture(scope="session")
 def workspace_auth() -> "tuple[str, Callable[[], str]]":
-    """(host, get_token) resolved by the SDK from the ambient auth.
+    """(host, get_token) resolved by the SDK from the ambient auth — the *control-plane* bearer.
 
     Uses the SDK's default config resolution — the same auth the harness provides:
     acceptance-action OIDC env in CI, a profile or env vars locally. ``get_token()`` mints a
     **fresh** bearer on each call via ``config.authenticate()`` (the SDK refreshes OAuth /
     metadata-service tokens), so the single long end-to-end test never reuses an expired token.
-    No DATABRICKS_TOKEN needs to be set anywhere. The bearer is needed for the CLI deploy and for
-    raw HTTP to the serving endpoint and the app's /mcp endpoint (a separate
-    *.databricksapps.com host the SDK can't proxy).
+    No DATABRICKS_TOKEN needs to be set anywhere. This bearer is for the CLI deploy and for the
+    Model Serving endpoint (both on the workspace host). The app's /mcp front-door needs a
+    different bearer — see ``app_auth``.
     """
     config = WorkspaceClient().config
     _bearer_from(config)  # fail fast if auth is broken
     return config.host.rstrip("/"), lambda: _bearer_from(config)
+
+
+@pytest.fixture(scope="session")
+def app_auth(workspace_auth: "tuple[str, Callable[[], str]]") -> "Callable[[], str]":
+    """``get_token`` for the app's /mcp front-door, which only accepts OAuth tokens.
+
+    The Databricks Apps front-door honors **OAuth** tokens (user U2M, or service-principal
+    M2M-with-secret) and rejects the acceptance harness's metadata-service token with 401 — even
+    though that identity owns the app. This is a token-*type* limitation, not a permission one.
+
+    When ``DQX_MCP_APP_CLIENT_ID`` + ``DQX_MCP_APP_CLIENT_SECRET`` are present (provisioned from the
+    acceptance vault for a service principal that has CAN_USE on the app), authenticate as that SP
+    via OAuth M2M, which the front-door accepts. Otherwise fall back to the ambient SDK auth — an
+    OAuth profile locally also works. MCP-specific env names are used deliberately so that adding
+    these to the shared vault never changes how other suites' ``WorkspaceClient`` authenticates.
+    """
+    host, ambient_get_token = workspace_auth
+    client_id = os.environ.get("DQX_MCP_APP_CLIENT_ID")
+    client_secret = os.environ.get("DQX_MCP_APP_CLIENT_SECRET")
+    if not (client_id and client_secret):
+        return ambient_get_token  # local OAuth profile (front-door accepts it)
+    config = Config(host=host, client_id=client_id, client_secret=client_secret, auth_type="oauth-m2m")
+    _bearer_from(config)  # fail fast if the M2M credentials are bad
+    return lambda: _bearer_from(config)
 
 
 def _script_env(name_prefix: str, secret_scope: str, host: str, token: str) -> dict[str, str]:
@@ -204,7 +229,15 @@ def wait_until_ready(client: McpClient, *, timeout: float = 180.0, interval: flo
     """Poll tools/list until the freshly-deployed app is serving.
 
     A just-deployed app needs a moment before its server answers; until then /mcp can return
-    401/404/5xx. Retry until it lists tools (or time out with the last error).
+    404/5xx — retry those until it lists tools (or time out with the last error).
+
+    A **401/403**, however, is not a "warming up" state: the request authenticated against the
+    workspace but the Databricks Apps OBO front-door rejected the *identity*. The acceptance
+    harness authenticates via the metadata service, whose tokens the front-door does not accept —
+    only OAuth tokens (user U2M, or SP M2M-with-secret) carrying the app's ``user_api_scopes`` are.
+    Retrying can't change that, so skip with a clear reason rather than burning the timeout and
+    failing. The suite still runs fully under an OAuth profile locally, and in CI once an OAuth
+    token is provided to the harness.
     """
     deadline = time.monotonic() + timeout
     last: Exception | None = None
@@ -212,7 +245,20 @@ def wait_until_ready(client: McpClient, *, timeout: float = 180.0, interval: flo
         try:
             client.list_tools()
             return
-        except (requests.RequestException, RuntimeError) as exc:  # HTTP errors + MCP error bodies
+        except requests.HTTPError as exc:
+            status = exc.response.status_code if exc.response is not None else None
+            if status in {401, 403}:
+                pytest.skip(
+                    f"MCP app front-door rejected the test identity ({status} Unauthorized): it only "
+                    "accepts OAuth tokens, not the acceptance metadata-service token. Set "
+                    "DQX_MCP_APP_CLIENT_ID / DQX_MCP_APP_CLIENT_SECRET (an SP with CAN_USE on the app) "
+                    "to run live in CI — see the app_auth fixture. Runs under an OAuth profile locally."
+                )
+            last = exc
+            if time.monotonic() >= deadline:
+                raise AssertionError(f"MCP app not ready within {timeout:.0f}s: {last}") from last
+            time.sleep(interval)
+        except (requests.RequestException, RuntimeError) as exc:  # other HTTP errors + MCP error bodies
             last = exc
             if time.monotonic() >= deadline:
                 raise AssertionError(f"MCP app not ready within {timeout:.0f}s: {last}") from last
