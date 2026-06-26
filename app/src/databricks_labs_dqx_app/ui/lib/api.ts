@@ -602,6 +602,43 @@ export interface Name {
   given_name?: string | null;
 }
 
+export type PreviewDryRunInChecksItem = { [key: string]: unknown };
+
+export type PreviewDryRunInRowsItem = { [key: string]: unknown };
+
+export interface PreviewDryRunIn {
+  /** Original table FQN (informational label only) */
+  table_fqn: string;
+  /** List of check metadata dictionaries */
+  checks: PreviewDryRunInChecksItem[];
+  /** Preview rows as column-name-keyed dicts */
+  rows: PreviewDryRunInRowsItem[];
+}
+
+/**
+ * Original row values
+ */
+export type PreviewRowResultRow = { [key: string]: unknown };
+
+export interface PreviewRowResult {
+  /** Original row values */
+  row: PreviewRowResultRow;
+  /** Check names that failed with error criticality */
+  errors?: string[];
+  /** Check names that failed with warn criticality */
+  warnings?: string[];
+}
+
+export interface PreviewDryRunOut {
+  table_fqn: string;
+  total_rows: number;
+  error_rows: number;
+  warning_rows: number;
+  pass_rows: number;
+  /** Per-row results with error/warning annotations */
+  rows: PreviewRowResult[];
+}
+
 export type ProfileResultsOutGeneratedRulesItem = { [key: string]: unknown };
 
 export type ProfileResultsOutSummary = { [key: string]: unknown };
@@ -786,6 +823,21 @@ export interface SetStatusIn {
   status: string;
   /** If provided, the update is rejected when the current version does not match (optimistic concurrency). */
   expected_version?: number | null;
+}
+
+export type TableDryRunInChecksItem = { [key: string]: unknown };
+
+export interface TableDryRunIn {
+  /** Fully qualified table name to read via Spark (catalog.schema.table) */
+  table_fqn: string;
+  /** List of check metadata dictionaries */
+  checks: TableDryRunInChecksItem[];
+  /**
+     * Number of rows to sample from the table
+     * @minimum 1
+     * @maximum 10000
+     */
+  sample_size?: number;
 }
 
 export interface TableOut {
@@ -7338,6 +7390,201 @@ export function useSubmitDryRun<TData = Awaited<ReturnType<typeof submitDryRun>>
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getSubmitDryRunQueryOptions(dryRunIn,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+/**
+ * Run DQX checks inline against preview rows using Databricks Connect serverless.
+ *
+ * No job is submitted. The preview rows are loaded into a Spark DataFrame via
+ * pandas, checks are applied synchronously, and per-row results are returned
+ * immediately. Results are not recorded in the validation history.
+ * @summary Run Dry Run On Preview
+ */
+export const runDryRunOnPreview = (
+    previewDryRunIn: PreviewDryRunIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<PreviewDryRunOut>> => {
+
+
+    return axios.post(
+      `/api/v1/dryrun/run-on-preview`,
+      previewDryRunIn,options
+    );
+  }
+
+
+
+
+export const getRunDryRunOnPreviewQueryKey = (previewDryRunIn?: PreviewDryRunIn,) => {
+    return [
+    'POST', `/api/v1/dryrun/run-on-preview`, previewDryRunIn
+    ] as const;
+    }
+
+
+export const getRunDryRunOnPreviewQueryOptions = <TData = Awaited<ReturnType<typeof runDryRunOnPreview>>, TError = AxiosError<HTTPValidationError>>(previewDryRunIn: PreviewDryRunIn, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof runDryRunOnPreview>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getRunDryRunOnPreviewQueryKey(previewDryRunIn);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof runDryRunOnPreview>>> = ({ signal }) => runDryRunOnPreview(previewDryRunIn, { signal, ...axiosOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof runDryRunOnPreview>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type RunDryRunOnPreviewQueryResult = NonNullable<Awaited<ReturnType<typeof runDryRunOnPreview>>>
+export type RunDryRunOnPreviewQueryError = AxiosError<HTTPValidationError>
+
+
+export function useRunDryRunOnPreview<TData = Awaited<ReturnType<typeof runDryRunOnPreview>>, TError = AxiosError<HTTPValidationError>>(
+ previewDryRunIn: PreviewDryRunIn, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof runDryRunOnPreview>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof runDryRunOnPreview>>,
+          TError,
+          Awaited<ReturnType<typeof runDryRunOnPreview>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useRunDryRunOnPreview<TData = Awaited<ReturnType<typeof runDryRunOnPreview>>, TError = AxiosError<HTTPValidationError>>(
+ previewDryRunIn: PreviewDryRunIn, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof runDryRunOnPreview>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof runDryRunOnPreview>>,
+          TError,
+          Awaited<ReturnType<typeof runDryRunOnPreview>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useRunDryRunOnPreview<TData = Awaited<ReturnType<typeof runDryRunOnPreview>>, TError = AxiosError<HTTPValidationError>>(
+ previewDryRunIn: PreviewDryRunIn, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof runDryRunOnPreview>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Run Dry Run On Preview
+ */
+
+export function useRunDryRunOnPreview<TData = Awaited<ReturnType<typeof runDryRunOnPreview>>, TError = AxiosError<HTTPValidationError>>(
+ previewDryRunIn: PreviewDryRunIn, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof runDryRunOnPreview>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getRunDryRunOnPreviewQueryOptions(previewDryRunIn,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+/**
+ * Run DQX checks inline against a live table using Databricks Connect serverless.
+ *
+ * No job is submitted. The table is read directly via Spark (OBO credentials —
+ * Unity Catalog permissions enforced), checks are applied synchronously, and
+ * per-row results are returned immediately. Results are not recorded in the
+ * validation history.
+ * @summary Run Dry Run On Table
+ */
+export const runDryRunOnTable = (
+    tableDryRunIn: TableDryRunIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<PreviewDryRunOut>> => {
+
+
+    return axios.post(
+      `/api/v1/dryrun/run-on-table`,
+      tableDryRunIn,options
+    );
+  }
+
+
+
+
+export const getRunDryRunOnTableQueryKey = (tableDryRunIn?: TableDryRunIn,) => {
+    return [
+    'POST', `/api/v1/dryrun/run-on-table`, tableDryRunIn
+    ] as const;
+    }
+
+
+export const getRunDryRunOnTableQueryOptions = <TData = Awaited<ReturnType<typeof runDryRunOnTable>>, TError = AxiosError<HTTPValidationError>>(tableDryRunIn: TableDryRunIn, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof runDryRunOnTable>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getRunDryRunOnTableQueryKey(tableDryRunIn);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof runDryRunOnTable>>> = ({ signal }) => runDryRunOnTable(tableDryRunIn, { signal, ...axiosOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof runDryRunOnTable>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type RunDryRunOnTableQueryResult = NonNullable<Awaited<ReturnType<typeof runDryRunOnTable>>>
+export type RunDryRunOnTableQueryError = AxiosError<HTTPValidationError>
+
+
+export function useRunDryRunOnTable<TData = Awaited<ReturnType<typeof runDryRunOnTable>>, TError = AxiosError<HTTPValidationError>>(
+ tableDryRunIn: TableDryRunIn, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof runDryRunOnTable>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof runDryRunOnTable>>,
+          TError,
+          Awaited<ReturnType<typeof runDryRunOnTable>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useRunDryRunOnTable<TData = Awaited<ReturnType<typeof runDryRunOnTable>>, TError = AxiosError<HTTPValidationError>>(
+ tableDryRunIn: TableDryRunIn, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof runDryRunOnTable>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof runDryRunOnTable>>,
+          TError,
+          Awaited<ReturnType<typeof runDryRunOnTable>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useRunDryRunOnTable<TData = Awaited<ReturnType<typeof runDryRunOnTable>>, TError = AxiosError<HTTPValidationError>>(
+ tableDryRunIn: TableDryRunIn, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof runDryRunOnTable>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Run Dry Run On Table
+ */
+
+export function useRunDryRunOnTable<TData = Awaited<ReturnType<typeof runDryRunOnTable>>, TError = AxiosError<HTTPValidationError>>(
+ tableDryRunIn: TableDryRunIn, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof runDryRunOnTable>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getRunDryRunOnTableQueryOptions(tableDryRunIn,options)
 
   const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 

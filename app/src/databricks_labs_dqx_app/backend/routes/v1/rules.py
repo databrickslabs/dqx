@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from databricks_labs_dqx_app.backend.common.authorization import UserRole
 from databricks_labs_dqx_app.backend.dependencies import (
     CurrentUserRole,
+    get_dq_engine,
     get_obo_ws,
     get_rules_catalog_service,
     get_user_catalog_names,
@@ -17,6 +18,8 @@ from databricks_labs_dqx_app.backend.models import (
     BatchSaveRulesOut,
     CheckDuplicatesIn,
     CheckDuplicatesOut,
+    PushToTableIn,
+    PushToTableOut,
     RuleCatalogEntryOut,
     SaveRulesIn,
     SetStatusIn,
@@ -434,3 +437,41 @@ def reject_rules(
     except Exception as e:
         logger.error(f"Failed to reject rule: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to reject rule: {e}")
+
+
+@router.post(
+    "/push-to-table",
+    response_model=PushToTableOut,
+    operation_id="pushRulesToTable",
+    dependencies=[require_role(*_APPROVERS_ONLY)],
+)
+async def push_rules_to_table(
+    body: PushToTableIn,
+    engine=Depends(get_dq_engine),
+) -> PushToTableOut:
+    """Push a set of approved checks directly into a user-specified Delta table via Spark."""
+    import asyncio
+    from databricks.labs.dqx.config import TableChecksStorageConfig
+
+    if not body.checks:
+        raise HTTPException(status_code=400, detail="No checks provided")
+    if body.mode not in ("append", "overwrite"):
+        raise HTTPException(status_code=400, detail="mode must be 'append' or 'overwrite'")
+
+    def _push() -> None:
+        config = TableChecksStorageConfig(
+            location=body.target_table,
+            run_config_name=body.run_config_name,
+            mode=body.mode,
+        )
+        engine.save_checks(body.checks, config)
+
+    try:
+        await asyncio.to_thread(_push)
+        return PushToTableOut(
+            message=f"Pushed {len(body.checks)} check(s) to {body.target_table}",
+            pushed_count=len(body.checks),
+        )
+    except Exception as e:
+        logger.error("push_rules_to_table failed for %s: %s", body.target_table, e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to push rules to table: {e}")

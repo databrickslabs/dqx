@@ -123,11 +123,14 @@ export const getTablePreview = (
   schema: string,
   table: string,
   limit = 10,
+  filterQuery?: string,
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<TablePreviewOut>> => {
+  const params: Record<string, unknown> = { limit };
+  if (filterQuery && filterQuery.trim()) params.filter_query = filterQuery.trim();
   return axios.default.get(
     `/api/v1/discovery/catalogs/${encodeURIComponent(catalog)}/schemas/${encodeURIComponent(schema)}/tables/${encodeURIComponent(table)}/preview`,
-    { ...options, params: { limit } },
+    { ...options, params },
   );
 };
 
@@ -174,6 +177,29 @@ export const runDryRunOnTable = (
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<PreviewDryRunOut>> => {
   return axios.default.post(`/api/v1/dryrun/run-on-table`, body, options);
+};
+
+// ---------------------------------------------------------------------------
+// Push rules to Delta table
+// ---------------------------------------------------------------------------
+
+export interface PushToTableIn {
+  checks: Array<Record<string, unknown>>;
+  target_table: string;
+  run_config_name: string;
+  mode?: "append" | "overwrite";
+}
+
+export interface PushToTableOut {
+  message: string;
+  pushed_count: number;
+}
+
+export const pushRulesToTable = (
+  body: PushToTableIn,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<PushToTableOut>> => {
+  return axios.default.post(`/api/v1/rules/push-to-table`, body, options);
 };
 
 // ---------------------------------------------------------------------------

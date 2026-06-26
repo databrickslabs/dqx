@@ -174,7 +174,7 @@ export function CatalogBrowser({
             onValueChange={handleCatalogChange}
             disabled={disabled || catalogsLoading}
           >
-            <SelectTrigger>
+            <SelectTrigger className="w-full">
               {catalogsLoading ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
@@ -198,7 +198,7 @@ export function CatalogBrowser({
             onValueChange={handleSchemaChange}
             disabled={disabled || !catalog || schemasLoading}
           >
-            <SelectTrigger>
+            <SelectTrigger className="w-full">
               {schemasLoading ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
@@ -223,7 +223,7 @@ export function CatalogBrowser({
               onValueChange={handleTableChange}
               disabled={disabled || !schema || tablesLoading}
             >
-              <SelectTrigger>
+              <SelectTrigger className="w-full">
                 {tablesLoading ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (

@@ -1,9 +1,11 @@
 import asyncio
+import re
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from databricks.sdk import WorkspaceClient
+from fastapi import APIRouter, Depends, HTTPException, Query
 
-from databricks_labs_dqx_app.backend.dependencies import get_discovery_service, get_obo_sql_executor
+from databricks_labs_dqx_app.backend.dependencies import get_discovery_service, get_obo_sql_executor, get_obo_ws
 from databricks_labs_dqx_app.backend.logger import logger
 from databricks_labs_dqx_app.backend.models import (
     CatalogOut,
@@ -154,6 +156,45 @@ async def get_table_tags(
         raise HTTPException(status_code=500, detail=f"Failed to get table tags: {e}")
 
 
+_NL_FILTER_MODEL = "databricks-claude-sonnet-4-5"
+
+
+def _generate_filter_sql(ws: WorkspaceClient, nl_query: str, quoted_fqn: str, limit: int, columns: list[str]) -> str:
+    """Call a Databricks Foundation Model to convert a natural-language filter into SQL.
+
+    Returns a complete SELECT statement. Falls back to a plain SELECT on any error.
+    """
+    col_list = ", ".join(columns) if columns else "(columns unknown)"
+    prompt = (
+        f"You are a SQL expert. Generate a valid Spark SQL SELECT statement for the table {quoted_fqn}.\n\n"
+        f"The table has EXACTLY these columns (use no others): {col_list}\n\n"
+        f"User request: {nl_query}\n\n"
+        "Rules:\n"
+        "1. Return ONLY the raw SQL — no markdown, no code fences.\n"
+        f"2. Always include LIMIT {limit}.\n"
+        "3. ONLY use column names from the list above — never infer or guess column names.\n"
+        f"4. If the request is unclear default to: SELECT * FROM {quoted_fqn} LIMIT {limit}"
+    )
+    payload = {
+        "messages": [
+            {"role": "system", "content": "You are a SQL generator for Databricks Spark SQL."},
+            {"role": "user", "content": prompt},
+        ],
+        "max_tokens": 512,
+        "temperature": 0,
+    }
+    try:
+        resp = ws.api_client.do("POST", f"/serving-endpoints/{_NL_FILTER_MODEL}/invocations", body=payload)
+        sql = resp["choices"][0]["message"]["content"].strip()  # type: ignore[index]
+        sql = re.sub(r"```[a-z]*|```", "", sql).strip()
+        if not sql.lower().startswith("select"):
+            return f"SELECT * FROM {quoted_fqn} LIMIT {limit}"
+        return sql
+    except Exception as exc:
+        logger.warning("NL filter SQL generation failed, falling back to plain SELECT: %s", exc)
+        return f"SELECT * FROM {quoted_fqn} LIMIT {limit}"
+
+
 @router.get(
     "/catalogs/{catalog}/schemas/{schema}/tables/{table}/preview",
     response_model=TablePreviewOut,
@@ -164,10 +205,13 @@ async def get_table_preview(
     schema: str,
     table: str,
     obo_sql: Annotated[SqlExecutor, Depends(get_obo_sql_executor)],
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
     limit: int = 10,
+    filter_query: str | None = Query(default=None, description="Natural-language filter applied via AI-generated SQL"),
 ) -> TablePreviewOut:
     """Return up to *limit* sample rows from the table for UI preview.
 
+    When *filter_query* is provided the AI converts it to a SQL WHERE clause first.
     Runs as the calling user (OBO) so Unity Catalog row filters and column masks apply.
     """
     limit = max(1, min(limit, 100))
@@ -178,7 +222,20 @@ async def get_table_preview(
         raise HTTPException(status_code=400, detail=str(e))
     quoted = quote_fqn(fqn)
     try:
-        rows = await asyncio.to_thread(obo_sql.query_dicts, f"SELECT * FROM {quoted} LIMIT {limit}")
+        if filter_query and filter_query.strip():
+            try:
+                desc_rows = await asyncio.to_thread(obo_sql.query_dicts, f"DESCRIBE TABLE {quoted}")
+                # DESCRIBE TABLE returns col_name / data_type / comment; skip partition headers (start with #)
+                columns = [
+                    r["col_name"] for r in desc_rows
+                    if r.get("col_name") and not str(r["col_name"]).startswith("#")
+                ]
+            except Exception:
+                columns = []
+            sql = await asyncio.to_thread(_generate_filter_sql, obo_ws, filter_query.strip(), quoted, limit, columns)
+        else:
+            sql = f"SELECT * FROM {quoted} LIMIT {limit}"
+        rows = await asyncio.to_thread(obo_sql.query_dicts, sql)
         cols = list(rows[0].keys()) if rows else []
         return TablePreviewOut(columns=cols, rows=rows, row_count=len(rows))
     except HTTPException:

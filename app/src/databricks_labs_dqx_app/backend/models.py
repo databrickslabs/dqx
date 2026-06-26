@@ -156,6 +156,18 @@ class PreviewRowResult(BaseModel):
     warnings: list[str] = Field(default_factory=list, description="Check names that failed with warn criticality")
 
 
+class PushToTableIn(BaseModel):
+    checks: list[dict[str, Any]] = Field(description="List of check metadata dictionaries to push")
+    target_table: str = Field(description="Fully qualified Delta table name to write checks into")
+    run_config_name: str = Field(description="Run config name used as partition key in the checks table")
+    mode: str = Field(default="append", description="Write mode: append or overwrite")
+
+
+class PushToTableOut(BaseModel):
+    message: str = Field(description="Result message")
+    pushed_count: int = Field(description="Number of checks pushed")
+
+
 class PreviewDryRunOut(BaseModel):
     table_fqn: str
     total_rows: int

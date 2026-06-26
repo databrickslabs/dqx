@@ -651,24 +651,26 @@ function UnifiedRulesPage() {
     } catch { return null; }
   });
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewFilterQuery, setPreviewFilterQuery] = useState("");
   const isPreviewTableFqn = previewTable.split(".").length === 3;
 
   const handlePreviewTableChange = useCallback((fqn: string) => {
     setPreviewTable(fqn);
     setPreviewData(null);
+    setPreviewFilterQuery("");
     try {
       localStorage.setItem(PREVIEW_TABLE_LS_KEY, fqn);
       localStorage.removeItem(PREVIEW_DATA_LS_KEY);
     } catch { /* ignore */ }
   }, []);
 
-  const handleLoadPreview = useCallback(async () => {
+  const handleLoadPreview = useCallback(async (filterQ?: string) => {
     if (!isPreviewTableFqn) return;
     const [cat, sch, tbl] = previewTable.split(".");
     setPreviewLoading(true);
     try {
       const [previewResp, colsResp] = await Promise.all([
-        getTablePreview(cat, sch, tbl, 10),
+        getTablePreview(cat, sch, tbl, 10, filterQ),
         getTableColumns(cat, sch, tbl),
       ]);
       const col_types: Record<string, string> = {};
@@ -677,7 +679,9 @@ function UnifiedRulesPage() {
       }
       const data: PreviewData = { ...previewResp.data, col_types };
       setPreviewData(data);
-      try { localStorage.setItem(PREVIEW_DATA_LS_KEY, JSON.stringify({ fqn: previewTable, data })); } catch { /* ignore */ }
+      if (!filterQ) {
+        try { localStorage.setItem(PREVIEW_DATA_LS_KEY, JSON.stringify({ fqn: previewTable, data })); } catch { /* ignore */ }
+      }
     } catch {
       toast.error(t("rulesSingleTable.previewLoadError"));
     } finally {
@@ -1205,7 +1209,7 @@ function UnifiedRulesPage() {
               <Button
                 size="sm"
                 variant="outline"
-                onClick={handleLoadPreview}
+                onClick={() => { setPreviewFilterQuery(""); void handleLoadPreview(); }}
                 disabled={!isPreviewTableFqn || previewLoading}
                 className="gap-2"
               >
@@ -1225,11 +1229,41 @@ function UnifiedRulesPage() {
           />
           {previewData && previewData.columns.length > 0 && (
             <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <LayoutGrid className="h-3.5 w-3.5 text-muted-foreground" />
-                <span className="text-sm font-mono font-bold">
-                  {t("rulesSingleTable.datasetLabel", { name: previewTable })}
-                </span>
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 shrink-0">
+                  <LayoutGrid className="h-3.5 w-3.5 text-muted-foreground" />
+                  <span className="text-sm font-mono font-bold">
+                    {t("rulesSingleTable.datasetLabel", { name: previewTable })}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5 flex-1 max-w-sm">
+                  <div className="relative flex-1">
+                    <Sparkles className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-primary" />
+                    <Input
+                      value={previewFilterQuery}
+                      onChange={(e) => setPreviewFilterQuery(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") void handleLoadPreview(previewFilterQuery || undefined);
+                      }}
+                      placeholder={t("rulesSingleTable.previewFilterPlaceholder")}
+                      className="h-8 pl-8 text-xs"
+                      disabled={previewLoading}
+                    />
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-8 w-8 p-0 shrink-0"
+                    disabled={previewLoading}
+                    onClick={() => void handleLoadPreview(previewFilterQuery || undefined)}
+                  >
+                    {previewLoading ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Search className="h-3.5 w-3.5" />
+                    )}
+                  </Button>
+                </div>
               </div>
               <div className="overflow-x-auto border rounded-md">
                 <table className="w-full text-xs">
