@@ -1,10 +1,13 @@
 ---
 sidebar_position: 315
+title: DQX MCP Server
+sidebar_label: DQX MCP Server
 ---
 
 import Admonition from '@theme/Admonition';
+import Link from '@docusaurus/Link';
 
-# DQX MCP Server
+# DQX MCP Server <Link to="/docs/reference/feature_lifecycle#beta" title="Feature lifecycle: Beta" style={{textDecoration: 'none'}}><span className="badge badge--beta" style={{verticalAlign: 'text-top', marginLeft: '0.4rem', fontSize: '0.19em', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Beta</span></Link> {#dqx-mcp-server}
 
 **DQX MCP Server** is an [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server that exposes DQX data quality tools for AI agents.
 It runs as a [Databricks App](https://docs.databricks.com/en/dev-tools/databricks-apps/index.html) inside your workspace with on-behalf-of (OBO) authentication — every operation respects the calling user's Unity Catalog permissions.
