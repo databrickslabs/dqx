@@ -200,6 +200,10 @@ mcp-test: ## Run MCP server pytest suite (K=<expr> filter)
 # Usage: make mcp-deploy PROFILE=my-profile
 #        make mcp-deploy PROFILE=my-profile BUNDLE_VARS='--var catalog_name=main'
 # TARGET defaults to the bundle's default target (dev); override with TARGET=<t>.
+# The bundle artifact build runs `uv build ../` from inside mcp-server/, so the global
+# relative UV_BUILD_CONSTRAINT (.build-constraints.txt) would resolve against the wrong
+# directory. Pin it to the absolute repo-root path so the wheel build finds it.
+mcp-deploy: export UV_BUILD_CONSTRAINT := $(CURDIR)/.build-constraints.txt
 mcp-deploy: ## Deploy the MCP server bundle, run setup, and (re)deploy + start the app
 	@test -n "$(PROFILE)" || (echo "Usage: make mcp-deploy PROFILE=<databricks-profile> [TARGET=<bundle-target>] [BUNDLE_VARS=...]"; exit 1)
 	cd mcp-server && databricks bundle deploy -p $(PROFILE) $(if $(TARGET),-t $(TARGET)) $(BUNDLE_VARS)
