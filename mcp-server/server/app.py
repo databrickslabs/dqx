@@ -16,7 +16,11 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from .tools import load_tools
-from .utils import OBOAuthMiddleware
+from .utils import OBOAuthMiddleware, configure_logging
+
+# Ensure logging is configured even when this module is the entry point (e.g. a direct
+# `uvicorn server.app:combined_app` in dev). Idempotent — a no-op once main.py has run.
+configure_logging()
 
 logger = logging.getLogger(__name__)
 

@@ -15,6 +15,9 @@ import json
 import logging
 import os
 import re
+import sys
+import time
+import uuid
 from typing import Any
 
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -38,6 +41,68 @@ def sanitize_for_log(value: object) -> str:
     return str(value).replace("\n", " ").replace("\r", " ")
 
 
+# ── Logging configuration ────────────────────────────────────────────
+
+# Per-request correlation id (set by OBOAuthMiddleware), so log lines from a single
+# request — across the tool handler, SQL, and job submission — can be traced together
+# in the Databricks Apps log stream, which is the only place these logs surface.
+_request_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar("request_id", default=None)
+
+# Third-party loggers that are noisy at INFO and would otherwise bury the server's own logs.
+_NOISY_LOGGERS = ("databricks.sdk", "httpx", "httpcore", "urllib3", "py4j")
+
+_LOG_FORMAT = "%(asctime)s %(levelname)s [%(name)s] [req=%(request_id)s user=%(user)s] %(message)s"
+
+_logging_configured = False
+
+
+class RequestContextFilter(logging.Filter):
+    """Inject the per-request correlation id and calling user into every log record.
+
+    Attached to the root handler so *all* records (including third-party ones) carry
+    ``request_id`` and ``user`` fields, defaulting to ``"-"`` outside a request. The
+    user email is sanitized (CWE-117) since it originates from a request header.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.request_id = _request_id_var.get(None) or "-"
+        email = _user_email_var.get(None)
+        record.user = sanitize_for_log(email) if email else "-"
+        return True
+
+
+def configure_logging() -> None:
+    """Configure root logging for the MCP server. Idempotent and entry-point agnostic.
+
+    Safe to call from any entry point (``server/main.py``, a direct ``uvicorn`` invocation,
+    or tests). Emits to stdout (where Databricks Apps collects logs), honors the
+    ``DQX_MCP_LOG_LEVEL`` env var (default ``INFO``), tags every line with the request id and
+    calling user, and quiets noisy third-party loggers so the server's own logs stand out.
+    """
+    global _logging_configured
+    if _logging_configured:
+        return
+
+    level_name = os.environ.get("DQX_MCP_LOG_LEVEL", "INFO").upper()
+    level = logging.getLevelName(level_name)
+    if not isinstance(level, int):
+        level = logging.INFO
+
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(logging.Formatter(_LOG_FORMAT))
+    handler.addFilter(RequestContextFilter())
+
+    root = logging.getLogger()
+    root.handlers.clear()
+    root.addHandler(handler)
+    root.setLevel(level)
+
+    for name in _NOISY_LOGGERS:
+        logging.getLogger(name).setLevel(logging.WARNING)
+
+    _logging_configured = True
+
+
 # ── OBO Auth via contextvars ──────────────────────────────────────────
 
 # Store user identity per-request from Databricks Apps proxy headers
@@ -53,7 +118,12 @@ class OBOAuthMiddleware:
 
     Extracts user identity from Databricks Apps proxy headers:
     - X-Forwarded-Access-Token: user's OBO token (used to call run_now() as user)
-    - X-Forwarded-Email: user's email (for logging)
+    - X-Forwarded-Email: user's email (grant principal + log context)
+
+    Also establishes a per-request correlation id (honoring an inbound ``X-Request-Id``,
+    otherwise generated) and logs one line per request with status and duration, so a
+    request can be traced end-to-end in the Databricks Apps log stream. All request
+    context is reset on the way out so it never leaks across requests on a reused worker.
 
     Using pure ASGI (not BaseHTTPMiddleware) is critical — BaseHTTPMiddleware
     buffers response bodies which causes MCP streaming timeouts.
@@ -70,16 +140,40 @@ class OBOAuthMiddleware:
         headers = dict(scope.get("headers", []))
         user_token = headers.get(b"x-forwarded-access-token", b"").decode() or None
         user_email = headers.get(b"x-forwarded-email", b"").decode() or None
+        # Correlate logs across the request; honor an upstream trace id if the proxy set one.
+        incoming_id = headers.get(b"x-request-id", b"").decode().strip()
+        request_id = (incoming_id or uuid.uuid4().hex)[:32]
 
-        if user_token:
-            host = os.environ.get("DATABRICKS_HOST", "")
-            _user_token_var.set((host, user_token))
+        host = os.environ.get("DATABRICKS_HOST", "")
+        token_tok = _user_token_var.set((host, user_token) if user_token else None)
+        email_tok = _user_email_var.set(user_email)
+        request_tok = _request_id_var.set(request_id)
+
+        status_holder = {"code": 0}
+
+        async def send_wrapper(message: dict) -> None:
+            if message.get("type") == "http.response.start":
+                status_holder["code"] = message.get("status", 0)
+            await send(message)
+
+        method = scope.get("method", "-")
+        path = sanitize_for_log(scope.get("path", "-"))
+        # Health probes hit "/" constantly; log them at DEBUG so they don't drown real traffic.
+        log_at = logger.debug if path == "/" else logger.info
+        started = time.monotonic()
+        try:
+            await self.app(scope, receive, send_wrapper)
+        except Exception:
+            elapsed_ms = int((time.monotonic() - started) * 1000)
+            logger.exception(f"request error: {method} {path} after {elapsed_ms}ms")
+            raise
         else:
-            _user_token_var.set(None)
-
-        _user_email_var.set(user_email)
-
-        await self.app(scope, receive, send)
+            elapsed_ms = int((time.monotonic() - started) * 1000)
+            log_at(f"request: {method} {path} status={status_holder['code']} {elapsed_ms}ms")
+        finally:
+            _user_token_var.reset(token_tok)
+            _user_email_var.reset(email_tok)
+            _request_id_var.reset(request_tok)
 
 
 def get_obo_client():
@@ -97,12 +191,22 @@ def get_obo_client():
     token_info = _user_token_var.get(None)
     if token_info is None:
         raise RuntimeError(
-            "No OBO token available. This operation requires a user context " "(X-Forwarded-Access-Token header)."
+            "No OBO token available. This operation requires a user context (X-Forwarded-Access-Token header)."
         )
 
     host, token = token_info
     cfg = Config(host=host, token=token, auth_type="pat")
     return WorkspaceClient(config=cfg)
+
+
+def get_user_email() -> str | None:
+    """The calling user's email (from the X-Forwarded-Email OBO header), or None.
+
+    Used as the principal to grant on MCP-created tables so the user can read/manage the outputs
+    outside the MCP. None when there is no user context (e.g. a non-OBO/service-principal call),
+    in which case the runner simply skips the grant.
+    """
+    return _user_email_var.get(None)
 
 
 def _get_sp_client():
@@ -144,12 +248,12 @@ def get_warehouse_id(ws: Any) -> str:
     # Prefer a running warehouse to avoid startup wait
     for wh in warehouses:
         if wh.state and wh.state.value == "RUNNING":
-            logger.info(f"Using running warehouse: {wh.name} ({wh.id})")
+            logger.debug(f"Using running warehouse: {wh.name} ({wh.id})")
             return wh.id
 
     # Fall back to first available
     wh = warehouses[0]
-    logger.info(f"Using warehouse: {wh.name} ({wh.id})")
+    logger.debug(f"Using warehouse: {wh.name} ({wh.id})")
     return wh.id
 
 

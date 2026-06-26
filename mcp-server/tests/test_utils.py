@@ -1,4 +1,5 @@
 import json
+import logging
 from unittest.mock import MagicMock, create_autospec, patch
 
 import pytest
@@ -52,6 +53,83 @@ class TestGetOboClient:
                 get_obo_client()
         finally:
             _user_token_var.reset(token)
+
+
+class TestGetUserEmail:
+    def test_returns_email_when_present(self):
+        from server.utils import get_user_email, _user_email_var
+
+        token = _user_email_var.set("alice@example.com")
+        try:
+            assert get_user_email() == "alice@example.com"
+        finally:
+            _user_email_var.reset(token)
+
+    def test_returns_none_without_user_context(self):
+        from server.utils import get_user_email, _user_email_var
+
+        token = _user_email_var.set(None)
+        try:
+            assert get_user_email() is None
+        finally:
+            _user_email_var.reset(token)
+
+
+class TestRequestContextFilter:
+    def _record(self) -> logging.LogRecord:
+        return logging.LogRecord("n", logging.INFO, "f", 1, "msg", None, None)
+
+    def test_injects_defaults_outside_request(self):
+        from server.utils import RequestContextFilter
+
+        record = self._record()
+        assert RequestContextFilter().filter(record) is True
+        assert record.request_id == "-"
+        assert record.user == "-"
+
+    def test_injects_request_id_and_user(self):
+        from server.utils import RequestContextFilter, _request_id_var, _user_email_var
+
+        rid = _request_id_var.set("abc123")
+        em = _user_email_var.set("alice@example.com")
+        try:
+            record = self._record()
+            RequestContextFilter().filter(record)
+            assert record.request_id == "abc123"
+            assert record.user == "alice@example.com"
+        finally:
+            _request_id_var.reset(rid)
+            _user_email_var.reset(em)
+
+    def test_sanitizes_newlines_in_user(self):
+        from server.utils import RequestContextFilter, _user_email_var
+
+        em = _user_email_var.set("a@b.com\nINJECTED log line")
+        try:
+            record = self._record()
+            RequestContextFilter().filter(record)
+            assert "\n" not in record.user and "\r" not in record.user
+        finally:
+            _user_email_var.reset(em)
+
+
+class TestConfigureLogging:
+    def test_idempotent_and_attaches_filter(self):
+        import server.utils as u
+
+        saved_handlers = logging.getLogger().handlers[:]
+        saved_flag = u._logging_configured
+        try:
+            u._logging_configured = False
+            u.configure_logging()
+            root = logging.getLogger()
+            assert any(isinstance(f, u.RequestContextFilter) for h in root.handlers for f in h.filters)
+            count = len(root.handlers)
+            u.configure_logging()  # second call must be a no-op
+            assert len(root.handlers) == count
+        finally:
+            logging.getLogger().handlers[:] = saved_handlers
+            u._logging_configured = saved_flag
 
 
 class TestExecuteSql:
@@ -409,3 +487,74 @@ class TestOBOAuthMiddleware:
         await middleware({"type": "lifespan"}, None, None)
 
         assert called["count"] == 1
+
+    @pytest.mark.anyio
+    async def test_honors_inbound_request_id(self):
+        from server.utils import OBOAuthMiddleware, _request_id_var
+
+        captured = {}
+
+        async def app(scope, receive, send):
+            captured["rid"] = _request_id_var.get(None)
+
+        middleware = OBOAuthMiddleware(app)
+        scope = {"type": "http", "method": "POST", "path": "/mcp", "headers": [(b"x-request-id", b"trace-123")]}
+        await middleware(scope, None, None)
+
+        assert captured["rid"] == "trace-123"
+
+    @pytest.mark.anyio
+    async def test_generates_request_id_when_absent(self):
+        from server.utils import OBOAuthMiddleware, _request_id_var
+
+        captured = {}
+
+        async def app(scope, receive, send):
+            captured["rid"] = _request_id_var.get(None)
+
+        middleware = OBOAuthMiddleware(app)
+        await middleware({"type": "http", "method": "GET", "path": "/mcp", "headers": []}, None, None)
+
+        assert captured["rid"] and len(captured["rid"]) > 0
+
+    @pytest.mark.anyio
+    async def test_resets_context_after_request(self):
+        # Context must not leak across requests on a reused ASGI worker.
+        from server.utils import OBOAuthMiddleware, _user_email_var, _user_token_var, _request_id_var
+
+        async def app(scope, receive, send):
+            pass
+
+        middleware = OBOAuthMiddleware(app)
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/mcp",
+            "headers": [(b"x-forwarded-email", b"u@example.com"), (b"x-forwarded-access-token", b"tok")],
+        }
+        with patch.dict("os.environ", {"DATABRICKS_HOST": "https://host.com"}):
+            await middleware(scope, None, None)
+
+        assert _user_email_var.get(None) is None
+        assert _user_token_var.get(None) is None
+        assert _request_id_var.get(None) is None
+
+    @pytest.mark.anyio
+    async def test_captures_response_status(self):
+        from server.utils import OBOAuthMiddleware
+
+        sent = []
+
+        async def app(scope, receive, send):
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": b"ok"})
+
+        async def send(message):
+            sent.append(message)
+
+        middleware = OBOAuthMiddleware(app)
+        scope = {"type": "http", "method": "POST", "path": "/mcp", "headers": []}
+        await middleware(scope, None, send)
+
+        # send_wrapper must forward every message untouched to the real send.
+        assert [m["type"] for m in sent] == ["http.response.start", "http.response.body"]

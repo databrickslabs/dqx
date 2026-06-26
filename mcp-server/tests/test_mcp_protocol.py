@@ -98,6 +98,13 @@ class TestToolInvocation:
                 )
         mock_submit.assert_called_once_with(
             "save_checks",
-            {"checks": [{"check": "foo"}], "location": "c.s.checks", "run_config_name": "default", "mode": "overwrite"},
+            {
+                "checks": [{"check": "foo"}],
+                "location": "c.s.checks",
+                "run_config_name": "default",
+                "mode": "overwrite",
+                # no OBO user context in the in-memory client, so there is nobody to grant to
+                "grant_to": None,
+            },
         )
         assert res.data["run_id"] == 23

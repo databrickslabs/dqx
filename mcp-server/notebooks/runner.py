@@ -132,7 +132,15 @@ def save_checks(params: dict) -> dict:
         config.mode = mode
     engine.save_checks(checks, config)
 
-    return {"saved": True, "count": len(checks), "location": location}
+    # Grant the calling user access to the created table (table backends only — a 3-part name,
+    # not a /Volumes or /Workspace path) so they can use it outside the MCP.
+    grant_to = params.get("grant_to")
+    granted_to = None
+    if grant_to and "/" not in location and location.count(".") == 2:
+        if _grant_table_access(location, grant_to):
+            granted_to = grant_to
+
+    return {"saved": True, "count": len(checks), "location": location, "access_granted_to": granted_to}
 
 
 # COMMAND ----------
@@ -164,10 +172,21 @@ def apply_checks_and_save_to_table(params: dict) -> dict:
         quarantine_config=quarantine_config,
     )
 
+    # Grant the calling user access to the output (and quarantine) tables so they can use them
+    # outside the MCP. Best-effort as the app SP (the owner of tables it just created).
+    grant_to = params.get("grant_to")
+    granted_tables = []
+    if grant_to:
+        for tbl in (output_table, quarantine_table):
+            if tbl and _grant_table_access(tbl, grant_to):
+                granted_tables.append(tbl)
+
     result = {"output_table": output_table, "output_rows": spark.table(output_table).count()}
     if quarantine_table:
         result["quarantine_table"] = quarantine_table
         result["quarantine_rows"] = spark.table(quarantine_table).count()
+    result["access_granted_to"] = grant_to if granted_tables else None
+    result["granted_tables"] = granted_tables
     return result
 
 
@@ -328,6 +347,43 @@ def list_available_checks(params: dict) -> dict:
         )
 
     return {"checks": checks, "count": len(checks)}
+
+
+# COMMAND ----------
+
+
+def _grant_table_access(table_name, principal) -> bool:
+    """Best-effort grant of full access on a table to the calling user. Returns True on success.
+
+    Grants ``ALL PRIVILEGES`` (read + modify the data) **and** ``MANAGE`` (edit, drop, and manage
+    grants on the table), so the user has full lifecycle control of MCP-created outputs outside
+    the MCP — without transferring **ownership**. Keeping the app service principal as owner means
+    a later overwrite run still works and does not depend on a grant the user could revoke.
+    (Exercising MANAGE to drop also requires USE CATALOG / USE SCHEMA on the parents, which the
+    user already has for tables they can reference.) Best-effort: logs and returns False on
+    failure (e.g. the table pre-existed and is owned by someone else, or there is no caller).
+    """
+    import re
+
+    if not principal or not table_name:
+        return False
+    # Validate before embedding in SQL — the principal comes from the OBO header and the table
+    # from the tool arguments. Reject anything that is not a plain principal / 3-part identifier.
+    if not re.match(r"^[A-Za-z0-9._%+\-@]+$", str(principal)):
+        logger.warning(f"Skipping grant: unexpected principal format {principal!r}")
+        return False
+    parts = str(table_name).split(".")
+    if len(parts) != 3 or not all(re.match(r"^[A-Za-z0-9_]+$", p) for p in parts):
+        logger.warning(f"Skipping grant: not a 3-part table name: {table_name!r}")
+        return False
+    fqn = ".".join(f"`{p}`" for p in parts)
+    try:
+        spark.sql(f"GRANT ALL PRIVILEGES, MANAGE ON TABLE {fqn} TO `{principal}`")
+        logger.info(f"Granted ALL PRIVILEGES + MANAGE on {table_name} to {principal}")
+        return True
+    except Exception:
+        logger.warning(f"Could not grant on {table_name} to {principal}", exc_info=True)
+        return False
 
 
 # COMMAND ----------

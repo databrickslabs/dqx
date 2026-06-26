@@ -12,12 +12,35 @@ It runs as a [Databricks App](https://docs.databricks.com/en/dev-tools/databrick
 <Admonition type="tip" title="When to use the MCP server">
 The MCP server is the recommended integration point for:
 - AI agents ([Agent Bricks](https://www.databricks.com/product/artificial-intelligence/agent-bricks), Genie Code) that need to profile tables, generate rules, and run quality checks programmatically.
-- IDE-based workflows (Cursor, Claude Desktop) where you want DQX tools available as MCP tools.
+- IDE-based workflows (Cursor, Claude Code) where you want DQX tools available as MCP tools.
 - Any MCP-compatible client that needs data quality capabilities without writing DQX code directly.
 
 For interactive, browser-based rule management, see [DQX Studio](/docs/guide/dqx_studio).
 For code-level integration into pipelines or notebooks, see the [Programmatic approach](/docs/guide/quality_checks_apply#programmatic-approach).
 </Admonition>
+
+## Who this guide is for
+
+There are two reading paths:
+
+- **Platform admins** set up and operate the server: [Prerequisites](#prerequisites) → [Deploy](#deploy) → [Configuration](#configuration) → [Troubleshooting](#troubleshooting) → [Upgrade and uninstall](#upgrade-and-uninstall).
+- **Users** — Genie Code users, data engineers, power users — consume it once it's deployed: [Connect an MCP client](#connect-an-mcp-client) → [Usage](#usage) → [Example prompts](#example-prompts). In **Genie Code** you just need the app shared with you and then enable it in settings; other clients (Cursor, Claude Code) use the server's `/mcp` URL — ask your admin.
+
+### Quickstart
+
+**Admins** — set the catalog, deploy, and share the URL (full steps under [Deploy](#deploy)):
+
+```bash
+databricks secrets create-scope dqx-config --profile <profile>
+databricks secrets put-secret dqx-config catalog_name --string-value "<your_catalog>" --profile <profile>
+make mcp-deploy PROFILE=<profile>
+databricks apps get mcp-dqx --profile <profile> -o json | jq -r .url   # users in users_group discover it in Genie Code; share <url>/mcp for other clients
+```
+
+**Users** — connect and ask (details under [Connect an MCP client](#connect-an-mcp-client)):
+
+1. **Genie Code:** once the DQX app is shared with you (you're in its `users_group`), enable it from **Settings → MCP Servers** — no URL needed. **Cursor / Claude Code:** add a remote MCP server with the URL `https://<app-url>/mcp`.
+2. Ask in plain English, e.g. *"Profile `<catalog>.<schema>.<table>` and tell me which rows fail data quality checks."*
 
 ## Architecture
 
@@ -68,7 +91,7 @@ sequenceDiagram
 | `profile_table` | Profile data patterns (nulls, ranges, distributions) | OBO view + runner job | `run_id` |
 | `generate_rules` | Generate DQX check rules from a profile | Runner job | `run_id` |
 | `generate_rules_from_contract` | Generate DQX checks from an ODCS data contract | Runner job | `run_id` |
-| `list_available_checks` | List all 68+ built-in check functions | Runner job | `run_id` |
+| `list_available_checks` | List the built-in check functions | Runner job | `run_id` |
 | `validate_checks` | Validate check definitions for correctness | Runner job | `run_id` |
 | `run_checks` | Execute checks and return a sample of results | OBO view + runner job | `run_id` |
 | `save_checks` | Persist checks to a table, UC volume, or workspace file&nbsp;† | Runner job (writes as SP) | `run_id` |
@@ -180,6 +203,12 @@ databricks apps get mcp-dqx --profile <profile> -o json | jq -r .url
 
 ## Configuration
 
+### Security and governance
+
+- **Reads run as the calling user.** `get_table_schema`, and the temporary views behind `profile_table` / `run_checks` / `apply_checks_and_save_to_table`, use the user's OBO token — Unity Catalog is enforced, so a user only ever sees data they are already granted.
+- **Jobs and writes run as the app service principal.** The runner job executes under the app SP. `save_checks` and `apply_checks_and_save_to_table` write as the SP, so it needs write grants on the target (see [Write access](#write-access)); the tables they create are auto-granted to the calling user (`ALL PRIVILEGES` + `MANAGE`, so the user can fully manage them while the SP retains ownership).
+- **App access is gated.** Only members of `users_group` (default `account users`) receive `CAN_USE` on the app, and the Databricks Apps front-door requires an OAuth login (PATs are rejected).
+
 ### Secrets
 
 | Secret Scope | Key | Description |
@@ -211,6 +240,8 @@ databricks apps stop mcp-dqx --profile <profile>     # stop the app (e.g. to pau
 
 The runner job's per-operation runs are visible under **Workflows → Jobs → mcp-dqx-runner**, which is where tool failures (a failed `run_id`) show their full stack trace.
 
+**Cost and concurrency:** the app runs continuously while deployed (stop it with `databricks apps stop` to pause that cost); the runner jobs are serverless and bill per run, and support up to 10 concurrent runs.
+
 ### How it works
 
 1. **Catalog name:** Read from Databricks secret (`dqx-config/catalog_name`) by both the app and the setup job. Update the secret and restart the app to change it.
@@ -231,6 +262,8 @@ GRANT USE SCHEMA, CREATE TABLE, MODIFY ON SCHEMA `<catalog>`.`<schema>` TO `<app
 ```
 
 For a UC **volume** or **workspace file** target, grant the SP the equivalent write permission on that volume/folder instead. If you only ever use the read/analyze tools (profile, generate, validate, run), no extra grant is needed.
+
+Tables these tools create are **owned by the app service principal**, but the **calling user is automatically granted `ALL PRIVILEGES` + `MANAGE`** on them — so you can read, modify, **and drop/alter** the outputs outside the MCP. Ownership deliberately stays with the SP (so repeat overwrite runs keep working and don't depend on a grant you could revoke); if you also want to *own* the tables, point the tools at a schema you own.
 </Admonition>
 
 ## Connect an MCP client
@@ -243,9 +276,9 @@ The Databricks Apps front-door authenticates the caller with **OAuth** and forwa
 
 ### Genie Code (recommended)
 
-Genie Code runs inside your Databricks workspace and authenticates to the app automatically. Follow the Databricks guide [Add MCP servers to Genie Code](https://docs.databricks.com/aws/en/genie-code/mcp) to add a **custom MCP server**, using the DQX server endpoint `https://<app-url>/mcp`.
+Genie Code runs inside your Databricks workspace and authenticates to the app automatically. Because the DQX server is a Databricks App, you don't need its URL — once the app is **shared with you** (your account is in its `users_group`; the deploy grants `CAN_USE` to that group, default `account users`), you discover and enable it from **Settings → MCP Servers** in Genie Code. See the Databricks guide [Add MCP servers to Genie Code](https://docs.databricks.com/aws/en/genie-code/mcp) for the exact steps.
 
-Once added, the DQX server appears under **Settings → MCP Servers** with its tools enabled. You can then ask questions in plain English (see [Example prompts](#example-prompts)).
+Once enabled, the DQX tools are available and you can ask questions in plain English (see [Example prompts](#example-prompts)).
 
 ![Genie Code Settings showing the deployed DQX MCP server with its tools enabled](/img/mcp-genie-settings.png)
 
@@ -267,7 +300,7 @@ Add a remote (HTTP) MCP server pointing at `https://<app-url>/mcp`, following [C
 
 ### Recommended workflow
 
-Call `get_workflow` first to get the recommended sequence:
+You don't run these tools by hand — you ask in plain English (see [Example prompts](#example-prompts)) and the assistant orchestrates them. Behind a request, it calls `get_workflow` to discover the recommended sequence and then runs roughly:
 
 1. `get_table_schema` — Understand the table structure (returns result directly)
 2. `profile_table` — Profile data to discover patterns (returns `run_id`)
@@ -285,6 +318,7 @@ Each long-running tool returns a `run_id` immediately; the client then polls `ge
 - If an [ODCS data contract](/docs/guide/data_contract_quality_rules_generation) already exists, use `generate_rules_from_contract` instead of profiling + `generate_rules` — it derives checks deterministically from the contract's schema and quality expectations.
 - To reuse rules across sessions, `save_checks` to persist them and `load_checks` to retrieve them later.
 - To operationalize (write results to Delta instead of returning a sample), use `apply_checks_and_save_to_table` instead of `run_checks`.
+- For **scheduled pipelines**, treat the MCP server as the interactive/exploratory path: use it to design and `save_checks` a validated rule set, then run that rule set in production with the [programmatic approach](/docs/guide/quality_checks_apply#programmatic-approach).
 
 ### Example prompts
 
@@ -311,7 +345,7 @@ These are natural-language prompts you can give any connected agent. Replace `<c
 
 ### Run the whole workflow in one prompt
 
-You don't need to name the tools — a good agent picks them from a plain-English goal. The request below is the kind of thing an analyst onboarding a new table would actually ask, and it naturally drives the full chain: schema inspection, profiling, rule generation (from both the data and a contract), validation, running checks, persisting the rules, reloading them the way a pipeline would, and writing clean/quarantine tables. It assumes the sample table from [Try it with sample data](#try-it-with-sample-data); swap in your own table, contract path, and output tables.
+You don't need to name the tools — the assistant selects them from a plain-English goal. The request below is the kind of thing an analyst onboarding a new table would actually ask, and it naturally drives the full chain: schema inspection, profiling, rule generation (from both the data and a contract), validation, running checks, persisting the rules, reloading them the way a pipeline would, and writing clean/quarantine tables. It assumes the sample table from [Try it with sample data](#try-it-with-sample-data); swap in your own table, contract path, and output tables.
 
 ```text
 I've just been handed the table <catalog>.<schema>.customers and I need to get a handle on

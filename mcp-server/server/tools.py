@@ -229,7 +229,15 @@ def load_tools(mcp_server):
 
         run_id = utils.submit_job_async(
             "save_checks",
-            {"checks": checks, "location": location, "run_config_name": run_config_name, "mode": mode},
+            {
+                "checks": checks,
+                "location": location,
+                "run_config_name": run_config_name,
+                "mode": mode,
+                # Grant the calling user access to the table this creates (table backends only),
+                # so they can use it outside the MCP. The runner does this best-effort as the SP.
+                "grant_to": utils.get_user_email(),
+            },
         )
 
         return {
@@ -345,6 +353,9 @@ def load_tools(mcp_server):
                 "output_table": output_table,
                 "quarantine_table": quarantine_table,
                 "mode": mode,
+                # Grant the calling user access to the output/quarantine tables this creates,
+                # so they can use them outside the MCP. The runner does this best-effort as the SP.
+                "grant_to": utils.get_user_email(),
             },
         )
 

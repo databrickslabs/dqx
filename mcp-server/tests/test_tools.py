@@ -210,7 +210,10 @@ class TestJobOnlyTools:
     def test_save_checks(self):
         tools = _register_tools()
 
-        with patch("server.tools.utils.submit_job_async", return_value=23) as mock_submit:
+        with (
+            patch("server.tools.utils.submit_job_async", return_value=23) as mock_submit,
+            patch("server.tools.utils.get_user_email", return_value="user@example.com"),
+        ):
             result = tools["save_checks"]([{"check": "foo"}], "/Workspace/checks.yml", mode="overwrite")
 
         mock_submit.assert_called_once_with(
@@ -220,6 +223,7 @@ class TestJobOnlyTools:
                 "location": "/Workspace/checks.yml",
                 "run_config_name": "default",
                 "mode": "overwrite",
+                "grant_to": "user@example.com",  # the calling user, for the runner's grant-on-write
             },
         )
         assert result["run_id"] == 23
@@ -236,6 +240,7 @@ class TestApplyChecksAndSaveToTable:
             patch("server.tools.utils.get_warehouse_id", return_value="wh123"),
             patch("server.tools.utils.create_temp_view", return_value="dqx_mcp.tmp.v_abc") as mock_create,
             patch("server.tools.utils.submit_job_async", return_value=24) as mock_submit,
+            patch("server.tools.utils.get_user_email", return_value="user@example.com"),
             patch.dict("os.environ", _ENV),
         ):
             result = tools["apply_checks_and_save_to_table"](
@@ -255,5 +260,7 @@ class TestApplyChecksAndSaveToTable:
         assert job_params["mode"] == "append"
         # table_name travels in params; the runner drops the temp view itself (no server metadata).
         assert job_params["table_name"] == "catalog.schema.orders"
+        # the calling user is forwarded so the runner can grant them access to the outputs
+        assert job_params["grant_to"] == "user@example.com"
         assert "metadata" not in mock_submit.call_args.kwargs
         assert result["run_id"] == 24

@@ -178,6 +178,8 @@ def test_mcp_server_end_to_end(workspace_auth):
             "save_checks", {"checks": EXPLICIT_CHECKS, "location": data["checks_table"], "mode": "overwrite"}
         )
         assert saved["saved"] is True and saved["count"] == len(EXPLICIT_CHECKS)
+        # grant-on-write: the calling user is granted access to the table backend it created
+        assert saved.get("access_granted_to"), "save_checks should grant the caller access to the checks table"
         loaded = client.call("load_checks", {"location": data["checks_table"]})
         assert loaded["count"] == len(EXPLICIT_CHECKS)
         assert {c["check"]["function"] for c in loaded["checks"]} == {c["check"]["function"] for c in EXPLICIT_CHECKS}
@@ -195,6 +197,9 @@ def test_mcp_server_end_to_end(workspace_auth):
         )
         assert applied["quarantine_rows"] == EXPECTED_INVALID_ROWS
         assert applied["output_rows"] == EXPECTED_TOTAL_ROWS - EXPECTED_INVALID_ROWS
+        # grant-on-write: the calling user is granted access to both output tables it created
+        assert applied.get("access_granted_to"), "apply should grant the caller access to the outputs"
+        assert set(applied.get("granted_tables") or []) == {data["clean_table"], data["quarantine_table"]}
 
         # 11. Agent-in-the-loop — a real model must discover + invoke a tool (skip if unreachable).
         if _endpoint_reachable(host, get_token):
