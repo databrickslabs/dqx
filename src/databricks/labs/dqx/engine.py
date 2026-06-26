@@ -290,7 +290,7 @@ class DQEngineCore(DQEngineCoreBase):
         return good_df, bad_df
 
     @staticmethod
-     def validate_checks(
+    def validate_checks(
         checks: list[dict],
         custom_check_functions: dict[str, Callable] | None = None,
         validate_custom_check_functions: bool = True,
