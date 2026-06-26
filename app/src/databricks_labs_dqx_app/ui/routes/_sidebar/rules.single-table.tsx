@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate, Navigate } from "@tanstack/react-router";
 import { useUnsavedGuard } from "@/hooks/use-unsaved-guard";
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
-import { useTranslation, Trans } from "react-i18next";
+import { useTranslation } from "react-i18next";
 import { usePermissions } from "@/hooks/use-permissions";
 import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
 import {
@@ -26,7 +26,6 @@ import {
 } from "@/components/ui/select";
 import { CatalogBrowser } from "@/components/CatalogBrowser";
 import { ColumnDiscoveryPanel } from "@/components/ColumnDiscoveryPanel";
-import { DryRunResults } from "@/components/DryRunResults";
 import {
   Sparkles,
   Plus,
@@ -40,7 +39,6 @@ import {
   Table2,
   Play,
   SendHorizonal,
-  Info,
   Search,
   Check,
   LayoutGrid,
@@ -58,19 +56,16 @@ import {
   aiAssistedChecksGeneration,
   type SaveRulesIn,
   saveRules,
-  submitDryRun,
-  useGetDryRunResults,
   useGetRules,
   getGetRulesQueryKey,
   useListCheckFunctions,
   getTableColumns,
   type CheckFunctionDef as ApiCheckFunctionDef,
   type CheckFunctionParam as ApiCheckFunctionParam,
-  type DryRunResultsOut,
   type RuleCatalogEntryOut,
 } from "@/lib/api";
 import { useQueryClient } from "@tanstack/react-query";
-import { filterTablesByColumns, checkDuplicates, type CheckDuplicatesIn, submitRuleForApproval, cancelDryRun, getDryRunStatusCustom, useLabelDefinitions, type LabelDefinition, getTablePreview, runDryRunOnPreview, type PreviewDryRunIn, type PreviewDryRunOut, type PreviewRowResult } from "@/lib/api-custom";
+import { filterTablesByColumns, checkDuplicates, type CheckDuplicatesIn, submitRuleForApproval, useLabelDefinitions, type LabelDefinition, getTablePreview, runDryRunOnPreview, runDryRunOnTable, type PreviewDryRunIn, type TableDryRunIn, type PreviewDryRunOut, type PreviewRowResult } from "@/lib/api-custom";
 import {
   Tabs,
   TabsContent,
@@ -79,7 +74,6 @@ import {
 } from "@/components/ui/tabs";
 import { LabelsEditor } from "@/components/Labels";
 import { getUserMetadata } from "@/lib/format-utils";
-import { useJobPolling } from "@/hooks/use-job-polling";
 import {
   Tooltip,
   TooltipContent,
@@ -367,6 +361,8 @@ interface CheckDraft {
    * original row in place and create fresh rules for the additions.
    */
   originalTable?: string;
+  /** Original user prompt / instruction that produced this check via AI. */
+  description?: string;
 }
 
 function newCheck(): CheckDraft {
@@ -454,6 +450,9 @@ function checkToDict(c: CheckDraft): Record<string, unknown> {
   if (Object.keys(c.userMetadata).length > 0) {
     out.user_metadata = { ...c.userMetadata };
   }
+  if (c.description) {
+    out._description = c.description;
+  }
   return out;
 }
 
@@ -505,6 +504,7 @@ function aiCheckToDraft(raw: Record<string, unknown>): CheckDraft | null {
     criticality: criticality === "error" ? "error" : "warn",
     userMetadata,
     targetTables: [],
+    description: typeof raw._description === "string" ? raw._description : undefined,
   };
 }
 
@@ -690,53 +690,10 @@ function UnifiedRulesPage() {
   const [aiGenerating, setAiGenerating] = useState(false);
 
   // Dry run state
-  const [dryRunTable, setDryRunTable] = useState(initialTable ?? "");
   const [dryRunSampleSize, setDryRunSampleSize] = useState(1000);
-  const [dryRunResult, setDryRunResult] = useState<DryRunResultsOut | null>(null);
   const [previewDryRunResult, setPreviewDryRunResult] = useState<PreviewDryRunOut | null>(null);
-  const [dryRunJobRunId, setDryRunJobRunId] = useState<number | null>(null);
-  const [dryRunRunId, setDryRunRunId] = useState<string | null>(null);
-  const [dryRunViewFqn, setDryRunViewFqn] = useState<string | null>(null);
 
   const [dryRunSubmitting, setDryRunSubmitting] = useState(false);
-
-  const dryRunResultsQuery = useGetDryRunResults(dryRunRunId ?? "", {
-    query: { enabled: false },
-  });
-
-  const fetchDryRunStatus = useCallback(async () => {
-    if (!dryRunRunId || dryRunJobRunId === null) throw new Error("No active run");
-    const resp = await getDryRunStatusCustom(dryRunRunId, {
-      job_run_id: dryRunJobRunId,
-      view_fqn: dryRunViewFqn ?? undefined,
-    });
-    return resp.data;
-  }, [dryRunRunId, dryRunJobRunId, dryRunViewFqn]);
-
-  const dryRunPolling = useJobPolling({
-    fetchStatus: fetchDryRunStatus,
-    enabled: dryRunJobRunId !== null && dryRunRunId !== null,
-    interval: 3000,
-    onComplete: async (status) => {
-      if (status.result_state === "SUCCESS") {
-        try {
-          const resp = await dryRunResultsQuery.refetch();
-          if (resp.data?.data) {
-            setDryRunResult(resp.data.data);
-            toast.success(t("rulesSingleTable.toastDryRunComplete"));
-          }
-        } catch {
-          toast.error(t("rulesSingleTable.toastDryRunFetchFailed"));
-        }
-      } else {
-        toast.error(t("rulesSingleTable.toastDryRunFailed", { message: status.message || t("rulesSingleTable.toastUnknownError") }));
-      }
-      setDryRunJobRunId(null);
-    },
-    onError: () => {
-      toast.error(t("rulesSingleTable.toastFailedCheckStatus"));
-    },
-  });
 
   const addCheck = () => setChecks((prev) => [...prev, newCheck()]);
 
@@ -797,10 +754,9 @@ function UnifiedRulesPage() {
         .map((c) => aiCheckToDraft(c as Record<string, unknown>))
         .filter((d): d is CheckDraft => d !== null)
         .filter((d) => d.fn !== "sql_query");
-      if (effectiveTable) {
-        for (const d of drafts) {
-          d.targetTables = [effectiveTable];
-        }
+      for (const d of drafts) {
+        d.description = aiPrompt.trim();
+        if (effectiveTable) d.targetTables = [effectiveTable];
       }
       if (drafts.length === 0) {
         toast.error(t("rulesSingleTable.toastAiNoChecks"));
@@ -935,7 +891,7 @@ function UnifiedRulesPage() {
   const hasDuplicates = dupCheckIds.size > 0;
 
   // Dry run handler
-  const isDryRunning = dryRunSubmitting || dryRunPolling.isPolling;
+  const isDryRunning = dryRunSubmitting;
 
   const justSavedRef = useRef(false);
 
@@ -946,38 +902,36 @@ function UnifiedRulesPage() {
 
   const { blocker } = useUnsavedGuard({ hasUnsavedChanges, isRunning: isDryRunning, bypassRef: justSavedRef });
 
-  const handleConfirmLeave = async () => {
-    if (isDryRunning && dryRunRunId && dryRunJobRunId) {
-      try {
-        await cancelDryRun(dryRunRunId, { job_run_id: dryRunJobRunId });
-      } catch {
-        // best-effort cancel
-      }
-    }
+  const handleConfirmLeave = () => {
     blocker.proceed?.();
   };
 
-  const hasPreviewForDryRun = isPreviewTableFqn && previewData !== null && dryRunTable === previewTable;
+  const hasPreviewForDryRun = isPreviewTableFqn && previewData !== null;
 
-  const handleDryRun = async () => {
-    if (!dryRunTable) {
+  const checksForPreviewTable = useMemo(
+    () => (isPreviewTableFqn ? buildChecksForTable(checks, previewTable) : []),
+    [checks, previewTable, isPreviewTableFqn],
+  );
+
+  const handleDryRun = async (overrideChecks?: CheckDraft[]) => {
+    const checksToRun = overrideChecks ?? checks;
+    if (!previewTable) {
       toast.error(t("rulesSingleTable.toastSelectTable"));
       return;
     }
-    const checksForTable = buildChecksForTable(checks, dryRunTable);
+    const checksForTable = buildChecksForTable(checksToRun, previewTable);
     if (checksForTable.length === 0) {
       toast.error(t("rulesSingleTable.toastNoChecksTargetTable"));
       return;
     }
     try {
-      setDryRunResult(null);
       setPreviewDryRunResult(null);
       setDryRunSubmitting(true);
 
-      if (hasPreviewForDryRun && previewData) {
-        // Inline path — no job, returns immediately with per-row results
+      if (previewData) {
+        // Inline path using pre-loaded preview rows (fastest — no table read)
         const body: PreviewDryRunIn = {
-          table_fqn: dryRunTable,
+          table_fqn: previewTable,
           checks: checksForTable as Array<Record<string, unknown>>,
           rows: previewData.rows,
         };
@@ -985,12 +939,15 @@ function UnifiedRulesPage() {
         setPreviewDryRunResult(r.data);
         toast.success(t("rulesSingleTable.toastDryRunComplete"));
       } else {
-        // Job-based path — submits async, polling picks up the result
-        const r = await submitDryRun({ table_fqn: dryRunTable, checks: checksForTable, sample_size: dryRunSampleSize, skip_history: true });
-        setDryRunRunId(r.data.run_id);
-        setDryRunJobRunId(r.data.job_run_id);
-        setDryRunViewFqn(r.data.view_fqn ?? null);
-        toast.info(t("rulesSingleTable.toastDryRunSubmitted"));
+        // Inline path reading directly from the live table via Spark (no job submission)
+        const body: TableDryRunIn = {
+          table_fqn: previewTable,
+          checks: checksForTable as Array<Record<string, unknown>>,
+          sample_size: dryRunSampleSize,
+        };
+        const r = await runDryRunOnTable(body);
+        setPreviewDryRunResult(r.data);
+        toast.success(t("rulesSingleTable.toastDryRunComplete"));
       }
     } catch (err) {
       const axErr = err as { response?: { data?: { detail?: string } } };
@@ -1000,6 +957,21 @@ function UnifiedRulesPage() {
     } finally {
       setDryRunSubmitting(false);
     }
+  };
+
+  const handleLoadChecks = (newChecks: CheckDraft[]) => {
+    const hasOnlyEmptyDefault = checks.length === 1 && checks[0].fn === "";
+    setChecks(hasOnlyEmptyDefault ? newChecks : [...checks, ...newChecks]);
+    setActiveDefineTab("generator");
+    toast.success(t("rulesSingleTable.toastLoadedFromActivity", { count: newChecks.length }));
+  };
+
+  const handleLoadAndRunDryRun = async (newChecks: CheckDraft[]) => {
+    const hasOnlyEmptyDefault = checks.length === 1 && checks[0].fn === "";
+    const merged = hasOnlyEmptyDefault ? newChecks : [...checks, ...newChecks];
+    setChecks(merged);
+    setActiveDefineTab("generator");
+    await handleDryRun(merged);
   };
 
   const hasArgErrors = useMemo(() => {
@@ -1216,20 +1188,35 @@ function UnifiedRulesPage() {
                 {t("rulesSingleTable.source")}
               </span>
             </div>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={handleLoadPreview}
-              disabled={!isPreviewTableFqn || previewLoading}
-              className="gap-2"
-            >
-              {previewLoading ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <LayoutGrid className="h-3.5 w-3.5" />
-              )}
-              {previewLoading ? t("rulesSingleTable.loadingPreview") : t("rulesSingleTable.loadDataPreview")}
-            </Button>
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5">
+                <Label className="text-xs text-muted-foreground whitespace-nowrap">
+                  {t("rulesSingleTable.sampleRows")}
+                </Label>
+                <Input
+                  type="number"
+                  min={1}
+                  max={10000}
+                  value={dryRunSampleSize}
+                  onChange={(e) => setDryRunSampleSize(Math.min(10000, Math.max(1, Number(e.target.value) || 1000)))}
+                  className="w-20 h-8 text-xs"
+                />
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleLoadPreview}
+                disabled={!isPreviewTableFqn || previewLoading}
+                className="gap-2"
+              >
+                {previewLoading ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <LayoutGrid className="h-3.5 w-3.5" />
+                )}
+                {previewLoading ? t("rulesSingleTable.loadingPreview") : t("rulesSingleTable.loadDataPreview")}
+              </Button>
+            </div>
           </div>
           <CatalogBrowser
             value={previewTable}
@@ -1392,7 +1379,12 @@ function UnifiedRulesPage() {
 
           <TabsContent value="activity" className="mt-0 focus-visible:ring-0 focus-visible:outline-none">
             <CardContent className="pt-5">
-              <RecentActivityPanel tableFqn={previewTable} isPreviewTableFqn={isPreviewTableFqn} />
+              <RecentActivityPanel
+                tableFqn={previewTable}
+                isPreviewTableFqn={isPreviewTableFqn}
+                onLoadChecks={handleLoadChecks}
+                onValidate={handleLoadAndRunDryRun}
+              />
             </CardContent>
           </TabsContent>
         </Tabs>
@@ -1411,52 +1403,14 @@ function UnifiedRulesPage() {
         </CardHeader>
         <CardContent className="space-y-5">
           {/* Dry run section */}
-          {allTargetTables.length > 0 && (
+          {isPreviewTableFqn && (
             <div className="space-y-3 border rounded-lg p-4 bg-muted/20">
               <div className="flex items-center gap-3 flex-wrap">
-                <Select value={dryRunTable} onValueChange={setDryRunTable}>
-                  <SelectTrigger className="h-9 text-xs max-w-xs">
-                    <SelectValue placeholder={t("rulesSingleTable.selectTableForDryRun")} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {allTargetTables.map((tbl) => (
-                      <SelectItem key={tbl} value={tbl} className="text-xs font-mono">
-                        {tbl}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <div className="flex items-center gap-1.5">
-                  <Label className="text-xs text-muted-foreground whitespace-nowrap flex items-center gap-1">
-                    {t("rulesSingleTable.sampleRows")}
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Info className="h-3 w-3 cursor-help" />
-                      </TooltipTrigger>
-                      <TooltipContent className="max-w-xs">
-                        <p className="text-xs leading-relaxed">
-                          <Trans
-                            i18nKey="rulesSingleTable.sampleRowsTooltip"
-                            components={{ strong: <strong /> }}
-                          />
-                        </p>
-                      </TooltipContent>
-                    </Tooltip>
-                  </Label>
-                  <Input
-                    type="number"
-                    min={1}
-                    max={10000}
-                    value={dryRunSampleSize}
-                    onChange={(e) => setDryRunSampleSize(Math.min(10000, Math.max(1, Number(e.target.value) || 1000)))}
-                    disabled={isBusy}
-                    className="w-24 h-9 text-xs"
-                  />
-                  <span className="text-[10px] text-muted-foreground whitespace-nowrap">
-                    {t("rulesSingleTable.maxRows")}
-                  </span>
+                <div className="flex items-center gap-2 min-w-0">
+                  <Table2 className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                  <span className="text-xs font-mono text-muted-foreground truncate">{previewTable}</span>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 ml-auto">
                   {hasPreviewForDryRun && (
                     <Badge variant="secondary" className="text-[10px] gap-1 font-normal">
                       <LayoutGrid className="h-3 w-3" />
@@ -1465,8 +1419,8 @@ function UnifiedRulesPage() {
                   )}
                   <Button
                     variant="outline"
-                    onClick={handleDryRun}
-                    disabled={!dryRunTable || isBusy || isDryRunning}
+                    onClick={() => handleDryRun()}
+                    disabled={checksForPreviewTable.length === 0 || isBusy || isDryRunning}
                     className="gap-2"
                     size="sm"
                   >
@@ -1479,22 +1433,6 @@ function UnifiedRulesPage() {
                   </Button>
                 </div>
               </div>
-
-              {isDryRunning && dryRunPolling.status && (
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  <span>
-                    {t("rulesSingleTable.jobStatus")} <span className="font-medium">{dryRunPolling.status.state}</span>
-                  </span>
-                </div>
-              )}
-
-              {dryRunResult && (
-                <>
-                  <Separator />
-                  <DryRunResults result={dryRunResult} />
-                </>
-              )}
 
               {previewDryRunResult && (
                 <>
@@ -1840,8 +1778,19 @@ function PreviewDryRunResultPanel({ result }: { result: PreviewDryRunOut }) {
 // RecentActivityPanel
 // ──────────────────────────────────────────────────────────────────────────────
 
-function RecentActivityPanel({ tableFqn, isPreviewTableFqn }: { tableFqn: string; isPreviewTableFqn: boolean }) {
+function RecentActivityPanel({
+  tableFqn,
+  isPreviewTableFqn,
+  onLoadChecks,
+  onValidate,
+}: {
+  tableFqn: string;
+  isPreviewTableFqn: boolean;
+  onLoadChecks?: (checks: CheckDraft[]) => void;
+  onValidate?: (checks: CheckDraft[]) => void;
+}) {
   const { t } = useTranslation();
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const { data: rulesResp, isLoading } = useGetRules(tableFqn, {
     query: { enabled: isPreviewTableFqn },
   });
@@ -1880,26 +1829,105 @@ function RecentActivityPanel({ tableFqn, isPreviewTableFqn }: { tableFqn: string
     rejected: "destructive",
   };
 
+  const toggleId = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const buildDraftsFromSelected = (): CheckDraft[] => {
+    const drafts: CheckDraft[] = [];
+    for (const entry of entries) {
+      const id = entry.rule_id ?? "";
+      if (!selectedIds.has(id)) continue;
+      for (const c of entry.checks ?? []) {
+        const draft = savedCheckToDraft(c as Record<string, unknown>, entry.table_fqn);
+        if (draft) {
+          if (entry.rule_id) { draft.ruleId = entry.rule_id; draft.originalTable = entry.table_fqn; }
+          drafts.push(draft);
+        }
+      }
+    }
+    return drafts;
+  };
+
   return (
     <div className="space-y-3">
       <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
         {t("rulesSingleTable.recentRulesFor", { table: tableFqn.split(".").pop() })}
       </p>
       <div className="divide-y rounded-md border">
-        {entries.map((entry, i) => (
-          <div key={entry.rule_id ?? i} className="flex items-center gap-3 px-3 py-2.5">
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium truncate">{entry.display_name || t("rulesSingleTable.noRulesForTable")}</p>
-              <p className="text-xs text-muted-foreground font-mono truncate">
-                {entry.checks.length} {entry.checks.length === 1 ? "check" : "checks"} · v{entry.version}
-              </p>
+        {entries.map((entry, i) => {
+          const id = entry.rule_id ?? String(i);
+          const selected = selectedIds.has(id);
+          const rawCheck = entry.checks[0] as Record<string, unknown> | undefined;
+          const description = typeof rawCheck?._description === "string" ? rawCheck._description : undefined;
+          const createdAtRaw = entry.created_at;
+          const createdAt = createdAtRaw
+            ? (() => { try { return new Date(createdAtRaw).toLocaleString(); } catch { return createdAtRaw; } })()
+            : null;
+          return (
+            <div
+              key={id}
+              className={`flex items-start gap-3 px-3 py-3 cursor-pointer hover:bg-muted/20 transition-colors ${selected ? "bg-primary/5 dark:bg-primary/10" : ""}`}
+              onClick={() => toggleId(id)}
+            >
+              <div className={`mt-0.5 h-4 w-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors ${selected ? "bg-primary border-primary" : "border-muted-foreground/40"}`}>
+                {selected && <Check className="h-2.5 w-2.5 text-primary-foreground" />}
+              </div>
+              <div className="flex-1 min-w-0 space-y-1">
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-semibold truncate leading-tight">{entry.table_fqn.split(".").pop()}</p>
+                  <Badge variant={statusVariant[entry.status] ?? "outline"} className="capitalize shrink-0 text-[10px]">
+                    {entry.status}
+                  </Badge>
+                </div>
+                {createdAt && (
+                  <p className="text-[11px] text-muted-foreground flex items-center gap-1">
+                    <History className="h-3 w-3 shrink-0" />
+                    {createdAt}
+                  </p>
+                )}
+                {description && (
+                  <p className="text-[11px] text-muted-foreground/80 italic line-clamp-2">
+                    &ldquo;{description}&rdquo;
+                  </p>
+                )}
+                <p className="text-[10px] text-muted-foreground/60 font-mono">
+                  {entry.checks.length} {entry.checks.length === 1 ? "check" : "checks"} · v{entry.version}
+                </p>
+              </div>
             </div>
-            <Badge variant={statusVariant[entry.status] ?? "outline"} className="capitalize shrink-0 text-[10px]">
-              {entry.status}
-            </Badge>
-          </div>
-        ))}
+          );
+        })}
       </div>
+      {selectedIds.size > 0 && (
+        <div className="flex gap-2">
+          {onLoadChecks && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="flex-1 gap-1.5"
+              onClick={() => { const drafts = buildDraftsFromSelected(); if (drafts.length) onLoadChecks(drafts); }}
+            >
+              <Settings2 className="h-3.5 w-3.5" />
+              {t("rulesSingleTable.loadIntoEditor")}
+            </Button>
+          )}
+          {onValidate && (
+            <Button
+              size="sm"
+              className="flex-1 gap-1.5"
+              onClick={() => { const drafts = buildDraftsFromSelected(); if (drafts.length) onValidate(drafts); }}
+            >
+              <Play className="h-3.5 w-3.5" />
+              {t("rulesSingleTable.validateSelected")}
+            </Button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

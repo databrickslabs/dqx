@@ -779,7 +779,10 @@
     "usingPreviewData": "Using preview data",
     "noRulesForTable": "No rules found for this table",
     "selectTableForActivity": "Select a table in the Preview block above to view recent activity",
-    "recentRulesFor": "Rules for {{table}}"
+    "recentRulesFor": "Rules for {{table}}",
+    "loadIntoEditor": "Cargar en editor",
+    "validateSelected": "Validar & Guardar",
+    "toastLoadedFromActivity": "{{count}} comprobaciones cargadas desde la actividad reciente"
   },
   "runs": {
     "breadcrumb": "Ejecutar Reglas",

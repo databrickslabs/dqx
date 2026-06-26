@@ -163,6 +163,19 @@ export const runDryRunOnPreview = (
   return axios.default.post(`/api/v1/dryrun/run-on-preview`, body, options);
 };
 
+export interface TableDryRunIn {
+  table_fqn: string;
+  checks: Array<Record<string, unknown>>;
+  sample_size?: number;
+}
+
+export const runDryRunOnTable = (
+  body: TableDryRunIn,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<PreviewDryRunOut>> => {
+  return axios.default.post(`/api/v1/dryrun/run-on-table`, body, options);
+};
+
 // ---------------------------------------------------------------------------
 // Filter tables by required columns
 // ---------------------------------------------------------------------------

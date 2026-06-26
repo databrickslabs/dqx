@@ -40,6 +40,7 @@ from databricks_labs_dqx_app.backend.models import (
     PreviewDryRunOut,
     PreviewRowResult,
     RunStatusOut,
+    TableDryRunIn,
     ValidationRunSummaryOut,
 )
 from databricks_labs_dqx_app.backend.services.job_service import JobService
@@ -296,6 +297,51 @@ def submit_dry_run(
         raise HTTPException(status_code=500, detail=f"Failed to submit dry run: {e}")
 
 
+def _collect_checked_df(table_fqn: str, checked_df: Any) -> PreviewDryRunOut:
+    """Collect DQX-annotated Spark DataFrame into a PreviewDryRunOut.
+
+    Shared by ``run_dry_run_on_preview`` and ``run_dry_run_on_table`` so the
+    per-row extraction logic lives in exactly one place.
+    """
+    has_errors_col = "_errors" in checked_df.columns
+    has_warnings_col = "_warnings" in checked_df.columns
+
+    row_results: list[PreviewRowResult] = []
+    error_count = 0
+    warning_count = 0
+
+    for spark_row in checked_df.collect():
+        row_dict = spark_row.asDict()
+        errors: list[str] = []
+        warnings: list[str] = []
+        if has_errors_col:
+            for err in (row_dict.pop("_errors", None) or []):
+                name = err["name"] if isinstance(err, dict) else getattr(err, "name", str(err))
+                if name:
+                    errors.append(name)
+        if has_warnings_col:
+            for warn in (row_dict.pop("_warnings", None) or []):
+                name = warn["name"] if isinstance(warn, dict) else getattr(warn, "name", str(warn))
+                if name:
+                    warnings.append(name)
+        row_dict = {k: v for k, v in row_dict.items() if not k.startswith("_")}
+        row_results.append(PreviewRowResult(row=row_dict, errors=errors, warnings=warnings))
+        if errors:
+            error_count += 1
+        elif warnings:
+            warning_count += 1
+
+    total = len(row_results)
+    return PreviewDryRunOut(
+        table_fqn=table_fqn,
+        total_rows=total,
+        error_rows=error_count,
+        warning_rows=warning_count,
+        pass_rows=total - error_count - warning_count,
+        rows=row_results,
+    )
+
+
 @router.post(
     "/run-on-preview",
     response_model=PreviewDryRunOut,
@@ -327,46 +373,7 @@ async def run_dry_run_on_preview(
             pdf = pd.DataFrame(body.rows)
             df = engine.spark.createDataFrame(pdf)
             checked_df = engine.apply_checks_by_metadata(df, body.checks)
-
-            # _errors / _warnings are arrays of structs with a 'name' field.
-            has_errors_col = "_errors" in checked_df.columns
-            has_warnings_col = "_warnings" in checked_df.columns
-
-            row_results: list[PreviewRowResult] = []
-            error_count = 0
-            warning_count = 0
-
-            for spark_row in checked_df.collect():
-                row_dict = spark_row.asDict()
-                errors: list[str] = []
-                warnings: list[str] = []
-                if has_errors_col:
-                    for err in (row_dict.pop("_errors", None) or []):
-                        name = err["name"] if isinstance(err, dict) else getattr(err, "name", str(err))
-                        if name:
-                            errors.append(name)
-                if has_warnings_col:
-                    for warn in (row_dict.pop("_warnings", None) or []):
-                        name = warn["name"] if isinstance(warn, dict) else getattr(warn, "name", str(warn))
-                        if name:
-                            warnings.append(name)
-                # Strip any remaining DQX internal columns from the row payload
-                row_dict = {k: v for k, v in row_dict.items() if not k.startswith("_")}
-                row_results.append(PreviewRowResult(row=row_dict, errors=errors, warnings=warnings))
-                if errors:
-                    error_count += 1
-                elif warnings:
-                    warning_count += 1
-
-            total = len(row_results)
-            return PreviewDryRunOut(
-                table_fqn=body.table_fqn,
-                total_rows=total,
-                error_rows=error_count,
-                warning_rows=warning_count,
-                pass_rows=total - error_count - warning_count,
-                rows=row_results,
-            )
+            return _collect_checked_df(body.table_fqn, checked_df)
 
         return await asyncio.to_thread(_run)
 
@@ -374,6 +381,45 @@ async def run_dry_run_on_preview(
         raise
     except Exception as e:
         logger.error("Inline preview dry run failed for %s: %s", body.table_fqn, e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Inline validation failed: {e}")
+
+
+@router.post(
+    "/run-on-table",
+    response_model=PreviewDryRunOut,
+    operation_id="runDryRunOnTable",
+    dependencies=[require_role(*_NON_VIEWERS)],
+)
+async def run_dry_run_on_table(
+    body: TableDryRunIn,
+    validate_checks_fn: Annotated[Callable[[list[Any]], ChecksValidationStatus], Depends(get_check_validator)],
+    engine=Depends(get_dq_engine),
+) -> PreviewDryRunOut:
+    """Run DQX checks inline against a live table using Databricks Connect serverless.
+
+    No job is submitted. The table is read directly via Spark (OBO credentials —
+    Unity Catalog permissions enforced), checks are applied synchronously, and
+    per-row results are returned immediately. Results are not recorded in the
+    validation history.
+    """
+    import asyncio
+
+    try:
+        validation = validate_checks_fn(body.checks)
+        if validation.has_errors:
+            raise HTTPException(status_code=400, detail=f"Invalid checks: {validation.errors}")
+
+        def _run() -> PreviewDryRunOut:
+            df = engine.spark.table(body.table_fqn).limit(body.sample_size)
+            checked_df = engine.apply_checks_by_metadata(df, body.checks)
+            return _collect_checked_df(body.table_fqn, checked_df)
+
+        return await asyncio.to_thread(_run)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Inline table dry run failed for %s: %s", body.table_fqn, e, exc_info=True)
         raise HTTPException(status_code=500, detail=f"Inline validation failed: {e}")
 
 

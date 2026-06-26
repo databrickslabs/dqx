@@ -144,6 +144,12 @@ class PreviewDryRunIn(BaseModel):
     rows: list[dict[str, Any]] = Field(description="Preview rows as column-name-keyed dicts")
 
 
+class TableDryRunIn(BaseModel):
+    table_fqn: str = Field(description="Fully qualified table name to read via Spark (catalog.schema.table)")
+    checks: list[dict[str, Any]] = Field(description="List of check metadata dictionaries")
+    sample_size: int = Field(default=100, ge=1, le=10_000, description="Number of rows to sample from the table")
+
+
 class PreviewRowResult(BaseModel):
     row: dict[str, Any] = Field(description="Original row values")
     errors: list[str] = Field(default_factory=list, description="Check names that failed with error criticality")
