@@ -652,6 +652,7 @@ function UnifiedRulesPage() {
   });
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewFilterQuery, setPreviewFilterQuery] = useState("");
+  const [dryRunSampleSize, setDryRunSampleSize] = useState(1000);
   const isPreviewTableFqn = previewTable.split(".").length === 3;
 
   const handlePreviewTableChange = useCallback((fqn: string) => {
@@ -670,7 +671,7 @@ function UnifiedRulesPage() {
     setPreviewLoading(true);
     try {
       const [previewResp, colsResp] = await Promise.all([
-        getTablePreview(cat, sch, tbl, 10, filterQ),
+        getTablePreview(cat, sch, tbl, dryRunSampleSize, filterQ),
         getTableColumns(cat, sch, tbl),
       ]);
       const col_types: Record<string, string> = {};
@@ -687,14 +688,11 @@ function UnifiedRulesPage() {
     } finally {
       setPreviewLoading(false);
     }
-  }, [previewTable, isPreviewTableFqn, t]);
+  }, [previewTable, isPreviewTableFqn, dryRunSampleSize, t]);
 
   // AI generation state
   const [aiPrompt, setAiPrompt] = useState("");
   const [aiGenerating, setAiGenerating] = useState(false);
-
-  // Dry run state
-  const [dryRunSampleSize, setDryRunSampleSize] = useState(1000);
   const [previewDryRunResult, setPreviewDryRunResult] = useState<PreviewDryRunOut | null>(null);
 
   const [dryRunSubmitting, setDryRunSubmitting] = useState(false);
@@ -1265,9 +1263,9 @@ function UnifiedRulesPage() {
                   </Button>
                 </div>
               </div>
-              <div className="overflow-x-auto border rounded-md">
+              <div className="overflow-auto border rounded-md max-h-[400px]">
                 <table className="w-full text-xs">
-                  <thead className="border-b bg-muted/40">
+                  <thead className="sticky top-0 z-10 border-b bg-muted/90 backdrop-blur-sm">
                     <tr>
                       {previewData.columns.map((col) => (
                         <th
@@ -1407,6 +1405,7 @@ function UnifiedRulesPage() {
                 variant="inline"
                 defaultCollapsed={false}
                 onTableSelect={handleDiscoveryTableSelect}
+                initialTableFqn={isPreviewTableFqn ? previewTable : undefined}
               />
             </CardContent>
           </TabsContent>

@@ -48,6 +48,7 @@ class ChecksIn(BaseModel):
 class GenerateChecksIn(BaseModel):
     user_input: str = Field(description="Natural language description of data quality requirements")
     table_fqn: str | None = Field(default=None, description="Optional fully qualified table name for schema context")
+    table_fqns: list[str] | None = Field(default=None, description="Optional list of FQNs for multi-table / cross-table context")
 
 
 class GenerateChecksOut(BaseModel):

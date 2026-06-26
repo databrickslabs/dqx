@@ -38,7 +38,8 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import {
-  useSaveRules,
+  saveRules,
+  type SaveRulesIn,
   useGetRules,
   aiAssistedChecksGeneration,
   useSubmitDryRun,
@@ -180,8 +181,6 @@ function CreateSqlCheckPage() {
 
   const [checks, setChecks] = useState<SqlCheckDraft[]>([newSqlCheck()]);
   const [initialized, setInitialized] = useState(false);
-  const saveMutation = useSaveRules();
-
   const { data: labelDefsData } = useLabelDefinitions();
   const labelDefinitions = labelDefsData?.definitions ?? [];
 
@@ -493,9 +492,7 @@ function CreateSqlCheckPage() {
       }
       const checkPayload = [payloadEntry];
       try {
-        await saveMutation.mutateAsync({
-          data: { table_fqn: tableFqn, checks: checkPayload },
-        });
+        await saveRules({ table_fqn: tableFqn, checks: checkPayload } as SaveRulesIn);
         successCount++;
       } catch (err) {
         toast.error(t("rulesCreateSql.failedSave", { name: check.name, detail: extractApiError(err, t) }));

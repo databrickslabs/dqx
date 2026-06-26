@@ -214,7 +214,7 @@ async def get_table_preview(
     When *filter_query* is provided the AI converts it to a SQL WHERE clause first.
     Runs as the calling user (OBO) so Unity Catalog row filters and column masks apply.
     """
-    limit = max(1, min(limit, 100))
+    limit = max(1, min(limit, 10_000))
     fqn = f"{catalog}.{schema}.{table}"
     try:
         validate_fqn(fqn)
