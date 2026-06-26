@@ -766,7 +766,20 @@
     "overrideHelpNegateExpression": "Cuando es verdadero, la regla falla cuando la expresión se evalúa como verdadera.",
     "overrideHelpNegateRegex": "Cuando es verdadero, la regla falla cuando el valor coincide con el patrón.",
     "overrideHintMsg": "Reemplazo opcional del mensaje de error",
-    "overrideHintName": "Nombre personalizado opcional"
+    "overrideHintName": "Nombre personalizado opcional",
+    "source": "Source",
+    "loadDataPreview": "Load Data Preview",
+    "loadingPreview": "Loading preview...",
+    "datasetLabel": "Dataset: {{name}}",
+    "noPreviewSelected": "Click 'Load Data Preview' to see sample data",
+    "previewLoadError": "Failed to load data preview",
+    "ruleGeneratorTab": "Rule Generator",
+    "columnsTab": "Columns",
+    "recentActivityTab": "Recent Activity",
+    "usingPreviewData": "Using preview data",
+    "noRulesForTable": "No rules found for this table",
+    "selectTableForActivity": "Select a table in the Preview block above to view recent activity",
+    "recentRulesFor": "Rules for {{table}}"
   },
   "runs": {
     "breadcrumb": "Ejecutar Reglas",

@@ -17,6 +17,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_app_settings_service,
     get_check_validator,
     get_conf,
+    get_dq_engine,
     get_job_service,
     get_obo_ws,
     get_rules_catalog_service,
@@ -35,6 +36,9 @@ from databricks_labs_dqx_app.backend.models import (
     DryRunIn,
     DryRunResultsOut,
     DryRunSubmitOut,
+    PreviewDryRunIn,
+    PreviewDryRunOut,
+    PreviewRowResult,
     RunStatusOut,
     ValidationRunSummaryOut,
 )
@@ -290,6 +294,87 @@ def submit_dry_run(
     except Exception as e:
         logger.error("Failed to submit dry run for %s: %s", body.table_fqn, e, exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to submit dry run: {e}")
+
+
+@router.post(
+    "/run-on-preview",
+    response_model=PreviewDryRunOut,
+    operation_id="runDryRunOnPreview",
+    dependencies=[require_role(*_NON_VIEWERS)],
+)
+async def run_dry_run_on_preview(
+    body: PreviewDryRunIn,
+    validate_checks_fn: Annotated[Callable[[list[Any]], ChecksValidationStatus], Depends(get_check_validator)],
+    engine=Depends(get_dq_engine),
+) -> PreviewDryRunOut:
+    """Run DQX checks inline against preview rows using Databricks Connect serverless.
+
+    No job is submitted. The preview rows are loaded into a Spark DataFrame via
+    pandas, checks are applied synchronously, and per-row results are returned
+    immediately. Results are not recorded in the validation history.
+    """
+    import asyncio
+    import pandas as pd
+
+    try:
+        validation = validate_checks_fn(body.checks)
+        if validation.has_errors:
+            raise HTTPException(status_code=400, detail=f"Invalid checks: {validation.errors}")
+        if not body.rows:
+            raise HTTPException(status_code=400, detail="No preview rows supplied")
+
+        def _run() -> PreviewDryRunOut:
+            pdf = pd.DataFrame(body.rows)
+            df = engine.spark.createDataFrame(pdf)
+            checked_df = engine.apply_checks_by_metadata(df, body.checks)
+
+            # _errors / _warnings are arrays of structs with a 'name' field.
+            has_errors_col = "_errors" in checked_df.columns
+            has_warnings_col = "_warnings" in checked_df.columns
+
+            row_results: list[PreviewRowResult] = []
+            error_count = 0
+            warning_count = 0
+
+            for spark_row in checked_df.collect():
+                row_dict = spark_row.asDict()
+                errors: list[str] = []
+                warnings: list[str] = []
+                if has_errors_col:
+                    for err in (row_dict.pop("_errors", None) or []):
+                        name = err["name"] if isinstance(err, dict) else getattr(err, "name", str(err))
+                        if name:
+                            errors.append(name)
+                if has_warnings_col:
+                    for warn in (row_dict.pop("_warnings", None) or []):
+                        name = warn["name"] if isinstance(warn, dict) else getattr(warn, "name", str(warn))
+                        if name:
+                            warnings.append(name)
+                # Strip any remaining DQX internal columns from the row payload
+                row_dict = {k: v for k, v in row_dict.items() if not k.startswith("_")}
+                row_results.append(PreviewRowResult(row=row_dict, errors=errors, warnings=warnings))
+                if errors:
+                    error_count += 1
+                elif warnings:
+                    warning_count += 1
+
+            total = len(row_results)
+            return PreviewDryRunOut(
+                table_fqn=body.table_fqn,
+                total_rows=total,
+                error_rows=error_count,
+                warning_rows=warning_count,
+                pass_rows=total - error_count - warning_count,
+                rows=row_results,
+            )
+
+        return await asyncio.to_thread(_run)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Inline preview dry run failed for %s: %s", body.table_fqn, e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Inline validation failed: {e}")
 
 
 @router.get(

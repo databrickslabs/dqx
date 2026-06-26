@@ -766,7 +766,20 @@
     "overrideHelpNegateExpression": "When true, the rule fails when the expression evaluates to true.",
     "overrideHelpNegateRegex": "When true, the rule fails when the value matches the pattern.",
     "overrideHintMsg": "Optional error message override",
-    "overrideHintName": "Optional custom name"
+    "overrideHintName": "Optional custom name",
+    "source": "Source",
+    "loadDataPreview": "Load Data Preview",
+    "loadingPreview": "Loading preview...",
+    "datasetLabel": "Dataset: {{name}}",
+    "noPreviewSelected": "Click 'Load Data Preview' to see sample data",
+    "previewLoadError": "Failed to load data preview",
+    "ruleGeneratorTab": "Rule Generator",
+    "columnsTab": "Columns",
+    "recentActivityTab": "Recent Activity",
+    "usingPreviewData": "Using preview data",
+    "noRulesForTable": "No rules found for this table",
+    "selectTableForActivity": "Select a table in the Preview block above to view recent activity",
+    "recentRulesFor": "Rules for {{table}}"
   },
   "runs": {
     "breadcrumb": "Run Rules",

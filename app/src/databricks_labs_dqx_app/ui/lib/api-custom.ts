@@ -109,6 +109,61 @@ export const useBatchRunFromCatalog = <
 };
 
 // ---------------------------------------------------------------------------
+// Table preview — sample rows for the Preview Data block
+// ---------------------------------------------------------------------------
+
+export interface TablePreviewOut {
+  columns: string[];
+  rows: Record<string, string | null>[];
+  row_count: number;
+}
+
+export const getTablePreview = (
+  catalog: string,
+  schema: string,
+  table: string,
+  limit = 10,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<TablePreviewOut>> => {
+  return axios.default.get(
+    `/api/v1/discovery/catalogs/${encodeURIComponent(catalog)}/schemas/${encodeURIComponent(schema)}/tables/${encodeURIComponent(table)}/preview`,
+    { ...options, params: { limit } },
+  );
+};
+
+// ---------------------------------------------------------------------------
+// Preview dry run — run checks inline against preview rows (no job submission)
+// ---------------------------------------------------------------------------
+
+export interface PreviewDryRunIn {
+  table_fqn: string;
+  checks: Array<Record<string, unknown>>;
+  rows: Record<string, unknown>[];
+}
+
+export interface PreviewRowResult {
+  row: Record<string, unknown>;
+  errors: string[];
+  warnings: string[];
+}
+
+export interface PreviewDryRunOut {
+  table_fqn: string;
+  total_rows: number;
+  error_rows: number;
+  warning_rows: number;
+  pass_rows: number;
+  rows: PreviewRowResult[];
+}
+
+export const runDryRunOnPreview = (
+  body: PreviewDryRunIn,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<PreviewDryRunOut>> => {
+  return axios.default.post(`/api/v1/dryrun/run-on-preview`, body, options);
+};
+
+// ---------------------------------------------------------------------------
 // Filter tables by required columns
 // ---------------------------------------------------------------------------
 

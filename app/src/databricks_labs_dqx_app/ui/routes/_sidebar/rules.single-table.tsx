@@ -43,6 +43,10 @@ import {
   Info,
   Search,
   Check,
+  LayoutGrid,
+  Settings2,
+  History,
+  Columns3,
 } from "lucide-react";
 import {
   Popover,
@@ -54,17 +58,25 @@ import {
   aiAssistedChecksGeneration,
   type SaveRulesIn,
   saveRules,
-  useSubmitDryRun,
+  submitDryRun,
   useGetDryRunResults,
   useGetRules,
   getGetRulesQueryKey,
   useListCheckFunctions,
+  getTableColumns,
   type CheckFunctionDef as ApiCheckFunctionDef,
   type CheckFunctionParam as ApiCheckFunctionParam,
   type DryRunResultsOut,
+  type RuleCatalogEntryOut,
 } from "@/lib/api";
 import { useQueryClient } from "@tanstack/react-query";
-import { filterTablesByColumns, checkDuplicates, type CheckDuplicatesIn, submitRuleForApproval, cancelDryRun, getDryRunStatusCustom, useLabelDefinitions, type LabelDefinition } from "@/lib/api-custom";
+import { filterTablesByColumns, checkDuplicates, type CheckDuplicatesIn, submitRuleForApproval, cancelDryRun, getDryRunStatusCustom, useLabelDefinitions, type LabelDefinition, getTablePreview, runDryRunOnPreview, type PreviewDryRunIn, type PreviewDryRunOut, type PreviewRowResult } from "@/lib/api-custom";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui/tabs";
 import { LabelsEditor } from "@/components/Labels";
 import { getUserMetadata } from "@/lib/format-utils";
 import { useJobPolling } from "@/hooks/use-job-polling";
@@ -543,6 +555,7 @@ function UnifiedRulesPage() {
   );
   const [isSaving, setIsSaving] = useState(false);
   const [loadedFromTable, setLoadedFromTable] = useState(false);
+  const [activeDefineTab, setActiveDefineTab] = useState<"generator" | "activity" | "columns">("generator");
 
   // Pull DQX's full check-function registry from the backend. The list
   // re-renders the function picker; ``checkToDict`` and friends read the
@@ -614,21 +627,78 @@ function UnifiedRulesPage() {
     setLoadedFromTable(true);
   }, [existingRulesResp]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Preview Data state — table selection and loaded rows persist to localStorage
+  const PREVIEW_TABLE_LS_KEY = "dqx:single_table:preview_table";
+  const PREVIEW_DATA_LS_KEY = "dqx:single_table:preview_data";
+
+  type PreviewData = { columns: string[]; rows: Record<string, string | null>[]; col_types: Record<string, string> };
+
+  const [previewTable, setPreviewTable] = useState<string>(() => {
+    if (isTableFqn && initialTable) return initialTable;
+    try {
+      const stored = localStorage.getItem(PREVIEW_TABLE_LS_KEY);
+      if (stored && stored.split(".").length === 3) return stored;
+    } catch { /* ignore */ }
+    return "";
+  });
+  const [previewData, setPreviewData] = useState<PreviewData | null>(() => {
+    try {
+      const raw = localStorage.getItem(PREVIEW_DATA_LS_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as { fqn: string; data: PreviewData };
+      const storedFqn = localStorage.getItem(PREVIEW_TABLE_LS_KEY);
+      return parsed.fqn === storedFqn ? parsed.data : null;
+    } catch { return null; }
+  });
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const isPreviewTableFqn = previewTable.split(".").length === 3;
+
+  const handlePreviewTableChange = useCallback((fqn: string) => {
+    setPreviewTable(fqn);
+    setPreviewData(null);
+    try {
+      localStorage.setItem(PREVIEW_TABLE_LS_KEY, fqn);
+      localStorage.removeItem(PREVIEW_DATA_LS_KEY);
+    } catch { /* ignore */ }
+  }, []);
+
+  const handleLoadPreview = useCallback(async () => {
+    if (!isPreviewTableFqn) return;
+    const [cat, sch, tbl] = previewTable.split(".");
+    setPreviewLoading(true);
+    try {
+      const [previewResp, colsResp] = await Promise.all([
+        getTablePreview(cat, sch, tbl, 10),
+        getTableColumns(cat, sch, tbl),
+      ]);
+      const col_types: Record<string, string> = {};
+      for (const col of colsResp.data) {
+        col_types[col.name] = col.type_name;
+      }
+      const data: PreviewData = { ...previewResp.data, col_types };
+      setPreviewData(data);
+      try { localStorage.setItem(PREVIEW_DATA_LS_KEY, JSON.stringify({ fqn: previewTable, data })); } catch { /* ignore */ }
+    } catch {
+      toast.error(t("rulesSingleTable.previewLoadError"));
+    } finally {
+      setPreviewLoading(false);
+    }
+  }, [previewTable, isPreviewTableFqn, t]);
+
   // AI generation state
   const [aiPrompt, setAiPrompt] = useState("");
   const [aiGenerating, setAiGenerating] = useState(false);
-  const [aiReferenceTable, setAiReferenceTable] = useState(initialTable ?? "");
 
   // Dry run state
   const [dryRunTable, setDryRunTable] = useState(initialTable ?? "");
   const [dryRunSampleSize, setDryRunSampleSize] = useState(1000);
   const [dryRunResult, setDryRunResult] = useState<DryRunResultsOut | null>(null);
+  const [previewDryRunResult, setPreviewDryRunResult] = useState<PreviewDryRunOut | null>(null);
   const [dryRunJobRunId, setDryRunJobRunId] = useState<number | null>(null);
   const [dryRunRunId, setDryRunRunId] = useState<string | null>(null);
   const [dryRunViewFqn, setDryRunViewFqn] = useState<string | null>(null);
 
-  const submitDryRunMutation = useSubmitDryRun();
-  // submitMutation replaced by direct submitRuleForApproval calls
+  const [dryRunSubmitting, setDryRunSubmitting] = useState(false);
 
   const dryRunResultsQuery = useGetDryRunResults(dryRunRunId ?? "", {
     query: { enabled: false },
@@ -712,8 +782,7 @@ function UnifiedRulesPage() {
     });
   }, [t]);
 
-  const hasRefTable = aiReferenceTable.split(".").length === 3;
-  const effectiveTable = hasRefTable ? aiReferenceTable : (isTableFqn ? initialTable : undefined);
+  const effectiveTable = isPreviewTableFqn ? previewTable : (isTableFqn ? initialTable : undefined);
 
   const handleAiGenerate = async () => {
     if (!aiPrompt.trim()) return;
@@ -866,7 +935,7 @@ function UnifiedRulesPage() {
   const hasDuplicates = dupCheckIds.size > 0;
 
   // Dry run handler
-  const isDryRunning = submitDryRunMutation.isPending || dryRunPolling.isPolling;
+  const isDryRunning = dryRunSubmitting || dryRunPolling.isPolling;
 
   const justSavedRef = useRef(false);
 
@@ -888,6 +957,8 @@ function UnifiedRulesPage() {
     blocker.proceed?.();
   };
 
+  const hasPreviewForDryRun = isPreviewTableFqn && previewData !== null && dryRunTable === previewTable;
+
   const handleDryRun = async () => {
     if (!dryRunTable) {
       toast.error(t("rulesSingleTable.toastSelectTable"));
@@ -900,18 +971,34 @@ function UnifiedRulesPage() {
     }
     try {
       setDryRunResult(null);
-      const resp = await submitDryRunMutation.mutateAsync({
-        data: { table_fqn: dryRunTable, checks: checksForTable, sample_size: dryRunSampleSize, skip_history: true },
-      });
-      setDryRunRunId(resp.data.run_id);
-      setDryRunJobRunId(resp.data.job_run_id);
-      setDryRunViewFqn(resp.data.view_fqn ?? null);
-      toast.info(t("rulesSingleTable.toastDryRunSubmitted"));
+      setPreviewDryRunResult(null);
+      setDryRunSubmitting(true);
+
+      if (hasPreviewForDryRun && previewData) {
+        // Inline path — no job, returns immediately with per-row results
+        const body: PreviewDryRunIn = {
+          table_fqn: dryRunTable,
+          checks: checksForTable as Array<Record<string, unknown>>,
+          rows: previewData.rows,
+        };
+        const r = await runDryRunOnPreview(body);
+        setPreviewDryRunResult(r.data);
+        toast.success(t("rulesSingleTable.toastDryRunComplete"));
+      } else {
+        // Job-based path — submits async, polling picks up the result
+        const r = await submitDryRun({ table_fqn: dryRunTable, checks: checksForTable, sample_size: dryRunSampleSize, skip_history: true });
+        setDryRunRunId(r.data.run_id);
+        setDryRunJobRunId(r.data.job_run_id);
+        setDryRunViewFqn(r.data.view_fqn ?? null);
+        toast.info(t("rulesSingleTable.toastDryRunSubmitted"));
+      }
     } catch (err) {
       const axErr = err as { response?: { data?: { detail?: string } } };
       const detail = axErr?.response?.data?.detail;
       toast.error(detail ? t("rulesSingleTable.toastDryRunSubmitFailedDetail", { detail }) : t("rulesSingleTable.toastDryRunSubmitFailed"));
       console.error("Dry run error:", err);
+    } finally {
+      setDryRunSubmitting(false);
     }
   };
 
@@ -1119,95 +1206,196 @@ function UnifiedRulesPage() {
         </div>
       </div>
 
-      {/* Step 1: Define Rules */}
+      {/* Block 1: Preview Data */}
       <Card>
-        <CardHeader>
-          <CardTitle className="text-base flex items-center gap-2">
-            <span className="inline-flex items-center justify-center h-6 w-6 rounded-full bg-primary text-primary-foreground text-xs font-bold">1</span>
-            {t("rulesSingleTable.defineRulesStep")}
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-5">
-          {/* AI generation */}
-          <div className="border border-violet-200 dark:border-violet-800 rounded-lg p-4 bg-violet-50/50 dark:bg-violet-950/30 space-y-3">
-            <div className="flex items-center gap-2 mb-1">
-              <Sparkles className="h-4 w-4 text-violet-600 dark:text-violet-400" />
-              <span className="text-sm font-medium text-violet-900 dark:text-violet-200">{t("rulesSingleTable.generateWithAi")}</span>
+        <CardContent className="p-4 space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Table2 className="h-4 w-4 text-muted-foreground" />
+              <span className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+                {t("rulesSingleTable.source")}
+              </span>
             </div>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleLoadPreview}
+              disabled={!isPreviewTableFqn || previewLoading}
+              className="gap-2"
+            >
+              {previewLoading ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <LayoutGrid className="h-3.5 w-3.5" />
+              )}
+              {previewLoading ? t("rulesSingleTable.loadingPreview") : t("rulesSingleTable.loadDataPreview")}
+            </Button>
+          </div>
+          <CatalogBrowser
+            value={previewTable}
+            onChange={handlePreviewTableChange}
+            disabled={previewLoading}
+          />
+          {previewData && previewData.columns.length > 0 && (
             <div className="space-y-2">
-              <Label className="text-xs text-muted-foreground">
-                {t("rulesSingleTable.referenceTableLabel")}
-              </Label>
-              <CatalogBrowser
-                value={aiReferenceTable}
-                onChange={setAiReferenceTable}
-                disabled={aiGenerating}
-              />
+              <div className="flex items-center gap-2">
+                <LayoutGrid className="h-3.5 w-3.5 text-muted-foreground" />
+                <span className="text-sm font-mono font-bold">
+                  {t("rulesSingleTable.datasetLabel", { name: previewTable })}
+                </span>
+              </div>
+              <div className="overflow-x-auto border rounded-md">
+                <table className="w-full text-xs">
+                  <thead className="border-b bg-muted/40">
+                    <tr>
+                      {previewData.columns.map((col) => (
+                        <th
+                          key={col}
+                          className="px-3 py-2 text-left font-semibold uppercase tracking-wide text-[10px] text-muted-foreground whitespace-nowrap font-mono"
+                        >
+                          {col}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {previewData.rows.map((row, i) => (
+                      <tr key={i} className="border-b last:border-0 hover:bg-muted/20 transition-colors">
+                        {previewData.columns.map((col) => (
+                          <td key={col} className="px-3 py-2 font-mono text-[11px] whitespace-nowrap text-muted-foreground">
+                            {row[col] ?? <span className="italic text-muted-foreground/40">null</span>}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
-            <div className="flex gap-2">
-              <Textarea
-                value={aiPrompt}
-                onChange={(e) => setAiPrompt(e.target.value)}
-                placeholder={t("rulesSingleTable.aiPromptPlaceholder")}
-                className="min-h-[52px] resize-none text-sm"
-                disabled={aiGenerating}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    handleAiGenerate();
-                  }
-                }}
-              />
-              <Button
-                onClick={handleAiGenerate}
-                disabled={aiGenerating || !aiPrompt.trim()}
-                className="shrink-0 gap-1.5"
-                size="sm"
+          )}
+          {!previewData && !previewLoading && isPreviewTableFqn && (
+            <p className="text-xs text-muted-foreground text-center py-2">
+              {t("rulesSingleTable.noPreviewSelected")}
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Block 2: Define Rules */}
+      <Card>
+        <Tabs
+          value={activeDefineTab}
+          onValueChange={(v) => setActiveDefineTab(v as "generator" | "activity" | "columns")}
+        >
+          <div className="px-4 pt-4 pb-3 border-b">
+            <TabsList className="h-9 rounded-full bg-muted/60 p-1">
+              <TabsTrigger
+                value="generator"
+                className="rounded-full text-xs gap-1.5 px-3 data-[state=active]:bg-background data-[state=active]:shadow-sm"
               >
-                {aiGenerating ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Sparkles className="h-3.5 w-3.5" />
-                )}
-                {aiGenerating ? t("rulesSingleTable.generating") : t("rulesSingleTable.generate")}
-              </Button>
-            </div>
+                <Settings2 className="h-3.5 w-3.5" />
+                {t("rulesSingleTable.ruleGeneratorTab")}
+              </TabsTrigger>
+              <TabsTrigger
+                value="columns"
+                className="rounded-full text-xs gap-1.5 px-3 data-[state=active]:bg-background data-[state=active]:shadow-sm"
+              >
+                <Columns3 className="h-3.5 w-3.5" />
+                {t("rulesSingleTable.columnsTab")}
+              </TabsTrigger>
+              <TabsTrigger
+                value="activity"
+                className="rounded-full text-xs gap-1.5 px-3 data-[state=active]:bg-background data-[state=active]:shadow-sm"
+              >
+                <History className="h-3.5 w-3.5" />
+                {t("rulesSingleTable.recentActivityTab")}
+              </TabsTrigger>
+            </TabsList>
           </div>
 
-          {/* Two-column row: check editor on the left, column discovery
-              side panel on the right. On smaller viewports the panel
-              stacks above the checks so it stays visible. */}
-          <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_320px] gap-4 items-start">
-            <div className="space-y-5 min-w-0 order-2 xl:order-1">
-              {checks.map((check, idx) => (
-                <CheckCard
-                  key={check.id}
-                  check={check}
-                  index={idx}
-                  onUpdate={updateCheck}
-                  onRemove={removeCheck}
-                  canRemove={checks.length > 1}
-                  disabled={isBusy}
-                  isDuplicate={dupCheckIds.has(check.id)}
-                  labelDefinitions={labelDefinitions}
-                  checkFunctions={checkFunctions}
-                />
-              ))}
-              <Button variant="outline" size="sm" onClick={addCheck} className="gap-1" disabled={isBusy}>
-                <Plus className="h-3 w-3" />
-                {t("rulesSingleTable.addCheck")}
-              </Button>
-            </div>
-            <div className="order-1 xl:order-2 min-w-0">
+          <TabsContent value="generator" className="mt-0 focus-visible:ring-0 focus-visible:outline-none">
+            <CardContent className="space-y-5 pt-5">
+              {/* AI generation — table is selected in Preview Data block above */}
+              <div className="border border-violet-200 dark:border-violet-800 rounded-lg p-4 bg-violet-50/50 dark:bg-violet-950/30 space-y-3">
+                <div className="flex items-center gap-2 mb-1">
+                  <Sparkles className="h-4 w-4 text-violet-600 dark:text-violet-400" />
+                  <span className="text-sm font-medium text-violet-900 dark:text-violet-200">{t("rulesSingleTable.generateWithAi")}</span>
+                  {isPreviewTableFqn && (
+                    <Badge variant="outline" className="ml-auto text-[10px] font-mono">
+                      {previewTable.split(".").pop()}
+                    </Badge>
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  <Textarea
+                    value={aiPrompt}
+                    onChange={(e) => setAiPrompt(e.target.value)}
+                    placeholder={t("rulesSingleTable.aiPromptPlaceholder")}
+                    className="min-h-[52px] resize-none text-sm"
+                    disabled={aiGenerating}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        handleAiGenerate();
+                      }
+                    }}
+                  />
+                  <Button
+                    onClick={handleAiGenerate}
+                    disabled={aiGenerating || !aiPrompt.trim()}
+                    className="shrink-0 gap-1.5"
+                    size="sm"
+                  >
+                    {aiGenerating ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Sparkles className="h-3.5 w-3.5" />
+                    )}
+                    {aiGenerating ? t("rulesSingleTable.generating") : t("rulesSingleTable.generate")}
+                  </Button>
+                </div>
+              </div>
+
+              {/* Check editor — full width now that column discovery is its own tab */}
+              <div className="space-y-5">
+                {checks.map((check, idx) => (
+                  <CheckCard
+                    key={check.id}
+                    check={check}
+                    index={idx}
+                    onUpdate={updateCheck}
+                    onRemove={removeCheck}
+                    canRemove={checks.length > 1}
+                    disabled={isBusy}
+                    isDuplicate={dupCheckIds.has(check.id)}
+                    labelDefinitions={labelDefinitions}
+                    checkFunctions={checkFunctions}
+                  />
+                ))}
+                <Button variant="outline" size="sm" onClick={addCheck} className="gap-1" disabled={isBusy}>
+                  <Plus className="h-3 w-3" />
+                  {t("rulesSingleTable.addCheck")}
+                </Button>
+              </div>
+            </CardContent>
+          </TabsContent>
+
+          <TabsContent value="columns" className="mt-0 focus-visible:ring-0 focus-visible:outline-none">
+            <CardContent className="pt-5">
               <ColumnDiscoveryPanel
                 variant="inline"
                 defaultCollapsed={false}
-                className="xl:sticky xl:top-4"
                 onTableSelect={handleDiscoveryTableSelect}
               />
-            </div>
-          </div>
-        </CardContent>
+            </CardContent>
+          </TabsContent>
+
+          <TabsContent value="activity" className="mt-0 focus-visible:ring-0 focus-visible:outline-none">
+            <CardContent className="pt-5">
+              <RecentActivityPanel tableFqn={previewTable} isPreviewTableFqn={isPreviewTableFqn} />
+            </CardContent>
+          </TabsContent>
+        </Tabs>
       </Card>
 
       {/* Step 2: Validate & Save */}
@@ -1268,20 +1456,28 @@ function UnifiedRulesPage() {
                     {t("rulesSingleTable.maxRows")}
                   </span>
                 </div>
-                <Button
-                  variant="outline"
-                  onClick={handleDryRun}
-                  disabled={!dryRunTable || isBusy || isDryRunning}
-                  className="gap-2"
-                  size="sm"
-                >
-                  {isDryRunning ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Play className="h-4 w-4" />
+                <div className="flex items-center gap-2">
+                  {hasPreviewForDryRun && (
+                    <Badge variant="secondary" className="text-[10px] gap-1 font-normal">
+                      <LayoutGrid className="h-3 w-3" />
+                      {t("rulesSingleTable.usingPreviewData")}
+                    </Badge>
                   )}
-                  {isDryRunning ? t("rulesSingleTable.running") : t("rulesSingleTable.dryRun")}
-                </Button>
+                  <Button
+                    variant="outline"
+                    onClick={handleDryRun}
+                    disabled={!dryRunTable || isBusy || isDryRunning}
+                    className="gap-2"
+                    size="sm"
+                  >
+                    {isDryRunning ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Play className="h-4 w-4" />
+                    )}
+                    {isDryRunning ? t("rulesSingleTable.running") : t("rulesSingleTable.dryRun")}
+                  </Button>
+                </div>
               </div>
 
               {isDryRunning && dryRunPolling.status && (
@@ -1297,6 +1493,13 @@ function UnifiedRulesPage() {
                 <>
                   <Separator />
                   <DryRunResults result={dryRunResult} />
+                </>
+              )}
+
+              {previewDryRunResult && (
+                <>
+                  <Separator />
+                  <PreviewDryRunResultPanel result={previewDryRunResult} />
                 </>
               )}
             </div>
@@ -1530,6 +1733,175 @@ function argHint(arg: string, fn: string | undefined, t: TFunc): string {
     case "dimension": return t("rulesSingleTable.argHintDimension");
     default: return "";
   }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// PreviewDryRunResultPanel
+// ──────────────────────────────────────────────────────────────────────────────
+
+function PreviewDryRunResultPanel({ result }: { result: PreviewDryRunOut }) {
+  const { t } = useTranslation();
+  const passRate = result.total_rows > 0
+    ? Math.round((result.pass_rows / result.total_rows) * 100)
+    : 100;
+
+  return (
+    <div className="space-y-3">
+      {/* Summary bar */}
+      <div className="flex items-center gap-4 flex-wrap text-sm">
+        <span className="font-semibold">{t("rulesSingleTable.previewRunSummary", "Preview validation")}</span>
+        <span className="flex items-center gap-1 text-green-600 dark:text-green-400">
+          <Check className="h-3.5 w-3.5" />
+          {result.pass_rows} {t("rulesSingleTable.passed", "passed")}
+        </span>
+        {result.error_rows > 0 && (
+          <span className="flex items-center gap-1 text-red-600 dark:text-red-400">
+            <AlertCircle className="h-3.5 w-3.5" />
+            {result.error_rows} {t("rulesSingleTable.errors", "errors")}
+          </span>
+        )}
+        {result.warning_rows > 0 && (
+          <span className="flex items-center gap-1 text-amber-600 dark:text-amber-400">
+            <AlertCircle className="h-3.5 w-3.5" />
+            {result.warning_rows} {t("rulesSingleTable.warnings", "warnings")}
+          </span>
+        )}
+        <span className="ml-auto text-xs text-muted-foreground font-mono">{passRate}% pass rate</span>
+      </div>
+
+      {/* Per-row table */}
+      <div className="overflow-x-auto border rounded-md">
+        <table className="w-full text-xs">
+          <thead className="border-b bg-muted/40">
+            <tr>
+              <th className="px-2 py-2 text-left font-semibold text-[10px] uppercase tracking-wide text-muted-foreground w-8">#</th>
+              {result.rows[0] && Object.keys(result.rows[0].row).map((col) => (
+                <th key={col} className="px-3 py-2 text-left font-semibold text-[10px] uppercase tracking-wide text-muted-foreground whitespace-nowrap font-mono">
+                  {col}
+                </th>
+              ))}
+              <th className="px-3 py-2 text-left font-semibold text-[10px] uppercase tracking-wide text-muted-foreground">
+                {t("rulesSingleTable.status", "Status")}
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {result.rows.map((r: PreviewRowResult, i: number) => {
+              const hasError = r.errors.length > 0;
+              const hasWarning = r.warnings.length > 0;
+              return (
+                <tr
+                  key={i}
+                  className={`border-b last:border-0 ${
+                    hasError
+                      ? "bg-red-50/60 dark:bg-red-950/20"
+                      : hasWarning
+                      ? "bg-amber-50/60 dark:bg-amber-950/20"
+                      : "hover:bg-muted/20"
+                  } transition-colors`}
+                >
+                  <td className="px-2 py-2 text-muted-foreground/50 font-mono text-[10px]">{i + 1}</td>
+                  {Object.values(r.row).map((v, vi) => (
+                    <td key={vi} className="px-3 py-2 font-mono text-[11px] whitespace-nowrap text-muted-foreground">
+                      {v == null ? <span className="italic text-muted-foreground/40">null</span> : String(v)}
+                    </td>
+                  ))}
+                  <td className="px-3 py-2 whitespace-nowrap">
+                    {hasError ? (
+                      <div className="space-y-0.5">
+                        {r.errors.map((e) => (
+                          <Badge key={e} variant="destructive" className="text-[9px] font-normal block w-fit">{e}</Badge>
+                        ))}
+                      </div>
+                    ) : hasWarning ? (
+                      <div className="space-y-0.5">
+                        {r.warnings.map((w) => (
+                          <Badge key={w} variant="outline" className="text-[9px] font-normal border-amber-400 text-amber-700 dark:text-amber-400 block w-fit">{w}</Badge>
+                        ))}
+                      </div>
+                    ) : (
+                      <Badge variant="outline" className="text-[9px] font-normal text-green-700 dark:text-green-400 border-green-400">
+                        <Check className="h-2.5 w-2.5 mr-1" />
+                        {t("rulesSingleTable.pass", "Pass")}
+                      </Badge>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// RecentActivityPanel
+// ──────────────────────────────────────────────────────────────────────────────
+
+function RecentActivityPanel({ tableFqn, isPreviewTableFqn }: { tableFqn: string; isPreviewTableFqn: boolean }) {
+  const { t } = useTranslation();
+  const { data: rulesResp, isLoading } = useGetRules(tableFqn, {
+    query: { enabled: isPreviewTableFqn },
+  });
+
+  if (!isPreviewTableFqn) {
+    return (
+      <p className="text-sm text-muted-foreground text-center py-6">
+        {t("rulesSingleTable.selectTableForActivity")}
+      </p>
+    );
+  }
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center gap-2 py-6 justify-center">
+        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+        <span className="text-sm text-muted-foreground">{t("common.loading", "Loading…")}</span>
+      </div>
+    );
+  }
+
+  const entries: RuleCatalogEntryOut[] = Array.isArray(rulesResp?.data) ? rulesResp.data : [];
+
+  if (entries.length === 0) {
+    return (
+      <p className="text-sm text-muted-foreground text-center py-6">
+        {t("rulesSingleTable.noRulesForTable")}
+      </p>
+    );
+  }
+
+  const statusVariant: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
+    approved: "default",
+    draft: "secondary",
+    pending: "outline",
+    rejected: "destructive",
+  };
+
+  return (
+    <div className="space-y-3">
+      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+        {t("rulesSingleTable.recentRulesFor", { table: tableFqn.split(".").pop() })}
+      </p>
+      <div className="divide-y rounded-md border">
+        {entries.map((entry, i) => (
+          <div key={entry.rule_id ?? i} className="flex items-center gap-3 px-3 py-2.5">
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium truncate">{entry.display_name || t("rulesSingleTable.noRulesForTable")}</p>
+              <p className="text-xs text-muted-foreground font-mono truncate">
+                {entry.checks.length} {entry.checks.length === 1 ? "check" : "checks"} · v{entry.version}
+              </p>
+            </div>
+            <Badge variant={statusVariant[entry.status] ?? "outline"} className="capitalize shrink-0 text-[10px]">
+              {entry.status}
+            </Badge>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

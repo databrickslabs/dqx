@@ -3,7 +3,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from databricks_labs_dqx_app.backend.dependencies import get_discovery_service
+from databricks_labs_dqx_app.backend.dependencies import get_discovery_service, get_obo_sql_executor
 from databricks_labs_dqx_app.backend.logger import logger
 from databricks_labs_dqx_app.backend.models import (
     CatalogOut,
@@ -12,9 +12,12 @@ from databricks_labs_dqx_app.backend.models import (
     FilterTablesByColumnsOut,
     SchemaOut,
     TableOut,
+    TablePreviewOut,
     TableTagsOut,
 )
 from databricks_labs_dqx_app.backend.services.discovery import DiscoveryService
+from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
+from databricks_labs_dqx_app.backend.sql_utils import quote_fqn, validate_fqn
 
 # No router-level role guard: OBO auth via get_discovery_service rejects
 # unauthenticated callers, and Unity Catalog OBO permissions enforce what each
@@ -149,6 +152,40 @@ async def get_table_tags(
     except Exception as e:
         logger.error(f"Failed to get tags for {catalog}.{schema}.{table}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to get table tags: {e}")
+
+
+@router.get(
+    "/catalogs/{catalog}/schemas/{schema}/tables/{table}/preview",
+    response_model=TablePreviewOut,
+    operation_id="get_table_preview",
+)
+async def get_table_preview(
+    catalog: str,
+    schema: str,
+    table: str,
+    obo_sql: Annotated[SqlExecutor, Depends(get_obo_sql_executor)],
+    limit: int = 10,
+) -> TablePreviewOut:
+    """Return up to *limit* sample rows from the table for UI preview.
+
+    Runs as the calling user (OBO) so Unity Catalog row filters and column masks apply.
+    """
+    limit = max(1, min(limit, 100))
+    fqn = f"{catalog}.{schema}.{table}"
+    try:
+        validate_fqn(fqn)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    quoted = quote_fqn(fqn)
+    try:
+        rows = await asyncio.to_thread(obo_sql.query_dicts, f"SELECT * FROM {quoted} LIMIT {limit}")
+        cols = list(rows[0].keys()) if rows else []
+        return TablePreviewOut(columns=cols, rows=rows, row_count=len(rows))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Preview failed for %s: %s", fqn, e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to load preview: {e}")
 
 
 @router.post(
