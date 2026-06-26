@@ -32,7 +32,7 @@ SCHEMA_STR = (
     "col1: int, col2: int, col3: int, col4: array<int>, "
     "col5: date, col6: timestamp, col7: map<string, int>, "
     "col8: struct<field1: int>, col10: int, col_ipv4: string, col_ipv6: string, "
-    "col_json_str: string"
+    "col_json_str: string, col_geo_point: string"
 )
 
 RUN_TIME = datetime(2025, 1, 1, 0, 0, 0, 0, tzinfo=timezone.utc)
@@ -110,6 +110,15 @@ def generated_df(spark, rows=DEFAULT_ROWS):
         .withColumnSpec("col_ipv4", template=r"\n.\n.\n.\n")
         .withColumnSpec("col_ipv6", template="XXXX:XXXX:XXXX:XXXX:XXXX:XXXX:XXXX:XXXX")
         .withColumnSpec("col_json_str", template=r"{'key1': '\w', 'key2': 'd\w'}")
+        .withColumnSpec(
+            "col_geo_point",
+            values=[
+                "POINT(4.90 52.37)",
+                "POINT(4.73 52.28)",
+                "POINT(4.48 51.92)",
+                "POINT(5.20 52.35)",
+            ],
+        )
     )
     return spec.build()
 
@@ -285,3 +294,28 @@ def generated_timestamp_df(request, spark):
     for col in col_names:
         data_gen = data_gen.withColumn(col, "timestamp", begin=begin, end=end, interval=interval, **opts)
     return col_names, data_gen.build(), n_rows
+
+
+@pytest.fixture
+def generated_email_df(spark):
+    email_schema_str = (
+        "col1_email_standard: string, "
+        "col2_email_with_quoted_local_part: string, "
+        "col3_email_with_ip_domain: string, "
+        "col4_email_with_multi_part_domain: string"
+    )
+    schema = _parse_datatype_string(email_schema_str)
+
+    email_templates = {
+        "col1_email_standard": r"kkkkkkkkkkkk@kkkkkkkk.org",
+        "col2_email_with_quoted_local_part": r"\"kkkkkkkkkkkk\"@kkkkkkkk.org",
+        "col3_email_with_ip_domain": r"kkkkkkkkkkkk@\[\\n.\\n.\\n.\\n\]",
+        "col4_email_with_multi_part_domain": r"kkkkkkkkkkkk@kkkk.kkkk.com",
+    }
+
+    _, gen = make_data_gen(spark, n_rows=DEFAULT_ROWS, n_columns=len(email_templates), partitions=DEFAULT_PARTITIONS)
+    gen = gen.withSchema(schema)
+    for col, template in email_templates.items():
+        gen = gen.withColumnSpec(col, template=template)
+
+    return gen.build()

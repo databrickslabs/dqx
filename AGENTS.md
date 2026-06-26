@@ -21,6 +21,28 @@ git config --global commit.gpgsign true  # GPG-sign all commits (required)
 git verify-commit <hash>   # verify after first commit
 ```
 
+### DQX Studio app (under `app/`)
+
+The Studio is a separate uv sub-project with its own pyproject + lockfile under `app/`. Use these targets — never invoke `uv` / `yarn` / `bun` directly unless you know why:
+
+**Prerequisites:** before `make app-install` / `app-build` / `app-check` / `app-deploy` (deploy builds the wheel first), install the JS toolchain — Node.js 18+ (provides `npm`; `brew install node` / nvm / nodejs.org), **yarn** classic v1 (`npm install -g yarn`), and **bun** (`curl -fsSL https://bun.sh/install | bash`). See [`app/DEVELOPMENT.md`](app/DEVELOPMENT.md#prerequisites).
+
+```bash
+make app-install              # yarn install --frozen-lockfile
+make app-build                # OpenAPI dump + orval + Vite build + wheels
+make app-check                # bun tsc -b  +  basedpyright (type-check only, no lint)
+make app-test                 # backend pytest
+make app-start-dev            # uvicorn (:9002) + Vite (:9001), foreground
+make app-stop-dev             # pkill the two dev servers
+make app-regen-api            # dump OpenAPI + run orval (after backend model changes)
+make app-deploy   PROFILE=<p> TARGET=<t>   # build + bundle deploy + grants + bundle run
+make app-bind     PROFILE=<p> TARGET=<t>   # one-time: adopt pre-existing storage into bundle state
+make app-grant-permissions PROFILE=<p> TARGET=<t>  # rerun post_deploy_grants.sh
+make lock-app-dependencies    # refresh app/uv.lock + app/yarn.lock
+```
+
+App docs (read these before touching `app/`): [`app/CLAUDE.md`](app/CLAUDE.md), [`app/DEPLOYMENT.md`](app/DEPLOYMENT.md), [`app/DEVELOPMENT.md`](app/DEVELOPMENT.md), [`app/README.md`](app/README.md), and the backend / UI CLAUDEs under `app/src/databricks_labs_dqx_app/`.
+
 ### Dependency installs and lock files
 
 - Use **`make dev`** from the repo root to create `.venv` and install Python dependencies. Do **not** run `uv sync`, `uv lock`, or `uv add` for normal setup — that bypasses `UV_FROZEN=1` and may modify `uv.lock` or bake in internal registry URLs.

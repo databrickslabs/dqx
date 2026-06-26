@@ -576,6 +576,16 @@ class DQEngineCore(DQEngineCoreBase):
         return df.observe(observation, *metric_exprs), observation
 
 
+def _populate_batch_observation(
+    metrics_config: OutputConfig | None,
+    batch_observation: Observation | None,
+    metrics_only_df: DataFrame | None,
+) -> None:
+    """Force an action so the Observation is populated; otherwise Observation.get blocks in metrics-only mode."""
+    if metrics_config is not None and batch_observation is not None and metrics_only_df is not None:
+        metrics_only_df.count()
+
+
 class DQEngine(DQEngineBase):
     """High-level engine to apply data quality checks and manage IO.
 
@@ -714,11 +724,54 @@ class DQEngine(DQEngineBase):
             df=df, checks=checks, custom_check_functions=custom_check_functions, ref_dfs=ref_dfs
         )
 
+    @staticmethod
+    def _validate_save_destination_configs(
+        output_config: OutputConfig | None,
+        quarantine_config: OutputConfig | None,
+        metrics_config: OutputConfig | None,
+    ) -> None:
+        if output_config is None and quarantine_config is None and metrics_config is None:
+            raise InvalidParameterError(
+                "At least one of 'output_config', 'quarantine_config' or 'metrics_config' must be provided"
+            )
+
+    def _validate_metrics_observer(self, metrics_config: OutputConfig | None) -> None:
+        """Validate that summary metrics can be collected whenever they are requested.
+
+        Summary metrics come from a Spark Observation that only exists when the engine is constructed with an
+        observer. If *metrics_config* is provided without one, the metrics table would be silently skipped -
+        regardless of whether output/quarantine tables are also written - so fail fast instead.
+
+        Args:
+            metrics_config: Configuration for writing summary metrics, if any.
+
+        Raises:
+            InvalidParameterError: If *metrics_config* is provided but the engine has no observer.
+        """
+        if metrics_config is not None and not self._engine.observer:
+            raise InvalidParameterError("Metrics cannot be collected for engine with no observer")
+
+    def _validate_metrics_only_save(
+        self,
+        input_config: InputConfig,
+        output_config: OutputConfig | None,
+        quarantine_config: OutputConfig | None,
+        metrics_config: OutputConfig | None,
+    ) -> None:
+        if output_config is not None or quarantine_config is not None or metrics_config is None:
+            return
+
+        if input_config.is_streaming:
+            raise InvalidParameterError(
+                "Metrics-only writes are not supported for streaming input. Provide 'output_config' or "
+                "'quarantine_config' to run a streaming query that can emit summary metrics."
+            )
+
     @telemetry_logger("engine", "apply_checks_and_save_in_table")
     def apply_checks_and_save_in_table(
         self,
         input_config: InputConfig,
-        output_config: OutputConfig,
+        output_config: OutputConfig | None = None,
         checks: list[DQRule] | None = None,
         quarantine_config: OutputConfig | None = None,
         metrics_config: OutputConfig | None = None,
@@ -729,18 +782,21 @@ class DQEngine(DQEngineBase):
         """
         Apply data quality checks to input data and save results.
 
-        If *quarantine_config* is provided, split the data into valid and invalid records:
-        - valid records are written using *output_config*.
+        If *quarantine_config* is provided, the data is split into valid and invalid records:
+        - valid records are written using *output_config* (skipped when *output_config* is not provided).
         - invalid records are written using *quarantine_config*.
 
-        If *quarantine_config* is not provided, write all rows (including result columns) using *output_config*.
+        If *quarantine_config* is not provided and *output_config* is provided, all rows (including result columns)
+        are written using *output_config*.
 
-        If *metrics_config* is provided and the `DQEngine` has a valid `observer`, data quality summary metrics will be
+        If *metrics_config* is provided and the `DQEngine` has a valid `observer`, data quality summary metrics are
         tracked and written using *metrics_config*.
 
         Args:
             input_config: Input configuration (e.g., table/view or file location and read options).
-            output_config: Output configuration (e.g., table name, mode, and write options).
+            output_config: Output configuration (e.g., table name, mode, and write options). Optional when
+                *quarantine_config* is provided, in which case valid records are not written, or when only
+                *metrics_config* is provided for batch summary metrics.
             checks: Optional list of *DQRule* checks to apply. If not provided, checks_location must be provided.
             quarantine_config: Optional configuration for writing invalid records.
             metrics_config: Optional configuration for writing summary metrics.
@@ -749,11 +805,21 @@ class DQEngine(DQEngineBase):
                 - If 'checks' parameter is provided, it is only used for reporting purposes
                 - If 'checks' parameter is not provided, it is used for loading checks from the storage.
             run_config_name: Name of the run configuration to use when loading checks from a table.
+
+        Raises:
+            InvalidParameterError: If both *checks* and *checks_location* are not specified, if none of
+                *output_config*, *quarantine_config*, and *metrics_config* are specified, if *metrics_config* is
+                provided while the engine has no observer to collect metrics, or if metrics-only is requested for
+                streaming.
         """
         logger.info(f"Applying checks to {input_config.location}")
 
         if checks is None and checks_location is None:
             raise InvalidParameterError("Either 'checks_location' or 'checks' must be provided")
+
+        self._validate_save_destination_configs(output_config, quarantine_config, metrics_config)
+        self._validate_metrics_observer(metrics_config)
+        self._validate_metrics_only_save(input_config, output_config, quarantine_config, metrics_config)
 
         if checks is None and checks_location:
             storage_handler, storage_config = self._checks_handler_factory.create_for_location(
@@ -768,6 +834,7 @@ class DQEngine(DQEngineBase):
         batch_observation = None
         output_streaming_query = None
         quarantine_streaming_query = None
+        metrics_only_df: DataFrame | None = None
 
         if quarantine_config:
             check_result = self.apply_checks_and_split(df, checks, ref_dfs)
@@ -775,7 +842,8 @@ class DQEngine(DQEngineBase):
                 good_df, bad_df, batch_observation = check_result
             else:
                 good_df, bad_df = check_result
-            output_streaming_query = save_dataframe_as_table(good_df, output_config)
+            if output_config is not None:
+                output_streaming_query = save_dataframe_as_table(good_df, output_config)
             quarantine_streaming_query = save_dataframe_as_table(bad_df, quarantine_config)
             target_streaming_query = quarantine_streaming_query
         else:
@@ -784,11 +852,16 @@ class DQEngine(DQEngineBase):
                 checked_df, batch_observation = check_result
             else:
                 checked_df = check_result
-            output_streaming_query = save_dataframe_as_table(checked_df, output_config)
+            if output_config is not None:
+                output_streaming_query = save_dataframe_as_table(checked_df, output_config)
+            else:
+                metrics_only_df = checked_df
             target_streaming_query = output_streaming_query
 
         assert checks is not None  # guaranteed: either provided or loaded from checks_location above
         rule_set_fingerprint = compute_rule_set_fingerprint(checks) if checks else None
+
+        _populate_batch_observation(metrics_config, batch_observation, metrics_only_df)
 
         # Add listener for streaming metrics, targeting the specific query to avoid duplicates
         if self._engine.observer and metrics_config and target_streaming_query is not None:
@@ -822,7 +895,7 @@ class DQEngine(DQEngineBase):
     def apply_checks_by_metadata_and_save_in_table(
         self,
         input_config: InputConfig,
-        output_config: OutputConfig,
+        output_config: OutputConfig | None = None,
         checks: list[dict] | None = None,
         quarantine_config: OutputConfig | None = None,
         metrics_config: OutputConfig | None = None,
@@ -834,15 +907,21 @@ class DQEngine(DQEngineBase):
         """
         Apply metadata-defined data quality checks to input data and save results.
 
-        If *quarantine_config* is provided, split the data into valid and invalid records:
-        - valid records are written using *output_config*;
+        If *quarantine_config* is provided, the data is split into valid and invalid records:
+        - valid records are written using *output_config* (skipped when *output_config* is not provided).
         - invalid records are written using *quarantine_config*.
 
-        If *quarantine_config* is not provided, write all rows (including result columns) using *output_config*.
+        If *quarantine_config* is not provided and *output_config* is provided, all rows (including result columns)
+        are written using *output_config*.
+
+        If *metrics_config* is provided and the `DQEngine` has a valid `observer`, data quality summary metrics are
+        tracked and written using *metrics_config*.
 
         Args:
             input_config: Input configuration (e.g., table/view or file location and read options).
-            output_config: Output configuration (e.g., table name, mode, and write options).
+            output_config: Output configuration (e.g., table name, mode, and write options). Optional when
+                *quarantine_config* is provided, in which case valid records are not written, or when only
+                *metrics_config* is provided for batch summary metrics.
             checks: Optional list of dicts containing checks to apply. If not provided, checks_location must be provided.
                 Each check dictionary must contain the following:
                 - *check* - A check definition including check function and arguments to use.
@@ -858,11 +937,21 @@ class DQEngine(DQEngineBase):
                 - If 'checks' param is provided, the parameter is only used for reporting purposes.
                 - If 'checks' param is not provided, the parameter is used for loading checks from the storage.
             run_config_name: Name of the run configuration to use when loading checks from a table.
+
+        Raises:
+            InvalidParameterError: If both *checks* and *checks_location* are not specified, if none of
+                *output_config*, *quarantine_config*, and *metrics_config* are specified, if *metrics_config* is
+                provided while the engine has no observer to collect metrics, or if metrics-only is requested for
+                streaming.
         """
         logger.info(f"Applying checks to {input_config.location}")
 
         if checks is None and checks_location is None:
             raise InvalidParameterError("Either 'checks_location' or 'checks' must be provided")
+
+        self._validate_save_destination_configs(output_config, quarantine_config, metrics_config)
+        self._validate_metrics_observer(metrics_config)
+        self._validate_metrics_only_save(input_config, output_config, quarantine_config, metrics_config)
 
         if checks is None and checks_location:
             storage_handler, storage_config = self._checks_handler_factory.create_for_location(
@@ -876,6 +965,7 @@ class DQEngine(DQEngineBase):
         batch_observation = None
         output_streaming_query = None
         quarantine_streaming_query = None
+        metrics_only_df: DataFrame | None = None
 
         if quarantine_config:
             check_result = self.apply_checks_by_metadata_and_split(
@@ -885,7 +975,8 @@ class DQEngine(DQEngineBase):
                 good_df, bad_df, batch_observation = check_result
             else:
                 good_df, bad_df = check_result
-            output_streaming_query = save_dataframe_as_table(good_df, output_config)
+            if output_config is not None:
+                output_streaming_query = save_dataframe_as_table(good_df, output_config)
             quarantine_streaming_query = save_dataframe_as_table(bad_df, quarantine_config)
             target_streaming_query = quarantine_streaming_query
         else:
@@ -896,13 +987,18 @@ class DQEngine(DQEngineBase):
                 checked_df, batch_observation = check_result
             else:
                 checked_df = check_result
-            output_streaming_query = save_dataframe_as_table(checked_df, output_config)
+            if output_config is not None:
+                output_streaming_query = save_dataframe_as_table(checked_df, output_config)
+            else:
+                metrics_only_df = checked_df
             target_streaming_query = output_streaming_query
 
         assert checks is not None  # guaranteed: either provided or loaded from checks_location above
         rule_set_fingerprint = (
             compute_rule_set_fingerprint_by_metadata(checks, custom_check_functions) if checks else None
         )
+
+        _populate_batch_observation(metrics_config, batch_observation, metrics_only_df)
 
         # Add listener for streaming metrics, targeting the specific query to avoid duplicates
         if self._engine.observer and metrics_config and target_streaming_query is not None:
@@ -939,16 +1035,17 @@ class DQEngine(DQEngineBase):
         max_parallelism: int | None = os.cpu_count(),
     ) -> None:
         """
-        Apply data quality checks to multiple tables or views and write the results to output table(s).
+        Apply data quality checks to multiple tables or views and write the results to output and/or metrics table(s).
 
         If quarantine tables are provided in the run configuration, the data will be split into
         good and bad records, with good records written to the output table and bad records to the
-        quarantine table. If quarantine tables are not provided, all records (with error/warning
-        columns) will be written to the output table.
+        quarantine table. If quarantine tables are not provided and output tables are provided, all records
+        (with error/warning columns) will be written to the output table. If only metrics tables are provided,
+        only summary metrics will be written.
 
         Args:
             run_configs (list[RunConfig]): List of run configurations containing input configs, output configs,
-                quarantine configs, and a checks file location.
+                quarantine configs, metrics configs, and a checks file location.
             max_parallelism (int, optional): Maximum number of tables to check in parallel. Defaults to the
                 number of CPU cores.
 
@@ -979,11 +1076,14 @@ class DQEngine(DQEngineBase):
         """
         Apply data quality checks to tables or views matching a pattern and write the results to output table(s).
 
-        If quarantine option is enabled the data will be split into
-        good and bad records, with good records written to the output table
-        (under the same name as input table and "_dq" suffix) and bad records to the
-        quarantine table (under the same name as input table and "_quarantine" suffix).
-        If quarantine is not enabled, all records (with error/warning columns) will be written to the output table.
+        If quarantine option is enabled the data is split into good and bad records, with good
+        records written to the output table (under the same name as input table and "_dq" suffix)
+        and bad records to the quarantine table (under the same name as input table and
+        "_quarantine" suffix). When *output_config* is omitted on the template and
+        *quarantine_config* is provided, valid records are not written and only the quarantine
+        table is produced per matched table. When only *metrics_config* is provided on the template,
+        only summary metrics are written. If quarantine is not enabled and metrics-only is not configured,
+        all records (with error/warning columns) will be written to the output table.
 
         Checks are expected to be available under the same name as the table, with a .yml extension.
 
@@ -1007,7 +1107,15 @@ class DQEngine(DQEngineBase):
         Returns:
             None
         """
-        if not output_table_suffix:
+        metrics_only = (
+            run_config_template.metrics_config is not None
+            and run_config_template.output_config is None
+            and run_config_template.quarantine_config is None
+        )
+        write_output = not metrics_only and (
+            run_config_template.output_config is not None or run_config_template.quarantine_config is None
+        )
+        if write_output and not output_table_suffix:
             raise InvalidParameterError("Output table suffix cannot be empty.")
 
         if run_config_template.quarantine_config and not quarantine_table_suffix:
@@ -1016,7 +1124,7 @@ class DQEngine(DQEngineBase):
         if run_config_template.input_config is None:
             run_config_template.input_config = InputConfig(location="")  # location derived from patterns
 
-        if run_config_template.output_config is None:
+        if write_output and run_config_template.output_config is None:
             run_config_template.output_config = OutputConfig(location="")  # location derived from patterns
 
         tables = list_tables(
@@ -1031,11 +1139,12 @@ class DQEngine(DQEngineBase):
             run_config = copy.deepcopy(run_config_template)
 
             assert run_config.input_config  # to satisfy linter
-            assert run_config.output_config  # to satisfy linter
 
             run_config.name = table
             run_config.input_config.location = table
-            run_config.output_config.location = f"{table}{output_table_suffix}"
+
+            if run_config.output_config:
+                run_config.output_config.location = f"{table}{output_table_suffix}"
 
             if run_config.quarantine_config:
                 run_config.quarantine_config.location = f"{table}{quarantine_table_suffix}"
@@ -1123,6 +1232,7 @@ class DQEngine(DQEngineBase):
         - If *quarantine_df* is provided and *quarantine_config* is None, load the run config and use its *quarantine_config*.
         - If *observation* is provided and *metrics_config* is None, load the run config and use its *metrics_config*
         - A write occurs only when both a DataFrame and its corresponding config are available.
+        - If only *observation* and *metrics_config* are provided, only summary metrics are written.
 
         Args:
             output_df: DataFrame with valid rows to be saved (optional).
@@ -1140,8 +1250,11 @@ class DQEngine(DQEngineBase):
         Returns:
             None
         """
-        if not output_df and not quarantine_df:
-            raise InvalidConfigError("At least one of 'output_df' or 'quarantine_df' Dataframe must be present.")
+        if output_df is None and quarantine_df is None and observation is None:
+            raise InvalidConfigError(
+                "At least one of 'output_df' or 'quarantine_df' Dataframe must be present. "
+                "For metrics-only writes, provide 'observation'."
+            )
 
         if output_df is not None and output_config is None:
             run_config = self._config_serializer.load_run_config(
@@ -1169,6 +1282,11 @@ class DQEngine(DQEngineBase):
                 install_folder=install_folder,
             )
             metrics_config = run_config.metrics_config
+
+        if output_df is None and quarantine_df is None and metrics_config is None:
+            raise InvalidConfigError(
+                "At least one of 'output_config', 'quarantine_config' or 'metrics_config' must be provided"
+            )
 
         output_query = None
         quarantine_query = None
@@ -1338,7 +1456,7 @@ class DQEngine(DQEngineBase):
         Save data quality summary metrics to a table.
 
         This method extracts observed metrics from a Spark Observation and persists them to a configured
-        output destination. Metrics are only saved if an observer is configured on the engine.
+        output destination.
 
         Args:
             observed_metrics: Collected summary metrics from Spark Observation.
@@ -1356,24 +1474,24 @@ class DQEngine(DQEngineBase):
             This method is only supported by spark batch. Spark query listener must be used for streaming:
             For streaming use spark.streams.addListener(get_streaming_metrics_listener(..))
         """
-        if self._engine.observer:
-            metrics_observation = DQMetricsObservation(
-                run_id=self._engine.run_id,
-                run_name=self._engine.observer.name,
-                run_time_overwrite=self._engine.run_time_overwrite,
-                observed_metrics=observed_metrics,
-                error_column_name=self._engine.result_column_names[ColumnArguments.ERRORS],
-                warning_column_name=self._engine.result_column_names[ColumnArguments.WARNINGS],
-                input_location=input_config.location if input_config else None,
-                output_location=output_config.location if output_config else None,
-                quarantine_location=quarantine_config.location if quarantine_config else None,
-                checks_location=checks_location,
-                rule_set_fingerprint=rule_set_fingerprint,
-                user_metadata=self._engine.engine_user_metadata,
-            )
+        run_name = self._engine.observer.name if self._engine.observer else DQMetricsObserver().name
+        metrics_observation = DQMetricsObservation(
+            run_id=self._engine.run_id,
+            run_name=run_name,
+            run_time_overwrite=self._engine.run_time_overwrite,
+            observed_metrics=observed_metrics,
+            error_column_name=self._engine.result_column_names[ColumnArguments.ERRORS],
+            warning_column_name=self._engine.result_column_names[ColumnArguments.WARNINGS],
+            input_location=input_config.location if input_config else None,
+            output_location=output_config.location if output_config else None,
+            quarantine_location=quarantine_config.location if quarantine_config else None,
+            checks_location=checks_location,
+            rule_set_fingerprint=rule_set_fingerprint,
+            user_metadata=self._engine.engine_user_metadata,
+        )
 
-            metrics_df = self._engine.observer.build_metrics_df(self.spark, metrics_observation)
-            save_dataframe_as_table(metrics_df, metrics_config)
+        metrics_df = DQMetricsObserver.build_metrics_df(self.spark, metrics_observation)
+        save_dataframe_as_table(metrics_df, metrics_config)
 
     @telemetry_logger("engine", "get_streaming_metrics_listener")
     def get_streaming_metrics_listener(
@@ -1410,8 +1528,8 @@ class DQEngine(DQEngineBase):
                 f"Metrics cannot be collected for engine with type '{self._engine.__class__.__name__}'"
             )
 
-        if not self._engine.observer:
-            raise InvalidParameterError("Metrics cannot be collected for engine with no observer")
+        self._validate_metrics_observer(metrics_config)
+        assert self._engine.observer is not None  # guaranteed by _validate_metrics_observer above (required by mypy)
 
         metrics_observation = DQMetricsObservation(
             run_id=self._engine.run_id,
@@ -1434,7 +1552,7 @@ class DQEngine(DQEngineBase):
         Applies checks based on a given RunConfig.
 
         This method loads checks from the specified location, reads input data using the input config,
-        and writes results using the output and optionally quarantine configs.
+        and writes results using the output and/or quarantine configs.
 
         The storage handler is determined by the factory based on the RunConfig. If Lakebase
         connection parameters are present (lakebase_instance_name), checks will be loaded from
@@ -1442,12 +1560,19 @@ class DQEngine(DQEngineBase):
 
         Args:
             run_config (RunConfig): Specifies the inputs, outputs, and checks file.
+
+        Raises:
+            InvalidConfigError: If *input_config* is not provided, or if *output_config*, *quarantine_config*,
+                and *metrics_config* are all missing from the run configuration.
         """
         if not run_config.input_config:
             raise InvalidConfigError("Input configuration not provided")
 
-        if not run_config.output_config:
-            raise InvalidConfigError("Output configuration not provided")
+        if not run_config.output_config and not run_config.quarantine_config and not run_config.metrics_config:
+            raise InvalidConfigError(
+                "At least one of 'output_config', 'quarantine_config' or 'metrics_config' must be provided "
+                "in the run configuration"
+            )
 
         logger.info(f"Applying checks from {run_config.checks_location} to {run_config.input_config.location}")
 

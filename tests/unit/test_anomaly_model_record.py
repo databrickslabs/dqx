@@ -277,3 +277,27 @@ def test_anomaly_model_record_with_empty_collections():
     assert not record.training.hyperparameters
     assert record.training.metrics == {}
     assert record.training.baseline_stats == {}
+
+
+def test_model_identity_is_ensemble_single_uri():
+    """A single MLflow URI is treated as a single (non-ensemble) model."""
+    identity = ModelIdentity(
+        model_name="m",
+        model_uri="models:/m/1",
+        algorithm="IsolationForest",
+        mlflow_run_id="run-1",
+    )
+    assert identity.is_ensemble is False
+    assert identity.model_uris == ["models:/m/1"]
+
+
+def test_model_identity_is_ensemble_multiple_uris():
+    """Comma-separated MLflow URIs are treated as an ensemble (one URI per member)."""
+    identity = ModelIdentity(
+        model_name="m",
+        model_uri="models:/m/1,models:/m/2,models:/m/3",
+        algorithm="IsolationForest",
+        mlflow_run_id="run-1",
+    )
+    assert identity.is_ensemble is True
+    assert identity.model_uris == ["models:/m/1", "models:/m/2", "models:/m/3"]

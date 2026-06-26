@@ -28,6 +28,7 @@ from tests.integration.conftest import (
     EXTRA_PARAMS,
     RUN_ID,
     build_quality_violation,
+    build_skipped_violation,
     assert_check_and_split_results,
     assert_df_equality_ignore_fingerprints as assert_df_equality,
     generate_checks_with_rule_and_set_fingerprint_from_rules,
@@ -5903,7 +5904,8 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
     schema = (
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
         "col7: map<string, int>, col8: struct<field1: int>, col10: int, col11: string, "
-        "col_ipv4: string, col_ipv6: string, col_json_str: string, col_json_str2: string"
+        "col_ipv4: string, col_ipv6: string, col_json_str: string, col_json_str2: string, "
+        "col_email: string"
     )
     test_df = spark.createDataFrame(
         [
@@ -5922,6 +5924,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 "2001:0db8:85a3:08d3:1319:8a2e:0370:7344",
                 '{"key1": "1"}',
                 '{"a" : 1, "b": 2}',
+                "user@example.com",
             ],
             [
                 "val2",
@@ -5938,6 +5941,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 "2001:0db8:85a3:08d3:ffff:ffff:ffff:ffff",
                 '{"key1": "1", "key2": "2"}',
                 '{ "a" : 1, "b": 1000,  "c": {"1": 8}}',
+                '"quoted_user"@example.co.uk',
             ],
             [
                 "val3",
@@ -5954,6 +5958,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 "2001:db8:85a3:8d3:1319:8a2e:3.112.115.68",
                 '{"key1": "[1, 2, 3]"}',
                 '{ "a" : 1, "b": 1023455,  "c": null }',
+                "user@[12.96.144.202]",
             ],
         ],
         schema,
@@ -5994,6 +5999,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 "2001:0db8:85a3:08d3:1319:8a2e:0370:7344",
                 '{"key1": "1"}',
                 '{"a" : 1, "b": 2}',
+                "user@example.com",
                 None,
                 None,
             ],
@@ -6012,6 +6018,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 "2001:0db8:85a3:08d3:ffff:ffff:ffff:ffff",
                 '{"key1": "1", "key2": "2"}',
                 '{ "a" : 1, "b": 1000,  "c": {"1": 8}}',
+                '"quoted_user"@example.co.uk',
                 None,
                 None,
             ],
@@ -6030,6 +6037,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 "2001:db8:85a3:8d3:1319:8a2e:3.112.115.68",
                 '{"key1": "[1, 2, 3]"}',
                 '{ "a" : 1, "b": 1023455,  "c": null }',
+                "user@[12.96.144.202]",
                 None,
                 None,
             ],
@@ -6183,7 +6191,8 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
     schema = (
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
         "col7: map<string, int>, col8: struct<field1: int>, col10: int, col11: string, "
-        "col_ipv4: string, col_ipv6: string, col_json_str: string, col_json_str2: string"
+        "col_ipv4: string, col_ipv6: string, col_json_str: string, col_json_str2: string, "
+        "col_email: string"
     )
     test_df = spark.createDataFrame(
         [
@@ -6202,6 +6211,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 "2001:0db8:85a3:08d3:0000:0000:0000:0001",
                 '{"key1": "1"}',
                 '{"a" : 1, "b": 2}',
+                "user@example.com",
             ],
             [
                 "val2",
@@ -6218,6 +6228,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 "2001:0db8:85a3:08d3:0000:0000:0000:1",
                 '{"key1": "1", "key2": "2"}',
                 '{ "a" : 1, "b": 1000,  "c": {"1": 8}}',
+                '"quoted_user"@example.co.uk',
             ],
             [
                 "val3",
@@ -6234,6 +6245,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 "2001:0db8:85a3:08d3:0000::2",
                 '{"key1": "[1, 2, 3]"}',
                 '{ "a" : 1, "b": 1023455,  "c": null }',
+                "user@[12.96.144.202]",
             ],
         ],
         schema,
@@ -6262,6 +6274,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 "2001:0db8:85a3:08d3:0000:0000:0000:0001",
                 '{"key1": "1"}',
                 '{"a" : 1, "b": 2}',
+                "user@example.com",
                 None,
                 None,
             ],
@@ -6280,6 +6293,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 "2001:0db8:85a3:08d3:0000:0000:0000:1",
                 '{"key1": "1", "key2": "2"}',
                 '{ "a" : 1, "b": 1000,  "c": {"1": 8}}',
+                '"quoted_user"@example.co.uk',
                 None,
                 None,
             ],
@@ -6298,6 +6312,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 "2001:0db8:85a3:08d3:0000::2",
                 '{"key1": "[1, 2, 3]"}',
                 '{ "a" : 1, "b": 1023455,  "c": null }',
+                "user@[12.96.144.202]",
                 None,
                 None,
             ],
@@ -10000,29 +10015,19 @@ def test_apply_checks_with_has_valid_schema_extra_columns_in_params(ws, spark):
 
     expected_schema = schema + REPORTING_COLUMNS
 
-    expected_skip_strict = {
-        "name": "has_valid_schema_strict",
-        "message": "Check evaluation skipped due to invalid check columns: ['missing_col']",
-        "columns": ["id", "v1", "missing_col"],
-        "filter": None,
-        "function": "has_valid_schema",
-        "run_time": RUN_TIME,
-        "run_id": RUN_ID,
-        "user_metadata": {},
-        "skipped": True,
-    }
+    expected_skip_strict = build_skipped_violation(
+        name="has_valid_schema_strict",
+        message="Check evaluation skipped due to invalid check columns: ['missing_col']",
+        columns=["id", "v1", "missing_col"],
+        function="has_valid_schema",
+    )
 
-    expected_skip_permissive = {
-        "name": "has_valid_schema_permissive",
-        "message": "Check evaluation skipped due to invalid check columns: ['missing_col']",
-        "columns": ["id", "v1", "missing_col"],
-        "filter": None,
-        "function": "has_valid_schema",
-        "run_time": RUN_TIME,
-        "run_id": RUN_ID,
-        "user_metadata": {},
-        "skipped": True,
-    }
+    expected_skip_permissive = build_skipped_violation(
+        name="has_valid_schema_permissive",
+        message="Check evaluation skipped due to invalid check columns: ['missing_col']",
+        columns=["id", "v1", "missing_col"],
+        function="has_valid_schema",
+    )
 
     expected = spark.createDataFrame(
         [
@@ -10149,76 +10154,49 @@ def test_apply_checks_skip_checks_with_missing_columns(ws, spark):
                 {"key1": 1},
                 {"field1": 1},
                 [
-                    {
-                        "name": "b_is_null_or_empty",
-                        "message": "Check evaluation skipped due to invalid check filter: 'missing_col > 0'",
-                        "columns": ["b"],
-                        "filter": "missing_col > 0",
-                        "function": "is_not_null_and_not_empty",
-                        "run_time": RUN_TIME,
-                        "run_id": RUN_ID,
-                        "user_metadata": {},
-                        "skipped": True,
-                    },
-                    {
-                        "name": "missing_col_is_null",
-                        "message": "Check evaluation skipped due to invalid check columns: ['missing_col']",
-                        "columns": ["missing_col"],
-                        "filter": None,
-                        "function": "is_not_null",
-                        "run_time": RUN_TIME,
-                        "run_id": RUN_ID,
-                        "user_metadata": {},
-                        "skipped": True,
-                    },
-                    {
-                        "name": "missing_col_sql_expression",
-                        "message": "Check evaluation skipped due to invalid check columns: ['missing_col']; "
+                    build_skipped_violation(
+                        name="b_is_null_or_empty",
+                        message="Check evaluation skipped due to invalid check filter: 'missing_col > 0'",
+                        columns=["b"],
+                        function="is_not_null_and_not_empty",
+                        filter_expr="missing_col > 0",
+                    ),
+                    build_skipped_violation(
+                        name="missing_col_is_null",
+                        message="Check evaluation skipped due to invalid check columns: ['missing_col']",
+                        columns=["missing_col"],
+                    ),
+                    build_skipped_violation(
+                        name="missing_col_sql_expression",
+                        message="Check evaluation skipped due to invalid check columns: ['missing_col']; "
                         "Check evaluation skipped due to invalid sql expression: 'missing_col > 0'",
-                        "columns": ["missing_col"],
-                        "filter": None,
-                        "function": "sql_expression",
-                        "run_time": RUN_TIME,
-                        "run_id": RUN_ID,
-                        "user_metadata": {},
-                        "skipped": True,
-                    },
-                    {
-                        "name": "missing_col_is_unique",
-                        "message": "Check evaluation skipped due to invalid check columns: ['missing_col']; "
+                        columns=["missing_col"],
+                        function="sql_expression",
+                    ),
+                    build_skipped_violation(
+                        name="missing_col_is_unique",
+                        message="Check evaluation skipped due to invalid check columns: ['missing_col']; "
                         "Check evaluation skipped due to invalid check filter: 'missing_col > 0'",
-                        "columns": ["missing_col"],
-                        "filter": "missing_col > 0",
-                        "function": "is_unique",
-                        "run_time": RUN_TIME,
-                        "run_id": RUN_ID,
-                        "user_metadata": {},
-                        "skipped": True,
-                    },
-                    {
-                        "name": "invalid_col_sql_expression",
-                        "message": "Check evaluation skipped due to invalid sql expression: 'missing_col > 0'",
-                        "columns": None,
-                        "filter": None,
-                        "function": "sql_expression",
-                        "run_time": RUN_TIME,
-                        "run_id": RUN_ID,
-                        "user_metadata": {},
-                        "skipped": True,
-                    },
+                        columns=["missing_col"],
+                        function="is_unique",
+                        filter_expr="missing_col > 0",
+                    ),
+                    build_skipped_violation(
+                        name="invalid_col_sql_expression",
+                        message="Check evaluation skipped due to invalid sql expression: 'missing_col > 0'",
+                        columns=None,
+                        function="sql_expression",
+                    ),
                 ],
                 [
-                    {
-                        "name": "missing_col_is_null_or_empty",
-                        "message": "Check evaluation skipped due to invalid check columns: ['missing_col']",
-                        "columns": ["missing_col"],
-                        "filter": "a > 0",
-                        "function": "is_not_null_and_not_empty",
-                        "run_time": RUN_TIME,
-                        "run_id": RUN_ID,
-                        "user_metadata": {"tag1": "value1", "tag2": "value2"},
-                        "skipped": True,
-                    },
+                    build_skipped_violation(
+                        name="missing_col_is_null_or_empty",
+                        message="Check evaluation skipped due to invalid check columns: ['missing_col']",
+                        columns=["missing_col"],
+                        function="is_not_null_and_not_empty",
+                        filter_expr="a > 0",
+                        user_metadata={"tag1": "value1", "tag2": "value2"},
+                    ),
                 ],
             ]
         ],
@@ -10333,76 +10311,49 @@ def test_apply_checks_by_metadata_skip_checks_with_missing_columns(ws, spark):
                 {"key1": 1},
                 {"field1": 1},
                 [
-                    {
-                        "name": "b_is_null_or_empty",
-                        "message": "Check evaluation skipped due to invalid check filter: 'missing_col > 0'",
-                        "columns": ["b"],
-                        "filter": "missing_col > 0",
-                        "function": "is_not_null_and_not_empty",
-                        "run_time": RUN_TIME,
-                        "run_id": RUN_ID,
-                        "user_metadata": {},
-                        "skipped": True,
-                    },
-                    {
-                        "name": "missing_col_is_null",
-                        "message": "Check evaluation skipped due to invalid check columns: ['missing_col']",
-                        "columns": ["missing_col"],
-                        "filter": None,
-                        "function": "is_not_null",
-                        "run_time": RUN_TIME,
-                        "run_id": RUN_ID,
-                        "user_metadata": {},
-                        "skipped": True,
-                    },
-                    {
-                        "name": "missing_col_sql_expression",
-                        "message": "Check evaluation skipped due to invalid check columns: ['missing_col']; "
+                    build_skipped_violation(
+                        name="b_is_null_or_empty",
+                        message="Check evaluation skipped due to invalid check filter: 'missing_col > 0'",
+                        columns=["b"],
+                        function="is_not_null_and_not_empty",
+                        filter_expr="missing_col > 0",
+                    ),
+                    build_skipped_violation(
+                        name="missing_col_is_null",
+                        message="Check evaluation skipped due to invalid check columns: ['missing_col']",
+                        columns=["missing_col"],
+                    ),
+                    build_skipped_violation(
+                        name="missing_col_sql_expression",
+                        message="Check evaluation skipped due to invalid check columns: ['missing_col']; "
                         "Check evaluation skipped due to invalid sql expression: 'missing_col > 0'",
-                        "columns": ["missing_col"],
-                        "filter": None,
-                        "function": "sql_expression",
-                        "run_time": RUN_TIME,
-                        "run_id": RUN_ID,
-                        "user_metadata": {},
-                        "skipped": True,
-                    },
-                    {
-                        "name": "missing_col_is_unique",
-                        "message": "Check evaluation skipped due to invalid check columns: ['missing_col']; "
+                        columns=["missing_col"],
+                        function="sql_expression",
+                    ),
+                    build_skipped_violation(
+                        name="missing_col_is_unique",
+                        message="Check evaluation skipped due to invalid check columns: ['missing_col']; "
                         "Check evaluation skipped due to invalid check filter: 'missing_col > 0'",
-                        "columns": ["missing_col"],
-                        "filter": "missing_col > 0",
-                        "function": "is_unique",
-                        "run_time": RUN_TIME,
-                        "run_id": RUN_ID,
-                        "user_metadata": {},
-                        "skipped": True,
-                    },
-                    {
-                        "name": "invalid_col_sql_expression",
-                        "message": "Check evaluation skipped due to invalid sql expression: 'missing_col > 0'",
-                        "columns": None,
-                        "filter": None,
-                        "function": "sql_expression",
-                        "run_time": RUN_TIME,
-                        "run_id": RUN_ID,
-                        "user_metadata": {},
-                        "skipped": True,
-                    },
+                        columns=["missing_col"],
+                        function="is_unique",
+                        filter_expr="missing_col > 0",
+                    ),
+                    build_skipped_violation(
+                        name="invalid_col_sql_expression",
+                        message="Check evaluation skipped due to invalid sql expression: 'missing_col > 0'",
+                        columns=None,
+                        function="sql_expression",
+                    ),
                 ],
                 [
-                    {
-                        "name": "missing_col_is_null_or_empty",
-                        "message": "Check evaluation skipped due to invalid check columns: ['missing_col']",
-                        "columns": ["missing_col"],
-                        "filter": "a > 0",
-                        "function": "is_not_null_and_not_empty",
-                        "run_time": RUN_TIME,
-                        "run_id": RUN_ID,
-                        "user_metadata": {"tag1": "value1", "tag2": "value2"},
-                        "skipped": True,
-                    },
+                    build_skipped_violation(
+                        name="missing_col_is_null_or_empty",
+                        message="Check evaluation skipped due to invalid check columns: ['missing_col']",
+                        columns=["missing_col"],
+                        function="is_not_null_and_not_empty",
+                        filter_expr="a > 0",
+                        user_metadata={"tag1": "value1", "tag2": "value2"},
+                    ),
                 ],
             ]
         ],

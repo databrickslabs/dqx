@@ -18,7 +18,7 @@ import logging
 import sys
 import time
 import re
-from datetime import datetime, timezone, date
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, cast
 
@@ -267,7 +267,12 @@ def _run_profile(
     # Write result row. Profiling has no checks yet, but we still record a
     # null fingerprint slot so later pipeline stages that join on
     # rule_set_fingerprint don't have to special-case profile rows.
-    now = datetime.now(timezone.utc).isoformat()
+    #
+    # ``created_at`` is TIMESTAMP per the baseline schema — we materialise
+    # via ``current_timestamp()`` instead of an ISO string so cluster-key
+    # zone maps stay tight and downstream filters behave correctly.
+    from pyspark.sql import functions as F
+
     result_row = spark.createDataFrame(
         [
             (
@@ -283,7 +288,6 @@ def _run_profile(
                 _json_dumps(rules) if rules else "[]",
                 "SUCCESS",
                 None,
-                now,
                 None,
             )
         ],
@@ -291,10 +295,10 @@ def _run_profile(
             "run_id STRING, requesting_user STRING, source_table_fqn STRING, "
             "view_fqn STRING, sample_limit INT, rows_profiled INT, columns_profiled INT, "
             "duration_seconds DOUBLE, summary_json STRING, generated_rules_json STRING, "
-            "status STRING, error_message STRING, created_at STRING, "
+            "status STRING, error_message STRING, "
             "rule_set_fingerprint STRING"
         ),
-    )
+    ).withColumn("created_at", F.current_timestamp())
     result_row.writeTo(result_table).append()
     logger.info("Profile results written to %s (run_id=%s)", result_table, run_id)
 
@@ -353,7 +357,11 @@ def _run_dryrun(
     )
     engine = DQEngine(workspace_client=ws, spark=spark, observer=observer)
 
-    df = _read_view_with_retry(spark, view_fqn).limit(sample_size)
+    # ``sample_size = 0`` is the UI convention for "All rows" — skip
+    # ``.limit`` for it (passing 0 would short-circuit to an empty DataFrame).
+    df = _read_view_with_retry(spark, view_fqn)
+    if sample_size:
+        df = df.limit(sample_size)
     # ``apply_checks_by_metadata_and_split`` returns ``(valid, invalid)``
     # when no observer is attached and ``(valid, invalid, observation)``
     # when one is. We always construct the engine with ``observer=...``
@@ -368,21 +376,29 @@ def _run_dryrun(
     # observation. ``invalid_df.count()`` triggers metric collection.
     invalid_rows = invalid_df.count()
 
+    # CRITICAL: snapshot the observation IMMEDIATELY after the first
+    # full-scan action and BEFORE any limit/partial action. On Spark
+    # Connect (Databricks), ``Observation.get`` returns a reference to a
+    # live dict that gets mutated by every subsequent action — including
+    # ``invalid_df.limit(10).collect()`` below, whose limit pushdown
+    # would otherwise overwrite ``input_row_count`` with ~10. We also
+    # ``dict(...)`` the result to detach our copy from the live dict so
+    # the later quarantine write (which re-fires the observer) cannot
+    # change what we pass to ``_persist_observed_metrics``.
+    observed: dict[str, Any] = dict(observation.get) if observation is not None else {}
+    total_rows = int(observed.get("input_row_count", 0) or 0)
+    valid_rows = int(observed.get("valid_row_count", 0) or 0)
+    error_rows = int(observed.get("error_row_count", 0) or 0)
+    warning_rows = int(observed.get("warning_row_count", 0) or 0)
+    error_summary = _check_metrics_to_error_summary(observed.get("check_metrics"))
+
     sample_invalid: list[dict[str, Any]] = []
     if invalid_rows > 0:
         sample_rows = invalid_df.limit(10).collect()
         sample_invalid = [row.asDict(recursive=True) for row in sample_rows]
 
-    observed = observation.get if observation is not None else {}
-    total_rows = int(observed.get("input_row_count", 0) or 0)
-    valid_rows = int(observed.get("valid_row_count", 0) or 0)
-    error_rows = int(observed.get("error_row_count", 0) or 0)
-    warning_rows = int(observed.get("warning_row_count", 0) or 0)
+    from pyspark.sql import functions as F
 
-    # Backwards-compatible error_summary derived from check_metrics.
-    error_summary = _check_metrics_to_error_summary(observed.get("check_metrics"))
-
-    now = datetime.now(timezone.utc).isoformat()
     result_row = spark.createDataFrame(
         [
             (
@@ -395,11 +411,12 @@ def _run_dryrun(
                 total_rows,
                 valid_rows,
                 invalid_rows,
+                error_rows,
+                warning_rows,
                 _json_dumps(error_summary),
                 _json_dumps(sample_invalid),
                 "SUCCESS",
                 None,
-                now,
                 run_type,
                 fingerprint,
             )
@@ -407,12 +424,12 @@ def _run_dryrun(
         schema=(
             "run_id STRING, requesting_user STRING, source_table_fqn STRING, "
             "view_fqn STRING, checks_json STRING, sample_size INT, "
-            "total_rows INT, valid_rows INT, invalid_rows INT, "
+            "total_rows INT, valid_rows INT, invalid_rows INT, error_rows INT, warning_rows INT, "
             "error_summary_json STRING, sample_invalid_json STRING, "
-            "status STRING, error_message STRING, created_at STRING, "
+            "status STRING, error_message STRING, "
             "run_type STRING, rule_set_fingerprint STRING"
         ),
-    )
+    ).withColumn("created_at", F.current_timestamp())
     result_row.writeTo(result_table).append()
     logger.info(
         "Dry-run results written to %s (run_id=%s, run_type=%s, errors=%d, warnings=%d)",
@@ -485,9 +502,12 @@ def _run_dryrun_sql_check(
         sample_rows = violation_df.limit(10).collect()
         sample_invalid = [row.asDict(recursive=True) for row in sample_rows]
 
-    now = datetime.now(timezone.utc).isoformat()
+    from pyspark.sql import functions as F
+
     if run_type == "dryrun" and sample_size == 0:
         run_type = "scheduled"
+    # SQL checks treat every violation as an error (no warning concept), so
+    # ``error_rows == invalid_rows`` and ``warning_rows == 0``.
     result_row = spark.createDataFrame(
         [
             (
@@ -500,11 +520,12 @@ def _run_dryrun_sql_check(
                 total_rows,
                 valid_rows,
                 invalid_rows,
+                invalid_rows,
+                0,
                 _json_dumps(error_summary),
                 _json_dumps(sample_invalid),
                 "SUCCESS",
                 None,
-                now,
                 run_type,
                 fingerprint,
             )
@@ -512,12 +533,12 @@ def _run_dryrun_sql_check(
         schema=(
             "run_id STRING, requesting_user STRING, source_table_fqn STRING, "
             "view_fqn STRING, checks_json STRING, sample_size INT, "
-            "total_rows INT, valid_rows INT, invalid_rows INT, "
+            "total_rows INT, valid_rows INT, invalid_rows INT, error_rows INT, warning_rows INT, "
             "error_summary_json STRING, sample_invalid_json STRING, "
-            "status STRING, error_message STRING, created_at STRING, "
+            "status STRING, error_message STRING, "
             "run_type STRING, rule_set_fingerprint STRING"
         ),
-    )
+    ).withColumn("created_at", F.current_timestamp())
     result_row.writeTo(result_table).append()
     logger.info(
         "SQL-check %s results written to %s (run_id=%s, violations=%d)", run_type, result_table, run_id, invalid_rows
@@ -582,7 +603,13 @@ def _write_quarantine_records(
     result_catalog: str,
     result_schema: str,
 ) -> None:
-    """Persist every invalid row to dq_quarantine_records."""
+    """Persist every invalid row to dq_quarantine_records.
+
+    ``row_data`` and ``errors`` columns are VARIANT in the baseline
+    schema. We materialise them via ``parse_json(to_json(...))`` so the
+    row payload becomes a typed JSON value (queryable with
+    ``variant_get``) rather than an opaque STRING.
+    """
     from pyspark.sql import functions as F
 
     invalid_count = invalid_df.count()
@@ -591,18 +618,34 @@ def _write_quarantine_records(
         return
 
     quarantine_table = f"{result_catalog}.{result_schema}.dq_quarantine_records"
-    now = datetime.now(timezone.utc).isoformat()
 
     data_cols = [c for c in invalid_df.columns if c not in ("_warnings", "_errors", "_rule_name")]
+    # ``_warnings`` may be absent if every check is error-level; default to a
+    # JSON null so the column stays well-typed in the VARIANT.
+    warnings_expr = (
+        F.parse_json(F.to_json(F.col("_warnings")))
+        if "_warnings" in invalid_df.columns
+        else F.parse_json(F.lit("null"))
+    )
     quarantine_df = (
         invalid_df.withColumn("quarantine_id", F.expr("uuid()"))
         .withColumn("run_id", F.lit(run_id))
         .withColumn("source_table_fqn", F.lit(source_table_fqn))
         .withColumn("requesting_user", F.lit(requesting_user))
-        .withColumn("row_data", F.to_json(F.struct(*data_cols)))
-        .withColumn("errors", F.to_json(F.col("_errors")))
-        .withColumn("created_at", F.lit(now))
-        .select("quarantine_id", "run_id", "source_table_fqn", "requesting_user", "row_data", "errors", "created_at")
+        .withColumn("row_data", F.parse_json(F.to_json(F.struct(*data_cols))))
+        .withColumn("errors", F.parse_json(F.to_json(F.col("_errors"))))
+        .withColumn("warnings", warnings_expr)
+        .withColumn("created_at", F.current_timestamp())
+        .select(
+            "quarantine_id",
+            "run_id",
+            "source_table_fqn",
+            "requesting_user",
+            "row_data",
+            "errors",
+            "warnings",
+            "created_at",
+        )
     )
     quarantine_df.writeTo(quarantine_table).append()
     logger.info("Wrote %d quarantine rows to %s (run_id=%s)", invalid_count, quarantine_table, run_id)
@@ -650,23 +693,28 @@ def _write_sql_quarantine_records(
     capped_df = violation_df.limit(persisted_target) if persisted_target < invalid_count else violation_df
 
     quarantine_table = f"{result_catalog}.{result_schema}.dq_quarantine_records"
-    now = datetime.now(timezone.utc).isoformat()
 
     # Every column on the violation view is part of the row payload —
     # there are no DQX-internal columns to strip (the ``not in`` filter
     # is just defensive in case a check author re-uses those names).
+    # ``row_data``/``errors`` are VARIANT — wrap with parse_json so the
+    # values land as typed JSON rather than opaque strings.
     data_cols = [c for c in capped_df.columns if c not in ("_warnings", "_errors", "_rule_name")]
-    row_data_expr = F.to_json(F.struct(*data_cols)) if data_cols else F.lit("{}")
-    errors_json = _json_dumps({check_name: "SQL check violation"})
+    row_data_expr = F.parse_json(F.to_json(F.struct(*data_cols))) if data_cols else F.parse_json(F.lit("{}"))
+    errors_expr = F.parse_json(F.lit(_json_dumps({check_name: "SQL check violation"})))
 
+    # SQL checks have no warning-level distinction — every violation is
+    # treated as an error. Persist ``warnings`` as JSON null so the
+    # column shape matches row-level quarantine writes.
     quarantine_df = (
         capped_df.withColumn("quarantine_id", F.expr("uuid()"))
         .withColumn("run_id", F.lit(run_id))
         .withColumn("source_table_fqn", F.lit(source_table_fqn))
         .withColumn("requesting_user", F.lit(requesting_user))
         .withColumn("row_data", row_data_expr)
-        .withColumn("errors", F.lit(errors_json))
-        .withColumn("created_at", F.lit(now))
+        .withColumn("errors", errors_expr)
+        .withColumn("warnings", F.parse_json(F.lit("null")))
+        .withColumn("created_at", F.current_timestamp())
         .select(
             "quarantine_id",
             "run_id",
@@ -674,6 +722,7 @@ def _write_sql_quarantine_records(
             "requesting_user",
             "row_data",
             "errors",
+            "warnings",
             "created_at",
         )
     )
@@ -923,14 +972,19 @@ def _run_scheduled(
 
     invalid_rows = invalid_df.count()  # triggers the observation
 
-    observed = observation.get if observation is not None else {}
+    # Defensive snapshot — on Spark Connect, ``Observation.get`` returns
+    # a reference to a live dict that subsequent actions (the quarantine
+    # write below) re-fire and can mutate. ``dict(...)`` detaches our
+    # copy.
+    observed: dict[str, Any] = dict(observation.get) if observation is not None else {}
     total_rows = int(observed.get("input_row_count", 0) or 0)
     valid_rows = int(observed.get("valid_row_count", 0) or 0)
     error_rows = int(observed.get("error_row_count", 0) or 0)
     warning_rows = int(observed.get("warning_row_count", 0) or 0)
     error_summary = _check_metrics_to_error_summary(observed.get("check_metrics"))
 
-    now = datetime.now(timezone.utc).isoformat()
+    from pyspark.sql import functions as F
+
     result_table = f"{result_catalog}.{result_schema}.dq_validation_runs"
     result_row = spark.createDataFrame(
         [
@@ -944,11 +998,12 @@ def _run_scheduled(
                 total_rows,
                 valid_rows,
                 invalid_rows,
+                error_rows,
+                warning_rows,
                 _json_dumps(error_summary),
                 None,
                 "SUCCESS",
                 None,
-                now,
                 "scheduled",
                 fingerprint,
             )
@@ -956,12 +1011,12 @@ def _run_scheduled(
         schema=(
             "run_id STRING, requesting_user STRING, source_table_fqn STRING, "
             "view_fqn STRING, checks_json STRING, sample_size INT, "
-            "total_rows INT, valid_rows INT, invalid_rows INT, "
+            "total_rows INT, valid_rows INT, invalid_rows INT, error_rows INT, warning_rows INT, "
             "error_summary_json STRING, sample_invalid_json STRING, "
-            "status STRING, error_message STRING, created_at STRING, "
+            "status STRING, error_message STRING, "
             "run_type STRING, rule_set_fingerprint STRING"
         ),
-    )
+    ).withColumn("created_at", F.current_timestamp())
     result_row.writeTo(result_table).append()
     logger.info(
         "Scheduled run results written to %s (run_id=%s, errors=%d, warnings=%d)",
@@ -1009,7 +1064,8 @@ def _write_error(
     skip_history: bool = False,
 ) -> None:
     """Write a FAILED status row so the app can report the error."""
-    now = datetime.now(timezone.utc).isoformat()
+    from pyspark.sql import functions as F
+
     checks_str = _json_dumps(checks) if checks else None
     fingerprint = _compute_fingerprint(checks or [])
     if task_type == "profile":
@@ -1029,7 +1085,6 @@ def _write_error(
                     None,
                     "FAILED",
                     error_message,
-                    now,
                     fingerprint,
                 )
             ],
@@ -1037,10 +1092,10 @@ def _write_error(
                 "run_id STRING, requesting_user STRING, source_table_fqn STRING, "
                 "view_fqn STRING, sample_limit INT, rows_profiled INT, columns_profiled INT, "
                 "duration_seconds DOUBLE, summary_json STRING, generated_rules_json STRING, "
-                "status STRING, error_message STRING, created_at STRING, "
+                "status STRING, error_message STRING, "
                 "rule_set_fingerprint STRING"
             ),
-        )
+        ).withColumn("created_at", F.current_timestamp())
     else:
         table = f"{result_catalog}.{result_schema}.dq_validation_runs"
         if skip_history:
@@ -1061,11 +1116,12 @@ def _write_error(
                     None,
                     None,
                     None,
+                    None,  # error_rows
+                    None,  # warning_rows
                     None,
                     None,
                     "FAILED",
                     error_message,
-                    now,
                     error_run_type,
                     fingerprint,
                 )
@@ -1073,12 +1129,12 @@ def _write_error(
             schema=(
                 "run_id STRING, requesting_user STRING, source_table_fqn STRING, "
                 "view_fqn STRING, checks_json STRING, sample_size INT, "
-                "total_rows INT, valid_rows INT, invalid_rows INT, "
+                "total_rows INT, valid_rows INT, invalid_rows INT, error_rows INT, warning_rows INT, "
                 "error_summary_json STRING, sample_invalid_json STRING, "
-                "status STRING, error_message STRING, created_at STRING, "
+                "status STRING, error_message STRING, "
                 "run_type STRING, rule_set_fingerprint STRING"
             ),
-        )
+        ).withColumn("created_at", F.current_timestamp())
     row.writeTo(table).append()
     logger.info("Error result written to %s (run_id=%s)", table, run_id)
 

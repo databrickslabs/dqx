@@ -67,6 +67,8 @@ class ProfilerRunner:
         options = {
             "sample_fraction": run_config.profiler_config.sample_fraction,
             "sample_seed": run_config.profiler_config.sample_seed,
+            "sample_by_column": run_config.profiler_config.sample_by_column,
+            "sample_by_values_limit": run_config.profiler_config.sample_by_values_limit,
             "limit": run_config.profiler_config.limit,
             "filter": run_config.profiler_config.filter,
             "llm_primary_key_detection": run_config.profiler_config.llm_primary_key_detection,

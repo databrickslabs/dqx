@@ -29,6 +29,12 @@ _IPV4_CIDR_SUFFIX = r"(3[0-2]|[12]?\d)"
 IPV4_MAX_OCTET_COUNT = 4
 IPV4_BIT_LENGTH = 32
 
+# Email helpers (RFC 5322 §3.2.3, §3.2.4 + RFC 5321 §4.1.3, §4.5.3.1).
+_EMAIL_ATEXT = r"[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]"
+_EMAIL_DOMAIN_LABEL = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+_EMAIL_QTEXT = r"[\x21\x23-\x5B\x5D-\x7E]"  # printable ASCII except '"' (0x22) and '\' (0x5C)
+_EMAIL_QPAIR = r"\\[\x09\x20-\x7E]"  # quoted-pair: '\' + VCHAR or WSP; valid only inside a quoted part
+
 # Curated aggregate functions for data quality checks
 # These are univariate (single-column) aggregate functions suitable for DQ monitoring
 # Maps function names to human-readable display names for error messages
@@ -69,6 +75,25 @@ class DQPattern(Enum):
 
     IPV4_ADDRESS = rf"^{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}$"
     IPV4_CIDR_BLOCK = rf"{IPV4_ADDRESS[:-1]}/{_IPV4_CIDR_SUFFIX}$"
+    # RFC 5322 pragmatic subset: dot-atom or quoted-string local part, dot-atom or
+    # IP-literal domain, with RFC 5321 length caps (local ≤ 64, total ≤ 254).
+    # Excludes CFWS, obsolete grammar, and SMTPUTF8/IDN. ReDoS-safe.
+    EMAIL_ADDRESS = (
+        rf"^(?=.{{1,254}}$)"
+        # Local part: dot-atom or quoted-string limited to 64-characters
+        rf"(?=[^@]{{1,64}}@)"
+        rf"(?:"
+        rf"{_EMAIL_ATEXT}+(?:\.{_EMAIL_ATEXT}+)*"
+        rf'|"(?:{_EMAIL_QTEXT}|{_EMAIL_QPAIR})*"'
+        rf")"
+        rf"@"
+        # Domain: LDH hostname with alphabetic TLD, or IP-literal
+        rf"(?:"
+        rf"(?:{_EMAIL_DOMAIN_LABEL}\.)+[A-Za-z]{{2,63}}"
+        rf"|\[(?:{_IPV4_OCTET}(?:\.{_IPV4_OCTET}){{3}}|IPv6:[A-Fa-f0-9:]+)\]"
+        rf")"
+        rf"$"
+    )
 
 
 def make_condition(condition: Column, message: Column | str, alias: str) -> Column:
@@ -620,15 +645,9 @@ def is_equal_to(
         column (str | Column): Column to check. Can be a string column name or a column expression.
         value: The value to compare with. Can be a number, date, timestamp literal or a Spark Column. Defaults to None.
         abs_tolerance: Values are considered equal if the absolute difference is less than or equal to the tolerance. This is applicable to numeric columns.
-                Example: abs(a - b) <= tolerance
-                With tolerance=0.01:
-                    2.001 and 2.0099 → equal (diff = 0.0089)
-                    2.001 and 2.02 → not equal (diff = 0.019)
+            For example, abs(a - b) <= tolerance. With abs_tolerance=0.01, values 2.001 and 2.0099 are equal (diff=0.0089), but 2.001 and 2.02 are not (diff=0.019).
         rel_tolerance: Relative tolerance for numeric comparisons. Differences within this relative tolerance are ignored. Useful if numbers vary in scale.
-                Example: abs(a - b) <= rel_tolerance * max(abs(a), abs(b))
-                With tolerance=0.01 (1%):
-                    100 vs 101 → equal (diff = 1, tolerance = 1)
-                    100 vs 102 → not equal (diff = 2, tolerance = 1)
+            For example, abs(a - b) <= rel_tolerance * max(abs(a), abs(b)). With rel_tolerance=0.01 (1%), values 100 and 101 are equal (diff=1), but 100 and 102 are not (diff=2).
     Returns:
         Column: A Spark Column condition that fails if the column value is not equal to the given value.
 
@@ -681,15 +700,9 @@ def is_not_equal_to(
         column (str | Column): Column to check. Can be a string column name or a column expression.
         value: The value to compare with. Can be a number, date, timestamp literal or a Spark Column. Defaults to None.
         abs_tolerance: Values are considered equal if the absolute difference is less than or equal to the tolerance. This is applicable to numeric columns.
-                Example: abs(a - b) <= tolerance
-                With tolerance=0.01:
-                    2.001 and 2.0099 → equal (diff = 0.0089)
-                    2.001 and 2.02 → not equal (diff = 0.019)
+            For example, abs(a - b) <= tolerance. With abs_tolerance=0.01, values 2.001 and 2.0099 are equal (diff=0.0089), but 2.001 and 2.02 are not (diff=0.019).
         rel_tolerance: Relative tolerance for numeric comparisons. Differences within this relative tolerance are ignored. Useful if numbers vary in scale.
-                Example: abs(a - b) <= rel_tolerance * max(abs(a), abs(b))
-                With tolerance=0.01 (1%):
-                    100 vs 101 → equal (diff = 1, tolerance = 1)
-                    100 vs 102 → not equal (diff = 2, tolerance = 1)
+            For example, abs(a - b) <= rel_tolerance * max(abs(a), abs(b)). With rel_tolerance=0.01 (1%), values 100 and 101 are equal (diff=1), but 100 and 102 are not (diff=2).
 
     Returns:
         Column: A Spark Column condition that fails if the column value is equal to the given value.
@@ -969,6 +982,39 @@ def is_valid_ipv4_address(column: str | Column) -> Column:
         Column object for condition
     """
     return _matches_pattern(column, DQPattern.IPV4_ADDRESS)
+
+
+@register_rule("row")
+def is_valid_email(column: str | Column) -> Column:
+    """Checks whether the values in the input column are valid email addresses.
+
+    Validates against a pragmatic subset of RFC 5322:
+
+    * Local part: dot-atom (RFC 5322 §3.2.3) or quoted-string (§3.2.4).
+    * Domain: dot-atom hostname with LDH labels (RFC 1035 §2.3.4) and an
+      alphabetic TLD, or an IP-literal (RFC 5321 §4.1.3) - bracketed IPv4
+      addresses will use octet validation while *[IPv6:...] addresses* are
+      only matched syntactically; Callers requiring semantic IPv6 domain
+      validation should implement a custom Python check that uses a Pandas
+      UDF to call *ipaddress.IPv6Address* methods.
+    * Length caps (per RFC 5321 §4.5.3.1): 64 octets for local-parts, 254
+      octets for the full address.
+
+    Comments and folding whitespace (CFWS), obsolete grammar
+    (*obs-local-part*, *obs-domain*, *obs-qtext*, *obs-qp*), and
+    internationalized addresses (RFC 6531 / SMTPUTF8) are not supported;
+    a separate check would be needed for each. Numeric and single-character
+    TLDs are rejected (ICANN policy + practical interoperability).
+
+    Null values will pass the check with no violation reported.
+
+    Args:
+        column: column to check; can be a string column name or a column expression
+
+    Returns:
+        Column object for condition
+    """
+    return _matches_pattern(column, DQPattern.EMAIL_ADDRESS)
 
 
 @register_rule("row")
@@ -2076,15 +2122,9 @@ def compare_datasets(
         If enabled, (NULL, NULL) column values are equal and matching.
       row_filter: Optional SQL expression to filter rows in the input DataFrame. Auto-injected from the check filter.
       abs_tolerance: Values are considered equal if the absolute difference is less than or equal to the tolerance. This is applicable to numeric columns.
-            Example: abs(a - b) <= tolerance
-            With tolerance=0.01:
-            2.001 and 2.0099 → equal (diff = 0.0089)
-            2.001 and 2.02 → not equal (diff = 0.019)
+        For example, abs(a - b) <= tolerance. With abs_tolerance=0.01, values 2.001 and 2.0099 are equal (diff=0.0089), but 2.001 and 2.02 are not (diff=0.019).
       rel_tolerance: Relative tolerance for numeric comparisons. Differences within this relative tolerance are ignored. Useful if numbers vary in scale.
-            Example: abs(a - b) <= rel_tolerance * max(abs(a), abs(b))
-            With tolerance=0.01 (1%):
-            100 vs 101 → equal (diff = 1, tolerance = 1)
-            2.001 vs 2.0099 → equal
+        For example, abs(a - b) <= rel_tolerance * max(abs(a), abs(b)). With rel_tolerance=0.01 (1%), values 100 and 101 are equal (diff=1), but 100 and 102 are not (diff=2).
 
 
     Returns:
@@ -3015,9 +3055,9 @@ def _add_column_diffs(
             If enabled (NULL, NULL) column values are equal and matching.
             If False, uses a standard inequality comparison (`!=`), where (NULL, NULL) values are not considered equal.
         abs_tolerance: Absolute tolerance for numeric comparisons. Differences within this absolute tolerance are ignored.
-            Example: abs(a - b) <= abs_tolerance
+            For example, abs(a - b) <= abs_tolerance
         rel_tolerance: Relative tolerance for numeric comparisons. Differences within this relative tolerance are ignored.
-            Example: abs(a - b) <= rel_tolerance * max(abs(a), abs(b))
+            For example, abs(a - b) <= rel_tolerance * max(abs(a), abs(b))
     Returns:
         A DataFrame with the added *columns_changed_col* containing the map of changed columns and differences.
     """

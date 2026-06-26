@@ -2091,3 +2091,77 @@ def test_benchmark_has_no_aggr_outliers(benchmark, ws, generated_df):
     checked = dq_engine.apply_checks(generated_df, checks)
     actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
+
+
+def test_benchmark_is_geo_covers_precise(benchmark, ws, generated_df):
+    """Benchmark `is_geo_covers`  precise version.
+
+    Uses col_geo_point with point geometry to benchmark it against polygon geometry value with `precise=True`
+    configuration to use ST_* family of functions.
+    """
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            criticality="warn",
+            check_func=geo_check_funcs.is_geo_covers,
+            column="col_geo_point",
+            check_func_kwargs={
+                "reference_geometry": "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
+                "precise": True,
+                "convert_column": True,
+                "convert_reference_geometry": True,
+            },
+        )
+    ]
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+def test_benchmark_is_geo_covers_approximate(benchmark, ws, generated_df):
+    """Benchmark `is_geo_covers`  approximate version.
+
+    Uses col_geo_point with point geometry to benchmark it against polygon geometry value with `precise=False`
+    configuration to use H3 family of functions.
+    """
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            criticality="warn",
+            check_func=geo_check_funcs.is_geo_covers,
+            column="col_geo_point",
+            check_func_kwargs={
+                "reference_geometry": "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
+                "resolution": 7,
+            },
+        )
+    ]
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+@pytest.mark.parametrize(
+    "column",
+    [
+        "col1_email_standard",
+        "col2_email_with_quoted_local_part",
+        "col3_email_with_ip_domain",
+        "col4_email_with_multi_part_domain",
+    ],
+)
+@pytest.mark.benchmark(group="test_benchmark_is_valid_email")
+def test_benchmark_is_valid_email(benchmark, ws, generated_email_df, column):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            name=f"{column}_is_valid_email_address",
+            criticality="warn",
+            check_func=check_funcs.is_valid_email,
+            column=column,
+        ),
+    ]
+    benchmark.group += f" {column}"
+    checked = dq_engine.apply_checks(generated_email_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS

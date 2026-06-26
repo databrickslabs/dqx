@@ -5,7 +5,7 @@ import {
   useNavigate,
   useParams,
 } from "@tanstack/react-router";
-import { PageBreadcrumb } from "@/components/apx/PageBreadcrumb";
+import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
 import {
   useListRules,
   RunConfig,
@@ -80,6 +80,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { useState, useEffect, useRef, Suspense, useMemo, useCallback } from "react";
+import { useTranslation } from "react-i18next";
 import yaml from "js-yaml";
 import { useQueryClient, QueryErrorResetBoundary } from "@tanstack/react-query";
 import { ErrorBoundary } from "react-error-boundary";
@@ -89,9 +90,61 @@ import { useActiveRuns, type ActiveRun } from "@/hooks/use-active-runs";
 import { getDryRunStatus, type RunStatusOut } from "@/lib/api";
 import { cancelDryRun } from "@/lib/api-custom";
 import { CircleStop, ShieldAlert } from "lucide-react";
-import { parseFqn, formatDateTime as formatDate } from "@/lib/format-utils";
+import { parseFqn, formatDateTime as formatDate, getUserMetadata, labelToken, tokenToLabel } from "@/lib/format-utils";
+import { LabelFilter, LabelsBadges, labelsMatchFilter } from "@/components/Labels";
 import { usePermissions } from "@/hooks/use-permissions";
 import { requireRunnerOrRedirect } from "@/lib/route-guards";
+
+// Collect every distinct ``(key, value)`` label seen on the checks of the
+// supplied approved rule sets. Used to populate ``<LabelFilter>`` dropdowns
+// on the Execute tab and the schedule editor.
+function collectAvailableLabels(
+  rules: RuleCatalogEntryOut[],
+): { key: string; value: string }[] {
+  const seen = new Set<string>();
+  const out: { key: string; value: string }[] = [];
+  for (const r of rules) {
+    for (const c of r.checks) {
+      const md = getUserMetadata(c as Record<string, unknown>);
+      for (const [k, v] of Object.entries(md)) {
+        const tok = labelToken(k, v);
+        if (!seen.has(tok)) {
+          seen.add(tok);
+          out.push({ key: k, value: v });
+        }
+      }
+    }
+  }
+  return out;
+}
+
+// True iff at least one check on ``rule`` carries a label that satisfies
+// the user's selection. Empty selection always passes.
+function ruleMatchesLabels(
+  rule: RuleCatalogEntryOut,
+  selected: Set<string>,
+): boolean {
+  if (selected.size === 0) return true;
+  return rule.checks.some((c) =>
+    labelsMatchFilter(getUserMetadata(c as Record<string, unknown>), selected),
+  );
+}
+
+// Merge every check's ``user_metadata`` for the rule set into a single
+// ``Record<string, string>`` for display next to the table name.
+// Most rule sets use the same labels across all checks; for the rare
+// case where a key has different values per check, last-write-wins —
+// the LabelFilter still shows every distinct ``(key, value)`` pair.
+function collectRuleLabels(rule: RuleCatalogEntryOut): Record<string, string> {
+  const merged: Record<string, string> = {};
+  for (const c of rule.checks) {
+    const md = getUserMetadata(c as Record<string, unknown>);
+    for (const [k, v] of Object.entries(md)) {
+      merged[k] = v;
+    }
+  }
+  return merged;
+}
 
 export const Route = createFileRoute("/_sidebar/runs")({
   // URL-level guard: aborts the route load before the page ever mounts
@@ -128,6 +181,11 @@ interface ScheduleConfig {
   scope_catalogs?: string[];
   scope_schemas?: string[];
   scope_tables?: string[];
+  // Optional label filter intersected with the FQN-based scope above. A rule
+  // set is included only if at least one of its checks carries a matching
+  // ``user_metadata`` label. Persisted as a list of ``{key, value}`` so the
+  // YAML round-trips cleanly and values containing ``=`` don't collide.
+  scope_labels?: { key: string; value: string }[];
   sample_size?: number;
 }
 
@@ -177,18 +235,47 @@ async function deleteScheduleApi(name: string): Promise<void> {
   await axios.delete(`/api/v1/schedules/${encodeURIComponent(name)}`);
 }
 
-function cronPreview(cfg: ScheduleConfig): string {
+type Translator = (key: string, options?: Record<string, unknown>) => string;
+
+function cronPreview(cfg: ScheduleConfig, t: Translator): string {
   switch (cfg.frequency) {
-    case "manual": return "Manual only (no automatic schedule)";
-    case "hourly": return `Every hour at :${String(cfg.minute ?? 0).padStart(2, "0")} UTC`;
-    case "daily": return `Daily at ${String(cfg.hour ?? 6).padStart(2, "0")}:${String(cfg.minute ?? 0).padStart(2, "0")} UTC`;
+    case "manual":
+      return t("runs.cronManualOnly");
+    case "hourly":
+      return t("runs.cronHourly", { minute: String(cfg.minute ?? 0).padStart(2, "0") });
+    case "daily":
+      return t("runs.cronDaily", {
+        hour: String(cfg.hour ?? 6).padStart(2, "0"),
+        minute: String(cfg.minute ?? 0).padStart(2, "0"),
+      });
     case "weekly": {
-      const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-      return `Every ${days[cfg.day_of_week ?? 1]} at ${String(cfg.hour ?? 6).padStart(2, "0")}:${String(cfg.minute ?? 0).padStart(2, "0")} UTC`;
+      const dayKeys = [
+        "runs.dayShortSun",
+        "runs.dayShortMon",
+        "runs.dayShortTue",
+        "runs.dayShortWed",
+        "runs.dayShortThu",
+        "runs.dayShortFri",
+        "runs.dayShortSat",
+      ];
+      return t("runs.cronWeekly", {
+        day: t(dayKeys[cfg.day_of_week ?? 1]),
+        hour: String(cfg.hour ?? 6).padStart(2, "0"),
+        minute: String(cfg.minute ?? 0).padStart(2, "0"),
+      });
     }
-    case "monthly": return `Monthly on day ${cfg.day_of_month ?? 1} at ${String(cfg.hour ?? 6).padStart(2, "0")}:${String(cfg.minute ?? 0).padStart(2, "0")} UTC`;
-    case "cron": return cfg.cron_expression ? `Cron: ${cfg.cron_expression}` : "Custom cron (not set)";
-    default: return "";
+    case "monthly":
+      return t("runs.cronMonthly", {
+        day: cfg.day_of_month ?? 1,
+        hour: String(cfg.hour ?? 6).padStart(2, "0"),
+        minute: String(cfg.minute ?? 0).padStart(2, "0"),
+      });
+    case "cron":
+      return cfg.cron_expression
+        ? t("runs.cronCustom", { expression: cfg.cron_expression })
+        : t("runs.cronCustomNotSet");
+    default:
+      return "";
   }
 }
 
@@ -205,42 +292,53 @@ function ScheduleFrequencyPicker({
   onChange: (cfg: ScheduleConfig) => void;
   disabled?: boolean;
 }) {
+  const { t } = useTranslation();
   const update = (patch: Partial<ScheduleConfig>) => onChange({ ...config, ...patch });
+
+  const dayLongKeys = [
+    "runs.daySunday",
+    "runs.dayMonday",
+    "runs.dayTuesday",
+    "runs.dayWednesday",
+    "runs.dayThursday",
+    "runs.dayFriday",
+    "runs.daySaturday",
+  ];
 
   return (
     <div className="space-y-3">
       <div className="grid gap-2">
-        <Label>Frequency</Label>
+        <Label>{t("runs.frequency")}</Label>
         <Select value={config.frequency} onValueChange={(v) => update({ frequency: v as ScheduleConfig["frequency"] })} disabled={disabled}>
           <SelectTrigger><SelectValue /></SelectTrigger>
           <SelectContent>
-            <SelectItem value="manual">Manual only</SelectItem>
-            <SelectItem value="hourly">Hourly</SelectItem>
-            <SelectItem value="daily">Daily</SelectItem>
-            <SelectItem value="weekly">Weekly</SelectItem>
-            <SelectItem value="monthly">Monthly</SelectItem>
-            <SelectItem value="cron">Custom cron</SelectItem>
+            <SelectItem value="manual">{t("runs.freqManual")}</SelectItem>
+            <SelectItem value="hourly">{t("runs.freqHourly")}</SelectItem>
+            <SelectItem value="daily">{t("runs.freqDaily")}</SelectItem>
+            <SelectItem value="weekly">{t("runs.freqWeekly")}</SelectItem>
+            <SelectItem value="monthly">{t("runs.freqMonthly")}</SelectItem>
+            <SelectItem value="cron">{t("runs.freqCron")}</SelectItem>
           </SelectContent>
         </Select>
       </div>
 
       {config.frequency === "cron" && (
         <div className="grid gap-2">
-          <Label>Cron Expression</Label>
+          <Label>{t("runs.cronExpression")}</Label>
           <Input
             value={config.cron_expression || ""}
             onChange={(e) => update({ cron_expression: e.target.value })}
             disabled={disabled}
-            placeholder="e.g., 0 6 * * MON-FRI"
+            placeholder={t("runs.cronPlaceholder")}
             className="font-mono text-sm"
           />
-          <p className="text-xs text-muted-foreground">Standard 5-field cron (minute hour day month weekday)</p>
+          <p className="text-xs text-muted-foreground">{t("runs.cronHint")}</p>
         </div>
       )}
 
       {config.frequency === "hourly" && (
         <div className="grid gap-2">
-          <Label>Minute</Label>
+          <Label>{t("runs.minute")}</Label>
           <Select value={String(config.minute ?? 0)} onValueChange={(v) => update({ minute: Number(v) })} disabled={disabled}>
             <SelectTrigger className="w-24"><SelectValue /></SelectTrigger>
             <SelectContent>
@@ -255,7 +353,7 @@ function ScheduleFrequencyPicker({
       {(config.frequency === "daily" || config.frequency === "weekly" || config.frequency === "monthly") && (
         <div className="flex items-center gap-3">
           <div className="grid gap-2">
-            <Label>Hour <span className="text-muted-foreground font-normal">(UTC)</span></Label>
+            <Label>{t("runs.hour")} <span className="text-muted-foreground font-normal">{t("runs.utcSuffix")}</span></Label>
             <Select value={String(config.hour ?? 6)} onValueChange={(v) => update({ hour: Number(v) })} disabled={disabled}>
               <SelectTrigger className="w-20"><SelectValue /></SelectTrigger>
               <SelectContent>
@@ -266,7 +364,7 @@ function ScheduleFrequencyPicker({
             </Select>
           </div>
           <div className="grid gap-2">
-            <Label>Minute</Label>
+            <Label>{t("runs.minute")}</Label>
             <Select value={String(config.minute ?? 0)} onValueChange={(v) => update({ minute: Number(v) })} disabled={disabled}>
               <SelectTrigger className="w-20"><SelectValue /></SelectTrigger>
               <SelectContent>
@@ -281,12 +379,12 @@ function ScheduleFrequencyPicker({
 
       {config.frequency === "weekly" && (
         <div className="grid gap-2">
-          <Label>Day of week</Label>
+          <Label>{t("runs.dayOfWeek")}</Label>
           <Select value={String(config.day_of_week ?? 1)} onValueChange={(v) => update({ day_of_week: Number(v) })} disabled={disabled}>
             <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
             <SelectContent>
-              {["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"].map((d, i) => (
-                <SelectItem key={i} value={String(i)}>{d}</SelectItem>
+              {dayLongKeys.map((dKey, i) => (
+                <SelectItem key={i} value={String(i)}>{t(dKey)}</SelectItem>
               ))}
             </SelectContent>
           </Select>
@@ -295,7 +393,7 @@ function ScheduleFrequencyPicker({
 
       {config.frequency === "monthly" && (
         <div className="grid gap-2">
-          <Label>Day of month</Label>
+          <Label>{t("runs.dayOfMonth")}</Label>
           <Select value={String(config.day_of_month ?? 1)} onValueChange={(v) => update({ day_of_month: Number(v) })} disabled={disabled}>
             <SelectTrigger className="w-20"><SelectValue /></SelectTrigger>
             <SelectContent>
@@ -309,7 +407,7 @@ function ScheduleFrequencyPicker({
 
       {config.frequency !== "manual" && (
         <p className="text-xs text-muted-foreground flex items-center gap-1.5">
-          <Clock className="h-3 w-3" /> {cronPreview(config)}
+          <Clock className="h-3 w-3" /> {cronPreview(config, t)}
         </p>
       )}
     </div>
@@ -331,6 +429,7 @@ function ScopePicker({
   approvedRules: RuleCatalogEntryOut[];
   disabled?: boolean;
 }) {
+  const { t } = useTranslation();
   const update = (patch: Partial<ScheduleConfig>) => onChange({ ...config, ...patch });
 
   const allCatalogs = useMemo(() => {
@@ -348,18 +447,40 @@ function ScopePicker({
     return Array.from(set).sort();
   }, [approvedRules]);
 
+  const availableLabels = useMemo(
+    () => collectAvailableLabels(approvedRules),
+    [approvedRules],
+  );
+
+  const selectedLabelTokens = useMemo(() => {
+    const set = new Set<string>();
+    for (const { key, value } of config.scope_labels ?? []) {
+      set.add(labelToken(key, value));
+    }
+    return set;
+  }, [config.scope_labels]);
+
+  const onLabelFilterChange = (selected: Set<string>) => {
+    const next = [...selected].map(tokenToLabel);
+    update({ scope_labels: next.length > 0 ? next : undefined });
+  };
+
   const matchedCount = useMemo(() => {
     return approvedRules.filter((r) => {
       const { catalog, schema } = parseFqn(r.table_fqn);
-      switch (config.scope_mode) {
-        case "all": return true;
-        case "catalog": return (config.scope_catalogs ?? []).includes(catalog);
-        case "schema": return (config.scope_schemas ?? []).includes(`${catalog}.${schema}`);
-        case "tables": return (config.scope_tables ?? []).includes(r.table_fqn);
-        default: return true;
-      }
+      const fqnMatches = (() => {
+        switch (config.scope_mode) {
+          case "all": return true;
+          case "catalog": return (config.scope_catalogs ?? []).includes(catalog);
+          case "schema": return (config.scope_schemas ?? []).includes(`${catalog}.${schema}`);
+          case "tables": return (config.scope_tables ?? []).includes(r.table_fqn);
+          default: return true;
+        }
+      })();
+      if (!fqnMatches) return false;
+      return ruleMatchesLabels(r, selectedLabelTokens);
     }).length;
-  }, [approvedRules, config]);
+  }, [approvedRules, config, selectedLabelTokens]);
 
   const toggleInList = (list: string[], item: string): string[] => {
     return list.includes(item) ? list.filter((x) => x !== item) : [...list, item];
@@ -368,14 +489,14 @@ function ScopePicker({
   return (
     <div className="space-y-3">
       <div className="grid gap-2">
-        <Label>Scope</Label>
+        <Label>{t("runs.scope")}</Label>
         <Select value={config.scope_mode} onValueChange={(v) => update({ scope_mode: v as ScheduleConfig["scope_mode"] })} disabled={disabled}>
           <SelectTrigger><SelectValue /></SelectTrigger>
           <SelectContent>
-            <SelectItem value="all"><span className="flex items-center gap-1.5"><Database className="h-3 w-3" /> All approved rules</span></SelectItem>
-            <SelectItem value="catalog"><span className="flex items-center gap-1.5"><Database className="h-3 w-3" /> By catalog</span></SelectItem>
-            <SelectItem value="schema"><span className="flex items-center gap-1.5"><Layers className="h-3 w-3" /> By schema</span></SelectItem>
-            <SelectItem value="tables"><span className="flex items-center gap-1.5"><Table2 className="h-3 w-3" /> Specific tables</span></SelectItem>
+            <SelectItem value="all"><span className="flex items-center gap-1.5"><Database className="h-3 w-3" /> {t("runs.scopeAll")}</span></SelectItem>
+            <SelectItem value="catalog"><span className="flex items-center gap-1.5"><Database className="h-3 w-3" /> {t("runs.scopeByCatalog")}</span></SelectItem>
+            <SelectItem value="schema"><span className="flex items-center gap-1.5"><Layers className="h-3 w-3" /> {t("runs.scopeBySchema")}</span></SelectItem>
+            <SelectItem value="tables"><span className="flex items-center gap-1.5"><Table2 className="h-3 w-3" /> {t("runs.scopeTables")}</span></SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -383,7 +504,7 @@ function ScopePicker({
       {config.scope_mode === "catalog" && (
         <div className="border rounded-lg overflow-hidden max-h-44 overflow-y-auto">
           {allCatalogs.length === 0 ? (
-            <p className="p-3 text-xs text-muted-foreground">No catalogs found in approved rules.</p>
+            <p className="p-3 text-xs text-muted-foreground">{t("runs.noCatalogsInRules")}</p>
           ) : allCatalogs.map((cat) => (
             <div
               key={cat}
@@ -401,7 +522,7 @@ function ScopePicker({
       {config.scope_mode === "schema" && (
         <div className="border rounded-lg overflow-hidden max-h-44 overflow-y-auto">
           {allSchemas.length === 0 ? (
-            <p className="p-3 text-xs text-muted-foreground">No schemas found in approved rules.</p>
+            <p className="p-3 text-xs text-muted-foreground">{t("runs.noSchemasInRules")}</p>
           ) : allSchemas.map((sch) => (
             <div
               key={sch}
@@ -419,7 +540,7 @@ function ScopePicker({
       {config.scope_mode === "tables" && (
         <div className="border rounded-lg overflow-hidden max-h-56 overflow-y-auto">
           {approvedRules.length === 0 ? (
-            <p className="p-3 text-xs text-muted-foreground">No approved rules available.</p>
+            <p className="p-3 text-xs text-muted-foreground">{t("runs.noApprovedRulesAvailable")}</p>
           ) : (
             <>
               <div className="flex items-center gap-3 p-2.5 bg-muted/40 border-b sticky top-0">
@@ -432,7 +553,9 @@ function ScopePicker({
                   disabled={disabled}
                 />
                 <span className="text-xs font-medium text-muted-foreground">
-                  {(config.scope_tables ?? []).length > 0 ? `${(config.scope_tables ?? []).length} of ${approvedRules.length} selected` : "Select all"}
+                  {(config.scope_tables ?? []).length > 0
+                    ? t("runs.selectedOf", { selected: (config.scope_tables ?? []).length, total: approvedRules.length })
+                    : t("runs.selectAll")}
                 </span>
               </div>
               {approvedRules.map((rule) => (
@@ -442,7 +565,10 @@ function ScopePicker({
                   onClick={() => !disabled && update({ scope_tables: toggleInList(config.scope_tables ?? [], rule.table_fqn) })}
                 >
                   <Checkbox checked={(config.scope_tables ?? []).includes(rule.table_fqn)} onCheckedChange={() => update({ scope_tables: toggleInList(config.scope_tables ?? [], rule.table_fqn) })} disabled={disabled} />
-                  <span className="font-mono text-xs flex-1 truncate">{rule.display_name || rule.table_fqn}</span>
+                  <div className="flex items-center gap-2 flex-1 min-w-0 flex-wrap">
+                    <span className="font-mono text-xs truncate">{rule.display_name || rule.table_fqn}</span>
+                    <LabelsBadges labels={collectRuleLabels(rule)} max={3} size="xs" />
+                  </div>
                   <Badge variant="secondary" className="text-[10px]">{rule.checks.length} rule{rule.checks.length !== 1 ? "s" : ""}</Badge>
                 </div>
               ))}
@@ -451,12 +577,29 @@ function ScopePicker({
         </div>
       )}
 
+      <div className="grid gap-2">
+        <Label>Filter by labels (optional)</Label>
+        <div>
+          <LabelFilter
+            available={availableLabels}
+            selected={selectedLabelTokens}
+            onChange={onLabelFilterChange}
+            className="h-9 w-full justify-between"
+          />
+        </div>
+        {availableLabels.length === 0 && (
+          <p className="text-[11px] text-muted-foreground">
+            No labels found on approved rules — add labels to checks to use this filter.
+          </p>
+        )}
+      </div>
+
       <p className="text-xs text-muted-foreground">
-        {matchedCount} of {approvedRules.length} approved rule set{approvedRules.length !== 1 ? "s" : ""} matched
+        {t("runs.matchedOfApproved", { matched: matchedCount, total: approvedRules.length, count: approvedRules.length })}
       </p>
 
       <div className="grid gap-2">
-        <Label>Row scope</Label>
+        <Label>{t("runs.rowScope")}</Label>
         <Select
           value={config.sample_size === 0 ? "all" : "sample"}
           onValueChange={(v) => update({ sample_size: v === "all" ? 0 : 1000 })}
@@ -464,13 +607,13 @@ function ScopePicker({
         >
           <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All rows</SelectItem>
-            <SelectItem value="sample">Sample rows</SelectItem>
+            <SelectItem value="all">{t("runs.allRows")}</SelectItem>
+            <SelectItem value="sample">{t("runs.sampleRows")}</SelectItem>
           </SelectContent>
         </Select>
         {(config.sample_size ?? 1000) > 0 && (
           <div className="flex items-center gap-2">
-            <Label className="text-xs text-muted-foreground whitespace-nowrap">Sample size per table</Label>
+            <Label className="text-xs text-muted-foreground whitespace-nowrap">{t("runs.sampleSizePerTable")}</Label>
             <Input
               type="number"
               min={1}
@@ -495,16 +638,23 @@ function resolveScheduleScope(
   cfg: ScheduleConfig,
   approvedRules: RuleCatalogEntryOut[],
 ): string[] {
+  const labelTokens = new Set<string>(
+    (cfg.scope_labels ?? []).map(({ key, value }) => labelToken(key, value)),
+  );
   return approvedRules
     .filter((r) => {
       const { catalog, schema } = parseFqn(r.table_fqn);
-      switch (cfg.scope_mode) {
-        case "all": return true;
-        case "catalog": return (cfg.scope_catalogs ?? []).includes(catalog);
-        case "schema": return (cfg.scope_schemas ?? []).includes(`${catalog}.${schema}`);
-        case "tables": return (cfg.scope_tables ?? []).includes(r.table_fqn);
-        default: return true;
-      }
+      const fqnMatches = (() => {
+        switch (cfg.scope_mode) {
+          case "all": return true;
+          case "catalog": return (cfg.scope_catalogs ?? []).includes(catalog);
+          case "schema": return (cfg.scope_schemas ?? []).includes(`${catalog}.${schema}`);
+          case "tables": return (cfg.scope_tables ?? []).includes(r.table_fqn);
+          default: return true;
+        }
+      })();
+      if (!fqnMatches) return false;
+      return ruleMatchesLabels(r, labelTokens);
     })
     .map((r) => r.table_fqn);
 }
@@ -514,6 +664,7 @@ function resolveScheduleScope(
 // ---------------------------------------------------------------------------
 
 function RunsPage() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const { canRunRules, isAdmin } = usePermissions();
   const params = useParams({ strict: false }) as { runName?: string };
@@ -537,31 +688,31 @@ function RunsPage() {
       setScheduleNames(entries.map((e) => e.schedule_name));
     }).catch((err) => {
       if (isAxiosError(err) && err.response?.status === 403) {
-        toast.error("Insufficient permissions to view schedules");
+        toast.error(t("runs.permissionsViewSchedules"));
       } else {
-        toast.error("Failed to load schedules");
+        toast.error(t("runs.failedLoadSchedules"));
       }
     });
-  }, []);
+  }, [t]);
 
   const handleCreateRun = async (name: string) => {
     try {
       await saveScheduleApi(name, { ...DEFAULT_SCHEDULE });
       await queryClient.refetchQueries({ queryKey: [...SCHEDULES_KEY] });
       setScheduleNames((prev) => [...prev, name]);
-      toast.success(`Schedule "${name}" created`);
+      toast.success(t("runs.scheduleCreated", { name }));
       navigate({ to: "/runs/$runName", params: { runName: name } });
       setIsCreateOpen(false);
     } catch (error: unknown) {
       if (isAxiosError(error) && error.response?.status === 403) {
-        toast.error("Insufficient permissions: only admins can create schedules.");
+        toast.error(t("runs.permissionsCreateSchedules"));
       } else {
         const detail =
           error instanceof Error ? error.message :
           typeof error === "object" && error !== null && "response" in error
             ? String((error as { response?: { data?: { detail?: string } } }).response?.data?.detail ?? "")
             : "";
-        toast.error(detail || "Failed to create new schedule");
+        toast.error(detail || t("runs.failedCreateSchedule"));
       }
       console.error(error);
       throw error;
@@ -579,8 +730,8 @@ function RunsPage() {
   return (
     <div className="flex flex-col h-full">
       <PageBreadcrumb
-        items={currentRunName ? [{ label: "Run Rules", to: "/runs" }] : []}
-        page={currentRunName || "Run Rules"}
+        items={currentRunName ? [{ label: t("runs.title"), to: "/runs" }] : []}
+        page={currentRunName || t("runs.title")}
       />
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col mt-4 overflow-hidden">
@@ -588,11 +739,11 @@ function RunsPage() {
           <TabsList>
             <TabsTrigger value="execute" className="gap-2">
               <Zap className="h-4 w-4" />
-              Execute
+              {t("runs.tabExecute")}
             </TabsTrigger>
             <TabsTrigger value="schedules" className="gap-2">
               <CalendarClock className="h-4 w-4" />
-              Schedules
+              {t("runs.tabSchedules")}
             </TabsTrigger>
           </TabsList>
         </div>
@@ -620,7 +771,7 @@ function RunsPage() {
                   onClick={() => navigate({ to: "/runs" })}
                 >
                   <ChevronRight className="h-4 w-4 rotate-180" />
-                  Back to schedules
+                  {t("runs.backToSchedules")}
                 </Button>
               </div>
               <div className="flex-1 overflow-hidden flex flex-col">
@@ -643,7 +794,7 @@ function RunsPage() {
           ) : (
             <div className="flex flex-col flex-1 overflow-hidden h-full">
               <div className="flex items-center justify-between mb-4 shrink-0">
-                <h2 className="font-semibold text-lg text-foreground">Scheduled Runs</h2>
+                <h2 className="font-semibold text-lg text-foreground">{t("runs.scheduledRuns")}</h2>
                 {isAdmin && (
                 <Button
                   variant="outline"
@@ -652,7 +803,7 @@ function RunsPage() {
                   className="gap-2"
                 >
                   <Plus className="h-4 w-4" />
-                  New Schedule
+                  {t("runs.newSchedule")}
                 </Button>
                 )}
               </div>
@@ -693,6 +844,7 @@ interface RunNotification {
 }
 
 function ExecuteTab({ onGoToHistory }: { onGoToHistory: () => void }) {
+  const { t } = useTranslation();
   const { data: rulesResp, isLoading: rulesLoading } = useListRules(
     { status: "approved" },
     { query: {} },
@@ -719,6 +871,7 @@ function ExecuteTab({ onGoToHistory }: { onGoToHistory: () => void }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [filterCatalog, setFilterCatalog] = useState<string>("__all__");
   const [filterSchema, setFilterSchema] = useState<string>("__all__");
+  const [labelFilter, setLabelFilter] = useState<Set<string>>(new Set());
   const [isRunning, setIsRunning] = useState(false);
   const [runNotification, setRunNotification] = useState<RunNotification | null>(null);
 
@@ -730,17 +883,19 @@ function ExecuteTab({ onGoToHistory }: { onGoToHistory: () => void }) {
   const batchRun = useBatchRunFromCatalog();
   const queryClient = useQueryClient();
 
+  const crossTableRulesLabel = t("runs.crossTableRules");
+
   const allCatalogs = useMemo(() => {
     const cats = new Set<string>();
     for (const r of approvedRules) {
       if (r.table_fqn.startsWith(_SQL_CHECK_PREFIX)) {
-        cats.add("Cross-table rules");
+        cats.add(crossTableRulesLabel);
       } else {
         cats.add(parseFqn(r.table_fqn).catalog);
       }
     }
     return Array.from(cats).sort();
-  }, [approvedRules]);
+  }, [approvedRules, crossTableRulesLabel]);
 
   const availableSchemas = useMemo(() => {
     const schemas = new Set<string>();
@@ -759,11 +914,16 @@ function ExecuteTab({ onGoToHistory }: { onGoToHistory: () => void }) {
     }
   }, [availableSchemas, filterSchema]);
 
+  const availableLabels = useMemo(
+    () => collectAvailableLabels(approvedRules),
+    [approvedRules],
+  );
+
   const filteredRules = useMemo(() => {
     return approvedRules.filter((r) => {
       const isSqlCheck = r.table_fqn.startsWith(_SQL_CHECK_PREFIX);
       if (filterCatalog !== "__all__") {
-        if (filterCatalog === "Cross-table rules") {
+        if (filterCatalog === crossTableRulesLabel) {
           if (!isSqlCheck) return false;
         } else {
           if (isSqlCheck) return false;
@@ -779,9 +939,10 @@ function ExecuteTab({ onGoToHistory }: { onGoToHistory: () => void }) {
         const q = searchQuery.toLowerCase();
         if (!(r.display_name || r.table_fqn).toLowerCase().includes(q)) return false;
       }
+      if (!ruleMatchesLabels(r, labelFilter)) return false;
       return true;
     });
-  }, [approvedRules, filterCatalog, filterSchema, searchQuery]);
+  }, [approvedRules, filterCatalog, filterSchema, searchQuery, crossTableRulesLabel, labelFilter]);
 
   const grouped = useMemo(() => {
     const groups = new Map<string, RuleCatalogEntryOut[]>();
@@ -790,18 +951,18 @@ function ExecuteTab({ onGoToHistory }: { onGoToHistory: () => void }) {
       const isSqlCheck = rule.table_fqn.startsWith(_SQL_CHECK_PREFIX);
       let key: string;
       if (isSqlCheck) {
-        key = "Cross-table rules";
+        key = crossTableRulesLabel;
       } else {
         const { catalog, schema } = parseFqn(rule.table_fqn);
         switch (groupBy) {
           case "catalog":
-            key = catalog || "Unknown";
+            key = catalog || t("runs.unknown");
             break;
           case "schema":
-            key = `${catalog}.${schema}` || "Unknown";
+            key = `${catalog}.${schema}` || t("runs.unknown");
             break;
           default:
-            key = "All";
+            key = t("runs.all");
         }
       }
       if (!groups.has(key)) groups.set(key, []);
@@ -809,7 +970,7 @@ function ExecuteTab({ onGoToHistory }: { onGoToHistory: () => void }) {
     }
 
     return new Map([...groups.entries()].sort(([a], [b]) => a.localeCompare(b)));
-  }, [filteredRules, groupBy]);
+  }, [filteredRules, groupBy, crossTableRulesLabel, t]);
 
   const toggleTable = useCallback((tableFqn: string) => {
     setSelectedTables((prev) => {
@@ -872,7 +1033,7 @@ function ExecuteTab({ onGoToHistory }: { onGoToHistory: () => void }) {
       });
       setSelectedTables(new Set());
     } catch (err) {
-      toast.error(`Batch run failed: ${err instanceof Error ? err.message : "Unknown error"}`);
+      toast.error(t("runs.batchRunFailed", { error: err instanceof Error ? err.message : t("common.unknownError") }));
     } finally {
       setIsRunning(false);
     }
@@ -884,9 +1045,9 @@ function ExecuteTab({ onGoToHistory }: { onGoToHistory: () => void }) {
     <div className="space-y-6 h-full overflow-y-auto">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-bold tracking-tight">Execute Rules</h2>
+          <h2 className="text-xl font-bold tracking-tight">{t("runs.executeRules")}</h2>
           <p className="text-muted-foreground text-sm">
-            Select approved rules and trigger manual validation runs.
+            {t("runs.executeRulesSubtitle")}
           </p>
         </div>
       </div>
@@ -898,11 +1059,10 @@ function ExecuteTab({ onGoToHistory }: { onGoToHistory: () => void }) {
               <>
                 <CheckCircle2 className="h-4 w-4 text-green-600 shrink-0" />
                 <span>
-                  Started {runNotification.count} validation run
-                  {runNotification.count !== 1 ? "s" : ""}
+                  {t("runs.startedRuns", { count: runNotification.count })}
                   {runNotification.errors > 0 && (
                     <span className="text-destructive ml-1">
-                      ({runNotification.errors} failed to submit)
+                      {t("runs.runsFailedToSubmit", { count: runNotification.errors })}
                     </span>
                   )}
                 </span>
@@ -911,7 +1071,7 @@ function ExecuteTab({ onGoToHistory }: { onGoToHistory: () => void }) {
               <>
                 <XCircle className="h-4 w-4 text-destructive shrink-0" />
                 <span className="text-destructive">
-                  All {runNotification.errors} table{runNotification.errors !== 1 ? "s" : ""} failed to submit
+                  {t("runs.allTablesFailedToSubmit", { count: runNotification.errors })}
                 </span>
               </>
             )}
@@ -925,7 +1085,7 @@ function ExecuteTab({ onGoToHistory }: { onGoToHistory: () => void }) {
                 onClick={onGoToHistory}
               >
                 <History className="h-3.5 w-3.5" />
-                View in History
+                {t("runs.viewInHistory")}
               </Button>
             )}
             <Button
@@ -948,13 +1108,13 @@ function ExecuteTab({ onGoToHistory }: { onGoToHistory: () => void }) {
                 <Play className="h-8 w-8 text-muted-foreground" />
               </div>
               <h3 className="text-lg font-medium text-muted-foreground">
-                No approved rules
+                {t("runs.noApprovedRules")}
               </h3>
               <p className="text-muted-foreground/70 text-sm mt-1 max-w-md">
-                Approve rules in Drafts & review first, then come back here to run them.
+                {t("runs.noApprovedRulesDescription")}
               </p>
               <Button variant="outline" className="mt-4" asChild>
-                <Link to="/rules/drafts">Go to Drafts & review</Link>
+                <Link to="/rules/drafts">{t("runs.goToDraftsReview")}</Link>
               </Button>
             </div>
           </CardContent>
@@ -968,13 +1128,13 @@ function ExecuteTab({ onGoToHistory }: { onGoToHistory: () => void }) {
                 <div>
                   <CardTitle className="flex items-center gap-2 text-base">
                     <Zap className="h-4 w-4" />
-                    Table Selection
+                    {t("runs.tableSelection")}
                   </CardTitle>
                   <CardDescription>
-                    {approvedRules.length} approved rule set{approvedRules.length !== 1 ? "s" : ""} available
+                    {t("runs.approvedRuleSetsAvailable", { count: approvedRules.length })}
                     {selectedTables.size > 0 && (
                       <span className="text-primary font-medium ml-1">
-                        · {selectedTables.size} selected
+                        {t("runs.selectedSuffix", { count: selectedTables.size })}
                       </span>
                     )}
                   </CardDescription>
@@ -987,8 +1147,8 @@ function ExecuteTab({ onGoToHistory }: { onGoToHistory: () => void }) {
                     >
                       <SelectTrigger className="w-32 h-8 text-xs"><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="all">All rows</SelectItem>
-                        <SelectItem value="sample">Sample rows</SelectItem>
+                        <SelectItem value="all">{t("runs.allRows")}</SelectItem>
+                        <SelectItem value="sample">{t("runs.sampleRows")}</SelectItem>
                       </SelectContent>
                     </Select>
                     {sampleSize > 0 && (
@@ -1014,8 +1174,10 @@ function ExecuteTab({ onGoToHistory }: { onGoToHistory: () => void }) {
                       <Play className="h-4 w-4" />
                     )}
                     {isRunning
-                      ? "Running..."
-                      : `Run ${selectedTables.size > 0 ? selectedTables.size : ""} selected`}
+                      ? t("runs.running")
+                      : selectedTables.size > 0
+                        ? t("runs.runNSelected", { count: selectedTables.size })
+                        : t("runs.runSelected")}
                   </Button>
                 </div>
               </div>
@@ -1023,20 +1185,20 @@ function ExecuteTab({ onGoToHistory }: { onGoToHistory: () => void }) {
               <div className="flex items-center gap-2 flex-wrap pt-3 border-t mt-3">
                 <div className="flex items-center gap-1.5">
                   <Layers className="h-3.5 w-3.5 text-muted-foreground" />
-                  <span className="text-xs text-muted-foreground">Group by:</span>
+                  <span className="text-xs text-muted-foreground">{t("runs.groupBy")}</span>
                   <Select value={groupBy} onValueChange={(v) => setGroupBy(v as GroupMode)}>
                     <SelectTrigger className="w-[120px] h-8 text-xs">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="catalog" className="text-xs">
-                        <span className="flex items-center gap-1.5"><Database className="h-3 w-3" /> Catalog</span>
+                        <span className="flex items-center gap-1.5"><Database className="h-3 w-3" /> {t("runs.groupByCatalog")}</span>
                       </SelectItem>
                       <SelectItem value="schema" className="text-xs">
-                        <span className="flex items-center gap-1.5"><Layers className="h-3 w-3" /> Schema</span>
+                        <span className="flex items-center gap-1.5"><Layers className="h-3 w-3" /> {t("runs.groupBySchema")}</span>
                       </SelectItem>
                       <SelectItem value="none" className="text-xs">
-                        <span className="flex items-center gap-1.5"><Table2 className="h-3 w-3" /> Flat list</span>
+                        <span className="flex items-center gap-1.5"><Table2 className="h-3 w-3" /> {t("runs.groupByFlat")}</span>
                       </SelectItem>
                     </SelectContent>
                   </Select>
@@ -1049,7 +1211,7 @@ function ExecuteTab({ onGoToHistory }: { onGoToHistory: () => void }) {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="__all__" className="text-xs">All catalogs</SelectItem>
+                      <SelectItem value="__all__" className="text-xs">{t("runs.allCatalogs")}</SelectItem>
                       {allCatalogs.map((c) => (
                         <SelectItem key={c} value={c} className="text-xs">{c}</SelectItem>
                       ))}
@@ -1064,7 +1226,7 @@ function ExecuteTab({ onGoToHistory }: { onGoToHistory: () => void }) {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="__all__" className="text-xs">All schemas</SelectItem>
+                      <SelectItem value="__all__" className="text-xs">{t("runs.allSchemas")}</SelectItem>
                       {availableSchemas.map((s) => (
                         <SelectItem key={s} value={s} className="text-xs">{s}</SelectItem>
                       ))}
@@ -1072,19 +1234,26 @@ function ExecuteTab({ onGoToHistory }: { onGoToHistory: () => void }) {
                   </Select>
                 </div>
 
+                <LabelFilter
+                  available={availableLabels}
+                  selected={labelFilter}
+                  onChange={setLabelFilter}
+                  className="h-8"
+                />
+
                 <div className="relative flex-1 max-w-xs">
                   <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
                   <Input
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Search tables..."
+                    placeholder={t("runs.searchTablesPlaceholder")}
                     className="h-8 pl-8 text-xs"
                   />
                 </div>
 
                 <div className="flex items-center gap-1.5 ml-auto">
                   <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={selectAll}>
-                    Select all
+                    {t("runs.selectAll")}
                   </Button>
                   <Button
                     variant="ghost"
@@ -1093,7 +1262,7 @@ function ExecuteTab({ onGoToHistory }: { onGoToHistory: () => void }) {
                     onClick={clearAll}
                     disabled={selectedTables.size === 0}
                   >
-                    Clear
+                    {t("runs.clear")}
                   </Button>
                 </div>
               </div>
@@ -1102,7 +1271,7 @@ function ExecuteTab({ onGoToHistory }: { onGoToHistory: () => void }) {
             <CardContent>
               {filteredRules.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground text-sm">
-                  No rules match your search.
+                  {t("runs.noRulesMatchSearch")}
                 </div>
               ) : groupBy === "none" ? (
                 <FadeIn duration={0.3}>
@@ -1132,7 +1301,7 @@ function ExecuteTab({ onGoToHistory }: { onGoToHistory: () => void }) {
                               <span className="text-sm font-medium">{group}</span>
                             </div>
                             <Badge variant="secondary" className="ml-auto text-xs">
-                              {rules.length} table{rules.length !== 1 ? "s" : ""}
+                              {t("runs.tablesCount", { count: rules.length })}
                             </Badge>
                           </div>
                           <RuleTable
@@ -1185,6 +1354,7 @@ function ActiveRunsCard({
   onRunComplete: (runId: string) => void;
   onDismissAll: () => void;
 }) {
+  const { t } = useTranslation();
   return (
     <Card>
       <CardHeader className="pb-3">
@@ -1192,15 +1362,15 @@ function ActiveRunsCard({
           <div>
             <CardTitle className="flex items-center gap-2 text-base">
               <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
-              Active Runs
+              {t("runs.activeRuns")}
               <Badge variant="secondary" className="text-xs">{runs.length}</Badge>
             </CardTitle>
             <CardDescription>
-              These validation runs are currently in progress. Status updates automatically.
+              {t("runs.activeRunsDescription")}
             </CardDescription>
           </div>
           <Button variant="ghost" size="sm" className="text-xs text-muted-foreground" onClick={onDismissAll}>
-            Dismiss all
+            {t("runs.dismissAll")}
           </Button>
         </div>
       </CardHeader>
@@ -1209,10 +1379,10 @@ function ActiveRunsCard({
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b bg-muted/50">
-                <th className="text-left p-3 font-medium">Table</th>
-                <th className="text-left p-3 font-medium">Run ID</th>
-                <th className="text-left p-3 font-medium">Status</th>
-                <th className="text-left p-3 font-medium">Elapsed</th>
+                <th className="text-left p-3 font-medium">{t("runs.headerTable")}</th>
+                <th className="text-left p-3 font-medium">{t("runs.headerRunId")}</th>
+                <th className="text-left p-3 font-medium">{t("runs.headerStatus")}</th>
+                <th className="text-left p-3 font-medium">{t("runs.headerElapsed")}</th>
                 <th className="w-10 p-3" />
               </tr>
             </thead>
@@ -1235,6 +1405,7 @@ function ActiveRunRow({
   run: ActiveRun;
   onComplete: (runId: string) => void;
 }) {
+  const { t } = useTranslation();
   const [status, setStatus] = useState<RunStatusOut | null>(null);
   const [pollError, setPollError] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
@@ -1256,13 +1427,13 @@ function ActiveRunRow({
         setPollError(false);
 
         if (TERMINAL_STATES.has(resp.data.state)) {
-          const tableName = cleanFqn(run.table_fqn).split(".").pop();
+          const tableName = cleanFqn(run.table_fqn).split(".").pop() ?? "";
           if (resp.data.state === "TERMINATED" && resp.data.result_state === "SUCCESS") {
-            toast.success(`Run for ${tableName} completed successfully`);
+            toast.success(t("runs.runCompleted", { table: tableName }));
           } else if (resp.data.state === "INTERNAL_ERROR") {
-            toast.error(`Run for ${tableName} failed with internal error`);
+            toast.error(t("runs.runFailedInternal", { table: tableName }));
           } else {
-            toast.info(`Run for ${tableName} finished (${resp.data.result_state ?? resp.data.state})`);
+            toast.info(t("runs.runFinished", { table: tableName, state: resp.data.result_state ?? resp.data.state }));
           }
           onCompleteRef.current(run.run_id);
           return;
@@ -1279,7 +1450,7 @@ function ActiveRunRow({
       cancelled = true;
       clearTimeout(timeoutId);
     };
-  }, [run.run_id, run.job_run_id, run.view_fqn, run.table_fqn]);
+  }, [run.run_id, run.job_run_id, run.view_fqn, run.table_fqn, t]);
 
   const stateLabel = status?.state ?? "PENDING";
   const isStillRunning = !TERMINAL_STATES.has(stateLabel);
@@ -1297,11 +1468,11 @@ function ActiveRunRow({
     setIsCancelling(true);
     try {
       await cancelDryRun(run.run_id, { job_run_id: run.job_run_id });
-      const tableName = cleanFqn(run.table_fqn).split(".").pop();
-      toast.info(`Run for ${tableName} canceled`);
+      const tableName = cleanFqn(run.table_fqn).split(".").pop() ?? "";
+      toast.info(t("runs.runCanceled", { table: tableName }));
       onCompleteRef.current(run.run_id);
     } catch {
-      toast.error("Failed to cancel run");
+      toast.error(t("runs.failedCancelRun"));
     } finally {
       setIsCancelling(false);
     }
@@ -1315,27 +1486,27 @@ function ActiveRunRow({
         {pollError ? (
           <Badge variant="secondary" className="gap-1 text-xs">
             <AlertCircle className="h-3 w-3" />
-            Polling error
+            {t("runs.statusPollingError")}
           </Badge>
         ) : stateLabel === "INTERNAL_ERROR" ? (
           <Badge variant="outline" className="gap-1 border-red-500 text-red-600 text-xs">
             <XCircle className="h-3 w-3" />
-            Internal Error
+            {t("runs.statusInternalError")}
           </Badge>
         ) : stateLabel === "RUNNING" ? (
           <Badge variant="outline" className="gap-1 border-amber-500 text-amber-600 text-xs">
             <Loader2 className="h-3 w-3 animate-spin" />
-            Running
+            {t("runs.statusRunning")}
           </Badge>
         ) : stateLabel === "PENDING" ? (
           <Badge variant="outline" className="gap-1 border-blue-500 text-blue-600 text-xs">
             <Clock className="h-3 w-3" />
-            Pending
+            {t("runs.statusPending")}
           </Badge>
         ) : stateLabel === "TERMINATED" ? (
           <Badge variant="outline" className="gap-1 border-green-500 text-green-600 text-xs">
             <CheckCircle2 className="h-3 w-3" />
-            {status?.result_state ?? "Done"}
+            {status?.result_state ?? t("runs.statusDone")}
           </Badge>
         ) : (
           <Badge variant="secondary" className="text-xs">{stateLabel}</Badge>
@@ -1351,14 +1522,14 @@ function ActiveRunRow({
               className="h-6 px-1.5 gap-1 text-red-600 hover:text-red-700 hover:bg-red-50"
               onClick={handleStop}
               disabled={isCancelling}
-              title="Stop run"
+              title={t("runs.stopRun")}
             >
               {isCancelling ? (
                 <Loader2 className="h-3 w-3 animate-spin" />
               ) : (
                 <CircleStop className="h-3.5 w-3.5" />
               )}
-              <span className="text-xs">Stop</span>
+              <span className="text-xs">{t("runs.stop")}</span>
             </Button>
           )}
           <Button
@@ -1366,7 +1537,7 @@ function ActiveRunRow({
             size="sm"
             className="h-6 w-6 p-0"
             onClick={() => onComplete(run.run_id)}
-            title="Dismiss"
+            title={t("runs.dismiss")}
           >
             <XCircle className="h-3.5 w-3.5 text-muted-foreground" />
           </Button>
@@ -1387,14 +1558,15 @@ function RuleTable({
   onToggle: (tableFqn: string) => void;
   runningFqns?: Set<string>;
 }) {
+  const { t } = useTranslation();
   return (
     <table className="w-full text-sm">
       <thead>
         <tr className="border-b bg-muted/30">
           <th className="w-10 p-3" />
-          <th className="text-left p-3 font-medium">Table</th>
-          <th className="text-right p-3 font-medium">Rules</th>
-          <th className="text-left p-3 font-medium">Status</th>
+          <th className="text-left p-3 font-medium">{t("runs.headerTable")}</th>
+          <th className="text-right p-3 font-medium">{t("runs.headerRules")}</th>
+          <th className="text-left p-3 font-medium">{t("runs.headerStatus")}</th>
         </tr>
       </thead>
       <tbody>
@@ -1416,18 +1588,23 @@ function RuleTable({
                   onClick={(e: React.MouseEvent) => e.stopPropagation()}
                 />
               </td>
-              <td className="p-3 font-mono text-xs">{rule.display_name || rule.table_fqn}</td>
+              <td className="p-3 font-mono text-xs">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="truncate">{rule.display_name || rule.table_fqn}</span>
+                  <LabelsBadges labels={collectRuleLabels(rule)} max={3} size="xs" />
+                </div>
+              </td>
               <td className="p-3 text-right tabular-nums">{rule.checks.length}</td>
               <td className="p-3">
                 <div className="flex items-center gap-1.5">
                   <Badge variant="outline" className="gap-1 border-green-500 text-green-600 text-xs">
                     <CheckCircle2 className="h-3 w-3" />
-                    Approved
+                    {t("runs.approved")}
                   </Badge>
                   {isTableRunning && (
                     <Badge variant="outline" className="gap-1 border-amber-500 text-amber-600 text-xs">
                       <Loader2 className="h-3 w-3 animate-spin" />
-                      Running
+                      {t("runs.statusRunning")}
                     </Badge>
                   )}
                 </div>
@@ -1455,13 +1632,14 @@ function ExecuteTabSkeleton() {
 }
 
 function ExecuteTabError({ resetErrorBoundary }: { resetErrorBoundary: () => void }) {
+  const { t } = useTranslation();
   return (
     <div className="flex flex-col items-center justify-center py-16 text-center">
       <AlertCircle className="h-12 w-12 text-destructive/30 mb-3" />
-      <p className="text-muted-foreground text-sm mb-1">Failed to load rules</p>
+      <p className="text-muted-foreground text-sm mb-1">{t("runs.failedLoadRules")}</p>
       <Button variant="outline" size="sm" onClick={resetErrorBoundary} className="gap-2 mt-2">
         <RotateCcw className="h-3 w-3" />
-        Retry
+        {t("common.retry")}
       </Button>
     </div>
   );
@@ -1482,6 +1660,7 @@ function CreateRunDialog({
   existingNames: string[];
   onCreate: (name: string) => Promise<void>;
 }) {
+  const { t } = useTranslation();
   const [name, setName] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -1511,39 +1690,39 @@ function CreateRunDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[425px]">
         <DialogHeader>
-          <DialogTitle>Create Schedule</DialogTitle>
+          <DialogTitle>{t("runs.createSchedule")}</DialogTitle>
           <DialogDescription>
-            Enter a unique name for the new scheduled run configuration.
+            {t("runs.createScheduleDescription")}
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit}>
           <div className="grid gap-4 py-4">
             <div className="grid gap-2">
-              <Label htmlFor="name">Name</Label>
+              <Label htmlFor="name">{t("runs.name")}</Label>
               <Input
                 id="name"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 className={cn((isConflict || (name.length > 0 && !isFormatValid)) && "border-destructive focus-visible:ring-destructive")}
-                placeholder="e.g. daily_sales_check"
+                placeholder={t("runs.namePlaceholder")}
                 autoFocus
                 autoComplete="off"
               />
               {isConflict && (
-                <p className="text-xs text-destructive">This schedule name already exists.</p>
+                <p className="text-xs text-destructive">{t("runs.scheduleNameExists")}</p>
               )}
               {!isConflict && name.length > 0 && !isFormatValid && (
                 <p className="text-xs text-destructive">
-                  Name must be 1–64 characters using only letters, digits, underscores, or hyphens.
+                  {t("runs.scheduleNameInvalid")}
                 </p>
               )}
             </div>
           </div>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>{t("runs.cancel")}</Button>
             <Button type="submit" disabled={!isValid || isSubmitting}>
               {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-              Create
+              {t("runs.create")}
             </Button>
           </DialogFooter>
         </form>
@@ -1582,32 +1761,34 @@ function RunEditorSkeleton() {
 }
 
 function RunsListError({ resetErrorBoundary }: { resetErrorBoundary: () => void }) {
+  const { t } = useTranslation();
   return (
     <div className="flex flex-col items-center justify-center py-8 text-center">
       <AlertCircle className="h-12 w-12 text-destructive/30 mb-3" />
-      <p className="text-muted-foreground text-sm mb-1">Failed to load schedules</p>
+      <p className="text-muted-foreground text-sm mb-1">{t("runs.failedLoadSchedules")}</p>
       <p className="text-muted-foreground/70 text-xs mb-3">
-        Please check your configuration settings
+        {t("runs.failedLoadSchedulesHint")}
       </p>
       <Button variant="outline" size="sm" onClick={resetErrorBoundary} className="gap-2">
         <RotateCcw className="h-3 w-3" />
-        Retry
+        {t("common.retry")}
       </Button>
     </div>
   );
 }
 
 function RunEditorError({ resetErrorBoundary }: { resetErrorBoundary: () => void }) {
+  const { t } = useTranslation();
   return (
     <div className="flex flex-col items-center justify-center h-full text-center">
       <AlertCircle className="h-16 w-16 text-destructive/30 mb-4" />
-      <h3 className="text-lg font-semibold mb-2">Failed to load schedule editor</h3>
+      <h3 className="text-lg font-semibold mb-2">{t("runs.failedLoadEditor")}</h3>
       <p className="text-muted-foreground text-sm mb-4">
-        Please check your configuration settings
+        {t("runs.failedLoadEditorHint")}
       </p>
       <Button variant="outline" onClick={resetErrorBoundary} className="gap-2">
         <RotateCcw className="h-4 w-4" />
-        Retry
+        {t("common.retry")}
       </Button>
     </div>
   );
@@ -1617,21 +1798,22 @@ function RunEditorError({ resetErrorBoundary }: { resetErrorBoundary: () => void
 // Schedules List View — full-width table with metadata columns
 // ===========================================================================
 
-function scopeLabel(cfg: ScheduleConfig): string {
+function scopeLabel(cfg: ScheduleConfig, t: Translator): string {
   switch (cfg.scope_mode) {
-    case "all": return "All approved rules";
-    case "catalog": return (cfg.scope_catalogs ?? []).join(", ") || "No catalogs";
-    case "schema": return (cfg.scope_schemas ?? []).join(", ") || "No schemas";
+    case "all": return t("runs.scopeAll");
+    case "catalog": return (cfg.scope_catalogs ?? []).join(", ") || t("runs.scopeNoCatalogs");
+    case "schema": return (cfg.scope_schemas ?? []).join(", ") || t("runs.scopeNoSchemas");
     case "tables": {
       const tables = cfg.scope_tables ?? [];
-      if (tables.length <= 2) return tables.join(", ") || "No tables";
-      return `${tables[0]}, ${tables[1]} +${tables.length - 2} more`;
+      if (tables.length <= 2) return tables.join(", ") || t("runs.scopeNoTables");
+      return t("runs.scopeMoreSummary", { a: tables[0], b: tables[1], count: tables.length - 2 });
     }
-    default: return "All";
+    default: return t("runs.scopeAllLabel");
   }
 }
 
 function SchedulesListView({ isDeleting }: { isDeleting?: boolean }) {
+  const { t } = useTranslation();
   const [schedules, setSchedules] = useState<ScheduleConfigEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<"permission" | "other" | null>(null);
@@ -1669,10 +1851,9 @@ function SchedulesListView({ isDeleting }: { isDeleting?: boolean }) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-center">
         <ShieldAlert className="h-12 w-12 text-destructive/30 mb-3" />
-        <p className="text-destructive text-sm mb-1">Insufficient permissions</p>
+        <p className="text-destructive text-sm mb-1">{t("runs.permissionsViewSchedulesTitle")}</p>
         <p className="text-muted-foreground/70 text-xs">
-          You need Admin permissions to view and manage schedules.
-          Contact your workspace admin to request access.
+          {t("runs.permissionsViewSchedulesBody")}
         </p>
       </div>
     );
@@ -1682,9 +1863,9 @@ function SchedulesListView({ isDeleting }: { isDeleting?: boolean }) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-center">
         <AlertCircle className="h-12 w-12 text-destructive/30 mb-3" />
-        <p className="text-destructive text-sm mb-1">Failed to load schedules</p>
+        <p className="text-destructive text-sm mb-1">{t("runs.failedLoadSchedules")}</p>
         <p className="text-muted-foreground/70 text-xs">
-          Please try refreshing the page.
+          {t("runs.tryRefreshing")}
         </p>
       </div>
     );
@@ -1694,9 +1875,9 @@ function SchedulesListView({ isDeleting }: { isDeleting?: boolean }) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-center">
         <CalendarClock className="h-12 w-12 text-muted-foreground/30 mb-3" />
-        <p className="text-muted-foreground text-sm mb-1">No schedules configured</p>
+        <p className="text-muted-foreground text-sm mb-1">{t("runs.noSchedulesConfigured")}</p>
         <p className="text-muted-foreground/70 text-xs">
-          Click &ldquo;New Schedule&rdquo; to create your first schedule
+          {t("runs.clickNewScheduleHint")}
         </p>
       </div>
     );
@@ -1707,12 +1888,12 @@ function SchedulesListView({ isDeleting }: { isDeleting?: boolean }) {
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b bg-muted/50">
-            <th className="text-left font-medium text-muted-foreground px-4 py-3">Name</th>
-            <th className="text-left font-medium text-muted-foreground px-4 py-3">Frequency</th>
-            <th className="text-left font-medium text-muted-foreground px-4 py-3">Scope</th>
-            <th className="text-left font-medium text-muted-foreground px-4 py-3">Sample Size</th>
-            <th className="text-left font-medium text-muted-foreground px-4 py-3">Last Updated</th>
-            <th className="text-left font-medium text-muted-foreground px-4 py-3">Updated By</th>
+            <th className="text-left font-medium text-muted-foreground px-4 py-3">{t("runs.headerName")}</th>
+            <th className="text-left font-medium text-muted-foreground px-4 py-3">{t("runs.headerFrequency")}</th>
+            <th className="text-left font-medium text-muted-foreground px-4 py-3">{t("runs.headerScope")}</th>
+            <th className="text-left font-medium text-muted-foreground px-4 py-3">{t("runs.headerSampleSize")}</th>
+            <th className="text-left font-medium text-muted-foreground px-4 py-3">{t("runs.headerLastUpdated")}</th>
+            <th className="text-left font-medium text-muted-foreground px-4 py-3">{t("runs.headerUpdatedBy")}</th>
           </tr>
         </thead>
         <tbody>
@@ -1730,16 +1911,16 @@ function SchedulesListView({ isDeleting }: { isDeleting?: boolean }) {
               </td>
               <td className="px-4 py-3 text-muted-foreground">
                 <Badge variant="outline" className="font-normal capitalize">
-                  {sched.config.frequency === "manual" ? "Manual" : cronPreview(sched.config)}
+                  {sched.config.frequency === "manual" ? t("runs.manual") : cronPreview(sched.config, t)}
                 </Badge>
               </td>
               <td className="px-4 py-3 text-muted-foreground">
-                <span className="truncate block max-w-[240px]" title={scopeLabel(sched.config)}>
-                  {scopeLabel(sched.config)}
+                <span className="truncate block max-w-[240px]" title={scopeLabel(sched.config, t)}>
+                  {scopeLabel(sched.config, t)}
                 </span>
               </td>
               <td className="px-4 py-3 text-muted-foreground">
-                {sched.config.sample_size != null ? sched.config.sample_size.toLocaleString() : "All rows"}
+                {sched.config.sample_size != null ? sched.config.sample_size.toLocaleString() : t("runs.allRows")}
               </td>
               <td className="px-4 py-3 text-muted-foreground text-xs">
                 {sched.updated_at ? formatDate(sched.updated_at) : sched.created_at ? formatDate(sched.created_at) : "—"}
@@ -1766,6 +1947,7 @@ function RunEditorContainer({
   onDeletingChange: (isDeleting: boolean) => void;
   isAdmin: boolean;
 }) {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { setRunContext } = useAIAssistant();
@@ -1815,13 +1997,13 @@ function RunEditorContainer({
         setIsDirty(false);
       } catch (e) {
         console.error("Error converting config to YAML", e);
-        toast.error("Error parsing schedule configuration");
+        toast.error(t("runs.errorParsingSchedule"));
       }
     } else {
       setYamlContent("");
       setIsDirty(false);
     }
-  }, [scheduleEntry]);
+  }, [scheduleEntry, t]);
 
   useEffect(() => {
     if (currentRunName && yamlContent) {
@@ -1843,7 +2025,7 @@ function RunEditorContainer({
       const schedName = _name || currentRunName;
       const saved = await saveScheduleApi(schedName, configPart as ScheduleConfig);
       setScheduleEntry(saved);
-      toast.success("Schedule configuration saved successfully");
+      toast.success(t("runs.scheduleSaved"));
       setIsDirty(false);
       if (schedName !== currentRunName) {
         navigate({ to: "/runs/$runName", params: { runName: schedName } });
@@ -1852,10 +2034,10 @@ function RunEditorContainer({
     } catch (error) {
       console.error("Save error", error);
       if (isAxiosError(error) && error.response?.status === 403) {
-        toast.error("Insufficient permissions: only admins can save schedules.");
+        toast.error(t("runs.permissionsSaveSchedules"));
       } else {
-        const message = error instanceof Error ? error.message : "Check YAML syntax or validation errors.";
-        toast.error(`Failed to save: ${message}`);
+        const message = error instanceof Error ? error.message : t("runs.yamlSyntaxOrValidation");
+        toast.error(t("runs.failedSave", { message }));
       }
     } finally {
       setIsSaving(false);
@@ -1869,14 +2051,14 @@ function RunEditorContainer({
 
     try {
       await deleteScheduleApi(currentRunName);
-      toast.success(`Schedule "${currentRunName}" deleted`);
+      toast.success(t("runs.scheduleDeleted", { name: currentRunName }));
       navigate({ to: "/runs" });
       queryClient.refetchQueries({ queryKey: [...SCHEDULES_KEY] });
     } catch (error) {
       if (isAxiosError(error) && error.response?.status === 403) {
-        toast.error("Insufficient permissions: only admins can delete schedules.");
+        toast.error(t("runs.permissionsDeleteSchedules"));
       } else {
-        toast.error("Failed to delete schedule");
+        toast.error(t("runs.failedDeleteSchedule"));
       }
     } finally {
       setIsDeleting(false);
@@ -1893,7 +2075,7 @@ function RunEditorContainer({
         const dump = yaml.dump(displayObj);
         setYamlContent(dump);
         setIsDirty(false);
-        toast.info("Changes discarded");
+        toast.info(t("runs.changesDiscarded"));
       } catch (e) {
         console.error("Error converting config to YAML", e);
       }
@@ -1915,7 +2097,7 @@ function RunEditorContainer({
 
       const resolvedFqns = resolveScheduleScope(cfg, allRules);
       if (resolvedFqns.length === 0) {
-        toast.error("No rule sets matched the schedule scope. Check that approved rules exist for the selected scope.");
+        toast.error(t("runs.noScopeMatched"));
         return;
       }
       const result = await batchRun.mutateAsync({
@@ -1923,10 +2105,10 @@ function RunEditorContainer({
       });
       const ok = result.data.submitted.length;
       const errs = result.data.errors.length;
-      if (ok > 0) toast.success(`Submitted ${ok} rule run${ok !== 1 ? "s" : ""}`);
-      if (errs > 0) toast.error(`${errs} table${errs !== 1 ? "s" : ""} failed to submit`);
+      if (ok > 0) toast.success(t("runs.submittedRuns", { count: ok }));
+      if (errs > 0) toast.error(t("runs.tablesFailedToSubmit", { count: errs }));
     } catch (err) {
-      toast.error(`Run failed: ${err instanceof Error ? err.message : "Unknown error"}`);
+      toast.error(t("runs.runFailed", { error: err instanceof Error ? err.message : t("common.unknownError") }));
     } finally {
       setIsRunningNow(false);
     }
@@ -1966,20 +2148,20 @@ function RunEditorContainer({
 }
 
 function EmptyState({ onAddRun, isAdmin }: { onAddRun: () => void; isAdmin: boolean }) {
+  const { t } = useTranslation();
   return (
     <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
       <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mb-6">
         <CalendarClock className="h-8 w-8 text-primary" />
       </div>
-      <h3 className="text-xl font-semibold mb-2">No Scheduled Runs</h3>
+      <h3 className="text-xl font-semibold mb-2">{t("runs.noScheduledRuns")}</h3>
       <p className="text-muted-foreground mb-6 max-w-md">
-        Scheduled runs define how DQX Studio automatically processes your data quality checks
-        on a recurring or time-based cadence.{isAdmin ? " Create your first schedule to get started." : ""}
+        {t("runs.noScheduledRunsDescription")}{isAdmin ? t("runs.noScheduledRunsAdminSuffix") : ""}
       </p>
       {isAdmin && (
       <Button onClick={onAddRun} className="gap-2">
         <Plus className="h-4 w-4" />
-        Create Your First Schedule
+        {t("runs.createFirstSchedule")}
       </Button>
       )}
     </div>
@@ -1987,25 +2169,26 @@ function EmptyState({ onAddRun, isAdmin }: { onAddRun: () => void; isAdmin: bool
 }
 
 function RunNotFoundState({ runName, onAddRun, isAdmin }: { runName: string; onAddRun: () => void; isAdmin: boolean }) {
+  const { t } = useTranslation();
   return (
     <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
       <div className="w-16 h-16 rounded-full bg-destructive/10 flex items-center justify-center mb-6">
         <AlertCircle className="h-8 w-8 text-destructive" />
       </div>
-      <h3 className="text-xl font-semibold mb-2">Schedule Not Found</h3>
+      <h3 className="text-xl font-semibold mb-2">{t("runs.scheduleNotFound")}</h3>
       <p className="text-muted-foreground mb-6 max-w-md">
-        The schedule configuration{" "}
-        <code className="px-1.5 py-0.5 bg-muted rounded text-sm font-mono">{runName}</code>{" "}
-        does not exist. It may have been deleted or renamed.
+        {t("runs.scheduleNotFoundDescriptionPrefix")}
+        <code className="px-1.5 py-0.5 bg-muted rounded text-sm font-mono">{runName}</code>
+        {t("runs.scheduleNotFoundDescriptionSuffix")}
       </p>
       <div className="flex gap-3">
         <Button variant="outline" asChild>
-          <Link to="/runs">View All Schedules</Link>
+          <Link to="/runs">{t("runs.viewAllSchedules")}</Link>
         </Button>
         {isAdmin && (
         <Button onClick={onAddRun} className="gap-2">
           <Plus className="h-4 w-4" />
-          Create New Schedule
+          {t("runs.createNewSchedule")}
         </Button>
         )}
       </div>
@@ -2014,14 +2197,15 @@ function RunNotFoundState({ runName, onAddRun, isAdmin }: { runName: string; onA
 }
 
 function SelectRunState() {
+  const { t } = useTranslation();
   return (
     <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
       <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center mb-6">
         <CalendarClock className="h-8 w-8 text-muted-foreground" />
       </div>
-      <h3 className="text-lg font-medium text-muted-foreground">Select a Schedule</h3>
+      <h3 className="text-lg font-medium text-muted-foreground">{t("runs.selectAScheduleTitle")}</h3>
       <p className="text-muted-foreground/70 text-sm mt-1">
-        Choose a schedule from the list to view and edit its configuration
+        {t("runs.selectAScheduleDescription")}
       </p>
     </div>
   );
@@ -2066,6 +2250,7 @@ function RunEditor({
   setIsDeleteOpen,
   isAdmin,
 }: RunEditorProps) {
+  const { t } = useTranslation();
   const isLocked = isSaving || isDeleting || !!isRunning || !isAdmin;
 
   return (
@@ -2074,47 +2259,47 @@ function RunEditor({
         <div className="flex-1">
           <h2 className="text-2xl font-bold tracking-tight">{runName}</h2>
           <p className="text-muted-foreground text-sm mt-0.5">
-            {isAdmin ? "Edit schedule configuration" : "View schedule configuration"}
-            {isDirty && isAdmin && <span className="text-amber-500 ml-2">• Unsaved changes</span>}
+            {isAdmin ? t("runs.editScheduleConfiguration") : t("runs.viewScheduleConfiguration")}
+            {isDirty && isAdmin && <span className="text-amber-500 ml-2">{t("runs.unsavedChangesIndicator")}</span>}
           </p>
         </div>
         {isAdmin && (
         <div className="flex items-center gap-2">
             {onRunNow && (
-              <Button variant="outline" size="sm" onClick={onRunNow} disabled={isDirty || isLocked} title={isDirty ? "Save changes before running" : "Run this schedule now"} className="gap-1.5">
+              <Button variant="outline" size="sm" onClick={onRunNow} disabled={isDirty || isLocked} title={isDirty ? t("runs.saveBeforeRun") : t("runs.runNowTooltip")} className="gap-1.5">
                 {isRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-                Run Now
+                {t("runs.runNow")}
               </Button>
             )}
-            <Button variant="ghost" size="icon" onClick={onReset} disabled={!isDirty || isLocked} title="Reset changes">
+            <Button variant="ghost" size="icon" onClick={onReset} disabled={!isDirty || isLocked} title={t("runs.resetChanges")}>
               <RotateCcw className="h-4 w-4" />
             </Button>
-            <Button onClick={onSave} variant="default" size="icon" disabled={!isDirty || isLocked} title="Save changes">
+            <Button onClick={onSave} variant="default" size="icon" disabled={!isDirty || isLocked} title={t("runs.saveChanges")}>
               {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
             </Button>
             <AlertDialog open={isDeleteOpen} onOpenChange={setIsDeleteOpen}>
               <AlertDialogTrigger asChild>
-                <Button variant="destructive" size="icon" disabled={isDeleting || isLocked} title="Delete Schedule">
+                <Button variant="destructive" size="icon" disabled={isDeleting || isLocked} title={t("runs.deleteSchedule")}>
                   <Trash2 className="h-4 w-4" />
                 </Button>
               </AlertDialogTrigger>
               <AlertDialogContent>
                 <AlertDialogHeader>
-                  <AlertDialogTitle>Delete Schedule</AlertDialogTitle>
+                  <AlertDialogTitle>{t("runs.deleteSchedule")}</AlertDialogTitle>
                   <AlertDialogDescription>
-                    Are you sure you want to delete the schedule{" "}
-                    <span className="font-mono font-medium">{runName}</span>? This action cannot be undone.
+                    {t("runs.deleteScheduleConfirmPrefix")}
+                    <span className="font-mono font-medium">{runName}</span>{t("runs.deleteScheduleConfirmSuffix")}
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
-                  <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+                  <AlertDialogCancel disabled={isDeleting}>{t("runs.cancel")}</AlertDialogCancel>
                   <AlertDialogAction
                     onClick={(e) => { e.preventDefault(); if (!isDeleting) onDelete(); }}
                     disabled={isDeleting}
                     className="bg-destructive text-foreground hover:bg-destructive/90"
                   >
                     {isDeleting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-                    Delete
+                    {t("runs.delete")}
                   </AlertDialogAction>
                 </AlertDialogFooter>
               </AlertDialogContent>
@@ -2132,6 +2317,7 @@ function RunEditor({
 function FormEditor({
   yamlContent, setYamlContent, setIsDirty, isLocked,
 }: { yamlContent: string; setYamlContent: (c: string) => void; setIsDirty: (d: boolean) => void; isLocked: boolean }) {
+  const { t } = useTranslation();
   const [formData, setFormData] = useState<RunConfig | null>(null);
   const [parseError, setParseError] = useState<string | null>(null);
   const [scheduleConfig, setScheduleConfig] = useState<ScheduleConfig>({ ...DEFAULT_SCHEDULE });
@@ -2177,6 +2363,26 @@ function FormEditor({
         if (parsed.scope_catalogs) schedFromYaml.scope_catalogs = parsed.scope_catalogs;
         if (parsed.scope_schemas) schedFromYaml.scope_schemas = parsed.scope_schemas;
         if (parsed.scope_tables) schedFromYaml.scope_tables = parsed.scope_tables;
+        if (Array.isArray(parsed.scope_labels)) {
+          // Tolerate both the canonical ``[{key, value}]`` form and a
+          // ``["key=value"]`` shorthand that admins might hand-edit.
+          schedFromYaml.scope_labels = parsed.scope_labels
+            .map((entry: unknown) => {
+              if (entry && typeof entry === "object" && !Array.isArray(entry)) {
+                const e = entry as Record<string, unknown>;
+                if (typeof e.key === "string") {
+                  return { key: e.key, value: String(e.value ?? "") };
+                }
+              }
+              if (typeof entry === "string") {
+                const idx = entry.indexOf("=");
+                if (idx < 0) return { key: entry, value: "" };
+                return { key: entry.slice(0, idx), value: entry.slice(idx + 1) };
+              }
+              return null;
+            })
+            .filter((v: unknown): v is { key: string; value: string } => v !== null);
+        }
         if (parsed.sample_size != null) schedFromYaml.sample_size = parsed.sample_size;
         if (parsed.cron_expression) schedFromYaml.cron_expression = parsed.cron_expression;
         setScheduleConfig({ ...DEFAULT_SCHEDULE, ...schedFromYaml });
@@ -2185,10 +2391,10 @@ function FormEditor({
         setFormData(null);
       }
     } catch (e) {
-      setParseError(e instanceof Error ? e.message : "Failed to parse YAML");
+      setParseError(e instanceof Error ? e.message : t("runs.failedParseYaml"));
       setFormData(null);
     }
-  }, [yamlContent]);
+  }, [yamlContent, t]);
 
   const updateFormData = useCallback((updates: Partial<RunConfig>) => {
     setFormData((prev) => {
@@ -2200,11 +2406,11 @@ function FormEditor({
         setYamlContent(newYaml);
         setIsDirty(true);
       } catch {
-        toast.error("Failed to convert form data to YAML");
+        toast.error(t("runs.failedConvertYaml"));
       }
       return updated;
     });
-  }, [setYamlContent, setIsDirty]);
+  }, [setYamlContent, setIsDirty, t]);
 
   const handleScheduleChange = useCallback((cfg: ScheduleConfig) => {
     setScheduleConfig(cfg);
@@ -2217,20 +2423,20 @@ function FormEditor({
         setYamlContent(newYaml);
         setIsDirty(true);
       } catch {
-        toast.error("Failed to convert form data to YAML");
+        toast.error(t("runs.failedConvertYaml"));
       }
       return updated;
     });
-  }, [setYamlContent, setIsDirty]);
+  }, [setYamlContent, setIsDirty, t]);
 
   if (parseError) {
     return (
       <div className="h-full flex items-center justify-center">
         <div className="text-center">
           <AlertCircle className="h-12 w-12 text-destructive mx-auto mb-3" />
-          <p className="text-destructive font-medium mb-1">Invalid schedule configuration</p>
+          <p className="text-destructive font-medium mb-1">{t("runs.invalidScheduleConfig")}</p>
           <p className="text-muted-foreground text-sm">{parseError}</p>
-          <p className="text-muted-foreground text-xs mt-2">Please delete and recreate this schedule to fix the issue.</p>
+          <p className="text-muted-foreground text-xs mt-2">{t("runs.deleteRecreateHint")}</p>
         </div>
       </div>
     );
@@ -2248,35 +2454,36 @@ function FormEditor({
     <div className="h-full overflow-y-auto">
       <div className="max-w-4xl space-y-8 pr-4">
         <section>
-          <h3 className="text-lg font-semibold mb-4">Basic Configuration</h3>
+          <h3 className="text-lg font-semibold mb-4">{t("runs.basicConfiguration")}</h3>
           <div className="space-y-4">
             <div className="grid gap-2">
-              <Label htmlFor="name">Name</Label>
-              <Input id="name" value={formData.name || ""} onChange={(e) => updateFormData({ name: e.target.value })} disabled={isLocked} placeholder="e.g., daily_sales_check" />
+              <Label htmlFor="name">{t("runs.name")}</Label>
+              <Input id="name" value={formData.name || ""} onChange={(e) => updateFormData({ name: e.target.value })} disabled={isLocked} placeholder={t("runs.namePlaceholder")} />
             </div>
           </div>
         </section>
 
         <section>
           <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-            <CalendarClock className="h-5 w-5" /> Schedule
+            <CalendarClock className="h-5 w-5" /> {t("runs.schedule")}
           </h3>
           <p className="text-xs text-muted-foreground mb-3">
-            Configure when this schedule should automatically run. Choose "Manual only" to disable automatic execution.
+            {t("runs.scheduleSectionDescription")}
           </p>
           <ScheduleFrequencyPicker config={scheduleConfig} onChange={handleScheduleChange} disabled={isLocked} />
         </section>
 
         <section>
           <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-            <Database className="h-5 w-5" /> Rule Scope
+            <Database className="h-5 w-5" /> {t("runs.ruleScope")}
           </h3>
           <p className="text-xs text-muted-foreground mb-3">
-            Choose which approved rule sets to include. Select by catalog, schema, or specific tables.
-            Rules are read from the <code className="text-[10px] bg-muted px-1 py-0.5 rounded">dq_quality_rules</code> Delta table.
+            {t("runs.ruleScopeDescriptionPrefix")}
+            <code className="text-[10px] bg-muted px-1 py-0.5 rounded">dq_quality_rules</code>
+            {t("runs.ruleScopeDescriptionSuffix")}
           </p>
           {approvedTables.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No approved rules found. Approve rules in Drafts & review first.</p>
+            <p className="text-sm text-muted-foreground">{t("runs.noApprovedRulesFound")}</p>
           ) : (
             <ScopePicker
               config={scheduleConfig}

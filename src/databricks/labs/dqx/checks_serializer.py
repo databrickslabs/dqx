@@ -267,6 +267,7 @@ class ChecksDeserializer:
             criticality = check_def.get("criticality", "error")
             filter_str = check_def.get("filter")
             user_metadata = check_def.get("user_metadata")
+            message_expr = check_def.get("message_expr")
 
             # Exclude `column` and `columns` from check_func_kwargs
             # as these are always included in the check function call
@@ -282,6 +283,7 @@ class ChecksDeserializer:
                     filter=filter_str,
                     check_func_kwargs=check_func_kwargs,
                     user_metadata=user_metadata,
+                    message_expr=message_expr,
                 ).get_rules()
             else:
                 rule_type = CHECK_FUNC_REGISTRY.get(func_name)
@@ -296,6 +298,7 @@ class ChecksDeserializer:
                             criticality=criticality,
                             filter=filter_str,
                             user_metadata=user_metadata,
+                            message_expr=message_expr,
                         )
                     )
                 else:  # default to row-level rule
@@ -309,6 +312,7 @@ class ChecksDeserializer:
                             criticality=criticality,
                             filter=filter_str,
                             user_metadata=user_metadata,
+                            message_expr=message_expr,
                         )
                     )
 

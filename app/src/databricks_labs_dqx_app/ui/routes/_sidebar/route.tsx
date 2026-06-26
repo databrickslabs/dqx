@@ -1,6 +1,7 @@
-import SidebarLayout from "@/components/apx/SidebarLayout";
+import SidebarLayout from "@/components/layout/SidebarLayout";
 import { createFileRoute, Link, useLocation } from "@tanstack/react-router";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import { usePermissions } from "@/hooks/use-permissions";
 import {
@@ -32,6 +33,7 @@ export const Route = createFileRoute("/_sidebar")({
 function Layout() {
   const location = useLocation();
   const { canCreateRules, canRunRules } = usePermissions();
+  const { t } = useTranslation();
 
   const isCreateActive =
     location.pathname.startsWith("/rules/create") ||
@@ -44,26 +46,26 @@ function Layout() {
   const createChildren = [
     {
       to: "/rules/single-table",
-      label: "Single table rules",
+      label: t("sidebar.singleTableRules"),
       icon: <Sparkles size={14} />,
       match: (path: string) =>
         path.startsWith("/rules/single-table") || path.startsWith("/rules/create"),
     },
     {
       to: "/rules/create-sql",
-      label: "Cross-table rules",
+      label: t("sidebar.crossTableRules"),
       icon: <Database size={14} />,
       match: (path: string) => path.startsWith("/rules/create-sql"),
     },
     {
       to: "/profiler",
-      label: "Profile & generate",
+      label: t("sidebar.profileAndGenerate"),
       icon: <BarChart3 size={14} />,
       match: (path: string) => path.startsWith("/profiler"),
     },
     {
       to: "/rules/import",
-      label: "Import rules",
+      label: t("sidebar.importRules"),
       icon: <Upload size={14} />,
       match: (path: string) => path.startsWith("/rules/import"),
     },
@@ -88,7 +90,7 @@ function Layout() {
                 )}
               >
                 <PenLine size={16} />
-                <span className="flex-1 text-left">Create Rules</span>
+                <span className="flex-1 text-left">{t("sidebar.createRules")}</span>
                 <ChevronDown
                   size={14}
                   className={cn(
@@ -129,7 +131,7 @@ function Layout() {
                 )}
               >
                 <ClipboardCheck size={16} />
-                <span>Drafts & Review</span>
+                <span>{t("sidebar.draftsAndReview")}</span>
               </Link>
             </SidebarMenuItem>
 
@@ -146,7 +148,7 @@ function Layout() {
                 )}
               >
                 <ShieldCheck size={16} />
-                <span>Active Rules</span>
+                <span>{t("sidebar.activeRules")}</span>
               </Link>
             </SidebarMenuItem>
 
@@ -167,7 +169,7 @@ function Layout() {
                 )}
               >
                 <PlayCircle size={16} />
-                <span>Run Rules</span>
+                <span>{t("sidebar.runRules")}</span>
               </Link>
             </SidebarMenuItem>
             )}
@@ -184,7 +186,7 @@ function Layout() {
                 )}
               >
                 <History size={16} />
-                <span>Runs History</span>
+                <span>{t("sidebar.runsHistory")}</span>
               </Link>
             </SidebarMenuItem>
           </SidebarMenu>

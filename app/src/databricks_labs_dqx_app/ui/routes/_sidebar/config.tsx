@@ -1,9 +1,10 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { QueryErrorResetBoundary, useQueryClient } from "@tanstack/react-query";
 import { ErrorBoundary } from "react-error-boundary";
+import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
-import { PageBreadcrumb } from "@/components/apx/PageBreadcrumb";
-import { AlertCircle, Globe, Loader2, Search, Tags, Plus, Trash2, X } from "lucide-react";
+import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
+import { AlertCircle, Clock, Globe, Loader2, Search, Tags, Plus, Trash2, X } from "lucide-react";
 import { FadeIn } from "@/components/anim/FadeIn";
 import { ShinyText } from "@/components/anim/ShinyText";
 import { RoleManagement } from "@/components/RoleManagement";
@@ -25,7 +26,11 @@ import {
   useLabelDefinitions,
   useSaveLabelDefinitions,
   getLabelDefinitionsQueryKey,
+  useRetentionSettings,
+  useSaveRetentionSettings,
+  getRetentionSettingsQueryKey,
   type LabelDefinition,
+  type RetentionSettingsOut,
 } from "@/lib/api-custom";
 import type { AxiosError } from "axios";
 import { toast } from "sonner";
@@ -86,19 +91,21 @@ function SectionError({
 }: {
   resetErrorBoundary: () => void;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="flex flex-col gap-2 items-start">
       <p className="text-sm text-destructive flex items-center gap-1">
-        <AlertCircle className="h-4 w-4" /> Failed to load section
+        <AlertCircle className="h-4 w-4" /> {t("config.sectionLoadFailed")}
       </p>
       <Button variant="outline" size="sm" onClick={resetErrorBoundary}>
-        Retry
+        {t("common.retry")}
       </Button>
     </div>
   );
 }
 
 function TimezoneSettings() {
+  const { t } = useTranslation();
   const { data: tz, isLoading } = useTimezone();
   const saveMutation = useSaveTimezone();
   const queryClient = useQueryClient();
@@ -135,9 +142,9 @@ function TimezoneSettings() {
       {
         onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: getTimezoneQueryKey() });
-          toast.success(`Timezone updated to ${value}`);
+          toast.success(t("config.timezoneUpdated", { value }));
         },
-        onError: () => toast.error("Failed to save timezone"),
+        onError: () => toast.error(t("config.failedToSaveTimezone")),
       },
     );
   };
@@ -151,7 +158,7 @@ function TimezoneSettings() {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Globe className="h-5 w-5" />
-          Display Timezone
+          {t("config.timezoneTitle")}
         </CardTitle>
       </CardHeader>
       <CardContent>
@@ -174,7 +181,7 @@ function TimezoneSettings() {
                 <Search className="mr-2 h-4 w-4 shrink-0 opacity-50" />
                 <Input
                   ref={inputRef}
-                  placeholder="Search timezones..."
+                  placeholder={t("config.searchTimezones")}
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   className="h-8 border-0 p-0 shadow-none focus-visible:ring-0"
@@ -182,7 +189,7 @@ function TimezoneSettings() {
               </div>
               <div className="max-h-72 overflow-y-auto">
                 {filtered.length === 0 && (
-                  <p className="px-3 py-4 text-sm text-muted-foreground text-center">No timezone found.</p>
+                  <p className="px-3 py-4 text-sm text-muted-foreground text-center">{t("config.noTimezoneFound")}</p>
                 )}
                 {filtered.map((opt) => (
                   <button
@@ -204,7 +211,7 @@ function TimezoneSettings() {
           </Popover>
           {saveMutation.isPending && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
           {!isAdmin && (
-            <span className="text-xs text-muted-foreground">Only admins can change this setting</span>
+            <span className="text-xs text-muted-foreground">{t("config.adminOnly")}</span>
           )}
         </div>
       </CardContent>
@@ -247,6 +254,7 @@ function draftToDef(d: DraftDefinition): LabelDefinition {
 }
 
 function LabelDefinitionsSettings() {
+  const { t } = useTranslation();
   const { data, isLoading } = useLabelDefinitions();
   const queryClient = useQueryClient();
   const saveMutation = useSaveLabelDefinitions();
@@ -275,19 +283,17 @@ function LabelDefinitionsSettings() {
     for (const d of drafts) {
       const k = d.key.trim();
       if (!k) {
-        errors.push("Every definition needs a key.");
+        errors.push(t("config.labelKeyMissing"));
         continue;
       }
       if (!LABEL_KEY_RE.test(k)) {
-        errors.push(
-          `Key "${k}" must start with a letter and contain only letters, digits, and underscores.`,
-        );
+        errors.push(t("config.labelKeyInvalid", { key: k }));
       }
-      if (seen.has(k)) errors.push(`Duplicate key "${k}".`);
+      if (seen.has(k)) errors.push(t("config.labelKeyDuplicate", { key: k }));
       seen.add(k);
     }
     return errors;
-  }, [drafts]);
+  }, [drafts, t]);
 
   const updateDraft = (draftId: string, patch: Partial<DraftDefinition>) => {
     setDrafts((prev) => prev.map((d) => (d.draftId === draftId ? { ...d, ...patch } : d)));
@@ -344,13 +350,13 @@ function LabelDefinitionsSettings() {
           setDrafts(resp.data.definitions.map(defToDraft));
           toast.success(
             definitions.length === 0
-              ? "Cleared rule labels."
-              : `Saved ${definitions.length} rule label${definitions.length === 1 ? "" : "s"}.`,
+              ? t("config.clearedLabels")
+              : t("config.savedLabels", { count: definitions.length }),
           );
         },
         onError: (err: unknown) => {
           const axErr = err as AxiosError<{ detail?: string }>;
-          toast.error(axErr?.response?.data?.detail ?? "Failed to save label definitions");
+          toast.error(axErr?.response?.data?.detail ?? t("config.failedSaveLabels"));
         },
       },
     );
@@ -371,13 +377,13 @@ function LabelDefinitionsSettings() {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Tags className="h-5 w-5" />
-          Rule Labels
+          {t("config.labelsTitle")}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
         {drafts.length === 0 && (
           <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
-            No label definitions yet.
+            {t("config.noLabelDefinitions")}
           </div>
         )}
         {drafts.map((d) => (
@@ -393,7 +399,7 @@ function LabelDefinitionsSettings() {
         <div className="flex flex-wrap items-center gap-2">
           <Button variant="outline" size="sm" onClick={() => addDraft()} className="gap-1.5">
             <Plus className="h-3.5 w-3.5" />
-            Add label definition
+            {t("config.addLabelDefinition")}
           </Button>
           {!hasWeightKey && (
             <Button
@@ -401,10 +407,10 @@ function LabelDefinitionsSettings() {
               size="sm"
               onClick={() => addDraft(RESERVED_WEIGHT_KEY)}
               className="gap-1.5 text-xs text-muted-foreground"
-              title="Add a weight label with values 1..5 quickly"
+              title={t("config.addWeightTooltip")}
             >
               <Plus className="h-3.5 w-3.5" />
-              Add weight definition
+              {t("config.addWeightDefinition")}
             </Button>
           )}
         </div>
@@ -425,7 +431,7 @@ function LabelDefinitionsSettings() {
             disabled={!isDirty || validation.length > 0 || saveMutation.isPending}
           >
             {saveMutation.isPending && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}
-            Save changes
+            {t("config.saveChanges")}
           </Button>
           <Button
             size="sm"
@@ -433,12 +439,11 @@ function LabelDefinitionsSettings() {
             onClick={handleReset}
             disabled={!isDirty || saveMutation.isPending}
           >
-            Reset
+            {t("config.reset")}
           </Button>
           {!isDirty && (data?.definitions?.length ?? 0) > 0 && (
             <span className="text-xs text-muted-foreground">
-              {data?.definitions?.length} definition
-              {(data?.definitions?.length ?? 0) === 1 ? "" : "s"} active
+              {t("config.definitionsActive", { count: data?.definitions?.length ?? 0 })}
             </span>
           )}
         </div>
@@ -462,6 +467,7 @@ function DefinitionEditorCard({
   onAddValue,
   onRemoveValue,
 }: DefinitionEditorCardProps) {
+  const { t } = useTranslation();
   const keyValid = !draft.key || LABEL_KEY_RE.test(draft.key.trim());
   const isWeight = draft.key.trim() === RESERVED_WEIGHT_KEY;
   return (
@@ -470,38 +476,38 @@ function DefinitionEditorCard({
         <div className="grid grid-cols-[180px_1fr] gap-3 flex-1 items-start">
           <div className="space-y-1">
             <Label className="text-xs flex items-center gap-1.5">
-              Key
+              {t("config.key")}
               {isWeight && (
                 <Badge variant="secondary" className="h-4 px-1 text-[10px] font-normal">
-                  reserved
+                  {t("config.reserved")}
                 </Badge>
               )}
             </Label>
             <Input
               value={draft.key}
               onChange={(e) => onChange({ key: e.target.value })}
-              placeholder="e.g. team"
+              placeholder={t("config.keyPlaceholder")}
               className={cn("h-8 text-xs font-mono", !keyValid && "border-destructive")}
             />
             {!keyValid && (
               <p className="text-[10px] text-destructive">
-                Letters, digits, underscore. Must start with a letter.
+                {t("config.keyHint")}
               </p>
             )}
             {isWeight && (
               <p className="text-[10px] text-blue-700">
-                Drives the weight picker on rule authoring pages.
+                {t("config.weightHint")}
               </p>
             )}
           </div>
           <div className="space-y-1">
             <Label className="text-xs">
-              Description <span className="text-muted-foreground">(optional)</span>
+              {t("config.descriptionLabel")} <span className="text-muted-foreground">{t("config.optional")}</span>
             </Label>
             <Textarea
               value={draft.description ?? ""}
               onChange={(e) => onChange({ description: e.target.value })}
-              placeholder={isWeight ? "Rule weight (1 = informational, 5 = critical)" : "What this label captures (e.g. Owning team)"}
+              placeholder={isWeight ? t("config.weightDescriptionPlaceholder") : t("config.descriptionPlaceholder")}
               className="text-xs min-h-[32px] py-1.5"
               rows={1}
             />
@@ -513,7 +519,7 @@ function DefinitionEditorCard({
           size="icon"
           className="h-8 w-8 shrink-0 text-destructive hover:text-destructive"
           onClick={onRemove}
-          aria-label="Remove definition"
+          aria-label={t("config.removeDefinition")}
         >
           <Trash2 className="h-3.5 w-3.5" />
         </Button>
@@ -521,9 +527,9 @@ function DefinitionEditorCard({
       <div className="space-y-1.5">
         <div className="flex items-center justify-between">
           <Label className="text-xs">
-            Allowed values{" "}
+            {t("config.allowedValues")}{" "}
             <span className="text-muted-foreground">
-              (leave empty for a boolean tag)
+              {t("config.allowedValuesHint")}
             </span>
           </Label>
           <label className="flex items-center gap-1.5 text-xs cursor-pointer">
@@ -531,7 +537,7 @@ function DefinitionEditorCard({
               checked={draft.allow_custom_values}
               onCheckedChange={(c) => onChange({ allow_custom_values: c === true })}
             />
-            <span>Allow custom values</span>
+            <span>{t("config.allowCustomValues")}</span>
           </label>
         </div>
         {draft.values.length > 0 ? (
@@ -547,7 +553,7 @@ function DefinitionEditorCard({
                   type="button"
                   className="ml-0.5 rounded-full hover:bg-foreground/10 p-0.5"
                   onClick={() => onRemoveValue(v)}
-                  aria-label={`Remove value ${v}`}
+                  aria-label={t("config.removeValueAria", { value: v })}
                 >
                   <X className="h-3 w-3" />
                 </button>
@@ -556,8 +562,7 @@ function DefinitionEditorCard({
           </div>
         ) : (
           <p className="text-[11px] italic text-muted-foreground">
-            No values — authors will toggle this label as a boolean tag (
-            <code>true</code>/<code>false</code>).
+            {t("config.noValuesHint")}
           </p>
         )}
         <div className="flex items-center gap-1.5">
@@ -570,7 +575,7 @@ function DefinitionEditorCard({
                 onAddValue();
               }
             }}
-            placeholder={isWeight ? "add weight value (e.g. 1)" : "add value… (press Enter)"}
+            placeholder={isWeight ? t("config.weightValuePlaceholder") : t("config.addValuePlaceholder")}
             className="h-7 text-xs flex-1 font-mono"
           />
           <Button
@@ -582,7 +587,7 @@ function DefinitionEditorCard({
             onClick={onAddValue}
           >
             <Plus className="h-3 w-3" />
-            Add
+            {t("common.add")}
           </Button>
         </div>
       </div>
@@ -590,7 +595,219 @@ function DefinitionEditorCard({
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Retention Settings — admin-controlled DELETE windows for the daily sweep.
+// Two knobs: a global retention applied to dq_validation_runs, dq_metrics,
+// dq_profiling_results + the OLTP history tables; and a tighter
+// quarantine-specific retention applied only to dq_quarantine_records (which
+// holds full source row payloads + errors/warnings). The split exists so PII
+// can age out faster than trend tables that the dashboards look back on.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function RetentionSettings() {
+  const { data, isLoading } = useRetentionSettings();
+  const queryClient = useQueryClient();
+  const saveMutation = useSaveRetentionSettings();
+  const { data: role } = useCurrentUserRoleSuspense();
+  const isAdmin = role?.data?.role === "admin";
+
+  const settings = data as RetentionSettingsOut | undefined;
+  const [global, setGlobal] = useState<string>("");
+  const [quarantine, setQuarantine] = useState<string>("");
+  const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
+    if (settings && !hydrated) {
+      setGlobal(String(settings.retention_days));
+      setQuarantine(String(settings.quarantine_retention_days));
+      setHydrated(true);
+    }
+  }, [settings, hydrated]);
+
+  const min = settings?.retention_days_min ?? 7;
+  const max = settings?.retention_days_max ?? 3650;
+
+  const parsedGlobal = Number.parseInt(global, 10);
+  const parsedQuarantine = Number.parseInt(quarantine, 10);
+
+  const validation = useMemo(() => {
+    const errors: string[] = [];
+    const check = (label: string, value: number) => {
+      if (Number.isNaN(value)) {
+        errors.push(`${label} must be a whole number of days.`);
+        return;
+      }
+      if (value < min) errors.push(`${label} must be at least ${min} days.`);
+      if (value > max) errors.push(`${label} must be at most ${max} days.`);
+    };
+    check("Global retention", parsedGlobal);
+    check("Quarantine retention", parsedQuarantine);
+    return errors;
+  }, [parsedGlobal, parsedQuarantine, min, max]);
+
+  const isDirty = useMemo(() => {
+    if (!settings) return false;
+    return (
+      parsedGlobal !== settings.retention_days ||
+      parsedQuarantine !== settings.quarantine_retention_days
+    );
+  }, [settings, parsedGlobal, parsedQuarantine]);
+
+  const handleSave = () => {
+    if (!settings || validation.length > 0) return;
+    const payload: { retention_days?: number; quarantine_retention_days?: number } = {};
+    if (parsedGlobal !== settings.retention_days) payload.retention_days = parsedGlobal;
+    if (parsedQuarantine !== settings.quarantine_retention_days) {
+      payload.quarantine_retention_days = parsedQuarantine;
+    }
+    saveMutation.mutate(
+      { data: payload },
+      {
+        onSuccess: (resp) => {
+          queryClient.invalidateQueries({ queryKey: getRetentionSettingsQueryKey() });
+          setGlobal(String(resp.data.retention_days));
+          setQuarantine(String(resp.data.quarantine_retention_days));
+          toast.success("Retention settings saved.");
+        },
+        onError: (err: unknown) => {
+          const axErr = err as AxiosError<{ detail?: string }>;
+          toast.error(axErr?.response?.data?.detail ?? "Failed to save retention settings.");
+        },
+      },
+    );
+  };
+
+  const handleReset = () => {
+    if (!settings) return;
+    setGlobal(String(settings.retention_days));
+    setQuarantine(String(settings.quarantine_retention_days));
+  };
+
+  const resetToDefaults = () => {
+    if (!settings) return;
+    setGlobal(String(settings.retention_days_default));
+    setQuarantine(String(settings.quarantine_retention_days_default));
+  };
+
+  if (isLoading || !settings) return <Skeleton className="h-40 w-full" />;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Clock className="h-5 w-5" />
+          Data Retention
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          The scheduler runs a daily DELETE pass against the analytical tables.
+          <strong className="text-foreground"> Quarantine</strong> holds the full source
+          row payload (errors, warnings, and the row itself) so its window is kept
+          tighter than the trend tables by default. Both values are floored at{" "}
+          <code>{min}</code> days to protect against accidental data loss.
+        </p>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="retention-global" className="text-xs">
+              Global retention (days)
+            </Label>
+            <Input
+              id="retention-global"
+              type="number"
+              min={min}
+              max={max}
+              step={1}
+              value={global}
+              disabled={!isAdmin || saveMutation.isPending}
+              onChange={(e) => setGlobal(e.target.value)}
+              className="h-8"
+            />
+            <p className="text-[11px] text-muted-foreground">
+              Applies to <code>dq_validation_runs</code>, <code>dq_profiling_results</code>,{" "}
+              <code>dq_metrics</code>, and the OLTP history tables.
+              <br />
+              Default: <code>{settings.retention_days_default}</code> days
+              {!settings.retention_days_set && " (not yet customised)"}
+            </p>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="retention-quarantine" className="text-xs">
+              Quarantine retention (days)
+            </Label>
+            <Input
+              id="retention-quarantine"
+              type="number"
+              min={min}
+              max={max}
+              step={1}
+              value={quarantine}
+              disabled={!isAdmin || saveMutation.isPending}
+              onChange={(e) => setQuarantine(e.target.value)}
+              className="h-8"
+            />
+            <p className="text-[11px] text-muted-foreground">
+              Applies only to <code>dq_quarantine_records</code> (the table that
+              stores per-row failures, including the source row payload).
+              <br />
+              Default: <code>{settings.quarantine_retention_days_default}</code> days
+              {!settings.quarantine_retention_days_set && " (not yet customised)"}
+            </p>
+          </div>
+        </div>
+
+        {validation.length > 0 && (
+          <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 space-y-1">
+            {validation.map((msg, i) => (
+              <p key={i} className="text-xs text-destructive flex items-start gap-1.5">
+                <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                <span>{msg}</span>
+              </p>
+            ))}
+          </div>
+        )}
+
+        <div className="flex items-center gap-2 pt-2 border-t">
+          <Button
+            size="sm"
+            onClick={handleSave}
+            disabled={!isAdmin || !isDirty || validation.length > 0 || saveMutation.isPending}
+          >
+            {saveMutation.isPending && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}
+            Save changes
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={handleReset}
+            disabled={!isAdmin || !isDirty || saveMutation.isPending}
+          >
+            Reset
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={resetToDefaults}
+            disabled={!isAdmin || saveMutation.isPending}
+            title="Restore both fields to the system defaults (does not save until you click Save changes)"
+          >
+            Restore defaults
+          </Button>
+          {!isAdmin && (
+            <span className="text-xs text-muted-foreground">
+              Only admins can change retention.
+            </span>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function ConfigPage() {
+  const { t } = useTranslation();
   const { isAdmin } = usePermissions();
   const navigate = useNavigate();
 
@@ -607,13 +824,13 @@ function ConfigPage() {
   return (
     <div className="space-y-6">
       <div className="space-y-2">
-        <PageBreadcrumb page="Configuration" />
+        <PageBreadcrumb page={t("config.breadcrumb")} />
         <div>
           <h1 className="text-2xl font-bold tracking-tight">
-            <ShinyText text="Configuration" speed={6} className="font-bold" />
+            <ShinyText text={t("config.title")} speed={6} className="font-bold" />
           </h1>
           <p className="text-muted-foreground">
-            Manage roles, permissions, and display settings for your workspace.
+            {t("config.subtitle")}
           </p>
         </div>
       </div>
@@ -636,6 +853,13 @@ function ConfigPage() {
               </ErrorBoundary>
             </FadeIn>
             <FadeIn delay={0.15}>
+              <ErrorBoundary onReset={reset} fallbackRender={SectionError}>
+                <Suspense fallback={<Skeleton className="h-40 w-full" />}>
+                  <RetentionSettings />
+                </Suspense>
+              </ErrorBoundary>
+            </FadeIn>
+            <FadeIn delay={0.2}>
               <ErrorBoundary onReset={reset} fallbackRender={SectionError}>
                 <RoleManagement />
               </ErrorBoundary>

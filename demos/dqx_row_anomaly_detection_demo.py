@@ -425,7 +425,7 @@ print("   • Threshold is a percentile cutoff — tune it based on your data an
 # MAGIC %md
 # MAGIC ---
 # MAGIC
-# MAGIC ## Section 5: (Optional) Review Results to understand why some records are anomalous
+# MAGIC ## Section 5a: (Optional) Review Results to understand why some records are anomalous
 # MAGIC
 # MAGIC You’ll see flagged anomalies, severity percentiles, and top contributors.
 # MAGIC
@@ -482,6 +482,63 @@ display(df_quarantine.orderBy(severity_col.desc()).select(
     F.round(score_col, 3).alias("anomaly_score"),
     percentile_band.alias("severity_band"),
 ).limit(10))
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ---
+# MAGIC ## Section 5b: AI explanations
+# MAGIC
+# MAGIC AI explanations are **on by default** — the checks in Section 4 already produced
+# MAGIC `_dq_info[0].anomaly.ai_explanation` (a plain-language `narrative`, `business_impact`,
+# MAGIC `action`, and the deterministic `top_features` pattern). The LLM call runs **inside Spark**
+# MAGIC via the SQL `ai_query` function against a Databricks Model Serving endpoint — no extra
+# MAGIC dependency, and rows are grouped so the model is called **once per group** (capped by
+# MAGIC `max_groups`). This requires **Databricks serverless compute or Databricks Runtime 15.4 LTS
+# MAGIC or above** (where `ai_query` is available). If `ai_query` is unavailable or no endpoint is
+# MAGIC reachable, explanations are skipped with a warning and scoring still completes.
+# MAGIC
+# MAGIC This cell just shows how to override the endpoint or turn explanations off — none of these
+# MAGIC kwargs are required.
+
+# COMMAND ----------
+# DBTITLE 1,Apply checks (AI explanations are on by default)
+
+checks_with_ai = [
+    DQDatasetRule(
+        check_func=has_no_row_anomalies,
+        check_func_kwargs={
+            "model_name": model_name_auto,
+            "registry_table": registry_table,
+            # All optional — explanations + contributions are on by default:
+            # "enable_ai_explanation": False,                       # turn explanations off
+            # "ai_explanation_llm_model_config": {"model_name": "databricks-claude-sonnet-4-5"},  # override endpoint
+            # "redact_columns": ["region"],                         # keep sensitive names out of the prompt
+            # "max_groups": 500,                                    # cap on LLM calls per run
+        },
+    )
+]
+
+df_ai = dq_engine.apply_checks(df_new, checks_with_ai)
+
+anomaly = F.col("_dq_info").getItem(0).getField("anomaly")
+explanation = anomaly.getField("ai_explanation")
+print("🤖 Top anomalies with AI explanations:\n")
+display(
+    df_ai.filter(anomaly.getField("is_anomaly") == True)
+    .orderBy(anomaly.getField("severity_percentile").desc())
+    .select(
+        "transaction_id",
+        "amount",
+        "quantity",
+        F.round(anomaly.getField("severity_percentile"), 1).alias("severity_percentile"),
+        explanation.getField("top_features").alias("top_features"),
+        explanation.getField("narrative").alias("why_flagged"),
+        explanation.getField("business_impact").alias("business_impact"),
+        explanation.getField("action").alias("suggested_action"),
+    )
+    .limit(10)
+)
 
 # COMMAND ----------
 
@@ -662,7 +719,7 @@ checks_with_contrib = [
         check_func_kwargs={
             "model_name": model_name_manual,
             "threshold": 95.0,
-            "enable_contributions": True,  # default is False
+            "enable_contributions": True,  # on by default; shown here for clarity
             "registry_table": registry_table
         }
     )

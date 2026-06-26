@@ -18,7 +18,7 @@ All rule types, including row-level and dataset-level rules, can be defined and 
 
 When you define checks **declaratively** (YAML, JSON, or list of dicts), check arguments must contain every required parameter of the check function, matching its Python signature (optional parameters may be omitted). If you use `for_each_column`, DQX merges `column` or `columns` into the arguments for each expansion. Use `DQEngine.validate_checks` to catch unknown keys, type mismatches, and missing required parameters before apply. See [Quality checks definition](/docs/guide/quality_checks_definition) for the declarative format and validation section.
 
-You can explore the implementation details of the check functions [here](https://github.com/databrickslabs/dqx/blob/v0.14.0/src/databricks/labs/dqx/check_funcs.py).
+You can explore the implementation details of the check functions [here](https://github.com/databrickslabs/dqx/blob/v0.15.0/src/databricks/labs/dqx/check_funcs.py).
 
 <Admonition type="tip" title="Variable Substitution">
 All declarative check definitions (YAML, JSON, or Delta tables) support **variable substitution** for string-based fields using the `{{ variable_name }}` syntax. This allows for dynamic parameterization of column names, thresholds, and filters at load time. See the [User Guide](/docs/guide/quality_checks_definition/#variable-substitution) for more details.
@@ -59,6 +59,7 @@ You can also define your own custom checks in Python (see [Creating custom check
 | `is_older_than_n_days`             | Checks whether the values in one input column are at least N days older than the values in another column.                                                                                                                                                                                                                                                                                                                        | `column`: column to check (can be a string column name or a column expression); `days`: number of days; `curr_date`: current date, if not provided current_date() function is used; `negate`: if the condition should be negated                                                                                                                                                                                                                                                                                                                     |
 | `is_older_than_col2_for_n_days`    | Checks whether the values in one input column are at least N days older than the values in another column.                                                                                                                                                                                                                                                                                                                        | `column1`: first column to check (can be a string column name or a column expression); `column2`: second column to check (can be a string column name or a column expression); `days`: number of days; `negate`: if the condition should be negated                                                                                                                                                                                                                                                                                                  |
 | `regex_match`                      | Checks whether the values in the input column match a given regex.                                                                                                                                                                                                                                                                                                                                                                | `column`: column to check (can be a string column name or a column expression); regex: regex to check; `negate`: if the condition should be negated (true) or not                                                                                                                                                                                                                                                                                                                                                                                    |
+| `is_valid_email`                   | Checks whether the values in the input column have valid email address format.                                                                                                                                                                                                                                                                                                                                                    | `column`: column to check (can be a string column name or a column expression)                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `is_valid_ipv4_address`            | Checks whether the values in the input column have valid IPv4 address format.                                                                                                                                                                                                                                                                                                                                                     | `column` to check (can be a string column name or a column expression)                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `is_ipv4_address_in_cidr`          | Checks whether the values in the input column have valid IPv4 address format and fall within the given CIDR block.                                                                                                                                                                                                                                                                                                                | `column`: column to check (can be a string column name or a column expression); `cidr_block`: CIDR block string                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `is_valid_ipv6_address`            | Checks whether the values in the input column have valid IPv6 address format.                                                                                                                                                                                                                                                                                                                                                     | `column` to check (can be a string column name or a column expression)                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
@@ -523,6 +524,13 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
       column: col2
       regex: '[0-9]+'
       negate: false
+
+# is_valid_email check
+- criticality: error
+  check:
+    function: is_valid_email
+    arguments:
+      column: col1
 
 # is_valid_ipv4_address check
 - criticality: error
@@ -1264,6 +1272,13 @@ checks = [
       }
     ),
 
+    # is_valid_email check
+    DQRowRule(
+      criticality="error",
+      check_func=check_funcs.is_valid_email,
+      column="col1"
+    ),
+
     # is_valid_ipv4_address check
     DQRowRule(
       criticality="error",
@@ -1819,8 +1834,13 @@ You can also define your own custom dataset-level checks (see [Creating custom c
 | `is_data_fresh_per_time_window`    | Freshness check that validates whether at least X records arrive within every Y-minute time window.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | `column`: timestamp column (can be a string column name or a column expression); `window_minutes`: time window in minutes to check for data arrival; `min_records_per_window`: minimum number of records expected per time window; `lookback_windows`: (optional) number of time windows to look back from `curr_timestamp`, it filters records to include only those within the specified number of time windows from `curr_timestamp` (if no lookback is provided, the check is applied to the entire dataset); `curr_timestamp`: (optional) current timestamp column (if not provided, current_timestamp() function is used)                                                                                                                                                                                                                                                                              |
 | `has_valid_schema`                 | Schema check that validates whether the DataFrame schema matches an expected schema. In non-strict mode, validates that all expected columns exist with compatible types (allows extra columns). In strict mode, validates exact schema match (same columns, same order, same types) for all columns by default or for all columns specified in `columns`. This check is applied at the dataset level and reports schema violations for all rows in the DataFrame when incompatibilities are detected. All columns in the `exclude_columns` list will be ignored even if the column is present in the `columns` list.                                                                               | `expected_schema`: (optional) expected schema as a DDL string (e.g., "id INT, name STRING") or StructType object; `ref_df_name`: (optional) name of the reference DataFrame to load the schema from (dictionary of DataFrames can be passed when applying checks); `ref_table`: (optional) fully qualified reference table name to load the schema from (e.g. "catalog.schema.table"); exactly one of `expected_schema`, `ref_df_name`, or `ref_table` must be provided; `columns`: (optional) list of columns to validate (if not provided, all columns are considered); `strict`: (optional) whether to perform strict schema validation (default: False) - False: validates that all expected columns exist with compatible types, True: validates exact schema match; `exclude_columns`: (optional) list of columns to ignore during validation (if not provided, all columns are considered);           |
 | `has_no_outliers`                  | Checks whether the values in the input column contain any outliers. This function implements a median absolute deviation (MAD) algorithm to find outliers.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | `column`: column of type numeric to check (can be a string column name or a column expression);                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `has_no_row_anomalies`             | Flags rows that are anomalous according to a trained ML model. The model learns "normal" patterns from your training data; at check time each row is scored (severity percentile 0–100) and optionally enriched with SHAP contributions. Requires a model trained with the anomaly engine first. See [Row Anomaly Detection](#row-anomaly-detection) below for training, full parameters, and usage.                                                                                                                                                                                                                                                                                                | `model_name`: fully qualified model name (e.g. catalog.schema.model_name); `registry_table`: fully qualified registry table (e.g. catalog.schema.model_registry); `threshold`: (optional) severity percentile threshold (default 95); `drift_threshold`: (optional) warn when score distribution drifts from training (None = off); `enable_contributions`: (optional) add SHAP per-feature contributions to `_dq_info` (default False); `enable_confidence_std`: (optional) add ensemble score std to `_dq_info` (default False). See [Row Anomaly Detection](/docs/reference/quality_checks#row-anomaly-detection) section for full parameter details.                                                                                                                                                                                                                                                     |
+| `has_no_row_anomalies`             | Flags rows that are anomalous according to a trained ML model. The model learns "normal" patterns from your training data; at check time each row is scored (severity percentile 0–100) and optionally enriched with SHAP contributions. Requires a model trained with the anomaly engine first. See [Row Anomaly Detection](#row-anomaly-detection) below for training, full parameters, and usage.                                                                                                                                                                                                                                                                                                | `model_name`: fully qualified model name (e.g. catalog.schema.model_name); `registry_table`: fully qualified registry table (e.g. catalog.schema.model_registry); `threshold`: (optional) severity percentile threshold (default 95); `drift_threshold`: (optional) warn when score distribution drifts from training (None = off); `enable_contributions`: (optional) add SHAP per-feature contributions to `_dq_info` (default True; set False to skip the SHAP cost); `enable_confidence_std`: (optional) add ensemble score std to `_dq_info` (default False); `enable_ai_explanation`: (optional) add an LLM-generated explanation to `_dq_info` (default True; degrades to null if contributions are off or no serving endpoint is reachable); `ai_explanation_llm_model_config`: (optional) Databricks Model Serving endpoint config for the explanation; `redact_columns`: (optional) feature/segment names to keep out of the LLM prompt; `max_groups`: (optional) cap on LLM calls per run (default 500). See [Row Anomaly Detection](/docs/reference/quality_checks#row-anomaly-detection) section for full parameter details.                                                                                                                                                                                                                                                     |
 | `are_polygons_mutually_disjoint`   | Checks whether the polygons in a geometry column are mutually disjoint. Polygons sharing an edge or boundary are considered intersecting. Nulls and invalid geometries are excluded from the check. Requires Databricks runtime 17.1 or above.                                                                                                                                                                                                                                                                                                                                                                                                                                                      | `column`: column to check (can be a string column name or a column expression), must contain polygon or multipolygon geometries                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `is_geo_contains`  | Checks if the reference geometry contains each column geometry using `st_contains` with meter-level precision. A geometry A *contains* B when B lies entirely within the interior of A with no boundary points of B on the boundary of A. Points on the shared boundary are not considered contained — use `is_geo_covers` for boundary-inclusive checks. When a convert flag is set to `True`, `try_to_geometry` is applied to parse the input from any supported format (WKT, WKB, EWKT, EWKB). Null values are skipped. Requires Databricks runtime 17.1 or above. | `column`: column to check (can be a string column name or a column expression); `reference_geometry`: reference geometry as a literal WKT/WKB/EWKT/EWKB string or bytes value, or a `Column` expression (e.g. `F.col('col_name')`) — a plain string is always treated as a literal, not a column name; `convert_column`: when `True`, applies `try_to_geometry` to convert the column values to GEOMETRY (default `False`); `convert_reference_geometry`: when `True`, applies `try_to_geometry` to convert the reference geometry to GEOMETRY (default `False`) |
+| `is_geo_covers`    | Checks if the reference geometry covers each column geometry. When `precise=True`, uses `st_covers` for exact computation — A *covers* B when every point of B lies within A, including boundary points. When `precise=False` (default), approximates coverage using H3 cell indexing: all hexagonal cells of the column geometry must exist in the H3 cells of the reference geometry. Edge membership is not supported by H3 — geometries near boundaries may be misclassified. Higher `resolution` values give finer precision at the cost of more cells. Null values are skipped; in approximate mode invalid (unparseable) geometries are also skipped rather than flagged — use `is_geometry` to flag invalid values. Requires Databricks runtime 17.1 or above. | `column`: column to check (can be a string column name or a column expression); `reference_geometry`: reference geometry as a literal WKT/WKB/EWKT/EWKB string or bytes value, or a `Column` expression (e.g. `F.col('col_name')`) — a plain string is always treated as a literal, not a column name (bytes/WKB only supported when `precise=True`); `precise`: when `True`, uses exact `st_covers`; when `False` (default), uses H3 approximation and requires `resolution`; `resolution`: H3 resolution integer (0–15) or a column — required when `precise=False`; higher values give finer precision at the cost of more cells; `convert_column`: when `True`, applies `try_to_geometry` to the column (only used in precise mode, default `False`); `convert_reference_geometry`: when `True`, applies `try_to_geometry` to the reference geometry (only used in precise mode, default `False`) |
+| `is_geo_intersects` | Checks if the column geometry intersects the reference geometry. When `precise=True`, uses `st_intersects` for exact computation — two geometries intersect when they share at least one point, whether interior or boundary. When `precise=False` (default), approximates intersection using H3 cell indexing: at least one hexagonal cell must be shared between the H3 representations of both geometries. Edge membership is not supported by H3 — geometries near boundaries may be misclassified. Higher `resolution` values give finer precision. Null values are skipped; in approximate mode invalid (unparseable) geometries are also skipped rather than flagged — use `is_geometry` to flag invalid values. Requires Databricks runtime 17.1 or above. | `column`: column to check (can be a string column name or a column expression); `reference_geometry`: reference geometry as a literal WKT/WKB/EWKT/EWKB string or bytes value, or a `Column` expression (e.g. `F.col('col_name')`) — a plain string is always treated as a literal, not a column name (bytes/WKB only supported when `precise=True`); `precise`: when `True`, uses exact `st_intersects`; when `False` (default), uses H3 approximation and requires `resolution`; `resolution`: H3 resolution integer (0–15) or a column — required when `precise=False`; higher values give finer precision at the cost of more cells; `convert_column`: when `True`, applies `try_to_geometry` to the column (only used in precise mode, default `False`); `convert_reference_geometry`: when `True`, applies `try_to_geometry` to the reference geometry (only used in precise mode, default `False`) |
+| `is_geo_touches`   | Checks if the column geometry touches the reference geometry using `st_touches` with meter-level precision. Two geometries *touch* when they share at least one boundary point but their interiors do not intersect. A point strictly inside a polygon does not touch it; a point on the polygon boundary does. Only precise (`ST_*`) evaluation is supported — there is no H3 approximation for `TOUCHES`. When a convert flag is set to `True`, `try_to_geometry` is applied to parse the input. Null values are skipped. Requires Databricks runtime 17.1 or above. | `column`: column to check (can be a string column name or a column expression); `reference_geometry`: reference geometry as a literal WKT/WKB/EWKT/EWKB string or bytes value, or a `Column` expression (e.g. `F.col('col_name')`) — a plain string is always treated as a literal, not a column name; `convert_column`: when `True`, applies `try_to_geometry` to convert the column values to GEOMETRY (default `False`); `convert_reference_geometry`: when `True`, applies `try_to_geometry` to convert the reference geometry to GEOMETRY (default `False`) |
+| `is_geo_within`    | Checks if the reference geometry is within the column geometry using `st_within` with meter-level precision. `st_within(reference, column)` returns true when the reference lies entirely within the column geometry — this is the converse of `is_geo_contains`. Only precise (`ST_*`) evaluation is supported — there is no H3 approximation for `WITHIN`. When a convert flag is set to `True`, `try_to_geometry` is applied to parse the input. Null values are skipped. Requires Databricks runtime 17.1 or above. | `column`: column to check (can be a string column name or a column expression); `reference_geometry`: reference geometry as a literal WKT/WKB/EWKT/EWKB string or bytes value, or a `Column` expression (e.g. `F.col('col_name')`) — a plain string is always treated as a literal, not a column name; `convert_column`: when `True`, applies `try_to_geometry` to convert the column values to GEOMETRY (default `False`); `convert_reference_geometry`: when `True`, applies `try_to_geometry` to convert the reference geometry to GEOMETRY (default `False`) |
 
 <Admonition type="tip" title="Row filter">
 Most dataset-level check functions take `row_filter` as argument. This parameter is auto-injected from the top-level `filter`.
@@ -2301,6 +2321,87 @@ Complex data types are supported as well.
     function: are_polygons_mutually_disjoint
     arguments:
       column: geom
+
+# is_geo_contains check (geo, precise, requires runtime 17.1+)
+# reference polygon must contain each location point (uses st_contains)
+- criticality: error
+  check:
+    function: is_geo_contains
+    arguments:
+      column: location
+      reference_geometry: "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))"
+      convert_column: true
+      convert_reference_geometry: true
+
+# is_geo_covers check — approximate mode
+# H3 resolution 7 (~5 km² cells); default when precise=false
+- criticality: error
+  check:
+    function: is_geo_covers
+    arguments:
+      column: location
+      reference_geometry: "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))"
+      resolution: 7
+      convert_column: true
+      convert_reference_geometry: true
+
+# is_geo_covers check — precise mode (geo, requires runtime 17.1+)
+# uses st_covers; includes boundary points unlike st_contains
+- criticality: error
+  check:
+    function: is_geo_covers
+    arguments:
+      column: location
+      reference_geometry: "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))"
+      precise: true
+      convert_column: true
+      convert_reference_geometry: true
+
+# is_geo_intersects check — approximate mode
+# at least one shared H3 cell between location and the reference polygon
+- criticality: error
+  check:
+    function: is_geo_intersects
+    arguments:
+      column: location
+      reference_geometry: "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))"
+      resolution: 7
+      convert_column: true
+      convert_reference_geometry: true
+
+# is_geo_intersects check — precise mode (geo, requires runtime 17.1+)
+# uses st_intersects for exact computation
+- criticality: error
+  check:
+    function: is_geo_intersects
+    arguments:
+      column: location
+      reference_geometry: "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))"
+      precise: true
+      convert_column: true
+      convert_reference_geometry: true
+
+# is_geo_touches check (geo, precise only, requires runtime 17.1+)
+# location point must touch (share a boundary point with) the reference polygon
+- criticality: error
+  check:
+    function: is_geo_touches
+    arguments:
+      column: location
+      reference_geometry: "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))"
+      convert_column: true
+      convert_reference_geometry: true
+
+# is_geo_within check (geo, precise only, requires runtime 17.1+)
+# reference geometry must be within the column geometry (converse of is_geo_contains)
+- criticality: error
+  check:
+    function: is_geo_within
+    arguments:
+      column: region
+      reference_geometry: "POINT(4.90 52.37)"
+      convert_column: true
+      convert_reference_geometry: true
 ```
 
 **Providing Reference DataFrames programmatically**
@@ -2775,6 +2876,97 @@ checks = [
       column="geom" # or as expr: F.col("geom")
     ),
 
+    # is_geo_contains check (geo, precise only, requires runtime 17.1+)
+    # reference polygon must contain each location point (uses st_contains)
+    DQDatasetRule(
+      criticality="error",
+      check_func=geo_check_funcs.is_geo_contains,
+      column="location", # or as expr: F.col("location")
+      check_func_kwargs={
+        "reference_geometry": "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
+        "convert_column": True,
+        "convert_reference_geometry": True,
+      }
+    ),
+
+    # is_geo_covers check — approximate mode,
+    # H3 resolution 7 (~5 km² cells); default when precise=False
+    DQDatasetRule(
+      criticality="error",
+      check_func=geo_check_funcs.is_geo_covers,
+      column="location", # or as expr: F.col("location")
+      check_func_kwargs={
+        "reference_geometry": "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
+        "resolution": 7,
+      }
+    ),
+
+    # is_geo_covers check — precise mode (geo, requires runtime 17.1+)
+    # uses st_covers; includes boundary points unlike st_contains
+    DQDatasetRule(
+      criticality="error",
+      check_func=geo_check_funcs.is_geo_covers,
+      column="location", # or as expr: F.col("location")
+      check_func_kwargs={
+        "reference_geometry": "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
+        "precise": True,
+        "convert_column": True,
+        "convert_reference_geometry": True,
+      }
+    ),
+
+    # is_geo_intersects check — approximate mode (geo, requires runtime 17.1+)
+    # at least one shared H3 cell between location and the reference polygon
+    DQDatasetRule(
+      criticality="error",
+      check_func=geo_check_funcs.is_geo_intersects,
+      column="location", # or as expr: F.col("location")
+      check_func_kwargs={
+        "reference_geometry": "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
+        "resolution": 7,
+      }
+    ),
+
+    # is_geo_intersects check — precise mode (geo, requires runtime 17.1+)
+    # uses st_intersects for exact computation
+    DQDatasetRule(
+      criticality="error",
+      check_func=geo_check_funcs.is_geo_intersects,
+      column="location", # or as expr: F.col("location")
+      check_func_kwargs={
+        "reference_geometry": "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
+        "precise": True,
+        "convert_column": True,
+        "convert_reference_geometry": True,
+      }
+    ),
+
+    # is_geo_touches check (geo, precise only, requires runtime 17.1+)
+    # location point must touch (share a boundary point with) the reference polygon
+    DQDatasetRule(
+      criticality="error",
+      check_func=geo_check_funcs.is_geo_touches,
+      column="location", # or as expr: F.col("location")
+      check_func_kwargs={
+        "reference_geometry": "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
+        "convert_column": True,
+        "convert_reference_geometry": True,
+      }
+    ),
+
+    # is_geo_within check (geo, precise only, requires runtime 17.1+)
+    # reference geometry must be within the column geometry (converse of is_geo_contains)
+    DQDatasetRule(
+      criticality="error",
+      check_func=geo_check_funcs.is_geo_within,
+      column="region", # or as expr: F.col("region")
+      check_func_kwargs={
+        "reference_geometry": "POINT(4.90 52.37)",
+        "convert_column": True,
+        "convert_reference_geometry": True,
+      }
+    ),
+
     # has_valid_schema check with specific columns, expected schema defined using StructType
     DQDatasetRule(
       criticality="warn",
@@ -3203,8 +3395,12 @@ checks = [
 - `threshold`: Severity percentile threshold (0–100, default 95).
 - `row_filter`: Optional SQL expression to filter rows before scoring.
 - `drift_threshold`: Optional float (e.g. 3.0) to enable drift detection; default None (disabled). When set, a warning is emitted if the scoring distribution at check time deviates from training. A value of 3.0 corresponds to roughly 3-sigma deviation from training statistics. See the section below for more details.
-- `enable_contributions`: Include per-feature contributions in `_dq_info[0].anomaly.contributions` (default `False`). Set `True` for explainability; adds significant scoring cost. See the section below and [Schema of _dq_info](/docs/guide/row_anomaly_detection#schema-of-the-info-column-_dq_info) for field details.
+- `enable_contributions`: Include per-feature contributions in `_dq_info[0].anomaly.contributions` (default `True`). SHAP is computed only for anomalous rows (severity at or above the threshold), so the cost scales with the number of anomalies rather than the table size; non-anomalous rows get a `null` map. Set `False` to skip the SHAP computation entirely (which also disables AI explanations). See the section below and [Schema of _dq_info](/docs/guide/row_anomaly_detection#schema-of-the-info-column-_dq_info) for field details.
 - `enable_confidence_std`: Include `confidence_std` for ensembles (default `False`). Useful when using ensemble training.
+- `enable_ai_explanation`: Add an LLM-generated plain-language explanation in `_dq_info[0].anomaly.ai_explanation` (default `True`). Uses the SHAP contributions as input — if `enable_contributions=False`, explanations are disabled with a warning (not an error). The LLM call runs inside Spark via the SQL `ai_query` function against a Databricks Model Serving endpoint — no extra dependency, but it requires Databricks serverless compute or Databricks Runtime 15.4 LTS or above (where `ai_query` is available). If `ai_query` is unavailable or the endpoint isn't reachable, explanations are skipped with a warning and scoring still completes. See the **AI Explanations** section below.
+- `ai_explanation_llm_model_config`: `LLMModelConfig` (or a dict with keys `model_name`, `api_key`, `api_base`) used by `enable_ai_explanation`. `model_name` must resolve to a Databricks Model Serving endpoint (the `databricks/` prefix, if present, is stripped). Defaults to `databricks/databricks-claude-sonnet-4-5`.
+- `redact_columns`: Feature/column names to exclude from the LLM prompt (default `None`). Filters SHAP contribution keys, the top-2 pattern key, and matching segment keys (emitted as `key=<redacted>`).
+- `max_groups`: Maximum number of distinct `(segment, pattern)` groups the LLM is called for per scoring run (default `500`). Anomalous rows are bucketed by `(segment, pattern)` and the LLM is called once per group; groups beyond the cap — ranked by `group_size * group_avg_severity` — get a `null` explanation and a warning is logged. For segmented models the cap is split across eligible segments with a floor of one call each.
 
 **Notes**
 - For workflow training, `model_name` and `registry_table` are required and must be fully qualified names. Both are stored in Unity Catalog.
@@ -3250,7 +3446,7 @@ checks = [
 ]
 ```
 
-When `enable_contributions=True`, the `_dq_info` column includes `contributions` (per-feature contribution percentages). For the full list of fields in `_dq_info` and the nested `anomaly` struct, see [Schema of the info column (_dq_info)](/docs/guide/row_anomaly_detection#schema-of-the-info-column-_dq_info).
+When `enable_contributions=True`, the `_dq_info` column includes `contributions` (per-feature contribution percentages) for anomalous rows; non-anomalous rows carry a `null` map. For the full list of fields in `_dq_info` and the nested `anomaly` struct, see [Schema of the info column (_dq_info)](/docs/guide/row_anomaly_detection#schema-of-the-info-column-_dq_info).
 
 Example: triage top anomalies and inspect contributions:
 ```python
@@ -3268,6 +3464,55 @@ display(
   )
 )
 ```
+
+**AI Explanations**
+
+AI explanations are **on by default** — each anomalous row gets an LLM-generated, plain-language explanation in `_dq_info[0].anomaly.ai_explanation`. The LLM call runs entirely inside Spark via the SQL `ai_query` function against a Databricks Model Serving endpoint — no extra Python dependency and it scales with the cluster. Set `enable_ai_explanation=False` to turn it off; setting `enable_contributions=False` also disables explanations (they use SHAP contributions as input). If the serving endpoint isn't reachable, explanations are skipped with a warning and scoring still completes. The explanation is AI-generated from the anomaly signal (feature names + SHAP + severity), not grounded in catalog metadata — treat business impact / action as a starting point.
+
+Anomalous rows are bucketed by a deterministic `(segment, pattern)` key, where the pattern is the sorted top-2 contributing SHAP features. The LLM is called **once per group** and every row in the group shares the same narrative, so cost stays predictable on large datasets (bounded by `max_groups`).
+
+```python
+from databricks.labs.dqx.rule import DQDatasetRule
+from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies
+
+checks = [
+  DQDatasetRule(
+    criticality="error",
+    check_func=has_no_row_anomalies,
+    check_func_kwargs={
+      "model_name": "catalog.schema.orders_monitor",
+      "registry_table": "catalog.schema.dqx_anomaly_models",
+      "threshold": 95.0,
+      "enable_contributions": True,        # required for AI explanations
+      "enable_ai_explanation": True,
+      "ai_explanation_llm_model_config": {"model_name": "databricks-claude-sonnet-4-5"},
+      "redact_columns": ["customer_id"],   # optional: keep sensitive names out of the prompt
+      "max_groups": 500,                    # optional: cap LLM calls per run
+   }
+  )
+]
+```
+
+The `ai_explanation` struct contains `narrative`, `business_impact`, `action` (LLM-generated), `top_features` (the deterministic top-2 pattern), and the group's `group_size` / `group_avg_severity`. See [Schema of the info column (_dq_info)](/docs/guide/row_anomaly_detection#schema-of-the-info-column-_dq_info) for the full field list.
+
+```python
+import pyspark.sql.functions as F
+
+anomaly = F.col("_dq_info").getItem(0).getField("anomaly")
+display(
+  scored_df.filter(anomaly.getField("is_anomaly")).select(
+    "transaction_id",
+    anomaly.getField("ai_explanation").getField("narrative").alias("why"),
+    anomaly.getField("ai_explanation").getField("action").alias("action"),
+    anomaly.getField("ai_explanation").getField("top_features").alias("top_features"),
+  )
+)
+```
+
+<Admonition type="note" title="Cost and privacy">
+* The LLM is called once per `(segment, pattern)` group, capped by `max_groups` (default 500). For segmented models the cap is split across eligible segments with a floor of one call each, so when `max_groups` is below the eligible-segment count the effective cap is the segment count (a warning is logged).
+* `redact_columns` keeps the listed feature and segment names out of the prompt. Segment **values** for non-redacted keys are sent verbatim — avoid segmenting on sensitive columns, or list them in `redact_columns`.
+</Admonition>
 
 **Drift Detection**
 
@@ -4080,6 +4325,92 @@ Using DQX classes:
 When using dataset-level checks, the top-level `filter` condition is pushed down as `row_filter` to the check function and applied before aggregation, ensuring that the check operates only on the relevant subset of rows rather than on the aggregated results.
 </Admonition>
 
+## Customizing check messages
+
+Users can override the default failure message of any `DQRule` by specifying a custom message expression. Set `message_expr` to either a Spark SQL expression string or a Spark `Column` expression that returns a string-valued message when data fails a check.
+If a check cannot be evaluated (for example, because it references invalid columns or uses an invalid SQL expression), the results report the default skip message instead of the custom message.
+
+<Admonition type="tip" title="Using custom messages">
+When using custom message expressions:
+
+* Messages defined as SQL expressions are only validated when checks are run (e.g. with `apply_checks_by_metadata(...)`).
+* Wrap column references with `coalesce` to avoid null messages. In Spark SQL, `concat(..., null)` returns `null`.
+* Pass literal string values with quotes (e.g. `'Email must not be null'`) to ensure they are not evaluated as SQL expressions.
+* Avoid long messages or referencing unbounded string columns. Message text is **truncated at 500 characters**.
+* Avoid unquoted SQL keywords that may be executed naively (e.g. `DELETE` or `TRUNCATE`).
+</Admonition>
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    import pyspark.sql.functions as F
+    from databricks.labs.dqx import check_funcs
+    from databricks.labs.dqx.rule import DQRowRule
+
+    # static message: "Email must not be null"
+    checks = [
+      DQRowRule(
+        name="email_not_null",
+        criticality="error",
+        check_func=check_funcs.is_not_null,
+        column="email",
+        message_expr="'Email must not be null'",
+      )
+    ]
+
+    # dynamic message using a SQL expression string: "age_positive: age <value> is not valid"
+    checks = [
+      DQRowRule(
+        name="age_positive",
+        criticality="error",
+        check_func=check_funcs.is_not_less_than,
+        column="age",
+        check_func_kwargs={"limit": 0},
+        message_expr="concat('age_positive: age ', coalesce(cast(age as string), 'null'), ' is not valid')",
+      )
+    ]
+
+    # dynamic message using a Spark Column expression: "age_positive: age <value> is not valid"
+    checks = [
+      DQRowRule(
+        name="age_positive",
+        criticality="error",
+        check_func=check_funcs.is_not_less_than,
+        column="age",
+        check_func_kwargs={"limit": 0},
+        message_expr=F.concat(
+            F.lit("age_positive: age "),
+            F.coalesce(F.col("age").cast("string"), F.lit("null")),
+            F.lit(" is not valid"),
+        ),
+      )
+    ]
+    ```
+  </TabItem>
+  <TabItem value="YAML" label="YAML">
+    ```yaml
+    # static message: "Email must not be null"
+    - name: email_not_null
+      criticality: error
+      message_expr: "'Email must not be null'"
+      check:
+        function: is_not_null
+        arguments:
+          column: email
+
+    # dynamic message using a SQL expression string: "age_positive: age <value> is not valid"
+    - name: age_positive
+      criticality: error
+      message_expr: "concat('age_positive: age ', coalesce(cast(age as string), 'null'), ' is not valid')"
+      check:
+        function: is_not_less_than
+        arguments:
+          column: age
+          limit: 0
+    ```
+  </TabItem>
+</Tabs>
+
 ## Converting checks between formats
 
 In DQX, checks can be defined either as Python classes or YAML declarations. When using YAML, the files are first parsed into dictionaries and then transformed into DQX class instances under the hood. Since both formats share the same internal structure, they are interchangeable and can be safely converted between one another.
@@ -4272,7 +4603,7 @@ The built-in check supports several configurable parameters:
 DQX automatically installs the built-in entity recognition models at runtime if they are not already available.
 However, for better performance and to avoid potential out-of-memory issues, it is recommended to pre-install models using pip install.
 Any additional models used in a custom configuration must also be installed on your Databricks cluster.
-See the [Using DQX for PII Detection](https://github.com/databrickslabs/dqx/blob/v0.14.0/demos/dqx_demo_pii_detection.py) notebook for examples of custom model installation.
+See the [Using DQX for PII Detection](https://github.com/databrickslabs/dqx/blob/v0.15.0/demos/dqx_demo_pii_detection.py) notebook for examples of custom model installation.
 </Admonition>
 
 #### Using Built-in NLP Engine Configurations

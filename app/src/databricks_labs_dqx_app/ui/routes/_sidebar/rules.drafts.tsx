@@ -1,6 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { parseFqn, formatDateShort as formatDate, getUserMetadata, labelToken } from "@/lib/format-utils";
 import { LabelFilter, LabelsBadges, labelsMatchFilter } from "@/components/Labels";
+import { useTranslation } from "react-i18next";
 
 const SQL_CHECK_PREFIX = "__sql_check__/";
 const CROSS_TABLE_CATALOG = "Cross-table rules";
@@ -12,7 +13,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useQueryClient } from "@tanstack/react-query";
-import { PageBreadcrumb } from "@/components/apx/PageBreadcrumb";
+import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
 import {
   Card,
   CardContent,
@@ -126,34 +127,38 @@ function DraftsSkeleton() {
   );
 }
 
-const STATUS_OPTIONS = [
-  { value: "all", label: "All Statuses" },
-  { value: "draft", label: "Draft" },
-  { value: "pending_approval", label: "Pending Approval" },
-  { value: "rejected", label: "Rejected" },
-];
+function useStatusOptions() {
+  const { t } = useTranslation();
+  return [
+    { value: "all", label: t("rulesDrafts.allStatuses") },
+    { value: "draft", label: t("rulesDrafts.statusDraft") },
+    { value: "pending_approval", label: t("rulesDrafts.statusPendingApproval") },
+    { value: "rejected", label: t("rulesDrafts.statusRejected") },
+  ];
+}
 
-function statusBadge(status: string) {
+function StatusBadge({ status }: { status: string }) {
+  const { t } = useTranslation();
   switch (status) {
     case "draft":
       return (
         <Badge variant="secondary" className="gap-1">
           <FileEdit className="h-3 w-3" />
-          Draft
+          {t("discovery.draft")}
         </Badge>
       );
     case "pending_approval":
       return (
         <Badge variant="outline" className="gap-1 border-amber-500 text-amber-600">
           <Clock className="h-3 w-3" />
-          Pending
+          {t("discovery.pending")}
         </Badge>
       );
     case "rejected":
       return (
         <Badge variant="outline" className="gap-1 border-red-500 text-red-600">
           <XCircle className="h-3 w-3" />
-          Rejected
+          {t("discovery.rejected")}
         </Badge>
       );
     default:
@@ -214,6 +219,8 @@ function SortableHeader({
 }
 
 function DraftsPage() {
+  const { t } = useTranslation();
+  const STATUS_OPTIONS = useStatusOptions();
   const navigate = useNavigate();
   const [statusFilter, setStatusFilter] = useState("all");
   const [catalogFilter, setCatalogFilter] = useState("all");
@@ -433,14 +440,14 @@ function DraftsPage() {
     setRepairing(true);
     try {
       const resp = await backfillRuleIds();
-      toast.success(`Repaired ${resp.data.repaired} rule(s) — IDs assigned`);
+      toast.success(t("rulesDrafts.repairedToast", { count: resp.data.repaired }));
       invalidateRules();
     } catch {
-      toast.error("Failed to repair rule IDs");
+      toast.error(t("rulesDrafts.failedRepairIds"));
     } finally {
       setRepairing(false);
     }
-  }, [invalidateRules]);
+  }, [invalidateRules, t]);
 
   const fireAction = useCallback(
     (
@@ -512,7 +519,7 @@ function DraftsPage() {
       const skippedNotOwned = selectedRules.length - ownRules.length;
       if (ownRules.length === 0) {
         toast.error(
-          `Cannot ${errorMsg.toLowerCase()}: you can only act on rules you authored.`,
+          t("rulesDrafts.bulkCannotAct", { action: errorMsg.toLowerCase() }),
           { duration: 6000 },
         );
         setSelectedIds(new Set());
@@ -537,16 +544,16 @@ function DraftsPage() {
       setSelectedIds(new Set());
       invalidateRules();
       const skippedSuffix = skippedNotOwned > 0
-        ? ` — ${skippedNotOwned} rule${skippedNotOwned !== 1 ? "s" : ""} skipped (not authored by you)`
+        ? t("rulesDrafts.bulkSkippedSuffix", { count: skippedNotOwned })
         : "";
       if (fail === 0) {
-        toast.success(`${successMsg} (${ok} rule${ok !== 1 ? "s" : ""})${skippedSuffix}`);
+        toast.success(t("rulesDrafts.bulkSucceededWithSkipped", { count: ok, msg: successMsg, ok, skipped: skippedSuffix }));
       } else {
         const reason = lastDetail ? ` — ${lastDetail}` : "";
-        toast.warning(`${ok} succeeded, ${fail} failed${reason}${skippedSuffix}`);
+        toast.warning(t("rulesDrafts.bulkPartial", { ok, fail, reason, skipped: skippedSuffix }));
       }
     },
-    [bulkBusy, selectedRules, invalidateRules, isOwnRule],
+    [bulkBusy, selectedRules, invalidateRules, isOwnRule, t],
   );
 
   const [bulkApproveOpen, setBulkApproveOpen] = useState(false);
@@ -554,18 +561,18 @@ function DraftsPage() {
   const handleBulkApprove = () => setBulkApproveOpen(true);
   const confirmBulkApprove = () => {
     setBulkApproveOpen(false);
-    bulkAction(approveRule, "Approved", "some rules could not be approved");
+    bulkAction(approveRule, t("rulesDrafts.bulkApproved"), t("rulesDrafts.bulkApproveAction"));
   };
   const handleBulkReject = () => setBulkRejectOpen(true);
   const confirmBulkReject = () => {
     setBulkRejectOpen(false);
-    bulkAction(rejectRule, "Rejected", "some rules could not be rejected");
+    bulkAction(rejectRule, t("rulesDrafts.bulkRejected"), t("rulesDrafts.bulkRejectAction"));
   };
   const [bulkRevokeOpen, setBulkRevokeOpen] = useState(false);
   const handleBulkRevoke = () => setBulkRevokeOpen(true);
   const confirmBulkRevoke = () => {
     setBulkRevokeOpen(false);
-    bulkAction(revokeRule, "Revoked", "some rules could not be revoked");
+    bulkAction(revokeRule, t("rulesDrafts.bulkRevoked"), t("rulesDrafts.bulkRevokeAction"));
   };
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const handleBulkDelete = () => {
@@ -573,7 +580,7 @@ function DraftsPage() {
   };
   const confirmBulkDelete = () => {
     setBulkDeleteOpen(false);
-    bulkAction(deleteRuleById, "Deleted", "some rules could not be deleted");
+    bulkAction(deleteRuleById, t("rulesDrafts.bulkDeleted"), t("rulesDrafts.bulkDeleteAction"));
   };
   const [bulkSubmitOpen, setBulkSubmitOpen] = useState(false);
   const bulkSubmitEligible = useMemo(
@@ -589,12 +596,12 @@ function DraftsPage() {
   const handleBulkSubmit = useCallback(() => {
     if (bulkSubmitEligible.length === 0) {
       toast.warning(
-        `All ${selectedRules.length} selected rule(s) are ineligible (duplicate or not authored by you)`,
+        t("rulesDrafts.bulkAllIneligible", { count: selectedRules.length }),
       );
       return;
     }
     setBulkSubmitOpen(true);
-  }, [bulkSubmitEligible, selectedRules]);
+  }, [bulkSubmitEligible, selectedRules, t]);
   const confirmBulkSubmit = useCallback(async () => {
     setBulkSubmitOpen(false);
     const skippedNotOwned = selectedRules.filter((r) => !isOwnRule(r)).length;
@@ -618,13 +625,13 @@ function DraftsPage() {
     setSelectedIds(new Set());
     invalidateRules();
     const parts: string[] = [];
-    if (ok > 0) parts.push(`${ok} submitted`);
-    if (fail > 0) parts.push(`${fail} failed${lastDetail ? ` (${lastDetail})` : ""}`);
-    if (skippedDuplicate > 0) parts.push(`${skippedDuplicate} skipped (duplicate)`);
-    if (skippedNotOwned > 0) parts.push(`${skippedNotOwned} skipped (not authored by you)`);
+    if (ok > 0) parts.push(t("rulesDrafts.bulkSubmitted", { count: ok }));
+    if (fail > 0) parts.push(lastDetail ? t("rulesDrafts.bulkFailedDetail", { count: fail, detail: lastDetail }) : t("rulesDrafts.bulkFailed", { count: fail }));
+    if (skippedDuplicate > 0) parts.push(t("rulesDrafts.bulkSkippedDuplicate", { count: skippedDuplicate }));
+    if (skippedNotOwned > 0) parts.push(t("rulesDrafts.bulkSkippedNotOwned", { count: skippedNotOwned }));
     if (fail === 0) toast.success(parts.join(", "));
     else toast.warning(parts.join(", "));
-  }, [selectedRules, bulkSubmitEligible, invalidateRules, isOwnRule]);
+  }, [selectedRules, bulkSubmitEligible, invalidateRules, isOwnRule, t]);
 
   const ruleKey = (rule: RuleCatalogEntryOut) => rule.rule_id ?? rule.table_fqn;
 
@@ -632,8 +639,8 @@ function DraftsPage() {
     fireAction(
       ruleKey(rule),
       () => revokeRule(rule.rule_id!),
-      "Submission revoked — moved back to draft",
-      "Failed to revoke submission",
+      t("rulesDrafts.toastRevoked"),
+      t("rulesDrafts.toastFailedRevoke"),
     );
 
   const [singleDeleteTarget, setSingleDeleteTarget] = useState<RuleCatalogEntryOut | null>(null);
@@ -649,8 +656,8 @@ function DraftsPage() {
     fireAction(
       ruleKey(rule),
       () => deleteRuleById(rule.rule_id!),
-      "Rule deleted",
-      "Failed to delete rule",
+      t("rulesDrafts.toastRuleDeleted"),
+      t("rulesDrafts.toastFailedDelete"),
     );
   };
 
@@ -658,41 +665,41 @@ function DraftsPage() {
     fireAction(
       ruleKey(rule),
       () => submitRuleForApproval(rule.rule_id!),
-      "Submitted for approval",
-      "Failed to submit for approval",
+      t("rulesDrafts.toastSubmitted"),
+      t("rulesDrafts.toastFailedSubmit"),
     );
 
   const handleApprove = (rule: RuleCatalogEntryOut) =>
     fireAction(
       ruleKey(rule),
       () => approveRule(rule.rule_id!),
-      "Rule approved — moved to Active rules",
-      "Failed to approve rule",
+      t("rulesDrafts.toastApproved"),
+      t("rulesDrafts.toastFailedApprove"),
     );
 
   const handleReject = (rule: RuleCatalogEntryOut) =>
     fireAction(
       ruleKey(rule),
       () => rejectRule(rule.rule_id!),
-      "Rule rejected",
-      "Failed to reject rule",
+      t("rulesDrafts.toastRejected"),
+      t("rulesDrafts.toastFailedReject"),
     );
 
   return (
     <div className="space-y-6">
       <div className="space-y-2">
-        <PageBreadcrumb items={[]} page="Drafts & Review" />
+        <PageBreadcrumb items={[]} page={t("rulesDrafts.breadcrumb")} />
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold tracking-tight">Drafts & review</h1>
+            <h1 className="text-2xl font-bold tracking-tight">{t("rulesDrafts.title")}</h1>
             <p className="text-muted-foreground">
-              Rule sets awaiting review, recently created drafts, and rejected sets.
+              {t("rulesDrafts.subtitle")}
             </p>
           </div>
           {canCreateRules && (
             <Button onClick={() => navigate({ to: "/rules/create" })} className="gap-2">
               <Plus className="h-4 w-4" />
-              Create rules
+              {t("rulesDrafts.createRules")}
             </Button>
           )}
         </div>
@@ -705,13 +712,13 @@ function DraftsPage() {
               <div>
                 <CardTitle className="flex items-center gap-2">
                   <ClipboardCheck className="h-5 w-5" />
-                  Rule sets
+                  {t("rulesDrafts.ruleSets")}
                 </CardTitle>
                 <CardDescription>
                   {isLoading
-                    ? "Loading..."
-                    : `${rules.length} rule${rules.length !== 1 ? "s" : ""}${
-                        rules.length !== allRules.length ? ` (filtered from ${allRules.length})` : ""
+                    ? t("common.loading")
+                    : `${t("rulesDrafts.rulesCount", { count: rules.length })}${
+                        rules.length !== allRules.length ? t("rulesDrafts.filteredFrom", { total: allRules.length }) : ""
                       }`}
                 </CardDescription>
               </div>
@@ -720,10 +727,10 @@ function DraftsPage() {
             <div className="flex items-center gap-2 flex-wrap">
               <Select value={catalogFilter} onValueChange={handleCatalogChange}>
                 <SelectTrigger className="w-[160px]">
-                  <SelectValue placeholder="All Catalogs" />
+                  <SelectValue placeholder={t("rulesDrafts.allCatalogs")} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All Catalogs</SelectItem>
+                  <SelectItem value="all">{t("rulesDrafts.allCatalogs")}</SelectItem>
                   {catalogs.map((cat) => (
                     <SelectItem key={cat} value={cat}>{cat}</SelectItem>
                   ))}
@@ -732,10 +739,10 @@ function DraftsPage() {
 
               <Select value={schemaFilter} onValueChange={setSchemaFilter} disabled={catalogFilter === "all"}>
                 <SelectTrigger className="w-[160px]">
-                  <SelectValue placeholder="All Schemas" />
+                  <SelectValue placeholder={t("rulesDrafts.allSchemas")} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All Schemas</SelectItem>
+                  <SelectItem value="all">{t("rulesDrafts.allSchemas")}</SelectItem>
                   {availableSchemas.map((sch) => (
                     <SelectItem key={sch} value={sch}>{sch}</SelectItem>
                   ))}
@@ -760,7 +767,7 @@ function DraftsPage() {
                 onClick={() => setMySubmissionsOnly((prev) => !prev)}
               >
                 <User className="h-3.5 w-3.5" />
-                My submissions
+                {t("rulesDrafts.mySubmissions")}
               </Button>
 
               <LabelFilter
@@ -782,7 +789,7 @@ function DraftsPage() {
                     setLabelFilter(new Set());
                   }}
                 >
-                  Clear filters
+                  {t("common.clearFilters")}
                 </Button>
               )}
             </div>
@@ -793,7 +800,7 @@ function DraftsPage() {
             <div className="flex items-center gap-3 mb-4 p-3 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-700">
               <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
               <span className="text-sm text-amber-800 dark:text-amber-300">
-                {orphanCount} rule{orphanCount !== 1 ? "s" : ""} missing an internal ID — actions are disabled until repaired.
+                {t("rulesDrafts.orphanWarning", { count: orphanCount })}
               </span>
               <Button
                 size="sm"
@@ -803,7 +810,7 @@ function DraftsPage() {
                 onClick={handleRepair}
               >
                 {repairing ? <Loader2 className="h-3 w-3 animate-spin" /> : <AlertTriangle className="h-3 w-3" />}
-                {repairing ? "Repairing..." : "Repair IDs"}
+                {repairing ? t("rulesDrafts.repairing") : t("rulesDrafts.repairIds")}
               </Button>
             </div>
           )}
@@ -815,7 +822,7 @@ function DraftsPage() {
           )}
 
           {error && (
-            <p className="text-destructive text-sm">Failed to load rules: {(error as Error).message}</p>
+            <p className="text-destructive text-sm">{t("rulesDrafts.failedLoadRules", { error: (error as Error).message })}</p>
           )}
 
           {!isLoading && !error && rules.length > 0 && (
@@ -823,38 +830,38 @@ function DraftsPage() {
               {selectedIds.size > 0 && (
                 <div className="flex items-center gap-2 mb-3 p-2.5 rounded-lg bg-muted/60 border">
                   <span className="text-sm font-medium mr-1">
-                    {selectedIds.size} selected
+                    {t("rulesDrafts.selectedCount", { count: selectedIds.size })}
                   </span>
                   {bulkBusy && <Loader2 className="h-4 w-4 animate-spin" />}
                   {!bulkBusy && (
                     <>
                       {canSubmitRules && selectedRules.some((r) => r.status === "draft") && (
                         <Button size="sm" variant="outline" className="gap-1 h-7 text-xs" onClick={handleBulkSubmit}>
-                          <SendHorizonal className="h-3 w-3" /> Submit
+                          <SendHorizonal className="h-3 w-3" /> {t("rulesDrafts.submit")}
                         </Button>
                       )}
                       {canApproveRules && selectedRules.some((r) => r.status === "pending_approval") && (
                         <Button size="sm" variant="outline" className="gap-1 h-7 text-xs text-green-600" onClick={handleBulkApprove}>
-                          <CheckCircle2 className="h-3 w-3" /> Approve
+                          <CheckCircle2 className="h-3 w-3" /> {t("rulesDrafts.approve")}
                         </Button>
                       )}
                       {canApproveRules && selectedRules.some((r) => r.status === "pending_approval") && (
                         <Button size="sm" variant="outline" className="gap-1 h-7 text-xs text-red-600" onClick={handleBulkReject}>
-                          <XCircle className="h-3 w-3" /> Reject
+                          <XCircle className="h-3 w-3" /> {t("rulesDrafts.reject")}
                         </Button>
                       )}
                       {selectedRules.some((r) => r.status === "pending_approval" || r.status === "rejected") && (canApproveRules || selectedRules.some((r) => r.status === "pending_approval" && (r.updated_by ?? r.created_by) === currentUserEmail)) && (
                         <Button size="sm" variant="outline" className="gap-1 h-7 text-xs text-amber-600" onClick={handleBulkRevoke}>
-                          <Undo2 className="h-3 w-3" /> Revoke
+                          <Undo2 className="h-3 w-3" /> {t("rulesDrafts.revoke")}
                         </Button>
                       )}
                       {canEditRules && (
                         <Button size="sm" variant="outline" className="gap-1 h-7 text-xs text-destructive" onClick={handleBulkDelete}>
-                          <Trash2 className="h-3 w-3" /> Delete
+                          <Trash2 className="h-3 w-3" /> {t("rulesDrafts.delete")}
                         </Button>
                       )}
                       <Button size="sm" variant="ghost" className="h-7 text-xs ml-auto" onClick={() => setSelectedIds(new Set())}>
-                        Clear selection
+                        {t("rulesDrafts.clearSelection")}
                       </Button>
                     </>
                   )}
@@ -868,26 +875,26 @@ function DraftsPage() {
                         <Checkbox
                           checked={selectableRules.length > 0 && selectedIds.size === selectableRules.length}
                           onCheckedChange={toggleSelectAll}
-                          aria-label="Select all"
+                          aria-label={t("rulesDrafts.selectAllAria")}
                         />
                       </th>
                       <th className="text-left p-3 font-medium whitespace-nowrap">
-                        <SortableHeader label="Table" sortKey="table" active={sortKey === "table"} direction={sortDir} onSort={handleSort} />
+                        <SortableHeader label={t("rulesDrafts.headerTable")} sortKey="table" active={sortKey === "table"} direction={sortDir} onSort={handleSort} />
                       </th>
                       <th className="text-left p-3 font-medium whitespace-nowrap">
-                        <SortableHeader label="Check" sortKey="check" active={sortKey === "check"} direction={sortDir} onSort={handleSort} />
+                        <SortableHeader label={t("rulesDrafts.headerCheck")} sortKey="check" active={sortKey === "check"} direction={sortDir} onSort={handleSort} />
                       </th>
-                      <th className="text-left p-3 font-medium whitespace-nowrap">Labels</th>
+                      <th className="text-left p-3 font-medium whitespace-nowrap">{t("rulesDrafts.headerLabels")}</th>
                       <th className="text-left p-3 font-medium whitespace-nowrap">
-                        <SortableHeader label="Status" sortKey="status" active={sortKey === "status"} direction={sortDir} onSort={handleSort} />
-                      </th>
-                      <th className="text-left p-3 font-medium whitespace-nowrap">
-                        <SortableHeader label="Created by" sortKey="created_by" active={sortKey === "created_by"} direction={sortDir} onSort={handleSort} />
+                        <SortableHeader label={t("rulesDrafts.headerStatus")} sortKey="status" active={sortKey === "status"} direction={sortDir} onSort={handleSort} />
                       </th>
                       <th className="text-left p-3 font-medium whitespace-nowrap">
-                        <SortableHeader label="Modified" sortKey="modified" active={sortKey === "modified"} direction={sortDir} onSort={handleSort} />
+                        <SortableHeader label={t("rulesDrafts.headerCreatedBy")} sortKey="created_by" active={sortKey === "created_by"} direction={sortDir} onSort={handleSort} />
                       </th>
-                      <th className="text-right p-3 font-medium whitespace-nowrap sticky right-0 bg-muted/50">Actions</th>
+                      <th className="text-left p-3 font-medium whitespace-nowrap">
+                        <SortableHeader label={t("rulesDrafts.headerModified")} sortKey="modified" active={sortKey === "modified"} direction={sortDir} onSort={handleSort} />
+                      </th>
+                      <th className="text-right p-3 font-medium whitespace-nowrap sticky right-0 bg-muted/50">{t("rulesDrafts.headerActions")}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -909,7 +916,7 @@ function DraftsPage() {
                             <Checkbox
                               checked={selectedIds.has(rule.rule_id)}
                               onCheckedChange={() => toggleSelect(rule.rule_id!)}
-                              aria-label={`Select ${rule.display_name || rule.table_fqn}`}
+                              aria-label={t("rulesDrafts.selectRowAria", { name: rule.display_name || rule.table_fqn })}
                             />
                           )}
                         </td>
@@ -929,7 +936,7 @@ function DraftsPage() {
                                     <AlertTriangle className="h-3.5 w-3.5 text-amber-500 shrink-0" />
                                   </TooltipTrigger>
                                   <TooltipContent>
-                                    <p>Duplicate: same check exists as {dupLabel ?? "another rule"}</p>
+                                    <p>{t("rulesDrafts.duplicateTooltip", { label: dupLabel ?? t("rulesDrafts.duplicateAnotherRule") })}</p>
                                   </TooltipContent>
                                 </Tooltip>
                               </TooltipProvider>
@@ -943,7 +950,7 @@ function DraftsPage() {
                             <LabelsBadges labels={details.labels} max={3} size="sm" />
                           )}
                         </td>
-                        <td className="p-3">{statusBadge(rule.status)}</td>
+                        <td className="p-3"><StatusBadge status={rule.status} /></td>
                         <td className="p-3 text-xs text-muted-foreground whitespace-nowrap" title={rule.updated_by ?? rule.created_by ?? ""}>
                           {rule.updated_by ?? rule.created_by ?? "—"}
                         </td>
@@ -961,11 +968,11 @@ function DraftsPage() {
                                   <TooltipTrigger asChild>
                                     <Badge variant="outline" className="gap-1 text-[10px] border-amber-400 text-amber-600">
                                       <AlertTriangle className="h-2.5 w-2.5" />
-                                      No ID
+                                      {t("rulesDrafts.noIdBadge")}
                                     </Badge>
                                   </TooltipTrigger>
                                   <TooltipContent>
-                                    <p>This rule has no internal ID. Click "Repair IDs" above to fix.</p>
+                                    <p>{t("rulesDrafts.noIdTooltip")}</p>
                                   </TooltipContent>
                                 </Tooltip>
                               </TooltipProvider>
@@ -983,14 +990,14 @@ function DraftsPage() {
                                         className="gap-1 h-7 text-xs"
                                       >
                                         <SendHorizonal className="h-3 w-3 shrink-0" />
-                                        {busy ? "Submitting..." : "Submit"}
+                                        {busy ? t("rulesDrafts.submitting") : t("rulesDrafts.submit")}
                                       </Button>
                                     </span>
                                   </TooltipTrigger>
                                   <TooltipContent>
                                     {isDuplicate
-                                      ? `Cannot submit: same check exists as ${dupLabel ?? "another rule"}`
-                                      : "Send this rule for review and approval"}
+                                      ? t("rulesDrafts.cannotSubmitDuplicate", { label: dupLabel ?? t("rulesDrafts.duplicateAnotherRule") })
+                                      : t("rulesDrafts.submitTooltip")}
                                   </TooltipContent>
                                 </Tooltip>
                               </TooltipProvider>
@@ -1005,7 +1012,7 @@ function DraftsPage() {
                                   className="gap-1 h-7 text-xs text-green-600"
                                 >
                                   <CheckCircle2 className="h-3 w-3" />
-                                  {busy ? "..." : "Approve"}
+                                  {busy ? t("rulesDrafts.ellipsis") : t("rulesDrafts.approveAction")}
                                 </Button>
                                 <Button
                                   size="sm"
@@ -1015,7 +1022,7 @@ function DraftsPage() {
                                   className="gap-1 h-7 text-xs text-red-600"
                                 >
                                   <XCircle className="h-3 w-3" />
-                                  {busy ? "..." : "Reject"}
+                                  {busy ? t("rulesDrafts.ellipsis") : t("rulesDrafts.rejectAction")}
                                 </Button>
                               </>
                             )}
@@ -1029,7 +1036,7 @@ function DraftsPage() {
                                 disabled={busy}
                                 onClick={() => handleRevoke(rule)}
                                 className="h-7 text-xs text-amber-600"
-                                title="Revoke submission and move back to draft"
+                                title={t("rulesDrafts.revokeTitle")}
                               >
                                 <Undo2 className="h-3 w-3" />
                               </Button>
@@ -1041,10 +1048,10 @@ function DraftsPage() {
                                 disabled={busy}
                                 onClick={() => handleRevoke(rule)}
                                 className="gap-1 h-7 text-xs text-amber-600"
-                                title="Move rejected rule back to draft"
+                                title={t("rulesDrafts.unrejectTitle")}
                               >
                                 <Undo2 className="h-3 w-3" />
-                                {busy ? "..." : "Unreject"}
+                                {busy ? t("rulesDrafts.ellipsis") : t("rulesDrafts.unreject")}
                               </Button>
                             )}
                             {(rule.status === "draft" || rule.status === "rejected") &&
@@ -1074,7 +1081,7 @@ function DraftsPage() {
                                         <FileEdit className="h-3 w-3" />
                                       </Button>
                                     </TooltipTrigger>
-                                    <TooltipContent>Edit this rule</TooltipContent>
+                                    <TooltipContent>{t("rulesDrafts.editRuleTooltip")}</TooltipContent>
                                   </Tooltip>
                                 </TooltipProvider>
                               )}
@@ -1096,7 +1103,7 @@ function DraftsPage() {
                                         </Button>
                                       </span>
                                     </TooltipTrigger>
-                                    <TooltipContent>Revoke this submission first to edit</TooltipContent>
+                                    <TooltipContent>{t("rulesDrafts.revokeFirstToEdit")}</TooltipContent>
                                   </Tooltip>
                                 </TooltipProvider>
                               )}
@@ -1120,23 +1127,23 @@ function DraftsPage() {
                             <div className="px-6 py-4 space-y-3 border-l-4 border-primary/20">
                               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs">
                                 <div>
-                                  <span className="text-muted-foreground font-medium block mb-0.5">Function</span>
+                                  <span className="text-muted-foreground font-medium block mb-0.5">{t("rulesDrafts.function")}</span>
                                   <span className="font-mono">{details.fn}</span>
                                 </div>
                                 <div>
-                                  <span className="text-muted-foreground font-medium block mb-0.5">Criticality</span>
+                                  <span className="text-muted-foreground font-medium block mb-0.5">{t("rulesDrafts.criticality")}</span>
                                   <Badge variant={details.criticality === "error" ? "destructive" : "secondary"} className="text-[10px]">
                                     {details.criticality}
                                   </Badge>
                                 </div>
                                 <div>
-                                  <span className="text-muted-foreground font-medium block mb-0.5">Source</span>
+                                  <span className="text-muted-foreground font-medium block mb-0.5">{t("rulesDrafts.source")}</span>
                                   <span>{rule.source ?? "—"}</span>
                                 </div>
                               </div>
                               {Object.keys(details.args).length > 0 && (
                                 <div>
-                                  <span className="text-muted-foreground font-medium text-xs block mb-1">Arguments</span>
+                                  <span className="text-muted-foreground font-medium text-xs block mb-1">{t("rulesDrafts.arguments")}</span>
                                   <div className="flex flex-wrap gap-2">
                                     {Object.entries(details.args).map(([k, v]) => (
                                       <span key={k} className="inline-flex items-center gap-1 bg-muted rounded px-2 py-0.5 text-xs font-mono">
@@ -1160,12 +1167,12 @@ function DraftsPage() {
                                     }
                                   >
                                     <ExternalLink className="h-3 w-3" />
-                                    Edit rule
+                                    {t("rulesDrafts.editRule")}
                                   </Button>
                                 )}
                                 {!isOwnRule(rule) && (
                                   <span className="text-[11px] text-muted-foreground italic">
-                                    Authored by {rule.created_by ?? "another user"} — only the author or an approver can edit, submit, or delete.
+                                    {t("rulesDrafts.authoredBy", { user: rule.created_by ?? t("rulesDrafts.anotherUser") })}
                                   </span>
                                 )}
                               </div>
@@ -1187,16 +1194,16 @@ function DraftsPage() {
               <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center mb-6">
                 <ClipboardCheck className="h-8 w-8 text-muted-foreground" />
               </div>
-              <h3 className="text-lg font-medium text-muted-foreground">No drafts or pending rules</h3>
+              <h3 className="text-lg font-medium text-muted-foreground">{t("rulesDrafts.noDraftsTitle")}</h3>
               <p className="text-muted-foreground/70 text-sm mt-1 max-w-md">
                 {canCreateRules
-                  ? "Newly created rules appear here for review before they become active."
-                  : "No rules are awaiting review."}
+                  ? t("rulesDrafts.noDraftsAuthor")
+                  : t("rulesDrafts.noDraftsViewer")}
               </p>
               {canCreateRules && (
                 <Button onClick={() => navigate({ to: "/rules/create" })} className="mt-4 gap-2">
                   <Plus className="h-4 w-4" />
-                  Create rules
+                  {t("rulesDrafts.createRules")}
                 </Button>
               )}
             </div>
@@ -1207,22 +1214,22 @@ function DraftsPage() {
       <AlertDialog open={!!singleDeleteTarget} onOpenChange={(open) => !open && setSingleDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete rule</AlertDialogTitle>
+            <AlertDialogTitle>{t("rulesDrafts.deleteTitle")}</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete this rule for{" "}
+              {t("rulesDrafts.deleteConfirmPrefix")}
               <span className="font-medium text-foreground">
                 {singleDeleteTarget?.display_name || singleDeleteTarget?.table_fqn}
               </span>
-              ? This action cannot be undone.
+              {t("rulesDrafts.deleteConfirmSuffix")}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
             <AlertDialogAction
               onClick={confirmSingleDelete}
               className="bg-destructive text-white hover:bg-destructive/90"
             >
-              Delete
+              {t("rulesDrafts.delete")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -1231,15 +1238,15 @@ function DraftsPage() {
       <AlertDialog open={bulkRevokeOpen} onOpenChange={setBulkRevokeOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Revoke {selectedRules.length} rule{selectedRules.length !== 1 ? "s" : ""}</AlertDialogTitle>
+            <AlertDialogTitle>{t("rulesDrafts.revokeBulkTitle", { count: selectedRules.length })}</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to revoke {selectedRules.length} selected rule{selectedRules.length !== 1 ? "s" : ""}? They will be moved back to draft status.
+              {t("rulesDrafts.revokeBulkBody", { count: selectedRules.length })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
             <AlertDialogAction onClick={confirmBulkRevoke}>
-              Revoke
+              {t("rulesDrafts.revoke")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -1248,17 +1255,17 @@ function DraftsPage() {
       <AlertDialog open={bulkSubmitOpen} onOpenChange={setBulkSubmitOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Submit {bulkSubmitEligible.length} rule{bulkSubmitEligible.length !== 1 ? "s" : ""} for approval</AlertDialogTitle>
+            <AlertDialogTitle>{t("rulesDrafts.submitBulkTitle", { count: bulkSubmitEligible.length })}</AlertDialogTitle>
             <AlertDialogDescription>
-              {bulkSubmitEligible.length} of {selectedRules.length} selected rule{selectedRules.length !== 1 ? "s" : ""} will be submitted for approval.
+              {t("rulesDrafts.submitBulkBody", { eligible: bulkSubmitEligible.length, selected: selectedRules.length })}
               {selectedRules.length - bulkSubmitEligible.length > 0 &&
-                ` ${selectedRules.length - bulkSubmitEligible.length} will be skipped (not eligible or duplicate).`}
+                t("rulesDrafts.submitBulkSkipped", { count: selectedRules.length - bulkSubmitEligible.length })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
             <AlertDialogAction onClick={confirmBulkSubmit}>
-              Submit
+              {t("rulesDrafts.submit")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -1267,15 +1274,15 @@ function DraftsPage() {
       <AlertDialog open={bulkApproveOpen} onOpenChange={setBulkApproveOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Approve {selectedRules.length} rule{selectedRules.length !== 1 ? "s" : ""}</AlertDialogTitle>
+            <AlertDialogTitle>{t("rulesDrafts.approveBulkTitle", { count: selectedRules.length })}</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to approve {selectedRules.length} selected rule{selectedRules.length !== 1 ? "s" : ""}? Approved rules will become active immediately.
+              {t("rulesDrafts.approveBulkBody", { count: selectedRules.length })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
             <AlertDialogAction onClick={confirmBulkApprove}>
-              Approve
+              {t("rulesDrafts.approve")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -1284,18 +1291,18 @@ function DraftsPage() {
       <AlertDialog open={bulkRejectOpen} onOpenChange={setBulkRejectOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Reject {selectedRules.length} rule{selectedRules.length !== 1 ? "s" : ""}</AlertDialogTitle>
+            <AlertDialogTitle>{t("rulesDrafts.rejectBulkTitle", { count: selectedRules.length })}</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to reject {selectedRules.length} selected rule{selectedRules.length !== 1 ? "s" : ""}? Rejected rules will be moved back to the drafts list.
+              {t("rulesDrafts.rejectBulkBody", { count: selectedRules.length })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
             <AlertDialogAction
               onClick={confirmBulkReject}
               className="bg-destructive text-white hover:bg-destructive/90"
             >
-              Reject
+              {t("rulesDrafts.reject")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -1304,18 +1311,18 @@ function DraftsPage() {
       <AlertDialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete {selectedRules.length} rule{selectedRules.length !== 1 ? "s" : ""}</AlertDialogTitle>
+            <AlertDialogTitle>{t("rulesDrafts.deleteBulkTitle", { count: selectedRules.length })}</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete {selectedRules.length} selected rule{selectedRules.length !== 1 ? "s" : ""}? This action cannot be undone.
+              {t("rulesDrafts.deleteBulkBody", { count: selectedRules.length })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
             <AlertDialogAction
               onClick={confirmBulkDelete}
               className="bg-destructive text-white hover:bg-destructive/90"
             >
-              Delete
+              {t("rulesDrafts.delete")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
