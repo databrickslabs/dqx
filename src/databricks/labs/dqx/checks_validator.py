@@ -14,7 +14,14 @@ logger = logging.getLogger(__name__)
 
 
 class ChecksValidationStatus(BaseModel):
-    """Class to represent the validation status."""
+    """Class to represent the validation status.
+
+    This model is used as a mutable accumulator: *add_error* and *add_errors* append to the
+    *errors* list in place.  Pydantic instantiates a fresh copy of the ``[]`` default for each
+    instance, so the list is never shared between instances created via the constructor.  The
+    only sharing risk is a shallow ``model_copy()`` (without ``deep=True``); this model is never
+    shallow-copied, but use ``model_copy(deep=True)`` if that ever changes.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -25,7 +32,7 @@ class ChecksValidationStatus(BaseModel):
         self.errors.append(error)
 
     def add_errors(self, errors: list[str]):
-        """Add an error to the validation status."""
+        """Add errors to the validation status."""
         self.errors.extend(errors)
 
     @property

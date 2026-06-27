@@ -2,6 +2,7 @@ import pytest
 from databricks.labs.dqx.config import (
     WorkspaceConfig,
     RunConfig,
+    BaseChecksStorageConfig,
     InstallationChecksStorageConfig,
     FileChecksStorageConfig,
     LakebaseChecksStorageConfig,
@@ -616,3 +617,22 @@ def test_base_storage_config_replace_returns_new_same_type_with_overrides(
     assert getattr(config, changed_field) == original_changed_value  # original untouched
     if preserved_field is not None:
         assert getattr(replaced, preserved_field) == preserved_value
+
+
+# ---------------------------------------------------------------------------
+# ValidationError → InvalidConfigError wrapping (Task 4)
+# ---------------------------------------------------------------------------
+
+
+def test_base_checks_storage_config_wrong_type_raises_invalid_config_error():
+    """Constructing a BaseChecksStorageConfig subclass with a wrong-typed field must raise
+    InvalidConfigError, not the raw pydantic_core.ValidationError.  DQX callers should not
+    need to import pydantic to handle construction errors from config models.
+    """
+
+    class _StrictConfig(BaseChecksStorageConfig):
+        location: str = "test"
+        count: int  # int field — "not_a_number" cannot be coerced
+
+    with pytest.raises(InvalidConfigError):
+        _StrictConfig(location="test", count="not_a_number")  # type: ignore[arg-type]

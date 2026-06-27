@@ -6,12 +6,13 @@ import logging
 from enum import Enum
 import functools as ft
 from collections.abc import Callable, Iterable
-from typing import Any, ClassVar
+from typing import Annotated, Any, ClassVar
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
+from pydantic.json_schema import WithJsonSchema
 from pyspark.sql import Column
 import pyspark.sql.functions as F
-from databricks.labs.dqx.utils import get_column_name_or_alias, normalize_bound_args
+from databricks.labs.dqx.utils import get_column_name_or_alias, normalize_bound_args, SparkColumn
 from databricks.labs.dqx.errors import InvalidCheckError, InvalidParameterError
 
 logger = logging.getLogger(__name__)
@@ -174,16 +175,22 @@ class DQRule(BaseModel, abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleCol
 
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
-    check_func: Callable
+    check_func: Annotated[Callable, WithJsonSchema({"type": "string"})]
     name: str = ""
     criticality: str = Criticality.ERROR.value
-    column: str | Column | None = None
-    columns: list[str | Column] | None = None  # some checks require list of columns instead of column
+    column: str | SparkColumn | None = None
+    columns: list[str | SparkColumn] | None = None  # some checks require list of columns instead of column
     filter: str | None = None
     check_func_args: list[Any] = []
     check_func_kwargs: dict[str, Any] = {}
     user_metadata: dict[str, str] | None = None
-    message_expr: str | Column | None = None
+    message_expr: str | SparkColumn | None = None
+
+    def __init__(self, **data: Any) -> None:
+        try:
+            super().__init__(**data)
+        except ValidationError as exc:
+            raise InvalidCheckError(str(exc)) from exc
 
     @model_validator(mode='before')
     @classmethod
@@ -208,11 +215,33 @@ class DQRule(BaseModel, abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleCol
                 raise InvalidCheckError("'columns' list contains a None element.")
         return data
 
+    @model_validator(mode='before')
+    @classmethod
+    def _populate_columns_from_kwargs(cls, data: Any) -> Any:
+        """Promote column/columns from check_func_kwargs into top-level fields when not set directly.
+
+        Running this as a mode='before' validator means the promoted values go through the same
+        SparkColumn/type coercion as if the caller had passed them explicitly, without needing
+        object.__setattr__ on the frozen model.
+
+        Args:
+            data: Raw input mapping before field coercion.
+
+        Returns:
+            Possibly updated input mapping with column/columns set from check_func_kwargs.
+        """
+        if not isinstance(data, dict):
+            return data
+        check_func_kwargs: dict = data.get("check_func_kwargs") or {}
+        if data.get("column") is None and "column" in check_func_kwargs:
+            data = {**data, "column": check_func_kwargs["column"]}
+        if data.get("columns") is None and "columns" in check_func_kwargs:
+            data = {**data, "columns": check_func_kwargs["columns"]}
+        return data
+
     @model_validator(mode='after')
     def _validate_and_initialize(self) -> 'DQRule':
         self._validate_rule_type(self.check_func)
-        self._initialize_column_if_missing()
-        self._initialize_columns_if_missing()
         self._validate_attributes()
         check_condition = self.get_check_condition()
         self._initialize_name_if_missing(check_condition)
@@ -258,10 +287,16 @@ class DQRule(BaseModel, abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleCol
         """Return a new rule instance with the given field overrides.
 
         Unlike *model_copy*, this rebuilds the instance through the constructor so validation
-        re-runs and cached derived state (e.g. the compiled *check* condition) is recomputed
-        from the updated fields rather than copied stale. *model_copy(update=...)* shallow-copies
-        the instance dict, which carries over already-cached *functools.cached_property* values and
-        would therefore ignore the updated fields.
+        re-runs and *functools.cached_property* derived state (e.g. *rule_fingerprint*,
+        *columns_as_string_expr*) is recomputed from the updated fields rather than copied stale.
+        *model_copy(update=...)* shallow-copies the instance dict, which carries over the already
+        cached values and would therefore ignore the updated fields.
+
+        Note that regular fields are copied verbatim and only re-validated, not re-derived: an
+        already-populated *name* is preserved as-is (it is not regenerated from a changed
+        *column*/*columns*), and a *column*/*columns* already promoted from *check_func_kwargs*
+        is not re-promoted. Current callers only override *check_func_kwargs*, for which this is
+        the intended behaviour.
 
         Args:
             **changes: Field values to override on the new instance.
@@ -321,20 +356,14 @@ class DQRule(BaseModel, abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleCol
             logger.warning("Message expressions of type 'Column' cannot be serialized; falling back to default message")
         return metadata
 
-    def _initialize_column_if_missing(self):
-        """Handle scenarios where 'column' is provided in check_func_kwargs but not as an attribute."""
-        if "column" in self.check_func_kwargs and self.column is None:
-            object.__setattr__(self, "column", self.check_func_kwargs.get("column"))
-
-    def _initialize_columns_if_missing(self):
-        """Handle scenarios where 'columns' is provided in check_func_kwargs but not as an attribute."""
-        if "columns" in self.check_func_kwargs and self.columns is None:
-            object.__setattr__(self, "columns", self.check_func_kwargs.get("columns"))
-
     def _initialize_name_if_missing(self, check_condition: Column):
         """If name not provided directly, update it based on the condition."""
         if not self.name:
             normalized_name = get_column_name_or_alias(check_condition, normalize=True)
+            # object.__setattr__ is Pydantic's recommended way to write a field on a frozen
+            # model from within a mode='after' validator.  This cannot be promoted to a
+            # mode='before' validator because the name is derived from the computed check
+            # condition, which requires the model to be fully initialised first.
             object.__setattr__(self, "name", normalized_name)
 
     def _validate_attributes(self) -> None:
@@ -495,15 +524,21 @@ class DQForEachColRule(BaseModel, DQRuleTypeMixin):
 
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
-    columns: list[str | Column | list[str | Column]]
-    check_func: Callable
+    columns: list[str | SparkColumn | list[str | SparkColumn]]
+    check_func: Annotated[Callable, WithJsonSchema({"type": "string"})]
     name: str = ""
     criticality: str = Criticality.ERROR.value
     filter: str | None = None
     check_func_args: list[Any] = []
     check_func_kwargs: dict[str, Any] = {}
     user_metadata: dict[str, str] | None = None
-    message_expr: str | Column | None = None
+    message_expr: str | SparkColumn | None = None
+
+    def __init__(self, **data: Any) -> None:
+        try:
+            super().__init__(**data)
+        except ValidationError as exc:
+            raise InvalidCheckError(str(exc)) from exc
 
     def get_rules(self) -> list[DQRule]:
         """Build a list of rules for a set of columns.

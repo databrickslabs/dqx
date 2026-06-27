@@ -2,7 +2,7 @@ from abc import ABC
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, ValidationError, model_validator
 
 from databricks.labs.dqx.checks_serializer import SerializerFactory
 from databricks.labs.dqx.errors import InvalidConfigError, InvalidParameterError
@@ -337,6 +337,12 @@ class BaseChecksStorageConfig(BaseModel, ABC):
 
     location: str
 
+    def __init__(self, **data: Any) -> None:
+        try:
+            super().__init__(**data)
+        except ValidationError as exc:
+            raise InvalidConfigError(str(exc)) from exc
+
     def replace(self, **changes: Any) -> "BaseChecksStorageConfig":
         """Return a new config instance with the given field overrides, fully re-validated.
 
@@ -368,6 +374,12 @@ class FileChecksStorageConfig(BaseChecksStorageConfig):
     @model_validator(mode='before')
     @classmethod
     def validate_location(cls, data: Any) -> Any:
+        # `cls is FileChecksStorageConfig` intentionally excludes subclasses.
+        # InstallationChecksStorageConfig uses diamond inheritance from this class and
+        # WorkspaceFileChecksStorageConfig; both validators are inherited and would fire
+        # for any subclass without the exact-class guard, giving confusing duplicate errors.
+        # InstallationChecksStorageConfig has its own validate_installation_location that
+        # covers the empty-location case for itself.
         if cls is FileChecksStorageConfig and isinstance(data, dict) and not data.get("location"):
             raise InvalidConfigError("The file path ('location' field) must not be empty or None.")
         return data
@@ -384,6 +396,7 @@ class WorkspaceFileChecksStorageConfig(BaseChecksStorageConfig):
     @model_validator(mode='before')
     @classmethod
     def validate_location(cls, data: Any) -> Any:
+        # See FileChecksStorageConfig.validate_location for why the exact-class guard is needed.
         if cls is WorkspaceFileChecksStorageConfig and isinstance(data, dict) and not data.get("location"):
             raise InvalidConfigError("The workspace file path ('location' field) must not be empty or None.")
         return data
@@ -413,6 +426,7 @@ class TableChecksStorageConfig(BaseChecksStorageConfig):
     @model_validator(mode='before')
     @classmethod
     def validate_location(cls, data: Any) -> Any:
+        # See FileChecksStorageConfig.validate_location for why the exact-class guard is needed.
         if cls is TableChecksStorageConfig and isinstance(data, dict) and not data.get("location"):
             raise InvalidConfigError("The table name ('location' field) must not be empty or None.")
         return data
