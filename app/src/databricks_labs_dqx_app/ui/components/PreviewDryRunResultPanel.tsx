@@ -5,6 +5,17 @@ import type { PreviewDryRunOut, PreviewRowResult } from "@/lib/api-custom";
 
 export function PreviewDryRunResultPanel({ result }: { result: PreviewDryRunOut }) {
   const { t } = useTranslation();
+
+  // sql_query checks: 0 rows returned = check passed (no violations found)
+  if (result.total_rows === 0) {
+    return (
+      <div className="flex items-center gap-2 text-sm text-green-600 dark:text-green-400">
+        <Check className="h-4 w-4" />
+        <span className="font-medium">{t("common.noViolationsFound", "No violations found — check passed")}</span>
+      </div>
+    );
+  }
+
   const passRate =
     result.total_rows > 0
       ? Math.round((result.pass_rows / result.total_rows) * 100)

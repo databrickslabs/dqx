@@ -401,6 +401,10 @@ async def run_dry_run_on_table(
     Unity Catalog permissions enforced), checks are applied synchronously, and
     per-row results are returned immediately. Results are not recorded in the
     validation history.
+
+    For ``sql_query`` checks the SQL is executed directly and the returned rows
+    are treated as violations (DQX convention: zero rows = pass). This avoids the
+    ``condition`` column requirement that ``apply_checks_by_metadata`` imposes.
     """
     import asyncio
 
@@ -408,6 +412,36 @@ async def run_dry_run_on_table(
         validation = validate_checks_fn(body.checks)
         if validation.has_errors:
             raise HTTPException(status_code=400, detail=f"Invalid checks: {validation.errors}")
+
+        sql_query = _extract_sql_query(body.checks)
+        if sql_query:
+            # sql_query checks follow the violation-rows convention: the query returns
+            # rows that violate the rule, and zero rows means the check passes.
+            # apply_checks_by_metadata() does not support this — it expects a boolean
+            # `condition` column — so we run the SQL directly instead.
+            def _run_sql() -> PreviewDryRunOut:
+                df = engine.spark.sql(f"SELECT * FROM ({sql_query}) LIMIT {body.sample_size}")
+                spark_rows = df.collect()
+                cols = df.columns
+                result_rows = [
+                    PreviewRowResult(
+                        row={col: row[col] for col in cols},
+                        errors=["violation row"],
+                        warnings=[],
+                    )
+                    for row in spark_rows
+                ]
+                n = len(result_rows)
+                return PreviewDryRunOut(
+                    table_fqn=body.table_fqn,
+                    total_rows=n,
+                    error_rows=n,
+                    warning_rows=0,
+                    pass_rows=0,
+                    rows=result_rows,
+                )
+
+            return await asyncio.to_thread(_run_sql)
 
         def _run() -> PreviewDryRunOut:
             df = engine.spark.table(body.table_fqn).limit(body.sample_size)
