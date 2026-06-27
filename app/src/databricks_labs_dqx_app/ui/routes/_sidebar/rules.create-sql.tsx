@@ -35,6 +35,7 @@ import {
   CircleStop,
   Copy,
   X,
+  Workflow,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -42,11 +43,12 @@ import {
   type SaveRulesIn,
   useGetRules,
   aiAssistedChecksGeneration,
-  useSubmitDryRun,
+  submitDryRun,
   useGetDryRunResults,
   type DryRunResultsOut,
 } from "@/lib/api";
-import { checkDuplicates, type CheckDuplicatesIn, cancelDryRun, getDryRunStatusCustom, useLabelDefinitions } from "@/lib/api-custom";
+import { checkDuplicates, type CheckDuplicatesIn, cancelDryRun, getDryRunStatusCustom, useLabelDefinitions, runDryRunOnTable, type PreviewDryRunOut } from "@/lib/api-custom";
+import { PreviewDryRunResultPanel } from "@/components/PreviewDryRunResultPanel";
 import { LabelsEditor } from "@/components/Labels";
 import { getUserMetadata } from "@/lib/format-utils";
 import { useJobPolling } from "@/hooks/use-job-polling";
@@ -341,7 +343,12 @@ function CreateSqlCheckPage() {
   const [dryRunRunId, setDryRunRunId] = useState<string | null>(null);
   const [dryRunViewFqn, setDryRunViewFqn] = useState<string | null>(null);
 
-  const submitDryRunMutation = useSubmitDryRun();
+  const [dryRunSubmitting, setDryRunSubmitting] = useState(false);
+
+  // Local (inline) dry-run state — runs synchronously via Databricks Connect
+  const [localDryRunCheckId, setLocalDryRunCheckId] = useState<string | null>(null);
+  const [localDryRunResult, setLocalDryRunResult] = useState<PreviewDryRunOut | null>(null);
+  const [localDryRunSubmitting, setLocalDryRunSubmitting] = useState(false);
 
   const dryRunResultsQuery = useGetDryRunResults(dryRunRunId ?? "", {
     query: { enabled: false },
@@ -377,7 +384,7 @@ function CreateSqlCheckPage() {
     },
   });
 
-  const isDryRunning = submitDryRunMutation.isPending || dryRunPolling.isPolling;
+  const isDryRunning = dryRunSubmitting || dryRunPolling.isPolling || localDryRunSubmitting;
 
   const justSavedRef = useRef(false);
 
@@ -424,16 +431,56 @@ function CreateSqlCheckPage() {
     const checkName = check.name.trim() || `dryrun_${Date.now()}`;
     const tableFqn = resolveTableFqn({ ...check, name: checkName });
     const checksPayload = [buildSqlCheckPayload({ ...check, name: checkName })];
+    setDryRunSubmitting(true);
     try {
-      const resp = await submitDryRunMutation.mutateAsync({
-        data: { table_fqn: tableFqn, checks: checksPayload, sample_size: 1000, skip_history: true },
-      });
+      const resp = await submitDryRun({ table_fqn: tableFqn, checks: checksPayload, sample_size: 1000, skip_history: true });
       setDryRunRunId(resp.data.run_id);
       setDryRunJobRunId(resp.data.job_run_id);
       setDryRunViewFqn(resp.data.view_fqn ?? null);
       toast.info(t("rulesCreateSql.dryRunSubmitted"));
     } catch (err) {
       setDryRunError(extractApiError(err, t));
+    } finally {
+      setDryRunSubmitting(false);
+    }
+  };
+
+  const handleLocalDryRun = async (check: SqlCheckDraft) => {
+    if (!check.query.trim()) {
+      toast.error(t("rulesCreateSql.enterSqlBeforeDryRun"));
+      return;
+    }
+    const queryErr = validateSqlQuery(check.query, t);
+    if (queryErr) { toast.error(queryErr); return; }
+    if (check.name.trim()) {
+      const nameErr = validateCheckName(check.name.trim(), t);
+      if (nameErr) { toast.error(nameErr); return; }
+    }
+    const tableFqn = resolveTableFqn(check);
+    if (tableFqn.startsWith(SQL_CHECK_PREFIX)) {
+      toast.error(t("rulesCreateSql.localDryRunNeedsTable", "Set a target table to run locally."));
+      return;
+    }
+
+    setLocalDryRunResult(null);
+    setDryRunError(null);
+    setLocalDryRunCheckId(check.id);
+    setDryRunCheckId(null);
+    setDryRunResult(null);
+    setLocalDryRunSubmitting(true);
+    try {
+      const checkName = check.name.trim() || `dryrun_local_${Date.now()}`;
+      const resp = await runDryRunOnTable({
+        table_fqn: tableFqn,
+        checks: [buildSqlCheckPayload({ ...check, name: checkName })],
+        sample_size: 1000,
+      });
+      setLocalDryRunResult(resp.data);
+      toast.success(t("rulesCreateSql.localDryRunComplete", "Local dry run complete."));
+    } catch (err) {
+      setDryRunError(extractApiError(err, t));
+    } finally {
+      setLocalDryRunSubmitting(false);
     }
   };
 
@@ -603,14 +650,32 @@ function CreateSqlCheckPage() {
                     size="sm"
                     className="h-7 gap-1.5 text-xs"
                     disabled={!check.query.trim() || isDryRunning || saving}
-                    onClick={() => handleDryRun(check)}
+                    onClick={() => handleLocalDryRun(check)}
                   >
-                    {isDryRunning && dryRunCheckId === check.id ? (
+                    {localDryRunSubmitting && localDryRunCheckId === check.id ? (
                       <Loader2 className="h-3 w-3 animate-spin" />
                     ) : (
                       <Play className="h-3 w-3" />
                     )}
-                    {isDryRunning && dryRunCheckId === check.id ? t("rulesCreateSql.running") : t("rulesCreateSql.dryRun")}
+                    {localDryRunSubmitting && localDryRunCheckId === check.id
+                      ? t("rulesCreateSql.running")
+                      : t("rulesCreateSql.runLocally", "Run Locally")}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 gap-1.5 text-xs"
+                    disabled={!check.query.trim() || isDryRunning || saving}
+                    onClick={() => handleDryRun(check)}
+                  >
+                    {(dryRunSubmitting || dryRunPolling.isPolling) && dryRunCheckId === check.id ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <Workflow className="h-3 w-3" />
+                    )}
+                    {(dryRunSubmitting || dryRunPolling.isPolling) && dryRunCheckId === check.id
+                      ? t("rulesCreateSql.running")
+                      : t("rulesCreateSql.runAsWorkflow", "Run As Workflow")}
                   </Button>
                   {checks.length > 1 && (
                     <Button
@@ -703,10 +768,25 @@ function CreateSqlCheckPage() {
                 definitions={labelDefinitions}
               />
 
-              {dryRunCheckId === check.id && (isDryRunning || dryRunResult || dryRunError) && (
+              {/* Local dry-run result */}
+              {localDryRunCheckId === check.id && (localDryRunSubmitting || localDryRunResult) && (
                 <div className="space-y-3">
                   <Separator />
-                  {isDryRunning && (
+                  {localDryRunSubmitting && (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      <span>{t("rulesCreateSql.runningLocally", "Running locally…")}</span>
+                    </div>
+                  )}
+                  {localDryRunResult && <PreviewDryRunResultPanel result={localDryRunResult} />}
+                </div>
+              )}
+
+              {/* Workflow dry-run result */}
+              {dryRunCheckId === check.id && ((dryRunSubmitting || dryRunPolling.isPolling) || dryRunResult || dryRunError) && (
+                <div className="space-y-3">
+                  <Separator />
+                  {(dryRunSubmitting || dryRunPolling.isPolling) && (
                     <div className="flex items-center gap-2 text-sm text-muted-foreground">
                       <Loader2 className="h-4 w-4 animate-spin" />
                       <span>
@@ -718,7 +798,7 @@ function CreateSqlCheckPage() {
                       </Button>
                     </div>
                   )}
-                  {dryRunError && !isDryRunning && (
+                  {dryRunError && !(dryRunSubmitting || dryRunPolling.isPolling) && (
                     <div className="rounded-md border border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950/40 p-3 space-y-2">
                       <div className="flex items-start justify-between gap-2">
                         <div className="flex items-start gap-2 text-sm font-medium text-red-700 dark:text-red-400">
@@ -729,7 +809,7 @@ function CreateSqlCheckPage() {
                           variant="ghost"
                           size="sm"
                           className="h-6 w-6 p-0 text-red-400 hover:text-red-600"
-                          onClick={() => { setDryRunError(null); setDryRunCheckId(null); }}
+                          onClick={() => { setDryRunError(null); setDryRunCheckId(null); setLocalDryRunCheckId(null); }}
                         >
                           <X className="h-3.5 w-3.5" />
                         </Button>
