@@ -5,22 +5,22 @@ bundle:
 variables:
   catalog_name:
     description: "Name of the catalog for DQX Studio storage"
-    default: "dqx"
+    default: "uc_cjp_qa"
   schema_name:
     description: "Name of the schema for DQX Studio storage"
-    default: "dqx_studio"
+    default: "dqx_app"
   tmp_schema_name:
     description: "Name of the schema for temporary views and intermediate processing"
-    default: "dqx_studio_tmp"
+    default: "dqx_app_tmp"
   admin_group:
     description: "Databricks workspace group name for bootstrap Admin access"
     default: "admins"
   app_name:
     description: "Name of the deployed Databricks App (must be unique per workspace)"
-    default: "dqx-studio"
+    default: "dqx-app"
   sql_warehouse_name:
     description: "Name of the deployed SQL warehouse for DQX Studio queries (must be unique per workspace)"
-    default: "dqx-studio-sql-warehouse"
+    default: "dqx-app-sql-warehouse"
   sql_warehouse_id:
     description: >
       ID of the SQL warehouse the app queries. Every target MUST set
@@ -153,7 +153,18 @@ artifacts:
       uv build tasks/ --wheel --out-dir .build/tasks/ &&
       dqx_whl=$(ls -1 .build/databricks_labs_dqx-*.whl | head -1 | xargs basename) &&
       echo "$dqx_whl" | cat - .build/requirements.txt > .build/requirements.txt.tmp &&
-      mv .build/requirements.txt.tmp .build/requirements.txt
+      mv .build/requirements.txt.tmp .build/requirements.txt &&
+      python3 -c "import pathlib; lines=pathlib.Path('.build/requirements.txt').read_text().splitlines(); pathlib.Path('requirements.txt').write_text('\n'.join(f'.build/{l}' for l in lines if l.strip()) + '\n')" &&
+      python3 scripts/write_app_yml.py
+      DATABRICKS_WAREHOUSE_ID=${var.sql_warehouse_id}
+      DQX_CATALOG=${var.catalog_name}
+      DQX_SCHEMA=${var.schema_name}
+      DQX_JOB_ID_FROM=dqx-task-runner-job
+      DQX_TMP_SCHEMA=${var.tmp_schema_name}
+      DQX_ADMIN_GROUP=${var.admin_group}
+      DQX_WHEELS_VOLUME=/Volumes/${var.catalog_name}/${var.schema_name}/${var.wheels_volume_name}
+      DQX_LAKEBASE_INSTANCE_NAME=${var.lakebase_instance_name}
+      DQX_LAKEBASE_DATABASE_NAME=${var.lakebase_database_name}
 
 resources:
   apps:
@@ -254,8 +265,6 @@ resources:
       catalog_name: ${var.catalog_name}
       name: ${var.tmp_schema_name}
       comment: "DQX Studio temp schema for per-user dry-run views"
-      lifecycle:
-        prevent_destroy: true
 
   volumes:
     wheels:
@@ -366,15 +375,38 @@ targets:
   #           - group_name: "users"
   #             level: "CAN_USE"
   #
-  # example-target-mode-b:
-  #   workspace:
-  #     profile: <your-profile>
-  #   variables:
-  #     catalog_name: <your-catalog>
-  #     dqx_service_principal_application_id: <your-sp-application-id>
-  #     sql_warehouse_id: "<existing-warehouse-id>"   # just the ID
-  #   # No resources.sql_warehouses block. post_deploy_grants.sh grants
-  #   # CAN_USE to app SP / job SP / users via the warehouses API.
+  cjp-qa-mode-b:
+    workspace:
+      profile: CJPQA-APP
+    variables:
+      catalog_name: uc_cjp_qa
+      dqx_service_principal_application_id: "818ab164-e764-4bd0-bf5d-2e7726a92fe5"
+      sql_warehouse_id: "13df5a7f4c61072a"   # just the ID
+      schema_name: "dqx_app"
+      tmp_schema_name: "dqx_app_tmp"
+      app_name: "dqx-app"
+      admin_group: "admins"
+      wheels_volume_name: "wheels"
+    resources:
+      apps:
+        dqx-studio:
+          # The app's ``resources`` list is wholesale-replaced on target
+          # override, so all three entries (warehouse, job, lakebase) must
+          # be repeated even though only the warehouse changes.
+          resources:
+            - name: "dqx-sql-warehouse"
+              description: "Shared workspace SQL warehouse (not bundle-managed)"
+              sql_warehouse:
+                id: ${var.sql_warehouse_id}
+                permission: "CAN_USE"
+            - name: "dqx-task-runner-job"
+              job:
+                id: ${resources.jobs.dqx_task_runner.id}
+                permission: "CAN_MANAGE"
+      
+    # No resources.sql_warehouses block. post_deploy_grants.sh grants
+    # CAN_USE to app SP / job SP / users via the warehouses API.
+
 
   # Mode B: reuses the pre-existing ``dqx-studio-sql-warehouse``
   # (X-Small serverless) and the pre-existing
