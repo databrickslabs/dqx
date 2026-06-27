@@ -41,6 +41,8 @@ from databricks.labs.dqx.rule import (
     CHECK_FUNC_REGISTRY,
     register_rule,
     DQDatasetRule,
+    requires_dbr_version,
+    CHECK_FUNC_DBR_VERSION_REQUIREMENT_ATTRIBUTE,
 )
 from databricks.labs.dqx.checks_serializer import (
     ChecksSerializer,
@@ -1988,3 +1990,39 @@ def test_dq_dataset_rule_rule_fingerprint():
     fingerprint = rule.rule_fingerprint
     assert len(fingerprint) == 64
     assert all(char in "0123456789abcdef" for char in fingerprint)
+
+
+def test_requires_dbr_version_sets_attribute():
+    @requires_dbr_version(15)
+    def my_check():
+        pass
+
+    assert getattr(my_check, CHECK_FUNC_DBR_VERSION_REQUIREMENT_ATTRIBUTE) == 15
+
+
+def test_requires_dbr_version_stacked_with_register_rule():
+    @requires_dbr_version(14)
+    @register_rule("row")
+    def my_versioned_check():
+        pass
+
+    assert getattr(my_versioned_check, CHECK_FUNC_DBR_VERSION_REQUIREMENT_ATTRIBUTE) == 14
+    assert CHECK_FUNC_REGISTRY.get("my_versioned_check") == "row"
+
+
+def test_requires_register_rule_stacked_with_dbr_version_stacked():
+    @register_rule("row")
+    @requires_dbr_version(14)
+    def my_versioned_check():
+        pass
+
+    assert getattr(my_versioned_check, CHECK_FUNC_DBR_VERSION_REQUIREMENT_ATTRIBUTE) == 14
+    assert CHECK_FUNC_REGISTRY.get("my_versioned_check") == "row"
+
+
+def test_requires_dbr_version_returns_same_function():
+    def my_check():
+        pass
+
+    decorated = requires_dbr_version(12)(my_check)
+    assert decorated is my_check

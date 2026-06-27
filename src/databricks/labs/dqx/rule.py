@@ -29,11 +29,15 @@ __all__ = [
     "SingleColumnMixin",
     "normalize_bound_args",
     "register_for_original_columns_preselection",
+    "CHECK_FUNC_DBR_VERSION_REQUIREMENT_ATTRIBUTE",
     "register_rule",
+    "requires_dbr_version",
 ]
 
 CHECK_FUNC_REGISTRY: dict[str, str] = {}
 CHECK_FUNC_REGISTRY_ORIGINAL_COLUMNS_PRESELECTION: set[str] = set()
+
+CHECK_FUNC_DBR_VERSION_REQUIREMENT_ATTRIBUTE = "dqx_requires_dbr_major_version"
 
 
 def register_rule(rule_type: str) -> Callable:
@@ -47,6 +51,38 @@ def register_rule(rule_type: str) -> Callable:
 def register_for_original_columns_preselection() -> Callable:
     def wrapper(func: Callable) -> Callable:
         CHECK_FUNC_REGISTRY_ORIGINAL_COLUMNS_PRESELECTION.add(func.__name__)
+        return func
+
+    return wrapper
+
+
+def requires_dbr_version(major_version: int) -> Callable:
+    """Annotates a check function with a minimum Databricks Runtime major version requirement.
+
+    Sets the *dqx_requires_dbr_major_version* attribute on the decorated function. The engine
+    reads this attribute before execution and raises an error if the current Databricks Runtime
+    major version is lower than the required one, failing the entire run.
+
+    Example usage:
+
+    ```python
+    @requires_dbr_version(15)
+    @register_rule("row")
+    def my_check(column: str) -> Column:
+        ...
+    ```
+
+    Args:
+        major_version: The minimum required Databricks Runtime major version (e.g., 15).
+
+    Returns:
+        A decorator that annotates the function with the DBR version requirement.
+    """
+    if major_version < 1:
+        raise InvalidParameterError(f"Major version must be greater than or equal to 1. Given {major_version}.")
+
+    def wrapper(func: Callable) -> Callable:
+        setattr(func, CHECK_FUNC_DBR_VERSION_REQUIREMENT_ATTRIBUTE, major_version)
         return func
 
     return wrapper
