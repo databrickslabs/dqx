@@ -1,5 +1,3 @@
-import sys
-
 import pytest
 from pyspark.sql import Column
 import pyspark.sql.functions as F
@@ -10,16 +8,16 @@ from databricks.labs.dqx.errors import InvalidCheckError
 from databricks.labs.dqx.rule import DQRowRule, register_rule, requires_dbr_version
 
 
-@requires_dbr_version(1)
+@requires_dbr_version("1.0")
 @register_rule("row")
 def _check_requires_dbr_v1(column: str) -> Column:
-    return make_condition(F.col(column).isNull(), f"'{column}' is null", f"{column}_is_null")
+    return make_condition(F.col(column).isNull(), f"\'{column}\' is null", f"{column}_is_null")
 
 
-@requires_dbr_version(sys.maxsize)
+@requires_dbr_version("999.0")
 @register_rule("row")
 def _check_requires_dbr_max(column: str) -> Column:
-    return make_condition(F.col(column).isNull(), f"'{column}' is null", f"{column}_is_null")
+    return make_condition(F.col(column).isNull(), f"\'{column}\' is null", f"{column}_is_null")
 
 
 def test_apply_checks_passes_when_dbr_version_requirement_satisfied(ws, spark):

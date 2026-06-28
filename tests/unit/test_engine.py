@@ -3,7 +3,7 @@ from unittest.mock import create_autospec, Mock
 
 import pytest
 import pyspark.sql.functions as F
-from pyspark.sql import SparkSession
+from pyspark.sql import Column, SparkSession
 
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import DatabricksError
@@ -19,9 +19,10 @@ from databricks.labs.dqx.checks_storage import (
 from databricks.labs.dqx.config import InputConfig, OutputConfig
 from databricks.labs.dqx.base import DQEngineBase
 from databricks.labs.dqx.engine import DQEngine, DQEngineCore
-from databricks.labs.dqx.engine import InvalidParameterError
+from databricks.labs.dqx.engine import InvalidCheckError, InvalidParameterError
 from databricks.labs.dqx.metrics_observer import DQMetricsObserver
-from databricks.labs.dqx.rule import DQDatasetRule
+from databricks.labs.dqx.check_funcs import make_condition
+from databricks.labs.dqx.rule import DQDatasetRule, DQRowRule, register_rule, requires_dbr_version
 
 
 def test_engine_creation():
@@ -363,3 +364,58 @@ def test_apply_checks_by_metadata_and_save_in_table_raises_when_no_destination_c
             input_config=InputConfig(location="catalog.schema.input"),
             checks=[],
         )
+
+
+# --- DBR version validation error path tests ---
+
+
+@requires_dbr_version("15.0")
+@register_rule("row")
+def _check_requires_dbr_15(column: str) -> Column:
+    return make_condition(F.col(column).isNull(), f"'{column}' is null", f"{column}_is_null")
+
+
+def _engine_with_sql_side_effect(side_effect):
+    ws = create_autospec(WorkspaceClient)
+    spark = create_autospec(SparkSession)
+    spark.sql.side_effect = side_effect
+    return DQEngineCore(workspace_client=ws, spark=spark)
+
+
+def _engine_returning_dbr_version(version_str):
+    ws = create_autospec(WorkspaceClient)
+    spark = create_autospec(SparkSession)
+    row = Mock()
+    row.__getitem__ = Mock(return_value=version_str)
+    spark.sql.return_value.collect.return_value = [row]
+    return DQEngineCore(workspace_client=ws, spark=spark)
+
+
+def test_apply_checks_raises_invalid_check_error_when_spark_sql_fails():
+    from pyspark.sql.utils import AnalysisException
+    engine = _engine_with_sql_side_effect(AnalysisException("current_version() not found"))
+    df = Mock()
+    df.columns = ["a"]
+    with pytest.raises(InvalidCheckError, match="can only run on Databricks Runtime"):
+        engine.apply_checks(df, [DQRowRule(check_func=_check_requires_dbr_15, column="a")])
+
+
+def test_apply_checks_raises_invalid_check_error_when_dbr_version_is_null():
+    ws = create_autospec(WorkspaceClient)
+    spark = create_autospec(SparkSession)
+    row = Mock()
+    row.__getitem__ = Mock(return_value=None)
+    spark.sql.return_value.collect.return_value = [row]
+    engine = DQEngineCore(workspace_client=ws, spark=spark)
+    df = Mock()
+    df.columns = ["a"]
+    with pytest.raises(InvalidCheckError, match="returned null"):
+        engine.apply_checks(df, [DQRowRule(check_func=_check_requires_dbr_15, column="a")])
+
+
+def test_apply_checks_raises_invalid_check_error_when_dbr_version_unparseable():
+    engine = _engine_returning_dbr_version("custom-build")
+    df = Mock()
+    df.columns = ["a"]
+    with pytest.raises(InvalidCheckError, match="Cannot parse Databricks Runtime version"):
+        engine.apply_checks(df, [DQRowRule(check_func=_check_requires_dbr_15, column="a")])

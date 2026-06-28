@@ -41,7 +41,7 @@ from databricks.labs.dqx.manager import DQRuleManager
 from databricks.labs.dqx.reporting_columns import ColumnArguments, DefaultColumnNames, merge_info_columns
 from databricks.labs.dqx.rule import (
     Criticality,
-    CHECK_FUNC_DBR_VERSION_REQUIREMENT_ATTRIBUTE,
+    CHECK_FUNC_MIN_DBR_VERSION_ATTRIBUTE,
     DQRule,
     CHECK_FUNC_REGISTRY_ORIGINAL_COLUMNS_PRESELECTION,
 )
@@ -396,7 +396,7 @@ class DQEngineCore(DQEngineCoreBase):
         return all(isinstance(check, DQRule) for check in checks)
 
     def _validate_dbr_version_requirements(self, checks: list[DQRule]) -> None:
-        """Raise InvalidParameterError if the current DBR major version is below the highest version required by any check.
+        """Raise InvalidCheckError if the current DBR major version is below the highest version required by any check.
 
         The requirement is declared by decorating a check function with *requires_dbr_version(major_version)*.
         The current DBR version is resolved via *current_version().dbr_version* Spark SQL function.
@@ -410,12 +410,14 @@ class DQEngineCore(DQEngineCoreBase):
                 or if the DBR version cannot be resolved (non-Databricks environment or null result).
         """
         versioned = {
-            c.check_func.__name__: getattr(c.check_func, CHECK_FUNC_DBR_VERSION_REQUIREMENT_ATTRIBUTE)
+            c.check_func.__name__: getattr(c.check_func, CHECK_FUNC_MIN_DBR_VERSION_ATTRIBUTE)
             for c in checks
-            if getattr(c.check_func, CHECK_FUNC_DBR_VERSION_REQUIREMENT_ATTRIBUTE, None) is not None
+            if getattr(c.check_func, CHECK_FUNC_MIN_DBR_VERSION_ATTRIBUTE, None) is not None
         }
+
         if not versioned:
             return
+
         required = max(versioned.values())
         try:
             rows = self.spark.sql("select current_version().dbr_version as dbr_version").collect()
@@ -425,17 +427,25 @@ class DQEngineCore(DQEngineCoreBase):
                 "Check functions with a DBR version requirement can only run on Databricks Runtime. "
                 f"Failed to resolve the current DBR version: {e}"
             ) from e
+
         if dbr_version_str is None:
             raise InvalidCheckError(
                 "Check functions with a DBR version requirement can only run on Databricks Runtime. "
                 "current_version().dbr_version returned null."
             )
-        major = int(dbr_version_str.split(".")[0])
-        if major < required:
+
+        parts = dbr_version_str.split(".")
+        try:
+            current = (int(parts[0]), int(parts[1]) if len(parts) > 1 else 0)
+        except (ValueError, IndexError) as e:
+            raise InvalidCheckError(f"Cannot parse Databricks Runtime version: '{dbr_version_str}'.") from e
+
+        if current < required:
             check_names = ", ".join(sorted(versioned))
+            required_str = f"{required[0]}.{required[1]}"
             raise InvalidCheckError(
-                f"Check functions [{check_names}] require Databricks Runtime >= {required}, "
-                f"but the current version is {dbr_version_str} (major: {major})."
+                f"Check functions [{check_names}] require Databricks Runtime >= {required_str}, "
+                f"but the current version is {dbr_version_str}."
             )
 
     def _preselect_original_columns(self, df: DataFrame, check: DQRule) -> DQRule:
