@@ -476,8 +476,10 @@ class TestUpsertWithAuditSqlShape:
        the DO UPDATE SET clause so the original creator/timestamp
        survive after the first INSERT.
     2. ``increment_on_update`` rewrites the named column's DO UPDATE
-       expression to ``col = col + 1`` (bare reference, which Postgres
-       resolves to the existing row inside ON CONFLICT DO UPDATE).
+       expression to ``col = <alias>.col + 1``, where ``<alias>`` is the
+       conflict target aliased via ``INSERT INTO <fqn> AS <alias>`` so the
+       reference resolves to the existing row (not EXCLUDED) without a
+       schema-qualified reference that Postgres would reject.
 
     These tests pin the rendered SQL so a regression to the old
     "include every value_cols in DO UPDATE" shape would fail loudly.
@@ -518,10 +520,12 @@ class TestUpsertWithAuditSqlShape:
         assert '"created_by"' not in set_clause
         assert '"created_at"' not in set_clause
 
-    def test_increment_on_update_uses_table_qualified_self_reference(self) -> None:
-        """On Postgres, ``col + 1`` inside DO UPDATE must qualify with the
-        table identifier — Lakebase rejects the bare form as ambiguous
-        when the same column also appears in ``EXCLUDED``."""
+    def test_increment_on_update_uses_aliased_self_reference(self) -> None:
+        """On Postgres, ``col + 1`` inside DO UPDATE must reference the
+        aliased conflict target — Lakebase rejects the bare form as
+        ambiguous when the same column also appears in ``EXCLUDED``, and
+        rejects a schema-qualified reference outright as an invalid
+        FROM-clause entry."""
         executor = _make_pg_executor()
         captured = self._capture(executor)
 
@@ -539,17 +543,24 @@ class TestUpsertWithAuditSqlShape:
         )
 
         sql = captured[0]
+        # The conflict target is aliased so the increment can address the
+        # existing row unambiguously.
+        assert 'INSERT INTO "dq"."dq_schedule_config" AS "dqx_upsert_target"' in sql
         # INSERT VALUES include the literal initial 1 (not the increment expr).
         assert "VALUES ('main', '{\"k\":\"v\"}', 1, 'alice@x', CURRENT_TIMESTAMP)" in sql
-        # DO UPDATE qualifies the self-reference with the table so the
-        # planner picks the existing row (not EXCLUDED).
-        assert '"version" = "dq"."dq_schedule_config"."version" + 1' in sql
+        # DO UPDATE references the alias so the planner picks the existing
+        # row (not EXCLUDED).
+        assert '"version" = "dqx_upsert_target"."version" + 1' in sql
         # And specifically NOT the EXCLUDED form (which would set it to
         # the proposed 1 every time, defeating the increment).
         assert '"version" = EXCLUDED."version"' not in sql
         # Regression guard: the bare-column form is what triggered the
         # Lakebase "column reference is ambiguous" error in production.
         assert '"version" = "version" + 1' not in sql
+        # Regression guard: a schema-qualified reference is an invalid
+        # existing-row reference inside DO UPDATE SET and would error on
+        # the FIRST save, not just on conflict.
+        assert '"version" = "dq"."dq_schedule_config"."version" + 1' not in sql
 
     def test_combined_preserve_created_and_increment_for_schedule_config_shape(self) -> None:
         """The exact call ``ScheduleConfigService.save`` makes — locked
@@ -582,7 +593,7 @@ class TestUpsertWithAuditSqlShape:
         assert '"config_json"' in set_clause
         assert '"updated_by"' in set_clause
         assert '"updated_at"' in set_clause
-        assert '"version" = "dq"."dq_schedule_config"."version" + 1' in set_clause
+        assert '"version" = "dqx_upsert_target"."version" + 1' in set_clause
 
     def test_all_value_cols_are_created_renders_do_nothing(self) -> None:
         """Edge case: insert-only audit row with no updatable cols."""
@@ -632,9 +643,10 @@ class TestUpsertWithAuditSqlShape:
         )
         sql = captured[0]
         # Increment must use quoted identifier on the LHS and the
-        # table-qualified form on the RHS so EXCLUDED.<col> can't
-        # shadow the existing row.
-        assert '"order" = t."order" + 1' in sql
+        # alias-qualified form on the RHS so EXCLUDED.<col> can't
+        # shadow the existing row. The bare ``t`` target is aliased.
+        assert 'INSERT INTO t AS "dqx_upsert_target"' in sql
+        assert '"order" = "dqx_upsert_target"."order" + 1' in sql
 
 
 # ===========================================================================

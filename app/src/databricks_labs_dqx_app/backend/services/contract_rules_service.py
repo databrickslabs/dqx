@@ -76,6 +76,14 @@ class _TextExpectation:
 class ContractRulesService:
     """Generate DQX rules from a raw ODCS contract YAML/JSON string."""
 
+    # Upper bound on how many ``type: text`` expectations we route to the
+    # LLM in a single contract import. Each expectation costs one
+    # ChatDatabricks call, so without a cap an author-supplied contract with
+    # thousands of text quality entries amplifies into thousands of LLM
+    # invocations (cost/latency DoS — OWASP LLM04, see AGENTS.md). Beyond
+    # this limit we process the first N and warn the caller.
+    _MAX_TEXT_EXPECTATIONS: ClassVar[int] = 100
+
     def __init__(
         self,
         sp_ws: WorkspaceClient,
@@ -217,6 +225,19 @@ class ContractRulesService:
 
         rules: list[dict[str, Any]] = []
         warnings: list[str] = []
+
+        # Bound LLM fan-out before issuing any calls: one ChatDatabricks
+        # invocation per expectation, so cap the count to keep cost/latency
+        # bounded for adversarially large contracts (OWASP LLM04).
+        if len(expectations) > self._MAX_TEXT_EXPECTATIONS:
+            warnings.append(
+                f"Contract has {len(expectations)} natural-language expectations; only the "
+                f"first {self._MAX_TEXT_EXPECTATIONS} were processed to bound LLM cost. "
+                "Reduce the number of text quality expectations or split the contract to "
+                "process the rest."
+            )
+            expectations = expectations[: self._MAX_TEXT_EXPECTATIONS]
+
         for exp in expectations:
             try:
                 generated = self._ai_service.generate_from_schema_info(

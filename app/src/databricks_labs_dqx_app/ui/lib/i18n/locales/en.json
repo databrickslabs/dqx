@@ -1298,7 +1298,15 @@
     "canceledBadge": "Canceled",
     "pendingBadge": "Pending",
     "canceledByPrefix": "by ",
-    "canceledByTitle": "Canceled by {{user}}"
+    "canceledByTitle": "Canceled by {{user}}",
+    "reviewHeader": "Review",
+    "reviewHeaderTitle": "Per-run review status set by reviewers on the expanded row",
+    "reviewAuto": "auto",
+    "reviewAutoTitle": "Default — not yet reviewed",
+    "reviewFilterButton": "Review",
+    "reviewFilterTitle": "Filter by review status",
+    "reviewNoStatuses": "No statuses configured yet. Define them in Configuration.",
+    "reviewClearSelection": "Clear selection"
   },
   "aiAssistant": {
     "title": "AI Rules Assistant",

@@ -495,7 +495,10 @@ export interface GenerateChecksOut {
  * Request body for generating DQX rules from an ODCS v3.x contract.
  */
 export interface GenerateRulesFromContractIn {
-  /** Raw ODCS contract YAML or JSON content */
+  /**
+   * Raw ODCS contract YAML or JSON content
+   * @maxLength 1048576
+   */
   contract_text: string;
   /** Generate rules from schema property constraints (required, pattern, min/max, etc.) */
   generate_predefined_rules?: boolean;

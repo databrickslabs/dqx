@@ -62,6 +62,7 @@ import { ArrowDown, ArrowUp, ArrowUpDown, CircleStop, ShieldAlert } from "lucide
 import { parseFqn, formatDateTime as formatDate, getUserMetadata, labelToken } from "@/lib/format-utils";
 import { LabelFilter, labelsMatchFilter } from "@/components/Labels";
 import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 
 export const Route = createFileRoute("/_sidebar/runs-history")({
   component: RunsHistoryPage,
@@ -117,7 +118,11 @@ function StatusBadge({ status }: { status: string | null }) {
 // Renders the review-status badge for a row. Falls back to a neutral
 // placeholder when the listing endpoint hasn't yet populated the field
 // (transient pre-bulk-fetch state) so the column never collapses.
-function reviewStatusCell(run: ValidationRunSummaryOut, catalogueColor: Map<string, string>) {
+function reviewStatusCell(
+  run: ValidationRunSummaryOut,
+  catalogueColor: Map<string, string>,
+  t: TFunction,
+) {
   const value = run.review_status;
   if (!value) {
     return <span className="text-xs text-muted-foreground">—</span>;
@@ -138,9 +143,9 @@ function reviewStatusCell(run: ValidationRunSummaryOut, catalogueColor: Map<stri
       {run.review_status_is_default && (
         <span
           className="text-[9px] uppercase tracking-wide text-muted-foreground"
-          title="Default — not yet reviewed"
+          title={t("runsHistory.reviewAutoTitle")}
         >
-          auto
+          {t("runsHistory.reviewAuto")}
         </span>
       )}
     </div>
@@ -160,6 +165,7 @@ function ReviewStatusFilter({
   selected: Set<string>;
   onChange: (next: Set<string>) => void;
 }) {
+  const { t } = useTranslation();
   const toggle = (value: string) => {
     const next = new Set(selected);
     if (next.has(value)) next.delete(value);
@@ -174,10 +180,10 @@ function ReviewStatusFilter({
           variant={selected.size > 0 ? "default" : "outline"}
           size="sm"
           className="h-9 gap-1.5 text-xs"
-          title="Filter by review status"
+          title={t("runsHistory.reviewFilterTitle")}
         >
           <ShieldCheck className="h-3.5 w-3.5" />
-          Review
+          {t("runsHistory.reviewFilterButton")}
           {selected.size > 0 && (
             <Badge variant="secondary" className="ml-1 text-[10px] h-4 px-1">
               {selected.size}
@@ -189,7 +195,7 @@ function ReviewStatusFilter({
       <PopoverContent align="start" className="w-72 p-1">
         {available.length === 0 && (
           <div className="px-2 py-1.5 text-[11px] text-muted-foreground">
-            No statuses configured yet. Define them in Configuration.
+            {t("runsHistory.reviewNoStatuses")}
           </div>
         )}
         <div className="space-y-0.5 max-h-64 overflow-y-auto">
@@ -249,7 +255,7 @@ function ReviewStatusFilter({
               onClick={() => onChange(new Set())}
               className="w-full text-left px-2 py-1.5 text-[11px] text-muted-foreground hover:text-foreground"
             >
-              Clear selection
+              {t("runsHistory.reviewClearSelection")}
             </button>
           </div>
         )}
@@ -765,8 +771,8 @@ function RunHistoryContent() {
                       <th className="text-left p-3 font-medium">
                         <SortableHeader label={t("runsHistory.headerStatus")} sortKey="status" active={rSortKey === "status"} direction={rSortDir} onSort={handleRunsSort} />
                       </th>
-                      <th className="text-left p-3 font-medium" title="Per-run review status set by reviewers on the expanded row">
-                        Review
+                      <th className="text-left p-3 font-medium" title={t("runsHistory.reviewHeaderTitle")}>
+                        {t("runsHistory.reviewHeader")}
                       </th>
                       <th className="text-left p-3 font-medium">Rules</th>
                       <th className="text-left p-3 font-medium">
@@ -942,7 +948,7 @@ function RunHistoryRow({
             )}
           </div>
         </td>
-        <td className="p-3">{reviewStatusCell(run, reviewStatusColorMap)}</td>
+        <td className="p-3">{reviewStatusCell(run, reviewStatusColorMap, t)}</td>
         <td className="p-3">
           {run.checks && run.checks.length > 0 ? (() => {
             const labels = run.checks.map((c: Record<string, unknown>) => {

@@ -59,7 +59,14 @@ class GenerateChecksOut(BaseModel):
 class GenerateRulesFromContractIn(BaseModel):
     """Request body for generating DQX rules from an ODCS v3.x contract."""
 
-    contract_text: str = Field(description="Raw ODCS contract YAML or JSON content")
+    # Bound the raw payload so a single request can't carry a pathologically
+    # large contract. 1 MiB is far larger than any realistic ODCS contract
+    # while still capping parse cost and the upstream LLM fan-out from
+    # ``type: text`` expectations (OWASP LLM04 — see AGENTS.md).
+    contract_text: str = Field(
+        max_length=1_048_576,
+        description="Raw ODCS contract YAML or JSON content",
+    )
     generate_predefined_rules: bool = Field(
         default=True,
         description="Generate rules from schema property constraints (required, pattern, min/max, etc.)",
