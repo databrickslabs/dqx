@@ -62,7 +62,7 @@
 
 **Interfaces produced:**
 - `DQSecret(scope: str, key: str)` frozen; `as_reference() -> str` → `"scope/key"`; `DQSecret.from_reference(ref: str) -> DQSecret`.
-- Exceptions (extend existing DQX base in errors.py): `PipelineFailedError`, `InvalidConditionError`, `InvalidActionError`, `AlertDeliveryError`, `UnsafeWebhookUrlError`.
+- Exceptions (extend existing DQX base in errors.py): `TerminalActionError` (base for run-aborting actions), `PipelineFailedError(TerminalActionError)`, `InvalidConditionError`, `InvalidActionError`, `AlertDeliveryError`, `UnsafeWebhookUrlError`.
 - `TableActionsStorageConfig(location: str, run_config_name: str = "default", mode: str = "append")`.
 - `LakebaseActionsStorageConfig(location, instance_name, client_id=None, port="5432", run_config_name="default", mode="append")` (mirror `LakebaseChecksStorageConfig` validation + `database_name`/`schema_name`/`table_name`).
 - `ActionEventsConfig(location: str, mode: str = "append")` — UC table; plus optional Lakebase fields mirroring above.
@@ -224,7 +224,7 @@
 **Interfaces produced:**
 - `class DQAlertFrequency(Enum): ALWAYS; HOURLY; DAILY`. `class NotifyOn(Enum): EACH; STATUS_CHANGE`.
 - `@dataclass DQAlert(Action)`: `destinations: list[AlertDestination]; name: str = ""; alert_frequency: DQAlertFrequency = ALWAYS; notify_on: NotifyOn = EACH; severity: str = "error"`. `validate`: non-empty destinations, each `.validate()`. `execute(context, services)`: build message via `StandardMessageBuilder`, dispatch to each destination concurrently with `Threads.gather("dqx-alert", tasks)`, collect per-destination errors into `ActionResult` (isolated failures). Sanitize names before logging.
-- `@dataclass FailPipeline(Action)`: `message: str | None = None; name: str = "fail_pipeline"`. `execute` raises `PipelineFailedError(self.message or <default with condition+metrics>, context)`.
+- `@dataclass FailPipeline(Action)`: `message: str | None = None; name: str = "fail_pipeline"`. `execute` raises `PipelineFailedError(self.message or <default with condition+metrics>, context)` (a `TerminalActionError` subclass, so the evaluator defers it until other actions run).
 
 - [ ] **Step 1:** DQAlert tests: empty destinations raises at `validate`; `execute` calls every destination's `deliver`; one destination raising does not stop others and is recorded in `ActionResult.destination_errors`. FailPipeline test: `execute` raises `PipelineFailedError` with message containing metrics.
 - [ ] **Step 2:** FAIL.
@@ -280,7 +280,7 @@
 
 **Interfaces consumed:** all of the above.
 **Interfaces produced:**
-- `ActionEvaluator(actions: list[DQAction], *, state_store: ActionStateStore, services: ActionServices, message_builder: StandardMessageBuilder | None = None)`; `evaluate(context: ActionContext) -> list[ActionResult]`. Logic: for each action, if `condition is not None` eval it (false → record not-fired, continue); a `None` condition always passes; then if `state_store.should_fire` → run alert actions (collect results), collect `FailPipeline` actions; record events; raise the first `PipelineFailedError` **after** all alerts dispatched.
+- `ActionEvaluator(actions: list[DQAction], *, state_store: ActionStateStore, services: ActionServices, message_builder: StandardMessageBuilder | None = None)`; `evaluate(context: ActionContext) -> list[ActionResult]`. Logic: for each action, if `condition is not None` eval it (false → record not-fired, continue); a `None` condition always passes; then if `state_store.should_fire` → call `dq.action.execute(context, services)` **polymorphically (no isinstance on action type)**, append the `ActionResult` and record the event. Catch `TerminalActionError` (e.g. from `FailPipeline`) into a deferred list; after the loop, raise the first deferred error so all alerts are delivered first.
 
 - [ ] **Step 1:** Tests with autospec'd collaborators: condition false ⇒ destination never delivered; `None` condition ⇒ fires unconditionally; condition true + should_fire ⇒ delivered + event recorded; suppression path records suppressed; a `FailPipeline` action raises `PipelineFailedError` but only after a sibling `DQAlert` delivered; destination failure isolated.
 - [ ] **Step 2:** FAIL → implement → PASS. fmt+lint.

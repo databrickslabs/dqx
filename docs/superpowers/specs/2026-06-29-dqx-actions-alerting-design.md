@@ -121,6 +121,18 @@ class Action(abc.ABC):
 `ActionServices` bundles injected collaborators (`SecretResolver`, `WebhookClient`,
 `WorkspaceClient`, `SparkSession`) so concrete actions stay testable and free of hidden state.
 
+**Extensibility (OCP) — adding a new action takes 2 steps, no core edits:**
+1. Subclass `Action`, implement `execute(context, services) -> ActionResult` (read metrics
+   from `context.metrics`; that is the single input surface every action shares).
+2. Register its `type` string in the serializer registry (§9) for table round-trip.
+`ActionEvaluator`, `DQEngine`, `ConditionEvaluator`, `StandardMessageBuilder`, and storage
+are never modified to add an action. The evaluator (§10) dispatches every action
+polymorphically via `execute(...)` — it contains **no `isinstance` branching on action
+type**. An action that must abort the run raises `TerminalActionError` (base class);
+`PipelineFailedError` subclasses it, and the evaluator defers all such errors until every
+other action has run, then re-raises the first. This keeps "stop the run after the others
+finish" a generic, reusable behavior rather than a `FailPipeline` special case.
+
 ### 4.3 `DQAction` (base.py, dataclass)
 ```python
 @dataclass
@@ -139,9 +151,10 @@ A `None` condition means the action fires unconditionally whenever actions are e
 `condition` optional; callers use keywords per the PRD (`DQAction(condition=..., action=...)`).
 
 ### 4.4 `FailPipeline(Action)` (fail_pipeline.py)
-`execute` raises `PipelineFailedError(message, context)`. Default message includes the
-condition and observed metrics. Always evaluated **after** alert actions in a run so
-alerts are delivered before the pipeline aborts.
+`execute` raises `PipelineFailedError(message, context)` (a `TerminalActionError`). Default
+message includes the condition and observed metrics. Because the evaluator defers
+`TerminalActionError` until all other actions have executed, alerts are always delivered
+before the pipeline aborts — without the evaluator knowing `FailPipeline` exists.
 
 ---
 
@@ -268,22 +281,28 @@ destination types register without modifying the serializer (OCP).
 
 `ActionEvaluator(actions, *, state_store, services, message_builder)`:
 ```
-evaluate(context):
-  alert_results, fail_actions = [], []
+evaluate(context) -> list[ActionResult]:
+  results, deferred = [], []
   for dq in actions:
      # condition None => fire unconditionally; else gate on the metric expression
      if dq.condition is not None and not ConditionEvaluator.evaluate(dq.condition, context.metrics):
         record(not-fired); continue
      if not state_store.should_fire(dq, context, True): record(suppressed); continue
-     if isinstance(dq.action, DQAlert): alert_results.append(dispatch(dq, context))
-     elif isinstance(dq.action, FailPipeline): fail_actions.append(dq)
-  # alerts dispatched concurrently with isolated failures, then record events
-  if fail_actions: raise PipelineFailedError(...)   # after alerts delivered
+     try:
+        result = dq.action.execute(context, services)   # polymorphic — NO isinstance
+        results.append(result); state_store.record(event_from(result, dq, context))
+     except TerminalActionError as err:
+        deferred.append(err)                              # e.g. FailPipeline
+  if deferred: raise deferred[0]                          # after every other action ran
+  return results
 ```
-- Per-`DQAlert` destinations dispatched with `blueprint.parallel.Threads.gather` →
-  **isolated failures** (one destination error never blocks others; P1). Errors are
-  logged (sanitized, no secrets/newlines per CWE-117) and recorded on the event.
-- Returns a summary; `FailPipeline` raised last so notifications go out first.
+- The evaluator is **closed for modification**: it never names a concrete action type.
+  Non-terminal actions return an `ActionResult`; terminal actions raise
+  `TerminalActionError` and are deferred so notifications go out before the run aborts.
+- A `DQAlert` dispatches its destinations concurrently with
+  `blueprint.parallel.Threads.gather` inside its own `execute` → **isolated failures**
+  (one destination error never blocks others; P1), captured in `ActionResult.destination_errors`.
+- Errors are logged sanitized (no secrets/newlines per CWE-117) and recorded on the event.
 
 ---
 
@@ -310,8 +329,9 @@ Workflows/CLI load actions via `DQActionManager` from this location when present
 ---
 
 ## 12. Errors (errors.py additions)
-`PipelineFailedError`, `InvalidConditionError`, `InvalidActionError`,
-`AlertDeliveryError`, `UnsafeWebhookUrlError`. All extend the existing DQX error base.
+`TerminalActionError` (base for run-aborting actions), `PipelineFailedError(TerminalActionError)`,
+`InvalidConditionError`, `InvalidActionError`, `AlertDeliveryError`, `UnsafeWebhookUrlError`.
+All extend the existing DQX error base.
 
 ---
 
