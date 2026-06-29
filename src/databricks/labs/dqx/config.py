@@ -597,6 +597,8 @@ class TableActionsStorageConfig:
     def __post_init__(self) -> None:
         if not self.location:
             raise InvalidConfigError("The table name ('location' field) must not be empty or None.")
+        if self.mode not in ("append", "overwrite"):
+            raise InvalidConfigError(f"Invalid mode '{self.mode}'. Must be 'append' or 'overwrite'.")
 
 
 @dataclass
@@ -615,7 +617,7 @@ class LakebaseActionsStorageConfig:
     """
 
     location: str
-    instance_name: str | None = None
+    instance_name: str
     client_id: str | None = None
     port: str = "5432"
     run_config_name: str = "default"
@@ -638,8 +640,6 @@ class LakebaseActionsStorageConfig:
 
     def _split_location(self) -> tuple[str, ...]:
         """Splits *database.schema.table* into components."""
-        if not self.location:
-            raise InvalidConfigError("location must be set before accessing database components.")
         return tuple(self.location.split("."))
 
     @cached_property
@@ -673,3 +673,5 @@ class ActionEventsConfig:
     def __post_init__(self) -> None:
         if not self.location:
             raise InvalidConfigError("The table name ('location' field) must not be empty or None.")
+        if self.mode not in ("append", "overwrite"):
+            raise InvalidConfigError(f"Invalid mode '{self.mode}'. Must be 'append' or 'overwrite'.")

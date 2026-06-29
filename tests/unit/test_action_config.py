@@ -11,8 +11,10 @@ from databricks.labs.dqx.config import (
 )
 from databricks.labs.dqx.errors import (
     AlertDeliveryError,
+    DQXError,
     InvalidActionError,
     InvalidConditionError,
+    InvalidConfigError,
     InvalidParameterError,
     PipelineFailedError,
     TerminalActionError,
@@ -74,8 +76,6 @@ class TestTableActionsStorageConfig:
         assert cfg.mode == "append"
 
     def test_empty_location_raises(self):
-        from databricks.labs.dqx.errors import InvalidConfigError
-
         with pytest.raises(InvalidConfigError):
             TableActionsStorageConfig(location="")
 
@@ -83,6 +83,10 @@ class TestTableActionsStorageConfig:
         cfg = TableActionsStorageConfig(location="a.b.c", run_config_name="prod", mode="overwrite")
         assert cfg.run_config_name == "prod"
         assert cfg.mode == "overwrite"
+
+    def test_invalid_mode_raises(self):
+        with pytest.raises(InvalidConfigError, match="Invalid mode"):
+            TableActionsStorageConfig(location="a.b.c", mode="upsert")
 
 
 # ---------------------------------------------------------------------------
@@ -98,8 +102,6 @@ class TestLakebaseActionsStorageConfig:
         assert cfg.table_name == "tbl"
 
     def test_non_three_part_location_raises(self):
-        from databricks.labs.dqx.errors import InvalidConfigError
-
         with pytest.raises(InvalidConfigError):
             LakebaseActionsStorageConfig(location="db.schema", instance_name="inst")
 
@@ -108,8 +110,11 @@ class TestLakebaseActionsStorageConfig:
             LakebaseActionsStorageConfig(location="db.schema.tbl", instance_name="")
 
     def test_none_instance_name_raises(self):
+        # instance_name is a required str field; passing None satisfies no
+        # static type but Python dataclasses do not enforce types at runtime —
+        # __post_init__ still catches the empty/None value and raises.
         with pytest.raises(InvalidParameterError):
-            LakebaseActionsStorageConfig(location="db.schema.tbl", instance_name=None)
+            LakebaseActionsStorageConfig(location="db.schema.tbl", instance_name=None)  # type: ignore[arg-type]
 
     def test_empty_location_raises(self):
         with pytest.raises(InvalidParameterError):
@@ -135,10 +140,12 @@ class TestActionEventsConfig:
         assert cfg.mode == "append"
 
     def test_empty_location_raises(self):
-        from databricks.labs.dqx.errors import InvalidConfigError
-
         with pytest.raises(InvalidConfigError):
             ActionEventsConfig(location="")
+
+    def test_invalid_mode_raises(self):
+        with pytest.raises(InvalidConfigError, match="Invalid mode"):
+            ActionEventsConfig(location="catalog.schema.events", mode="upsert")
 
 
 # ---------------------------------------------------------------------------
@@ -163,31 +170,21 @@ class TestRunConfigActionsLocation:
 
 class TestExceptions:
     def test_terminal_action_error_is_dqx_error(self):
-        from databricks.labs.dqx.errors import DQXError
-
         assert issubclass(TerminalActionError, DQXError)
 
     def test_pipeline_failed_error_is_terminal(self):
         assert issubclass(PipelineFailedError, TerminalActionError)
 
     def test_invalid_condition_error_is_dqx_error(self):
-        from databricks.labs.dqx.errors import DQXError
-
         assert issubclass(InvalidConditionError, DQXError)
 
     def test_invalid_action_error_is_dqx_error(self):
-        from databricks.labs.dqx.errors import DQXError
-
         assert issubclass(InvalidActionError, DQXError)
 
     def test_alert_delivery_error_is_dqx_error(self):
-        from databricks.labs.dqx.errors import DQXError
-
         assert issubclass(AlertDeliveryError, DQXError)
 
     def test_unsafe_webhook_url_error_is_dqx_error(self):
-        from databricks.labs.dqx.errors import DQXError
-
         assert issubclass(UnsafeWebhookUrlError, DQXError)
 
     def test_exceptions_are_raisable(self):
