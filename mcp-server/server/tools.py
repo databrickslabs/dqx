@@ -48,11 +48,16 @@ def load_tools(mcp_server):
             warehouse_id=warehouse_id,
         )
 
-        columns = [
-            {"name": row["col_name"], "type": row["data_type"], "comment": row.get("comment", "")}
-            for row in rows
-            if row.get("col_name") and not row["col_name"].startswith("#")
-        ]
+        # DESCRIBE TABLE lists the real columns first. For a partitioned table it then
+        # emits a blank separator row followed by a "# Partition Information" section that
+        # re-lists each partition column WITHOUT a "#" prefix. Stop at the first blank or
+        # "#"-prefixed row so partition columns aren't duplicated.
+        columns = []
+        for row in rows:
+            col_name = row.get("col_name")
+            if not col_name or col_name.startswith("#"):
+                break
+            columns.append({"name": col_name, "type": row["data_type"], "comment": row.get("comment", "")})
 
         return {"table_name": table_name, "columns": columns}
 

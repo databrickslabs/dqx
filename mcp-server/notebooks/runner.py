@@ -432,16 +432,19 @@ OPERATIONS = {
 
 try:
     if operation not in OPERATIONS:
-        result = {"error": f"Unknown operation: {operation}. Valid: {list(OPERATIONS.keys())}"}
-    else:
-        result = OPERATIONS[operation](params)
-        # Echo the source table name so the client knows which table the result is for.
-        # Done here (instead of re-attaching in the server) so the server needs no per-run state.
-        if isinstance(result, dict) and params.get("table_name") and "table_name" not in result:
-            result["table_name"] = params["table_name"]
+        raise ValueError(f"Unknown operation: {operation}. Valid: {list(OPERATIONS.keys())}")
+    result = OPERATIONS[operation](params)
+    # Echo the source table name so the client knows which table the result is for.
+    # Done here (instead of re-attaching in the server) so the server needs no per-run state.
+    if isinstance(result, dict) and params.get("table_name") and "table_name" not in result:
+        result["table_name"] = params["table_name"]
 except Exception as e:
     logger.error(f"Operation '{operation}' failed: {e}", exc_info=True)
-    result = {"error": f"{type(e).__name__}: {str(e)}"}
+    # Re-raise so the job's result_state becomes FAILED. Exiting normally with an
+    # {"error": ...} payload would make get_run_status report status="completed",
+    # and an agent driving the workflow would treat the failed op as success
+    # (e.g. feed the error dict into the next operation).
+    raise
 finally:
     # Always drop the run's temp view, on success or failure.
     _drop_view_safe(params.get("view_name"))

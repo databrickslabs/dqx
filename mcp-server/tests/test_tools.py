@@ -69,6 +69,31 @@ class TestGetTableSchema:
         assert len(result["columns"]) == 1
         assert result["columns"][0]["name"] == "id"
 
+    def test_partition_columns_not_duplicated(self):
+        tools = _register_tools()
+
+        # DESCRIBE TABLE on a partitioned table re-lists each partition column
+        # (here "dt") under "# Partition Information" without a "#" prefix.
+        describe_rows = [
+            {"col_name": "id", "data_type": "int", "comment": ""},
+            {"col_name": "name", "data_type": "string", "comment": ""},
+            {"col_name": "dt", "data_type": "date", "comment": ""},
+            {"col_name": "", "data_type": "", "comment": ""},
+            {"col_name": "# Partition Information", "data_type": "", "comment": ""},
+            {"col_name": "# col_name", "data_type": "data_type", "comment": "comment"},
+            {"col_name": "dt", "data_type": "date", "comment": ""},
+        ]
+
+        with (
+            patch("server.tools.utils.get_obo_client"),
+            patch("server.tools.utils.get_warehouse_id", return_value="wh123"),
+            patch("server.tools.utils.execute_sql", return_value=describe_rows),
+            patch.dict("os.environ", _ENV),
+        ):
+            result = tools["get_table_schema"]("catalog.schema.table")
+
+        assert [c["name"] for c in result["columns"]] == ["id", "name", "dt"]
+
 
 class TestProfileTable:
     """Test that profile_table creates a view and submits a job, returning a run_id."""
