@@ -1,7 +1,9 @@
 import logging
 import time
 
+from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import PermissionDenied
+from databricks.sdk.service.catalog import SchemaInfo
 
 from tests.constants import TEST_CATALOG
 
@@ -11,7 +13,7 @@ DUMMY_SCHEMA_PREFIX = "dummy_"
 MAX_AGE_MS = 24 * 60 * 60 * 1000  # only drop objects older than 1 day
 
 
-def test_remove_orhpaned_test_schemas(ws):
+def test_remove_orhpaned_test_schemas(ws: WorkspaceClient) -> None:
     """Maintenance sweep: drop every schema in the test catalog whose name starts with
     ``dummy_`` and that is older than one day, cascading the deletion to all contained
     tables and registered models.
@@ -32,6 +34,9 @@ def test_remove_orhpaned_test_schemas(ws):
 
     skipped: list[str] = []
     for schema in schemas:
+        # Listed schemas always carry these fields; the guard also narrows them for the SDK calls below.
+        if schema.full_name is None or schema.catalog_name is None or schema.name is None:
+            continue
         try:
             # Registered models are not removed by a forced schema delete, so drop them first.
             _drop_registered_models(ws, schema.catalog_name, schema.name)
@@ -42,7 +47,9 @@ def test_remove_orhpaned_test_schemas(ws):
             skipped.append(schema.full_name)
             logger.warning(f"Skipping schema {schema.full_name!r}: no permission to drop it ({exc})")
 
-    remaining = {schema.full_name for schema in _list_stale_dummy_schemas(ws, cutoff_ms)}
+    remaining = {
+        schema.full_name for schema in _list_stale_dummy_schemas(ws, cutoff_ms) if schema.full_name is not None
+    }
     not_permission_skipped = remaining - set(skipped)
     assert not not_permission_skipped, (
         f"Stale schemas with prefix {DUMMY_SCHEMA_PREFIX!r} were not dropped "
@@ -50,7 +57,7 @@ def test_remove_orhpaned_test_schemas(ws):
     )
 
 
-def _list_stale_dummy_schemas(ws, cutoff_ms: int):
+def _list_stale_dummy_schemas(ws: WorkspaceClient, cutoff_ms: int) -> list[SchemaInfo]:
     """Return ``dummy_``-prefixed schemas in the test catalog older than the cutoff."""
     return [
         schema
@@ -61,7 +68,7 @@ def _list_stale_dummy_schemas(ws, cutoff_ms: int):
     ]
 
 
-def _drop_registered_models(ws, catalog_name: str, schema_name: str) -> None:
+def _drop_registered_models(ws: WorkspaceClient, catalog_name: str, schema_name: str) -> None:
     """Delete every registered (Unity Catalog) model in the given schema.
 
     A forced schema delete drops tables and functions but leaves registered models in
@@ -71,7 +78,11 @@ def _drop_registered_models(ws, catalog_name: str, schema_name: str) -> None:
     each version must be deleted first.
     """
     for model in ws.registered_models.list(catalog_name=catalog_name, schema_name=schema_name):
+        if model.full_name is None:
+            continue
         for version in ws.model_versions.list(full_name=model.full_name):
+            if version.version is None:
+                continue
             ws.model_versions.delete(full_name=model.full_name, version=version.version)
             logger.info(f"Deleted model version {model.full_name!r} v{version.version}")
         ws.registered_models.delete(full_name=model.full_name)

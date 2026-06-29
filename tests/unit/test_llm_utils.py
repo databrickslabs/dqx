@@ -8,6 +8,7 @@ from pyspark.sql.types import StructField, StringType, IntegerType
 
 from databricks.labs.dqx.check_funcs import make_condition, register_rule
 from databricks.labs.dqx.config import InputConfig
+from databricks.labs.dqx.rule import CHECK_FUNC_REGISTRY
 from databricks.labs.dqx.llm.llm_utils import (
     get_check_function_definitions,
     create_optimizer_training_set,
@@ -31,25 +32,25 @@ def test_get_check_function_definitions():
     custom_check_functions = {"dummy_custom_check_function_test": dummy_custom_check_function_test}
     result = list(
         filter(
-            lambda x: x['name'] == 'dummy_custom_check_function_test',
+            lambda x: x["name"] == "dummy_custom_check_function_test",
             get_check_function_definitions(custom_check_functions),
         )
     )
     sig = inspect.signature(dummy_custom_check_function_test)
     assert result[0] == {
-        'name': 'dummy_custom_check_function_test',
-        'type': 'row',
-        'doc': 'Test the custom check function.',
-        'signature': str(sig),
-        'parameters': str(sig.parameters),
-        'implementation': '@register_rule("row")\ndef dummy_custom_check_function_test(column: str, suffix: str):\n    """\n    Test the custom check function.\n    """\n    return make_condition(\n        F.col(column).endswith(suffix), f"Column {column} ends with {suffix}", f"{column}_ends_with_{suffix}"\n    )\n',
+        "name": "dummy_custom_check_function_test",
+        "type": "row",
+        "doc": "Test the custom check function.",
+        "signature": str(sig),
+        "parameters": str(sig.parameters),
+        "implementation": '@register_rule("row")\ndef dummy_custom_check_function_test(column: str, suffix: str):\n    """\n    Test the custom check function.\n    """\n    return make_condition(\n        F.col(column).endswith(suffix), f"Column {column} ends with {suffix}", f"{column}_ends_with_{suffix}"\n    )\n',
     }
 
 
 def test_get_check_function_definitions_with_missing_custom_check_functions():
     result = list(
         filter(
-            lambda x: x['name'] == 'dummy_custom_check_function_test',
+            lambda x: x["name"] == "dummy_custom_check_function_test",
             get_check_function_definitions(),
         )
     )
@@ -62,7 +63,7 @@ def test_get_check_function_definitions_with_custom_check_functions_missing_spec
 
     result = list(
         filter(
-            lambda x: x['name'] == 'dummy_custom_check_function_test',
+            lambda x: x["name"] == "dummy_custom_check_function_test",
             get_check_function_definitions(custom_check_functions),
         )
     )
@@ -74,21 +75,21 @@ def test_get_required_check_function_definitions():
 
     result = list(
         filter(
-            lambda x: x['check_function_name'] == 'dummy_custom_check_function_test',
+            lambda x: x["check_function_name"] == "dummy_custom_check_function_test",
             get_required_check_functions_definitions(custom_check_functions),
         )
     )
     sig = inspect.signature(dummy_custom_check_function_test)
     assert result[0] == {
-        'check_function_name': 'dummy_custom_check_function_test',
-        'parameters': str(sig.parameters),
+        "check_function_name": "dummy_custom_check_function_test",
+        "parameters": str(sig.parameters),
     }
 
 
 def test_get_required_check_functions_definitions_with_missing_custom_check_functions():
     result = list(
         filter(
-            lambda x: x['check_function_name'] == 'dummy_custom_check_function_test',
+            lambda x: x["check_function_name"] == "dummy_custom_check_function_test",
             get_required_check_functions_definitions(),
         )
     )
@@ -101,7 +102,7 @@ def test_get_required_check_function_definition_with_custom_check_functions_miss
 
     result = list(
         filter(
-            lambda x: x['check_function_name'] == 'dummy_custom_check_function_test',
+            lambda x: x["check_function_name"] == "dummy_custom_check_function_test",
             get_required_check_functions_definitions(custom_check_functions),
         )
     )
@@ -124,11 +125,11 @@ def test_get_training_examples():
         assert isinstance(example, dspy.Example)
 
         # Verify required attributes exist
-        assert hasattr(example, 'schema_info')
-        assert hasattr(example, 'business_description')
-        assert hasattr(example, 'available_functions')
-        assert hasattr(example, 'quality_rules')
-        assert hasattr(example, 'reasoning')
+        assert hasattr(example, "schema_info")
+        assert hasattr(example, "business_description")
+        assert hasattr(example, "available_functions")
+        assert hasattr(example, "quality_rules")
+        assert hasattr(example, "reasoning")
 
         schema_info = json.loads(example.schema_info)
         assert isinstance(schema_info, dict)
@@ -155,6 +156,25 @@ def test_get_training_examples_with_custom_check_functions():
         )
     ]
     assert filtered_examples
+
+
+@pytest.mark.parametrize(
+    "training_set_factory",
+    [create_optimizer_training_set, create_optimizer_training_set_with_stats],
+)
+def test_training_examples_reference_only_registered_functions(training_set_factory):
+    """Every function name used in the few-shot training examples must resolve in the registry.
+
+    Guards against typos like ``is_email`` (should be ``is_valid_email``): an unregistered
+    name silently teaches the LLM to emit rules that get dropped by validation at generation time.
+    """
+    referenced_functions = set()
+    for example in training_set_factory():
+        for rule in json.loads(example.quality_rules):
+            referenced_functions.add(rule["check"]["function"])
+
+    unknown_functions = referenced_functions - set(CHECK_FUNC_REGISTRY)
+    assert not unknown_functions, f"Training examples reference unregistered check functions: {unknown_functions}"
 
 
 @pytest.mark.parametrize(
@@ -206,11 +226,11 @@ def test_create_optimizer_training_set_with_stats():
         assert isinstance(example, dspy.Example)
 
         # Verify required attributes exist
-        assert hasattr(example, 'business_description')
-        assert hasattr(example, 'data_summary_stats')
-        assert hasattr(example, 'available_functions')
-        assert hasattr(example, 'quality_rules')
-        assert hasattr(example, 'reasoning')
+        assert hasattr(example, "business_description")
+        assert hasattr(example, "data_summary_stats")
+        assert hasattr(example, "available_functions")
+        assert hasattr(example, "quality_rules")
+        assert hasattr(example, "reasoning")
 
         # Verify data_summary_stats is valid JSON
         data_summary_stats = json.loads(example.data_summary_stats)
