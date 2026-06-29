@@ -20,6 +20,8 @@ import urllib.parse
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
+from http.client import HTTPMessage
+from typing import IO, Protocol
 
 from databricks.labs.dqx.errors import AlertDeliveryError, UnsafeWebhookUrlError
 
@@ -141,16 +143,40 @@ class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
     vectors where an initially-safe URL redirects to an internal address.
     """
 
-    def redirect_request(  # type: ignore[override]
+    def redirect_request(
         self,
         req: urllib.request.Request,
-        fp: object,
+        fp: IO[bytes],
         code: int,
         msg: str,
-        headers: object,
+        headers: HTTPMessage,
         newurl: str,
-    ) -> None:
+    ) -> urllib.request.Request | None:
+        """Block all redirects (returns None so urllib does not follow them)."""
         return None
+
+
+class _ResponseCtx(Protocol):
+    """Minimal context-manager interface for HTTP responses."""
+
+    def __enter__(self) -> object: ...
+
+    def __exit__(self, *args: object) -> None: ...
+
+
+class _Opener(Protocol):
+    """Structural interface for urllib openers used by *WebhookClient*.
+
+    Any object with a compatible *open* method satisfies this protocol,
+    including *urllib.request.OpenerDirector* and test stubs.
+    """
+
+    def open(
+        self,
+        fullurl: urllib.request.Request | str,
+        data: bytes | None = None,
+        timeout: float | None = None,
+    ) -> _ResponseCtx: ...
 
 
 def _build_default_opener() -> urllib.request.OpenerDirector:
@@ -171,7 +197,7 @@ class WebhookClient:
         max_delay: Maximum delay cap in seconds.
         timeout: Per-request socket timeout in seconds.
         sleeper: Callable used to sleep between retries; injectable for testing.
-        opener: urllib opener to use; a no-redirect opener is built by default.
+        opener: Opener satisfying the *_Opener* protocol; a no-redirect *OpenerDirector* is built by default.
     """
 
     def __init__(
@@ -182,19 +208,17 @@ class WebhookClient:
         max_delay: float = 30.0,
         timeout: float = 30.0,
         sleeper: Callable[[float], None] = time.sleep,
-        opener: object | None = None,
+        opener: _Opener | None = None,
     ) -> None:
         self._max_retries = max_retries
         self._base_delay = base_delay
         self._max_delay = max_delay
         self._timeout = timeout
         self._sleeper = sleeper
-        self._opener: urllib.request.OpenerDirector = (
-            opener if opener is not None else _build_default_opener()  # type: ignore[assignment]
-        )
+        self._opener: _Opener = opener if opener is not None else _build_default_opener()
 
     @property
-    def opener(self) -> urllib.request.OpenerDirector:
+    def opener(self) -> _Opener:
         """The urllib opener used for HTTP requests."""
         return self._opener
 
@@ -239,12 +263,20 @@ class WebhookClient:
         for attempt in range(total_attempts):
             req = urllib.request.Request(url, data=body, headers=headers, method="POST")
             try:
-                with self._opener.open(req, timeout=self._timeout):  # type: ignore[union-attr]
+                with self._opener.open(req, timeout=self._timeout):
                     return  # success
             except OSError as exc:
+                # OSError is the common base for HTTPError, URLError, TimeoutError, and socket
+                # errors. Non-retryable 4xx (other than 429) fail immediately; everything else
+                # (5xx, 429, and transport-level errors) is retried with exponential backoff.
+                if isinstance(exc, urllib.error.HTTPError):
+                    code = exc.code
+                    if 400 <= code < 500 and code != 429:
+                        raise AlertDeliveryError(f"Webhook delivery to '{host}' failed (HTTP {code})") from exc
                 last_exc = exc
-                if attempt < total_attempts - 1:
-                    delay = min(self._base_delay * (2**attempt), self._max_delay)
-                    self._sleeper(delay)
+
+            if attempt < total_attempts - 1:
+                delay = min(self._base_delay * (2**attempt), self._max_delay)
+                self._sleeper(delay)
 
         raise AlertDeliveryError(f"Webhook delivery to '{host}' failed after {total_attempts} attempt(s)") from last_exc

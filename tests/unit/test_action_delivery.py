@@ -6,6 +6,7 @@ Tests cover:
 """
 
 import base64
+import dataclasses
 import io
 import json
 import urllib.error
@@ -45,7 +46,10 @@ class _StubResponse:
 
 
 class FakeOpener:
-    """Records every call to open(); optionally raises on configured attempts."""
+    """Records every call to open(); optionally raises on configured attempts.
+
+    Satisfies *_Opener* protocol by implementing the required *open* method.
+    """
 
     def __init__(self, responses: list) -> None:
         # Each entry is either a _StubResponse or an exception to raise.
@@ -54,14 +58,22 @@ class FakeOpener:
         # Expose handlers so redirect-handler checks work via the opener property
         self.handlers: list = []
 
-    def open(self, request: urllib.request.Request, timeout: float = 30.0) -> object:
-        _ = timeout  # consumed but not forwarded in the stub
+    def open(
+        self,
+        fullurl: urllib.request.Request | str,
+        data: bytes | None = None,
+        timeout: float | None = None,
+    ) -> _StubResponse:
+        _ = data
+        _ = timeout
+        request = fullurl if isinstance(fullurl, urllib.request.Request) else urllib.request.Request(fullurl)
         self.calls.append(request)
         if not self._responses:
             raise urllib.error.URLError("no more responses")
         nxt = self._responses.pop(0)
         if isinstance(nxt, Exception):
             raise nxt
+        assert isinstance(nxt, _StubResponse)
         return nxt
 
 
@@ -157,8 +169,8 @@ class TestWebhookAuth:
 
     def test_frozen(self) -> None:
         auth = WebhookAuth(username="u", password="p")
-        with pytest.raises(Exception):
-            auth.username = "x"  # type: ignore[misc]
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            setattr(auth, "username", "x")
 
 
 # ---------------------------------------------------------------------------
@@ -180,7 +192,8 @@ class TestWebhookClientPost:
         req = opener.calls[0]
         assert req.get_method() == "POST"
         assert req.get_header("Content-type") == "application/json"
-        body = json.loads(req.data)  # type: ignore[arg-type]
+        assert req.data is not None
+        body = json.loads(req.data)
         assert body == {"text": "hello"}
         assert not delays
 
@@ -214,7 +227,7 @@ class TestWebhookClientPost:
             url="https://hooks.slack.com/x",
             code=500,
             msg="Internal Server Error",
-            hdrs=HTTPMessage(),  # type: ignore[arg-type]
+            hdrs=HTTPMessage(),
             fp=io.BytesIO(b""),
         )
         opener = FakeOpener([http_err, http_err, http_err, http_err])
@@ -225,6 +238,88 @@ class TestWebhookClientPost:
             client.post("https://hooks.slack.com/x", {"k": "v"})
 
         assert len(delays) == 3
+
+    def test_retries_on_http_503(self) -> None:
+        """HTTP 503 is retried up to max_retries with growing delays, then AlertDeliveryError."""
+        http_err = urllib.error.HTTPError(
+            url="https://hooks.slack.com/x",
+            code=503,
+            msg="Service Unavailable",
+            hdrs=HTTPMessage(),
+            fp=io.BytesIO(b""),
+        )
+        opener = FakeOpener([http_err, http_err, http_err, http_err])
+        delays: list[float] = []
+
+        client = WebhookClient(max_retries=3, base_delay=1.0, max_delay=30.0, opener=opener, sleeper=delays.append)
+        with pytest.raises(AlertDeliveryError) as exc_info:
+            client.post("https://hooks.slack.com/x", {"k": "v"})
+
+        assert len(delays) == 3
+        assert delays[0] == 1.0
+        assert delays[1] == 2.0
+        assert delays[2] == 4.0
+        assert "hooks.slack.com" in str(exc_info.value)
+
+    def test_retries_on_http_429(self) -> None:
+        """HTTP 429 (rate-limited) is retried; sleeper is called."""
+        http_err = urllib.error.HTTPError(
+            url="https://hooks.slack.com/x",
+            code=429,
+            msg="Too Many Requests",
+            hdrs=HTTPMessage(),
+            fp=io.BytesIO(b""),
+        )
+        opener = FakeOpener([http_err, http_err, _StubResponse(200)])
+        delays: list[float] = []
+
+        client = WebhookClient(max_retries=3, base_delay=1.0, opener=opener, sleeper=delays.append)
+        client.post("https://hooks.slack.com/x", {"k": "v"})
+
+        # Two failures before success — sleeper called twice
+        assert len(delays) == 2
+
+    def test_4xx_fails_fast_no_retry(self) -> None:
+        """HTTP 400 must NOT be retried: AlertDeliveryError after a single attempt, sleeper never called."""
+        secret_payload = "super-secret-payload-value"
+        http_err = urllib.error.HTTPError(
+            url="https://hooks.slack.com/x",
+            code=400,
+            msg="Bad Request",
+            hdrs=HTTPMessage(),
+            fp=io.BytesIO(b""),
+        )
+        opener = FakeOpener([http_err])
+        delays: list[float] = []
+
+        client = WebhookClient(max_retries=3, base_delay=1.0, opener=opener, sleeper=delays.append)
+        with pytest.raises(AlertDeliveryError) as exc_info:
+            client.post("https://hooks.slack.com/x", {"token": secret_payload})
+
+        assert len(opener.calls) == 1  # exactly one attempt
+        assert not delays  # sleeper never called
+        err_msg = str(exc_info.value)
+        assert "hooks.slack.com" in err_msg
+        assert secret_payload not in err_msg
+
+    def test_401_fails_fast_no_retry(self) -> None:
+        """HTTP 401 must NOT be retried: AlertDeliveryError after a single attempt, sleeper never called."""
+        http_err = urllib.error.HTTPError(
+            url="https://hooks.slack.com/x",
+            code=401,
+            msg="Unauthorized",
+            hdrs=HTTPMessage(),
+            fp=io.BytesIO(b""),
+        )
+        opener = FakeOpener([http_err])
+        delays: list[float] = []
+
+        client = WebhookClient(max_retries=3, base_delay=1.0, opener=opener, sleeper=delays.append)
+        with pytest.raises(AlertDeliveryError):
+            client.post("https://hooks.slack.com/x", {"k": "v"})
+
+        assert len(opener.calls) == 1
+        assert not delays
 
     def test_succeeds_after_transient_failures(self) -> None:
         """Fails twice then succeeds: no AlertDeliveryError raised."""
@@ -315,9 +410,15 @@ class TestWebhookClientTimeout:
         class RecordingOpener:
             handlers: list = []
 
-            def open(self, request: urllib.request.Request, timeout: float = 30.0) -> object:
-                _ = request
-                recorded.append(timeout)
+            def open(
+                self,
+                fullurl: urllib.request.Request | str,
+                data: bytes | None = None,
+                timeout: float | None = None,
+            ) -> _StubResponse:
+                _ = fullurl
+                _ = data
+                recorded.append(timeout if timeout is not None else 30.0)
                 return _StubResponse(200)
 
         client = WebhookClient(timeout=42.0, opener=RecordingOpener(), sleeper=lambda _: None)
@@ -331,5 +432,5 @@ class TestNoRedirectHandlerContract:
     def test_redirect_request_returns_none(self) -> None:
         handler = NoRedirectHandler()
         mock_req = create_autospec(urllib.request.Request, instance=True)
-        handler.redirect_request(mock_req, None, 301, "Moved", None, "https://other.com/")
+        handler.redirect_request(mock_req, io.BytesIO(b""), 301, "Moved", HTTPMessage(), "https://other.com/")
         # Method always returns None — the call itself is the assertion (no exception, no redirect)
