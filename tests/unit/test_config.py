@@ -624,7 +624,7 @@ def test_base_storage_config_replace_returns_new_same_type_with_overrides(
 # ---------------------------------------------------------------------------
 
 
-def test_base_checks_storage_config_wrong_type_raises_invalid_config_error():
+def test_base_checks_storage_config_wrong_type_raises_invalid_config_error() -> None:
     """Constructing a BaseChecksStorageConfig subclass with a wrong-typed field must raise
     InvalidConfigError, not the raw pydantic_core.ValidationError.  DQX callers should not
     need to import pydantic to handle construction errors from config models.
