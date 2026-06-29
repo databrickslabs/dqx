@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import dataclasses
 import enum
+import inspect
+import sys
 from datetime import datetime, timezone
 
 import pytest
@@ -84,8 +86,6 @@ def test_module_imports_without_delivery() -> None:
     documented in the test report.
     """
     # Confirm the import is accessible via sys.modules (already imported above).
-    import sys  # noqa: PLC0415
-
     assert "databricks.labs.dqx.actions.base" in sys.modules
 
 
@@ -177,9 +177,8 @@ def test_action_result_destination_errors_independent() -> None:
 
 
 def test_action_abc_cannot_be_instantiated_directly() -> None:
-    assert hasattr(Action, "__abstractmethods__")
-    with pytest.raises(TypeError):
-        Action()  # type: ignore[abstract]
+    assert inspect.isabstract(Action)
+    assert "execute" in Action.__abstractmethods__
 
 
 def test_dummy_action_validate_noop() -> None:

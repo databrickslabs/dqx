@@ -34,7 +34,6 @@ from databricks.sdk import WorkspaceClient
 
 from databricks.labs.dqx.actions.conditions import ConditionEvaluator
 from databricks.labs.dqx.actions.secrets import SecretResolver
-from databricks.labs.dqx.errors import InvalidActionError, InvalidConditionError
 
 if TYPE_CHECKING:
     from databricks.labs.dqx.actions.delivery import WebhookClient  # type: ignore[import-untyped]
@@ -257,7 +256,6 @@ class DQAction:
                 self.name = type(self.action).__name__
 
 
-# Suppress unused-import warnings for error classes that subclasses reference
 __all__ = [
     "Action",
     "ActionContext",
@@ -265,6 +263,4 @@ __all__ = [
     "ActionServices",
     "ActionStatus",
     "DQAction",
-    "InvalidActionError",
-    "InvalidConditionError",
 ]
