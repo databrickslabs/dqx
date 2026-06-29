@@ -1,5 +1,6 @@
 """Unit tests for AlertMessage and StandardMessageBuilder (Task 3)."""
 
+import dataclasses
 from datetime import datetime, timezone
 
 import pytest
@@ -33,7 +34,7 @@ class TestAlertMessage:
             severity="error",
             fields={"key": "value"},
         )
-        with pytest.raises(Exception):
+        with pytest.raises(dataclasses.FrozenInstanceError):
             msg.title = "mutated"  # type: ignore[misc]
 
     def test_condition_can_be_none(self):
@@ -169,7 +170,7 @@ class TestStandardMessageBuilderBuild:
             table="catalog.schema.table",
         )
         for metric_name in _METRICS:
-            assert metric_name in msg.fields
+            assert f"metric.{metric_name}" in msg.fields
 
     def test_fields_metric_values_are_strings(self):
         msg = StandardMessageBuilder.build(
@@ -181,7 +182,7 @@ class TestStandardMessageBuilderBuild:
             table="catalog.schema.table",
         )
         for metric_name, metric_value in _METRICS.items():
-            assert msg.fields[metric_name] == str(metric_value)
+            assert msg.fields[f"metric.{metric_name}"] == str(metric_value)
 
     def test_fields_contains_run_id(self):
         msg = StandardMessageBuilder.build(
@@ -341,4 +342,31 @@ class TestStandardMessageBuilderNoneCondition:
             run_time=_RUN_TIME,
             table=None,
         )
-        assert "error_row_count" in msg.fields
+        assert "metric.error_row_count" in msg.fields
+
+
+# ---------------------------------------------------------------------------
+# Reserved-key collision guard
+# ---------------------------------------------------------------------------
+
+
+class TestStandardMessageBuilderReservedKeyCollision:
+    def test_metric_named_condition_does_not_overwrite_reserved_field(self):
+        """A metric named 'condition' must not silently overwrite the reserved
+        'condition' metadata entry.  The metric appears under 'metric.condition'
+        and the reserved entry retains its human-readable condition text."""
+        msg = StandardMessageBuilder.build(
+            action_name="check_action",
+            condition="error_row_count > 0",
+            metrics={"condition": 99, "error_row_count": 5},
+            run_id="run-003",
+            run_time=_RUN_TIME,
+            table="catalog.schema.table",
+        )
+        # Prefixed metric entry must be present with the observed value
+        assert msg.fields["metric.condition"] == "99"
+        assert msg.fields["metric.error_row_count"] == "5"
+        # Reserved metadata entry must still hold the condition text, not "99"
+        assert msg.fields["condition"] == "error_row_count > 0"
+        # observed_metrics is always the raw dict — no prefixing
+        assert msg.observed_metrics["condition"] == 99

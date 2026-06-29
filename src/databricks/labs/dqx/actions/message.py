@@ -39,8 +39,10 @@ class AlertMessage:
         severity: Alert severity level (e.g. "error", "warn").
         fields: Flat string-to-string mapping suitable for key-value rendering
             in notification payloads.  Contains one entry per observed metric
-            (value coerced to *str*) plus entries for *condition*, *run_id*,
-            *run_time*, and *table*.
+            under the key ``"metric.<name>"`` (e.g. ``"metric.error_row_count"``)
+            plus un-prefixed reserved entries for *condition*, *run_id*,
+            *run_time*, and *table*.  The ``"metric."`` prefix ensures metric
+            names never silently overwrite the reserved metadata keys.
     """
 
     title: str
@@ -89,6 +91,12 @@ class StandardMessageBuilder:
         action fires unconditionally when *condition* is *None*), and a *fields*
         dict suitable for flat key-value rendering in notification payloads.
 
+        Metric entries in *fields* are stored under the key ``"metric.<name>"``
+        (e.g. ``"metric.error_row_count"``) so that they never collide with the
+        reserved metadata keys *condition*, *run_id*, *run_time*, and *table*,
+        which are always un-prefixed.  *observed_metrics* on the returned
+        *AlertMessage* is always the raw, un-prefixed metrics dict.
+
         Args:
             action_name: Logical name of the DQX action that was triggered.
             condition: Condition expression that triggered the action, or *None*
@@ -108,7 +116,9 @@ class StandardMessageBuilder:
         title = f"DQX alert: {action_name}"
         summary = f"Action '{action_name}' triggered on table '{table_text}'. " f"Condition: {condition_text}."
 
-        fields: dict[str, str] = {metric_name: str(metric_value) for metric_name, metric_value in metrics.items()}
+        fields: dict[str, str] = {
+            f"metric.{metric_name}": str(metric_value) for metric_name, metric_value in metrics.items()
+        }
         fields["condition"] = condition_text
         fields["run_id"] = run_id
         fields["run_time"] = str(run_time)
