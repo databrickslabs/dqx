@@ -14,7 +14,7 @@ violates a user-defined condition evaluated against the **summary metrics** prod
 `DQMetricsObserver`. The first two concrete actions are:
 
 - **`DQAlert`** — sends a notification to one or more destinations (Slack, Microsoft
-  Teams, generic webhook, Databricks SQL Alert).
+  Teams, generic webhook).
 - **`FailPipeline`** — raises an exception to stop the current pipeline.
 
 Actions are passed to `DQEngine` and fire automatically on save-to-table methods (the
@@ -25,7 +25,7 @@ that also seeds in-memory state for frequency / status-change control.
 
 ### Decisions locked with the requester
 
-- **Destinations built now:** Slack + Teams + generic Webhook + **Databricks SQL Alert** + `FailPipeline`. The `AlertDestination` interface stays open for PagerDuty/DQM/email later.
+- **Destinations built now:** Slack + Teams + generic Webhook + `FailPipeline` (+ an in-process callback destination). The `AlertDestination` interface stays open for DBSQL/PagerDuty/DQM/email later.
 - **State tracking:** in-memory dedup/frequency state for the `DQEngine` lifetime, **seeded from and persisted to** a configurable UC/Lakebase events table.
 
 ### Open questions — resolved per PRD "PREFERRED" options
@@ -44,7 +44,7 @@ that also seeds in-memory state for frequency / status-change control.
 
 **Goals (P0/P1)**
 - `DQAction` = (condition, inner `Action`); inner actions `DQAlert` and `FailPipeline`.
-- `DQAlert` with ≥1 destination and a condition; Slack, Teams, webhook, DBSQL.
+- `DQAlert` with ≥1 destination and a condition; Slack, Teams, webhook.
 - Conditions over built-in **and** custom observer metrics.
 - Frequency control (`ALWAYS`/`HOURLY`/`DAILY`) and notify-on-status-change (HEALTHY↔UNHEALTHY), backed by state.
 - Standard message with table name, condition, observed metrics, run time/id.
@@ -65,7 +65,7 @@ that also seeds in-memory state for frequency / status-change control.
 New package `src/databricks/labs/dqx/actions/`:
 
 ```
-action/
+actions/
   __init__.py            # public exports
   base.py                # Action (ABC), DQAction, ActionContext, ActionResult, ActionStatus
   conditions.py          # ConditionEvaluator — safe AST evaluation over metrics dict
@@ -81,7 +81,6 @@ action/
     slack.py             # SlackDQAlertDestination
     teams.py             # TeamsDQAlertDestination
     webhook.py           # WebhookDQAlertDestination (generic)
-    dbsql.py             # DBSQLAlertDestination (Databricks SQL Alert via WorkspaceClient)
     callback.py          # CallbackDQAlertDestination (P1 callback function)
   state.py               # ActionStateStore, AlertEvent, ActionEventStore (ABC)
   event_storage.py       # TableActionEventStore, LakebaseActionEventStore + factory
@@ -210,20 +209,11 @@ POSTs via `WebhookClient`. Subclasses implement only payload shape:
 - **Webhook (generic)**: DQX canonical JSON (message dict). Optional basic auth via
   `username`/`password` `DQSecret`s.
 
-### 7.3 `DBSQLAlertDestination` (destinations/dbsql.py)
-Delivers via the Databricks SQL Alerts API on the `WorkspaceClient`
-(`services.ws.alerts`). On `deliver`, **idempotently** creates-or-updates a managed SQL
-alert (named after the action) whose query runs against the configured metrics/checked
-table with the action's condition, attaches the configured workspace
-`notification_destination_ids`, and triggers an evaluation run. Requires `warehouse_id`
-and a `query` (or metrics table reference). Fully unit-tested with a mocked
-`WorkspaceClient`; integration test gated on a real workspace + warehouse.
-
-### 7.4 `CallbackDQAlertDestination` (destinations/callback.py) — P1
+### 7.3 `CallbackDQAlertDestination` (destinations/callback.py) — P1
 Wraps a user `Callable[[AlertMessage, ActionContext], None]`. Not serializable (omitted
 from table round-trip with a logged warning), in-process only.
 
-### 7.5 Delivery, retry, SSRF (delivery.py)
+### 7.4 Delivery, retry, SSRF (delivery.py)
 `WebhookClient.post(url, payload, *, auth=None)`:
 - stdlib `urllib.request` with a no-redirect opener (no new dependency).
 - **Retry** with exponential backoff: `max_retries`, `base_delay`, capped; injected
@@ -266,7 +256,7 @@ from table round-trip with a logged warning), in-process only.
 ## 9. Action-definition storage (manager.py, definition_storage.py, serializer.py)
 
 `ActionSerializer` round-trips actions to the PRD YAML/dict shape using a **type registry**
-(`alert`, `fail_pipeline`; destination types `slack`/`teams`/`webhook`/`dbsql`). `DQSecret`
+(`alert`, `fail_pipeline`; destination types `slack`/`teams`/`webhook`). `DQSecret`
 serializes to `"scope/key"`. Callback destinations are skipped (warned). New action/
 destination types register without modifying the serializer (OCP).
 
@@ -337,14 +327,13 @@ All extend the existing DQX error base.
 
 ## 13. Security (mandatory per AGENTS.md)
 - **No `eval()`** — safe AST walker only (§5).
-- **SSRF** — `validate_webhook_url` allowlist + private-range blocking (§7.5).
+- **SSRF** — `validate_webhook_url` allowlist + private-range blocking (§7.4).
 - **Secrets** — `DQSecret(scope, key)` resolved via WorkspaceClient secrets at call time;
-  redacted at construction; never logged. DBSQL uses workspace destinations.
+  redacted at construction; never logged.
 - **Log injection (CWE-117)** — sanitize action/destination/table names and delivery
   errors (strip newlines/control chars) before logging.
 - **Untrusted parse** — YAML/JSON action loading handles parse failures gracefully without
   leaking internals.
-- **DBSQL** — only operates on the authenticated workspace's own alert objects.
 
 ---
 
@@ -355,7 +344,7 @@ All extend the existing DQX error base.
   metrics, numeric coercion, boolean logic, malformed expressions.
 - `StandardMessageBuilder`: message content/fields.
 - Destinations: payload shape per type (Slack/Teams/webhook) with a fake `WebhookClient`;
-  DBSQL with `create_autospec(WorkspaceClient)`; callback invocation.
+callback invocation with a fake callable.
 - `WebhookClient`: retry/backoff counts (injected sleeper), failure after N, SSRF rejects
   (loopback, RFC1918, metadata IP, http scheme), basic-auth header.
 - `ActionStateStore`: ALWAYS/HOURLY/DAILY suppression, status-change transitions, seeding.
@@ -381,7 +370,7 @@ All extend the existing DQX error base.
 ## 15. Docs
 - New page `docs/docs/guide/quality_checks_apply.md` section or a dedicated
   `docs/docs/guide/actions_and_alerts.md`: defining actions, destinations (Slack/Teams/
-  webhook/DBSQL), conditions, frequency/status-change, storing/loading actions, engine
+  webhook), conditions, frequency/status-change, storing/loading actions, engine
   usage (auto vs `evaluate_actions`), streaming, `FailPipeline`, security/secrets notes.
 - Update README feature list and reference/API docs (`__all__` exports).
 - CHANGELOG entry.
@@ -392,7 +381,7 @@ All extend the existing DQX error base.
 1. Errors + config dataclasses (`DQSecret`, storage/events configs).
 2. `conditions.py` + `message.py` (+ tests).
 3. `secrets.py`, `delivery.py` (SSRF + retry) (+ tests).
-4. Destinations: base, webhook base, Slack/Teams/webhook, DBSQL, callback (+ tests).
+4. Destinations: base, webhook base, Slack/Teams/webhook, callback (+ tests).
 5. `base.py` (`Action`, `DQAction`, `ActionContext`, `ActionServices`), `alert.py`,
    `fail_pipeline.py` (+ tests).
 6. `state.py` + `event_storage.py` (UC + Lakebase) (+ tests).

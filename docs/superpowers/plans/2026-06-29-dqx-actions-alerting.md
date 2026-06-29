@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add an extensible action abstraction to DQX whose first actions are `DQAlert` (Slack/Teams/webhook/DBSQL notifications) and `FailPipeline`, triggered by conditions over `DQMetricsObserver` summary metrics.
+**Goal:** Add an extensible action abstraction to DQX whose first actions are `DQAlert` (Slack/Teams/webhook notifications) and `FailPipeline`, triggered by conditions over `DQMetricsObserver` summary metrics.
 
 **Architecture:** A new `databricks.labs.dqx.actions` package built on SOLID interfaces — `Action`/`AlertDestination`/`ActionEventStore`/`SecretResolver` abstractions, a safe AST condition evaluator (never `eval()`), webhook delivery with retry+SSRF guards, in-memory state seeded from a UC/Lakebase events table, and an `ActionEvaluator` orchestrator. `DQEngine` accepts `actions=[...]` and fires them on save-to-table methods (batch + streaming) or via `evaluate_actions(...)`.
 
@@ -33,7 +33,7 @@
 - `message.py` — `AlertMessage`, `StandardMessageBuilder`
 - `secrets.py` — `SecretResolver`
 - `delivery.py` — `WebhookClient`, `validate_webhook_url`, `WebhookAuth`
-- `destinations/__init__.py`, `base.py`, `webhook_base.py`, `slack.py`, `teams.py`, `webhook.py`, `dbsql.py`, `callback.py`
+- `destinations/__init__.py`, `base.py`, `webhook_base.py`, `slack.py`, `teams.py`, `webhook.py`, `callback.py`
 - `alert.py` — `DQAlert`, `DQAlertFrequency`, `NotifyOn`
 - `fail_pipeline.py` — `FailPipeline`
 - `state.py` — `AlertEvent`, `ActionStateStore`, `ActionEventStore` (ABC)
@@ -196,21 +196,20 @@
 
 ---
 
-## Task 8: DBSQL + callback destinations
+## Task 8: Callback destination
 
 **Files:**
-- Create: `src/databricks/labs/dqx/actions/destinations/dbsql.py`, `callback.py`
-- Test: `tests/unit/test_action_destinations_dbsql.py`, `tests/unit/test_action_destinations_callback.py`
+- Create: `src/databricks/labs/dqx/actions/destinations/callback.py`
+- Test: `tests/unit/test_action_destinations_callback.py`
 
 **Interfaces produced:**
-- `@dataclass DBSQLAlertDestination(AlertDestination)` type `"dbsql"`: `name: str; warehouse_id: str; query: str; notification_destination_ids: list[str] = []`. `validate` requires non-empty `warehouse_id` and `query` (run `is_sql_query_safe(query)` from `utils.py`; raise `InvalidActionError`/`UnsafeSqlQueryError` if unsafe). `deliver` idempotently creates-or-updates a SQL alert via `services.ws.alerts` (look up by display name == `self.name`; create if absent else update) and triggers a run. All `ws` calls via the injected client.
-- `@dataclass(eq=False) CallbackDQAlertDestination(AlertDestination)` type `"callback"`: `name: str; callback: Callable[[AlertMessage, ActionContext], None]`. `deliver` invokes the callback. Not serializable (Task 11 skips with warning).
+- `@dataclass(eq=False) CallbackDQAlertDestination(AlertDestination)` type `"callback"`: `name: str; callback: Callable[[AlertMessage, ActionContext], None]`. `validate` requires `callback` to be callable. `deliver` invokes the callback with the message and context. In-process only and not serializable (Task 11 skips it with a warning).
 
-- [ ] **Step 1:** DBSQL tests with `create_autospec(WorkspaceClient)`: unsafe query rejected at `validate`; `deliver` creates alert when none matches name; updates when one matches; attaches notification ids. Callback test: `deliver` calls the provided callable with message+context.
+- [ ] **Step 1:** Callback test: `deliver` calls the provided callable once with the message + context; a non-callable `callback` raises `InvalidActionError` at `validate`.
 - [ ] **Step 2:** FAIL.
-- [ ] **Step 3:** Implement (consult `ws.alerts` surface in installed databricks-sdk; use list+filter by `display_name`).
+- [ ] **Step 3:** Implement.
 - [ ] **Step 4:** PASS. fmt+lint.
-- [ ] **Step 5:** Commit `feat(actions): add DBSQL and callback alert destinations`.
+- [ ] **Step 5:** Commit `feat(actions): add callback alert destination`.
 
 ---
 
@@ -266,7 +265,7 @@
 - `TableActionsStorageHandler` (UC Delta, filter by `run_config_name`, append/overwrite) and `LakebaseActionsStorageHandler` (mirror checks Lakebase handler). `ActionsStorageHandlerFactory.create(config) -> ActionsStorageHandler`.
 - `DQActionManager(ws, spark=None)`: `save_actions(actions, config)`, `load_actions(config) -> list[DQAction]`.
 
-- [ ] **Step 1 (unit):** Round-trip a `DQAction` with each destination type (slack/teams/webhook/dbsql) and `FailPipeline`; `DQSecret` survives as `"scope/key"`; callback destination produces a warning and is omitted; unknown type raises.
+- [ ] **Step 1 (unit):** Round-trip a `DQAction` with each serializable destination type (slack/teams/webhook) and `FailPipeline`; `DQSecret` survives as `"scope/key"`; callback destination produces a warning and is omitted; unknown type raises.
 - [ ] **Step 2:** FAIL → implement → PASS. fmt+lint. Commit `feat(actions): add action serializer and storage handlers`.
 - [ ] **Step 3 (integration):** `DQActionManager.save_actions`/`load_actions` round-trip on a UC table (pytester `factory`). Commit.
 
@@ -294,7 +293,7 @@
 - Modify: `src/databricks/labs/dqx/actions/__init__.py`
 - Test: `tests/unit/test_action_exports.py`
 
-**Interfaces produced:** `from databricks.labs.dqx.actions import DQAction, DQAlert, FailPipeline, DQAlertFrequency, NotifyOn, SlackDQAlertDestination, TeamsDQAlertDestination, WebhookDQAlertDestination, DBSQLAlertDestination, CallbackDQAlertDestination, DQActionManager, ActionContext`.
+**Interfaces produced:** `from databricks.labs.dqx.actions import DQAction, DQAlert, FailPipeline, DQAlertFrequency, NotifyOn, SlackDQAlertDestination, TeamsDQAlertDestination, WebhookDQAlertDestination, CallbackDQAlertDestination, DQActionManager, ActionContext`.
 
 - [ ] **Step 1:** Test imports each public name. **Step 2:** FAIL. **Step 3:** populate `__all__`/exports. **Step 4:** PASS. fmt+lint. **Step 5:** Commit `feat(actions): expose public action API`.
 
@@ -338,7 +337,7 @@
 - Modify: README feature list; `CHANGELOG.md`
 - Verify API docs pick up `actions` package exports.
 
-- [ ] **Step 1:** Write `actions_and_alerts.md`: concepts; defining `DQAction`/`DQAlert`/`FailPipeline`; Slack/Teams/webhook/DBSQL destinations; `DQSecret` + security/SSRF notes; conditions over metrics (built-in + custom); frequency + status-change; engine usage (auto on save vs `evaluate_actions`); streaming; storing/loading via `DQActionManager` (UC + Lakebase); declarative `run_config` `actions_location`. Google-style, no backticks around arg names (use italics), escape `{{`.
+- [ ] **Step 1:** Write `actions_and_alerts.md`: concepts; defining `DQAction`/`DQAlert`/`FailPipeline`; Slack/Teams/webhook destinations; `DQSecret` + security/SSRF notes; conditions over metrics (built-in + custom); frequency + status-change; engine usage (auto on save vs `evaluate_actions`); streaming; storing/loading via `DQActionManager` (UC + Lakebase); declarative `run_config` `actions_location`. Google-style, no backticks around arg names (use italics), escape `{{`.
 - [ ] **Step 2:** Add a README feature bullet; CHANGELOG entry under unreleased.
 - [ ] **Step 3:** `make docs-build` (or at least `pydoc-markdown` check) to confirm no doc errors. Commit `docs(actions): document actions and alerting`.
 
@@ -349,7 +348,7 @@
 **Spec coverage:**
 - P0 actions param on engine → T14; `DQAlert` w/ destinations+condition → T7-9; Slack/Teams → T7; store actions UC/Lakebase → T11; batch+streaming → T14/T15; conditions on built-in+custom metrics → T2/T12; frequency + status-change state → T10; standard message detail → T3; requires observer + `evaluate_actions` → T14; `FailPipeline` → T9; standard message → T3.
 - P1 generic webhook → T7; frequency config → T10; validate-on-instantiation → T2/T5/T7/T9; performant/async + isolated failures → T9/T12 (Threads.gather); callback destinations → T8; retry/backoff + fail-after-N + warn → T6/T9.
-- Security: no eval (T2), SSRF (T6), secrets (T4), log-injection sanitize (T7/T9), unsafe SQL for DBSQL (T8).
+- Security: no eval (T2), SSRF (T6), secrets (T4), log-injection sanitize (T7/T9).
 - Storage/serialize round-trip + RunConfig `actions_location` → T1/T11.
 
 **Placeholder scan:** none — every task names exact files, interfaces, and test intents.
