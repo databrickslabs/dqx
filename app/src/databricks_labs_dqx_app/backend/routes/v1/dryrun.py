@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from databricks.labs.dqx.checks_validator import ChecksValidationStatus
 from databricks.sdk import WorkspaceClient
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
 from databricks_labs_dqx_app.backend.common.authorization import UserRole
 
@@ -98,6 +98,7 @@ def _catalog_of(fqn: str) -> str:
     dependencies=[require_role(*_ALL_ROLES)],
 )
 async def list_validation_runs(
+    response: Response,
     job_svc: Annotated[JobService, Depends(get_job_service)],
     review_svc: Annotated[ReviewStatusService, Depends(get_review_status_service)],
     app_conf: Annotated[AppConfig, Depends(get_conf)],
@@ -136,6 +137,7 @@ async def list_validation_runs(
         # backends, so we can't JOIN at the SQL layer — merging in Python
         # is what keeps this dialect-portable.
         candidate_run_ids = [row.get("run_id") or "" for row in candidates if row.get("run_id")]
+        review_statuses_unavailable = False
         try:
             review_map = review_svc.bulk_get_effective(candidate_run_ids)
         except Exception as exc:
@@ -145,6 +147,7 @@ async def list_validation_runs(
                 exc_info=True,
             )
             review_map = {}
+            review_statuses_unavailable = True
 
         # Normalise the optional multi-select filter into a set for O(1)
         # checks. Empty strings (e.g. trailing ``?review_status=``) are
@@ -157,6 +160,21 @@ async def list_validation_runs(
                 review_filter = None
         else:
             review_filter = None
+
+        # If the review-status backend is unavailable we cannot evaluate the
+        # filter; applying it would silently hide every run. Render all runs
+        # unfiltered instead and surface the degradation to the client via a
+        # response header so the UI can warn the user.
+        if review_statuses_unavailable and review_filter is not None:
+            logger.warning(
+                "Review-status filter %s requested but statuses are unavailable; returning all runs unfiltered.",
+                sorted(review_filter),
+            )
+            review_filter = None
+            response.headers["X-DQX-Warning"] = (
+                "review-status-unavailable: review statuses could not be loaded, "
+                "so the status filter was not applied and all runs are shown"
+            )
 
         results: list[ValidationRunSummaryOut] = []
         for row in candidates:
