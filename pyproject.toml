@@ -888,6 +888,10 @@ redefining-builtins-modules = ["six.moves", "past.builtins", "future.builtins", 
 "tests/unit/test_anomaly_check_funcs_validation.py" = "protected-access"
 "tests/unit/test_anomaly_scoring_run.py" = "protected-access"
 "tests/integration_anomaly/test_anomaly_ai_explanation.py" = "protected-access"
+# import-outside-toplevel: test_module_imports_without_delivery intentionally uses a local import
+#   to document that the module loads cleanly without delivery.py.
+# abstract-class-instantiated: the test explicitly verifies that Action() raises TypeError.
+"tests/unit/test_action_base.py" = "import-outside-toplevel,abstract-class-instantiated"
 
 # This plugin is used to generate correct links in README showed on PyPi
 [tool.hatch.metadata.hooks.fancy-pypi-readme]
