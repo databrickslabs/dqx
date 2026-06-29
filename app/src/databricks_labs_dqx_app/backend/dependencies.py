@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import os
+import threading
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Annotated, Any
 
@@ -477,29 +478,40 @@ __all__ = [
 ]
 
 
-async def get_spark(
-    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
-):
-    """Return a Databricks Connect SparkSession authenticated as the calling user (OBO).
+_spark_lock = threading.Lock()
 
-    Uses serverless compute — no cluster ID required. Unity Catalog row
-    filters and column masks are enforced at the Spark layer via the OBO token.
-    """
-    from databricks.connect import DatabricksSession
 
-    token = obo_ws.config.token
-    host = obo_ws.config.host
+def _get_spark_session():
+    # Databricks Apps OBO tokens cannot be issued with the "databricks-connect"
+    # OAuth scope, so we use the SP credentials (injected as env vars by the
+    # Apps runtime) for the Spark session. On local dev this falls back to the
+    # CLI profile. DQEngine still receives the OBO WorkspaceClient for all
+    # workspace API calls; only the Spark compute runs under the SP identity.
+    with _spark_lock:
+        from databricks.connect import DatabricksSession
+
+        return DatabricksSession.builder.serverless(True).getOrCreate()
+
+
+async def get_spark():
+    """Return a Databricks Connect SparkSession using the app SP credentials."""
     try:
-        return DatabricksSession.builder.remote(host=host, token=token, serverless=True).getOrCreate()
+        return await asyncio.to_thread(_get_spark_session)
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"Failed to start Spark session: {e}") from e
 
 
 async def get_dq_engine(
-    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
     spark=Depends(get_spark),
 ):
-    """Return a DQEngine backed by the OBO Spark session."""
+    """Return a DQEngine backed by the SP Spark session and SP workspace client.
+
+    DQX telemetry calls ws.clusters.select_spark_version() — a REST API that
+    requires the 'clusters' OAuth scope. The OBO token is issued without that
+    scope by Databricks Apps, so we use the SP workspace client here. The Spark
+    session also runs as SP (OBO tokens lack 'databricks-connect' scope too).
+    """
     from databricks.labs.dqx.engine import DQEngine
 
-    return DQEngine(workspace_client=obo_ws, spark=spark)
+    return DQEngine(workspace_client=sp_ws, spark=spark)

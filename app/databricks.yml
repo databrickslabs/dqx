@@ -21,6 +21,12 @@ variables:
   sql_warehouse_name:
     description: "Name of the deployed SQL warehouse for DQX Studio queries (must be unique per workspace)"
     default: "dqx-app-sql-warehouse"
+  task_runner_job_id:
+    description: >
+      Numeric ID of the dqx-task-runner job. Must be set per-target after
+      the first deploy creates the job. Used in app.yml so the app knows
+      which job to submit dry-run and profiler tasks to.
+    default: ""
   sql_warehouse_id:
     description: >
       ID of the SQL warehouse the app queries. Every target MUST set
@@ -88,6 +94,18 @@ variables:
       multiple apps can safely share ``databricks_postgres`` on the
       same Lakebase instance.
     default: "databricks_postgres"
+  app_lakebase_instance_name:
+    description: >
+      Lakebase instance name passed to the app as DQX_LAKEBASE_INSTANCE_NAME.
+      Defaults to the same value as lakebase_instance_name. Set to "" to
+      disable Lakebase and run all OLTP tables on Delta (useful for
+      workspaces where the deployer lacks Lakebase permissions).
+    default: "dqx-studio-lakebase"
+  app_lakebase_database_name:
+    description: >
+      Lakebase database name passed to the app as DQX_LAKEBASE_DATABASE_NAME.
+      Set to "" when app_lakebase_instance_name is "" (Delta fallback).
+    default: "databricks_postgres"
   lakebase_capacity:
     description: "Lakebase compute capacity (CU_1, CU_2, CU_4, CU_8)"
     default: "CU_1"
@@ -111,8 +129,8 @@ variables:
           value: "${var.catalog_name}"
         - name: "DQX_SCHEMA"
           value: "${var.schema_name}"
-        - name: "DQX_JOB_ID"
-          value_from: "dqx-task-runner-job"
+        - value_from: "DQX_JOB_ID"
+          value: "dqx-task-runner-job"
         - name: "DQX_TMP_SCHEMA"
           value: "${var.tmp_schema_name}"
         - name: "DQX_ADMIN_GROUP"
@@ -159,12 +177,12 @@ artifacts:
       DATABRICKS_WAREHOUSE_ID=${var.sql_warehouse_id}
       DQX_CATALOG=${var.catalog_name}
       DQX_SCHEMA=${var.schema_name}
-      DQX_JOB_ID_FROM=dqx-task-runner-job
+      DQX_JOB_ID=${var.task_runner_job_id}
       DQX_TMP_SCHEMA=${var.tmp_schema_name}
       DQX_ADMIN_GROUP=${var.admin_group}
       DQX_WHEELS_VOLUME=/Volumes/${var.catalog_name}/${var.schema_name}/${var.wheels_volume_name}
-      DQX_LAKEBASE_INSTANCE_NAME=${var.lakebase_instance_name}
-      DQX_LAKEBASE_DATABASE_NAME=${var.lakebase_database_name}
+      DQX_LAKEBASE_INSTANCE_NAME=${var.app_lakebase_instance_name}
+      DQX_LAKEBASE_DATABASE_NAME=${var.app_lakebase_database_name}
 
 resources:
   apps:
@@ -211,21 +229,11 @@ resources:
           job:
             id: ${resources.jobs.dqx_task_runner.id}
             permission: "CAN_MANAGE"
-        # Lakebase Postgres for OLTP state (rules catalog, app
-        # settings, RBAC, comments, schedule configs, scheduler
-        # bookkeeping). The instance is declared as a bundle resource
-        # below; the database defaults to the always-present
-        # ``databricks_postgres`` admin DB. This entry binds the app
-        # to the (instance, database) pair so DABs configures
-        # ``CAN_CONNECT_AND_CREATE`` automatically — that lets the app
-        # SP create its ``dqx_studio`` schema inside the bound DB on
-        # first connection.
-        - name: "dqx-lakebase"
-          description: "Lakebase Postgres backend for app OLTP state"
-          database:
-            database_name: ${var.lakebase_database_name}
-            instance_name: ${resources.database_instances.lakebase.name}
-            permission: "CAN_CONNECT_AND_CREATE"
+        # Lakebase resource removed from the default resources list.
+        # Targets that use Lakebase add it explicitly in their own
+        # resources override (with a literal instance_name).
+        # Targets that disable Lakebase (app_lakebase_instance_name: "")
+        # omit it entirely — the app falls back to Delta for OLTP tables.
 
       permissions:
         - group_name: "account users"
@@ -276,12 +284,10 @@ resources:
       lifecycle:
         prevent_destroy: true
 
-  database_instances:
-    lakebase:
-      name: ${var.lakebase_instance_name}
-      capacity: ${var.lakebase_capacity}
-      lifecycle:
-        prevent_destroy: true
+  # database_instances.lakebase removed from top-level. Targets that need
+  # bundle-managed Lakebase declare it under their own resources block.
+  # The app connects to Lakebase via DQX_LAKEBASE_INSTANCE_NAME (env var
+  # in app.yml); set app_lakebase_instance_name: "" per-target to disable.
 
   jobs:
     dqx_task_runner:
@@ -382,6 +388,7 @@ targets:
       catalog_name: uc_cjp_qa
       dqx_service_principal_application_id: "818ab164-e764-4bd0-bf5d-2e7726a92fe5"
       sql_warehouse_id: "13df5a7f4c61072a"   # just the ID
+      task_runner_job_id: "239838879800390"
       schema_name: "dqx_app"
       tmp_schema_name: "dqx_app_tmp"
       app_name: "dqx-app"
@@ -403,7 +410,41 @@ targets:
               job:
                 id: ${resources.jobs.dqx_task_runner.id}
                 permission: "CAN_MANAGE"
-      
+
+  eid-ro-mode-b:
+    workspace:
+      profile: EIDRO-APP
+    variables:
+      catalog_name: uc_eid_sandbox_prod
+      dqx_service_principal_application_id: ""
+      sql_warehouse_id: "cd5e118a673141a1" 
+      schema_name: "dqx_studio_app"
+      tmp_schema_name: "dqx_studio_app_tmp"
+      app_name: "dqx-studio-app"
+      admin_group: "admins"
+      wheels_volume_name: "wheels"
+      task_runner_job_id: ""
+      app_lakebase_instance_name: ""
+      app_lakebase_database_name: ""
+    resources:
+      apps:
+        dqx-studio:
+          # The app's ``resources`` list is wholesale-replaced on target
+          # override, so all three entries (warehouse, job, lakebase) must
+          # be repeated even though only the warehouse changes.
+          # Lakebase is disabled for this target (runs on Delta), so omit
+          # the dqx-lakebase entry.
+          resources:
+            - name: "dqx-sql-warehouse"
+              description: "Shared workspace SQL warehouse (not bundle-managed)"
+              sql_warehouse:
+                id: ${var.sql_warehouse_id}
+                permission: "CAN_USE"
+            - name: "dqx-task-runner-job"
+              job:
+                id: ${resources.jobs.dqx_task_runner.id}
+                permission: "CAN_MANAGE"
+
     # No resources.sql_warehouses block. post_deploy_grants.sh grants
     # CAN_USE to app SP / job SP / users via the warehouses API.
 

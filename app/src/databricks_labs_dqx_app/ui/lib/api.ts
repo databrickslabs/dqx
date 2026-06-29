@@ -7626,6 +7626,10 @@ export function useRunDryRunOnPreview<TData = Awaited<ReturnType<typeof runDryRu
  * Unity Catalog permissions enforced), checks are applied synchronously, and
  * per-row results are returned immediately. Results are not recorded in the
  * validation history.
+ *
+ * For ``sql_query`` checks the SQL is executed directly and the returned rows
+ * are treated as violations (DQX convention: zero rows = pass). This avoids the
+ * ``condition`` column requirement that ``apply_checks_by_metadata`` imposes.
  * @summary Run Dry Run On Table
  */
 export const runDryRunOnTable = (
