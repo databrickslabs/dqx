@@ -125,14 +125,18 @@ class Action(abc.ABC):
 ```python
 @dataclass
 class DQAction:
-    condition: str
     action: Action
+    condition: str | None = None      # optional; None => always fire after checks
     name: str = ""
     def __post_init__(self):
-        ConditionEvaluator.validate(self.condition)   # P1 validate-on-instantiation
+        if self.condition is not None:
+            ConditionEvaluator.validate(self.condition)   # P1 validate-on-instantiation
         self.action.validate()
-        if not self.name: self.name = self.action.name or <derived from condition>
+        if not self.name: self.name = self.action.name or <derived from condition or action type>
 ```
+A `None` condition means the action fires unconditionally whenever actions are evaluated
+(after checks are applied) — no metric gating. Field order keeps `action` required and
+`condition` optional; callers use keywords per the PRD (`DQAction(condition=..., action=...)`).
 
 ### 4.4 `FailPipeline(Action)` (fail_pipeline.py)
 `execute` raises `PipelineFailedError(message, context)`. Default message includes the
@@ -267,7 +271,9 @@ destination types register without modifying the serializer (OCP).
 evaluate(context):
   alert_results, fail_actions = [], []
   for dq in actions:
-     if not ConditionEvaluator.evaluate(dq.condition, context.metrics): record(not-fired); continue
+     # condition None => fire unconditionally; else gate on the metric expression
+     if dq.condition is not None and not ConditionEvaluator.evaluate(dq.condition, context.metrics):
+        record(not-fired); continue
      if not state_store.should_fire(dq, context, True): record(suppressed); continue
      if isinstance(dq.action, DQAlert): alert_results.append(dispatch(dq, context))
      elif isinstance(dq.action, FailPipeline): fail_actions.append(dq)
