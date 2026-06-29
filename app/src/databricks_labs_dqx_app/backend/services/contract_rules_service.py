@@ -279,14 +279,20 @@ class ContractRulesService:
                         "referenced an unknown check function or unsafe SQL."
                     )
                     continue
+                # Spread the LLM-supplied metadata FIRST so the trusted
+                # contract-lineage keys below always win. Letting LLM output
+                # override ``schema``/``rule_type``/``contract_id`` would
+                # corrupt lineage and, worse, mis-route the rule in
+                # ``_bucket_rules_by_schema`` to a wrong/nonexistent schema
+                # bucket — which on save can target an unintended table.
                 user_metadata = {
+                    **(rule.get("user_metadata") or {}),
                     "contract_id": metadata.contract_id or "unknown",
                     "contract_version": metadata.version or "unknown",
                     "odcs_version": metadata.odcs_api_version or "unknown",
                     "schema": exp.schema_name,
                     "rule_type": "text_llm",
                     "text_expectation": exp.description,
-                    **(rule.get("user_metadata") or {}),
                 }
                 if exp.field:
                     user_metadata["field"] = exp.field
@@ -297,12 +303,6 @@ class ContractRulesService:
             warnings.append("No rules were generated from the contract's text expectations.")
         return rules, warnings
 
-    # SQL-bearing fields an LLM could populate with unsafe statements: the
-    # rule's top-level ``filter`` plus the arguments used by SQL-based check
-    # functions (sql_expression → ``expression``, sql_query → ``query``,
-    # several checks → ``row_filter``).
-    _SQL_BEARING_KEYS: ClassVar[tuple[str, ...]] = ("expression", "query", "row_filter", "filter")
-
     @classmethod
     def _is_llm_rule_safe(cls, rule: dict[str, Any]) -> bool:
         """Validate an LLM-produced rule before it reaches the UI.
@@ -311,6 +311,20 @@ class ContractRulesService:
         name must resolve through ``CHECK_FUNC_REGISTRY`` and any generated
         SQL fragment must pass ``is_sql_query_safe()``. Returns ``False`` for
         hallucinated function names or unsafe SQL so the caller drops the rule.
+
+        We do **not** gate on a fixed argument-name allowlist. A
+        prompt-injected ``type: text`` expectation can steer the LLM to emit
+        a rule that resolves to a real check function yet stashes a
+        destructive statement in *any* argument (``column``, a nested value,
+        or an argument a future check adds), which a name-based allowlist
+        would wave through to save/execute. The app layer can't know which
+        arguments a given check ultimately interpolates into Spark SQL, so we
+        conservatively treat **every** string the rule carries — the
+        top-level ``filter`` plus all (possibly nested) argument values — as
+        a potential SQL fragment and require each to pass
+        ``is_sql_query_safe()``. Rejected rules are dropped non-fatally with
+        a warning, so over-rejecting a benign-but-keyword-bearing literal is
+        an acceptable trade-off for closing the injection vector.
         """
         # Local imports keep module import cheap and ensure the check-function
         # registry is populated (importing ``check_funcs`` runs the
@@ -327,15 +341,8 @@ class ContractRulesService:
             return False
 
         sql_fragments: list[str] = []
-        top_filter = rule.get("filter")
-        if isinstance(top_filter, str):
-            sql_fragments.append(top_filter)
-        arguments = check.get("arguments")
-        if isinstance(arguments, dict):
-            for key in cls._SQL_BEARING_KEYS:
-                value = arguments.get(key)
-                if isinstance(value, str):
-                    sql_fragments.append(value)
+        _collect_string_fragments(rule.get("filter"), sql_fragments)
+        _collect_string_fragments(check.get("arguments"), sql_fragments)
         return all(is_sql_query_safe(sql) for sql in sql_fragments if sql.strip())
 
     @staticmethod
@@ -505,6 +512,25 @@ class ContractRulesService:
                 )
             )
         return result, unassigned
+
+
+def _collect_string_fragments(value: Any, out: list[str]) -> None:
+    """Recursively collect every string scalar reachable within *value*.
+
+    Used by :meth:`ContractRulesService._is_llm_rule_safe` to gather all
+    strings an LLM-produced rule carries (the rule ``filter`` and the
+    arbitrarily nested ``arguments`` structure) so each can be screened by
+    ``is_sql_query_safe()``. Walks dicts (values only — keys are rule schema,
+    not LLM SQL), lists, and tuples; ignores non-string scalars.
+    """
+    if isinstance(value, str):
+        out.append(value)
+    elif isinstance(value, dict):
+        for v in value.values():
+            _collect_string_fragments(v, out)
+    elif isinstance(value, (list, tuple)):
+        for v in value:
+            _collect_string_fragments(v, out)
 
 
 def _scrub_for_log(value: str | None) -> str:

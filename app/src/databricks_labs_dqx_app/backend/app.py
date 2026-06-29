@@ -24,6 +24,7 @@ from .migrations import MigrationRunner
 # Delta-only test environments that don't install it.
 from .migrations.postgres import PgMigrationRunner
 from .routes import api_router
+from .services.app_settings_service import AppSettingsService
 from .services.scheduler_service import SchedulerService
 from .services.view_service import mark_tmp_schema_ready
 from .sql_executor import SqlExecutor
@@ -317,6 +318,17 @@ async def lifespan(app: FastAPI):
         logger.info("Delta schema is up to date")
 
     # Best-effort below — the app can recover from these failing.
+
+    # Seed the run-review-status catalogue once, here at startup, rather
+    # than lazily on first read. This keeps ``get_run_review_statuses``
+    # (called on the Runs listing GET path) side-effect free. Best-effort:
+    # if the write fails the read path still returns the seed virtually,
+    # so the feature degrades gracefully until an admin saves the list.
+    try:
+        oltp_for_seed = pg_executor if pg_executor is not None else sp_sql
+        AppSettingsService(sql=oltp_for_seed).seed_run_review_statuses_if_absent()
+    except Exception as seed_e:
+        logger.warning("Could not seed default run_review_statuses: %s", seed_e, exc_info=True)
 
     try:
         tmp_cat = conf.catalog.replace("`", "")

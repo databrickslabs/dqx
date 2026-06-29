@@ -464,6 +464,7 @@ def get_dry_run_status(
     view_svc: Annotated[ViewService, Depends(get_view_service)],
     app_conf: Annotated[AppConfig, Depends(get_conf)],
     sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+    user_role: CurrentUserRole,
     job_run_id_param: Annotated[int | None, Query(alias="job_run_id")] = None,
     view_fqn_param: Annotated[str | None, Query(alias="view_fqn")] = None,
 ) -> RunStatusOut:
@@ -481,8 +482,15 @@ def get_dry_run_status(
     try:
         if job_run_id_param is not None:
             requesting_user = obo_ws.current_user.me().user_name or "unknown"
+            can_check_others = user_role in (UserRole.ADMIN, UserRole.RULE_APPROVER)
             run_owner = job_svc.get_run_creator(job_run_id_param)
-            if run_owner != requesting_user:
+            # Fail closed, mirroring ``cancel_dry_run``: a missing
+            # ``run_owner`` (older run, SDK shape drift) is treated as a
+            # non-match, so only admins/approvers may proceed. This gives
+            # the documented escape hatch instead of 403'ing the legitimate
+            # owner (and silently skipping the status-poll view cleanup).
+            is_owner = run_owner is not None and run_owner == requesting_user
+            if not is_owner and not can_check_others:
                 raise HTTPException(
                     status_code=403,
                     detail="You can only check status of your own runs",

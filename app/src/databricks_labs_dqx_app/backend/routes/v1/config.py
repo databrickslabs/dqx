@@ -19,6 +19,14 @@ from databricks_labs_dqx_app.backend.models import (
 )
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 
+# Everyone except VIEWER. Used to gate the embedded-dashboard GET: the
+# Lakeview iframe is published with ``embed_credentials: true``
+# (app/databricks.yml), so it renders with the publisher's credentials
+# rather than the caller's — the "underlying dashboard enforces UC
+# permissions" assumption does not hold, and a VIEWER could otherwise see
+# data they lack UC grants for. Mirrors ``_NON_VIEWERS`` in routes/v1/dryrun.py.
+_NON_VIEWERS = [UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTHOR]
+
 _TZ_SETTING_KEY = "display_timezone"
 _TZ_DEFAULT = "UTC"
 
@@ -610,15 +618,19 @@ def _workspace_host() -> str:
     "/embedded-dashboard",
     response_model=EmbeddedDashboardOut,
     operation_id="getEmbeddedDashboard",
+    dependencies=[require_role(*_NON_VIEWERS)],
 )
 def get_embedded_dashboard(
     svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
 ) -> EmbeddedDashboardOut:
     """Return the current embedded-dashboard config.
 
-    Available to any authenticated user — the Insights page is read-only
-    and the underlying dashboard enforces UC permissions on the data,
-    so we don't gate visibility here.
+    Gated to non-VIEWER roles. The Lakeview iframe is published with
+    ``embed_credentials: true`` (app/databricks.yml), so it renders with
+    the publisher's credentials rather than the caller's — the dashboard
+    does NOT re-enforce UC permissions per viewer, so handing a VIEWER the
+    dashboard id + workspace host would let them see data they lack UC
+    grants for. See ``_NON_VIEWERS``.
     """
     saved = svc.get_embedded_dashboard()
     workspace_host = _workspace_host()

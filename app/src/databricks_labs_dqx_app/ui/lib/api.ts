@@ -3340,9 +3340,12 @@ export const useSaveCustomMetrics = <TError = AxiosError<HTTPValidationError>,
 /**
  * Return the current embedded-dashboard config.
 
-Available to any authenticated user — the Insights page is read-only
-and the underlying dashboard enforces UC permissions on the data,
-so we don't gate visibility here.
+Gated to non-VIEWER roles. The Lakeview iframe is published with
+``embed_credentials: true`` (app/databricks.yml), so it renders with
+the publisher's credentials rather than the caller's — the dashboard
+does NOT re-enforce UC permissions per viewer, so handing a VIEWER the
+dashboard id + workspace host would let them see data they lack UC
+grants for. See ``_NON_VIEWERS``.
  * @summary Get Embedded Dashboard
  */
 export const getEmbeddedDashboard = (
@@ -3365,7 +3368,7 @@ export const getGetEmbeddedDashboardQueryKey = () => {
     }
 
     
-export const getGetEmbeddedDashboardQueryOptions = <TData = Awaited<ReturnType<typeof getEmbeddedDashboard>>, TError = AxiosError<unknown>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getEmbeddedDashboard>>, TError, TData>>, axios?: AxiosRequestConfig}
+export const getGetEmbeddedDashboardQueryOptions = <TData = Awaited<ReturnType<typeof getEmbeddedDashboard>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getEmbeddedDashboard>>, TError, TData>>, axios?: AxiosRequestConfig}
 ) => {
 
 const {query: queryOptions, axios: axiosOptions} = options ?? {};
@@ -3384,10 +3387,10 @@ const {query: queryOptions, axios: axiosOptions} = options ?? {};
 }
 
 export type GetEmbeddedDashboardQueryResult = NonNullable<Awaited<ReturnType<typeof getEmbeddedDashboard>>>
-export type GetEmbeddedDashboardQueryError = AxiosError<unknown>
+export type GetEmbeddedDashboardQueryError = AxiosError<HTTPValidationError>
 
 
-export function useGetEmbeddedDashboard<TData = Awaited<ReturnType<typeof getEmbeddedDashboard>>, TError = AxiosError<unknown>>(
+export function useGetEmbeddedDashboard<TData = Awaited<ReturnType<typeof getEmbeddedDashboard>>, TError = AxiosError<HTTPValidationError>>(
   options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getEmbeddedDashboard>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getEmbeddedDashboard>>,
@@ -3397,7 +3400,7 @@ export function useGetEmbeddedDashboard<TData = Awaited<ReturnType<typeof getEmb
       >, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useGetEmbeddedDashboard<TData = Awaited<ReturnType<typeof getEmbeddedDashboard>>, TError = AxiosError<unknown>>(
+export function useGetEmbeddedDashboard<TData = Awaited<ReturnType<typeof getEmbeddedDashboard>>, TError = AxiosError<HTTPValidationError>>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getEmbeddedDashboard>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getEmbeddedDashboard>>,
@@ -3407,7 +3410,7 @@ export function useGetEmbeddedDashboard<TData = Awaited<ReturnType<typeof getEmb
       >, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useGetEmbeddedDashboard<TData = Awaited<ReturnType<typeof getEmbeddedDashboard>>, TError = AxiosError<unknown>>(
+export function useGetEmbeddedDashboard<TData = Awaited<ReturnType<typeof getEmbeddedDashboard>>, TError = AxiosError<HTTPValidationError>>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getEmbeddedDashboard>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
@@ -3415,7 +3418,7 @@ export function useGetEmbeddedDashboard<TData = Awaited<ReturnType<typeof getEmb
  * @summary Get Embedded Dashboard
  */
 
-export function useGetEmbeddedDashboard<TData = Awaited<ReturnType<typeof getEmbeddedDashboard>>, TError = AxiosError<unknown>>(
+export function useGetEmbeddedDashboard<TData = Awaited<ReturnType<typeof getEmbeddedDashboard>>, TError = AxiosError<HTTPValidationError>>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getEmbeddedDashboard>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient 
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
@@ -3432,7 +3435,7 @@ export function useGetEmbeddedDashboard<TData = Awaited<ReturnType<typeof getEmb
 
 
 
-export const getGetEmbeddedDashboardSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getEmbeddedDashboard>>, TError = AxiosError<unknown>>( options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getEmbeddedDashboard>>, TError, TData>>, axios?: AxiosRequestConfig}
+export const getGetEmbeddedDashboardSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getEmbeddedDashboard>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getEmbeddedDashboard>>, TError, TData>>, axios?: AxiosRequestConfig}
 ) => {
 
 const {query: queryOptions, axios: axiosOptions} = options ?? {};
@@ -3451,18 +3454,18 @@ const {query: queryOptions, axios: axiosOptions} = options ?? {};
 }
 
 export type GetEmbeddedDashboardSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof getEmbeddedDashboard>>>
-export type GetEmbeddedDashboardSuspenseQueryError = AxiosError<unknown>
+export type GetEmbeddedDashboardSuspenseQueryError = AxiosError<HTTPValidationError>
 
 
-export function useGetEmbeddedDashboardSuspense<TData = Awaited<ReturnType<typeof getEmbeddedDashboard>>, TError = AxiosError<unknown>>(
+export function useGetEmbeddedDashboardSuspense<TData = Awaited<ReturnType<typeof getEmbeddedDashboard>>, TError = AxiosError<HTTPValidationError>>(
   options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getEmbeddedDashboard>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useGetEmbeddedDashboardSuspense<TData = Awaited<ReturnType<typeof getEmbeddedDashboard>>, TError = AxiosError<unknown>>(
+export function useGetEmbeddedDashboardSuspense<TData = Awaited<ReturnType<typeof getEmbeddedDashboard>>, TError = AxiosError<HTTPValidationError>>(
   options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getEmbeddedDashboard>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useGetEmbeddedDashboardSuspense<TData = Awaited<ReturnType<typeof getEmbeddedDashboard>>, TError = AxiosError<unknown>>(
+export function useGetEmbeddedDashboardSuspense<TData = Awaited<ReturnType<typeof getEmbeddedDashboard>>, TError = AxiosError<HTTPValidationError>>(
   options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getEmbeddedDashboard>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
@@ -3470,7 +3473,7 @@ export function useGetEmbeddedDashboardSuspense<TData = Awaited<ReturnType<typeo
  * @summary Get Embedded Dashboard
  */
 
-export function useGetEmbeddedDashboardSuspense<TData = Awaited<ReturnType<typeof getEmbeddedDashboard>>, TError = AxiosError<unknown>>(
+export function useGetEmbeddedDashboardSuspense<TData = Awaited<ReturnType<typeof getEmbeddedDashboard>>, TError = AxiosError<HTTPValidationError>>(
   options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getEmbeddedDashboard>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient 
  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {

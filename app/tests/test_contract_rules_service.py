@@ -281,6 +281,52 @@ class TestLlmRuleSafetyGate:
         assert result.total_rules == 0
         assert any("discarded" in w for w in result.warnings)
 
+    def test_drops_rule_with_unsafe_sql_in_non_allowlisted_arg(self, patched_generator):
+        # Regression: the safety gate must not rely on a fixed argument-name
+        # allowlist. A registry-resolved check that smuggles a destructive
+        # statement into an argument other than expression/query/row_filter
+        # (here ``column``) must still be dropped.
+        _, gen = patched_generator
+        gen.generate_rules_from_contract.return_value = []
+        ai = _ai_service_returning(
+            [
+                {
+                    "check": {
+                        "function": "is_not_null",
+                        "arguments": {"column": "order_id`) ; DROP TABLE orders --"},
+                    }
+                }
+            ]
+        )
+        svc = ContractRulesService(sp_ws=MagicMock(), ai_service=ai)
+
+        result = svc.generate(contract_text=_TEXT_CONTRACT, process_text_rules=True)
+
+        assert result.total_rules == 0
+        assert any("discarded" in w for w in result.warnings)
+
+    def test_drops_rule_with_unsafe_sql_in_nested_arg(self, patched_generator):
+        # Nested structures must be screened too — an unsafe statement buried
+        # in a list/dict argument value must not slip past the gate.
+        _, gen = patched_generator
+        gen.generate_rules_from_contract.return_value = []
+        ai = _ai_service_returning(
+            [
+                {
+                    "check": {
+                        "function": "is_in_list",
+                        "arguments": {"column": "status", "allowed": ["ok", "DROP TABLE orders"]},
+                    }
+                }
+            ]
+        )
+        svc = ContractRulesService(sp_ws=MagicMock(), ai_service=ai)
+
+        result = svc.generate(contract_text=_TEXT_CONTRACT, process_text_rules=True)
+
+        assert result.total_rules == 0
+        assert any("discarded" in w for w in result.warnings)
+
     def test_keeps_safe_llm_rule(self, patched_generator):
         _, gen = patched_generator
         gen.generate_rules_from_contract.return_value = []
@@ -294,6 +340,43 @@ class TestLlmRuleSafetyGate:
         assert result.total_rules == 1
         kept = result.schemas[0].rules[0]
         assert kept["user_metadata"]["rule_type"] == "text_llm"
+
+    def test_llm_metadata_cannot_override_trusted_lineage(self, patched_generator):
+        # Regression: an LLM rule carrying its own user_metadata must not be
+        # able to overwrite the trusted contract-lineage keys. Otherwise a
+        # forged ``schema`` could mis-route the rule to an unintended bucket /
+        # target table, and ``rule_type``/``contract_id`` lineage would be
+        # corrupted.
+        _, gen = patched_generator
+        gen.generate_rules_from_contract.return_value = []
+        ai = _ai_service_returning(
+            [
+                {
+                    "check": {"function": "sql_expression", "arguments": {"expression": "order_total > 0"}},
+                    "user_metadata": {
+                        "schema": "evil_other_schema",
+                        "rule_type": "predefined",
+                        "contract_id": "spoofed",
+                        "harmless_extra": "kept",
+                    },
+                }
+            ]
+        )
+        svc = ContractRulesService(sp_ws=MagicMock(), ai_service=ai)
+
+        result = svc.generate(contract_text=_TEXT_CONTRACT, process_text_rules=True)
+
+        assert result.total_rules == 1
+        kept = result.schemas[0].rules[0]
+        meta = kept["user_metadata"]
+        # Trusted keys win.
+        assert meta["schema"] == "orders"
+        assert meta["rule_type"] == "text_llm"
+        assert meta["contract_id"] == "urn:datacontract:demo:orders"
+        # Non-conflicting LLM keys are preserved.
+        assert meta["harmless_extra"] == "kept"
+        # And the rule landed in the correct (trusted) schema bucket.
+        assert result.schemas[0].schema_name == "orders"
 
     def test_llm_failure_warning_excludes_raw_exception(self, patched_generator):
         _, gen = patched_generator

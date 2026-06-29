@@ -259,10 +259,12 @@ class AppSettingsService:
     # ``ReviewStatusService`` returns virtually for runs that have never
     # been explicitly reviewed.
     #
-    # We seed a sensible default list on first read (rather than at
-    # migration time) so the feature works out-of-the-box even on
-    # already-deployed workspaces, and so the seed list can evolve in
-    # code without needing a fresh migration.
+    # The seed catalogue below is persisted once at startup via
+    # :meth:`seed_run_review_statuses_if_absent` (called from the app
+    # lifespan after migrations). The read path is side-effect free: if
+    # the setting is somehow still unset it returns the seed *virtually*
+    # without writing, so a GET (e.g. the Runs listing) never turns into
+    # a write and read-only health probes don't mutate state.
     # ------------------------------------------------------------------
 
     _RUN_REVIEW_STATUSES_KEY = "run_review_statuses_v1"
@@ -300,8 +302,13 @@ class AppSettingsService:
     def get_run_review_statuses(self) -> list[dict]:
         """Return the admin-managed catalogue of run review status values.
 
-        Falls back to (and persists) the seed list on first read so the
-        Runs detail dropdown is never empty after a fresh deploy.
+        Pure read — never writes. When the setting is unset (or
+        malformed) this returns the normalised seed list *virtually*
+        rather than persisting it; the seed is written once at startup by
+        :meth:`seed_run_review_statuses_if_absent`. Keeping this read-only
+        means the Runs listing GET (which calls this) and read-only health
+        probes don't trigger a ``dq_app_settings`` write.
+
         Returned entries are always normalised — ``value`` trimmed,
         ``description`` defaulted to empty string, ``color`` defaulted
         to ``"gray"``, ``is_default`` coerced to bool — so call sites
@@ -309,8 +316,6 @@ class AppSettingsService:
         """
         raw = self.get_setting(self._RUN_REVIEW_STATUSES_KEY)
         if not raw:
-            logger.info("Seeding default run_review_statuses on first read")
-            self._persist_run_review_statuses(self._RUN_REVIEW_STATUSES_SEED, user_email=None)
             return [self._normalise_status_entry(e) for e in self._RUN_REVIEW_STATUSES_SEED]
 
         try:
@@ -332,6 +337,21 @@ class AppSettingsService:
         # Defensive: if the persisted list is malformed and we end up
         # with nothing, surface the seed rather than an empty dropdown.
         return out or [self._normalise_status_entry(e) for e in self._RUN_REVIEW_STATUSES_SEED]
+
+    def seed_run_review_statuses_if_absent(self, *, user_email: str | None = None) -> bool:
+        """Persist the seed catalogue iff no value exists yet.
+
+        Called once at startup (after migrations) so the read path stays
+        side-effect free. Idempotent: returns ``False`` (no write) when a
+        value is already present, ``True`` when it seeded. ``save_setting``
+        is an upsert keyed by ``setting_key``, so the rare case of two
+        first-start workers racing converges instead of conflicting.
+        """
+        if self.get_setting(self._RUN_REVIEW_STATUSES_KEY):
+            return False
+        logger.info("Seeding default run_review_statuses at startup")
+        self._persist_run_review_statuses(self._RUN_REVIEW_STATUSES_SEED, user_email=user_email)
+        return True
 
     def save_run_review_statuses(
         self,

@@ -68,6 +68,26 @@ validate_warehouse_id() {
   fi
 }
 
+# Validate a UC *principal* (grantee) before interpolating it into a
+# backticked identifier. Unlike validate_uc_identifier this must also
+# accept user emails (local-part@domain) and SP application UUIDs, so it
+# permits the characters legal in those — but still rejects backticks,
+# quotes, backslashes, whitespace, and anything else that could escape
+# the backtick-quoted identifier or smuggle additional SQL. The deployer
+# name comes from ``current-user me`` JSON and is therefore not trusted.
+validate_principal() {
+  local name="$1" value="$2"
+  if [[ -z "$value" ]]; then
+    echo "ERROR: $name is empty." >&2
+    exit 1
+  fi
+  if [[ ! "$value" =~ ^[A-Za-z0-9][A-Za-z0-9._%+@-]*$ ]]; then
+    echo "ERROR: $name '$value' contains characters that are unsafe to interpolate into SQL." >&2
+    echo "       Allowed: [A-Za-z0-9._%+@-], must start with a letter or digit." >&2
+    exit 1
+  fi
+}
+
 PROFILE=""
 TARGET=""
 
@@ -325,6 +345,10 @@ echo "==> Granting SELECT to deployer (for Insights dashboard queries)..."
 DEPLOYER_JSON=$($CLI current-user me -o json 2>/dev/null || echo "")
 DEPLOYER=$(echo "$DEPLOYER_JSON" | jq -r '.userName // .applicationId // empty' 2>/dev/null || echo "")
 if [[ -n "$DEPLOYER" ]]; then
+  # $DEPLOYER is read from ``current-user me`` JSON, so it has NOT been
+  # through the identifier validation the other GRANT operands get.
+  # Validate before interpolating into the backticked identifier.
+  validate_principal "deployer" "$DEPLOYER"
   echo "   Deployer: $DEPLOYER"
   run_sql "GRANT USE SCHEMA ON SCHEMA \`$CATALOG\`.\`$SCHEMA\` TO \`$DEPLOYER\`"
   run_sql "GRANT SELECT ON SCHEMA \`$CATALOG\`.\`$SCHEMA\` TO \`$DEPLOYER\`"

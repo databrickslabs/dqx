@@ -339,7 +339,7 @@ class ReviewStatusService:
         previous_status: str | None,
         changed_by: str,
     ) -> None:
-        """Insert one row into ``dq_run_review_status_history``.
+        """Insert one row into ``dq_run_review_status_history`` (best-effort).
 
         Hand-rolled INSERT (no ``upsert``) because the table is
         append-only with no natural key. We can't piggyback on the
@@ -350,6 +350,20 @@ class ReviewStatusService:
         (Postgres ships it as a built-in synonym for
         ``CURRENT_TIMESTAMP``; Delta SQL accepts it too — same idiom
         as :class:`CommentsService`), so we inline it directly here.
+
+        The primary status mutation (upsert in ``set_status`` / DELETE in
+        ``clear_status``) and this audit INSERT are separate
+        auto-committed statements — the OLTP protocol spans Delta
+        (Statement Execution API, no multi-statement transactions) as
+        well as Lakebase, so there is no portable transaction to wrap
+        them in. We therefore make the history write **best-effort**,
+        matching :meth:`RoleService._record_history`: a failure here must
+        NOT propagate, because the status change has already committed and
+        raising would surface a 500 to the caller (prompting a retry)
+        while the live status already reflects the change. Losing one
+        audit row is strictly less harmful than that inconsistency.
+        Failures are logged at WARNING with the stack trace so they remain
+        investigable post-hoc.
         """
         run_id_lit = f"'{escape_sql_string(run_id)}'"
         status_lit = f"'{escape_sql_string(status)}'"
@@ -359,8 +373,15 @@ class ReviewStatusService:
             prev_lit = f"'{escape_sql_string(previous_status)}'"
         changed_by_lit = f"'{escape_sql_string(changed_by)}'"
 
-        self._sql.execute(
-            f"INSERT INTO {self._history_table} "
-            f"(run_id, status, previous_status, changed_by, changed_at) "
-            f"VALUES ({run_id_lit}, {status_lit}, {prev_lit}, {changed_by_lit}, now())"
-        )
+        try:
+            self._sql.execute(
+                f"INSERT INTO {self._history_table} "
+                f"(run_id, status, previous_status, changed_by, changed_at) "
+                f"VALUES ({run_id_lit}, {status_lit}, {prev_lit}, {changed_by_lit}, now())"
+            )
+        except Exception:
+            logger.warning(
+                "Failed to record review-status history for run %s (non-fatal)",
+                run_id,
+                exc_info=True,
+            )
