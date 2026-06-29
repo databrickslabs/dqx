@@ -18,7 +18,6 @@ from databricks.labs.dqx.rule_fingerprint import compute_rule_set_fingerprint_by
 from databricks.labs.dqx.config import InstallationChecksStorageConfig, LakebaseChecksStorageConfig
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.checks_storage import LakebaseChecksStorageHandler
-from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import NotFound
 
 from tests.conftest import compare_checks
@@ -69,16 +68,6 @@ TEST_CHECKS = [
 ]
 
 
-def _is_orphan_to_sweep(
-    name: str, created: datetime | None, current_run_pattern: re.Pattern[str], grace_period: datetime
-) -> bool:
-    """Whether a resource is a sweepable orphan: matches the fixture naming, is not from the current
-    run, and is older than the grace period (younger ones may be in use by a concurrent run)."""
-    if current_run_pattern.match(name) or not _LAKEBASE_RESOURCE_PATTERN.match(name):
-        return False
-    return created is not None and created < grace_period
-
-
 def _safe_delete(delete: Callable[[], object], name: str, kind: str) -> None:
     """Best-effort delete: a single failure is logged and never blocks the rest of the sweep."""
     try:
@@ -89,13 +78,60 @@ def _safe_delete(delete: Callable[[], object], name: str, kind: str) -> None:
         logger.warning(f"Failed to delete orphaned Lakebase {kind} {name}: {e}")
 
 
+def _is_current_or_foreign(name: str, current_run_pattern: re.Pattern[str]) -> bool:
+    """True if the resource belongs to the current run or does not match the test fixture naming."""
+    return bool(current_run_pattern.match(name)) or not _LAKEBASE_RESOURCE_PATTERN.match(name)
+
+
+def _sweep_orphaned_catalogs(ws, current_run_pattern: re.Pattern[str], grace_period: datetime) -> None:
+    """Delete orphaned test catalogs. A catalog with no ``created_at`` is treated as orphaned and
+    deleted (it cannot be age-gated); the count is logged so we can see whether that path is hit."""
+    listed = matched = missing_created_at = attempted = 0
+    for catalog in ws.catalogs.list():
+        listed += 1
+        name = catalog.name or ""
+        if _is_current_or_foreign(name, current_run_pattern):
+            continue
+        matched += 1
+        created = datetime.fromtimestamp(catalog.created_at / 1000, tz=timezone.utc) if catalog.created_at else None
+        if created is None:
+            missing_created_at += 1
+        elif created >= grace_period:
+            continue
+        # catalogs.delete removes the UC catalog object (the metastore slot). These orphans have no
+        # surviving instance, so the database-catalog API cannot be used; force=True handles non-empty.
+        _safe_delete(partial(ws.catalogs.delete, name=name, force=True), name, "catalog")
+        attempted += 1
+    logger.info(
+        f"Lakebase catalog sweep: listed={listed} matched_naming={matched} "
+        f"missing_created_at={missing_created_at} delete_attempts={attempted}"
+    )
+
+
+def _sweep_orphaned_instances(ws, current_run_pattern: re.Pattern[str], grace_period: datetime) -> None:
+    """Delete orphaned test database instances older than the grace period."""
+    matched = attempted = 0
+    for instance in ws.database.list_database_instances():
+        name = instance.name or ""
+        if _is_current_or_foreign(name, current_run_pattern):
+            continue
+        matched += 1
+        if datetime.fromisoformat(instance.creation_time) >= grace_period:
+            continue
+        _safe_delete(partial(ws.database.delete_database_instance, name=name), name, "instance")
+        attempted += 1
+    logger.info(f"Lakebase instance sweep: matched_naming={matched} delete_attempts={attempted}")
+
+
 def _remove_orphaned_lakebase_resources(ws) -> None:
     """Delete orphaned Lakebase catalogs and instances left behind by cancelled CI runs.
 
     Orphaned resources accumulate when a github action is cancelled and the fixture cleanup process
     does not run. Database catalogs count toward the per-metastore catalog limit (1000) and are NOT
-    removed when their instance is deleted, so they are swept explicitly via the Unity Catalog API
-    (the database-catalog listing requires a still-existing instance, which orphans may lack).
+    removed when their instance is deleted, so they are swept explicitly. Catalogs are enumerated via
+    the Unity Catalog API (``ws.catalogs.list`` finds orphans whose instance is already gone, which
+    the per-instance database listing cannot) and deleted via the database catalog API, matching the
+    make_lakebase_instance fixture teardown.
 
     Runs only in CI. Resources for the current run, those not matching the fixture naming, and those
     younger than the 2h grace period (possibly in use by a concurrent run) are skipped.
@@ -108,35 +144,19 @@ def _remove_orphaned_lakebase_resources(ws) -> None:
     grace_period = datetime.now(timezone.utc) - timedelta(hours=2)  # aligned with tests timeout
 
     # Sweep orphaned catalogs first — these exhaust the metastore catalog limit and block new runs.
-    for catalog in ws.catalogs.list():
-        created = datetime.fromtimestamp(catalog.created_at / 1000, tz=timezone.utc) if catalog.created_at else None
-        if _is_orphan_to_sweep(catalog.name, created, current_run_pattern, grace_period):
-            _safe_delete(partial(ws.catalogs.delete, name=catalog.name, force=True), catalog.name, "catalog")
-
-    # Then sweep orphaned instances.
-    for instance in ws.database.list_database_instances():
-        created = datetime.fromisoformat(instance.creation_time)
-        if _is_orphan_to_sweep(instance.name, created, current_run_pattern, grace_period):
-            _safe_delete(partial(ws.database.delete_database_instance, name=instance.name), instance.name, "instance")
+    _sweep_orphaned_catalogs(ws, current_run_pattern, grace_period)
+    _sweep_orphaned_instances(ws, current_run_pattern, grace_period)
 
 
-@pytest.fixture(scope="session", autouse=True)
-def _sweep_orphaned_lakebase_resources():
-    """Sweep orphaned Lakebase resources once per worker session, before any test creates new ones.
+def test_remove_orphaned_lakebase_resources(ws):
+    """Maintenance sweep: remove orphaned Lakebase catalogs and instances left by cancelled CI runs.
 
-    Implemented as a session-scoped autouse fixture rather than a standalone test: with xdist
-    (``-n 10``) a single test runs on only one worker, leaving the other nine to hit the
-    already-exhausted metastore catalog limit. A session fixture runs once per worker ahead of that
-    worker's first Lakebase test, so the shared backlog is cleared before any ``make_lakebase_instance``
-    call. It builds its own client because the session scope cannot depend on the function-scoped
-    ``ws`` fixture; the sweep is gated to CI and only lists/deletes catalogs and instances.
+    Mirrors the established instance-cleanup test. Database catalogs count toward the per-metastore
+    catalog limit (1000) and are NOT removed when their instance is deleted, so they are swept
+    explicitly. Runs only in CI; resources for the current run, those not matching the fixture
+    naming, and those younger than the 2h grace period are skipped.
     """
-    if os.getenv("GITHUB_RUN_ID"):
-        try:
-            _remove_orphaned_lakebase_resources(WorkspaceClient())
-        except Exception as e:  # noqa: BLE001 — cleanup failure must never block the test suite
-            logger.warning(f"Orphaned Lakebase resource sweep failed: {e}")
-    yield
+    _remove_orphaned_lakebase_resources(ws)
 
 
 def test_load_checks_when_lakebase_table_does_not_exist(
