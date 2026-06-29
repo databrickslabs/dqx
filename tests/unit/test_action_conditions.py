@@ -257,3 +257,47 @@ class TestValidate:
     def test_validate_disallows_call_node(self):
         with pytest.raises(InvalidConditionError):
             ConditionEvaluator.validate("__import__('os')")
+
+
+# ---------------------------------------------------------------------------
+# Full-tree pre-pass: short-circuit must NOT bypass allowlist (Fix round 1)
+# ---------------------------------------------------------------------------
+
+
+class TestFullTreePrePass:
+    def test_validate_or_with_disallowed_right_raises(self):
+        """validate must reject 'True or len(x) > 0' even though True short-circuits."""
+        with pytest.raises(InvalidConditionError):
+            ConditionEvaluator.validate("True or len(x) > 0")
+
+    def test_evaluate_or_with_disallowed_right_raises(self):
+        """evaluate must raise even when the left branch short-circuits to True."""
+        with pytest.raises(InvalidConditionError):
+            ConditionEvaluator.evaluate("True or len(x) > 0", {})
+
+    def test_validate_and_with_disallowed_right_raises(self):
+        """validate must reject '__import__' hidden in a False-short-circuit and branch."""
+        with pytest.raises(InvalidConditionError):
+            ConditionEvaluator.validate("False and __import__('os').system('x')")
+
+    def test_evaluate_or_short_circuit_with_attribute_raises(self):
+        """evaluate must raise on attribute access even when left branch is truthy."""
+        with pytest.raises(InvalidConditionError):
+            ConditionEvaluator.evaluate("metric == 0 or x.y", {"metric": 0})
+
+
+# ---------------------------------------------------------------------------
+# Operator errors wrapped as InvalidConditionError (Fix round 1)
+# ---------------------------------------------------------------------------
+
+
+class TestOperatorErrorsWrapped:
+    def test_division_by_zero_raises_invalid_condition(self):
+        """ZeroDivisionError from '1/0 > 0' must surface as InvalidConditionError."""
+        with pytest.raises(InvalidConditionError):
+            ConditionEvaluator.evaluate("1 / 0 > 0", {})
+
+    def test_type_error_on_compare_raises_invalid_condition(self):
+        """TypeError comparing non-numeric string to int must surface as InvalidConditionError."""
+        with pytest.raises(InvalidConditionError):
+            ConditionEvaluator.evaluate("x > 1", {"x": "abc"})

@@ -54,6 +54,81 @@ _CMP_OPS: dict[type, object] = {
 # Constant types allowed in conditions
 _ALLOWED_CONSTANT_TYPES = (int, float, bool, str)
 
+# ---------------------------------------------------------------------------
+# Structural allowlist: every node type that may appear in a valid condition.
+# Used by the full-tree pre-pass (_validate_tree) — default-deny.
+# ---------------------------------------------------------------------------
+
+_ALLOWED_NODE_TYPES: frozenset[type] = frozenset(
+    {
+        ast.Expression,
+        ast.BoolOp,
+        ast.UnaryOp,
+        ast.BinOp,
+        ast.Compare,
+        ast.Name,
+        ast.Constant,
+        # Boolean op singletons
+        ast.And,
+        ast.Or,
+        # Unary op singletons
+        ast.Not,
+        ast.USub,
+        ast.UAdd,
+        # Binary op singletons
+        ast.Add,
+        ast.Sub,
+        ast.Mult,
+        ast.Div,
+        ast.FloorDiv,
+        ast.Mod,
+        ast.Pow,
+        # Comparison op singletons
+        ast.Lt,
+        ast.LtE,
+        ast.Gt,
+        ast.GtE,
+        ast.Eq,
+        ast.NotEq,
+        # Context node that Python attaches to ast.Name (load context only)
+        ast.Load,
+        # Abstract base classes that Python includes in ast.walk output
+        ast.boolop,
+        ast.unaryop,
+        ast.operator,
+        ast.cmpop,
+        ast.expr,
+        ast.expr_context,
+    }
+)
+
+
+def _validate_tree(tree: ast.AST) -> None:
+    """Walk every node in *tree* and reject any node type not in the allowlist.
+
+    This full-tree pre-pass is unconditionally called before any evaluation so
+    that short-circuit evaluation cannot bypass the structural check.  A single
+    disallowed node anywhere in the tree — even in a branch that would never be
+    reached at runtime — causes an :class:`~databricks.labs.dqx.errors.InvalidConditionError`.
+
+    Args:
+        tree: The root AST node (typically an :class:`ast.Expression`).
+
+    Raises:
+        InvalidConditionError: If any node type is not in the allowlist.
+    """
+    for node in ast.walk(tree):
+        node_type = type(node)
+        if node_type not in _ALLOWED_NODE_TYPES:
+            raise InvalidConditionError(
+                f"AST node type '{node_type.__name__}' is not allowed in conditions; "
+                "only arithmetic, comparison, boolean, and literal expressions are permitted"
+            )
+        # Additional constant-type check — the node type ast.Constant is allowed
+        # but only for specific value types.
+        if isinstance(node, ast.Constant) and not isinstance(node.value, _ALLOWED_CONSTANT_TYPES):
+            raise InvalidConditionError(f"Constant type '{type(node.value).__name__}' is not allowed in conditions")
+
 
 def _coerce_numeric(value: object) -> object:
     """Coerce a numeric string to *float* for arithmetic/comparison.
@@ -83,9 +158,8 @@ def _eval_constant(node: ast.Constant, _metrics: dict[str, object] | None = None
 
     The *_metrics* parameter is accepted (and ignored) so that all evaluators
     in the dispatch table share the same ``(node, metrics)`` signature.
+    Constant-type validation has already been performed by the pre-pass.
     """
-    if not isinstance(node.value, _ALLOWED_CONSTANT_TYPES):
-        raise InvalidConditionError(f"Constant type '{type(node.value).__name__}' is not allowed in conditions")
     return node.value
 
 
@@ -103,9 +177,11 @@ def _eval_name(node: ast.Name, metrics: dict[str, object] | None) -> object:
 
 
 def _eval_boolop(node: ast.BoolOp, metrics: dict[str, object] | None) -> object:
-    """Evaluate a :class:`ast.BoolOp` (``and`` / ``or``) node."""
-    if type(node.op) not in _BOOL_OPS:
-        raise InvalidConditionError(f"Boolean operator '{type(node.op).__name__}' is not allowed in conditions")
+    """Evaluate a :class:`ast.BoolOp` (``and`` / ``or``) node.
+
+    Short-circuit evaluation is safe here because the full-tree pre-pass has
+    already validated every node in the tree before any evaluation begins.
+    """
     if isinstance(node.op, ast.And):
         result: object = True
         for value_node in node.values:
@@ -128,7 +204,10 @@ def _eval_unaryop(node: ast.UnaryOp, metrics: dict[str, object] | None) -> objec
     if op_func is None:
         raise InvalidConditionError(f"Unary operator '{type(node.op).__name__}' is not allowed in conditions")
     operand = _walk(node.operand, metrics)
-    return op_func(operand)  # type: ignore[operator]
+    try:
+        return op_func(operand)  # type: ignore[operator]
+    except (TypeError, OverflowError) as exc:
+        raise InvalidConditionError(f"Operator error in condition: {exc}") from exc
 
 
 def _eval_binop(node: ast.BinOp, metrics: dict[str, object] | None) -> object:
@@ -138,7 +217,10 @@ def _eval_binop(node: ast.BinOp, metrics: dict[str, object] | None) -> object:
         raise InvalidConditionError(f"Binary operator '{type(node.op).__name__}' is not allowed in conditions")
     left = _walk(node.left, metrics)
     right = _walk(node.right, metrics)
-    return op_func(left, right)  # type: ignore[operator]
+    try:
+        return op_func(left, right)  # type: ignore[operator]
+    except (ZeroDivisionError, TypeError, OverflowError) as exc:
+        raise InvalidConditionError(f"Operator error in condition: {exc}") from exc
 
 
 def _eval_compare(node: ast.Compare, metrics: dict[str, object] | None) -> object:
@@ -150,8 +232,11 @@ def _eval_compare(node: ast.Compare, metrics: dict[str, object] | None) -> objec
     for cmp_op, comparator_node in zip(node.ops, node.comparators):
         right = _walk(comparator_node, metrics)
         op_func = _CMP_OPS[type(cmp_op)]
-        if not op_func(left, right):  # type: ignore[operator]
-            return False
+        try:
+            if not op_func(left, right):  # type: ignore[operator]
+                return False
+        except (TypeError, OverflowError) as exc:
+            raise InvalidConditionError(f"Operator error in condition: {exc}") from exc
         left = right
     return True
 
@@ -179,8 +264,8 @@ def _walk(node: ast.AST, metrics: dict[str, object] | None) -> object:
 
     When *metrics* is *None* (validate-only mode) the function performs a
     structural walk without resolving :class:`ast.Name` nodes — unknown names
-    are not flagged at this stage.  Any disallowed node type raises
-    :class:`~databricks.labs.dqx.errors.InvalidConditionError` regardless.
+    are not flagged at this stage.  The full-tree allowlist check is performed
+    by :func:`_validate_tree` before this function is ever called.
     """
     if isinstance(node, ast.Expression):
         return _walk(node.body, metrics)
@@ -241,6 +326,9 @@ class ConditionEvaluator:
     Any other node type (calls, attribute access, subscripts, lambdas,
     comprehensions, …) raises :class:`~databricks.labs.dqx.errors.InvalidConditionError`.
 
+    A full-tree structural pre-pass is performed unconditionally before any
+    evaluation, so short-circuit evaluation cannot bypass the allowlist.
+
     Usage::
 
         ConditionEvaluator.validate("error_row_count > 0")
@@ -251,9 +339,9 @@ class ConditionEvaluator:
     def validate(condition: str) -> None:
         """Validate *condition* syntax and structure without requiring metrics.
 
-        Parses and walks the AST, rejecting disallowed node types and syntax
-        errors.  Name resolution is *not* performed — unknown metric names
-        are only caught at :meth:`evaluate` time.  Call this method at
+        Parses and walks every node in the AST, rejecting disallowed node types
+        and syntax errors.  Name resolution is *not* performed — unknown metric
+        names are only caught at :meth:`evaluate` time.  Call this method at
         *DQAction* construction time to surface malformed conditions early.
 
         Args:
@@ -264,15 +352,16 @@ class ConditionEvaluator:
                 contains an AST node type that is not allowed.
         """
         tree = _parse_condition(condition)
+        _validate_tree(tree)
         _walk(tree, metrics=None)
 
     @staticmethod
     def evaluate(condition: str, metrics: dict[str, object]) -> bool:
         """Evaluate *condition* against *metrics* and return a bool result.
 
-        Parses *condition*, validates its structure, resolves :class:`ast.Name`
-        nodes from *metrics* (coercing numeric strings to *float*), and returns
-        the final truth value.
+        Parses *condition*, performs a full-tree structural validation pass,
+        resolves :class:`ast.Name` nodes from *metrics* (coercing numeric
+        strings to *float*), and returns the final truth value.
 
         Args:
             condition: The condition expression string to evaluate.
@@ -288,5 +377,6 @@ class ConditionEvaluator:
                 present in *metrics*.
         """
         tree = _parse_condition(condition)
+        _validate_tree(tree)
         result = _walk(tree, metrics=metrics)
         return bool(result)
