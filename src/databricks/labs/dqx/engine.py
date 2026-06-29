@@ -2,6 +2,7 @@ import copy
 import inspect
 import logging
 import os
+import re
 from concurrent import futures
 from collections.abc import Callable
 from dataclasses import replace
@@ -396,18 +397,23 @@ class DQEngineCore(DQEngineCoreBase):
         return all(isinstance(check, DQRule) for check in checks)
 
     def _validate_dbr_version_requirements(self, checks: list[DQRule]) -> None:
-        """Raise InvalidCheckError if the current DBR major version is below the highest version required by any check.
+        """Raise InvalidCheckError if the current Databricks Runtime version is below the version required by any check.
 
-        The requirement is declared by decorating a check function with *requires_dbr_version(major_version)*.
-        The current DBR version is resolved via *current_version().dbr_version* Spark SQL function.
-        Validation checks that the current major version is >= the required major version (not an exact match).
+        The requirement is declared by decorating a check function with *requires_dbr_version("major.minor")*.
+        The current DBR version is resolved via the *current_version().dbr_version* Spark SQL function and compared
+        as a *(major, minor)* tuple. The version string may carry a suffix (for example *"18.2.x-photon-scala2.13"*
+        on serverless or *"15.4 LTS"*); only the leading *major.minor* is used.
+
+        When the version cannot be determined - *current_version().dbr_version* returns null or empty - the
+        requirement is not enforced rather than blocking an environment that may well support the check.
 
         Args:
             checks: List of DQRule instances to validate.
 
         Raises:
-            InvalidCheckError: If the current DBR major version is below the maximum required version,
-                or if the DBR version cannot be resolved (non-Databricks environment or null result).
+            InvalidCheckError: If the current DBR version is below the maximum required version, if the
+                *current_version()* function is unavailable (non-Databricks environment), or if a non-empty
+                version string has no leading *major.minor* and cannot be parsed.
         """
         versioned = {
             c.check_func.__name__: getattr(c.check_func, CHECK_FUNC_MIN_DBR_VERSION_ATTRIBUTE)
@@ -428,17 +434,17 @@ class DQEngineCore(DQEngineCoreBase):
                 f"Failed to resolve the current DBR version: {e}"
             ) from e
 
-        if dbr_version_str is None:
-            raise InvalidCheckError(
-                "Check functions with a DBR version requirement can only run on Databricks Runtime. "
-                "current_version().dbr_version returned null."
-            )
+        # When the version cannot be determined (null or empty), skip enforcement rather than blocking an
+        # environment that may well support the check.
+        if dbr_version_str is None or not dbr_version_str.strip():
+            return
 
-        parts = dbr_version_str.split(".")
-        try:
-            current = (int(parts[0]), int(parts[1]) if len(parts) > 1 else 0)
-        except (ValueError, IndexError) as e:
-            raise InvalidCheckError(f"Cannot parse Databricks Runtime version: '{dbr_version_str}'.") from e
+        # Resolve the leading "major.minor" prefix, tolerating suffixes such as "18.2.x-photon-scala2.13"
+        # (serverless) or "15.4 LTS".
+        match = re.match(r"\s*(\d+)\.(\d+)", dbr_version_str)
+        if match is None:
+            raise InvalidCheckError(f"Cannot parse Databricks Runtime version: '{dbr_version_str}'.")
+        current = (int(match.group(1)), int(match.group(2)))
 
         if current < required:
             check_names = ", ".join(sorted(versioned))

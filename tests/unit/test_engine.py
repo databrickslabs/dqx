@@ -1,8 +1,10 @@
+import re
 from datetime import datetime, timezone
 from unittest.mock import create_autospec, Mock
 
 import pytest
 import pyspark.sql.functions as F
+from pyspark.errors import AnalysisException
 from pyspark.sql import Column, SparkSession
 
 from databricks.sdk import WorkspaceClient
@@ -375,6 +377,18 @@ def _check_requires_dbr_15(column: str) -> Column:
     return make_condition(F.col(column).isNull(), f"'{column}' is null", f"{column}_is_null")
 
 
+@requires_dbr_version("17.1")
+@register_rule("row")
+def _check_requires_dbr_17_1(column: str) -> Column:
+    return make_condition(F.col(column).isNull(), f"'{column}' is null", f"{column}_is_null")
+
+
+@requires_dbr_version("999.0")
+@register_rule("row")
+def _check_requires_dbr_max(column: str) -> Column:
+    return make_condition(F.col(column).isNull(), f"'{column}' is null", f"{column}_is_null")
+
+
 def _engine_with_sql_side_effect(side_effect):
     ws = create_autospec(WorkspaceClient)
     spark = create_autospec(SparkSession)
@@ -392,24 +406,10 @@ def _engine_returning_dbr_version(version_str):
 
 
 def test_apply_checks_raises_invalid_check_error_when_spark_sql_fails():
-    from pyspark.sql.utils import AnalysisException
     engine = _engine_with_sql_side_effect(AnalysisException("current_version() not found"))
     df = Mock()
     df.columns = ["a"]
     with pytest.raises(InvalidCheckError, match="can only run on Databricks Runtime"):
-        engine.apply_checks(df, [DQRowRule(check_func=_check_requires_dbr_15, column="a")])
-
-
-def test_apply_checks_raises_invalid_check_error_when_dbr_version_is_null():
-    ws = create_autospec(WorkspaceClient)
-    spark = create_autospec(SparkSession)
-    row = Mock()
-    row.__getitem__ = Mock(return_value=None)
-    spark.sql.return_value.collect.return_value = [row]
-    engine = DQEngineCore(workspace_client=ws, spark=spark)
-    df = Mock()
-    df.columns = ["a"]
-    with pytest.raises(InvalidCheckError, match="returned null"):
         engine.apply_checks(df, [DQRowRule(check_func=_check_requires_dbr_15, column="a")])
 
 
@@ -419,3 +419,36 @@ def test_apply_checks_raises_invalid_check_error_when_dbr_version_unparseable():
     df.columns = ["a"]
     with pytest.raises(InvalidCheckError, match="Cannot parse Databricks Runtime version"):
         engine.apply_checks(df, [DQRowRule(check_func=_check_requires_dbr_15, column="a")])
+
+
+@pytest.mark.parametrize("dbr_version", ["17.0", "16.4", "9.1"])
+def test_apply_checks_raises_when_minor_version_below_required(dbr_version):
+    # Required 17.1; a lower (major, minor) - including 17.0, the same major - must fail. Guards against a
+    # regression to major-only comparison, which would wrongly let 17.0 through.
+    engine = _engine_returning_dbr_version(dbr_version)
+    df = Mock()
+    df.columns = ["a"]
+    with pytest.raises(InvalidCheckError, match=r"require Databricks Runtime >= 17\.1"):
+        engine.apply_checks(df, [DQRowRule(check_func=_check_requires_dbr_17_1, column="a")])
+
+
+@pytest.mark.parametrize(
+    "dbr_version, required_check",
+    [
+        # A suffixed runtime string such as "15.4 LTS" must parse to (15, 4) rather than hard-fail.
+        ("15.4 LTS", _check_requires_dbr_17_1),
+        # Serverless reports e.g. "18.2.x-photon-scala2.13"; it must parse to (18, 2), not hard-fail.
+        ("18.2.x-photon-scala2.13", _check_requires_dbr_max),
+    ],
+)
+def test_apply_checks_parses_dbr_version_with_suffix(dbr_version, required_check):
+    # Asserting the version is compared (and echoed back) against a higher requirement proves the leading
+    # major.minor was parsed and the suffix ignored, rather than the parse hard-failing.
+    engine = _engine_returning_dbr_version(dbr_version)
+    df = Mock()
+    df.columns = ["a"]
+    with pytest.raises(
+        InvalidCheckError,
+        match=rf"require Databricks Runtime >= .*but the current version is {re.escape(dbr_version)}",
+    ):
+        engine.apply_checks(df, [DQRowRule(check_func=required_check, column="a")])
