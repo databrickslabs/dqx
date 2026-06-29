@@ -932,8 +932,13 @@ def make_lakebase_instance(ws, make_random):
         return LakebaseInstance(name=instance_name, catalog_name=catalog_name, database_name=database_name)
 
     def delete(instance: LakebaseInstance) -> None:
-        _lakebase_delete_catalog(ws, instance.catalog_name)
-        _lakebase_delete_database_instance(ws, instance.name)
+        # Always attempt instance deletion even if catalog deletion fails, otherwise a failed
+        # catalog delete would orphan the instance. Catalogs count toward the metastore limit,
+        # so deleting the catalog first is intentional.
+        try:
+            _lakebase_delete_catalog(ws, instance.catalog_name)
+        finally:
+            _lakebase_delete_database_instance(ws, instance.name)
 
     yield from factory("lakebase", create, delete)
 
