@@ -62,7 +62,7 @@ that also seeds in-memory state for frequency / status-change control.
 
 ## 3. Module layout
 
-New package `src/databricks/labs/dqx/action/`:
+New package `src/databricks/labs/dqx/actions/`:
 
 ```
 action/

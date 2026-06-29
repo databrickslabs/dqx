@@ -4,7 +4,7 @@
 
 **Goal:** Add an extensible action abstraction to DQX whose first actions are `DQAlert` (Slack/Teams/webhook/DBSQL notifications) and `FailPipeline`, triggered by conditions over `DQMetricsObserver` summary metrics.
 
-**Architecture:** A new `databricks.labs.dqx.action` package built on SOLID interfaces — `Action`/`AlertDestination`/`ActionEventStore`/`SecretResolver` abstractions, a safe AST condition evaluator (never `eval()`), webhook delivery with retry+SSRF guards, in-memory state seeded from a UC/Lakebase events table, and an `ActionEvaluator` orchestrator. `DQEngine` accepts `actions=[...]` and fires them on save-to-table methods (batch + streaming) or via `evaluate_actions(...)`.
+**Architecture:** A new `databricks.labs.dqx.actions` package built on SOLID interfaces — `Action`/`AlertDestination`/`ActionEventStore`/`SecretResolver` abstractions, a safe AST condition evaluator (never `eval()`), webhook delivery with retry+SSRF guards, in-memory state seeded from a UC/Lakebase events table, and an `ActionEvaluator` orchestrator. `DQEngine` accepts `actions=[...]` and fires them on save-to-table methods (batch + streaming) or via `evaluate_actions(...)`.
 
 **Tech Stack:** Python 3.10+, PySpark, databricks-sdk (~0.73), databricks-labs-blueprint (Threads), SQLAlchemy (Lakebase), PyYAML, stdlib `ast`/`urllib.request`. No new dependencies.
 
@@ -26,7 +26,7 @@
 
 ## File Structure
 
-**New package `src/databricks/labs/dqx/action/`:**
+**New package `src/databricks/labs/dqx/actions/`:**
 - `__init__.py` — public exports
 - `base.py` — `ActionStatus`, `ActionContext`, `ActionResult`, `ActionServices`, `Action` (ABC), `DQAction`
 - `conditions.py` — `ConditionEvaluator`
@@ -79,8 +79,8 @@
 ## Task 2: Safe condition evaluator
 
 **Files:**
-- Create: `src/databricks/labs/dqx/action/__init__.py` (empty for now)
-- Create: `src/databricks/labs/dqx/action/conditions.py`
+- Create: `src/databricks/labs/dqx/actions/__init__.py` (empty for now)
+- Create: `src/databricks/labs/dqx/actions/conditions.py`
 - Test: `tests/unit/test_action_conditions.py`
 
 **Interfaces produced:**
@@ -100,7 +100,7 @@
 ## Task 3: Alert message + builder
 
 **Files:**
-- Create: `src/databricks/labs/dqx/action/message.py`
+- Create: `src/databricks/labs/dqx/actions/message.py`
 - Test: `tests/unit/test_action_message.py`
 
 **Interfaces consumed:** `ActionContext` is defined in Task 5; to avoid a cycle, `StandardMessageBuilder.build` takes primitives, not `ActionContext`:
@@ -118,7 +118,7 @@
 ## Task 4: Secret resolver
 
 **Files:**
-- Create: `src/databricks/labs/dqx/action/secrets.py`
+- Create: `src/databricks/labs/dqx/actions/secrets.py`
 - Test: `tests/unit/test_action_secrets.py`
 
 **Interfaces produced:**
@@ -135,7 +135,7 @@
 ## Task 5: Action core types
 
 **Files:**
-- Create: `src/databricks/labs/dqx/action/base.py`
+- Create: `src/databricks/labs/dqx/actions/base.py`
 - Test: `tests/unit/test_action_base.py`
 
 **Interfaces consumed:** `ConditionEvaluator` (Task 2), `SecretResolver` (Task 4).
@@ -158,7 +158,7 @@
 ## Task 6: Webhook delivery + SSRF guard
 
 **Files:**
-- Create: `src/databricks/labs/dqx/action/delivery.py`
+- Create: `src/databricks/labs/dqx/actions/delivery.py`
 - Test: `tests/unit/test_action_delivery.py`
 
 **Interfaces produced:**
@@ -177,7 +177,7 @@
 ## Task 7: Destination base + webhook destinations (Slack/Teams/generic)
 
 **Files:**
-- Create: `src/databricks/labs/dqx/action/destinations/__init__.py`, `base.py`, `webhook_base.py`, `slack.py`, `teams.py`, `webhook.py`
+- Create: `src/databricks/labs/dqx/actions/destinations/__init__.py`, `base.py`, `webhook_base.py`, `slack.py`, `teams.py`, `webhook.py`
 - Test: `tests/unit/test_action_destinations_webhook.py`
 
 **Interfaces consumed:** `AlertMessage` (T3), `ActionContext`/`ActionServices` (T5), `WebhookClient`/`WebhookAuth` (T6), `SecretResolver` (T4), `DQSecret` (T1).
@@ -199,7 +199,7 @@
 ## Task 8: DBSQL + callback destinations
 
 **Files:**
-- Create: `src/databricks/labs/dqx/action/destinations/dbsql.py`, `callback.py`
+- Create: `src/databricks/labs/dqx/actions/destinations/dbsql.py`, `callback.py`
 - Test: `tests/unit/test_action_destinations_dbsql.py`, `tests/unit/test_action_destinations_callback.py`
 
 **Interfaces produced:**
@@ -217,7 +217,7 @@
 ## Task 9: DQAlert + FailPipeline actions
 
 **Files:**
-- Create: `src/databricks/labs/dqx/action/alert.py`, `src/databricks/labs/dqx/action/fail_pipeline.py`
+- Create: `src/databricks/labs/dqx/actions/alert.py`, `src/databricks/labs/dqx/actions/fail_pipeline.py`
 - Test: `tests/unit/test_action_alert.py`, `tests/unit/test_action_fail_pipeline.py`
 
 **Interfaces consumed:** `Action`/`ActionContext`/`ActionResult`/`ActionServices` (T5), `AlertDestination` (T7), `StandardMessageBuilder` (T3).
@@ -237,7 +237,7 @@
 ## Task 10: State store + event stores
 
 **Files:**
-- Create: `src/databricks/labs/dqx/action/state.py`, `src/databricks/labs/dqx/action/event_storage.py`
+- Create: `src/databricks/labs/dqx/actions/state.py`, `src/databricks/labs/dqx/actions/event_storage.py`
 - Test: `tests/unit/test_action_state.py`; integration: `tests/integration/test_action_event_storage.py`
 
 **Interfaces produced:**
@@ -257,7 +257,7 @@
 ## Task 11: Serializer + definition storage + manager
 
 **Files:**
-- Create: `src/databricks/labs/dqx/action/serializer.py`, `src/databricks/labs/dqx/action/definition_storage.py`, `src/databricks/labs/dqx/action/manager.py`
+- Create: `src/databricks/labs/dqx/actions/serializer.py`, `src/databricks/labs/dqx/actions/definition_storage.py`, `src/databricks/labs/dqx/actions/manager.py`
 - Test: `tests/unit/test_action_serializer.py`; integration: `tests/integration/test_action_manager.py`
 
 **Interfaces produced:**
@@ -275,7 +275,7 @@
 ## Task 12: Action evaluator
 
 **Files:**
-- Create: `src/databricks/labs/dqx/action/evaluator.py`
+- Create: `src/databricks/labs/dqx/actions/evaluator.py`
 - Test: `tests/unit/test_action_evaluator.py`
 
 **Interfaces consumed:** all of the above.
@@ -291,10 +291,10 @@
 ## Task 13: Public exports
 
 **Files:**
-- Modify: `src/databricks/labs/dqx/action/__init__.py`
+- Modify: `src/databricks/labs/dqx/actions/__init__.py`
 - Test: `tests/unit/test_action_exports.py`
 
-**Interfaces produced:** `from databricks.labs.dqx.action import DQAction, DQAlert, FailPipeline, DQAlertFrequency, NotifyOn, SlackDQAlertDestination, TeamsDQAlertDestination, WebhookDQAlertDestination, DBSQLAlertDestination, CallbackDQAlertDestination, DQActionManager, ActionContext`.
+**Interfaces produced:** `from databricks.labs.dqx.actions import DQAction, DQAlert, FailPipeline, DQAlertFrequency, NotifyOn, SlackDQAlertDestination, TeamsDQAlertDestination, WebhookDQAlertDestination, DBSQLAlertDestination, CallbackDQAlertDestination, DQActionManager, ActionContext`.
 
 - [ ] **Step 1:** Test imports each public name. **Step 2:** FAIL. **Step 3:** populate `__all__`/exports. **Step 4:** PASS. fmt+lint. **Step 5:** Commit `feat(actions): expose public action API`.
 
@@ -336,7 +336,7 @@
 **Files:**
 - Create: `docs/docs/guide/actions_and_alerts.md`
 - Modify: README feature list; `CHANGELOG.md`
-- Verify API docs pick up `action` package exports.
+- Verify API docs pick up `actions` package exports.
 
 - [ ] **Step 1:** Write `actions_and_alerts.md`: concepts; defining `DQAction`/`DQAlert`/`FailPipeline`; Slack/Teams/webhook/DBSQL destinations; `DQSecret` + security/SSRF notes; conditions over metrics (built-in + custom); frequency + status-change; engine usage (auto on save vs `evaluate_actions`); streaming; storing/loading via `DQActionManager` (UC + Lakebase); declarative `run_config` `actions_location`. Google-style, no backticks around arg names (use italics), escape `{{`.
 - [ ] **Step 2:** Add a README feature bullet; CHANGELOG entry under unreleased.
