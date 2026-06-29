@@ -1336,7 +1336,7 @@ requires-dist = [
     { name = "datacontract-cli", marker = "extra == 'datacontract'", specifier = ">=0.11.1,<1.0" },
     { name = "dspy", marker = "extra == 'llm'", specifier = "~=3.1.3" },
     { name = "langchain-core", marker = "extra == 'llm'", specifier = ">=0.1.0,<1.0" },
-    { name = "litellm", marker = "extra == 'llm'", specifier = ">=1.64.0,<=1.82.6" },
+    { name = "litellm", marker = "extra == 'llm'", specifier = ">=1.64.0,<=1.89.3" },
     { name = "mlflow", extras = ["databricks"], marker = "extra == 'anomaly'", specifier = ">=2.19.1,<3.0" },
     { name = "numpy", marker = "extra == 'pii'", specifier = ">=1.20,<2.0" },
     { name = "presidio-analyzer", marker = "extra == 'pii'", specifier = "~=2.2.359" },
@@ -3271,7 +3271,7 @@ wheels = [
 
 [[package]]
 name = "litellm"
-version = "1.82.6"
+version = "1.89.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -3287,9 +3287,9 @@ dependencies = [
     { name = "tiktoken" },
     { name = "tokenizers" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/29/75/1c537aa458426a9127a92bc2273787b2f987f4e5044e21f01f2eed5244fd/litellm-1.82.6.tar.gz", hash = "sha256:2aa1c2da21fe940c33613aa447119674a3ad4d2ad5eb064e4d5ce5ee42420136", size = 17414147, upload-time = "2026-03-22T06:36:00.452Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/56/f1/f7cfead063f2ab1877c8fb465d0d7fe300b75f081bcb73525f6d550aeb1c/litellm-1.89.3.tar.gz", hash = "sha256:8fcdb2b7a0ef3381d41adf164443842e31ef9f0cd5bcda6fc3c0bd8bc2959510", size = 14080611, upload-time = "2026-06-20T22:42:26.997Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/02/6c/5327667e6dbe9e98cbfbd4261c8e91386a52e38f41419575854248bbab6a/litellm-1.82.6-py3-none-any.whl", hash = "sha256:164a3ef3e19f309e3cabc199bef3d2045212712fefdfa25fc7f75884a5b5b205", size = 15591595, upload-time = "2026-03-22T06:35:56.795Z" },
+    { url = "https://files.pythonhosted.org/packages/d1/f1/34d174ff1d84e459b30f971606ac9cb7078ad24cd7661e9786b25adf7def/litellm-1.89.3-py3-none-any.whl", hash = "sha256:414ef5aee504b2b3eb1b219d39f1c11902db399cbdbc06e5fb550c15d731abeb", size = 15495226, upload-time = "2026-06-20T22:42:23.156Z" },
 ]
 
 [[package]]
