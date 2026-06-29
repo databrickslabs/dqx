@@ -27,7 +27,60 @@ __all__ = [
     "LakebaseChecksStorageConfig",
     "InstallationChecksStorageConfig",
     "VolumeFileChecksStorageConfig",
+    "DQSecret",
+    "TableActionsStorageConfig",
+    "LakebaseActionsStorageConfig",
+    "ActionEventsConfig",
 ]
+
+
+@dataclass(frozen=True)
+class DQSecret:
+    """A reference to a Databricks secret stored in a secret scope.
+
+    Provides a canonical *scope/key* string representation that can be passed as
+    a credential reference in DQX configuration without embedding the secret
+    value in plain text.
+
+    Args:
+        scope: The Databricks secret scope name.
+        key: The key within the secret scope.
+    """
+
+    scope: str
+    key: str
+
+    def as_reference(self) -> str:
+        """Return the canonical *scope/key* reference string.
+
+        Returns:
+            A string of the form ``scope/key``.
+        """
+        return f"{self.scope}/{self.key}"
+
+    @classmethod
+    def from_reference(cls, ref: str) -> "DQSecret":
+        """Parse a *scope/key* reference string into a *DQSecret*.
+
+        The string is split on the **first** ``/`` only, so a key that itself
+        contains slashes is handled correctly.
+
+        Args:
+            ref: A reference string in the form ``scope/key``.
+
+        Returns:
+            A new *DQSecret* instance.
+
+        Raises:
+            InvalidParameterError: If *ref* does not contain a ``/``, or if
+                either the scope or key part is empty.
+        """
+        if "/" not in ref:
+            raise InvalidParameterError(f"Secret reference must be in the form 'scope/key', got {ref!r}.")
+        scope, _, key = ref.partition("/")
+        if not scope or not key:
+            raise InvalidParameterError(f"Secret reference must have non-empty scope and key parts, got {ref!r}.")
+        return cls(scope=scope, key=key)
 
 
 @dataclass
@@ -192,6 +245,8 @@ class RunConfig:
     lakebase_instance_name: str | None = None
     lakebase_client_id: str | None = None
     lakebase_port: str | None = None
+
+    actions_location: str | None = None  # UC table for action events; None disables action event persistence
 
 
 @dataclass
@@ -523,3 +578,98 @@ class InstallationChecksStorageConfig(
     assume_user: bool = True
     install_folder: str | None = None
     overwrite_location: bool = False
+
+
+@dataclass
+class TableActionsStorageConfig:
+    """Configuration class for persisting DQ action events to a Unity Catalog table.
+
+    Args:
+        location: Fully qualified UC table name (e.g. *catalog.schema.table*) where action events are stored.
+        run_config_name: Name of the run configuration these events belong to (default is *default*).
+        mode: Write mode for the table (*append* or *overwrite*, default *append*).
+    """
+
+    location: str
+    run_config_name: str = "default"
+    mode: str = "append"
+
+    def __post_init__(self) -> None:
+        if not self.location:
+            raise InvalidConfigError("The table name ('location' field) must not be empty or None.")
+
+
+@dataclass
+class LakebaseActionsStorageConfig:
+    """Configuration class for persisting DQ action events to a Lakebase (PostgreSQL) table.
+
+    The *location* must be a fully qualified three-part name in the form *database.schema.table*.
+
+    Args:
+        location: Fully qualified Lakebase table name in the format *database.schema.table*.
+        instance_name: Name of the Lakebase instance.
+        client_id: ID of the Databricks service principal for the Lakebase connection.
+        port: Lakebase port (default is *5432*).
+        run_config_name: Name of the run configuration these events belong to (default is *default*).
+        mode: Write mode for the table (*append* or *overwrite*, default *append*).
+    """
+
+    location: str
+    instance_name: str | None = None
+    client_id: str | None = None
+    port: str = "5432"
+    run_config_name: str = "default"
+    mode: str = "append"
+
+    def __post_init__(self) -> None:
+        if not self.location:
+            raise InvalidParameterError("Location must not be empty or None.")
+
+        if not self.instance_name:
+            raise InvalidParameterError("Instance name must not be empty or None.")
+
+        if len(self.location.split(".")) != 3:
+            raise InvalidConfigError(
+                f"Invalid Lakebase table name '{self.location}'. Must be in the format 'database.schema.table'."
+            )
+
+        if self.mode not in ("append", "overwrite"):
+            raise InvalidConfigError(f"Invalid mode '{self.mode}'. Must be 'append' or 'overwrite'.")
+
+    def _split_location(self) -> tuple[str, ...]:
+        """Splits *database.schema.table* into components."""
+        if not self.location:
+            raise InvalidConfigError("location must be set before accessing database components.")
+        return tuple(self.location.split("."))
+
+    @cached_property
+    def database_name(self) -> str:
+        """The database portion of the three-part location."""
+        return self._split_location()[0]
+
+    @cached_property
+    def schema_name(self) -> str:
+        """The schema portion of the three-part location."""
+        return self._split_location()[1]
+
+    @cached_property
+    def table_name(self) -> str:
+        """The table portion of the three-part location."""
+        return self._split_location()[2]
+
+
+@dataclass
+class ActionEventsConfig:
+    """Configuration class for storing DQ action events in a Unity Catalog table.
+
+    Args:
+        location: Fully qualified UC table name (e.g. *catalog.schema.events*) where action events are written.
+        mode: Write mode for the table (*append* or *overwrite*, default *append*).
+    """
+
+    location: str
+    mode: str = "append"
+
+    def __post_init__(self) -> None:
+        if not self.location:
+            raise InvalidConfigError("The table name ('location' field) must not be empty or None.")
