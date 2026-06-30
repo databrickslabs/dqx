@@ -1,0 +1,450 @@
+---
+sidebar_position: 311
+---
+
+import Admonition from '@theme/Admonition';
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+# Actions and Alerting
+
+DQX **actions** let you react automatically when observed summary metrics cross a threshold. After checks are applied and the Spark observation is materialized, each action evaluates its optional *condition* against the observed metrics and, when the condition is satisfied (or when there is no condition), executes its inner logic.
+
+The two built-in action types are:
+
+- *DQAlert* — delivers a notification to one or more destinations (Slack, Microsoft Teams, generic HTTPS webhook, or an in-process callback).
+- *FailPipeline* — raises `PipelineFailedError` to abort the current pipeline run.
+
+Actions require a `DQMetricsObserver` to be configured on the engine because they evaluate metrics collected by that observer.
+
+## Defining a DQAction
+
+A `DQAction` binds an inner *action* to an optional gating *condition*. When *condition* is `None` the action fires unconditionally after every DQX run. When *condition* is set it is validated at construction time, so syntax errors surface immediately rather than at evaluation time.
+
+```python
+from databricks.labs.dqx.actions import DQAction, DQAlert, SlackDQAlertDestination
+
+# Fires on every run (no condition)
+unconditional = DQAction(
+    action=DQAlert(
+        destinations=[SlackDQAlertDestination(name="slack", webhook_url="https://hooks.slack.com/…")]
+    )
+)
+
+# Fires only when at least one error row is observed
+on_errors = DQAction(
+    condition="error_row_count > 0",
+    action=DQAlert(
+        destinations=[SlackDQAlertDestination(name="slack", webhook_url="https://hooks.slack.com/…")]
+    )
+)
+```
+
+### Condition syntax and available metrics
+
+Conditions are SQL-like boolean expressions evaluated against the observed metrics dictionary. The evaluator uses a safe expression parser — it does **not** execute arbitrary Python.
+
+Built-in metrics available in every condition:
+
+| Metric name | Description |
+|---|---|
+| `input_row_count` | Total rows processed |
+| `error_row_count` | Rows that triggered at least one error-level check |
+| `warning_row_count` | Rows that triggered at least one warning-level check |
+| `valid_row_count` | Rows with no errors and no warnings |
+
+Per-check breakdown metrics (`check_metrics`) are available as a JSON string; they are most useful for monitoring or alerting via SQL queries on the metrics table, not directly in action conditions.
+
+Custom metrics defined on `DQMetricsObserver` (via `custom_metrics`) are also available by their SQL alias:
+
+```python
+from databricks.labs.dqx.metrics_observer import DQMetricsObserver
+
+observer = DQMetricsObserver(
+    name="my_pipeline",
+    custom_metrics=["error_row_count * 1.0 / input_row_count as error_row_ratio"],
+)
+
+# Now "error_row_ratio" can be referenced in conditions
+action = DQAction(
+    condition="error_row_ratio > 0.10",
+    action=DQAlert(destinations=[...]),
+)
+```
+
+Compound conditions using `and` / `or` are supported:
+
+```python
+DQAction(condition="error_row_count > 0 or warning_row_count > 0", action=DQAlert(destinations=[...]))
+```
+
+## DQAlert destinations
+
+`DQAlert` dispatches a single alert message concurrently to all configured destinations. A delivery failure in one destination is isolated — the remaining destinations still receive the alert, and per-destination errors are captured in `ActionResult.destination_errors`.
+
+### Slack
+
+`SlackDQAlertDestination` posts a Block Kit message to a Slack incoming webhook. Delivery is restricted to `hooks.slack.com`.
+
+```python
+from databricks.labs.dqx.actions import DQAlert, DQAlertFrequency, NotifyOn, SlackDQAlertDestination
+
+alert = DQAlert(
+    destinations=[
+        SlackDQAlertDestination(
+            name="data-quality-alerts",
+            webhook_url="https://hooks.slack.com/services/T000/B000/xxxx",
+        )
+    ],
+    severity="error",
+    alert_frequency=DQAlertFrequency.ALWAYS,
+    notify_on=NotifyOn.EACH,
+)
+```
+
+### Microsoft Teams
+
+`TeamsDQAlertDestination` posts a MessageCard to a Teams incoming webhook. Delivery is restricted to `webhook.office.com` and `office.com`.
+
+```python
+from databricks.labs.dqx.actions import TeamsDQAlertDestination
+
+alert = DQAlert(
+    destinations=[
+        TeamsDQAlertDestination(
+            name="teams-dq-channel",
+            webhook_url="https://webhook.office.com/webhookb2/…",
+        )
+    ]
+)
+```
+
+### Generic HTTPS webhook
+
+`WebhookDQAlertDestination` sends a canonical DQX JSON payload to any HTTPS endpoint. No host restriction is applied. Optional HTTP Basic-auth can be supplied via *username* and *password*.
+
+```python
+from databricks.labs.dqx.actions import WebhookDQAlertDestination
+from databricks.labs.dqx.config import DQSecret
+
+alert = DQAlert(
+    destinations=[
+        WebhookDQAlertDestination(
+            name="pagerduty",
+            webhook_url="https://events.pagerduty.com/v2/enqueue",
+            # In production, use DQSecret — see the Secrets section below
+            username=DQSecret(scope="dq-secrets", key="pd-user"),
+            password=DQSecret(scope="dq-secrets", key="pd-token"),
+        )
+    ]
+)
+```
+
+### In-process callback
+
+`CallbackDQAlertDestination` invokes a Python callable in the same process. It is useful for testing and for custom side effects (e.g. writing to a buffer, triggering another function). Callback destinations are **not serializable** and are skipped when actions are saved to storage.
+
+```python
+from databricks.labs.dqx.actions import CallbackDQAlertDestination
+from databricks.labs.dqx.actions.message import AlertMessage
+from databricks.labs.dqx.actions.base import ActionContext
+
+
+def my_handler(message: AlertMessage, context: ActionContext) -> None:
+    print(f"Alert fired: {message.title} | errors={context.metrics.get('error_row_count')}")
+
+
+alert = DQAlert(
+    destinations=[
+        CallbackDQAlertDestination(name="my-handler", callback=my_handler)
+    ]
+)
+```
+
+## FailPipeline
+
+`FailPipeline` raises `PipelineFailedError` to abort the current run. The evaluator defers the error until all other non-terminal actions (e.g. alert notifications) have completed, so alerts are always delivered before the pipeline is stopped.
+
+```python
+from databricks.labs.dqx.actions import DQAction, FailPipeline
+
+# Fail with a custom message when error row count exceeds 1 000
+fail_action = DQAction(
+    condition="error_row_count > 1000",
+    action=FailPipeline(message="Too many errors — aborting pipeline."),
+)
+
+# Fail with an auto-generated message that includes observed metrics
+fail_action_auto = DQAction(
+    condition="error_row_count > 0",
+    action=FailPipeline(),  # message generated automatically from context.metrics
+)
+```
+
+## Alert frequency and notify_on
+
+Two knobs control when `DQAlert` actually sends a notification after its condition fires.
+
+*alert_frequency* limits how often alerts can be sent:
+
+| Value | Behaviour |
+|---|---|
+| `DQAlertFrequency.ALWAYS` (default) | Send on every run where the condition is true |
+| `DQAlertFrequency.HOURLY` | Send at most once per hour |
+| `DQAlertFrequency.DAILY` | Send at most once per day |
+
+*notify_on* controls which status transitions trigger a notification:
+
+| Value | Behaviour |
+|---|---|
+| `NotifyOn.EACH` (default) | Notify every time the condition fires |
+| `NotifyOn.STATUS_CHANGE` | Notify only when status changes (healthy → unhealthy or vice-versa) |
+
+```python
+from databricks.labs.dqx.actions import DQAlert, DQAlertFrequency, NotifyOn, SlackDQAlertDestination
+
+alert = DQAlert(
+    destinations=[SlackDQAlertDestination(name="slack", webhook_url="https://hooks.slack.com/…")],
+    alert_frequency=DQAlertFrequency.DAILY,  # at most once per day
+    notify_on=NotifyOn.STATUS_CHANGE,         # only on healthy↔unhealthy transitions
+)
+```
+
+## Using actions with DQEngine
+
+### Auto-fire on save methods (recommended)
+
+Pass a list of `DQAction` instances to `DQEngine` together with a `DQMetricsObserver`. Actions fire automatically at the end of `apply_checks_and_save_in_table` and `apply_checks_by_metadata_and_save_in_table` (both batch and streaming) once the Spark observation has been materialized.
+
+```python
+from databricks.sdk import WorkspaceClient
+from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.metrics_observer import DQMetricsObserver
+from databricks.labs.dqx.config import InputConfig, OutputConfig
+from databricks.labs.dqx.actions import (
+    DQAction,
+    DQAlert,
+    DQAlertFrequency,
+    FailPipeline,
+    SlackDQAlertDestination,
+)
+
+observer = DQMetricsObserver(name="my_pipeline")
+
+actions = [
+    # Send a Slack alert whenever any error row is observed
+    DQAction(
+        condition="error_row_count > 0",
+        action=DQAlert(
+            destinations=[
+                SlackDQAlertDestination(
+                    name="slack",
+                    webhook_url="https://hooks.slack.com/services/T000/B000/xxxx",
+                )
+            ],
+            alert_frequency=DQAlertFrequency.ALWAYS,
+        ),
+    ),
+    # Also fail the pipeline when the error ratio exceeds 10 %
+    DQAction(
+        condition="error_row_count > 0",
+        action=FailPipeline(message="Error rate too high — pipeline aborted."),
+    ),
+]
+
+# Actions require an observer
+engine = DQEngine(WorkspaceClient(), observer=observer, actions=actions)
+
+# Actions fire automatically after the save completes
+engine.apply_checks_and_save_in_table(
+    checks=checks,
+    input_config=InputConfig(location="catalog.schema.input"),
+    output_config=OutputConfig(location="catalog.schema.valid"),
+    quarantine_config=OutputConfig(location="catalog.schema.quarantine"),
+    metrics_config=OutputConfig(location="catalog.schema.metrics"),
+)
+```
+
+<Admonition type="warning" title="Observer required">
+Passing *actions* to *DQEngine* without also passing an *observer* raises `InvalidParameterError` at construction time. Actions evaluate metrics produced by the observer and cannot function without one.
+</Admonition>
+
+### Streaming pipelines
+
+The same pattern works for streaming. Actions fire per micro-batch after the observation for that batch is materialized:
+
+```python
+from databricks.labs.dqx.config import InputConfig, OutputConfig
+
+# Streaming input — actions still fire automatically after each micro-batch
+engine.apply_checks_and_save_in_table(
+    checks=checks,
+    input_config=InputConfig(location="catalog.schema.input", is_streaming=True),
+    output_config=OutputConfig(
+        location="catalog.schema.valid",
+        trigger={"availableNow": True},
+        options={"checkpointLocation": "/path/to/checkpoint"},
+    ),
+    quarantine_config=OutputConfig(
+        location="catalog.schema.quarantine",
+        trigger={"availableNow": True},
+        options={"checkpointLocation": "/path/to/checkpoint_q"},
+    ),
+)
+```
+
+### Manual evaluation with evaluate_actions
+
+For pipelines that do not use the save methods (e.g. Lakeflow Pipelines or custom `writeStream` code), call `evaluate_actions` explicitly after triggering a Spark action on the checked DataFrame:
+
+```python
+from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.metrics_observer import DQMetricsObserver
+from databricks.labs.dqx.actions import DQAction, DQAlert, SlackDQAlertDestination
+
+observer = DQMetricsObserver(name="manual_eval")
+engine = DQEngine(WorkspaceClient(), observer=observer, actions=[
+    DQAction(
+        condition="error_row_count > 0",
+        action=DQAlert(
+            destinations=[SlackDQAlertDestination(name="slack", webhook_url="https://hooks.slack.com/…")]
+        ),
+    )
+])
+
+# Apply checks — returns the DataFrame and an observation handle
+checked_df, observation = engine.apply_checks_by_metadata(input_df, checks)
+
+# Trigger a Spark action to materialize the observation
+checked_df.count()  # or write to a table, etc.
+
+# Now evaluate actions against the populated metrics
+results = engine.evaluate_actions(
+    observation.get,
+    input_location="catalog.schema.input",
+)
+```
+
+<Admonition type="warning" title="Trigger a Spark action first">
+Call *evaluate_actions* only after a Spark action (count, write, etc.) has been triggered on the checked DataFrame. If the observation has not been materialized, metrics will be empty and actions will not receive meaningful values.
+</Admonition>
+
+## Storing and loading actions
+
+Actions can be persisted to a Unity Catalog Delta table or a Lakebase PostgreSQL instance using `DQActionManager`. This allows actions to be managed separately from the pipeline code and reused across runs.
+
+<Admonition type="note" title="Callback destinations not serializable">
+`CallbackDQAlertDestination` instances are skipped when saving because Python callables cannot be serialized. Only webhook-based destinations (Slack, Teams, generic webhook) are persisted.
+</Admonition>
+
+### Unity Catalog Delta table
+
+```python
+from databricks.sdk import WorkspaceClient
+from databricks.labs.dqx.actions import DQAction, DQAlert, SlackDQAlertDestination, DQActionManager
+from databricks.labs.dqx.config import TableActionsStorageConfig
+
+ws = WorkspaceClient()
+manager = DQActionManager(ws=ws)
+
+actions = [
+    DQAction(
+        condition="error_row_count > 0",
+        action=DQAlert(
+            destinations=[
+                SlackDQAlertDestination(name="slack", webhook_url="https://hooks.slack.com/…")
+            ]
+        ),
+    )
+]
+
+config = TableActionsStorageConfig(
+    location="catalog.schema.dqx_actions",
+    run_config_name="default",
+    mode="append",
+)
+
+# Save
+manager.save_actions(actions, config)
+
+# Load back
+loaded_actions = manager.load_actions(config)
+```
+
+### Lakebase (PostgreSQL)
+
+```python
+from databricks.labs.dqx.config import LakebaseActionsStorageConfig
+
+config = LakebaseActionsStorageConfig(
+    location="mydb.dqx_schema.actions",
+    instance_name="my-lakebase-instance",
+    client_id="my-service-principal-client-id",  # optional
+    port="5432",
+    run_config_name="default",
+)
+
+manager.save_actions(actions, config)
+loaded_actions = manager.load_actions(config)
+```
+
+### Declarative configuration with actions_location
+
+When using DQX Workflows or the configuration file, set *actions_location* on a `RunConfig` to point to the UC table where actions for that run config are stored. This mirrors the *checks_location* mechanism and allows actions to be loaded automatically by the workflow.
+
+```yaml
+run_configs:
+  - name: default
+    checks_location: catalog.schema.dq_checks
+    actions_location: catalog.schema.dqx_actions  # UC table with persisted actions
+    input_config:
+      location: catalog.schema.input
+    output_config:
+      location: catalog.schema.valid
+      mode: append
+    quarantine_config:
+      location: catalog.schema.quarantine
+      mode: append
+    metrics_config:
+      location: catalog.schema.dq_metrics
+      mode: append
+```
+
+When `actions_location` is `None` (the default), action event persistence is disabled for that run config.
+
+## Security and secrets
+
+### Using DQSecret for credentials
+
+Webhook URLs, usernames, and passwords accept either a plain `str` or a `DQSecret(scope, key)` reference. In production, always use `DQSecret` to avoid storing credentials in source code or configuration files.
+
+```python
+from databricks.labs.dqx.config import DQSecret
+from databricks.labs.dqx.actions import SlackDQAlertDestination, WebhookDQAlertDestination
+
+# Slack webhook URL from a Databricks secret scope
+slack_dest = SlackDQAlertDestination(
+    name="slack",
+    webhook_url=DQSecret(scope="dq-secrets", key="slack-webhook-url"),
+)
+
+# Generic webhook with Basic-auth credentials from secret scope
+webhook_dest = WebhookDQAlertDestination(
+    name="my-webhook",
+    webhook_url=DQSecret(scope="dq-secrets", key="webhook-url"),
+    username=DQSecret(scope="dq-secrets", key="webhook-user"),
+    password=DQSecret(scope="dq-secrets", key="webhook-password"),
+)
+```
+
+### SSRF protection
+
+All webhook destinations validate that the resolved URL uses HTTPS only and that the target host is not a private, loopback, or cloud-metadata IP address. Delivery is rejected before any network call if the URL fails validation. This prevents SSRF attacks where a malicious URL could reach internal services.
+
+### Delivery retries and fault isolation
+
+Each destination is attempted concurrently. A delivery failure in one destination is isolated: the error is recorded in `ActionResult.destination_errors` but the other destinations still receive the alert. Transient failures are retried with exponential backoff before the error is recorded.
+
+<Admonition type="warning" title="Plaintext credentials are development-only">
+Passing webhook URLs, usernames, or passwords as plain strings is convenient for local development but must not be used in production. Always use *DQSecret* references in deployed pipelines.
+</Admonition>

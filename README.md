@@ -9,6 +9,18 @@ DQX by Databricks Labs
 
 Simplified Data Quality checking at Scale for PySpark Workloads on streaming and standard DataFrames.
 
+Key capabilities:
+
+- **Rule-based quality checks** — 50+ built-in checks (null, range, regex, referential, aggregate, geo, PII, and more) for row-level and dataset-level validation, with support for custom check functions.
+- **AI-assisted rule generation** — LLM-driven rule suggestions from business descriptions, powered by DSPy and Databricks Model Serving.
+- **ML anomaly detection** — Isolation Forest–based row anomaly detection with SHAP explanations and AI-generated narratives.
+- **Data profiling** — automatic statistics collection and quality rule candidates generation from existing data.
+- **Summary metrics** — built-in and custom aggregate metrics (input/error/warning/valid row counts, per-check breakdowns) persisted to Delta tables for trend analysis.
+- **Actions and alerting** — automatically send Slack, Microsoft Teams, or generic webhook alerts and/or fail the pipeline when summary metrics cross a threshold. See the [Actions and Alerting guide](https://databrickslabs.github.io/dqx/docs/guide/actions_and_alerts).
+- **Flexible checks storage** — save and load quality rules from YAML/JSON files, Unity Catalog tables, Volumes, or Lakebase (PostgreSQL).
+- **DQX Studio** — browser-based no-code UI for authoring rules, running checks, and reviewing results, deployed as a Databricks App.
+- **Streaming support** — apply checks to both batch and streaming DataFrames using the same API.
+
 [![build](https://github.com/databrickslabs/dqx/actions/workflows/push.yml/badge.svg)](https://github.com/databrickslabs/dqx/actions/workflows/push.yml) 
 [![codecov](https://codecov.io/github/databrickslabs/dqx/graph/badge.svg)](https://codecov.io/github/databrickslabs/dqx) 
 ![linesofcode](https://aschey.tech/tokei/github/databrickslabs/dqx?category=code)
