@@ -118,6 +118,16 @@ class TestArithmeticOperations:
     def test_power(self):
         assert ConditionEvaluator.evaluate("a ** 2 > 20", {"a": 5}) is True
 
+    def test_power_with_large_int_metrics_is_bounded(self):
+        """`a ** b` with huge int metrics must not build an unbounded bigint (DoS); float
+        coercion makes it overflow to InvalidConditionError instead of hanging the driver."""
+        with pytest.raises(InvalidConditionError):
+            ConditionEvaluator.evaluate("a ** b > 0", {"a": 10**6, "b": 10**6})
+
+    def test_power_with_non_numeric_operand_raises(self):
+        with pytest.raises(InvalidConditionError):
+            ConditionEvaluator.evaluate("a ** 2 > 0", {"a": "not-a-number"})
+
     def test_unary_sub(self):
         assert ConditionEvaluator.evaluate("-a < 0", {"a": 5}) is True
 

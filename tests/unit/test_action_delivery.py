@@ -148,6 +148,39 @@ class TestValidateWebhookUrl:
     def test_suffix_allowlist_case_insensitive(self) -> None:
         validate_webhook_url("https://Hooks.Slack.Com/x", allowed_host_suffixes=["hooks.slack.com"])
 
+    def test_suffix_allowlist_rejects_unanchored_spoof(self) -> None:
+        """'eviloffice.com' must NOT match the suffix 'office.com' (dot-anchored)."""
+        with pytest.raises(UnsafeWebhookUrlError):
+            validate_webhook_url("https://eviloffice.com/steal", allowed_host_suffixes=["office.com"])
+
+    def test_suffix_allowlist_accepts_exact_and_subdomain(self) -> None:
+        validate_webhook_url("https://office.com/x", allowed_host_suffixes=["office.com"])
+        validate_webhook_url("https://x.office.com/x", allowed_host_suffixes=["office.com"])
+
+    def test_rejects_octal_encoded_loopback(self) -> None:
+        with pytest.raises(UnsafeWebhookUrlError):
+            validate_webhook_url("https://0177.0.0.1/x")
+
+    def test_rejects_hex_encoded_loopback(self) -> None:
+        with pytest.raises(UnsafeWebhookUrlError):
+            validate_webhook_url("https://0x7f000001/x")
+
+    def test_rejects_integer_encoded_loopback(self) -> None:
+        with pytest.raises(UnsafeWebhookUrlError):
+            validate_webhook_url("https://2130706433/x")
+
+    def test_rejects_trailing_dot_localhost(self) -> None:
+        with pytest.raises(UnsafeWebhookUrlError):
+            validate_webhook_url("https://localhost./x")
+
+    def test_rejects_trailing_dot_loopback_ip(self) -> None:
+        with pytest.raises(UnsafeWebhookUrlError):
+            validate_webhook_url("https://127.0.0.1./x")
+
+    def test_rejects_shorthand_loopback(self) -> None:
+        with pytest.raises(UnsafeWebhookUrlError):
+            validate_webhook_url("https://127.1/x")
+
     def test_error_message_contains_sanitized_host(self) -> None:
         """Host with newlines must be stripped from error message (CWE-117)."""
         with pytest.raises(UnsafeWebhookUrlError) as exc_info:

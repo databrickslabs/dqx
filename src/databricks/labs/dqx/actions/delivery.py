@@ -14,6 +14,7 @@ Security notes:
 import base64
 import ipaddress
 import json
+import socket
 import time
 import urllib.error
 import urllib.parse
@@ -58,7 +59,9 @@ def validate_webhook_url(url: str, allowed_host_suffixes: list[str] | None = Non
         raise UnsafeWebhookUrlError(f"Webhook URL must use HTTPS scheme; got '{parsed.scheme}'")
 
     raw_host = parsed.hostname or ""
-    host = _sanitize_host(raw_host)
+    # Strip a trailing dot (fully-qualified form): "localhost." and "127.0.0.1." resolve to the
+    # same target as the dot-less form, so they must not slip past the loopback/IP checks below.
+    host = _sanitize_host(raw_host).rstrip(".")
 
     if not host:
         raise UnsafeWebhookUrlError("Webhook URL contains no host")
@@ -66,19 +69,32 @@ def validate_webhook_url(url: str, allowed_host_suffixes: list[str] | None = Non
     if host.lower() == "localhost":
         raise UnsafeWebhookUrlError(f"Webhook host '{host}' is not allowed (loopback)")
 
-    # Check if the host is a literal IP address.
+    # Reject literal IPs in any encoding. ipaddress only parses canonical dotted-decimal / IPv6,
+    # so it misses octal (0177.0.0.1), hex (0x7f000001), and integer (2130706433) IPv4 forms that
+    # the OS resolver still maps to loopback/private ranges — socket.inet_aton catches those.
     try:
-        addr = ipaddress.ip_address(host)
-        _reject_ip(addr, host)
+        _reject_ip(ipaddress.ip_address(host), host)
     except ValueError:
-        # Not an IP address — domain name; proceed to suffix check.
-        pass
+        try:
+            packed = socket.inet_aton(host)
+        except OSError:
+            pass  # genuine domain name — proceed to the suffix check
+        else:
+            _reject_ip(ipaddress.IPv4Address(packed), host)
 
     if allowed_host_suffixes is not None:
         host_lower = host.lower()
-        if not any(host_lower.endswith(suffix.lower()) for suffix in allowed_host_suffixes):
+        # Anchor on a dot boundary so suffix "office.com" matches "x.office.com" but NOT the
+        # attacker-registrable "eviloffice.com".
+        if not any(_host_matches_suffix(host_lower, suffix) for suffix in allowed_host_suffixes):
             safe_host = _sanitize_host(host)
             raise UnsafeWebhookUrlError(f"Webhook host '{safe_host}' is not in the allowed-host-suffix list")
+
+
+def _host_matches_suffix(host_lower: str, suffix: str) -> bool:
+    """Return True if *host_lower* equals *suffix* or is a subdomain of it (dot-anchored)."""
+    suffix_lower = suffix.lower().strip(".")
+    return host_lower == suffix_lower or host_lower.endswith("." + suffix_lower)
 
 
 def _reject_ip(addr: ipaddress.IPv4Address | ipaddress.IPv6Address, host: str) -> None:

@@ -15,7 +15,7 @@ The evaluator is purely structural, operating on the parsed AST.
 import ast
 import collections.abc
 
-from typing import cast
+from typing import SupportsFloat, cast
 
 from databricks.labs.dqx.errors import InvalidConditionError
 
@@ -76,8 +76,16 @@ def _op_mod(lhs: object, rhs: object) -> object:
 
 
 def _op_pow(lhs: object, rhs: object) -> object:
-    """Raise *lhs* to the power *rhs* (must be numeric)."""
-    return cast(float, lhs) ** cast(float, rhs)
+    """Raise *lhs* to the power *rhs* (must be numeric).
+
+    Operands are coerced to *float* before exponentiation. *typing.cast* is a runtime
+    no-op, so casting alone would leave ``int ** int`` to build an unbounded
+    arbitrary-precision integer (a CPU/memory denial-of-service for conditions such as
+    ``a ** b`` with large integer metrics). Real *float* coercion bounds the result —
+    an oversized exponentiation raises *OverflowError*, which the caller maps to
+    *InvalidConditionError*.
+    """
+    return float(cast(str | SupportsFloat, lhs)) ** float(cast(str | SupportsFloat, rhs))
 
 
 def _op_lt(lhs: object, rhs: object) -> bool:
@@ -318,7 +326,7 @@ def _eval_binop(node: ast.AST, metrics: dict[str, object] | None) -> object:
     right = _walk(bin_node.right, metrics)
     try:
         return op_func(left, right)
-    except (ZeroDivisionError, TypeError, OverflowError) as exc:
+    except (ZeroDivisionError, TypeError, OverflowError, ValueError) as exc:
         raise InvalidConditionError(f"Operator error in condition: {exc}") from exc
 
 
