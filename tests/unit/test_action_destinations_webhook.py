@@ -16,6 +16,7 @@ from __future__ import annotations
 import inspect
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import ClassVar
 from unittest.mock import create_autospec
 
 import pytest
@@ -507,4 +508,86 @@ def test_webhook_validate_passes_for_dqsecret_url():
         name="wh_test",
         webhook_url=DQSecret(scope="myscope", key="mykey"),
     )
+    dest.validate()  # must not raise
+
+
+def test_slack_validate_passes_for_valid_destination():
+    """Valid Slack destination with non-empty name and URL must not raise."""
+    dest = SlackDQAlertDestination(name="slack_ok", webhook_url="https://hooks.slack.com/services/T/B/x")
+    dest.validate()  # must not raise
+
+
+def test_teams_validate_passes_for_valid_destination():
+    """Valid Teams destination with non-empty name and URL must not raise."""
+    dest = TeamsDQAlertDestination(name="teams_ok", webhook_url="https://my.webhook.office.com/webhookb2/x")
+    dest.validate()  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# Teams section assertions
+# ---------------------------------------------------------------------------
+
+
+def test_teams_payload_section_activity_title_matches_message_title():
+    client = FakeWebhookClient()
+    services = _make_services(webhook_client=client)
+    context = ActionContext(metrics={}, run_id="r1", run_time=datetime.now(timezone.utc))
+    msg = _make_message(title="My Alert Title")
+
+    dest = TeamsDQAlertDestination(name="teams_test", webhook_url="https://my.webhook.office.com/webhookb2/x")
+    dest.deliver(msg, context, services)
+
+    payload = client.calls[0].payload
+    sections = payload["sections"]
+    assert isinstance(sections, list)
+    assert len(sections) >= 1
+    first_section = sections[0]
+    assert isinstance(first_section, dict)
+    assert first_section["activityTitle"] == msg.title
+
+
+def test_teams_payload_section_facts_derived_from_message_fields():
+    client = FakeWebhookClient()
+    services = _make_services(webhook_client=client)
+    context = ActionContext(metrics={}, run_id="r1", run_time=datetime.now(timezone.utc))
+    msg = _make_message(fields={"condition": "error_row_count > 0", "run_id": "run-xyz"})
+
+    dest = TeamsDQAlertDestination(name="teams_test", webhook_url="https://my.webhook.office.com/webhookb2/x")
+    dest.deliver(msg, context, services)
+
+    payload = client.calls[0].payload
+    sections = payload["sections"]
+    assert isinstance(sections, list)
+    first_section = sections[0]
+    assert isinstance(first_section, dict)
+    facts = first_section["facts"]
+    assert isinstance(facts, list)
+    assert len(facts) > 0
+    # Each fact must correspond to an entry in message.fields
+    fact_names = [f["name"] for f in facts]
+    fact_values = [f["value"] for f in facts]
+    for field_name, field_value in msg.fields.items():
+        assert field_name in fact_names
+        assert field_value in fact_values
+
+
+# ---------------------------------------------------------------------------
+# AlertDestination base no-op validate
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _MinimalDestination(AlertDestination):
+    """Minimal concrete subclass that does NOT override validate."""
+
+    type: ClassVar[str] = "minimal"
+    name: str
+
+    def deliver(self, message: AlertMessage, context: ActionContext, services: ActionServices) -> None:
+        pass  # no-op for testing
+
+
+def test_alert_destination_base_validate_is_noop():
+    """AlertDestination.validate() default must return None without raising."""
+    dest = _MinimalDestination(name="test")
     dest.validate()  # must not raise

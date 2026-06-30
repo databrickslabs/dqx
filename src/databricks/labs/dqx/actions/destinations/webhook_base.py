@@ -60,7 +60,7 @@ class WebhookAlertDestination(AlertDestination, abc.ABC):
             raise InvalidActionError("AlertDestination 'webhook_url' must be a non-empty string or DQSecret.")
 
     @abc.abstractmethod
-    def _build_payload(self, message: AlertMessage) -> dict:
+    def _build_payload(self, message: AlertMessage) -> dict[str, object]:
         """Build the wire-format payload dict for *message*.
 
         Args:

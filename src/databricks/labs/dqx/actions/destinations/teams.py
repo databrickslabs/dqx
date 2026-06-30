@@ -35,7 +35,7 @@ class TeamsDQAlertDestination(WebhookAlertDestination):
     type: ClassVar[str] = "teams"
     allowed_host_suffixes: ClassVar[list[str] | None] = ["webhook.office.com", "office.com"]
 
-    def _build_payload(self, message: AlertMessage) -> dict:
+    def _build_payload(self, message: AlertMessage) -> dict[str, object]:
         """Build a Teams MessageCard payload from *message*.
 
         Constructs a MessageCard with the alert title as *activityTitle* and

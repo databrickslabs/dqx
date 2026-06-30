@@ -34,7 +34,7 @@ class SlackDQAlertDestination(WebhookAlertDestination):
     type: ClassVar[str] = "slack"
     allowed_host_suffixes: ClassVar[list[str] | None] = ["hooks.slack.com"]
 
-    def _build_payload(self, message: AlertMessage) -> dict:
+    def _build_payload(self, message: AlertMessage) -> dict[str, object]:
         """Build a Slack Block Kit payload from *message*.
 
         Constructs a ``blocks`` list with a header block containing the alert

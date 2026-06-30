@@ -70,7 +70,7 @@ class WebhookDQAlertDestination(WebhookAlertDestination):
         resolved_password = services.secret_resolver.resolve(self.password)
         return WebhookAuth(username=resolved_username, password=resolved_password)
 
-    def _build_payload(self, message: AlertMessage) -> dict:
+    def _build_payload(self, message: AlertMessage) -> dict[str, object]:
         """Build a canonical DQX JSON payload from *message*.
 
         Args:
