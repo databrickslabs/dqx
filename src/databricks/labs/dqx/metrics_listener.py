@@ -5,6 +5,9 @@ from pyspark.sql.streaming import listener
 from databricks.labs.dqx.config import OutputConfig
 from databricks.labs.dqx.metrics_observer import DQMetricsObservation, DQMetricsObserver
 from databricks.labs.dqx.io import save_dataframe_as_table
+from databricks.labs.dqx.actions.base import ActionContext
+from databricks.labs.dqx.actions.evaluator import ActionEvaluator
+from databricks.labs.dqx.errors import TerminalActionError
 
 
 logger = logging.getLogger(__name__)
@@ -22,12 +25,17 @@ class StreamingMetricsListener(listener.StreamingQueryListener):
         spark: `SparkSession` for writing summary metrics
         target_query_id: Optional query ID of the specific streaming query to monitor. If provided, only events
             from this query will be processed (useful when multiple queries share the same observation).
+        action_evaluator: Optional *ActionEvaluator* to invoke after each micro-batch. When provided, actions
+            are evaluated per micro-batch using the observed metrics from that batch. *TerminalActionError*
+            (including *PipelineFailedError*) propagates out of *onQueryProgress* to abort the stream; all
+            other exceptions are logged and swallowed so a single bad alert cannot kill the stream.
     """
 
     metrics_config: OutputConfig
     metrics_observation: DQMetricsObservation
     spark: SparkSession
     target_query_id: str | None
+    action_evaluator: ActionEvaluator | None
 
     def __init__(
         self,
@@ -35,11 +43,13 @@ class StreamingMetricsListener(listener.StreamingQueryListener):
         metrics_observation: DQMetricsObservation,
         spark: SparkSession,
         target_query_id: str | None = None,
+        action_evaluator: ActionEvaluator | None = None,
     ) -> None:
         self.metrics_config = metrics_config
         self.metrics_observation = metrics_observation
         self.spark = spark
         self.target_query_id = target_query_id
+        self.action_evaluator = action_evaluator
 
     def onQueryStarted(self, event: listener.QueryStartedEvent) -> None:
         """
@@ -86,6 +96,26 @@ class StreamingMetricsListener(listener.StreamingQueryListener):
         )
         metrics_df = DQMetricsObserver.build_metrics_df(self.spark, metrics_observation)
         save_dataframe_as_table(metrics_df, self.metrics_config)
+
+        if self.action_evaluator is not None:
+            context = ActionContext(
+                metrics=metrics_observation.observed_metrics or {},
+                run_id=self.metrics_observation.run_id,
+                run_time=run_time_overwrite,
+                input_location=self.metrics_observation.input_location,
+                output_location=self.metrics_observation.output_location,
+                quarantine_location=self.metrics_observation.quarantine_location,
+                checks_location=self.metrics_observation.checks_location,
+                rule_set_fingerprint=self.metrics_observation.rule_set_fingerprint,
+                user_metadata=self.metrics_observation.user_metadata,
+            )
+            try:
+                self.action_evaluator.evaluate(context)
+            except TerminalActionError:
+                raise
+            except Exception as exc:
+                safe_run_id = self.metrics_observation.run_id.replace("\r", "").replace("\n", "")
+                logger.warning(f"Action evaluation failed for streaming micro-batch (run_id={safe_run_id}): {exc}")
 
     def onQueryIdle(self, event: listener.QueryIdleEvent) -> None:
         """

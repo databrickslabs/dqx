@@ -1688,7 +1688,9 @@ class DQEngine(DQEngineBase):
             rule_set_fingerprint=rule_set_fingerprint,
             user_metadata=self._engine.engine_user_metadata,
         )
-        return StreamingMetricsListener(metrics_config, metrics_observation, self.spark, target_query_id)
+        return StreamingMetricsListener(
+            metrics_config, metrics_observation, self.spark, target_query_id, self._get_action_evaluator()
+        )
 
     @telemetry_logger("engine", "apply_checks_for_run_config")
     def _apply_checks_for_run_config(self, run_config: RunConfig) -> None:
