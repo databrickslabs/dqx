@@ -510,9 +510,7 @@ class SchedulerService:
                 if is_synthetic:
                     sql_query = self._extract_sql_query(entry["checks"])
                     if sql_query is None:
-                        errors.append(
-                            f"{table_fqn}: cross-table rule is missing its sql_query"
-                        )
+                        errors.append(f"{table_fqn}: cross-table rule is missing its sql_query")
                         continue
 
                 config = {

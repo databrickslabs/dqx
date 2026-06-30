@@ -258,9 +258,7 @@ def batch_run_from_catalog(
             if is_synthetic:
                 sql_query = _extract_sql_query(approved_checks)
                 if not sql_query:
-                    errors.append(
-                        f"{table_fqn}: cross-table rule is missing its sql_query"
-                    )
+                    errors.append(f"{table_fqn}: cross-table rule is missing its sql_query")
                     continue
                 view_fqn = view_svc.create_view_from_sql(sql_query)
             else:
