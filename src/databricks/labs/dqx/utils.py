@@ -214,7 +214,7 @@ def normalize_col_str(col_str: str) -> str:
     return re.sub(COLUMN_NORMALIZE_EXPRESSION, "_", col_str[:max_chars].lower()).rstrip("_")
 
 
-def is_sql_query_safe(query: str) -> bool:
+def is_sql_query_safe(query: str, forbid_select: bool = False) -> bool:
     # Normalize the query by removing extra whitespace and converting to lowercase
     normalized_query = re.sub(r"\s+", " ", query).strip().lower()
 
@@ -237,6 +237,8 @@ def is_sql_query_safe(query: str) -> bool:
         "optimize",
         "zorder",
     ]
+    if forbid_select:
+        forbidden_statements = forbidden_statements + ["select"]
     return not any(re.search(rf"\b{kw}\b", normalized_query) for kw in forbidden_statements)
 
 
