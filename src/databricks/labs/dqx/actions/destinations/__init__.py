@@ -1,7 +1,7 @@
 """Alert destination adapters for DQX actions.
 
-Exposes the abstract base classes and concrete webhook destination
-implementations used by the DQX actions & alerting subsystem.
+Exposes the abstract base classes and concrete destination implementations
+used by the DQX actions & alerting subsystem.
 
 Classes:
     AlertDestination: Abstract base class for all alert destinations.
@@ -10,11 +10,13 @@ Classes:
     TeamsDQAlertDestination: Microsoft Teams MessageCard webhook destination.
     WebhookDQAlertDestination: Generic HTTPS webhook destination with optional
         Basic-auth support.
+    CallbackDQAlertDestination: In-process callback destination.
 """
 
 from __future__ import annotations
 
 from databricks.labs.dqx.actions.destinations.base import AlertDestination
+from databricks.labs.dqx.actions.destinations.callback import CallbackDQAlertDestination
 from databricks.labs.dqx.actions.destinations.slack import SlackDQAlertDestination
 from databricks.labs.dqx.actions.destinations.teams import TeamsDQAlertDestination
 from databricks.labs.dqx.actions.destinations.webhook import WebhookDQAlertDestination
@@ -26,4 +28,5 @@ __all__ = [
     "SlackDQAlertDestination",
     "TeamsDQAlertDestination",
     "WebhookDQAlertDestination",
+    "CallbackDQAlertDestination",
 ]
