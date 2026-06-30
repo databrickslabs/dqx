@@ -68,39 +68,76 @@ class ChecksSemanticValidator:
         return arguments if isinstance(arguments, dict) else {}
 
     @staticmethod
+    def _get_for_each_column(check: dict) -> object:
+        """Extract the *for_each_column* value (a list of columns or list of column groups).
+
+        Returns None when absent. This value lives in the check block alongside
+        *function* and *arguments*, so it must be part of a rule's identity.
+        """
+        if not isinstance(check, dict):
+            return None
+        inner = check.get("check", check)
+        if not isinstance(inner, dict):
+            return None
+        return inner.get("for_each_column")
+
+    @staticmethod
+    def _get_filter(check: dict) -> object:
+        """Extract the rule *filter*.
+
+        DQX accepts *filter* either at the top level of the check or nested inside
+        the check block; the top-level value takes precedence when both are present.
+        """
+        if not isinstance(check, dict):
+            return None
+        if check.get("filter") is not None:
+            return check.get("filter")
+        inner = check.get("check", check)
+        if not isinstance(inner, dict):
+            return None
+        return inner.get("filter")
+
+    @staticmethod
     def _full_key(check: dict) -> tuple | None:
         """Return a hashable key representing a rule's complete identity.
 
         Two rules with the same full key are exact duplicates.
-        Key: (function, sorted_arguments, criticality, filter)
+        Key: (function, arguments + for_each_column, criticality, filter)
         """
         function = ChecksSemanticValidator._get_function(check)
         if not function:
             return None
         arguments = ChecksSemanticValidator._get_arguments(check)
         criticality = check.get("criticality", "error")
-        filter_expr = check.get("filter")
-        # Serialize arguments to a stable, hashable string so that list- or dict-valued
-        # arguments (e.g. is_in_list allowed=[...], for_each_column=[...]) do not raise
-        # "unhashable type" when the key is used in a dict/set.
-        arguments_key = json.dumps(arguments, sort_keys=True, default=str)
-        return (function, arguments_key, criticality, filter_expr)
+        filter_expr = ChecksSemanticValidator._get_filter(check)
+        for_each_column = ChecksSemanticValidator._get_for_each_column(check)
+        # Serialize the targeting parts (arguments + for_each_column) to a stable,
+        # hashable string so that list- or dict-valued values (e.g. is_in_list
+        # allowed=[...], for_each_column=[...]) do not raise "unhashable type" when
+        # the key is used in a dict/set, and so rules targeting different columns via
+        # for_each_column are not collapsed into the same identity.
+        identity = {"arguments": arguments, "for_each_column": for_each_column}
+        identity_key = json.dumps(identity, sort_keys=True, default=str)
+        return (function, identity_key, criticality, filter_expr)
 
     @staticmethod
     def _conflict_key(check: dict) -> tuple | None:
-        """Return a key grouping rules that target the same function and column.
+        """Return a key grouping rules that target the same function and column(s).
 
         Used to detect rules that share a function and column but differ in
-        other arguments (e.g. conflicting thresholds). Returns None if the
-        check has no identifiable column to compare against.
+        other arguments (e.g. conflicting thresholds). Handles both the singular
+        *column*/*col_name* arguments and the plural *columns* argument. Returns
+        None if the check has no identifiable column to compare against.
         """
         function = ChecksSemanticValidator._get_function(check)
         if not function:
             return None
         arguments = ChecksSemanticValidator._get_arguments(check)
-        column = arguments.get("col_name") or arguments.get("column")
+        column = arguments.get("col_name") or arguments.get("column") or arguments.get("columns")
         if not column:
             return None
+        if isinstance(column, list):
+            column = tuple(column)
         return (function, column)
 
     @staticmethod

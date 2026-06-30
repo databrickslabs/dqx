@@ -104,6 +104,53 @@ def test_list_valued_arguments_with_different_lists_not_duplicate():
     assert not ChecksSemanticValidator.detect_duplicates(checks)
 
 
+def test_for_each_column_same_columns_is_duplicate():
+    checks = [
+        {"criticality": "error", "check": {"function": "is_not_null", "for_each_column": ["a", "b"], "arguments": {}}},
+        {"criticality": "error", "check": {"function": "is_not_null", "for_each_column": ["a", "b"], "arguments": {}}},
+    ]
+    issues = ChecksSemanticValidator.detect_duplicates(checks)
+    assert len(issues) == 1
+    assert "Duplicate rule detected" in issues[0]
+
+
+def test_for_each_column_different_columns_not_duplicate():
+    """for_each_column is part of a rule's identity; different column groups are distinct rules."""
+    checks = [
+        {"criticality": "error", "check": {"function": "is_not_null", "for_each_column": ["a", "b"], "arguments": {}}},
+        {"criticality": "error", "check": {"function": "is_not_null", "for_each_column": ["c", "d"], "arguments": {}}},
+    ]
+    assert not ChecksSemanticValidator.detect_duplicates(checks)
+
+
+def test_nested_filter_same_is_duplicate():
+    checks = [
+        {"criticality": "error", "check": {"function": "is_not_null", "arguments": {"column": "x"}, "filter": "a > 0"}},
+        {"criticality": "error", "check": {"function": "is_not_null", "arguments": {"column": "x"}, "filter": "a > 0"}},
+    ]
+    issues = ChecksSemanticValidator.detect_duplicates(checks)
+    assert len(issues) == 1
+
+
+def test_nested_filter_different_not_duplicate():
+    """A filter nested inside the check block is part of a rule's identity."""
+    checks = [
+        {"criticality": "error", "check": {"function": "is_not_null", "arguments": {"column": "x"}, "filter": "a > 0"}},
+        {"criticality": "error", "check": {"function": "is_not_null", "arguments": {"column": "x"}, "filter": "a < 0"}},
+    ]
+    assert not ChecksSemanticValidator.detect_duplicates(checks)
+
+
+def test_flat_form_checks_detected_as_duplicate():
+    """Checks in the flat form (no nested 'check' block) are also compared."""
+    checks = [
+        {"function": "is_not_null", "arguments": {"column": "x"}},
+        {"function": "is_not_null", "arguments": {"column": "x"}},
+    ]
+    issues = ChecksSemanticValidator.detect_duplicates(checks)
+    assert len(issues) == 1
+
+
 # ---------------------------------------------------------------------------
 # detect_conflicts
 # ---------------------------------------------------------------------------
@@ -142,6 +189,31 @@ def test_check_without_column_skipped_in_conflict_detection():
     checks = [
         {"check": {"function": "sql_expression", "arguments": {"expression": "age > 0"}}, "criticality": "error"},
         {"check": {"function": "sql_expression", "arguments": {"expression": "age > 18"}}, "criticality": "error"},
+    ]
+    assert not ChecksSemanticValidator.detect_conflicts(checks)
+
+
+def test_plural_columns_same_columns_different_args_flagged():
+    """Conflict detection handles the plural 'columns' argument (e.g. is_unique)."""
+    checks = [
+        {
+            "criticality": "error",
+            "check": {"function": "is_unique", "arguments": {"columns": ["a", "b"], "nulls_distinct": True}},
+        },
+        {
+            "criticality": "error",
+            "check": {"function": "is_unique", "arguments": {"columns": ["a", "b"], "nulls_distinct": False}},
+        },
+    ]
+    issues = ChecksSemanticValidator.detect_conflicts(checks)
+    assert len(issues) == 1
+    assert "is_unique" in issues[0]
+
+
+def test_plural_columns_different_column_sets_not_conflict():
+    checks = [
+        {"criticality": "error", "check": {"function": "is_unique", "arguments": {"columns": ["a", "b"]}}},
+        {"criticality": "error", "check": {"function": "is_unique", "arguments": {"columns": ["c", "d"]}}},
     ]
     assert not ChecksSemanticValidator.detect_conflicts(checks)
 
