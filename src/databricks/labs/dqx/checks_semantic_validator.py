@@ -39,18 +39,23 @@ class ChecksSemanticValidator:
     """
 
     @staticmethod
-    def _get_function(check: dict) -> str | None:
-        """Extract the function name from a check dict.
+    def _inner_block(check: dict) -> dict | None:
+        """Return the check block, handling both the nested and flat forms.
 
-        Handles both the nested form (a *check* block containing *function*)
-        and the flat form (a top-level *function* key).
+        The nested form wraps the definition under a *check* key; the flat form
+        places *function*/*arguments* at the top level. Returns None for anything
+        that is not a dict (malformed input is reported by structural validation).
         """
         if not isinstance(check, dict):
             return None
         inner = check.get("check", check)
-        if not isinstance(inner, dict):
-            return None
-        return inner.get("function")
+        return inner if isinstance(inner, dict) else None
+
+    @staticmethod
+    def _get_function(check: dict) -> str | None:
+        """Extract the function name from a check dict."""
+        inner = ChecksSemanticValidator._inner_block(check)
+        return inner.get("function") if inner is not None else None
 
     @staticmethod
     def _get_arguments(check: dict) -> dict:
@@ -59,10 +64,8 @@ class ChecksSemanticValidator:
         Returns an empty dict for malformed checks (e.g. a non-dict *check* block
         or non-dict *arguments*); structural validation reports those separately.
         """
-        if not isinstance(check, dict):
-            return {}
-        inner = check.get("check", check)
-        if not isinstance(inner, dict):
+        inner = ChecksSemanticValidator._inner_block(check)
+        if inner is None:
             return {}
         arguments = inner.get("arguments", {})
         return arguments if isinstance(arguments, dict) else {}
@@ -74,12 +77,8 @@ class ChecksSemanticValidator:
         Returns None when absent. This value lives in the check block alongside
         *function* and *arguments*, so it must be part of a rule's identity.
         """
-        if not isinstance(check, dict):
-            return None
-        inner = check.get("check", check)
-        if not isinstance(inner, dict):
-            return None
-        return inner.get("for_each_column")
+        inner = ChecksSemanticValidator._inner_block(check)
+        return inner.get("for_each_column") if inner is not None else None
 
     @staticmethod
     def _get_filter(check: dict) -> object:
@@ -92,10 +91,25 @@ class ChecksSemanticValidator:
             return None
         if check.get("filter") is not None:
             return check.get("filter")
-        inner = check.get("check", check)
-        if not isinstance(inner, dict):
-            return None
-        return inner.get("filter")
+        inner = ChecksSemanticValidator._inner_block(check)
+        return inner.get("filter") if inner is not None else None
+
+    @staticmethod
+    def _sorted_columns(columns: list) -> list:
+        """Sort a column list by a stable serialized key (handles names and nested groups)."""
+        return sorted(columns, key=lambda item: json.dumps(item, sort_keys=True, default=str))
+
+    @staticmethod
+    def _normalize_columns(value: object) -> object:
+        """Return an order-insensitive canonical form for a column list.
+
+        Column targeting (*columns*, *for_each_column*) is order-independent, so two
+        rules listing the same columns in a different order are the same rule. Lists
+        are sorted by a stable serialized key; non-list values are returned unchanged.
+        """
+        if isinstance(value, list):
+            return ChecksSemanticValidator._sorted_columns(value)
+        return value
 
     @staticmethod
     def _full_key(check: dict) -> tuple | None:
@@ -110,13 +124,22 @@ class ChecksSemanticValidator:
         arguments = ChecksSemanticValidator._get_arguments(check)
         criticality = check.get("criticality", "error")
         filter_expr = ChecksSemanticValidator._get_filter(check)
-        for_each_column = ChecksSemanticValidator._get_for_each_column(check)
+        for_each_column = ChecksSemanticValidator._normalize_columns(
+            ChecksSemanticValidator._get_for_each_column(check)
+        )
+        # Normalize the column-targeting argument so that reordered column lists are
+        # treated as the same rule (column order is not semantically significant).
+        normalized_arguments = dict(arguments)
+        if "columns" in normalized_arguments:
+            normalized_arguments["columns"] = ChecksSemanticValidator._normalize_columns(
+                normalized_arguments["columns"]
+            )
         # Serialize the targeting parts (arguments + for_each_column) to a stable,
         # hashable string so that list- or dict-valued values (e.g. is_in_list
         # allowed=[...], for_each_column=[...]) do not raise "unhashable type" when
         # the key is used in a dict/set, and so rules targeting different columns via
         # for_each_column are not collapsed into the same identity.
-        identity = {"arguments": arguments, "for_each_column": for_each_column}
+        identity = {"arguments": normalized_arguments, "for_each_column": for_each_column}
         identity_key = json.dumps(identity, sort_keys=True, default=str)
         return (function, identity_key, criticality, filter_expr)
 
@@ -137,7 +160,9 @@ class ChecksSemanticValidator:
         if not column:
             return None
         if isinstance(column, list):
-            column = tuple(column)
+            # Column order is not semantically significant; normalize so reordered
+            # lists group together.
+            column = tuple(ChecksSemanticValidator._sorted_columns(column))
         return (function, column)
 
     @staticmethod

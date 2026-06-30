@@ -123,6 +123,24 @@ def test_for_each_column_different_columns_not_duplicate():
     assert not ChecksSemanticValidator.detect_duplicates(checks)
 
 
+def test_for_each_column_reordered_is_duplicate():
+    """Column order in for_each_column is not significant, so reordered lists are duplicates."""
+    checks = [
+        {"criticality": "error", "check": {"function": "is_not_null", "for_each_column": ["a", "b"], "arguments": {}}},
+        {"criticality": "error", "check": {"function": "is_not_null", "for_each_column": ["b", "a"], "arguments": {}}},
+    ]
+    assert len(ChecksSemanticValidator.detect_duplicates(checks)) == 1
+
+
+def test_reordered_columns_argument_is_duplicate():
+    """Column order in the plural 'columns' argument is not significant."""
+    checks = [
+        {"criticality": "error", "check": {"function": "is_unique", "arguments": {"columns": ["a", "b"]}}},
+        {"criticality": "error", "check": {"function": "is_unique", "arguments": {"columns": ["b", "a"]}}},
+    ]
+    assert len(ChecksSemanticValidator.detect_duplicates(checks)) == 1
+
+
 def test_nested_filter_same_is_duplicate():
     checks = [
         {"criticality": "error", "check": {"function": "is_not_null", "arguments": {"column": "x"}, "filter": "a > 0"}},
@@ -216,6 +234,21 @@ def test_plural_columns_different_column_sets_not_conflict():
         {"criticality": "error", "check": {"function": "is_unique", "arguments": {"columns": ["c", "d"]}}},
     ]
     assert not ChecksSemanticValidator.detect_conflicts(checks)
+
+
+def test_plural_columns_reordered_same_set_flagged_as_conflict():
+    """Reordered 'columns' lists target the same set, so differing args still conflict."""
+    checks = [
+        {
+            "criticality": "error",
+            "check": {"function": "is_unique", "arguments": {"columns": ["a", "b"], "nulls_distinct": True}},
+        },
+        {
+            "criticality": "error",
+            "check": {"function": "is_unique", "arguments": {"columns": ["b", "a"], "nulls_distinct": False}},
+        },
+    ]
+    assert len(ChecksSemanticValidator.detect_conflicts(checks)) == 1
 
 
 def test_malformed_checks_do_not_crash_validation():

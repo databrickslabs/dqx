@@ -794,16 +794,24 @@ In addition to specifying variables during the load or save process, you can def
 
 For technical details and configuration examples, see [Default Variables](/docs/guide/additional_configuration#defining-default-variables-for-substitution) in the Additional Configuration guide.
 
-## Validating syntax of quality checks
+## Validating quality checks
 
-You can validate the syntax of checks loaded from a storage system or checks defined programmatically before applying them.
-This validation ensures that the checks are correctly defined and can be interpreted by the DQX engine.
+You can validate checks loaded from a storage system or checks defined declaratively (metadata) before applying them.
+DQX performs two complementary kinds of validation:
 
-The validation cannot be used for checks defined programmatically using DQX classes.
+- **Syntax (structural) validation** ensures each check is correctly defined and can be interpreted by the DQX engine,
+  for example that the function exists and the provided arguments match its signature. Structural problems are reported
+  as errors in the returned `ChecksValidationStatus`.
+- **Semantic (ruleset-level) validation** inspects the ruleset as a whole and detects:
+  - **Duplicate rules**: two rules with the same function, arguments, criticality and filter.
+  - **Conflicting rules**: two rules targeting the same function and column(s) but with different arguments
+    (e.g. two `is_in_range` checks on the same column with different thresholds).
+
+Validation cannot be used for checks defined programmatically using DQX classes.
 When checks are defined programmatically with DQX classes, syntax validation is unnecessary because the application will fail to interpret them if the DQX objects are constructed incorrectly.
 
 <Admonition type="tip" title="Usage tips">
-Validating quality rules are typically done as part of the CI/CD process to ensure checks are ready to use in the application.
+Validating quality rules is typically done as part of the CI/CD process to ensure checks are ready to use in the application.
 </Admonition>
 
 <Tabs>
@@ -842,3 +850,48 @@ Validating quality rules are typically done as part of the CI/CD process to ensu
     - 'checks_location': file or table location of the quality checks
   </TabItem>
 </Tabs>
+
+### Controlling semantic validation
+
+Semantic validation runs automatically inside `validate_checks`, `load_checks` and `save_checks`. Its behavior is
+controlled by the `semantic_validation_mode` parameter:
+
+| Mode | Behavior |
+| --- | --- |
+| `"warn"` (default) | Log a warning for each duplicate or conflicting rule and continue. |
+| `"fail"` | Raise a `ValueError` listing all issues found. |
+| `None` | Skip semantic validation entirely. |
+
+Duplicate and conflicting rules are not necessarily invalid (a duplicate is redundant, a conflict may be intentional),
+so the default mode only warns. Use `"fail"` to enforce a clean ruleset, for example in a CI/CD pipeline.
+
+<Admonition type="note" title="Limitations">
+Checks that use raw Spark SQL expressions (via the `sql_expression` function) are not deeply inspected — only
+structured metadata (function name, column, arguments, criticality and filter) is compared.
+</Admonition>
+
+```python
+import yaml
+from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.checks_semantic_validator import ChecksSemanticValidationMode
+
+checks = yaml.safe_load("""
+- criticality: error
+  check:
+    function: is_not_null
+    arguments:
+      column: col1
+- criticality: error
+  check:
+    function: is_not_null
+    arguments:
+      column: col1
+""")
+
+# Fail fast on duplicate or conflicting rules (e.g. in CI/CD)
+DQEngine.validate_checks(checks, semantic_validation_mode=ChecksSemanticValidationMode.FAIL)
+
+# Skip semantic validation when loading checks
+engine = DQEngine(ws)
+engine.load_checks(config=..., semantic_validation_mode=None)
+```
