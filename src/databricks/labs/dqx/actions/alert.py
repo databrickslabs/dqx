@@ -43,8 +43,11 @@ class NotifyOn(enum.Enum):
 
     Attributes:
         EACH: Send a notification every time the condition fires.
-        STATUS_CHANGE: Send a notification only when the quality status
-            changes (e.g. healthy → unhealthy or vice-versa).
+        STATUS_CHANGE: Send a notification only on the transition INTO an unhealthy
+            state — i.e. the first run whose condition fires after a healthy (or unseen)
+            run. While the status stays unhealthy, repeat notifications are suppressed.
+            Recovery (unhealthy → healthy) is not notified: a healthy run does not fire
+            the condition, so no recovery alert is sent.
     """
 
     EACH = "each"

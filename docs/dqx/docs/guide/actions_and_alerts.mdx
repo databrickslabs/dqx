@@ -198,7 +198,7 @@ Two knobs control when `DQAlert` actually sends a notification after its conditi
 | Value | Behaviour |
 |---|---|
 | `NotifyOn.EACH` (default) | Notify every time the condition fires |
-| `NotifyOn.STATUS_CHANGE` | Notify only when status changes (healthy → unhealthy or vice-versa) |
+| `NotifyOn.STATUS_CHANGE` | Notify only on the transition into unhealthy (first fire after a healthy/unseen run); repeats suppressed while unhealthy. Recovery is not notified. |
 
 ```python
 from databricks.labs.dqx.actions import DQAlert, DQAlertFrequency, NotifyOn, SlackDQAlertDestination
@@ -206,7 +206,7 @@ from databricks.labs.dqx.actions import DQAlert, DQAlertFrequency, NotifyOn, Sla
 alert = DQAlert(
     destinations=[SlackDQAlertDestination(name="slack", webhook_url="https://hooks.slack.com/…")],
     alert_frequency=DQAlertFrequency.DAILY,  # at most once per day
-    notify_on=NotifyOn.STATUS_CHANGE,         # only on healthy↔unhealthy transitions
+    notify_on=NotifyOn.STATUS_CHANGE,         # only on the transition into unhealthy
 )
 ```
 
@@ -292,6 +292,15 @@ engine.apply_checks_and_save_in_table(
     ),
 )
 ```
+
+<Admonition type="note" title="Streaming delivery is synchronous per micro-batch">
+Action evaluation runs inside the streaming query's progress callback, so webhook delivery
+(including retries) blocks that micro-batch until it completes. For streaming destinations,
+keep the webhook *timeout* and retry budget small so a slow or unreachable endpoint cannot
+stall progress; `FailPipeline` itself is cheap and aborts the stream immediately. A
+non-terminal delivery failure is logged and never crashes the stream. (Fully asynchronous
+off-thread delivery is a planned enhancement.)
+</Admonition>
 
 ### Manual evaluation with evaluate_actions
 
