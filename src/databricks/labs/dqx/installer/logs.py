@@ -21,18 +21,6 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class LogRecord:
-    timestamp: int
-    job_id: int
-    job_name: str
-    task_name: str
-    job_run_id: int
-    level: str
-    component: str
-    message: str
-
-
-@dataclass
 class PartialLogRecord:
     """The information found within a log file record."""
 

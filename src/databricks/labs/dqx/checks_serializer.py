@@ -254,7 +254,7 @@ class ChecksDeserializer:
             logger.debug(f"Processing check definition: {check_def}")
 
             check = check_def.get("check", {})
-            name = check_def.get("name", None)
+            name = check_def.get("name") or ""
             func_name = check.get("function")
             func = resolve_check_function(func_name, self.custom_checks, fail_on_missing=True)
             assert func  # should already be validated

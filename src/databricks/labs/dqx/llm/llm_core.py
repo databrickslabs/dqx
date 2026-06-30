@@ -7,10 +7,57 @@ import dspy  # type: ignore
 
 from databricks.labs.dqx.config import LLMModelConfig
 from databricks.labs.dqx.llm.llm_utils import create_optimizer_training_set, create_optimizer_training_set_with_stats
+from databricks.labs.dqx.utils import is_sql_query_safe
 from databricks.labs.dqx.llm.optimizers import BootstrapFewShotOptimizer
 from databricks.labs.dqx.llm.validators import RuleValidator
 
 logger = logging.getLogger(__name__)
+
+
+def _filter_unsafe_sql_rules(rules: object) -> list[dict]:
+    """Filter out any sql_query rules whose query argument fails the SQL safety check.
+
+    Accepts a pre-parsed rules value and drops every rule where *check.function* is
+    *sql_query* and the *query* argument is not a string or does not pass
+    *is_sql_query_safe*. All other rules are returned unchanged. Non-list input
+    returns an empty list.
+
+    Args:
+        rules: Parsed rules value (expected to be a list of rule dicts).
+
+    Returns:
+        List of safe rules with unsafe sql_query rules removed.
+    """
+    if not isinstance(rules, list):
+        return []
+
+    safe_rules: list[dict] = []
+    for rule in rules:
+        if not isinstance(rule, dict):
+            continue
+
+        check = rule.get("check", {})
+        if not isinstance(check, dict):
+            continue
+
+        if check.get("function") == "sql_query":
+            arguments = check.get("arguments", {})
+            if not isinstance(arguments, dict):
+                continue
+
+            query = arguments.get("query")
+            if not isinstance(query, str):
+                logger.warning(f"LLM-generated sql_query rule dropped: non-string query argument {query!r}")
+                continue
+            if not is_sql_query_safe(query):
+                # Strip control characters before logging to prevent log injection (CWE-117)
+                safe_repr = repr(query.replace("\n", " ").replace("\r", " "))
+                logger.warning(f"LLM-generated sql_query rule dropped: unsafe SQL query {safe_repr}")
+                continue
+
+        safe_rules.append(rule)
+
+    return safe_rules
 
 
 class LLMModelConfigurator:
@@ -147,13 +194,15 @@ class DspyRuleGeneration(dspy.Module):
             schema_info=schema_info, business_description=business_description, available_functions=available_functions
         )
 
-        # Validate JSON output
+        # Validate JSON output and filter unsafe sql_query rules
         if result.quality_rules:
             try:
-                json.loads(result.quality_rules)
+                parsed = json.loads(result.quality_rules)
             except json.JSONDecodeError as e:
                 logger.warning(f"Generated invalid JSON: {e}. Returning empty rules.")
                 result.quality_rules = "[]"
+            else:
+                result.quality_rules = json.dumps(_filter_unsafe_sql_rules(parsed))
 
         return result
 
@@ -275,13 +324,15 @@ class DspyRuleUsingDataStats(dspy.Module):
             business_description=business_description or "",
         )
 
-        # Validate JSON output
+        # Validate JSON output and filter unsafe sql_query rules
         if result.quality_rules:
             try:
-                json.loads(result.quality_rules)
+                parsed = json.loads(result.quality_rules)
             except json.JSONDecodeError as e:
                 logger.warning(f"Generated invalid JSON: {e}. Returning empty rules.")
                 result.quality_rules = "[]"
+            else:
+                result.quality_rules = json.dumps(_filter_unsafe_sql_rules(parsed))
 
         return result
 

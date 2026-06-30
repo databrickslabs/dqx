@@ -7,6 +7,7 @@ import yaml
 import pytest
 import pyspark.sql.functions as F
 from pyspark.sql import Column
+import databricks.labs.dqx.utils as dqx_utils
 from databricks.labs.dqx.check_funcs import (
     is_not_null,
     is_not_null_and_not_empty,
@@ -41,6 +42,8 @@ from databricks.labs.dqx.rule import (
     CHECK_FUNC_REGISTRY,
     register_rule,
     DQDatasetRule,
+    requires_dbr_version,
+    CHECK_FUNC_MIN_DBR_VERSION_ATTRIBUTE,
 )
 from databricks.labs.dqx.checks_serializer import (
     ChecksSerializer,
@@ -1988,3 +1991,136 @@ def test_dq_dataset_rule_rule_fingerprint():
     fingerprint = rule.rule_fingerprint
     assert len(fingerprint) == 64
     assert all(char in "0123456789abcdef" for char in fingerprint)
+
+
+# ---------------------------------------------------------------------------
+# Regression: Connect-column acceptance (Task 2)
+# ---------------------------------------------------------------------------
+
+
+def test_spark_column_annotation_accepts_connect_column_type(monkeypatch):
+    """SparkColumn validator must accept objects whose type is ConnectColumn even when
+    it is NOT an instance of the classic pyspark.sql.Column.
+
+    In CI (Python 3.10/3.11) F.lit()/F.col() return pyspark.sql.connect.column.Column
+    which is a *different* class from pyspark.sql.Column.  Before the SparkColumn fix,
+    those environments raised pydantic_core.ValidationError: 'Input should be an instance
+    of Column'.  This regression simulates that CI environment deterministically via
+    monkeypatching — _validate_spark_column reads ConnectColumn at call time, so the patch
+    takes effect immediately for all rule constructors.
+    """
+
+    class FakeConnectColumn:
+        """Simulates pyspark.sql.connect.column.Column — not a subclass of classic Column."""
+
+    monkeypatch.setattr(dqx_utils, "ConnectColumn", FakeConnectColumn)
+
+    fake_col = FakeConnectColumn()
+    rule = DQRowRule(check_func=is_not_null, column="id", message_expr=fake_col)
+    assert rule.message_expr is fake_col
+
+
+def test_spark_column_annotation_rejects_non_column():
+    """SparkColumn validator must reject integers and other non-Column objects, raising
+    InvalidCheckError (wrapped from pydantic ValidationError by DQRule.__init__)."""
+    with pytest.raises(InvalidCheckError):
+        DQRowRule(check_func=is_not_null, column=42)  # int is not a Column or str
+
+
+# ---------------------------------------------------------------------------
+# json_schema generation (Task 3)
+# ---------------------------------------------------------------------------
+
+
+def test_dq_row_rule_model_json_schema():
+    """DQRowRule.model_json_schema() must not raise PydanticInvalidForJsonSchema.
+
+    Before the fix, Callable and Column fields caused: 'Cannot generate a JsonSchema for
+    core_schema.CallableSchema / IsInstanceSchema'.  WithJsonSchema annotations on check_func
+    and SparkColumn's __get_pydantic_json_schema__ resolve this.
+    """
+    schema = DQRowRule.model_json_schema()
+    assert isinstance(schema, dict)
+    assert "properties" in schema
+
+
+def test_dq_dataset_rule_model_json_schema():
+    """DQDatasetRule.model_json_schema() must not raise."""
+    schema = DQDatasetRule.model_json_schema()
+    assert isinstance(schema, dict)
+
+
+def test_dq_for_each_col_rule_model_json_schema():
+    """DQForEachColRule.model_json_schema() must not raise."""
+
+    schema = DQForEachColRule.model_json_schema()
+    assert isinstance(schema, dict)
+
+
+# ---------------------------------------------------------------------------
+# ValidationError → InvalidCheckError wrapping (Task 4)
+# ---------------------------------------------------------------------------
+
+
+def test_dq_row_rule_wrong_type_raises_invalid_check_error():
+    """Constructing DQRowRule with a wrong-typed field must raise InvalidCheckError, not the
+    raw pydantic_core.ValidationError.  DQX callers should never need to import pydantic to
+    handle construction errors from rule models.
+    """
+    with pytest.raises(InvalidCheckError):
+        DQRowRule(check_func=is_not_null, column="id", criticality=12345)  # int where str expected
+
+
+def test_dq_dataset_rule_wrong_type_raises_invalid_check_error():
+    """Same contract for DQDatasetRule."""
+    with pytest.raises(InvalidCheckError):
+        DQDatasetRule(check_func=is_unique, columns="not_a_list")  # str where list expected
+
+
+def test_dq_for_each_col_rule_wrong_type_raises_invalid_check_error():
+    """DQForEachColRule must wrap pydantic ValidationError into InvalidCheckError too, so all
+    public rule-construction entry points raise the same DQX error type for bad input."""
+    with pytest.raises(InvalidCheckError):
+        DQForEachColRule(check_func=is_not_null, columns=42)  # int where list expected
+
+
+def test_requires_dbr_version_sets_attribute():
+    @requires_dbr_version("15.0")
+    def my_check():
+        pass
+
+    assert getattr(my_check, CHECK_FUNC_MIN_DBR_VERSION_ATTRIBUTE) == (15, 0)
+
+
+def test_requires_dbr_version_stacked_with_register_rule():
+    @requires_dbr_version("14.0")
+    @register_rule("row")
+    def my_versioned_check():
+        pass
+
+    assert getattr(my_versioned_check, CHECK_FUNC_MIN_DBR_VERSION_ATTRIBUTE) == (14, 0)
+    assert CHECK_FUNC_REGISTRY.get("my_versioned_check") == "row"
+
+
+def test_requires_register_rule_stacked_with_dbr_version_stacked():
+    @register_rule("row")
+    @requires_dbr_version("14.1")
+    def my_versioned_check():
+        pass
+
+    assert getattr(my_versioned_check, CHECK_FUNC_MIN_DBR_VERSION_ATTRIBUTE) == (14, 1)
+    assert CHECK_FUNC_REGISTRY.get("my_versioned_check") == "row"
+
+
+def test_requires_dbr_version_returns_same_function():
+    def my_check():
+        pass
+
+    decorated = requires_dbr_version("12.0")(my_check)
+    assert decorated is my_check
+
+
+@pytest.mark.parametrize("bad_version", ["15", "15.4.1", "abc.def", "-1.0", "15.-1", ""])
+def test_requires_dbr_version_raises_on_invalid_version(bad_version):
+    with pytest.raises(ValueError):
+        requires_dbr_version(bad_version)

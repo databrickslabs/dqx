@@ -320,7 +320,11 @@ lock-dependencies: ## Regenerate top-level uv.lock and .build-constraints.txt
 	$(UV_RUN) --group yq tomlq -r '.["build-system"].requires[]' pyproject.toml | \
 	  uv pip compile --generate-hashes --universal --no-header - > build-constraints-new.txt
 	mv build-constraints-new.txt .build-constraints.txt
-	perl -pi -e 's|registry = "https://[^"]*"|registry = "https://pypi.org/simple"|g' uv.lock
+	# Normalize the lock so contributors inside Databricks (private proxy) and outside (public PyPI)
+	# produce an identical file. A proxy mirrors PyPI with identical paths, so rewrite the registry
+	# index and every per-package "/packages/..." download URL to the public hosts. Also drop the
+	# "size" field: the private proxy never reports it, so it is the only form both can reproduce.
+	perl -pi -e 's|registry = "https://[^"]*"|registry = "https://pypi.org/simple"|g; s|url = "https://[^/"]+/packages/|url = "https://files.pythonhosted.org/packages/|g; s|, size = \d+||g' uv.lock
 
 ##@ Misc
 
