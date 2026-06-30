@@ -14,8 +14,6 @@ This module provides:
 from __future__ import annotations
 
 import logging
-import uuid
-from collections.abc import Callable
 
 from pyspark.sql import SparkSession, functions as F
 from pyspark.sql.window import Window
@@ -28,8 +26,6 @@ from sqlalchemy import (
     String,
     Table,
     Text,
-    create_engine,
-    event,
     inspect,
     insert,
     select,
@@ -44,6 +40,7 @@ from databricks.labs.dqx.actions.base import ActionStatus
 from databricks.labs.dqx.config import ActionEventsConfig, LakebaseActionsStorageConfig
 from databricks.labs.dqx.io import save_dataframe_as_table
 from databricks.labs.dqx.config import OutputConfig
+from databricks.labs.dqx.lakebase_engine import LakebaseConnectionMixin
 
 logger = logging.getLogger(__name__)
 
@@ -154,13 +151,13 @@ class TableActionEventStore(ActionEventStore):
 # ---------------------------------------------------------------------------
 
 
-class LakebaseActionEventStore(ActionEventStore):
+class LakebaseActionEventStore(LakebaseConnectionMixin, ActionEventStore):
     """Persists *AlertEvent* records to a Lakebase (PostgreSQL) table via SQLAlchemy.
 
-    Mirrors the pattern from *LakebaseChecksStorageHandler* in
-    *databricks.labs.dqx.checks_storage*: engine creation with a
-    *do_connect* listener that refreshes the Databricks-generated credential
-    token before each connection, and schema / table bootstrap on first use.
+    Inherits engine lifecycle management from *LakebaseConnectionMixin*: a lazily
+    created, cached engine with a *do_connect* listener that refreshes the
+    Databricks-generated credential token before each connection, and schema /
+    table bootstrap on first use.
 
     The *observed_metrics* dict is serialized to a PostgreSQL *JSONB* column;
     values are stored as JSON-compatible objects (coerced to *str* on write
@@ -183,63 +180,7 @@ class LakebaseActionEventStore(ActionEventStore):
         config: LakebaseActionsStorageConfig,
         engine: Engine | None = None,
     ) -> None:
-        self._spark = spark
-        self._ws = ws
-        self._config = config
-        self._engine = engine
-
-    def _get_engine(self) -> Engine:
-        """Return the cached SQLAlchemy engine, creating it on first call.
-
-        Returns:
-            SQLAlchemy *Engine* configured for Lakebase (PostgreSQL).
-        """
-        if self._engine is None:
-            self._engine = self._create_engine()
-        return self._engine
-
-    def _create_engine(self) -> Engine:
-        """Build a SQLAlchemy engine with a credential-refresh listener.
-
-        Returns:
-            A newly created SQLAlchemy *Engine*.
-        """
-        url = self._connection_url()
-        engine = create_engine(
-            url,
-            pool_recycle=45 * 60,
-            connect_args={"sslmode": "require"},
-            pool_size=4,
-        )
-        event.listen(engine, "do_connect", self._before_connect_listener())
-        return engine
-
-    def _connection_url(self) -> str:
-        """Construct a *postgresql+psycopg2* connection URL for the Lakebase instance.
-
-        Returns:
-            Connection URL string.
-        """
-        instance = self._ws.database.get_database_instance(self._config.instance_name)
-        host = instance.read_write_dns
-        user = self._config.client_id if self._config.client_id else self._ws.current_user.me().user_name
-        return f"postgresql+psycopg2://{user}@{host}:{self._config.port}/{self._config.database_name}"
-
-    def _before_connect_listener(self) -> Callable[..., None]:
-        """Return a *do_connect* event listener that injects a fresh credential token.
-
-        Returns:
-            A callable suitable for *event.listen(engine, "do_connect", …)*.
-        """
-        instance_name = self._config.instance_name
-
-        def _before_connect(_dialect, _conn_rec, _cargs, cparams) -> None:
-            cred = self._ws.database.generate_database_credential(
-                request_id=str(uuid.uuid4()), instance_names=[instance_name]
-            )
-            cparams["password"] = cred.token
-
-        return _before_connect
+        super().__init__(spark=spark, ws=ws, config=config, engine=engine)
 
     @staticmethod
     def _get_table_definition(schema_name: str, table_name: str) -> Table:
