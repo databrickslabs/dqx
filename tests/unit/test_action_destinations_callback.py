@@ -64,8 +64,9 @@ def _make_services() -> ActionServices:
 # ---------------------------------------------------------------------------
 
 
-def test_callback_type_classvar() -> None:
-    assert CallbackDQAlertDestination.type == "callback"
+def test_callback_type_discriminator() -> None:
+    dest = CallbackDQAlertDestination(name="cb_dest", callback=lambda msg, ctx: None)
+    assert dest.type == "callback"
 
 
 # ---------------------------------------------------------------------------
@@ -127,7 +128,7 @@ def test_deliver_with_mock_callable() -> None:
 
 
 # ---------------------------------------------------------------------------
-# validate() tests
+# Construction-time validation (Pydantic model_validator)
 # ---------------------------------------------------------------------------
 
 
@@ -135,18 +136,15 @@ def test_validate_raises_for_empty_name() -> None:
     def noop(_msg: AlertMessage, _ctx: ActionContext) -> None:
         pass
 
-    dest = CallbackDQAlertDestination(name="", callback=noop)
     with pytest.raises(InvalidActionError):
-        dest.validate()
+        CallbackDQAlertDestination(name="", callback=noop)
 
 
 def test_validate_raises_for_non_callable_callback() -> None:
-    # Use typing.cast to construct the dataclass with a non-callable value
-    # without introducing a type-ignore suppression.
+    # Use typing.cast to pass a non-callable value without a type-ignore suppression.
     bad: Callable[[AlertMessage, ActionContext], None] = cast(Callable[[AlertMessage, ActionContext], None], 123)
-    dest = CallbackDQAlertDestination(name="cb_dest", callback=bad)
     with pytest.raises(InvalidActionError):
-        dest.validate()
+        CallbackDQAlertDestination(name="cb_dest", callback=bad)
 
 
 def test_validate_passes_for_valid_destination() -> None:
@@ -154,7 +152,7 @@ def test_validate_passes_for_valid_destination() -> None:
         pass
 
     dest = CallbackDQAlertDestination(name="cb_dest", callback=my_callback)
-    dest.validate()  # must not raise
+    assert dest.name == "cb_dest"
 
 
 def test_validate_passes_for_lambda_callback() -> None:
@@ -162,4 +160,4 @@ def test_validate_passes_for_lambda_callback() -> None:
         name="lambda_dest",
         callback=lambda msg, ctx: None,
     )
-    dest.validate()  # must not raise
+    assert callable(dest.callback)

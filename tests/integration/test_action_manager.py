@@ -20,7 +20,7 @@ from databricks.labs.pytester.fixtures.baseline import factory
 from databricks.sdk import WorkspaceClient
 
 from databricks.labs.dqx.actions.alert import DQAlert, DQAlertFrequency, NotifyOn
-from databricks.labs.dqx.actions.base import DQAction
+from databricks.labs.dqx.actions.dq_action import DQAction
 from databricks.labs.dqx.actions.destinations.slack import SlackDQAlertDestination
 from databricks.labs.dqx.actions.destinations.webhook import WebhookDQAlertDestination
 from databricks.labs.dqx.actions.fail_pipeline import FailPipeline

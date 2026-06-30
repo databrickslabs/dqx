@@ -27,9 +27,10 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from databricks.labs.dqx.actions.alert import DQAlert, DQAlertFrequency, NotifyOn
-from databricks.labs.dqx.actions.base import Action, ActionContext, ActionResult, ActionServices, ActionStatus, DQAction
-from databricks.labs.dqx.actions.destinations.base import AlertDestination
-from databricks.labs.dqx.actions.message import AlertMessage
+from databricks.labs.dqx.actions.base import ActionContext, ActionStatus
+from databricks.labs.dqx.actions.dq_action import DQAction
+from databricks.labs.dqx.actions.fail_pipeline import FailPipeline
+from databricks.labs.dqx.actions.destinations.callback import CallbackDQAlertDestination
 from databricks.labs.dqx.actions.state import ActionEventStore, ActionStateStore, AlertEvent
 
 
@@ -52,17 +53,9 @@ class FakeEventStore(ActionEventStore):
         return dict(self._initial)
 
 
-def _make_destination() -> AlertDestination:
-    """Return a minimal stub AlertDestination."""
-
-    class _StubDest(AlertDestination):
-        type = "stub"
-        name = "stub-dest"
-
-        def deliver(self, message: AlertMessage, context: ActionContext, services: ActionServices) -> None:
-            pass
-
-    return _StubDest()
+def _make_destination() -> CallbackDQAlertDestination:
+    """Return a real in-process callback destination (a member of *AnyDestination*)."""
+    return CallbackDQAlertDestination(name="stub-dest", callback=lambda message, context: None)
 
 
 def _make_dq_alert(
@@ -376,14 +369,7 @@ def test_record_without_event_store_updates_only_memory() -> None:
 
 def test_non_alert_action_always_fires() -> None:
     """A DQAction whose action is NOT a DQAlert always fires when condition_result is True."""
-
-    class _SimpleAction(Action):
-        name = "simple"
-
-        def execute(self, context: ActionContext, services: ActionServices) -> ActionResult:
-            return ActionResult(action_name=self.name, fired=True, status=ActionStatus.UNHEALTHY)
-
-    dq_action = DQAction(action=_SimpleAction())
+    dq_action = DQAction(action=FailPipeline(name="simple"))
     store = ActionStateStore()
     ctx = _make_context()
     assert store.should_fire(dq_action, ctx, condition_result=True) is True

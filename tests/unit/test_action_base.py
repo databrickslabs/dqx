@@ -21,10 +21,11 @@ from databricks.labs.dqx.actions.base import (
     Action,
     ActionContext,
     ActionResult,
-    ActionServices,
     ActionStatus,
-    DQAction,
 )
+from databricks.labs.dqx.actions.alert import DQAlert
+from databricks.labs.dqx.actions.dq_action import DQAction
+from databricks.labs.dqx.actions.fail_pipeline import FailPipeline
 from databricks.labs.dqx.errors import InvalidActionError, InvalidConditionError
 
 
@@ -33,28 +34,14 @@ from databricks.labs.dqx.errors import InvalidActionError, InvalidConditionError
 # ---------------------------------------------------------------------------
 
 
-class DummyAction(Action):
-    """Concrete Action subclass for testing — always succeeds."""
+def _named_action(name: str = "dummy_action") -> FailPipeline:
+    """Return a real union-member action carrying the given *name*.
 
-    name: str = "dummy_action"
-
-    def execute(self, context: ActionContext, services: ActionServices) -> ActionResult:
-        return ActionResult(action_name=self.name, fired=True, status=ActionStatus.HEALTHY)
-
-
-class ValidatingAction(DummyAction):
-    """Action whose validate() raises InvalidActionError."""
-
-    name: str = "bad_action"
-
-    def validate(self) -> None:
-        raise InvalidActionError("bad_action is always invalid")
-
-
-class UnnamedAction(DummyAction):
-    """Action with an empty name, for name-derivation tests."""
-
-    name: str = ""
+    *DQAction.action* is the discriminated *AnyAction* union, so the action
+    wrapped by a *DQAction* must be a real member (here *FailPipeline*).  The
+    name-derivation behaviour under test does not depend on the action type.
+    """
+    return FailPipeline(name=name)
 
 
 # ---------------------------------------------------------------------------
@@ -181,67 +168,63 @@ def test_action_abc_cannot_be_instantiated_directly() -> None:
     assert "execute" in Action.__abstractmethods__
 
 
-def test_dummy_action_validate_noop() -> None:
-    action = DummyAction()
-    action.validate()  # must not raise
-
-
 # ---------------------------------------------------------------------------
 # DQAction construction
 # ---------------------------------------------------------------------------
 
 
 def test_dqaction_with_condition_constructs_and_sets_name() -> None:
-    dqa = DQAction(condition="error_row_count > 0", action=DummyAction())
+    dqa = DQAction(condition="error_row_count > 0", action=_named_action())
     assert dqa.condition == "error_row_count > 0"
     assert dqa.name
     assert isinstance(dqa.name, str)
 
 
 def test_dqaction_without_condition_is_valid() -> None:
-    dqa = DQAction(action=DummyAction())
+    dqa = DQAction(action=_named_action())
     assert dqa.condition is None
 
 
 def test_dqaction_without_condition_has_name() -> None:
-    dqa = DQAction(action=DummyAction())
+    dqa = DQAction(action=_named_action())
     assert dqa.name  # non-empty — derived from action.name
 
 
 def test_dqaction_bad_condition_raises_invalid_condition_error() -> None:
     with pytest.raises(InvalidConditionError):
-        DQAction(condition="import os; os.system('rm -rf /')", action=DummyAction())
+        DQAction(condition="import os; os.system('rm -rf /')", action=_named_action())
 
 
 def test_dqaction_syntax_error_condition_raises_invalid_condition_error() -> None:
     with pytest.raises(InvalidConditionError):
-        DQAction(condition="??? not valid", action=DummyAction())
+        DQAction(condition="??? not valid", action=_named_action())
 
 
 def test_dqaction_invalid_action_propagates_error() -> None:
+    """An action that fails its own validators surfaces as InvalidActionError at construction."""
     with pytest.raises(InvalidActionError):
-        DQAction(action=ValidatingAction())
+        # DQAlert requires at least one destination; an empty list fails validation.
+        DQAction(action=DQAlert(destinations=[]))
 
 
 def test_dqaction_explicit_name_takes_precedence() -> None:
-    dqa = DQAction(action=DummyAction(), name="my_custom_name")
+    dqa = DQAction(action=_named_action(), name="my_custom_name")
     assert dqa.name == "my_custom_name"
 
 
 def test_dqaction_name_derived_from_action_name_when_empty() -> None:
-    dqa = DQAction(action=DummyAction())
-    # DummyAction.name == "dummy_action" — must appear in derived name
+    dqa = DQAction(action=_named_action("dummy_action"))
+    # action.name == "dummy_action" — must appear in derived name
     assert "dummy_action" in dqa.name
 
 
 def test_dqaction_name_derived_from_condition_when_action_name_empty() -> None:
     """When action.name is '' and no explicit name given, name is derived from condition."""
-    dqa = DQAction(condition="error_row_count > 0", action=UnnamedAction())
-    assert dqa.name  # non-empty, derived from condition
+    dqa = DQAction(condition="error_row_count > 0", action=_named_action(name=""))
+    assert dqa.name == "error_row_count_>_0"  # derived from condition
 
 
 def test_dqaction_name_derived_from_class_name_when_all_empty() -> None:
-    """Fallback: when action.name is '' and condition is None, use action's class name."""
-    dqa = DQAction(action=UnnamedAction())
-    assert dqa.name  # non-empty, derived from class name
-    assert "UnnamedAction" in dqa.name
+    """Fallback: when action.name is '' and condition is None, use the action's class name."""
+    dqa = DQAction(action=_named_action(name=""))
+    assert "FailPipeline" in dqa.name  # derived from the action's class name

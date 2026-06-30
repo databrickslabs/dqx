@@ -13,9 +13,10 @@ from databricks.labs.dqx.actions.base import (
     ActionResult,
     ActionServices,
     ActionStatus,
-    DQAction,
 )
+from databricks.labs.dqx.actions.dq_action import DQAction
 from databricks.labs.dqx.actions.evaluator import ActionEvaluator
+from databricks.labs.dqx.actions.fail_pipeline import FailPipeline
 from databricks.labs.dqx.actions.state import ActionStateStore, AlertEvent
 from databricks.labs.dqx.errors import PipelineFailedError
 
@@ -39,53 +40,81 @@ def _make_services() -> ActionServices:
     return services
 
 
+def _make_dq_action(action: object, condition: str | None, name: str) -> DQAction:
+    """Build a *DQAction* wrapping an arbitrary test *action*.
+
+    *DQAction.action* is the discriminated *AnyAction* union, which only accepts
+    real *DQAlert* / *FailPipeline* instances at construction.  These evaluator
+    tests instead need to inject mocks or lightweight fakes to observe dispatch.
+    The action is therefore assigned after construction (attribute assignment
+    bypasses validation, since *validate_assignment* is not enabled), which is
+    exactly the seam the evaluator exercises: it only ever calls
+    *dq_action.action.execute(...)*.
+    """
+    dq_action = DQAction(action=FailPipeline(name=name or "placeholder"), condition=condition, name=name)
+    dq_action.action = action  # type: ignore[assignment]
+    return dq_action
+
+
 # ---------------------------------------------------------------------------
-# Fake Action subclasses (for no-isinstance test)
+# Lightweight fake actions (duck-typed; injected post-construction)
 # ---------------------------------------------------------------------------
 
 
-class FakeActionA(Action):
+class FakeActionA:
     """Fake action type A — always returns UNHEALTHY."""
 
-    def execute(self, context: ActionContext, services: ActionServices) -> ActionResult:
+    name = "fake_a"
+
+    def execute(self, _context: ActionContext, _services: ActionServices) -> ActionResult:
         return ActionResult(action_name="fake_a", fired=True, status=ActionStatus.UNHEALTHY)
 
 
-class FakeActionB(Action):
+class FakeActionB:
     """Fake action type B — always returns HEALTHY."""
 
-    def execute(self, context: ActionContext, services: ActionServices) -> ActionResult:
+    name = "fake_b"
+
+    def execute(self, _context: ActionContext, _services: ActionServices) -> ActionResult:
         return ActionResult(action_name="fake_b", fired=True, status=ActionStatus.HEALTHY)
 
 
-class FakeTerminalAction(Action):
+class FakeTerminalAction:
     """Fake action that raises PipelineFailedError on execute."""
 
-    def execute(self, context: ActionContext, services: ActionServices) -> ActionResult:
+    name = "terminal"
+
+    def execute(self, _context: ActionContext, _services: ActionServices) -> ActionResult:
         raise PipelineFailedError("pipeline failed")
 
 
-class FakeTerminalActionFirst(Action):
+class FakeTerminalActionFirst:
     """Fake terminal action that raises PipelineFailedError with a distinct 'first failure' message."""
 
-    def execute(self, context: ActionContext, services: ActionServices) -> ActionResult:
+    name = "terminal_first"
+
+    def execute(self, _context: ActionContext, _services: ActionServices) -> ActionResult:
         raise PipelineFailedError("first failure")
 
 
-class FakeTerminalActionSecond(Action):
+class FakeTerminalActionSecond:
     """Fake terminal action that raises PipelineFailedError with a distinct 'second failure' message."""
 
-    def execute(self, context: ActionContext, services: ActionServices) -> ActionResult:
+    name = "terminal_second"
+
+    def execute(self, _context: ActionContext, _services: ActionServices) -> ActionResult:
         raise PipelineFailedError("second failure")
 
 
-class FakeAlertAction(Action):
+class FakeAlertAction:
     """Fake non-terminal alert action that records execution and returns UNHEALTHY."""
+
+    name = "alert"
 
     def __init__(self, executed: list[str]) -> None:
         self._executed = executed
 
-    def execute(self, context: ActionContext, services: ActionServices) -> ActionResult:
+    def execute(self, _context: ActionContext, _services: ActionServices) -> ActionResult:
         self._executed.append("ran")
         return ActionResult(action_name="alert", fired=True, status=ActionStatus.UNHEALTHY)
 
@@ -100,7 +129,7 @@ def test_condition_false_skips_execute() -> None:
     action_mock = create_autospec(Action, instance=True)
     action_mock.name = "test_action"
 
-    dq_action = DQAction(action=action_mock, condition="error_row_count > 100", name="check_errors")
+    dq_action = _make_dq_action(action_mock, condition="error_row_count > 100", name="check_errors")
     state_store = create_autospec(ActionStateStore, instance=True)
 
     evaluator = ActionEvaluator(
@@ -140,7 +169,7 @@ def test_condition_none_fires_unconditionally() -> None:
     result_val = ActionResult(action_name="unconditional", fired=True, status=ActionStatus.UNHEALTHY)
     action_mock.execute.return_value = result_val
 
-    dq_action = DQAction(action=action_mock, condition=None, name="unconditional")
+    dq_action = _make_dq_action(action_mock, condition=None, name="unconditional")
     state_store = create_autospec(ActionStateStore, instance=True)
     state_store.should_fire.return_value = True
 
@@ -176,7 +205,7 @@ def test_condition_true_should_fire_true_executes_and_records() -> None:
     result_val = ActionResult(action_name="alert_action", fired=True, status=ActionStatus.UNHEALTHY)
     action_mock.execute.return_value = result_val
 
-    dq_action = DQAction(action=action_mock, condition="error_row_count > 0", name="alert_action")
+    dq_action = _make_dq_action(action_mock, condition="error_row_count > 0", name="alert_action")
     state_store = create_autospec(ActionStateStore, instance=True)
     state_store.should_fire.return_value = True
 
@@ -213,7 +242,7 @@ def test_should_fire_false_suppresses() -> None:
     action_mock = create_autospec(Action, instance=True)
     action_mock.name = "suppressed_action"
 
-    dq_action = DQAction(action=action_mock, condition="error_row_count > 0", name="suppressed_action")
+    dq_action = _make_dq_action(action_mock, condition="error_row_count > 0", name="suppressed_action")
     state_store = create_autospec(ActionStateStore, instance=True)
     state_store.should_fire.return_value = False  # suppressed
 
@@ -253,8 +282,8 @@ def test_terminal_action_deferred() -> None:
     # Second action: raises PipelineFailedError
     action_b = FakeTerminalAction()
 
-    dq_a = DQAction(action=action_a, condition=None, name="recording_action")
-    dq_b = DQAction(action=action_b, condition=None, name="terminal_action")
+    dq_a = _make_dq_action(action_a, condition=None, name="recording_action")
+    dq_b = _make_dq_action(action_b, condition=None, name="terminal_action")
 
     state_store = create_autospec(ActionStateStore, instance=True)
     state_store.should_fire.return_value = True
@@ -288,8 +317,8 @@ def test_no_isinstance_on_action_type() -> None:
     action_a = FakeActionA()
     action_b = FakeActionB()
 
-    dq_a = DQAction(action=action_a, condition=None, name="fake_a")
-    dq_b = DQAction(action=action_b, condition=None, name="fake_b")
+    dq_a = _make_dq_action(action_a, condition=None, name="fake_a")
+    dq_b = _make_dq_action(action_b, condition=None, name="fake_b")
 
     state_store = create_autospec(ActionStateStore, instance=True)
     state_store.should_fire.return_value = True
@@ -329,7 +358,7 @@ def test_destination_errors_recorded_in_event() -> None:
     )
     action_mock.execute.return_value = result_val
 
-    dq_action = DQAction(action=action_mock, condition=None, name="delivery_action")
+    dq_action = _make_dq_action(action_mock, condition=None, name="delivery_action")
     state_store = create_autospec(ActionStateStore, instance=True)
     state_store.should_fire.return_value = True
 
@@ -361,8 +390,8 @@ def test_terminal_error_ordering_raises_first() -> None:
     term1 = FakeTerminalActionFirst()
     term2 = FakeTerminalActionSecond()
 
-    dq_term1 = DQAction(action=term1, condition=None, name="terminal_first")
-    dq_term2 = DQAction(action=term2, condition=None, name="terminal_second")
+    dq_term1 = _make_dq_action(term1, condition=None, name="terminal_first")
+    dq_term2 = _make_dq_action(term2, condition=None, name="terminal_second")
 
     state_store = create_autospec(ActionStateStore, instance=True)
     state_store.should_fire.return_value = True
@@ -390,8 +419,8 @@ def test_alert_fires_before_terminal_abort() -> None:
     alert_action = FakeAlertAction(executed)
     terminal_action = FakeTerminalAction()
 
-    dq_alert = DQAction(action=alert_action, condition=None, name="alert")
-    dq_terminal = DQAction(action=terminal_action, condition=None, name="terminal")
+    dq_alert = _make_dq_action(alert_action, condition=None, name="alert")
+    dq_terminal = _make_dq_action(terminal_action, condition=None, name="terminal")
 
     state_store = create_autospec(ActionStateStore, instance=True)
     state_store.should_fire.return_value = True

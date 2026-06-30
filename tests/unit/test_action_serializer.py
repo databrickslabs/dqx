@@ -19,8 +19,8 @@ from databricks.labs.dqx.actions.base import (
     ActionResult,
     ActionServices,
     ActionStatus,
-    DQAction,
 )
+from databricks.labs.dqx.actions.dq_action import DQAction
 from databricks.labs.dqx.actions.definition_storage import build_replace_where_predicate
 from databricks.labs.dqx.actions.destinations.callback import CallbackDQAlertDestination
 from databricks.labs.dqx.actions.destinations.slack import SlackDQAlertDestination
@@ -494,22 +494,21 @@ class TestBuildReplaceWhere:
 
 
 # ---------------------------------------------------------------------------
-# Serializer registry OCP — unknown action type raises via registry lookup
+# Unknown action type — rejected at DQAction construction
 # ---------------------------------------------------------------------------
 
 
-class TestSerializerRegistryOCP:
-    """Verify that to_dict uses _ACTION_SERIALIZERS (registry-driven, not isinstance chain)."""
+class TestUnknownActionTypeRejected:
+    """An *Action* subclass outside the *AnyAction* union is rejected when wrapped."""
 
-    def test_unknown_action_type_raises_on_to_dict(self) -> None:
-        """A concrete Action subclass not in _ACTION_SERIALIZERS must raise InvalidActionError."""
+    def test_unknown_action_type_raises_on_construction(self) -> None:
+        """A concrete Action subclass not in the discriminated union must raise InvalidActionError."""
 
         class _UnknownAction(Action):
-            name = "unknown_test_action"
+            name: str = "unknown_test_action"
 
             def execute(self, context: ActionContext, services: ActionServices) -> ActionResult:
                 return ActionResult(action_name=self.name, fired=False, status=ActionStatus.HEALTHY)
 
-        dq_action = DQAction(action=_UnknownAction())
         with pytest.raises(InvalidActionError):
-            ActionSerializer.to_dict(dq_action)
+            DQAction(action=_UnknownAction())

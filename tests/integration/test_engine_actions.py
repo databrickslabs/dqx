@@ -22,7 +22,8 @@ import pytest
 
 from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.actions.alert import DQAlert
-from databricks.labs.dqx.actions.base import ActionContext, DQAction
+from databricks.labs.dqx.actions.base import ActionContext
+from databricks.labs.dqx.actions.dq_action import DQAction
 from databricks.labs.dqx.actions.destinations import CallbackDQAlertDestination
 from databricks.labs.dqx.actions.fail_pipeline import FailPipeline
 from databricks.labs.dqx.actions.message import AlertMessage

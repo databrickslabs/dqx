@@ -16,7 +16,7 @@ from __future__ import annotations
 import inspect
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import ClassVar
+from typing import Literal
 from unittest.mock import create_autospec
 
 import pytest
@@ -207,8 +207,9 @@ def test_slack_no_auth_passed():
     assert client.calls[0].auth is None
 
 
-def test_slack_type_classvar():
-    assert SlackDQAlertDestination.type == "slack"
+def test_slack_type_discriminator():
+    dest = SlackDQAlertDestination(name="slack_test", webhook_url="https://hooks.slack.com/services/T/B/x")
+    assert dest.type == "slack"
 
 
 # ---------------------------------------------------------------------------
@@ -278,8 +279,9 @@ def test_teams_payload_context_field():
     assert payload.get("@context") == "http://schema.org/extensions"
 
 
-def test_teams_type_classvar():
-    assert TeamsDQAlertDestination.type == "teams"
+def test_teams_type_discriminator():
+    dest = TeamsDQAlertDestination(name="teams_test", webhook_url="https://my.webhook.office.com/webhookb2/x")
+    assert dest.type == "teams"
 
 
 # ---------------------------------------------------------------------------
@@ -337,8 +339,9 @@ def test_webhook_payload_run_time_is_isoformat():
     assert payload["run_time"] == run_time.isoformat()
 
 
-def test_webhook_type_classvar():
-    assert WebhookDQAlertDestination.type == "webhook"
+def test_webhook_type_discriminator():
+    dest = WebhookDQAlertDestination(name="wh_test", webhook_url="https://example.com/hook")
+    assert dest.type == "webhook"
 
 
 # ---------------------------------------------------------------------------
@@ -462,65 +465,59 @@ def test_webhook_only_password_no_auth():
 
 
 # ---------------------------------------------------------------------------
-# validate() tests
+# Construction-time validation (Pydantic model_validator)
 # ---------------------------------------------------------------------------
 
 
 def test_slack_validate_raises_for_empty_name():
-    dest = SlackDQAlertDestination(name="", webhook_url="https://hooks.slack.com/services/T/B/x")
     with pytest.raises(InvalidActionError):
-        dest.validate()
+        SlackDQAlertDestination(name="", webhook_url="https://hooks.slack.com/services/T/B/x")
 
 
 def test_slack_validate_raises_for_empty_url():
-    dest = SlackDQAlertDestination(name="slack_test", webhook_url="")
     with pytest.raises(InvalidActionError):
-        dest.validate()
+        SlackDQAlertDestination(name="slack_test", webhook_url="")
 
 
 def test_teams_validate_raises_for_empty_name():
-    dest = TeamsDQAlertDestination(name="", webhook_url="https://my.webhook.office.com/hook")
     with pytest.raises(InvalidActionError):
-        dest.validate()
+        TeamsDQAlertDestination(name="", webhook_url="https://my.webhook.office.com/hook")
 
 
 def test_teams_validate_raises_for_empty_url():
-    dest = TeamsDQAlertDestination(name="teams_test", webhook_url="")
     with pytest.raises(InvalidActionError):
-        dest.validate()
+        TeamsDQAlertDestination(name="teams_test", webhook_url="")
 
 
 def test_webhook_validate_raises_for_empty_name():
-    dest = WebhookDQAlertDestination(name="", webhook_url="https://example.com/hook")
     with pytest.raises(InvalidActionError):
-        dest.validate()
+        WebhookDQAlertDestination(name="", webhook_url="https://example.com/hook")
 
 
 def test_webhook_validate_raises_for_empty_url_string():
-    dest = WebhookDQAlertDestination(name="wh_test", webhook_url="")
     with pytest.raises(InvalidActionError):
-        dest.validate()
+        WebhookDQAlertDestination(name="wh_test", webhook_url="")
 
 
 def test_webhook_validate_passes_for_dqsecret_url():
-    """A DQSecret webhook_url should be accepted by validate()."""
+    """A DQSecret webhook_url should be accepted at construction."""
     dest = WebhookDQAlertDestination(
         name="wh_test",
         webhook_url=DQSecret(scope="myscope", key="mykey"),
     )
-    dest.validate()  # must not raise
+    assert isinstance(dest.webhook_url, DQSecret)
 
 
 def test_slack_validate_passes_for_valid_destination():
-    """Valid Slack destination with non-empty name and URL must not raise."""
+    """Valid Slack destination with non-empty name and URL must construct."""
     dest = SlackDQAlertDestination(name="slack_ok", webhook_url="https://hooks.slack.com/services/T/B/x")
-    dest.validate()  # must not raise
+    assert dest.name == "slack_ok"
 
 
 def test_teams_validate_passes_for_valid_destination():
-    """Valid Teams destination with non-empty name and URL must not raise."""
+    """Valid Teams destination with non-empty name and URL must construct."""
     dest = TeamsDQAlertDestination(name="teams_ok", webhook_url="https://my.webhook.office.com/webhookb2/x")
-    dest.validate()  # must not raise
+    assert dest.name == "teams_ok"
 
 
 # ---------------------------------------------------------------------------
@@ -572,22 +569,26 @@ def test_teams_payload_section_facts_derived_from_message_fields():
 
 
 # ---------------------------------------------------------------------------
-# AlertDestination base no-op validate
+# AlertDestination base name validation
 # ---------------------------------------------------------------------------
 
 
-@dataclass
 class _MinimalDestination(AlertDestination):
-    """Minimal concrete subclass that does NOT override validate."""
+    """Minimal concrete subclass of the abstract base, for base-class tests."""
 
-    type: ClassVar[str] = "minimal"
-    name: str
+    type: Literal["minimal"] = "minimal"
 
     def deliver(self, message: AlertMessage, context: ActionContext, services: ActionServices) -> None:
         pass  # no-op for testing
 
 
-def test_alert_destination_base_validate_is_noop():
-    """AlertDestination.validate() default must return None without raising."""
+def test_alert_destination_base_accepts_non_empty_name():
+    """A concrete destination with a non-empty name constructs without error."""
     dest = _MinimalDestination(name="test")
-    dest.validate()  # must not raise
+    assert dest.name == "test"
+
+
+def test_alert_destination_base_rejects_empty_name():
+    """The base name validator raises InvalidActionError for an empty name."""
+    with pytest.raises(InvalidActionError):
+        _MinimalDestination(name="")

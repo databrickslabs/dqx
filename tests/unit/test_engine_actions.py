@@ -13,7 +13,8 @@ from unittest.mock import create_autospec, patch
 import pytest
 from pyspark.sql import SparkSession
 
-from databricks.labs.dqx.actions.base import ActionContext, DQAction, ActionResult, ActionStatus
+from databricks.labs.dqx.actions.base import ActionContext, ActionResult, ActionStatus
+from databricks.labs.dqx.actions.dq_action import DQAction
 from databricks.labs.dqx.actions.evaluator import ActionEvaluator
 from databricks.labs.dqx.actions.event_storage import ActionEventStoreFactory
 from databricks.labs.dqx.actions.fail_pipeline import FailPipeline
