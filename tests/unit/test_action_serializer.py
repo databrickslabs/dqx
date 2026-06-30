@@ -1,4 +1,5 @@
-"""Unit tests for ActionSerializer (src/databricks/labs/dqx/actions/serializer.py).
+"""Unit tests for ActionSerializer (src/databricks/labs/dqx/actions/serializer.py)
+and the *build_replace_where_predicate* predicate helper in definition_storage.py.
 
 Tests are written in TDD order: they must FAIL before the implementation exists.
 No Spark session, no workspace connection — pure Python unit tests.
@@ -12,7 +13,15 @@ from typing import cast
 import pytest
 
 from databricks.labs.dqx.actions.alert import DQAlert, DQAlertFrequency, NotifyOn
-from databricks.labs.dqx.actions.base import DQAction
+from databricks.labs.dqx.actions.base import (
+    Action,
+    ActionContext,
+    ActionResult,
+    ActionServices,
+    ActionStatus,
+    DQAction,
+)
+from databricks.labs.dqx.actions.definition_storage import build_replace_where_predicate
 from databricks.labs.dqx.actions.destinations.callback import CallbackDQAlertDestination
 from databricks.labs.dqx.actions.destinations.slack import SlackDQAlertDestination
 from databricks.labs.dqx.actions.destinations.teams import TeamsDQAlertDestination
@@ -20,7 +29,7 @@ from databricks.labs.dqx.actions.destinations.webhook import WebhookDQAlertDesti
 from databricks.labs.dqx.actions.fail_pipeline import FailPipeline
 from databricks.labs.dqx.actions.serializer import ActionSerializer
 from databricks.labs.dqx.config import DQSecret
-from databricks.labs.dqx.errors import InvalidActionError
+from databricks.labs.dqx.errors import InvalidActionError, UnsafeSqlQueryError
 
 
 # ---------------------------------------------------------------------------
@@ -439,3 +448,68 @@ class TestDQActionNameField:
         assert "name" in raw
         restored = ActionSerializer.from_dict(raw)
         assert restored.name == action.name
+
+
+# ---------------------------------------------------------------------------
+# build_replace_where_predicate — SQL injection guard (CWE-89)
+# ---------------------------------------------------------------------------
+
+
+class TestBuildReplaceWhere:
+    """Tests for the *build_replace_where_predicate* predicate helper.
+
+    These tests exercise the pure function in isolation — no Spark session is
+    needed, which makes them fast and deterministic.
+    """
+
+    def test_safe_name_produces_correct_predicate(self) -> None:
+        predicate = build_replace_where_predicate("default")
+        assert predicate == "run_config_name = 'default'"
+
+    def test_name_with_dots_and_dashes_is_accepted(self) -> None:
+        predicate = build_replace_where_predicate("my-run.config_v1")
+        assert predicate == "run_config_name = 'my-run.config_v1'"
+
+    def test_single_quote_injection_raises(self) -> None:
+        """A value with a single quote must be rejected — not silently included."""
+        with pytest.raises(UnsafeSqlQueryError):
+            build_replace_where_predicate("a' OR '1'='1")
+
+    def test_semicolon_injection_raises(self) -> None:
+        with pytest.raises(UnsafeSqlQueryError):
+            build_replace_where_predicate("default; DROP TABLE actions;--")
+
+    def test_space_in_name_raises(self) -> None:
+        with pytest.raises(UnsafeSqlQueryError):
+            build_replace_where_predicate("has space")
+
+    def test_newline_injection_raises(self) -> None:
+        with pytest.raises(UnsafeSqlQueryError):
+            build_replace_where_predicate("line1\nline2")
+
+    def test_empty_string_raises(self) -> None:
+        """An empty run_config_name does not match the safe-chars pattern."""
+        with pytest.raises(UnsafeSqlQueryError):
+            build_replace_where_predicate("")
+
+
+# ---------------------------------------------------------------------------
+# Serializer registry OCP — unknown action type raises via registry lookup
+# ---------------------------------------------------------------------------
+
+
+class TestSerializerRegistryOCP:
+    """Verify that to_dict uses _ACTION_SERIALIZERS (registry-driven, not isinstance chain)."""
+
+    def test_unknown_action_type_raises_on_to_dict(self) -> None:
+        """A concrete Action subclass not in _ACTION_SERIALIZERS must raise InvalidActionError."""
+
+        class _UnknownAction(Action):
+            name = "unknown_test_action"
+
+            def execute(self, context: ActionContext, services: ActionServices) -> ActionResult:
+                return ActionResult(action_name=self.name, fired=False, status=ActionStatus.HEALTHY)
+
+        dq_action = DQAction(action=_UnknownAction())
+        with pytest.raises(InvalidActionError):
+            ActionSerializer.to_dict(dq_action)

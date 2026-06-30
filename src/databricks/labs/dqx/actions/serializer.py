@@ -1,10 +1,10 @@
 """Serializer for *DQAction* instances.
 
 *ActionSerializer* converts *DQAction* objects to plain Python dicts
-(suitable for JSON / YAML persistence) and back.  It uses two internal
+(suitable for JSON / YAML persistence) and back.  It uses four internal
 type registries so that adding a new action or destination type requires
-only a single registry entry — no conditional branching needed in the
-core logic (Open/Closed Principle).
+only one registry entry on each side (serialization and deserialization)
+— no conditional branching needed in the core logic (Open/Closed Principle).
 
 Registry keys
 -------------
@@ -15,14 +15,23 @@ Registry keys
   destination dict to a callable that reconstructs the *AlertDestination*
   instance.  Currently supported keys: ``"slack"``, ``"teams"``,
   ``"webhook"``.
+- *_ACTION_SERIALIZERS*: maps the concrete *Action* class to a callable
+  that converts an *Action* instance to a plain dict.  Symmetric counterpart
+  to *_ACTION_BUILDERS*.
+- *_DESTINATION_SERIALIZERS*: maps the concrete *AlertDestination* class to
+  a callable that converts it to a plain dict (or *None* for unserializable
+  types such as *CallbackDQAlertDestination*).  Symmetric counterpart to
+  *_DESTINATION_BUILDERS*.
 
 Adding a new type
 -----------------
-Register a new entry in the appropriate dict at module level — no other
-code changes are required::
+Register a new entry in all four dicts at module level — no other code
+changes are required::
 
     _ACTION_BUILDERS["my_action"] = _build_my_action
+    _ACTION_SERIALIZERS[MyAction] = _serialize_my_action
     _DESTINATION_BUILDERS["my_dest"] = _build_my_destination
+    _DESTINATION_SERIALIZERS[MyDestination] = _serialize_my_destination
 
 *DQSecret* serialization
 ------------------------
@@ -57,7 +66,6 @@ from databricks.labs.dqx.actions.destinations.callback import CallbackDQAlertDes
 from databricks.labs.dqx.actions.destinations.slack import SlackDQAlertDestination
 from databricks.labs.dqx.actions.destinations.teams import TeamsDQAlertDestination
 from databricks.labs.dqx.actions.destinations.webhook import WebhookDQAlertDestination
-from databricks.labs.dqx.actions.destinations.webhook_base import WebhookAlertDestination
 from databricks.labs.dqx.actions.fail_pipeline import FailPipeline
 from databricks.labs.dqx.config import DQSecret
 from databricks.labs.dqx.errors import InvalidActionError
@@ -127,12 +135,100 @@ def _deserialize_secret_or_str(value: object) -> str | DQSecret | None:
 # ---------------------------------------------------------------------------
 
 
+def _serialize_slack(dest: AlertDestination) -> dict[str, object]:
+    """Serialize a *SlackDQAlertDestination* to a plain dict.
+
+    Args:
+        dest: The Slack destination to serialize.
+
+    Returns:
+        A serialization dict for the Slack destination.
+    """
+    slack = dest if isinstance(dest, SlackDQAlertDestination) else None
+    assert slack is not None
+    return {
+        "type": slack.type,
+        "name": slack.name,
+        "webhook_url": _serialize_secret_or_str(slack.webhook_url),
+    }
+
+
+def _serialize_teams(dest: AlertDestination) -> dict[str, object]:
+    """Serialize a *TeamsDQAlertDestination* to a plain dict.
+
+    Args:
+        dest: The Teams destination to serialize.
+
+    Returns:
+        A serialization dict for the Teams destination.
+    """
+    teams = dest if isinstance(dest, TeamsDQAlertDestination) else None
+    assert teams is not None
+    return {
+        "type": teams.type,
+        "name": teams.name,
+        "webhook_url": _serialize_secret_or_str(teams.webhook_url),
+    }
+
+
+def _serialize_webhook(dest: AlertDestination) -> dict[str, object]:
+    """Serialize a *WebhookDQAlertDestination* to a plain dict.
+
+    Args:
+        dest: The webhook destination to serialize.
+
+    Returns:
+        A serialization dict for the webhook destination, including optional
+        *username* and *password* fields.
+    """
+    webhook = dest if isinstance(dest, WebhookDQAlertDestination) else None
+    assert webhook is not None
+    dest_dict: dict[str, object] = {
+        "type": webhook.type,
+        "name": webhook.name,
+        "webhook_url": _serialize_secret_or_str(webhook.webhook_url),
+    }
+    if webhook.username is not None:
+        dest_dict["username"] = _serialize_secret_or_str(webhook.username)
+    if webhook.password is not None:
+        dest_dict["password"] = _serialize_secret_or_str(webhook.password)
+    return dest_dict
+
+
+def _serialize_callback(dest: AlertDestination) -> dict[str, object] | None:
+    """Callback destinations cannot be serialized; always returns *None*.
+
+    The *dest* parameter exists only to satisfy the registry callable
+    signature; it is not used at runtime.
+
+    Args:
+        dest: The callback destination (present for registry uniformity only).
+
+    Returns:
+        *None* — callers must log a warning and skip this entry.
+    """
+    if isinstance(dest, CallbackDQAlertDestination):
+        return None
+    return None
+
+
+# Registry: concrete destination class → serializer callable.
+# Adding a new destination type: add ONE entry here and ONE in _DESTINATION_BUILDERS.
+# The OCP property guarantees no other code changes are needed.
+_DESTINATION_SERIALIZERS: dict[type[AlertDestination], Callable[[AlertDestination], dict[str, object] | None]] = {
+    SlackDQAlertDestination: _serialize_slack,
+    TeamsDQAlertDestination: _serialize_teams,
+    WebhookDQAlertDestination: _serialize_webhook,
+    CallbackDQAlertDestination: _serialize_callback,
+}
+
+
 def _serialize_destination(dest: AlertDestination) -> dict[str, object] | None:
-    """Serialize a single *AlertDestination* to a plain dict.
+    """Serialize a single *AlertDestination* to a plain dict via *_DESTINATION_SERIALIZERS*.
 
     *CallbackDQAlertDestination* instances are not serializable — this
     function returns *None* for them (the caller logs a warning and skips
-    the entry).
+    the entry).  An unregistered destination type is also logged and skipped.
 
     Args:
         dest: The destination to serialize.
@@ -141,35 +237,15 @@ def _serialize_destination(dest: AlertDestination) -> dict[str, object] | None:
         A serialization dict, or *None* when the destination cannot be
         serialized.
     """
-    if isinstance(dest, CallbackDQAlertDestination):
+    serializer = _DESTINATION_SERIALIZERS.get(type(dest))
+    if serializer is None:
+        # Unrecognized destination type — cannot serialize; return None so caller skips it.
+        logger.warning(
+            f"Destination '{_sanitize(dest.name)}' has an unrecognized type "
+            f"'{_sanitize(type(dest).__name__)}'; skipping."
+        )
         return None
-
-    if isinstance(dest, WebhookDQAlertDestination):
-        dest_dict: dict[str, object] = {
-            "type": dest.type,
-            "name": dest.name,
-            "webhook_url": _serialize_secret_or_str(dest.webhook_url),
-        }
-        if dest.username is not None:
-            dest_dict["username"] = _serialize_secret_or_str(dest.username)
-        if dest.password is not None:
-            dest_dict["password"] = _serialize_secret_or_str(dest.password)
-        return dest_dict
-
-    # SlackDQAlertDestination and TeamsDQAlertDestination both inherit from
-    # WebhookAlertDestination which provides webhook_url.
-    if isinstance(dest, WebhookAlertDestination):
-        return {
-            "type": dest.type,
-            "name": dest.name,
-            "webhook_url": _serialize_secret_or_str(dest.webhook_url),
-        }
-
-    # Unrecognized destination type — cannot serialize; return None so caller skips it.
-    logger.warning(
-        f"Destination '{_sanitize(dest.name)}' has an unrecognized type '{_sanitize(type(dest).__name__)}'; skipping."
-    )
-    return None
+    return serializer(dest)
 
 
 def _build_slack(raw: dict[str, object]) -> SlackDQAlertDestination:
@@ -301,10 +377,44 @@ def _build_fail_pipeline(raw: dict[str, object]) -> FailPipeline:
     )
 
 
-# Registry: action type string → builder callable
+def _serialize_alert_action(action: Action) -> dict[str, object]:
+    """Registry adapter that casts *action* to *DQAlert* and delegates.
+
+    Args:
+        action: A concrete *Action* known to be a *DQAlert* at call time.
+
+    Returns:
+        Serialized dict for the alert.
+    """
+    assert isinstance(action, DQAlert)
+    return _serialize_alert(action)
+
+
+def _serialize_fail_pipeline_action(action: Action) -> dict[str, object]:
+    """Registry adapter that casts *action* to *FailPipeline* and delegates.
+
+    Args:
+        action: A concrete *Action* known to be a *FailPipeline* at call time.
+
+    Returns:
+        Serialized dict for the fail-pipeline action.
+    """
+    assert isinstance(action, FailPipeline)
+    return _serialize_fail_pipeline(action)
+
+
+# Registry: action type string → builder callable (deserialization side)
 _ACTION_BUILDERS: dict[str, Callable[[dict[str, object]], Action]] = {
     "alert": _build_alert,
     "fail_pipeline": _build_fail_pipeline,
+}
+
+# Registry: concrete action class → serializer callable (serialization side).
+# Adding a new action type: add ONE entry here and ONE in _ACTION_BUILDERS.
+# The OCP property guarantees no other code changes are needed.
+_ACTION_SERIALIZERS: dict[type[Action], Callable[[Action], dict[str, object]]] = {
+    DQAlert: _serialize_alert_action,
+    FailPipeline: _serialize_fail_pipeline_action,
 }
 
 
@@ -356,13 +466,11 @@ class ActionSerializer:
         """
         inner = action.action
 
-        if isinstance(inner, DQAlert):
-            action_dict = _serialize_alert(inner)
-        elif isinstance(inner, FailPipeline):
-            action_dict = _serialize_fail_pipeline(inner)
-        else:
+        serializer = _ACTION_SERIALIZERS.get(type(inner))
+        if serializer is None:
             action_type = type(inner).__name__
             raise InvalidActionError(f"Action type '{_sanitize(action_type)}' is not supported by ActionSerializer.")
+        action_dict = serializer(inner)
 
         result: dict[str, object] = {
             "name": action.name,

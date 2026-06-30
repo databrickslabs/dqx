@@ -44,6 +44,7 @@ from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.actions.base import DQAction
 from databricks.labs.dqx.actions.serializer import ActionSerializer
 from databricks.labs.dqx.config import LakebaseActionsStorageConfig, TableActionsStorageConfig
+from databricks.labs.dqx.errors import UnsafeSqlQueryError
 from databricks.labs.dqx.lakebase_engine import LakebaseConnectionMixin
 
 logger = logging.getLogger(__name__)
@@ -66,6 +67,37 @@ def _sanitize(text: str) -> str:
         A copy of *text* with all control characters replaced by a space.
     """
     return _CONTROL_CHAR_RE.sub(" ", text)
+
+
+def build_replace_where_predicate(run_config_name: str) -> str:
+    """Build a safe Delta ``replaceWhere`` predicate for *run_config_name*.
+
+    Validates that *run_config_name* contains only characters in the set
+    ``[A-Za-z0-9_.-]`` to prevent SQL injection (CWE-89) in the predicate
+    string.  If the name contains any other character, *UnsafeSqlQueryError*
+    is raised before the predicate is constructed.
+
+    This mirrors the identical guard in *TableChecksStorageHandler.save* in
+    *checks_storage.py*.
+
+    Args:
+        run_config_name: The run configuration name to embed in the predicate.
+
+    Returns:
+        A SQL predicate string of the form
+        ``"run_config_name = '<run_config_name>'"`` safe for use as a
+        Delta ``replaceWhere`` option.
+
+    Raises:
+        UnsafeSqlQueryError: If *run_config_name* contains characters outside
+            ``[A-Za-z0-9_.-]``.
+    """
+    if not re.fullmatch(r"[\w.\-]+", run_config_name):
+        raise UnsafeSqlQueryError(
+            f"run_config_name must not contain unsafe SQL characters. "
+            f"Only word characters (a-z, A-Z, 0-9, _), '.', and '-' are allowed; got '{run_config_name}'."
+        )
+    return f"run_config_name = '{run_config_name}'"
 
 
 # ---------------------------------------------------------------------------
@@ -140,6 +172,12 @@ class TableActionsStorageHandler(ActionsStorageHandler[TableActionsStorageConfig
             actions: List of *DQAction* definitions to persist.
             config: *TableActionsStorageConfig* with target table, mode, and
                 run config name.
+
+        Raises:
+            UnsafeSqlQueryError: If *run_config_name* contains characters outside
+                ``[A-Za-z0-9_.-]`` when *mode* is ``"overwrite"``, raised by
+                *_build_replace_where* to prevent SQL injection in the Delta
+                ``replaceWhere`` predicate (CWE-89).
         """
         if not actions:
             logger.info("No actions provided; skipping save.")
@@ -158,7 +196,8 @@ class TableActionsStorageHandler(ActionsStorageHandler[TableActionsStorageConfig
 
         writer = df.write.format("delta")
         if config.mode == "overwrite":
-            writer = writer.option("replaceWhere", f"run_config_name = '{config.run_config_name}'")
+            predicate = build_replace_where_predicate(config.run_config_name)
+            writer = writer.option("replaceWhere", predicate)
             writer.mode("overwrite").saveAsTable(config.location)
         else:
             writer.mode("append").saveAsTable(config.location)
@@ -454,4 +493,5 @@ __all__ = [
     "ActionsStorageHandlerFactory",
     "LakebaseActionsStorageHandler",
     "TableActionsStorageHandler",
+    "build_replace_where_predicate",
 ]
