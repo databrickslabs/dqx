@@ -628,31 +628,43 @@ class InstallationChecksStorageConfig(
     install_folder: str | None = None
     overwrite_location: bool = False
 
+    @model_validator(mode='before')
+    @classmethod
+    def validate_installation_location(cls, data: Any) -> Any:
+        # Only guard against an explicitly empty/None location; an absent key keeps the default above.
+        if isinstance(data, dict) and "location" in data and not data["location"]:
+            raise InvalidConfigError("The workspace file path ('location' field) must not be empty or None.")
+        return data
 
-@dataclass
-class TableActionsStorageConfig:
-    """Configuration class for persisting DQ action events to a Unity Catalog table.
+
+class TableActionsStorageConfig(BaseChecksStorageConfig):
+    """Configuration class for persisting DQ action definitions to a Unity Catalog table.
 
     Args:
-        location: Fully qualified UC table name (e.g. *catalog.schema.table*) where action events are stored.
-        run_config_name: Name of the run configuration these events belong to (default is *default*).
+        location: Fully qualified UC table name (e.g. *catalog.schema.table*) where action definitions are stored.
+        run_config_name: Name of the run configuration these actions belong to (default is *default*).
         mode: Write mode for the table (*append* or *overwrite*, default *append*).
     """
 
-    location: str
     run_config_name: str = "default"
     mode: str = "append"
 
-    def __post_init__(self) -> None:
-        if not self.location:
+    @model_validator(mode='before')
+    @classmethod
+    def validate_location(cls, data: Any) -> Any:
+        if cls is TableActionsStorageConfig and isinstance(data, dict) and not data.get("location"):
             raise InvalidConfigError("The table name ('location' field) must not be empty or None.")
+        return data
+
+    @model_validator(mode='after')
+    def validate_mode(self) -> 'TableActionsStorageConfig':
         if self.mode not in ("append", "overwrite"):
             raise InvalidConfigError(f"Invalid mode '{self.mode}'. Must be 'append' or 'overwrite'.")
+        return self
 
 
-@dataclass
-class LakebaseActionsStorageConfig:
-    """Configuration class for persisting DQ action events to a Lakebase (PostgreSQL) table.
+class LakebaseActionsStorageConfig(BaseChecksStorageConfig):
+    """Configuration class for persisting DQ action definitions to a Lakebase (PostgreSQL) table.
 
     The *location* must be a fully qualified three-part name in the form *database.schema.table*.
 
@@ -661,21 +673,25 @@ class LakebaseActionsStorageConfig:
         instance_name: Name of the Lakebase instance.
         client_id: ID of the Databricks service principal for the Lakebase connection.
         port: Lakebase port (default is *5432*).
-        run_config_name: Name of the run configuration these events belong to (default is *default*).
+        run_config_name: Name of the run configuration these actions belong to (default is *default*).
         mode: Write mode for the table (*append* or *overwrite*, default *append*).
     """
 
-    location: str
-    instance_name: str
+    instance_name: str | None = None
     client_id: str | None = None
     port: str = "5432"
     run_config_name: str = "default"
     mode: str = "append"
 
-    def __post_init__(self) -> None:
-        if not self.location:
+    @model_validator(mode='before')
+    @classmethod
+    def validate_location_present(cls, data: Any) -> Any:
+        if cls is LakebaseActionsStorageConfig and isinstance(data, dict) and not data.get("location"):
             raise InvalidParameterError("Location must not be empty or None.")
+        return data
 
+    @model_validator(mode='after')
+    def validate_lakebase_config(self) -> 'LakebaseActionsStorageConfig':
         if not self.instance_name:
             raise InvalidParameterError("Instance name must not be empty or None.")
 
@@ -687,28 +703,29 @@ class LakebaseActionsStorageConfig:
         if self.mode not in ("append", "overwrite"):
             raise InvalidConfigError(f"Invalid mode '{self.mode}'. Must be 'append' or 'overwrite'.")
 
+        return self
+
     def _split_location(self) -> tuple[str, ...]:
         """Splits *database.schema.table* into components."""
         return tuple(self.location.split("."))
 
-    @cached_property
+    @property
     def database_name(self) -> str:
         """The database portion of the three-part location."""
         return self._split_location()[0]
 
-    @cached_property
+    @property
     def schema_name(self) -> str:
         """The schema portion of the three-part location."""
         return self._split_location()[1]
 
-    @cached_property
+    @property
     def table_name(self) -> str:
         """The table portion of the three-part location."""
         return self._split_location()[2]
 
 
-@dataclass
-class ActionEventsConfig:
+class ActionEventsConfig(BaseChecksStorageConfig):
     """Configuration class for storing DQ action events in a Unity Catalog table.
 
     Args:
@@ -716,19 +733,17 @@ class ActionEventsConfig:
         mode: Write mode for the table (*append* or *overwrite*, default *append*).
     """
 
-    location: str
     mode: str = "append"
-
-    def __post_init__(self) -> None:
-        if not self.location:
-            raise InvalidConfigError("The table name ('location' field) must not be empty or None.")
-        if self.mode not in ("append", "overwrite"):
-            raise InvalidConfigError(f"Invalid mode '{self.mode}'. Must be 'append' or 'overwrite'.")
 
     @model_validator(mode='before')
     @classmethod
-    def validate_installation_location(cls, data: Any) -> Any:
-        # Only guard against an explicitly empty/None location; an absent key keeps the default above.
-        if isinstance(data, dict) and "location" in data and not data["location"]:
-            raise InvalidConfigError("The workspace file path ('location' field) must not be empty or None.")
+    def validate_location(cls, data: Any) -> Any:
+        if cls is ActionEventsConfig and isinstance(data, dict) and not data.get("location"):
+            raise InvalidConfigError("The events table name ('location' field) must not be empty or None.")
         return data
+
+    @model_validator(mode='after')
+    def validate_mode(self) -> 'ActionEventsConfig':
+        if self.mode not in ("append", "overwrite"):
+            raise InvalidConfigError(f"Invalid mode '{self.mode}'. Must be 'append' or 'overwrite'.")
+        return self

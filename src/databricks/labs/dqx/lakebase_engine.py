@@ -30,6 +30,7 @@ from sqlalchemy import Engine, create_engine, event
 from databricks.sdk import WorkspaceClient
 
 from databricks.labs.dqx.config import LakebaseActionsStorageConfig
+from databricks.labs.dqx.errors import InvalidConfigError
 
 
 def create_lakebase_engine(
@@ -132,12 +133,17 @@ class LakebaseConnectionMixin:
         Returns:
             A newly created SQLAlchemy *Engine*.
         """
-        instance = self._ws.database.get_database_instance(self._config.instance_name)
+        instance_name = self._config.instance_name
+        if not instance_name:
+            # The config's model validator guarantees this at construction; guard defensively for
+            # direct/mutated use and to satisfy the str | None type.
+            raise InvalidConfigError("Lakebase 'instance_name' must be set to create a connection.")
+        instance = self._ws.database.get_database_instance(instance_name)
         host = instance.read_write_dns or ""
         user = self._config.client_id if self._config.client_id else (self._ws.current_user.me().user_name or "")
         return create_lakebase_engine(
             ws=self._ws,
-            instance_name=self._config.instance_name,
+            instance_name=instance_name,
             host=host,
             user=user,
             port=self._config.port,

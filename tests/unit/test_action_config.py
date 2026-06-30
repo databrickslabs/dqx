@@ -60,7 +60,7 @@ class TestDQSecret:
     def test_frozen_dataclass(self):
         secret = DQSecret(scope="s", key="k")
         with pytest.raises((AttributeError, TypeError)):
-            secret.scope = "other"  # type: ignore[misc]
+            setattr(secret, "scope", "other")
 
 
 # ---------------------------------------------------------------------------
@@ -112,9 +112,9 @@ class TestLakebaseActionsStorageConfig:
     def test_none_instance_name_raises(self):
         # instance_name is a required str field; passing None satisfies no
         # static type but Python dataclasses do not enforce types at runtime —
-        # __post_init__ still catches the empty/None value and raises.
+        # The model validator catches the None value and raises.
         with pytest.raises(InvalidParameterError):
-            LakebaseActionsStorageConfig(location="db.schema.tbl", instance_name=None)  # type: ignore[arg-type]
+            LakebaseActionsStorageConfig(location="db.schema.tbl", instance_name=None)
 
     def test_empty_location_raises(self):
         with pytest.raises(InvalidParameterError):
