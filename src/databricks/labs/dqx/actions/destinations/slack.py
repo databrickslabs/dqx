@@ -1,0 +1,90 @@
+"""Slack Block Kit alert destination.
+
+Delivers DQX alert messages to Slack incoming webhook URLs as Block Kit
+payloads.  The host is restricted to ``hooks.slack.com`` to prevent
+accidental or malicious redirection to non-Slack endpoints.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import ClassVar
+
+from databricks.labs.dqx.actions.destinations.webhook_base import WebhookAlertDestination
+from databricks.labs.dqx.actions.message import AlertMessage
+
+
+@dataclass
+class SlackDQAlertDestination(WebhookAlertDestination):
+    """Slack incoming-webhook destination using Slack Block Kit format.
+
+    Posts a structured Block Kit message to a Slack incoming webhook URL.
+    The payload includes sections for the alert title, summary, condition,
+    table, run metadata, severity, and all observed metrics.
+
+    Class attributes:
+        type: Always ``"slack"``.
+        allowed_host_suffixes: Restricts delivery to ``hooks.slack.com``.
+
+    Attributes:
+        name: Logical name for this destination instance.
+        webhook_url: The Slack incoming webhook URL (plain string or *DQSecret*).
+    """
+
+    type: ClassVar[str] = "slack"
+    allowed_host_suffixes: ClassVar[list[str] | None] = ["hooks.slack.com"]
+
+    def _build_payload(self, message: AlertMessage) -> dict:
+        """Build a Slack Block Kit payload from *message*.
+
+        Constructs a ``blocks`` list with a header block containing the alert
+        title, followed by section blocks for summary, condition, table,
+        run_id, run_time, severity, and observed metrics.
+
+        Args:
+            message: The alert message to render.
+
+        Returns:
+            A dict with a top-level ``"blocks"`` key containing a valid Slack
+            Block Kit block array.
+        """
+        condition_text = message.condition if message.condition is not None else "unconditional"
+        table_text = message.table if message.table is not None else "unspecified"
+        metrics_text = ", ".join(f"{k}: {v}" for k, v in message.observed_metrics.items())
+
+        blocks: list[dict] = [
+            {
+                "type": "header",
+                "text": {"type": "plain_text", "text": message.title, "emoji": True},
+            },
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": message.summary},
+            },
+            {
+                "type": "section",
+                "fields": [
+                    {"type": "mrkdwn", "text": f"*Condition:*\n{condition_text}"},
+                    {"type": "mrkdwn", "text": f"*Table:*\n{table_text}"},
+                ],
+            },
+            {
+                "type": "section",
+                "fields": [
+                    {"type": "mrkdwn", "text": f"*Run ID:*\n{message.run_id}"},
+                    {"type": "mrkdwn", "text": f"*Run Time:*\n{message.run_time!s}"},
+                ],
+            },
+            {
+                "type": "section",
+                "fields": [
+                    {"type": "mrkdwn", "text": f"*Severity:*\n{message.severity}"},
+                    {"type": "mrkdwn", "text": f"*Metrics:*\n{metrics_text}"},
+                ],
+            },
+        ]
+
+        return {"blocks": blocks}
+
+
+__all__ = ["SlackDQAlertDestination"]
