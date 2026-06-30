@@ -71,9 +71,8 @@ def build_replace_where_predicate(run_config_name: str) -> str:
         run_config_name: The run configuration name to embed in the predicate.
 
     Returns:
-        A SQL predicate string of the form
-        ``"run_config_name = '<run_config_name>'"`` safe for use as a
-        Delta ``replaceWhere`` option.
+        A SQL predicate string that compares *run_config_name* against its
+        validated value, safe for use as a Delta *replaceWhere* option.
 
     Raises:
         UnsafeSqlQueryError: If *run_config_name* contains characters outside

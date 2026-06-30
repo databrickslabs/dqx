@@ -39,7 +39,7 @@ class AlertMessage:
         severity: Alert severity level (e.g. "error", "warn").
         fields: Flat string-to-string mapping suitable for key-value rendering
             in notification payloads.  Contains one entry per observed metric
-            under the key ``"metric.<name>"`` (e.g. ``"metric.error_row_count"``)
+            under a key of the form *metric.NAME* (for example, *metric.error_row_count*)
             plus un-prefixed reserved entries for *condition*, *run_id*,
             *run_time*, and *table*.  The ``"metric."`` prefix ensures metric
             names never silently overwrite the reserved metadata keys.
@@ -61,16 +61,18 @@ class StandardMessageBuilder:
 
     The builder is intentionally decoupled from *ActionContext* to avoid a
     circular import.  Call it as a static method — no constructor arguments
-    are needed::
+    are needed:
 
-        msg = StandardMessageBuilder.build(
-            action_name="notify_on_errors",
-            condition="error_row_count > 0",
-            metrics={"error_row_count": 5},
-            run_id="run-abc",
-            run_time=datetime.now(timezone.utc),
-            table="catalog.schema.my_table",
-        )
+    ```python
+    msg = StandardMessageBuilder.build(
+        action_name="notify_on_errors",
+        condition="error_row_count > 0",
+        metrics={"error_row_count": 5},
+        run_id="run-abc",
+        run_time=datetime.now(timezone.utc),
+        table="catalog.schema.my_table",
+    )
+    ```
     """
 
     @staticmethod
@@ -91,8 +93,8 @@ class StandardMessageBuilder:
         action fires unconditionally when *condition* is *None*), and a *fields*
         dict suitable for flat key-value rendering in notification payloads.
 
-        Metric entries in *fields* are stored under the key ``"metric.<name>"``
-        (e.g. ``"metric.error_row_count"``) so that they never collide with the
+        Metric entries in *fields* are stored under a key of the form *metric.NAME*
+        (for example, *metric.error_row_count*) so that they never collide with the
         reserved metadata keys *condition*, *run_id*, *run_time*, and *table*,
         which are always un-prefixed.  *observed_metrics* on the returned
         *AlertMessage* is always the raw, un-prefixed metrics dict.

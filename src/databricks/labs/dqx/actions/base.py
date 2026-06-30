@@ -71,8 +71,8 @@ class ActionContext:
     meaningful for a given run.
 
     Attributes:
-        metrics: Mapping of metric name to observed value (e.g.
-            ``{"error_row_count": 12}``).
+        metrics: Mapping of metric name to observed value (for example, the
+            metric *error_row_count* with a value of 12).
         run_id: Unique identifier for the DQX run that produced these metrics.
         run_time: Timestamp when the DQX run executed.
         run_name: Human-readable name for the run; defaults to ``"dqx"``.

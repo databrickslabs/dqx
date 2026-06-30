@@ -89,22 +89,22 @@ def _op_pow(lhs: object, rhs: object) -> object:
 
 
 def _op_lt(lhs: object, rhs: object) -> bool:
-    """Return *lhs* < *rhs* (must be numeric)."""
+    """Return whether *lhs* is less than *rhs* (must be numeric)."""
     return cast(float, lhs) < cast(float, rhs)
 
 
 def _op_le(lhs: object, rhs: object) -> bool:
-    """Return *lhs* <= *rhs* (must be numeric)."""
+    """Return whether *lhs* is less than or equal to *rhs* (must be numeric)."""
     return cast(float, lhs) <= cast(float, rhs)
 
 
 def _op_gt(lhs: object, rhs: object) -> bool:
-    """Return *lhs* > *rhs* (must be numeric)."""
+    """Return whether *lhs* is greater than *rhs* (must be numeric)."""
     return cast(float, lhs) > cast(float, rhs)
 
 
 def _op_ge(lhs: object, rhs: object) -> bool:
-    """Return *lhs* >= *rhs* (must be numeric)."""
+    """Return whether *lhs* is greater than or equal to *rhs* (must be numeric)."""
     return cast(float, lhs) >= cast(float, rhs)
 
 
@@ -437,10 +437,12 @@ class ConditionEvaluator:
     A full-tree structural pre-pass is performed unconditionally before any
     evaluation, so short-circuit evaluation cannot bypass the allowlist.
 
-    Usage::
+    Usage:
 
-        ConditionEvaluator.validate("error_row_count > 0")
-        result = ConditionEvaluator.evaluate("error_row_count > 0", {"error_row_count": 5})
+    ```python
+    ConditionEvaluator.validate("error_row_count > 0")
+    result = ConditionEvaluator.evaluate("error_row_count > 0", {"error_row_count": 5})
+    ```
     """
 
     @staticmethod

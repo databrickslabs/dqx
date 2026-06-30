@@ -35,7 +35,7 @@ changes are required::
 
 *DQSecret* serialization
 ------------------------
-A *DQSecret* value is serialized as a tagged dict ``{"secret": "scope/key"}``
+A *DQSecret* value is serialized as a tagged dict mapping the key *secret* to a *scope/key* reference
 so that it can be distinguished from a plain string after a round-trip.  On
 deserialization, any dict with a single ``"secret"`` key is converted back to
 a *DQSecret*.
@@ -81,7 +81,7 @@ logger = logging.getLogger(__name__)
 def _serialize_secret_or_str(value: str | DQSecret | None) -> str | dict[str, str] | None:
     """Serialize a *str | DQSecret | None* value for storage.
 
-    A *DQSecret* is encoded as ``{"secret": "scope/key"}`` so that the tagged
+    A *DQSecret* is encoded as a tagged dict mapping the key *secret* to a *scope/key* reference so that the tagged
     form survives a JSON / YAML round-trip without being confused with a plain
     string.  Plain strings and *None* are passed through unchanged.
 
@@ -411,7 +411,7 @@ class ActionSerializer:
     for a new action or destination type, add a single entry to the
     corresponding registry dict at module level — no other changes are needed.
 
-    *DQSecret* values are serialized as ``{"secret": "scope/key"}`` tagged
+    *DQSecret* values are serialized as a tagged dict (key *secret* mapped to a *scope/key* reference)
     dicts so that the secret reference survives a round-trip through JSON or
     YAML without being confused with a plain string.
 

@@ -80,7 +80,7 @@ class TableActionEventStore(ActionEventStore):
         """Convert *events* to rows and append them to the configured Delta table.
 
         *observed_metrics* values are coerced to *str* because the Delta schema
-        stores them as *MAP<STRING,STRING>*.
+        stores them as a Spark *MAP* of string to string.
 
         Args:
             events: One or more *AlertEvent* records to persist.

@@ -145,7 +145,7 @@ class WebhookAuth:
 
         Returns:
             A dict with a single ``Authorization`` key whose value is
-            ``Basic <base64(username:password)>``.
+            a ``Basic`` scheme header containing the base64-encoded *username:password*.
         """
         token = base64.b64encode(f"{self.username}:{self.password}".encode("utf-8")).decode("ascii")
         return {"Authorization": f"Basic {token}"}
