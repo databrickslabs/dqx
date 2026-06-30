@@ -204,6 +204,20 @@ class ChecksSemanticValidator:
         return (function, ChecksSemanticValidator._make_hashable(column))
 
     @staticmethod
+    def _duplicate_issue(idx: int, check: dict, seen: dict[tuple, int]) -> str | None:
+        """Record *check* in *seen* and return a duplicate-issue message if it repeats an earlier rule."""
+        key = ChecksSemanticValidator._full_key(check)
+        if key is None:
+            return None
+        if key not in seen:
+            seen[key] = idx
+            return None
+        return (
+            f"Duplicate rule detected: rule at index {idx} is identical to "
+            f"rule at index {seen[key]} (function: '{key[0]}')."
+        )
+
+    @staticmethod
     def detect_duplicates(checks: list[dict]) -> list[str]:
         """Detect rules that are completely identical.
 
@@ -221,22 +235,39 @@ class ChecksSemanticValidator:
 
         for idx, check in enumerate(checks):
             try:
-                key = ChecksSemanticValidator._full_key(check)
-                if key is None:
-                    continue
-                if key in seen:
-                    issues.append(
-                        f"Duplicate rule detected: rule at index {idx} is identical to "
-                        f"rule at index {seen[key]} (function: '{key[0]}')."
-                    )
-                else:
-                    seen[key] = idx
+                issue = ChecksSemanticValidator._duplicate_issue(idx, check, seen)
             except TypeError as exc:
                 # Best-effort validation: never let a malformed/unhashable check crash the
                 # validator. Skip it here; structural validation reports such checks.
                 logger.warning(f"Skipping duplicate detection for check at index {idx}: {exc}")
+                continue
+            if issue:
+                issues.append(issue)
 
         return issues
+
+    @staticmethod
+    def _conflict_issue(idx: int, check: dict, seen: dict[tuple, tuple[int, dict]]) -> str | None:
+        """Record *check* in *seen* and return a conflict-issue message if it clashes with an earlier rule."""
+        conflict_key = ChecksSemanticValidator._conflict_key(check)
+        if conflict_key is None:
+            return None
+        # Compare normalized arguments so that rules differing only by column order
+        # are treated as identical (a duplicate), not as a conflict.
+        arguments = ChecksSemanticValidator._normalize_arguments(ChecksSemanticValidator._get_arguments(check))
+        if conflict_key not in seen:
+            seen[conflict_key] = (idx, arguments)
+            return None
+        prev_idx, prev_arguments = seen[conflict_key]
+        if arguments == prev_arguments:
+            return None
+        function, column = conflict_key
+        column_label = ", ".join(str(c) for c in column) if isinstance(column, tuple) else str(column)
+        return (
+            f"Conflicting rules detected: rule at index {idx} and rule at index {prev_idx} "
+            f"both apply '{function}' to column '{column_label}' but with different arguments "
+            f"(index {prev_idx}: {prev_arguments}, index {idx}: {arguments})."
+        )
 
     @staticmethod
     def detect_conflicts(checks: list[dict]) -> list[str]:
@@ -256,30 +287,14 @@ class ChecksSemanticValidator:
 
         for idx, check in enumerate(checks):
             try:
-                conflict_key = ChecksSemanticValidator._conflict_key(check)
-                if conflict_key is None:
-                    continue
-
-                # Compare normalized arguments so that rules differing only by column order
-                # are treated as identical (a duplicate), not as a conflict.
-                arguments = ChecksSemanticValidator._normalize_arguments(ChecksSemanticValidator._get_arguments(check))
-
-                if conflict_key in seen:
-                    prev_idx, prev_arguments = seen[conflict_key]
-                    if arguments != prev_arguments:
-                        function, column = conflict_key
-                        column_label = ", ".join(str(c) for c in column) if isinstance(column, tuple) else str(column)
-                        issues.append(
-                            f"Conflicting rules detected: rule at index {idx} and rule at index {prev_idx} "
-                            f"both apply '{function}' to column '{column_label}' but with different arguments "
-                            f"(index {prev_idx}: {prev_arguments}, index {idx}: {arguments})."
-                        )
-                else:
-                    seen[conflict_key] = (idx, arguments)
+                issue = ChecksSemanticValidator._conflict_issue(idx, check, seen)
             except TypeError as exc:
                 # Best-effort validation: never let a malformed/unhashable check crash the
                 # validator. Skip it here; structural validation reports such checks.
                 logger.warning(f"Skipping conflict detection for check at index {idx}: {exc}")
+                continue
+            if issue:
+                issues.append(issue)
 
         return issues
 

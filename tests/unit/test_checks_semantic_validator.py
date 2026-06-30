@@ -329,8 +329,8 @@ def test_unhashable_value_beyond_normalization_is_skipped(caplog):
     ]
     with caplog.at_level(logging.WARNING, logger="databricks.labs.dqx.checks_semantic_validator"):
         # Must not raise; the malformed checks are skipped.
-        assert ChecksSemanticValidator.detect_duplicates(checks) == []
-        assert ChecksSemanticValidator.detect_conflicts(checks) == []
+        assert not ChecksSemanticValidator.detect_duplicates(checks)
+        assert not ChecksSemanticValidator.detect_conflicts(checks)
     assert any("Skipping" in r.message for r in caplog.records)
 
 
