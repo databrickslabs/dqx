@@ -14,6 +14,8 @@ from databricks.labs.dqx.errors import InvalidParameterError
 
 logger = logging.getLogger(__name__)
 
+__all__ = ["SecretResolver"]
+
 
 class SecretResolver:
     """Resolves credential values from plain strings or Databricks secret references.
@@ -62,5 +64,8 @@ class SecretResolver:
         key = value.key
         try:
             return self._ws.dbutils.secrets.get(scope, key)
-        except Exception as exc:
-            raise InvalidParameterError(f"Failed to resolve secret for scope={scope!r}, key={key!r}.") from exc
+        except Exception:
+            # Raise 'from None' so the original cause (which could embed the secret value in
+            # its message) is never chained onto the user-facing error. The message names only
+            # the scope and key, never the resolved value.
+            raise InvalidParameterError(f"Failed to resolve secret for scope={scope!r}, key={key!r}.") from None

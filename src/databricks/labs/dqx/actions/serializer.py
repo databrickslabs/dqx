@@ -195,20 +195,15 @@ def _serialize_webhook(dest: AlertDestination) -> dict[str, object]:
     return dest_dict
 
 
-def _serialize_callback(dest: AlertDestination) -> dict[str, object] | None:
+def _serialize_callback(_dest: AlertDestination) -> dict[str, object] | None:
     """Callback destinations cannot be serialized; always returns *None*.
 
-    The *dest* parameter exists only to satisfy the registry callable
+    The *_dest* parameter exists only to satisfy the registry callable
     signature; it is not used at runtime.
-
-    Args:
-        dest: The callback destination (present for registry uniformity only).
 
     Returns:
         *None* — callers must log a warning and skip this entry.
     """
-    if isinstance(dest, CallbackDQAlertDestination):
-        return None
     return None
 
 

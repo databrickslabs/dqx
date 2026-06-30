@@ -390,7 +390,9 @@ loaded_actions = manager.load_actions(config)
 
 ### Declarative configuration with actions_location
 
-When using DQX Workflows or the configuration file, set *actions_location* on a `RunConfig` to point to the UC table where actions for that run config are stored. This mirrors the *checks_location* mechanism and allows actions to be loaded automatically by the workflow.
+The `RunConfig` carries an *actions_location* field, intended to mirror the *checks_location*
+mechanism so that a run configuration can reference the UC/Lakebase table where its actions are
+stored:
 
 ```yaml
 run_configs:
@@ -402,15 +404,17 @@ run_configs:
     output_config:
       location: catalog.schema.valid
       mode: append
-    quarantine_config:
-      location: catalog.schema.quarantine
-      mode: append
     metrics_config:
       location: catalog.schema.dq_metrics
       mode: append
 ```
 
-When `actions_location` is `None` (the default), action event persistence is disabled for that run config.
+:::note
+Automatic loading of *actions_location* by the installed DQX Workflows is not yet wired — the
+field is reserved for that integration. Today, load actions explicitly with `DQActionManager`
+and pass them to the engine via `DQEngine(ws, observer=..., actions=loaded_actions)`. The
+programmatic API described above is the supported path.
+:::
 
 ## Security and secrets
 
