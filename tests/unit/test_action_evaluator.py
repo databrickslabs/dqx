@@ -1,16 +1,4 @@
-"""Unit tests for databricks.labs.dqx.actions.evaluator.ActionEvaluator.
-
-TDD step 1: write failing tests before implementation.
-
-Tests cover:
-- condition_false_skips_execute: condition False → execute never called, not-fired event recorded.
-- condition_none_fires_unconditionally: None condition → execute called when should_fire=True.
-- condition_true_should_fire_true_executes_and_records: both True → execute called, event recorded with fired=True.
-- should_fire_false_suppresses: condition True, should_fire False → execute NOT called, fired=False event recorded.
-- terminal_action_deferred: first action executes, second raises TerminalActionError → error raised after loop.
-- no_isinstance_on_action_type: two different Action subclasses both execute via polymorphic dispatch.
-- destination_errors_recorded_in_event: result.destination_errors → AlertEvent.delivery_errors populated.
-"""
+"""Unit tests for ActionEvaluator: condition gating, suppression, polymorphic dispatch, terminal-error deferral, and alert-before-abort ordering."""
 
 from __future__ import annotations
 
@@ -51,10 +39,6 @@ def _make_services() -> ActionServices:
     return services
 
 
-def _healthy_result(action_name: str) -> ActionResult:
-    return ActionResult(action_name=action_name, fired=True, status=ActionStatus.UNHEALTHY)
-
-
 # ---------------------------------------------------------------------------
 # Fake Action subclasses (for no-isinstance test)
 # ---------------------------------------------------------------------------
@@ -79,6 +63,31 @@ class FakeTerminalAction(Action):
 
     def execute(self, context: ActionContext, services: ActionServices) -> ActionResult:
         raise PipelineFailedError("pipeline failed")
+
+
+class FakeTerminalActionFirst(Action):
+    """Fake terminal action that raises PipelineFailedError with a distinct 'first failure' message."""
+
+    def execute(self, context: ActionContext, services: ActionServices) -> ActionResult:
+        raise PipelineFailedError("first failure")
+
+
+class FakeTerminalActionSecond(Action):
+    """Fake terminal action that raises PipelineFailedError with a distinct 'second failure' message."""
+
+    def execute(self, context: ActionContext, services: ActionServices) -> ActionResult:
+        raise PipelineFailedError("second failure")
+
+
+class FakeAlertAction(Action):
+    """Fake non-terminal alert action that records execution and returns UNHEALTHY."""
+
+    def __init__(self, executed: list[str]) -> None:
+        self._executed = executed
+
+    def execute(self, context: ActionContext, services: ActionServices) -> ActionResult:
+        self._executed.append("ran")
+        return ActionResult(action_name="alert", fired=True, status=ActionStatus.UNHEALTHY)
 
 
 # ---------------------------------------------------------------------------
@@ -340,3 +349,63 @@ def test_destination_errors_recorded_in_event() -> None:
     assert set(event.destinations) == {"slack", "teams"}
     # delivery_errors should be the values
     assert set(event.delivery_errors) == {"connection refused", "timeout"}
+
+
+# ---------------------------------------------------------------------------
+# Test: deferred[0] ordering — first terminal error is raised, not the last
+# ---------------------------------------------------------------------------
+
+
+def test_terminal_error_ordering_raises_first() -> None:
+    """When two terminal actions both fail, evaluate() raises the FIRST error (deferred[0])."""
+    term1 = FakeTerminalActionFirst()
+    term2 = FakeTerminalActionSecond()
+
+    dq_term1 = DQAction(action=term1, condition=None, name="terminal_first")
+    dq_term2 = DQAction(action=term2, condition=None, name="terminal_second")
+
+    state_store = create_autospec(ActionStateStore, instance=True)
+    state_store.should_fire.return_value = True
+
+    evaluator = ActionEvaluator(
+        actions=[dq_term1, dq_term2],
+        state_store=state_store,
+        services=_make_services(),
+    )
+
+    context = _make_context()
+
+    with pytest.raises(PipelineFailedError, match="first failure"):
+        evaluator.evaluate(context)
+
+
+# ---------------------------------------------------------------------------
+# Test: alert executes and records before terminal action aborts the pipeline
+# ---------------------------------------------------------------------------
+
+
+def test_alert_fires_before_terminal_abort() -> None:
+    """Alert action executes (and records) before a subsequent terminal action aborts the pipeline."""
+    executed: list[str] = []
+    alert_action = FakeAlertAction(executed)
+    terminal_action = FakeTerminalAction()
+
+    dq_alert = DQAction(action=alert_action, condition=None, name="alert")
+    dq_terminal = DQAction(action=terminal_action, condition=None, name="terminal")
+
+    state_store = create_autospec(ActionStateStore, instance=True)
+    state_store.should_fire.return_value = True
+
+    evaluator = ActionEvaluator(
+        actions=[dq_alert, dq_terminal],
+        state_store=state_store,
+        services=_make_services(),
+    )
+
+    context = _make_context()
+
+    with pytest.raises(PipelineFailedError):
+        evaluator.evaluate(context)
+
+    # Alert action must have run before the pipeline was aborted
+    assert executed == ["ran"]
