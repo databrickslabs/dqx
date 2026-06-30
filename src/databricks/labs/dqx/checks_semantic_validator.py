@@ -1,4 +1,4 @@
-"""Semantic validation for DQ rulesets."""
+"""Semantic (ruleset-level) validation for DQ checks."""
 
 from __future__ import annotations
 
@@ -8,42 +8,42 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-class SemanticValidationMode:
+class ChecksSemanticValidationMode:
     """Controls how semantic validation issues are surfaced."""
 
     WARN = "warn"  # Log warnings but continue
     FAIL = "fail"  # Raise an exception if any issues are found
 
 
-class SemanticValidator:
+class ChecksSemanticValidator:
     """Provides semantic validation for a collection of DQ rules.
 
     Detects ruleset-level issues such as:
     - Duplicate rules: two rules with the same function, arguments, criticality, and filter.
     - Conflicting rules: two rules targeting the same function and column but with
-      different arguments (e.g. two ``is_in_range`` checks with different thresholds).
+      different arguments (e.g. two *is_in_range* checks with different thresholds).
 
     Note:
-        Rules that use raw Spark SQL expressions (via the ``sql_expression`` function)
+        Rules that use raw Spark SQL expressions (via the *sql_expression* function)
         are not deeply inspected — only structured metadata (function name, column,
         arguments) is compared. Document this limitation when such checks are used.
 
     Usage::
 
         # Just get a list of issues:
-        issues = SemanticValidator.validate_ruleset(checks)
+        issues = ChecksSemanticValidator.validate_ruleset(checks)
 
         # Or apply with configurable behavior:
-        SemanticValidator.apply(checks, mode=SemanticValidationMode.WARN)
-        SemanticValidator.apply(checks, mode=SemanticValidationMode.FAIL)
+        ChecksSemanticValidator.apply(checks, mode=ChecksSemanticValidationMode.WARN)
+        ChecksSemanticValidator.apply(checks, mode=ChecksSemanticValidationMode.FAIL)
     """
 
     @staticmethod
     def _get_function(check: dict) -> str | None:
         """Extract the function name from a check dict.
 
-        Handles both nested form ``{"check": {"function": ...}}``
-        and flat form ``{"function": ...}``.
+        Handles both the nested form (a *check* block containing *function*)
+        and the flat form (a top-level *function* key).
         """
         if not isinstance(check, dict):
             return None
@@ -56,8 +56,8 @@ class SemanticValidator:
     def _get_arguments(check: dict) -> dict:
         """Extract the arguments dict from a check dict.
 
-        Returns an empty dict for malformed checks (e.g. a non-dict ``check`` block
-        or non-dict ``arguments``); structural validation reports those separately.
+        Returns an empty dict for malformed checks (e.g. a non-dict *check* block
+        or non-dict *arguments*); structural validation reports those separately.
         """
         if not isinstance(check, dict):
             return {}
@@ -74,10 +74,10 @@ class SemanticValidator:
         Two rules with the same full key are exact duplicates.
         Key: (function, sorted_arguments, criticality, filter)
         """
-        function = SemanticValidator._get_function(check)
+        function = ChecksSemanticValidator._get_function(check)
         if not function:
             return None
-        arguments = SemanticValidator._get_arguments(check)
+        arguments = ChecksSemanticValidator._get_arguments(check)
         criticality = check.get("criticality", "error")
         filter_expr = check.get("filter")
         # Serialize arguments to a stable, hashable string so that list- or dict-valued
@@ -94,10 +94,10 @@ class SemanticValidator:
         other arguments (e.g. conflicting thresholds). Returns None if the
         check has no identifiable column to compare against.
         """
-        function = SemanticValidator._get_function(check)
+        function = ChecksSemanticValidator._get_function(check)
         if not function:
             return None
-        arguments = SemanticValidator._get_arguments(check)
+        arguments = ChecksSemanticValidator._get_arguments(check)
         column = arguments.get("col_name") or arguments.get("column")
         if not column:
             return None
@@ -120,7 +120,7 @@ class SemanticValidator:
         issues: list[str] = []
 
         for idx, check in enumerate(checks):
-            key = SemanticValidator._full_key(check)
+            key = ChecksSemanticValidator._full_key(check)
             if key is None:
                 continue
             if key in seen:
@@ -137,7 +137,7 @@ class SemanticValidator:
     def detect_conflicts(checks: list[dict]) -> list[str]:
         """Detect rules targeting the same function and column with different arguments.
 
-        For example, two ``is_in_range`` checks on ``age`` with different min/max
+        For example, two *is_in_range* checks on *age* with different min/max
         thresholds would be flagged, as this is likely a misconfiguration.
 
         Args:
@@ -150,11 +150,11 @@ class SemanticValidator:
         issues: list[str] = []
 
         for idx, check in enumerate(checks):
-            conflict_key = SemanticValidator._conflict_key(check)
+            conflict_key = ChecksSemanticValidator._conflict_key(check)
             if conflict_key is None:
                 continue
 
-            arguments = SemanticValidator._get_arguments(check)
+            arguments = ChecksSemanticValidator._get_arguments(check)
 
             if conflict_key in seen:
                 prev_idx, prev_arguments = seen[conflict_key]
@@ -181,40 +181,40 @@ class SemanticValidator:
             A list of issue strings. Empty list means the ruleset is semantically clean.
         """
         issues: list[str] = []
-        issues.extend(SemanticValidator.detect_duplicates(checks))
-        issues.extend(SemanticValidator.detect_conflicts(checks))
+        issues.extend(ChecksSemanticValidator.detect_duplicates(checks))
+        issues.extend(ChecksSemanticValidator.detect_conflicts(checks))
         return issues
 
     @staticmethod
-    def apply(checks: list[dict], mode: str | None = SemanticValidationMode.WARN) -> None:
+    def apply(checks: list[dict], mode: str | None = ChecksSemanticValidationMode.WARN) -> None:
         """Run semantic validation and surface issues according to the chosen mode.
 
-        This is the main entry point called from ``validate_checks``, ``save_checks``,
-        and ``load_checks`` with configurable behavior.
+        This is the main entry point called from *validate_checks*, *save_checks*,
+        and *load_checks* with configurable behavior.
 
         Args:
             checks: The ruleset to inspect.
-            mode: One of ``SemanticValidationMode.WARN`` (default),
-                ``SemanticValidationMode.FAIL``, or ``None``. In WARN mode, issues are
-                logged as warnings and execution continues. In FAIL mode, a ``ValueError``
-                is raised listing all issues found. When ``None``, semantic validation is
+            mode: One of *ChecksSemanticValidationMode.WARN* (default),
+                *ChecksSemanticValidationMode.FAIL*, or *None*. In WARN mode, issues are
+                logged as warnings and execution continues. In FAIL mode, a *ValueError*
+                is raised listing all issues found. When *None*, semantic validation is
                 skipped entirely.
 
         Raises:
-            ValueError: If ``mode`` is FAIL and any semantic issues are detected.
+            ValueError: If *mode* is FAIL and any semantic issues are detected.
             ValueError: If an unsupported mode value is passed.
         """
         if mode is None:
             return
 
-        if mode not in (SemanticValidationMode.WARN, SemanticValidationMode.FAIL):
+        if mode not in (ChecksSemanticValidationMode.WARN, ChecksSemanticValidationMode.FAIL):
             raise ValueError(f"Unsupported semantic validation mode: '{mode}'. Use 'warn' or 'fail'.")
 
-        issues = SemanticValidator.validate_ruleset(checks)
+        issues = ChecksSemanticValidator.validate_ruleset(checks)
         if not issues:
             return
 
-        if mode == SemanticValidationMode.WARN:
+        if mode == ChecksSemanticValidationMode.WARN:
             for issue in issues:
                 logger.warning(f"Semantic validation: {issue}")
         else:

@@ -56,7 +56,7 @@ from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.errors import InvalidCheckError, InvalidConfigError, InvalidParameterError
 from databricks.labs.dqx.utils import list_tables, safe_strip_file_from_path, resolve_variables, VariableValue
 from databricks.labs.dqx.io import is_one_time_trigger
-from databricks.labs.dqx.semantic_validator import SemanticValidator, SemanticValidationMode
+from databricks.labs.dqx.checks_semantic_validator import ChecksSemanticValidator, ChecksSemanticValidationMode
 
 logger = logging.getLogger(__name__)
 
@@ -301,7 +301,7 @@ class DQEngineCore(DQEngineCoreBase):
         checks: list[dict],
         custom_check_functions: dict[str, Callable] | None = None,
         validate_custom_check_functions: bool = True,
-        semantic_validation_mode: str | None = SemanticValidationMode.WARN,
+        semantic_validation_mode: str | None = ChecksSemanticValidationMode.WARN,
     ) -> ChecksValidationStatus:
         """
         Validate checks defined as metadata to ensure they conform to the expected
@@ -322,9 +322,9 @@ class DQEngineCore(DQEngineCoreBase):
                 (e.g., *globals()* of the calling module).
             validate_custom_check_functions: If True, validate custom check functions.
             semantic_validation_mode: Controls how semantic issues are surfaced.
-                Use ``SemanticValidationMode.WARN`` (default) to log warnings,
-                ``SemanticValidationMode.FAIL`` to raise on any issue, or
-                ``None`` to skip semantic validation entirely.
+                Use *ChecksSemanticValidationMode.WARN* (default) to log warnings,
+                *ChecksSemanticValidationMode.FAIL* to raise on any issue, or
+                *None* to skip semantic validation entirely.
 
         Returns:
             ChecksValidationStatus indicating the structural validation result.
@@ -335,7 +335,7 @@ class DQEngineCore(DQEngineCoreBase):
         status = ChecksValidator.validate_checks(checks, custom_check_functions, validate_custom_check_functions)
 
         if semantic_validation_mode is not None:
-            SemanticValidator.apply(checks, mode=semantic_validation_mode)
+            ChecksSemanticValidator.apply(checks, mode=semantic_validation_mode)
 
         return status
 
@@ -1229,7 +1229,7 @@ class DQEngine(DQEngineBase):
         checks: list[dict],
         custom_check_functions: dict[str, Callable] | None = None,
         validate_custom_check_functions: bool = True,
-        semantic_validation_mode: str | None = SemanticValidationMode.WARN,
+        semantic_validation_mode: str | None = ChecksSemanticValidationMode.WARN,
     ) -> ChecksValidationStatus:
         """
         Validate checks defined as metadata to ensure they conform to the expected structure and types.
@@ -1243,9 +1243,9 @@ class DQEngine(DQEngineBase):
             custom_check_functions: Optional dictionary with custom check functions (e.g., *globals()* of the calling module).
             validate_custom_check_functions: If True, validate custom check functions.
             semantic_validation_mode: Controls how semantic issues are surfaced.
-                Use ``SemanticValidationMode.WARN`` (default) to log warnings,
-                ``SemanticValidationMode.FAIL`` to raise on any issue, or
-                ``None`` to skip semantic validation entirely.
+                Use *ChecksSemanticValidationMode.WARN* (default) to log warnings,
+                *ChecksSemanticValidationMode.FAIL* to raise on any issue, or
+                *None* to skip semantic validation entirely.
 
         Returns:
             ChecksValidationStatus indicating the validation result.
@@ -1404,7 +1404,7 @@ class DQEngine(DQEngineBase):
         self,
         config: BaseChecksStorageConfig,
         variables: dict[str, VariableValue] | None = None,
-        semantic_validation_mode: str | None = SemanticValidationMode.WARN,
+        semantic_validation_mode: str | None = ChecksSemanticValidationMode.WARN,
     ) -> list[dict]:
         """Load DQ rules (checks) from the storage backend described by *config*.
 
@@ -1431,9 +1431,9 @@ class DQEngine(DQEngineBase):
             variables: Optional mapping of placeholder names to replacement values. Replaces placeholders
                 in all string values of the check definitions before returning.
             semantic_validation_mode: Controls semantic validation behavior after loading.
-                Use ``SemanticValidationMode.WARN`` (default) to log warnings and continue,
-                ``SemanticValidationMode.FAIL`` to raise if issues are found, or
-                ``None`` to skip semantic validation entirely.
+                Use *ChecksSemanticValidationMode.WARN* (default) to log warnings and continue,
+                *ChecksSemanticValidationMode.FAIL* to raise if issues are found, or
+                *None* to skip semantic validation entirely.
 
         Returns:
             List of DQ rules (checks) represented as dictionaries.
@@ -1447,7 +1447,7 @@ class DQEngine(DQEngineBase):
         merged_variables = self._merge_variables(variables)
         resolved = resolve_variables(checks=checks, variables=merged_variables)
         if semantic_validation_mode is not None:
-            SemanticValidator.apply(resolved, mode=semantic_validation_mode)
+            ChecksSemanticValidator.apply(resolved, mode=semantic_validation_mode)
         return resolved
 
     def _merge_variables(self, per_call: dict[str, VariableValue] | None) -> dict[str, VariableValue] | None:
@@ -1470,7 +1470,7 @@ class DQEngine(DQEngineBase):
         checks: list[dict],
         config: BaseChecksStorageConfig,
         variables: dict[str, VariableValue] | None = None,
-        semantic_validation_mode: str | None = SemanticValidationMode.WARN,
+        semantic_validation_mode: str | None = ChecksSemanticValidationMode.WARN,
     ) -> None:
         """Persist DQ rules (checks) to the storage backend described by *config*.
 
@@ -1498,9 +1498,9 @@ class DQEngine(DQEngineBase):
             variables: Optional mapping of placeholder names to replacement values. Replaces placeholders
                 in all string values of the check definitions before saving.
             semantic_validation_mode: Controls semantic validation behavior before saving.
-                Use ``SemanticValidationMode.WARN`` (default) to log warnings and continue,
-                ``SemanticValidationMode.FAIL`` to abort saving if issues are found, or
-                ``None`` to skip semantic validation entirely.
+                Use *ChecksSemanticValidationMode.WARN* (default) to log warnings and continue,
+                *ChecksSemanticValidationMode.FAIL* to abort saving if issues are found, or
+                *None* to skip semantic validation entirely.
 
         Returns:
             None
@@ -1512,7 +1512,7 @@ class DQEngine(DQEngineBase):
         merged_variables = self._merge_variables(variables)
         resolved_checks = resolve_variables(checks=checks, variables=merged_variables)
         if semantic_validation_mode is not None:
-            SemanticValidator.apply(resolved_checks, mode=semantic_validation_mode)
+            ChecksSemanticValidator.apply(resolved_checks, mode=semantic_validation_mode)
         handler = self._checks_handler_factory.create(config)
         handler.save(resolved_checks, config)
 
