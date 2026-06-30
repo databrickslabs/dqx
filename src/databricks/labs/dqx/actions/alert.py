@@ -11,35 +11,17 @@ from __future__ import annotations
 
 import enum
 import logging
-import re
 from dataclasses import dataclass
 
 from databricks.labs.blueprint.parallel import Threads
 
 from databricks.labs.dqx.actions.base import Action, ActionContext, ActionResult, ActionServices, ActionStatus
+from databricks.labs.dqx.actions.log_sanitize import sanitize_for_log as _sanitize
 from databricks.labs.dqx.actions.destinations.base import AlertDestination
 from databricks.labs.dqx.actions.message import AlertMessage, StandardMessageBuilder
 from databricks.labs.dqx.errors import InvalidActionError
 
 logger = logging.getLogger(__name__)
-
-# Pre-compiled pattern for sanitizing control characters (CWE-117).
-_CONTROL_CHAR_RE = re.compile(r"[\r\n\t\x00-\x1f\x7f]")
-
-
-def _sanitize(text: str) -> str:
-    """Strip newlines and control characters from *text* to prevent log injection.
-
-    Replaces all characters in the Unicode control-character range (U+0000–U+001F
-    and U+007F), including CR (``\\r``) and LF (``\\n``), with a space.
-
-    Args:
-        text: Raw string that may contain control characters.
-
-    Returns:
-        A copy of *text* with all control characters replaced by a space.
-    """
-    return _CONTROL_CHAR_RE.sub(" ", text)
 
 
 class DQAlertFrequency(enum.Enum):

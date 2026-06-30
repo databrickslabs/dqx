@@ -56,10 +56,10 @@ prevent log injection (CWE-117).
 from __future__ import annotations
 
 import logging
-import re
 from collections.abc import Callable
 
 from databricks.labs.dqx.actions.alert import DQAlert, DQAlertFrequency, NotifyOn
+from databricks.labs.dqx.actions.log_sanitize import sanitize_for_log as _sanitize
 from databricks.labs.dqx.actions.base import Action, DQAction
 from databricks.labs.dqx.actions.destinations.base import AlertDestination
 from databricks.labs.dqx.actions.destinations.callback import CallbackDQAlertDestination
@@ -71,21 +71,6 @@ from databricks.labs.dqx.config import DQSecret
 from databricks.labs.dqx.errors import InvalidActionError
 
 logger = logging.getLogger(__name__)
-
-# Pre-compiled pattern for sanitizing control characters (CWE-117).
-_CONTROL_CHAR_RE = re.compile(r"[\r\n\t\x00-\x1f\x7f]")
-
-
-def _sanitize(text: str) -> str:
-    """Strip newlines and control characters from *text* to prevent log injection (CWE-117).
-
-    Args:
-        text: Raw string that may contain control characters.
-
-    Returns:
-        A copy of *text* with all control characters replaced by a space.
-    """
-    return _CONTROL_CHAR_RE.sub(" ", text)
 
 
 # ---------------------------------------------------------------------------

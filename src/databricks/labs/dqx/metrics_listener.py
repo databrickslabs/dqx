@@ -7,6 +7,7 @@ from databricks.labs.dqx.metrics_observer import DQMetricsObservation, DQMetrics
 from databricks.labs.dqx.io import save_dataframe_as_table
 from databricks.labs.dqx.actions.base import ActionContext
 from databricks.labs.dqx.actions.evaluator import ActionEvaluator
+from databricks.labs.dqx.actions.log_sanitize import sanitize_for_log
 from databricks.labs.dqx.errors import TerminalActionError
 
 
@@ -114,10 +115,10 @@ class StreamingMetricsListener(listener.StreamingQueryListener):
             except TerminalActionError:
                 raise
             except Exception as exc:
-                safe_run_id = self.metrics_observation.run_id.replace("\r", "").replace("\n", "")
-                # Sanitize the exception text too: an evaluator error may embed user-supplied
-                # values (column/rule names) that could contain newlines (CWE-117).
-                safe_exc = str(exc).replace("\r", "").replace("\n", " ")
+                # Sanitize both the run id and the exception text: an evaluator error may embed
+                # user-supplied values (column/rule names) containing control characters (CWE-117).
+                safe_run_id = sanitize_for_log(self.metrics_observation.run_id)
+                safe_exc = sanitize_for_log(str(exc))
                 logger.warning(f"Action evaluation failed for streaming micro-batch (run_id={safe_run_id}): {safe_exc}")
 
     def onQueryIdle(self, event: listener.QueryIdleEvent) -> None:

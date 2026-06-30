@@ -26,24 +26,13 @@ from __future__ import annotations
 import logging
 
 from databricks.labs.dqx.actions.base import ActionContext, ActionResult, ActionServices, ActionStatus, DQAction
+from databricks.labs.dqx.actions.log_sanitize import sanitize_for_log as _sanitize
 from databricks.labs.dqx.actions.conditions import ConditionEvaluator
 from databricks.labs.dqx.actions.message import StandardMessageBuilder
 from databricks.labs.dqx.actions.state import ActionStateStore, AlertEvent
 from databricks.labs.dqx.errors import TerminalActionError
 
 logger = logging.getLogger(__name__)
-
-
-def _sanitize(value: str) -> str:
-    """Strip newlines from *value* before use in log messages (CWE-117).
-
-    Args:
-        value: An arbitrary user-supplied string.
-
-    Returns:
-        The string with CR and LF characters removed.
-    """
-    return value.replace("\r", "").replace("\n", "")
 
 
 class ActionEvaluator:

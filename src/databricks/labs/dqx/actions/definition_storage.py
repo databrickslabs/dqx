@@ -42,6 +42,7 @@ from sqlalchemy.schema import CreateSchema
 from databricks.sdk import WorkspaceClient
 
 from databricks.labs.dqx.actions.base import DQAction
+from databricks.labs.dqx.actions.log_sanitize import sanitize_for_log as _sanitize
 from databricks.labs.dqx.actions.serializer import ActionSerializer
 from databricks.labs.dqx.config import LakebaseActionsStorageConfig, TableActionsStorageConfig
 from databricks.labs.dqx.errors import UnsafeSqlQueryError
@@ -49,24 +50,10 @@ from databricks.labs.dqx.lakebase_engine import LakebaseConnectionMixin
 
 logger = logging.getLogger(__name__)
 
-# Pre-compiled pattern for sanitizing control characters (CWE-117).
-_CONTROL_CHAR_RE = re.compile(r"[\r\n\t\x00-\x1f\x7f]")
 
 T = TypeVar("T", TableActionsStorageConfig, LakebaseActionsStorageConfig)
 
 ACTIONS_TABLE_SCHEMA = "action_json STRING, run_config_name STRING, created_at TIMESTAMP"
-
-
-def _sanitize(text: str) -> str:
-    """Strip newlines and control characters from *text* to prevent log injection (CWE-117).
-
-    Args:
-        text: Raw string that may contain control characters.
-
-    Returns:
-        A copy of *text* with all control characters replaced by a space.
-    """
-    return _CONTROL_CHAR_RE.sub(" ", text)
 
 
 def build_replace_where_predicate(run_config_name: str) -> str:
