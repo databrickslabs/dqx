@@ -5,7 +5,7 @@ import os
 from concurrent import futures
 from collections.abc import Callable
 from dataclasses import replace
-from datetime import datetime
+from datetime import UTC, datetime
 from functools import cached_property
 from typing import Any
 from uuid import uuid4
@@ -53,6 +53,11 @@ from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.errors import InvalidCheckError, InvalidConfigError, InvalidParameterError
 from databricks.labs.dqx.utils import list_tables, safe_strip_file_from_path, resolve_variables, VariableValue
 from databricks.labs.dqx.io import is_one_time_trigger
+from databricks.labs.dqx.actions.base import ActionContext, ActionResult, ActionServices, DQAction
+from databricks.labs.dqx.actions.evaluator import ActionEvaluator
+from databricks.labs.dqx.actions.state import ActionStateStore
+from databricks.labs.dqx.actions.secrets import SecretResolver
+from databricks.labs.dqx.actions.delivery import WebhookClient
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +70,7 @@ class DQEngineCore(DQEngineCoreBase):
         spark: Optional SparkSession to use. If not provided, the active session is used.
         extra_params: Optional extra parameters for the engine, such as result column names and run metadata.
         observer: Optional DQMetricsObserver for tracking data quality summary metrics.
+        actions: Optional list of *DQAction* instances to evaluate after checks are applied.
     """
 
     def __init__(
@@ -73,6 +79,7 @@ class DQEngineCore(DQEngineCoreBase):
         spark: SparkSession | None = None,
         extra_params: ExtraParams | None = None,
         observer: DQMetricsObserver | None = None,
+        actions: list[DQAction] | None = None,
     ):
         super().__init__(workspace_client)
 
@@ -108,6 +115,8 @@ class DQEngineCore(DQEngineCoreBase):
             self.run_id = self.observer.id
         else:
             self.run_id = extra_params.run_id_overwrite or str(uuid4())  # auto-generate if not provided
+
+        self._actions = actions or []
 
     @cached_property
     def result_column_names(self) -> dict[ColumnArguments, str]:
@@ -581,6 +590,13 @@ class DQEngine(DQEngineBase):
             a default factory is created.
         config_serializer: Optional ConfigSerializer instance to use. If not provided, a new instance is created.
         observer: Optional DQMetricsObserver for tracking data quality summary metrics.
+        actions: Optional list of *DQAction* instances to evaluate after checks are applied in the batch path.
+            Requires an *observer* to be provided (actions need observed metrics to evaluate conditions).
+            When provided without an *observer*, raises *InvalidParameterError* at construction time.
+        action_evaluator_factory: Optional factory callable that receives the list of *DQAction* instances and
+            returns an *ActionEvaluator*. Used to inject a custom or test evaluator. When *None*, the default
+            factory builds a real *ActionEvaluator* with *ActionStateStore*, *SecretResolver*, and
+            *WebhookClient*.
     """
 
     def __init__(
@@ -592,16 +608,24 @@ class DQEngine(DQEngineBase):
         checks_handler_factory: BaseChecksStorageHandlerFactory | None = None,
         config_serializer: ConfigSerializer | None = None,
         observer: DQMetricsObserver | None = None,
+        actions: list[DQAction] | None = None,
+        action_evaluator_factory: Callable[[list[DQAction]], ActionEvaluator] | None = None,
     ):
         super().__init__(workspace_client)
 
+        self._actions = actions or []
+        if self._actions and observer is None:
+            raise InvalidParameterError("Actions require a metrics observer; construct DQEngine with observer=...")
+
         self._extra_params = extra_params or ExtraParams()
         self.spark = SparkSession.builder.getOrCreate() if spark is None else spark
-        self._engine = engine or DQEngineCore(workspace_client, spark, self._extra_params, observer)
+        self._engine = engine or DQEngineCore(workspace_client, spark, self._extra_params, observer, self._actions)
         self._config_serializer = config_serializer or ConfigSerializer(workspace_client)
         self._checks_handler_factory: BaseChecksStorageHandlerFactory = (
             checks_handler_factory or ChecksStorageHandlerFactory(self.ws, self.spark)
         )
+        self._action_evaluator_factory = action_evaluator_factory
+        self._action_evaluator: ActionEvaluator | None = None
 
     @telemetry_logger("engine", "apply_checks")
     def apply_checks(
@@ -703,6 +727,157 @@ class DQEngine(DQEngineBase):
         return self._engine.apply_checks_by_metadata_and_split(
             df=df, checks=checks, custom_check_functions=custom_check_functions, ref_dfs=ref_dfs
         )
+
+    def _get_action_evaluator(self) -> ActionEvaluator | None:
+        """Return the cached *ActionEvaluator*, building it on first call.
+
+        Returns *None* when no actions are configured (no-op path).
+        """
+        if not self._actions:
+            return None
+        if self._action_evaluator is None:
+            if self._action_evaluator_factory is not None:
+                self._action_evaluator = self._action_evaluator_factory(self._actions)
+            else:
+                self._action_evaluator = ActionEvaluator(
+                    self._actions,
+                    state_store=ActionStateStore(),
+                    services=ActionServices(
+                        secret_resolver=SecretResolver(self.ws),
+                        webhook_client=WebhookClient(),
+                        ws=self.ws,
+                        spark=self.spark,
+                    ),
+                )
+        return self._action_evaluator
+
+    @telemetry_logger("engine", "evaluate_actions")
+    def evaluate_actions(
+        self,
+        observed_metrics: dict[str, object],
+        *,
+        input_location: str | None = None,
+        output_location: str | None = None,
+        quarantine_location: str | None = None,
+        checks_location: str | None = None,
+        rule_set_fingerprint: str | None = None,
+    ) -> list[ActionResult]:
+        """Evaluate all configured actions against the observed metrics from the latest batch run.
+
+        Builds an *ActionContext* from *observed_metrics* plus the engine's run metadata and
+        the supplied location hints, then delegates to the lazily constructed *ActionEvaluator*.
+
+        When no actions are configured this is a no-op that returns an empty list immediately.
+
+        Note: action evaluation requires that the engine was constructed with an *observer* and
+        that *observed_metrics* was obtained from a triggered Spark *Observation*. If the
+        *batch_observation* was never triggered (e.g. no output table was written and the
+        metrics-only path was skipped), the metrics will be empty and actions will not receive
+        meaningful values — avoid calling *evaluate_actions* in that case.
+
+        Args:
+            observed_metrics: Mapping of metric name to value collected from a Spark *Observation*.
+            input_location: Source path/URI of the data being checked, or *None*.
+            output_location: Destination path/URI of checked output, or *None*.
+            quarantine_location: Path/URI where quarantined rows are written, or *None*.
+            checks_location: Path/URI of the checks definition file, or *None*.
+            rule_set_fingerprint: Fingerprint of the rule set applied, or *None*.
+
+        Returns:
+            List of *ActionResult* instances for every action that actually fired.  Returns an
+            empty list when no actions are configured.
+
+        Raises:
+            PipelineFailedError: When a *FailPipeline* action's condition is met, after all
+                other actions have been evaluated and their notifications delivered.
+        """
+        evaluator = self._get_action_evaluator()
+        if evaluator is None:
+            return []
+
+        run_time = self._engine.run_time_overwrite or datetime.now(UTC)
+        context = ActionContext(
+            metrics=observed_metrics,
+            run_id=self._engine.run_id,
+            run_time=run_time,
+            run_name="dqx",
+            input_location=input_location,
+            output_location=output_location,
+            quarantine_location=quarantine_location,
+            checks_location=checks_location,
+            rule_set_fingerprint=rule_set_fingerprint,
+            user_metadata=self._engine.engine_user_metadata,
+        )
+        return evaluator.evaluate(context)
+
+    def _finalize_batch(
+        self,
+        *,
+        batch_observation: Observation | None,
+        metrics_only_df: DataFrame | None,
+        target_streaming_query: StreamingQuery | None,
+        metrics_config: OutputConfig | None,
+        input_config: InputConfig,
+        output_config: OutputConfig | None,
+        quarantine_config: OutputConfig | None,
+        checks_location: str | None,
+        rule_set_fingerprint: str | None,
+    ) -> None:
+        """Save metrics and evaluate actions for a completed batch run.
+
+        This helper is called by both *apply_checks_and_save_in_table* and
+        *apply_checks_by_metadata_and_save_in_table* after all data writes have been
+        submitted. It handles:
+
+        1. Triggering the Spark *Observation* via a ``count()`` when actions are
+           configured but *metrics_config* is absent and no output/quarantine write
+           has triggered the observation yet (metrics-only-for-actions path).
+        2. Persisting summary metrics to *metrics_config* (batch path only, no
+           streaming query active).
+        3. Evaluating all configured *DQAction* instances (batch path only, when
+           *batch_observation* is populated).
+
+        Note: When *batch_observation* is *None* (no observer configured), actions
+        are not evaluated because observed metrics are unavailable.
+
+        Args:
+            batch_observation: Spark *Observation* carrying collected metrics, or *None*.
+            metrics_only_df: The checked DataFrame used in the metrics-only path
+                (no output/quarantine write), or *None* when an output write was done.
+            target_streaming_query: The active streaming query, or *None* for batch.
+            metrics_config: Destination config for writing summary metrics, or *None*.
+            input_config: Source configuration (provides *input_location* for context).
+            output_config: Output configuration, or *None*.
+            quarantine_config: Quarantine configuration, or *None*.
+            checks_location: Path/URI of the checks file, or *None*.
+            rule_set_fingerprint: Fingerprint of the applied rule set, or *None*.
+        """
+        # In the metrics-only path (no output/quarantine write), the observation needs to be triggered
+        # before actions can read metrics. When actions are configured but metrics_config is absent,
+        # force the observation via a count() on the checked DataFrame.
+        if self._actions and batch_observation is not None and metrics_config is None and metrics_only_df is not None:
+            metrics_only_df.count()
+
+        if metrics_config and batch_observation is not None and target_streaming_query is None:
+            self.save_summary_metrics(
+                observed_metrics=batch_observation.get,
+                metrics_config=metrics_config,
+                input_config=input_config,
+                output_config=output_config,
+                quarantine_config=quarantine_config,
+                checks_location=checks_location,
+                rule_set_fingerprint=rule_set_fingerprint,
+            )
+
+        if self._actions and batch_observation is not None and target_streaming_query is None:
+            self.evaluate_actions(
+                batch_observation.get,
+                input_location=input_config.location,
+                output_location=output_config.location if output_config else None,
+                quarantine_location=quarantine_config.location if quarantine_config else None,
+                checks_location=checks_location,
+                rule_set_fingerprint=rule_set_fingerprint,
+            )
 
     @staticmethod
     def _validate_save_destination_configs(
@@ -860,16 +1035,17 @@ class DQEngine(DQEngineBase):
             output_config, output_streaming_query, quarantine_config, quarantine_streaming_query
         )
 
-        if metrics_config and batch_observation is not None and target_streaming_query is None:
-            self.save_summary_metrics(
-                observed_metrics=batch_observation.get,
-                metrics_config=metrics_config,
-                input_config=input_config,
-                output_config=output_config,
-                quarantine_config=quarantine_config,
-                checks_location=checks_location,
-                rule_set_fingerprint=rule_set_fingerprint,
-            )
+        self._finalize_batch(
+            batch_observation=batch_observation,
+            metrics_only_df=metrics_only_df,
+            target_streaming_query=target_streaming_query,
+            metrics_config=metrics_config,
+            input_config=input_config,
+            output_config=output_config,
+            quarantine_config=quarantine_config,
+            checks_location=checks_location,
+            rule_set_fingerprint=rule_set_fingerprint,
+        )
 
     @telemetry_logger("engine", "apply_checks_by_metadata_and_save_in_table")
     def apply_checks_by_metadata_and_save_in_table(
@@ -997,16 +1173,17 @@ class DQEngine(DQEngineBase):
             output_config, output_streaming_query, quarantine_config, quarantine_streaming_query
         )
 
-        if metrics_config and batch_observation is not None and target_streaming_query is None:
-            self.save_summary_metrics(
-                observed_metrics=batch_observation.get,
-                metrics_config=metrics_config,
-                input_config=input_config,
-                output_config=output_config,
-                quarantine_config=quarantine_config,
-                checks_location=checks_location,
-                rule_set_fingerprint=rule_set_fingerprint,
-            )
+        self._finalize_batch(
+            batch_observation=batch_observation,
+            metrics_only_df=metrics_only_df,
+            target_streaming_query=target_streaming_query,
+            metrics_config=metrics_config,
+            input_config=input_config,
+            output_config=output_config,
+            quarantine_config=quarantine_config,
+            checks_location=checks_location,
+            rule_set_fingerprint=rule_set_fingerprint,
+        )
 
     @telemetry_logger("engine", "apply_checks_and_save_in_tables")
     def apply_checks_and_save_in_tables(
