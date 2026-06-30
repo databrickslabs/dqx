@@ -137,6 +137,20 @@ _SAMPLE_ROW = [
 class TestGetOboWs:
     """Unit tests for the get_obo_ws dependency function."""
 
+    @pytest.fixture(autouse=True)
+    def _no_ambient_databricks_auth(self, monkeypatch, debug_env):
+        """Clear ambient Databricks credentials so the no-token cases are hermetic.
+
+        *get_obo_ws* falls back to default auth (building a *WorkspaceClient*) when
+        *DATABRICKS_CONFIG_PROFILE* or *DATABRICKS_TOKEN* is set, instead of raising 401.
+        DQX's autouse *debug_env* fixture loads those from *debug-env.json*, which would send
+        these tests down the fallback path. Depending on *debug_env* ensures this runs after
+        it, then removes the variables so the expected 401 path is exercised regardless of the
+        local environment.
+        """
+        monkeypatch.delenv("DATABRICKS_CONFIG_PROFILE", raising=False)
+        monkeypatch.delenv("DATABRICKS_TOKEN", raising=False)
+
     def test_raises_when_no_token(self):
         """Should raise HTTPException when no token is provided."""
 
