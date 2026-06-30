@@ -5,7 +5,7 @@ import os
 import threading
 from concurrent import futures
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 import re
 from functools import cached_property
 from typing import Any
@@ -893,7 +893,7 @@ class DQEngine(DQEngineBase):
         if evaluator is None:
             return []
 
-        run_time = self._engine.run_time_overwrite or datetime.now(UTC)
+        run_time = self._engine.run_time_overwrite or datetime.now(timezone.utc)
         context = ActionContext(
             metrics=observed_metrics,
             run_id=self._engine.run_id,
