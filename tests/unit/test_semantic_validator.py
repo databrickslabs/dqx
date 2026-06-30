@@ -10,6 +10,7 @@ from databricks.labs.dqx.semantic_validator import SemanticValidator, SemanticVa
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_check(function: str, column: str, criticality: str = "error", filter_expr=None, **arguments) -> dict:
     """Build a DQX-style check dict."""
     check: dict = {
@@ -34,7 +35,7 @@ def test_no_duplicates_returns_empty():
         _make_check("is_not_null", "age"),
         _make_check("is_not_null", "name"),
     ]
-    assert SemanticValidator.detect_duplicates(checks) == []
+    assert not SemanticValidator.detect_duplicates(checks)
 
 
 def test_identical_rules_flagged_as_duplicate():
@@ -63,7 +64,7 @@ def test_different_criticality_not_duplicate():
         _make_check("is_not_null", "age", criticality="error"),
         _make_check("is_not_null", "age", criticality="warn"),
     ]
-    assert SemanticValidator.detect_duplicates(checks) == []
+    assert not SemanticValidator.detect_duplicates(checks)
 
 
 def test_different_filter_not_duplicate():
@@ -71,7 +72,7 @@ def test_different_filter_not_duplicate():
         _make_check("is_not_null", "age", filter_expr="status = 'ACTIVE'"),
         _make_check("is_not_null", "age", filter_expr="status = 'INACTIVE'"),
     ]
-    assert SemanticValidator.detect_duplicates(checks) == []
+    assert not SemanticValidator.detect_duplicates(checks)
 
 
 def test_multiple_duplicates_all_flagged():
@@ -84,6 +85,25 @@ def test_multiple_duplicates_all_flagged():
     assert len(issues) == 2
 
 
+def test_list_valued_arguments_do_not_crash_duplicate_detection():
+    """List-valued arguments must not raise 'unhashable type: list' (regression)."""
+    checks = [
+        _make_check("is_in_list", "status", allowed=["A", "B", "C"]),
+        _make_check("is_in_list", "status", allowed=["A", "B", "C"]),
+    ]
+    issues = SemanticValidator.detect_duplicates(checks)
+    assert len(issues) == 1
+    assert "Duplicate rule detected" in issues[0]
+
+
+def test_list_valued_arguments_with_different_lists_not_duplicate():
+    checks = [
+        _make_check("is_in_list", "status", allowed=["A", "B"]),
+        _make_check("is_in_list", "status", allowed=["A", "C"]),
+    ]
+    assert not SemanticValidator.detect_duplicates(checks)
+
+
 # ---------------------------------------------------------------------------
 # detect_conflicts
 # ---------------------------------------------------------------------------
@@ -94,7 +114,7 @@ def test_no_conflicts_returns_empty():
         _make_check("is_in_range", "age", min=0, max=120),
         _make_check("is_in_range", "score", min=0, max=100),
     ]
-    assert SemanticValidator.detect_conflicts(checks) == []
+    assert not SemanticValidator.detect_conflicts(checks)
 
 
 def test_same_function_same_column_different_args_flagged():
@@ -115,7 +135,7 @@ def test_same_function_same_column_same_args_no_conflict():
         _make_check("is_in_range", "age", min=0, max=120),
         _make_check("is_in_range", "age", min=0, max=120),
     ]
-    assert SemanticValidator.detect_conflicts(checks) == []
+    assert not SemanticValidator.detect_conflicts(checks)
 
 
 def test_check_without_column_skipped_in_conflict_detection():
@@ -123,7 +143,19 @@ def test_check_without_column_skipped_in_conflict_detection():
         {"check": {"function": "sql_expression", "arguments": {"expression": "age > 0"}}, "criticality": "error"},
         {"check": {"function": "sql_expression", "arguments": {"expression": "age > 18"}}, "criticality": "error"},
     ]
-    assert SemanticValidator.detect_conflicts(checks) == []
+    assert not SemanticValidator.detect_conflicts(checks)
+
+
+def test_malformed_checks_do_not_crash_validation():
+    """Malformed checks (non-dict check block or arguments) must not raise (regression).
+
+    Structural validation reports these separately; semantic validation should skip them.
+    """
+    checks = [
+        {"criticality": "warn", "check": "not_a_dict"},
+        {"criticality": "warn", "check": {"function": "dummy_func", "arguments": "not_a_dict"}},
+    ]
+    assert not SemanticValidator.validate_ruleset(checks)
 
 
 # ---------------------------------------------------------------------------
@@ -134,7 +166,7 @@ def test_check_without_column_skipped_in_conflict_detection():
 def test_validate_ruleset_combines_both():
     checks = [
         _make_check("is_not_null", "age"),
-        _make_check("is_not_null", "age"),           # duplicate
+        _make_check("is_not_null", "age"),  # duplicate
         _make_check("is_in_range", "score", min=0, max=100),
         _make_check("is_in_range", "score", min=0, max=50),  # conflict
     ]
@@ -150,7 +182,7 @@ def test_validate_ruleset_clean_returns_empty():
         _make_check("is_not_null", "name"),
         _make_check("is_in_range", "score", min=0, max=100),
     ]
-    assert SemanticValidator.validate_ruleset(checks) == []
+    assert not SemanticValidator.validate_ruleset(checks)
 
 
 # ---------------------------------------------------------------------------
@@ -221,4 +253,4 @@ def test_apply_none_mode_skips_validation():
         _make_check("is_not_null", "age"),  # would normally be a duplicate
     ]
     # Should not raise and should not log
-    SemanticValidator.apply(checks, mode=None)  # type: ignore[arg-type]
+    SemanticValidator.apply(checks, mode=None)

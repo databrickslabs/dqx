@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 
 logger = logging.getLogger(__name__)
@@ -47,15 +48,24 @@ class SemanticValidator:
         if not isinstance(check, dict):
             return None
         inner = check.get("check", check)
+        if not isinstance(inner, dict):
+            return None
         return inner.get("function")
 
     @staticmethod
     def _get_arguments(check: dict) -> dict:
-        """Extract the arguments dict from a check dict."""
+        """Extract the arguments dict from a check dict.
+
+        Returns an empty dict for malformed checks (e.g. a non-dict ``check`` block
+        or non-dict ``arguments``); structural validation reports those separately.
+        """
         if not isinstance(check, dict):
             return {}
         inner = check.get("check", check)
-        return inner.get("arguments", {}) or {}
+        if not isinstance(inner, dict):
+            return {}
+        arguments = inner.get("arguments", {})
+        return arguments if isinstance(arguments, dict) else {}
 
     @staticmethod
     def _full_key(check: dict) -> tuple | None:
@@ -70,7 +80,11 @@ class SemanticValidator:
         arguments = SemanticValidator._get_arguments(check)
         criticality = check.get("criticality", "error")
         filter_expr = check.get("filter")
-        return (function, tuple(sorted(arguments.items())), criticality, filter_expr)
+        # Serialize arguments to a stable, hashable string so that list- or dict-valued
+        # arguments (e.g. is_in_list allowed=[...], for_each_column=[...]) do not raise
+        # "unhashable type" when the key is used in a dict/set.
+        arguments_key = json.dumps(arguments, sort_keys=True, default=str)
+        return (function, arguments_key, criticality, filter_expr)
 
     @staticmethod
     def _conflict_key(check: dict) -> tuple | None:
@@ -172,7 +186,7 @@ class SemanticValidator:
         return issues
 
     @staticmethod
-    def apply(checks: list[dict], mode: str = SemanticValidationMode.WARN) -> None:
+    def apply(checks: list[dict], mode: str | None = SemanticValidationMode.WARN) -> None:
         """Run semantic validation and surface issues according to the chosen mode.
 
         This is the main entry point called from ``validate_checks``, ``save_checks``,
@@ -180,15 +194,19 @@ class SemanticValidator:
 
         Args:
             checks: The ruleset to inspect.
-            mode: One of ``SemanticValidationMode.WARN`` (default) or
-                ``SemanticValidationMode.FAIL``. In WARN mode, issues are logged
-                as warnings and execution continues. In FAIL mode, a ``ValueError``
-                is raised listing all issues found.
+            mode: One of ``SemanticValidationMode.WARN`` (default),
+                ``SemanticValidationMode.FAIL``, or ``None``. In WARN mode, issues are
+                logged as warnings and execution continues. In FAIL mode, a ``ValueError``
+                is raised listing all issues found. When ``None``, semantic validation is
+                skipped entirely.
 
         Raises:
             ValueError: If ``mode`` is FAIL and any semantic issues are detected.
             ValueError: If an unsupported mode value is passed.
         """
+        if mode is None:
+            return
+
         if mode not in (SemanticValidationMode.WARN, SemanticValidationMode.FAIL):
             raise ValueError(f"Unsupported semantic validation mode: '{mode}'. Use 'warn' or 'fail'.")
 
@@ -198,7 +216,7 @@ class SemanticValidator:
 
         if mode == SemanticValidationMode.WARN:
             for issue in issues:
-                logger.warning("Semantic validation: %s", issue)
+                logger.warning(f"Semantic validation: {issue}")
         else:
             raise ValueError(
                 "Semantic validation failed with the following issues:\n"
