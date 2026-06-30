@@ -192,7 +192,7 @@ class TestWebhookClientPost:
         req = opener.calls[0]
         assert req.get_method() == "POST"
         assert req.get_header("Content-type") == "application/json"
-        assert req.data is not None
+        assert isinstance(req.data, bytes)
         body = json.loads(req.data)
         assert body == {"text": "hello"}
         assert not delays
