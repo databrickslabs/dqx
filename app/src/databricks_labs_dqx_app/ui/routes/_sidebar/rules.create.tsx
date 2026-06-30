@@ -26,10 +26,9 @@ function CreateRulesLanding() {
   // distinct *kinds* of rule sources rather than file formats.
   //
   // The standalone "Validate table schema" tile was also removed: schema
-  // validation and other reference-table checks (foreign_key, …) are now
-  // authored inside the single-table editor, so users have one place to
-  // build per-table rules. The ``/rules/schema`` route is kept for editing
-  // existing dataset-level schema rules linked from Active/Drafts.
+  // validation and other reference-table checks (foreign_key, …) are
+  // authored and edited inside the single-table editor, so users have one
+  // place to build and maintain per-table rules.
   const OPTIONS = [
     {
       to: "/rules/single-table",

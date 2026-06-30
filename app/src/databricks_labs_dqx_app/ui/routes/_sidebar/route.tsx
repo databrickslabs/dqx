@@ -47,7 +47,6 @@ function Layout() {
     location.pathname.startsWith("/rules/single-table") ||
     location.pathname.startsWith("/rules/import") ||
     location.pathname.startsWith("/rules/from-contract") ||
-    location.pathname.startsWith("/rules/schema") ||
     location.pathname.startsWith("/profiler");
 
   const [createOpen, setCreateOpen] = useState(isCreateActive);
@@ -66,11 +65,9 @@ function Layout() {
       icon: <Database size={14} />,
       match: (path: string) => path.startsWith("/rules/create-sql"),
     },
-    // Schema validation and other reference-table checks now live in the
-    // single-table editor, so the standalone sidebar entry was removed.
-    // ``/rules/schema`` still resolves for editing existing dataset-level
-    // schema rules (linked from Active/Drafts) and is kept in
-    // ``isCreateActive`` above so those edits highlight the Create group.
+    // Schema validation and other reference-table checks (``has_valid_schema``,
+    // ``foreign_key``) are authored and edited in the single-table editor, so
+    // there is no standalone sidebar entry for them.
     {
       to: "/profiler",
       label: t("sidebar.profileAndGenerate"),

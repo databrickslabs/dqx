@@ -393,117 +393,6 @@
     "schemaTitle": "Validate table schema",
     "schemaDescription": "Catch drift in columns, order, and types with a has_valid_schema rule — strict match or compatibility check."
   },
-  "rulesSchema": {
-    "breadcrumb": "Schema validation",
-    "title": "Validate table schema",
-    "subtitle": "Create a dataset-level has_valid_schema rule that fails when the table's shape drifts from the schema you pinned.",
-    "viewDocs": "has_valid_schema reference",
-    "basics": {
-      "title": "Rule basics",
-      "description": "Pick the table to validate and give the rule a stable name. The rule is dataset-level: one check per run, not per row.",
-      "targetTable": "Target table",
-      "targetTableHint": "The table whose schema will be validated.",
-      "name": "Rule name",
-      "nameHint": "Letters, digits and underscores. Used as the YAML identifier.",
-      "criticality": "Criticality",
-      "criticalityHint": "Error blocks downstream consumers; warn just records the drift."
-    },
-    "source": {
-      "title": "Expected schema source",
-      "description": "Pick where the expected schema comes from. Snapshotting fills the DDL from the target table so you can fine-tune from a known-good shape.",
-      "ddl": {
-        "title": "Inline DDL",
-        "description": "Pin the schema with a Spark DDL string — paste, edit, or snapshot from the target table.",
-        "label": "Expected DDL",
-        "snapshotFromTarget": "Snapshot from target table",
-        "snapshotHint": "Reads the current Unity Catalog schema of the target table and writes it into the DDL box. Edit afterwards to drop optional columns or widen types.",
-        "hint": "Format: 'col TYPE, col TYPE'. Nested types (ARRAY<…>, STRUCT<…>, DECIMAL(p,s)) are supported."
-      },
-      "ref": {
-        "title": "Reference table",
-        "description": "Compare against another live UC table's schema. Best for canonical/golden tables that already encode the contract.",
-        "label": "Reference table",
-        "hint": "Schema is read from this table at every run, so changes to it propagate immediately."
-      }
-    },
-    "strictness": {
-      "title": "Match mode",
-      "description": "How exactly the table must match the expected schema.",
-      "recommended": "Recommended",
-      "compatible": {
-        "title": "Compatible (non-strict)",
-        "tagline": "Expected columns must exist with compatible types. Extra columns are allowed.",
-        "bullet1": "Survives additive evolutions — new columns appended by upstream don't break the rule.",
-        "bullet2": "Allows widening conversions (e.g. INT → BIGINT) where Spark considers them compatible.",
-        "bullet3": "Best for shared/downstream tables that grow over time."
-      },
-      "strict": {
-        "title": "Strict",
-        "tagline": "Exact column set, exact order, exact types. Any drift fails the rule.",
-        "bullet1": "Detects column additions, removals, reordering, and any type change.",
-        "bullet2": "Catches INT → BIGINT or DECIMAL precision changes that compatibility mode allows.",
-        "bullet3": "Best for contract-style tables produced for a specific consumer."
-      }
-    },
-    "advanced": {
-      "title": "Subset & exclusions (optional)",
-      "description": "Limit the check to a subset of columns or ignore columns that aren't part of the contract.",
-      "columns": "Validate only these columns",
-      "columnsHint": "Comma-separated names. Empty = all columns. With a DDL expected schema, the expected side is auto-trimmed to the same subset so the comparison stays aligned.",
-      "exclude": "Ignore these columns",
-      "excludeHint": "Comma-separated names. Useful for housekeeping columns like ingestion timestamps. With a DDL expected schema, those columns are also removed from the expected side.",
-      "refSubsetWarningTitle": "Subset isn't applied to the reference table schema",
-      "refSubsetWarningBody": "When the expected schema is loaded from a reference table, this app can't trim it client-side — the column subset only filters the actual table, so the comparison will still fire on every reference-table column. Switch to DDL mode if you want to validate a true subset."
-    },
-    "labels": {
-      "title": "Labels (optional)",
-      "description": "Free-form key/value tags for organising and filtering this rule. The system fields (rule_type, target_table, strictness) are managed by this page and cannot be overridden."
-    },
-    "readyToSave": "Ready to save — review the schema source and match mode above.",
-    "saveAsDraft": "Save as draft",
-    "updateRule": "Update rule",
-    "submitForReview": "Submit for review",
-    "savedDraft": "Schema rule saved as draft",
-    "savedUpdate": "Schema rule updated",
-    "edit": {
-      "breadcrumb": "Edit schema rule",
-      "title": "Edit schema validation rule",
-      "subtitle": "Update the expected schema, match mode, or column scope for an existing has_valid_schema rule.",
-      "notSchemaRule": "This rule isn't a schema-validation rule and can't be edited from this page."
-    },
-    "submitted_one": "Submitted {{count}} rule for review",
-    "submitted_other": "Submitted {{count}} rules for review",
-    "submitFailed_one": "{{count}} rule failed to submit",
-    "submitFailed_other": "{{count}} rules failed to submit",
-    "snapshotDone_one": "Snapshotted {{count}} column from the target table",
-    "snapshotDone_other": "Snapshotted {{count}} columns from the target table",
-    "errors": {
-      "pickTable": "Pick a target table before snapshotting.",
-      "emptyDdl": "The target table has no columns — nothing to snapshot.",
-      "snapshotFailed": "Failed to snapshot schema from target table",
-      "invalidForm": "Fill out the required fields above to save.",
-      "saveFailed": "Failed to save schema rule"
-    },
-    "dryRun": {
-      "title": "Dry run",
-      "description": "Run the rule against a sample of the target table to validate it before saving. Nothing is persisted to history.",
-      "sampleRows": "Sample rows",
-      "sampleRowsHint": "DQX samples this many rows from the target table before applying the check. has_valid_schema is dataset-level, so sample size mostly affects how quickly Spark spins up — pick a few hundred for fast feedback.",
-      "maxRows": "(max 10,000)",
-      "run": "Run dry run",
-      "running": "Running…",
-      "needsValidRule": "Complete the form above to enable dry run.",
-      "jobStatus": "Job status:",
-      "toastSubmitted": "Dry run submitted",
-      "toastComplete": "Dry run complete",
-      "toastFetchFailed": "Failed to load dry-run results",
-      "toastFailed": "Dry run failed: {{message}}",
-      "toastUnknownError": "unknown error",
-      "toastStatusFailed": "Failed to check dry-run status",
-      "toastSubmitFailed": "Failed to submit dry run",
-      "toastSubmitFailedDetail": "Failed to submit dry run: {{detail}}"
-    }
-  },
   "rulesFromContract": {
     "breadcrumb": "From data contract",
     "title": "Generate rules from data contract",
@@ -716,6 +605,7 @@
     "dryRunCanceled": "Dry run canceled",
     "failedCancelDryRun": "Failed to cancel dry run",
     "dryRunSubmitted": "Dry run submitted — waiting for results...",
+    "notSqlRule": "This rule isn't a cross-table SQL check, so it can't be edited here.",
     "noSqlGenerated": "AI did not generate any SQL checks. Try being more specific about the tables and conditions.",
     "sqlCheckGenerated_one": "{{count}} SQL check generated by AI",
     "sqlCheckGenerated_other": "{{count}} SQL checks generated by AI",

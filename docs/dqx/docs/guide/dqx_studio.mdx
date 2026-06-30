@@ -210,7 +210,7 @@ By design, a draft author who does not also hold approval rights cannot approve 
 
 ## Browsing active rules
 
-The **Active Rules** page lists every approved rule grouped by target table. Schema-validation and other reference-table checks (`has_valid_schema`, `foreign_key`) group under their target table alongside the rest of that table's rules — they target a single table, so they are *not* shown under the **Cross-table rules** group. Only cross-table SQL checks, which aren't tied to one table, live under that group. The **Edit / View** action on any rule opens the editor for the flow it belongs to (single-table editor, SQL editor, or schema-validation editor), so a `has_valid_schema` rule never lands on the wrong page.
+The **Active Rules** page lists every approved rule grouped by target table. Schema-validation and other reference-table checks (`has_valid_schema`, `foreign_key`) group under their target table alongside the rest of that table's rules — they target a single table, so they are *not* shown under the **Cross-table rules** group. Only cross-table SQL checks, which aren't tied to one table, live under that group. The **Edit / View** action opens the editor that matches the group: the single-table editor for a real table (which loads all of that table's checks, schema validation included) and the SQL editor for a cross-table rule.
 
 From here you can:
 

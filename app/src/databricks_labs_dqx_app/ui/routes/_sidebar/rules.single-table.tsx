@@ -66,7 +66,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { filterTablesByColumns, checkDuplicates, type CheckDuplicatesIn, submitRuleForApproval, cancelDryRun, getDryRunStatusCustom, useLabelDefinitions, type LabelDefinition } from "@/lib/api-custom";
 import { LabelsEditor } from "@/components/Labels";
-import { getUserMetadata } from "@/lib/format-utils";
+import { getUserMetadata, filterDdlByColumns } from "@/lib/format-utils";
 import { useJobPolling } from "@/hooks/use-job-polling";
 import {
   Tooltip,
@@ -476,6 +476,38 @@ function checkToDict(c: CheckDraft): Record<string, unknown> {
           delete args[engineKey];
         }
       }
+    }
+  }
+
+  // ``has_valid_schema`` subset handling. The ``columns`` / ``exclude_columns``
+  // subset args reach here as string[] (the list_csv branch above already
+  // split them). The ``*`` all-columns sentinel — and any blank — means "no
+  // subset", so strip those: otherwise we'd ask DQX to filter the *actual*
+  // dataframe down to a column literally named "*", and (below) trim the
+  // *expected* DDL to nothing.
+  if (c.fn === "has_valid_schema") {
+    for (const key of ["columns", "exclude_columns"] as const) {
+      const v = args[key];
+      if (!Array.isArray(v)) continue;
+      const cleaned = v.filter(
+        (x): x is string => typeof x === "string" && x.trim() !== "" && x.trim() !== "*",
+      );
+      if (cleaned.length > 0) args[key] = cleaned;
+      else delete args[key];
+    }
+    // DQX's ``columns`` / ``exclude_columns`` only filter the *actual*
+    // dataframe — the *expected* schema (DDL) is compared in full. Mirror the
+    // subset onto the expected DDL so both halves stay aligned; otherwise
+    // "validate only col X" against a full expected schema reports every other
+    // expected column as missing. Reference-table mode has no DDL to trim.
+    // (Ported from the former dedicated schema editor's ``buildRule``.)
+    if (typeof args.expected_schema === "string") {
+      let ddl = args.expected_schema.trim();
+      const include = Array.isArray(args.columns) ? (args.columns as string[]) : [];
+      const exclude = Array.isArray(args.exclude_columns) ? (args.exclude_columns as string[]) : [];
+      if (include.length > 0) ddl = filterDdlByColumns(ddl, include, "include");
+      if (exclude.length > 0) ddl = filterDdlByColumns(ddl, exclude, "exclude");
+      args.expected_schema = ddl;
     }
   }
 

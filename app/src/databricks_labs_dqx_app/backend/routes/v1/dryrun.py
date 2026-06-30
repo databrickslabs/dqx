@@ -62,27 +62,6 @@ def _extract_sql_query(checks: list[dict[str, Any]]) -> str | None:
     return None
 
 
-def _extract_schema_check_target(checks: list[dict[str, Any]]) -> str | None:
-    """Return the real Unity Catalog target table for a ``has_valid_schema`` rule.
-
-    Schema-validation rules are dataset-level, so they're persisted under
-    the same ``__sql_check__/<name>`` synthetic table_fqn as cross-table
-    SQL rules. The actual table the check should run against is carried
-    on ``user_metadata.target_table`` (stamped by the schema-rule
-    builder). This helper returns the first such target so the runner
-    knows which table to materialise a view from.
-    """
-    for check in checks:
-        fn = (check.get("check") or {}).get("function", "")
-        if fn != "has_valid_schema":
-            continue
-        meta = check.get("user_metadata") or {}
-        target = meta.get("target_table")
-        if isinstance(target, str) and target.strip():
-            return target.strip()
-    return None
-
-
 def _catalog_of(fqn: str) -> str:
     """Extract the catalog part from a fully qualified table name."""
     if fqn.startswith(_SQL_CHECK_PREFIX):
@@ -266,35 +245,24 @@ def batch_run_from_catalog(
                 continue
 
             run_id = uuid4().hex[:16]
-            # Rules under ``__sql_check__/<name>`` are dataset-level, but
-            # the *kind* of dataset rule decides how we materialise the
-            # input view:
-            #   * ``sql_query``         → run the embedded query and use
-            #     the result rows as violations (existing path).
-            #   * ``has_valid_schema``  → the rule runs against a real UC
-            #     table. We snapshot the target table into a temp view
-            #     and execute the standard row-level engine (which
-            #     handles ``has_valid_schema`` natively as a dataset
-            #     check). ``is_sql_check`` stays ``False`` so the runner
-            #     uses the engine path, not the SQL-violation shortcut.
-            # ``source_table_fqn`` keeps the synthetic key so the rule's
-            # run history still groups by the catalog entry.
+            # Rules under the synthetic ``__sql_check__/<name>`` namespace are
+            # cross-table SQL checks: run the embedded query and treat the
+            # result rows as violations. Reference checks like
+            # ``has_valid_schema`` / ``foreign_key`` carry a real target-table
+            # FQN and flow through the normal ``create_view(table_fqn)`` path,
+            # where the standard row-level engine handles them as dataset
+            # checks. ``source_table_fqn`` keeps the original key so run
+            # history groups by the catalog entry.
             is_synthetic = table_fqn.startswith(_SQL_CHECK_PREFIX)
             sql_query: str | None = None
-            schema_target: str | None = None
             if is_synthetic:
                 sql_query = _extract_sql_query(approved_checks)
-                if sql_query:
-                    view_fqn = view_svc.create_view_from_sql(sql_query)
-                else:
-                    schema_target = _extract_schema_check_target(approved_checks)
-                    if not schema_target:
-                        errors.append(
-                            f"{table_fqn}: dataset-level rule must provide either a sql_query "
-                            "or a has_valid_schema check with user_metadata.target_table"
-                        )
-                        continue
-                    view_fqn = view_svc.create_view(schema_target)
+                if not sql_query:
+                    errors.append(
+                        f"{table_fqn}: cross-table rule is missing its sql_query"
+                    )
+                    continue
+                view_fqn = view_svc.create_view_from_sql(sql_query)
             else:
                 view_fqn = view_svc.create_view(table_fqn)
 
@@ -305,10 +273,9 @@ def batch_run_from_catalog(
                     "checks": approved_checks,
                     "sample_size": body.sample_size,
                     "source_table_fqn": table_fqn,
-                    # Only true SQL queries take the SQL fast-path in the
-                    # runner — schema-validation rules go through the normal
-                    # row-level engine even though they share the synthetic
-                    # ``__sql_check__/`` prefix.
+                    # Only cross-table SQL queries take the SQL fast-path in
+                    # the runner; everything else (including has_valid_schema)
+                    # goes through the standard row-level engine.
                     "is_sql_check": sql_query is not None,
                 }
                 if custom_metrics:
@@ -381,29 +348,22 @@ def submit_dry_run(
         requesting_user = user.user_name or "unknown"
 
         # Create view using OBO token — inherits user's table permissions.
-        # For the synthetic ``__sql_check__/<name>`` namespace we accept
-        # both real cross-table SQL checks (build a view from the SQL)
-        # and schema-validation checks (build a view from the real
-        # ``user_metadata.target_table`` so the row-level engine can run
-        # ``has_valid_schema``). See ``batch_run_from_catalog`` for the
+        # The synthetic ``__sql_check__/<name>`` namespace holds cross-table
+        # SQL checks only: build the view from the embedded query. Reference
+        # checks (``has_valid_schema`` / ``foreign_key``) carry a real
+        # target-table FQN and build a view from that table so the row-level
+        # engine can run them. See ``batch_run_from_catalog`` for the
         # mirroring scheduled-run path.
         is_synthetic = body.table_fqn.startswith(_SQL_CHECK_PREFIX)
         sql_query: str | None = None
         if is_synthetic:
             sql_query = _extract_sql_query(body.checks)
-            if sql_query:
-                view_fqn = view_svc.create_view_from_sql(sql_query)
-            else:
-                schema_target = _extract_schema_check_target(body.checks)
-                if not schema_target:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=(
-                            "Dataset-level rule must provide either a sql_query or a "
-                            "has_valid_schema check with user_metadata.target_table"
-                        ),
-                    )
-                view_fqn = view_svc.create_view(schema_target)
+            if not sql_query:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Cross-table rule is missing its sql_query",
+                )
+            view_fqn = view_svc.create_view_from_sql(sql_query)
         else:
             view_fqn = view_svc.create_view(body.table_fqn)
 
@@ -417,9 +377,8 @@ def submit_dry_run(
                 "checks": body.checks,
                 "sample_size": body.sample_size,
                 "source_table_fqn": body.table_fqn,
-                # SQL fast-path only fires for actual sql_query checks —
-                # schema-validation rules under the synthetic prefix still
-                # use the row-level engine.
+                # SQL fast-path only fires for cross-table sql_query checks;
+                # everything else uses the row-level engine.
                 "is_sql_check": sql_query is not None,
             }
             if body.skip_history:

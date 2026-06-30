@@ -3,7 +3,6 @@ import {
   parseFqn,
   formatDateShort as formatDate,
   getUserMetadata,
-  isSchemaValidationRule,
   labelToken,
 } from "@/lib/format-utils";
 import { LabelFilter, LabelsBadges, labelsMatchFilter } from "@/components/Labels";
@@ -1106,16 +1105,11 @@ function DraftsPage() {
                                         variant="ghost"
                                         disabled={busy}
                                         onClick={() => {
-                                          // Dataset-level rules all live under ``__sql_check__/<name>``,
-                                          // but the right editor depends on the check function — schema
-                                          // validation has its own dedicated page, SQL queries go to
-                                          // the cross-table editor.
-                                          if (isSchemaValidationRule(rule)) {
-                                            navigate({
-                                              to: "/rules/schema",
-                                              search: { edit: rule.table_fqn, from: "drafts" },
-                                            });
-                                          } else if (rule.table_fqn.startsWith(SQL_CHECK_PREFIX)) {
+                                          // Only cross-table SQL checks live under the synthetic
+                                          // ``__sql_check__/<name>`` namespace. Reference checks
+                                          // (``has_valid_schema`` / ``foreign_key``) carry a real
+                                          // target-table FQN and edit in the single-table editor.
+                                          if (rule.table_fqn.startsWith(SQL_CHECK_PREFIX)) {
                                             navigate({
                                               to: "/rules/create-sql",
                                               search: { edit: rule.table_fqn, from: "drafts" },
@@ -1212,9 +1206,7 @@ function DraftsPage() {
                                     variant="outline"
                                     className="gap-1.5 h-7 text-xs"
                                     onClick={() => {
-                                      if (isSchemaValidationRule(rule)) {
-                                        navigate({ to: "/rules/schema", search: { edit: rule.table_fqn, from: "drafts" } });
-                                      } else if (rule.table_fqn.startsWith(SQL_CHECK_PREFIX)) {
+                                      if (rule.table_fqn.startsWith(SQL_CHECK_PREFIX)) {
                                         navigate({ to: "/rules/create-sql", search: { edit: rule.table_fqn, from: "drafts" } });
                                       } else {
                                         navigate({ to: "/rules/single-table", search: { table: rule.table_fqn, rule_id: rule.rule_id!, from: "drafts" } });

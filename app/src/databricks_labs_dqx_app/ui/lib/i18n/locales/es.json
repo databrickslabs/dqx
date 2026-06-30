@@ -393,117 +393,6 @@
     "schemaTitle": "Validar esquema de tabla",
     "schemaDescription": "Detecta cambios en columnas, orden y tipos con una regla has_valid_schema — coincidencia estricta o comprobación de compatibilidad."
   },
-  "rulesSchema": {
-    "breadcrumb": "Validación de esquema",
-    "title": "Validar esquema de tabla",
-    "subtitle": "Crea una regla has_valid_schema a nivel de dataset que falla cuando la forma de la tabla cambia respecto al esquema fijado.",
-    "viewDocs": "Referencia de has_valid_schema",
-    "basics": {
-      "title": "Datos básicos de la regla",
-      "description": "Elige la tabla a validar y dale un nombre estable. Es una regla a nivel de dataset: una comprobación por ejecución, no por fila.",
-      "targetTable": "Tabla destino",
-      "targetTableHint": "La tabla cuyo esquema se validará.",
-      "name": "Nombre de la regla",
-      "nameHint": "Letras, dígitos y guiones bajos. Se usa como identificador YAML.",
-      "criticality": "Criticidad",
-      "criticalityHint": "Error bloquea a consumidores aguas abajo; warn solo registra el cambio."
-    },
-    "source": {
-      "title": "Origen del esquema esperado",
-      "description": "Elige de dónde sale el esquema esperado. Tomar una instantánea rellena el DDL desde la tabla destino para que ajustes desde un punto conocido.",
-      "ddl": {
-        "title": "DDL en línea",
-        "description": "Fija el esquema con una cadena DDL de Spark — pega, edita o toma una instantánea de la tabla destino.",
-        "label": "DDL esperado",
-        "snapshotFromTarget": "Instantánea de la tabla destino",
-        "snapshotHint": "Lee el esquema actual de Unity Catalog de la tabla destino y lo escribe en el cuadro DDL. Edítalo después para descartar columnas opcionales o ampliar tipos.",
-        "hint": "Formato: 'col TIPO, col TIPO'. Se admiten tipos anidados (ARRAY<…>, STRUCT<…>, DECIMAL(p,s))."
-      },
-      "ref": {
-        "title": "Tabla de referencia",
-        "description": "Compara contra el esquema de otra tabla UC viva. Ideal para tablas canónicas/golden que ya codifican el contrato.",
-        "label": "Tabla de referencia",
-        "hint": "El esquema se lee desde esta tabla en cada ejecución, así los cambios se propagan inmediatamente."
-      }
-    },
-    "strictness": {
-      "title": "Modo de coincidencia",
-      "description": "Qué tan exactamente debe coincidir la tabla con el esquema esperado.",
-      "recommended": "Recomendado",
-      "compatible": {
-        "title": "Compatible (no estricto)",
-        "tagline": "Las columnas esperadas deben existir con tipos compatibles. Se permiten columnas adicionales.",
-        "bullet1": "Sobrevive a evoluciones aditivas — columnas nuevas añadidas aguas arriba no rompen la regla.",
-        "bullet2": "Permite conversiones ampliadoras (p. ej. INT → BIGINT) que Spark considera compatibles.",
-        "bullet3": "Ideal para tablas compartidas/aguas abajo que crecen con el tiempo."
-      },
-      "strict": {
-        "title": "Estricto",
-        "tagline": "Conjunto exacto de columnas, orden exacto, tipos exactos. Cualquier diferencia falla la regla.",
-        "bullet1": "Detecta adiciones, eliminaciones, reordenamientos y cualquier cambio de tipo.",
-        "bullet2": "Captura INT → BIGINT o cambios de precisión DECIMAL que el modo compatible permite.",
-        "bullet3": "Ideal para tablas tipo contrato producidas para un consumidor específico."
-      }
-    },
-    "advanced": {
-      "title": "Subconjunto y exclusiones (opcional)",
-      "description": "Limita la comprobación a un subconjunto de columnas o ignora columnas que no son parte del contrato.",
-      "columns": "Validar solo estas columnas",
-      "columnsHint": "Nombres separados por comas. Vacío = todas las columnas. Con un esquema esperado en DDL, el lado esperado se recorta automáticamente al mismo subconjunto para que la comparación quede alineada.",
-      "exclude": "Ignorar estas columnas",
-      "excludeHint": "Nombres separados por comas. Útil para columnas de mantenimiento como marcas de tiempo de ingesta. Con un esquema esperado en DDL, esas columnas también se eliminan del lado esperado.",
-      "refSubsetWarningTitle": "El subconjunto no se aplica al esquema de la tabla de referencia",
-      "refSubsetWarningBody": "Cuando el esquema esperado se carga desde una tabla de referencia, esta app no puede recortarlo en el cliente — el subconjunto de columnas solo filtra la tabla real, por lo que la comparación seguirá realizándose sobre todas las columnas de la tabla de referencia. Cambia al modo DDL si quieres validar un subconjunto real."
-    },
-    "labels": {
-      "title": "Etiquetas (opcional)",
-      "description": "Etiquetas clave/valor libres para organizar y filtrar esta regla. Los campos del sistema (rule_type, target_table, strictness) los gestiona esta página y no se pueden sobreescribir."
-    },
-    "readyToSave": "Listo para guardar — revisa el origen del esquema y el modo de coincidencia arriba.",
-    "saveAsDraft": "Guardar como borrador",
-    "updateRule": "Actualizar regla",
-    "submitForReview": "Enviar para revisión",
-    "savedDraft": "Regla de esquema guardada como borrador",
-    "savedUpdate": "Regla de esquema actualizada",
-    "edit": {
-      "breadcrumb": "Editar regla de esquema",
-      "title": "Editar regla de validación de esquema",
-      "subtitle": "Actualiza el esquema esperado, el modo de coincidencia o el alcance de columnas de una regla has_valid_schema existente.",
-      "notSchemaRule": "Esta regla no es una regla de validación de esquema y no puede editarse desde esta página."
-    },
-    "submitted_one": "Enviada {{count}} regla para revisión",
-    "submitted_other": "Enviadas {{count}} reglas para revisión",
-    "submitFailed_one": "Falló el envío de {{count}} regla",
-    "submitFailed_other": "Falló el envío de {{count}} reglas",
-    "snapshotDone_one": "Instantánea tomada de {{count}} columna de la tabla destino",
-    "snapshotDone_other": "Instantánea tomada de {{count}} columnas de la tabla destino",
-    "errors": {
-      "pickTable": "Selecciona una tabla destino antes de tomar la instantánea.",
-      "emptyDdl": "La tabla destino no tiene columnas — nada que capturar.",
-      "snapshotFailed": "Falló la instantánea del esquema desde la tabla destino",
-      "invalidForm": "Rellena los campos obligatorios arriba para guardar.",
-      "saveFailed": "Falló el guardado de la regla de esquema"
-    },
-    "dryRun": {
-      "title": "Prueba en seco",
-      "description": "Ejecuta la regla contra una muestra de la tabla destino para validarla antes de guardar. Nada se persiste en el historial.",
-      "sampleRows": "Filas de muestra",
-      "sampleRowsHint": "DQX toma este número de filas de la tabla destino antes de aplicar la verificación. has_valid_schema es a nivel de conjunto de datos, así que el tamaño de muestra afecta sobre todo a la velocidad de arranque de Spark — elige unas pocas centenas para feedback rápido.",
-      "maxRows": "(máx 10.000)",
-      "run": "Ejecutar prueba en seco",
-      "running": "Ejecutando…",
-      "needsValidRule": "Completa el formulario para habilitar la prueba en seco.",
-      "jobStatus": "Estado del job:",
-      "toastSubmitted": "Prueba en seco enviada",
-      "toastComplete": "Prueba en seco completada",
-      "toastFetchFailed": "No se pudieron cargar los resultados de la prueba en seco",
-      "toastFailed": "Prueba en seco fallida: {{message}}",
-      "toastUnknownError": "error desconocido",
-      "toastStatusFailed": "No se pudo consultar el estado de la prueba en seco",
-      "toastSubmitFailed": "No se pudo enviar la prueba en seco",
-      "toastSubmitFailedDetail": "No se pudo enviar la prueba en seco: {{detail}}"
-    }
-  },
   "rulesFromContract": {
     "breadcrumb": "Desde contrato de datos",
     "title": "Generar reglas desde contrato de datos",
@@ -716,6 +605,7 @@
     "dryRunCanceled": "Ejecución de prueba cancelada",
     "failedCancelDryRun": "Error al cancelar ejecución de prueba",
     "dryRunSubmitted": "Ejecución de prueba enviada — esperando resultados...",
+    "notSqlRule": "Esta regla no es una verificación SQL entre tablas, por lo que no se puede editar aquí.",
     "noSqlGenerated": "La IA no generó ninguna verificación SQL. Intenta ser más específico sobre las tablas y condiciones.",
     "sqlCheckGenerated_one": "{{count}} verificación SQL generada por IA",
     "sqlCheckGenerated_other": "{{count}} verificaciones SQL generadas por IA",

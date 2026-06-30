@@ -41,7 +41,7 @@ import {
 } from "@/lib/api";
 import { deleteRuleById } from "@/lib/api-custom";
 import { usePermissions } from "@/hooks/use-permissions";
-import { parseFqn, formatUser, getUserMetadata, isSchemaValidationRule, labelToken } from "@/lib/format-utils";
+import { parseFqn, formatUser, getUserMetadata, labelToken } from "@/lib/format-utils";
 import { LabelFilter, LabelsBadges, labelsMatchFilter } from "@/components/Labels";
 import {
   AlertDialog,
@@ -472,14 +472,14 @@ function ActiveRulesPage() {
                   groups={groupedByTable}
                   expandedTables={expandedTables}
                   onToggle={toggleTable}
-                  onNavigate={(fqn, rules) => {
-                    // Schema-validation rules share the ``__sql_check__/``
-                    // synthetic table_fqn with cross-table SQL rules but
-                    // round-trip through a different editor. Peek at the
-                    // group's rules to decide where to send the user.
-                    if (rules.some(isSchemaValidationRule)) {
-                      navigate({ to: "/rules/schema", search: { edit: fqn, from: "active" } });
-                    } else if (fqn.startsWith(SQL_CHECK_PREFIX)) {
+                  onNavigate={(fqn) => {
+                    // Only cross-table SQL checks live under the synthetic
+                    // ``__sql_check__/`` namespace. Everything else — including
+                    // ``has_valid_schema`` / ``foreign_key`` reference checks —
+                    // carries a real target-table FQN and is authored/edited in
+                    // the single-table editor, which loads every check on the
+                    // table.
+                    if (fqn.startsWith(SQL_CHECK_PREFIX)) {
                       navigate({ to: "/rules/create-sql", search: { edit: fqn, from: "active" } });
                     } else {
                       navigate({ to: "/rules/single-table", search: { table: fqn, from: "active" } });
@@ -548,11 +548,12 @@ interface ByTableViewProps {
   onToggle: (fqn: string) => void;
   /**
    * Called when the user clicks "View / edit rules" on a table group. The
-   * group's rules are forwarded so the caller can pick the right editor
-   * (schema validation vs. cross-table SQL vs. single-table) based on the
-   * check function, not just the synthetic ``__sql_check__/`` prefix.
+   * editor is chosen from the ``table_fqn`` alone: synthetic ``__sql_check__/``
+   * groups are cross-table SQL checks (SQL editor); every real-table group —
+   * including ``has_valid_schema`` / ``foreign_key`` reference checks — opens
+   * the single-table editor.
    */
-  onNavigate: (fqn: string, rules: RuleCatalogEntryOut[]) => void;
+  onNavigate: (fqn: string) => void;
   canDelete: boolean;
   onDelete: (rule: RuleCatalogEntryOut) => void;
   pendingDelete: string | null;
@@ -676,7 +677,7 @@ function ByTableView({ groups, expandedTables, onToggle, onNavigate, canDelete, 
                     variant="ghost"
                     size="sm"
                     className="h-7 text-xs"
-                    onClick={() => onNavigate(fqn, rules)}
+                    onClick={() => onNavigate(fqn)}
                   >
                     {t("rulesActive.viewEditRules")}
                   </Button>

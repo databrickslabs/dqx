@@ -25,9 +25,8 @@ ui/
 │       ├── rules.active.tsx    # Active rules library (grouped by target table; __sql_check__ bucket)
 │       ├── rules.drafts.tsx    # Drafts & Review
 │       ├── rules.create.tsx    # Create rules landing (tiles)
-│       ├── rules.single-table.tsx   # Single-table rule editor
+│       ├── rules.single-table.tsx   # Single-table rule editor (incl. has_valid_schema / foreign_key reference checks)
 │       ├── rules.create-sql.tsx     # Cross-table SQL editor (synthetic __sql_check__ FQN)
-│       ├── rules.schema.tsx         # has_valid_schema editor (edits to existing rules) + dry-run + snapshot
 │       ├── rules.create-reusable.tsx # Reusable-rule template editor
 │       ├── rules.import.tsx    # Bulk import — TABBED: "yaml" + "contract" (?tab=)
 │       ├── rules.from-contract.tsx  # Legacy URL → Navigate redirect to /rules/import?tab=contract
@@ -168,18 +167,16 @@ Themes are CSS custom properties on `:root` and `.dark` in `styles/globals.css`.
 
 ### Dataset-level rules: routing & editing
 
-Cross-table SQL checks and `has_valid_schema` schema-validation rules share the synthetic `__sql_check__/<name>` `table_fqn` so they bucket together in the **Cross-table rules** group on the Active Rules page. The Edit/View action must route each to its native editor — not lump everything into the SQL editor:
+Only **cross-table SQL checks** use the synthetic `__sql_check__/<name>` `table_fqn`, so they're the only rules bucketed under the **Cross-table rules** group on the Active Rules page. Reference checks (`has_valid_schema`, `foreign_key`) carry a **real target-table FQN** — they group under their target table and are authored *and* edited in the single-table editor. The Edit/View dispatch (in `routes/_sidebar/rules.active.tsx` and `rules.drafts.tsx`) keys off the FQN prefix only:
 
-- SQL check → `/rules/create-sql?...`
-- `has_valid_schema` → `/rules/schema?...`
+- synthetic `__sql_check__/` FQN → `/rules/create-sql?...`
+- real table FQN → `/rules/single-table?...` (loads every check on the table, schema validation included)
 
-This dispatch lives in `routes/_sidebar/rules.active.tsx`. When you add another dataset-level rule kind, add its editor route and extend the dispatch.
-
-> **Authoring vs editing:** New reference-table checks (`has_valid_schema`, `foreign_key`) are now authored inside the **single-table editor** (`rules.single-table.tsx`), which renders the reference-table picker and the `expected_schema`/`ref_table` mutually-exclusive fields. `/rules/schema` is retained for *editing existing* `has_valid_schema` rules opened from the Active Rules page (per the dispatch above).
+There is **no** separate schema-validation route — `has_valid_schema` is just another check in the single-table editor's catalog. When you add another dataset-level (table-less) rule kind, give it a synthetic FQN and extend the cross-table dispatch; per-table reference checks need no special routing.
 
 ### Schema rule subset filtering (DDL trimming)
 
-`has_valid_schema` only filters the *actual* DataFrame when you pass `columns` / `exclude_columns` — it does **not** trim the *expected* schema. To keep both sides aligned in DDL mode, `routes/_sidebar/rules.schema.tsx#buildRule()` calls `filterDdlByColumns()` from `lib/format-utils.ts` to trim `expected_schema` before saving. Reference-table mode can't trim a remote schema client-side, so the editor shows a warning instead. Don't remove either branch without porting the trimming server-side first.
+`has_valid_schema` only filters the *actual* DataFrame when you pass `columns` / `exclude_columns` — it does **not** trim the *expected* schema. To keep both sides aligned in DDL mode, `routes/_sidebar/rules.single-table.tsx#checkToDict()` calls `filterDdlByColumns()` from `lib/format-utils.ts` to trim `expected_schema` before saving. Reference-table mode can't trim a remote schema client-side, so it's left as-is. Don't remove this without porting the trimming server-side first.
 
 ### Import rules: tabbed page (?tab=yaml|contract)
 

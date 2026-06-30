@@ -206,6 +206,19 @@ function CreateSqlCheckPageInner() {
     const tableFqn = entries[0]?.table_fqn ?? "";
     const isAssignedToTable = tableFqn && !tableFqn.startsWith(SQL_CHECK_PREFIX);
     const allChecks = entries.flatMap((e) => e.checks ?? []);
+    // This editor only handles ``sql_query`` checks. If an edit target resolves
+    // here with any non-SQL check (e.g. a stale ``__sql_check__/`` rule from
+    // before reference checks moved to the single-table editor), refuse to load
+    // it — saving would silently overwrite it with an empty sql_query and
+    // destroy the original rule. Bail out instead of corrupting it.
+    const checkFn = (c: Record<string, unknown>): string =>
+      String(((c.check as Record<string, unknown> | undefined)?.function) ?? "");
+    if (allChecks.length > 0 && allChecks.some((c) => checkFn(c as Record<string, unknown>) !== "sql_query")) {
+      toast.error(t("rulesCreateSql.notSqlRule"));
+      navigate({ to: fromPage === "drafts" ? "/rules/drafts" : "/rules/active" });
+      setInitialized(true);
+      return;
+    }
     const loaded: SqlCheckDraft[] = allChecks.map((c: Record<string, unknown>) => {
       const check = (c.check ?? {}) as Record<string, unknown>;
       const args = (check.arguments ?? {}) as Record<string, unknown>;
@@ -239,7 +252,7 @@ function CreateSqlCheckPageInner() {
       setChecks(loaded);
     }
     setInitialized(true);
-  }, [existingRule, initialized]);
+  }, [existingRule, initialized, t, navigate, fromPage]);
 
   // ── Real-time duplicate detection ──────────────────────────────────
   const [dupCheckIds, setDupCheckIds] = useState<Set<string>>(new Set());

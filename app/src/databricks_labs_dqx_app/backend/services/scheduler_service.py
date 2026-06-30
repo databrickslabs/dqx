@@ -496,41 +496,31 @@ class SchedulerService:
                     continue
 
                 run_id = f"{run_id_prefix}_{i}"
-                # Dataset-level rules (``__sql_check__/<name>``) come in
-                # two flavours that need different runner inputs:
-                #   * ``sql_query`` checks      → the task runner creates
-                #     a Spark temp view from the embedded query, so
-                #     ``view_fqn`` can stay as the synthetic key.
-                #   * ``has_valid_schema`` checks → the rule operates
-                #     against a real UC table. We pass the real target as
-                #     ``view_fqn`` so the runner's standard row-level
-                #     path (``is_sql_check=False``) can read it.
-                # ``source_table_fqn`` keeps the synthetic key in either
-                # case so the run history still groups under the rule.
+                # The synthetic ``__sql_check__/<name>`` namespace holds
+                # cross-table SQL checks only: the task runner builds a Spark
+                # temp view from the embedded query, so ``view_fqn`` can stay
+                # as the synthetic key. Reference checks (``has_valid_schema``
+                # / ``foreign_key``) carry a real target-table FQN, which the
+                # runner reads directly through the standard row-level path
+                # (``is_sql_check=False``). ``source_table_fqn`` keeps the
+                # original key so run history groups under the rule.
                 is_synthetic = table_fqn.startswith(_SQL_CHECK_PREFIX)
                 sql_query: str | None = None
-                runner_view_fqn = table_fqn
 
                 if is_synthetic:
                     sql_query = self._extract_sql_query(entry["checks"])
                     if sql_query is None:
-                        schema_target = self._extract_schema_check_target(entry["checks"])
-                        if not schema_target:
-                            errors.append(
-                                f"{table_fqn}: dataset-level rule must provide either a "
-                                "sql_query or a has_valid_schema check with "
-                                "user_metadata.target_table"
-                            )
-                            continue
-                        runner_view_fqn = schema_target
+                        errors.append(
+                            f"{table_fqn}: cross-table rule is missing its sql_query"
+                        )
+                        continue
 
                 config = {
                     "checks": entry["checks"],
                     "sample_size": sample_size,
                     "source_table_fqn": table_fqn,
-                    # Only true SQL queries take the SQL fast-path in the
-                    # runner. Schema-validation rules go through the
-                    # row-level engine like any other check.
+                    # Only cross-table SQL queries take the SQL fast-path in
+                    # the runner; everything else uses the row-level engine.
                     "is_sql_check": sql_query is not None,
                 }
 
@@ -544,7 +534,7 @@ class SchedulerService:
                     job_id=int(self._job_id),
                     job_parameters={
                         "task_type": "scheduled",
-                        "view_fqn": runner_view_fqn,
+                        "view_fqn": table_fqn,
                         "result_catalog": self._catalog,
                         "result_schema": self._schema,
                         "config_json": json.dumps(config),
@@ -741,27 +731,6 @@ class SchedulerService:
             fn = (check.get("check") or {}).get("function", "")
             if fn == "sql_query":
                 return (check.get("check") or {}).get("arguments", {}).get("query")
-        return None
-
-    @staticmethod
-    def _extract_schema_check_target(checks: list[dict[str, Any]]) -> str | None:
-        """Return the real Unity Catalog target table for a ``has_valid_schema`` rule.
-
-        Mirrors ``dryrun._extract_schema_check_target`` — kept here as a
-        static helper to avoid the scheduler depending on the route
-        module. Schema-validation rules live under the synthetic
-        ``__sql_check__/<name>`` table_fqn so we look up the *real*
-        target on ``user_metadata.target_table`` and run the row-level
-        engine against that table.
-        """
-        for check in checks:
-            fn = (check.get("check") or {}).get("function", "")
-            if fn != "has_valid_schema":
-                continue
-            meta = check.get("user_metadata") or {}
-            target = meta.get("target_table")
-            if isinstance(target, str) and target.strip():
-                return target.strip()
         return None
 
     # ------------------------------------------------------------------

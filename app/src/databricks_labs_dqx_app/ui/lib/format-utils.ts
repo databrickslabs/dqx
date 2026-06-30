@@ -137,33 +137,6 @@ export function tokenToLabel(token: string): { key: string; value: string } {
 }
 
 /**
- * True when any check on the rule entry uses ``has_valid_schema``.
- *
- * Schema-validation rules are stored under the same ``__sql_check__/<name>``
- * synthetic table_fqn that cross-table SQL rules use (both are
- * dataset-level), so the table_fqn alone is not enough to tell them apart.
- * We peek at the check function instead — that's how DQX itself routes
- * the rule, and it round-trips through YAML exports.
- *
- * Accepts a ``RuleCatalogEntryOut``-shaped object or anything with a
- * ``checks`` array of dicts.
- */
-export function isSchemaValidationRule(rule: unknown): boolean {
-  if (!rule || typeof rule !== "object") return false;
-  const checks = (rule as { checks?: unknown }).checks;
-  if (!Array.isArray(checks)) return false;
-  for (const c of checks) {
-    if (!c || typeof c !== "object") continue;
-    const inner = (c as Record<string, unknown>).check as
-      | Record<string, unknown>
-      | undefined;
-    const fn = inner?.function ?? (c as Record<string, unknown>).function;
-    if (typeof fn === "string" && fn === "has_valid_schema") return true;
-  }
-  return false;
-}
-
-/**
  * Split a Spark DDL string into top-level field definitions.
  *
  * We split on commas at bracket-depth 0 only, so nested types keep

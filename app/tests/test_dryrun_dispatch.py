@@ -1,24 +1,20 @@
 """Unit tests for the dataset-level rule dispatch helpers.
 
-These helpers decide *how* to materialise the input dataset when a rule
-lives under the synthetic ``__sql_check__/<name>`` table_fqn used by the
-catalog to group dataset-level checks:
+The synthetic ``__sql_check__/<name>`` table_fqn is used by the catalog
+to group *cross-table SQL* checks. ``_extract_sql_query`` pulls the
+embedded query so the runner can build a view from it and take the SQL
+fast-path.
 
-  * ``sql_query`` checks       → build a view from the embedded query.
-  * ``has_valid_schema`` checks → build a view from the real target
-    table carried on ``user_metadata.target_table`` and run the regular
-    row-level engine.
-
-Regression coverage for the bug where the runner reported
-``"SQL check has no query"`` for schema-validation rules.
+Reference checks such as ``has_valid_schema`` / ``foreign_key`` are NOT
+dataset-synthetic: they carry a real target-table FQN and flow through
+the normal ``create_view(table_fqn)`` path, where the row-level engine
+handles them. They therefore have no ``sql_query`` — a synthetic rule
+that lacks one is a malformed cross-table rule, not a schema rule.
 """
 
 from __future__ import annotations
 
-from databricks_labs_dqx_app.backend.routes.v1.dryrun import (
-    _extract_schema_check_target,
-    _extract_sql_query,
-)
+from databricks_labs_dqx_app.backend.routes.v1.dryrun import _extract_sql_query
 from databricks_labs_dqx_app.backend.services.scheduler_service import SchedulerService
 
 
@@ -33,18 +29,14 @@ def _sql_check() -> dict[str, object]:
     }
 
 
-def _schema_check(target: str = "samples.bakehouse.sales_customers") -> dict[str, object]:
+def _schema_check() -> dict[str, object]:
+    """A ``has_valid_schema`` check — has no ``sql_query`` by design."""
     return {
         "name": "valid_customer_schema",
         "criticality": "error",
         "check": {
             "function": "has_valid_schema",
             "arguments": {"expected_schema": "id BIGINT, email STRING"},
-        },
-        "user_metadata": {
-            "rule_type": "schema_validation",
-            "strictness": "compatible",
-            "target_table": target,
         },
     }
 
@@ -59,6 +51,7 @@ def test_extract_sql_query_returns_query_for_sql_check() -> None:
 
 
 def test_extract_sql_query_returns_none_for_schema_check() -> None:
+    # has_valid_schema is not a SQL check, so it never yields a query.
     assert _extract_sql_query([_schema_check()]) is None
 
 
@@ -71,53 +64,8 @@ def test_extract_sql_query_handles_missing_arguments() -> None:
     assert _extract_sql_query([bare]) is None
 
 
-# ---------------------------------------------------------------------------
-# _extract_schema_check_target (route + scheduler helpers must agree)
-# ---------------------------------------------------------------------------
-
-
-def test_extract_schema_target_pulls_from_user_metadata() -> None:
-    assert _extract_schema_check_target([_schema_check()]) == "samples.bakehouse.sales_customers"
-
-
-def test_extract_schema_target_strips_whitespace() -> None:
-    chk = _schema_check(target="  samples.bakehouse.sales_customers  ")
-    assert _extract_schema_check_target([chk]) == "samples.bakehouse.sales_customers"
-
-
-def test_extract_schema_target_returns_none_for_sql_check() -> None:
-    assert _extract_schema_check_target([_sql_check()]) is None
-
-
-def test_extract_schema_target_skips_blank_target() -> None:
-    chk = _schema_check(target="   ")
-    assert _extract_schema_check_target([chk]) is None
-
-
-def test_extract_schema_target_picks_first_schema_check() -> None:
-    first = _schema_check(target="cat.sch.first")
-    second = _schema_check(target="cat.sch.second")
-    assert _extract_schema_check_target([first, second]) == "cat.sch.first"
-
-
-def test_extract_schema_target_ignores_non_schema_checks() -> None:
-    not_schema = {"check": {"function": "is_not_null"}, "user_metadata": {"target_table": "x.y.z"}}
-    chk = _schema_check()
-    assert _extract_schema_check_target([not_schema, chk]) == "samples.bakehouse.sales_customers"
-
-
-def test_extract_schema_target_handles_missing_user_metadata() -> None:
-    chk = {"check": {"function": "has_valid_schema", "arguments": {}}}
-    assert _extract_schema_check_target([chk]) is None
-
-
-# Same helper on the scheduler — the route module and the scheduler must
-# stay in lock-step or scheduled schema-rule runs would silently regress.
-def test_scheduler_schema_target_helper_matches_route_helper() -> None:
-    checks = [_schema_check()]
-    assert SchedulerService._extract_schema_check_target(checks) == _extract_schema_check_target(checks)
-
-
+# The route module and the scheduler must stay in lock-step or scheduled
+# cross-table SQL runs would silently regress.
 def test_scheduler_sql_query_helper_matches_route_helper() -> None:
     checks = [_sql_check()]
     assert SchedulerService._extract_sql_query(checks) == _extract_sql_query(checks)

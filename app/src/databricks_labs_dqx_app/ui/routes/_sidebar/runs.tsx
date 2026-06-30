@@ -857,9 +857,8 @@ interface RunNotification {
   count: number;
   errors: number;
   // Per-table error messages returned by the backend so the user can see
-  // *why* a submission failed (e.g. "dataset-level rule must provide
-  // either a sql_query or a has_valid_schema check with
-  // user_metadata.target_table") instead of just an aggregate count.
+  // *why* a submission failed (e.g. "cross-table rule is missing its
+  // sql_query") instead of just an aggregate count.
   errorDetails?: string[];
 }
 

@@ -393,117 +393,6 @@
     "schemaTitle": "Valida schema della tabella",
     "schemaDescription": "Rileva drift in colonne, ordine e tipi con una regola has_valid_schema — corrispondenza rigorosa o controllo di compatibilità."
   },
-  "rulesSchema": {
-    "breadcrumb": "Validazione schema",
-    "title": "Valida schema della tabella",
-    "subtitle": "Crea una regola has_valid_schema a livello di dataset che fallisce quando la forma della tabella si discosta dallo schema fissato.",
-    "viewDocs": "Riferimento has_valid_schema",
-    "basics": {
-      "title": "Dati base della regola",
-      "description": "Scegli la tabella da validare e assegna un nome stabile. La regola è a livello di dataset: un controllo per esecuzione, non per riga.",
-      "targetTable": "Tabella destinazione",
-      "targetTableHint": "La tabella di cui verrà validato lo schema.",
-      "name": "Nome regola",
-      "nameHint": "Lettere, cifre e underscore. Usato come identificatore YAML.",
-      "criticality": "Criticità",
-      "criticalityHint": "Error blocca i consumatori a valle; warn registra solo il drift."
-    },
-    "source": {
-      "title": "Origine dello schema atteso",
-      "description": "Scegli da dove proviene lo schema atteso. Lo snapshot riempie il DDL dalla tabella di destinazione per partire da una forma conosciuta.",
-      "ddl": {
-        "title": "DDL inline",
-        "description": "Fissa lo schema con una stringa DDL Spark — incolla, modifica o fai uno snapshot della tabella destinazione.",
-        "label": "DDL atteso",
-        "snapshotFromTarget": "Snapshot dalla tabella destinazione",
-        "snapshotHint": "Legge lo schema attuale di Unity Catalog della tabella destinazione e lo scrive nella casella DDL. Modificalo dopo per rimuovere colonne opzionali o allargare i tipi.",
-        "hint": "Formato: 'col TIPO, col TIPO'. Tipi annidati (ARRAY<…>, STRUCT<…>, DECIMAL(p,s)) sono supportati."
-      },
-      "ref": {
-        "title": "Tabella di riferimento",
-        "description": "Confronta con lo schema di un'altra tabella UC viva. Ideale per tabelle canoniche/golden che già codificano il contratto.",
-        "label": "Tabella di riferimento",
-        "hint": "Lo schema viene letto da questa tabella ad ogni esecuzione, quindi le modifiche si propagano immediatamente."
-      }
-    },
-    "strictness": {
-      "title": "Modalità di corrispondenza",
-      "description": "Quanto esattamente la tabella deve corrispondere allo schema atteso.",
-      "recommended": "Consigliato",
-      "compatible": {
-        "title": "Compatibile (non rigoroso)",
-        "tagline": "Le colonne attese devono esistere con tipi compatibili. Sono permesse colonne aggiuntive.",
-        "bullet1": "Sopravvive a evoluzioni additive — nuove colonne aggiunte a monte non rompono la regola.",
-        "bullet2": "Consente conversioni allarganti (es. INT → BIGINT) considerate compatibili da Spark.",
-        "bullet3": "Ideale per tabelle condivise/a valle che crescono nel tempo."
-      },
-      "strict": {
-        "title": "Rigoroso",
-        "tagline": "Insieme esatto di colonne, ordine esatto, tipi esatti. Qualsiasi drift fa fallire la regola.",
-        "bullet1": "Rileva aggiunte, rimozioni, riordini e qualsiasi cambio di tipo.",
-        "bullet2": "Cattura INT → BIGINT o variazioni di precisione DECIMAL che la modalità compatibile permette.",
-        "bullet3": "Ideale per tabelle di tipo contratto prodotte per un consumatore specifico."
-      }
-    },
-    "advanced": {
-      "title": "Sottoinsieme ed esclusioni (opzionale)",
-      "description": "Limita il controllo a un sottoinsieme di colonne o ignora colonne che non fanno parte del contratto.",
-      "columns": "Valida solo queste colonne",
-      "columnsHint": "Nomi separati da virgole. Vuoto = tutte le colonne. Con uno schema atteso in DDL, anche il lato atteso viene ridotto automaticamente allo stesso sottoinsieme così il confronto rimane allineato.",
-      "exclude": "Ignora queste colonne",
-      "excludeHint": "Nomi separati da virgole. Utile per colonne di servizio come timestamp di ingestion. Con uno schema atteso in DDL, queste colonne vengono rimosse anche dal lato atteso.",
-      "refSubsetWarningTitle": "Il sottoinsieme non viene applicato allo schema della tabella di riferimento",
-      "refSubsetWarningBody": "Quando lo schema atteso è caricato da una tabella di riferimento, questa app non può ridurlo lato client — il sottoinsieme di colonne filtra solo la tabella reale, quindi il confronto continuerà a coinvolgere tutte le colonne della tabella di riferimento. Passa alla modalità DDL se vuoi validare un sottoinsieme reale."
-    },
-    "labels": {
-      "title": "Etichette (opzionale)",
-      "description": "Tag chiave/valore liberi per organizzare e filtrare questa regola. I campi di sistema (rule_type, target_table, strictness) sono gestiti da questa pagina e non possono essere sovrascritti."
-    },
-    "readyToSave": "Pronto per salvare — rivedi l'origine dello schema e la modalità di corrispondenza sopra.",
-    "saveAsDraft": "Salva come bozza",
-    "updateRule": "Aggiorna regola",
-    "submitForReview": "Invia per revisione",
-    "savedDraft": "Regola di schema salvata come bozza",
-    "savedUpdate": "Regola di schema aggiornata",
-    "edit": {
-      "breadcrumb": "Modifica regola di schema",
-      "title": "Modifica regola di validazione schema",
-      "subtitle": "Aggiorna lo schema atteso, la modalità di corrispondenza o l'ambito di colonne di una regola has_valid_schema esistente.",
-      "notSchemaRule": "Questa regola non è una regola di validazione schema e non può essere modificata da questa pagina."
-    },
-    "submitted_one": "Inviata {{count}} regola per revisione",
-    "submitted_other": "Inviate {{count}} regole per revisione",
-    "submitFailed_one": "{{count}} regola non inviata",
-    "submitFailed_other": "{{count}} regole non inviate",
-    "snapshotDone_one": "Snapshot di {{count}} colonna dalla tabella destinazione",
-    "snapshotDone_other": "Snapshot di {{count}} colonne dalla tabella destinazione",
-    "errors": {
-      "pickTable": "Seleziona una tabella destinazione prima dello snapshot.",
-      "emptyDdl": "La tabella destinazione non ha colonne — nulla da catturare.",
-      "snapshotFailed": "Snapshot dello schema dalla tabella destinazione fallito",
-      "invalidForm": "Compila i campi obbligatori sopra per salvare.",
-      "saveFailed": "Salvataggio regola schema fallito"
-    },
-    "dryRun": {
-      "title": "Esecuzione di prova",
-      "description": "Esegui la regola su un campione della tabella destinazione per convalidarla prima di salvare. Nulla viene persistito nella cronologia.",
-      "sampleRows": "Righe di campione",
-      "sampleRowsHint": "DQX campiona questo numero di righe dalla tabella destinazione prima di applicare il controllo. has_valid_schema è a livello di dataset, quindi la dimensione del campione influisce soprattutto sulla velocità di avvio di Spark — scegli qualche centinaio per feedback rapido.",
-      "maxRows": "(max 10.000)",
-      "run": "Avvia esecuzione di prova",
-      "running": "In esecuzione…",
-      "needsValidRule": "Completa il modulo sopra per abilitare l'esecuzione di prova.",
-      "jobStatus": "Stato del job:",
-      "toastSubmitted": "Esecuzione di prova inviata",
-      "toastComplete": "Esecuzione di prova completata",
-      "toastFetchFailed": "Impossibile caricare i risultati dell'esecuzione di prova",
-      "toastFailed": "Esecuzione di prova fallita: {{message}}",
-      "toastUnknownError": "errore sconosciuto",
-      "toastStatusFailed": "Impossibile verificare lo stato dell'esecuzione di prova",
-      "toastSubmitFailed": "Impossibile inviare l'esecuzione di prova",
-      "toastSubmitFailedDetail": "Impossibile inviare l'esecuzione di prova: {{detail}}"
-    }
-  },
   "rulesFromContract": {
     "breadcrumb": "Da contratto dati",
     "title": "Genera regole da contratto dati",
@@ -716,6 +605,7 @@
     "dryRunCanceled": "Esecuzione di prova annullata",
     "failedCancelDryRun": "Impossibile annullare l'esecuzione di prova",
     "dryRunSubmitted": "Esecuzione di prova inviata — in attesa di risultati...",
+    "notSqlRule": "Questa regola non è un controllo SQL tra tabelle e non può essere modificata qui.",
     "noSqlGenerated": "L'IA non ha generato controlli SQL. Prova a essere più specifico su tabelle e condizioni.",
     "sqlCheckGenerated_one": "{{count}} controllo SQL generato dall'IA",
     "sqlCheckGenerated_other": "{{count}} controlli SQL generati dall'IA",
