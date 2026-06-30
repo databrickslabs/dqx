@@ -2,9 +2,10 @@ import logging
 import functools as ft
 import inspect
 from collections.abc import Callable
-from dataclasses import dataclass, field
 from types import UnionType
 from typing import Any, get_origin, get_args
+
+from pydantic import BaseModel, ConfigDict
 
 from databricks.labs.dqx.checks_resolver import resolve_check_function
 from databricks.labs.dqx.rule import Criticality
@@ -12,34 +13,37 @@ from databricks.labs.dqx.rule import Criticality
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
-class ChecksValidationStatus:
-    """Class to represent the validation status."""
+class ChecksValidationStatus(BaseModel):
+    """Class to represent the validation status.
 
-    _errors: list[str] = field(default_factory=list)
+    This model is used as a mutable accumulator: *add_error* and *add_errors* append to the
+    *errors* list in place.  Pydantic instantiates a fresh copy of the ``[]`` default for each
+    instance, so the list is never shared between instances created via the constructor.  The
+    only sharing risk is a shallow ``model_copy()`` (without ``deep=True``); this model is never
+    shallow-copied, but use ``model_copy(deep=True)`` if that ever changes.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    errors: list[str] = []
 
     def add_error(self, error: str):
         """Add an error to the validation status."""
-        self._errors.append(error)
+        self.errors.append(error)
 
     def add_errors(self, errors: list[str]):
-        """Add an error to the validation status."""
-        self._errors.extend(errors)
+        """Add errors to the validation status."""
+        self.errors.extend(errors)
 
     @property
     def has_errors(self) -> bool:
         """Check if there are any errors in the validation status."""
-        return bool(self._errors)
-
-    @property
-    def errors(self) -> list[str]:
-        """Get the list of errors in the validation status."""
-        return self._errors
+        return bool(self.errors)
 
     def to_string(self) -> str:
         """Convert the validation status to a string."""
         if self.has_errors:
-            return "\n".join(self._errors)
+            return "\n".join(self.errors)
         return "No errors found"
 
     def __str__(self) -> str:

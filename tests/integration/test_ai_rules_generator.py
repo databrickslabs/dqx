@@ -126,11 +126,11 @@ def test_generate_dq_rules_ai_assisted_with_custom_functions(ws, spark):
 
     expected_checks = EXPECTED_CHECKS + [
         {
-            'check': {
-                'arguments': {'column': 'email', 'suffix': '@gmail.com'},
-                'function': 'not_ends_with_suffix',
+            "check": {
+                "arguments": {"column": "email", "suffix": "@gmail.com"},
+                "function": "not_ends_with_suffix",
             },
-            'criticality': 'error',
+            "criticality": "error",
         }
     ]
     assert actual_checks == expected_checks
@@ -206,6 +206,34 @@ def test_generate_dq_rules_ai_assisted_with_summary_stats_only(ws, spark):
     # Verify checks were generated and are valid
     assert len(actual_checks) > 0
     assert not DQEngineCore.validate_checks(actual_checks).has_errors
+
+
+def test_generate_dq_rules_ai_assisted_email_format_with_summary_stats(ws, spark):
+    """Email column from summary stats should yield a valid is_valid_email check.
+
+    Regression for the stats training example that referenced the non-existent
+    `is_email` function (corrected to `is_valid_email`). Previously the model
+    imitated the bad example and the rule was silently dropped by validation,
+    producing no email-format check at all.
+    """
+    user_input = "Email addresses must be present and follow a valid email format."
+    summary_stats = {
+        "email": {"mean": None, "min": "alice@example.com", "max": "zoe@example.com"},
+        "username": {"mean": None, "min": "alice", "max": "zoe"},
+        "account_status": {"mean": None, "min": "active", "max": "suspended"},
+    }
+
+    generator = DQGenerator(ws, spark)
+    actual_checks = generator.generate_dq_rules_ai_assisted(user_input=user_input, summary_stats=summary_stats)
+
+    assert not DQEngineCore.validate_checks(actual_checks).has_errors
+    email_format_checks = [
+        c
+        for c in actual_checks
+        if c.get("check", {}).get("function") == "is_valid_email"
+        and c.get("check", {}).get("arguments", {}).get("column") == "email"
+    ]
+    assert len(email_format_checks) == 1, f"Expected one is_valid_email check for email, got: {actual_checks}"
 
 
 def test_generate_dq_rules_ai_assisted_sql_query_with_custom_input_placeholder(ws, spark):

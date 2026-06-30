@@ -1,8 +1,11 @@
-"""Unit tests for rule fingerprinting, expansion, and serialization alignment."""
+"""Unit tests for rule fingerprinting, replacement, expansion, and serialization alignment."""
 
 import re
 
-from databricks.labs.dqx.check_funcs import is_not_null, is_not_null_and_not_empty
+import pytest
+
+from databricks.labs.dqx.check_funcs import is_not_null, is_not_null_and_not_empty, is_unique
+from databricks.labs.dqx.errors import InvalidCheckError
 from databricks.labs.dqx.rule import DQRowRule
 from databricks.labs.dqx.rule_fingerprint import (
     compute_rule_fingerprint,
@@ -282,3 +285,49 @@ def test_compute_rule_fingerprint_none_arguments_same_as_empty():
     fp_none = compute_rule_fingerprint(check_none_args)
     fp_empty = compute_rule_fingerprint(check_empty_args)
     assert fp_none == fp_empty
+
+
+def test_dq_rule_replace_returns_new_instance_with_overrides_and_preserves_other_fields():
+    """`replace()` returns a new rule of the same concrete type with overrides applied and other
+    fields preserved, leaving the original (frozen) instance untouched."""
+    rule = DQRowRule(name="id_not_null", criticality="error", check_func=is_not_null, column="id")
+
+    replaced = rule.replace(criticality="warn")
+
+    assert replaced is not rule
+    assert isinstance(replaced, DQRowRule)
+    assert replaced.criticality == "warn"  # overridden
+    assert replaced.column == "id"  # preserved
+    assert replaced.check_func is is_not_null  # preserved
+    assert replaced.name == "id_not_null"  # preserved
+    assert rule.criticality == "error"  # original is frozen and must be untouched
+
+
+def test_dq_rule_replace_recomputes_cached_fingerprint_from_updated_fields():
+    """`replace()` recomputes `functools.cached_property` state instead of copying it stale.
+
+    `rule_fingerprint` is cached and derived from the rule's fields. After the cache is populated,
+    replacing a fingerprint-affecting field must yield the fingerprint of an equivalently-built rule,
+    not the stale pre-replace value. A shallow `model_copy(update=...)` would carry over the cached
+    hash and fail this assertion."""
+    # `name` is part of the fingerprint, so it is held constant across rule/replaced/expected to
+    # isolate `column` as the only fingerprint-affecting difference.
+    rule = DQRowRule(name="shared", criticality="error", check_func=is_not_null, column="id")
+    original_fingerprint = rule.rule_fingerprint  # populate the cached_property before replacing
+
+    replaced = rule.replace(column="other_col")
+
+    expected = DQRowRule(name="shared", criticality="error", check_func=is_not_null, column="other_col")
+    assert replaced.rule_fingerprint == expected.rule_fingerprint
+    assert replaced.rule_fingerprint != original_fingerprint
+
+
+def test_dq_rule_replace_reruns_validation():
+    """`replace()` rebuilds through the constructor, so validators re-run against the new fields.
+
+    Swapping a dataset-level function onto a row-level rule must raise `InvalidCheckError`; a shallow
+    `model_copy(update=...)` would skip validation and silently produce an invalid rule."""
+    rule = DQRowRule(name="id_not_null", criticality="error", check_func=is_not_null, column="id")
+
+    with pytest.raises(InvalidCheckError):
+        rule.replace(check_func=is_unique)
