@@ -7,42 +7,43 @@ adapters (Slack, Teams, generic webhook, …) must satisfy.
 from __future__ import annotations
 
 import abc
-from typing import ClassVar
+
+from pydantic import BaseModel, model_validator
 
 from databricks.labs.dqx.actions.base import ActionContext, ActionServices
 from databricks.labs.dqx.actions.message import AlertMessage
+from databricks.labs.dqx.errors import InvalidActionError
 
 
-class AlertDestination(abc.ABC):
-    """Abstract base for all DQX alert destination implementations.
+class AlertDestination(BaseModel, abc.ABC):
+    """Abstract Pydantic base for all DQX alert destination implementations.
 
-    Subclasses must set *type* as a class-level string identifier and
-    override *deliver* to send the alert via their own transport.  They may
-    optionally override *validate* to check their own configuration at
-    construction time.
+    Subclasses declare a literal *type* discriminator field and override
+    *deliver* to send the alert via their own transport.  Construction-time
+    validation of a subclass's own configuration is performed by Pydantic
+    validators rather than a separate *validate* method.
 
-    Class attributes:
-        type: Short string identifier for this destination type (e.g.
-            ``"slack"``, ``"teams"``, ``"webhook"``).  Set by each
-            concrete subclass.
-
-    Instance attributes:
-        name: Logical name for this destination instance.  Set by subclasses.
+    Attributes:
+        name: Logical name for this destination instance.  Must be non-empty.
     """
 
-    type: ClassVar[str]
+    model_config = {"arbitrary_types_allowed": True}
+
     name: str
 
-    def validate(self) -> None:
-        """Validate this destination's configuration.
+    @model_validator(mode="after")
+    def _validate_name(self) -> "AlertDestination":
+        """Validate that *name* is a non-empty string.
 
-        The default implementation is a no-op.  Override in subclasses to
-        raise *InvalidActionError* when the destination's own configuration
-        is invalid.
+        Returns:
+            This destination instance.
 
         Raises:
-            InvalidActionError: If the destination configuration is invalid.
+            InvalidActionError: If *name* is empty.
         """
+        if not self.name:
+            raise InvalidActionError("AlertDestination 'name' must be a non-empty string.")
+        return self
 
     @abc.abstractmethod
     def deliver(self, message: AlertMessage, context: ActionContext, services: ActionServices) -> None:

@@ -19,11 +19,13 @@ from databricks.labs.dqx.actions.destinations.base import AlertDestination
 from databricks.labs.dqx.actions.destinations.callback import CallbackDQAlertDestination
 from databricks.labs.dqx.actions.destinations.slack import SlackDQAlertDestination
 from databricks.labs.dqx.actions.destinations.teams import TeamsDQAlertDestination
+from databricks.labs.dqx.actions.destinations.union import AnyDestination
 from databricks.labs.dqx.actions.destinations.webhook import WebhookDQAlertDestination
 from databricks.labs.dqx.actions.destinations.webhook_base import WebhookAlertDestination
 
 __all__ = [
     "AlertDestination",
+    "AnyDestination",
     "WebhookAlertDestination",
     "SlackDQAlertDestination",
     "TeamsDQAlertDestination",

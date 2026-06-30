@@ -8,13 +8,15 @@ This module defines the foundational building blocks used throughout the
 - *ActionResult* — frozen record of a single action's outcome.
 - *ActionServices* — container for injectable services (secret resolver,
   webhook client, workspace client, Spark session).
-- *Action* — abstract base class that concrete actions extend.
-- *DQAction* — dataclass that binds an *Action* to an optional gating condition
-  and a logical name.
+- *Action* — abstract Pydantic base class that concrete actions extend.
+
+The *DQAction* binding lives in *actions/dq_action.py* rather than here: its
+*action* field is the discriminated union over the concrete action classes,
+which import this module, so declaring it here would create an import cycle.
 
 Forward-reference strategy
 --------------------------
-*WebhookClient* (defined in ``actions/delivery.py``, Task 6) and *SparkSession*
+*WebhookClient* (defined in ``actions/delivery.py``) and *SparkSession*
 (from ``pyspark.sql``) would introduce heavy or cyclic imports if resolved at
 module load time.  Both are therefore imported **only** inside the
 ``TYPE_CHECKING`` guard so that static type checkers can resolve them while the
@@ -30,9 +32,10 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from pydantic import BaseModel
+
 from databricks.sdk import WorkspaceClient
 
-from databricks.labs.dqx.actions.conditions import ConditionEvaluator
 from databricks.labs.dqx.actions.secrets import SecretResolver
 
 if TYPE_CHECKING:
@@ -155,30 +158,23 @@ class ActionServices:
 # ---------------------------------------------------------------------------
 
 
-class Action(abc.ABC):
-    """Abstract base class for all DQX action implementations.
+class Action(BaseModel, abc.ABC):
+    """Abstract Pydantic base class for all DQX action implementations.
 
-    Subclasses must override *execute*.  They may optionally override
-    *validate* to perform construction-time validation of their own
-    configuration fields; the default implementation is a no-op.
+    Subclasses must declare a literal *type* discriminator field and override
+    *execute*.  Construction-time validation of a subclass's own configuration
+    is performed by Pydantic validators on the subclass (for example, a
+    *model_validator* that raises *InvalidActionError*) rather than a separate
+    *validate* method.
 
-    Class / instance attribute:
-        name: Logical identifier for this action type.  Default is an empty
-            string; concrete subclasses should set a meaningful value.
+    Attributes:
+        name: Logical identifier for this action instance.  Default is an empty
+            string; concrete subclasses set a meaningful value.
     """
 
+    model_config = {"arbitrary_types_allowed": True}
+
     name: str = ""
-
-    def validate(self) -> None:
-        """Validate this action's configuration at construction time.
-
-        The default implementation is a no-op.  Override in subclasses to
-        raise *InvalidActionError* when the action's own configuration is
-        invalid.
-
-        Raises:
-            InvalidActionError: If the action configuration is invalid.
-        """
 
     @abc.abstractmethod
     def execute(self, context: ActionContext, services: ActionServices) -> ActionResult:
@@ -196,71 +192,10 @@ class Action(abc.ABC):
         """
 
 
-# ---------------------------------------------------------------------------
-# DQAction
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class DQAction:
-    """Binds an *Action* to an optional gating condition and a logical name.
-
-    The required field *action* is listed first so callers may omit it by
-    position when the action is the only argument::
-
-        DQAction(action=MyAction())
-        DQAction(condition="error_row_count > 0", action=MyAction())
-
-    A ``None`` *condition* means the action fires unconditionally after every
-    DQX run.  A non-``None`` *condition* is validated at construction time via
-    *ConditionEvaluator.validate* — a malformed expression surfaces immediately
-    rather than at evaluation time.
-
-    The *action*'s own *validate()* is also called during construction, so
-    configuration errors in the action itself are surfaced early.
-
-    Name derivation (applied when *name* is empty):
-
-    1. Use *action.name* if non-empty.
-    2. Otherwise, if *condition* is set, derive a compact label from the
-       condition string.
-    3. Otherwise, use the action's class name.
-
-    Attributes:
-        action: The *Action* instance to execute.
-        condition: Optional gating expression.  When *None* the action fires
-            unconditionally.
-        name: Logical name for this *DQAction* configuration entry.  Derived
-            automatically when left empty.
-    """
-
-    action: Action
-    condition: str | None = None
-    name: str = ""
-
-    def __post_init__(self) -> None:
-        if self.condition is not None:
-            ConditionEvaluator.validate(self.condition)
-
-        self.action.validate()
-
-        if not self.name:
-            if self.action.name:
-                self.name = self.action.name
-            elif self.condition is not None:
-                # Compact label: strip whitespace, replace spaces with underscores,
-                # truncate to keep names readable.
-                label = self.condition.strip().replace(" ", "_")[:64]
-                self.name = label
-            else:
-                self.name = type(self.action).__name__
-
-
 __all__ = [
     "Action",
     "ActionContext",
     "ActionResult",
     "ActionServices",
     "ActionStatus",
-    "DQAction",
 ]

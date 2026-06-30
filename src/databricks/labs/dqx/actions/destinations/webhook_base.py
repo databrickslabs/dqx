@@ -8,28 +8,28 @@ concrete subclasses via *_build_payload*.
 from __future__ import annotations
 
 import abc
-from dataclasses import dataclass
 from typing import ClassVar
+
+from pydantic import model_validator
 
 from databricks.labs.dqx.actions.base import ActionContext, ActionServices
 from databricks.labs.dqx.actions.delivery import WebhookAuth
 from databricks.labs.dqx.actions.destinations.base import AlertDestination
 from databricks.labs.dqx.actions.message import AlertMessage
-from databricks.labs.dqx.config import DQSecret
+from databricks.labs.dqx.actions.secret_field import SecretOrStr
 from databricks.labs.dqx.errors import InvalidActionError
 
 
-@dataclass
 class WebhookAlertDestination(AlertDestination, abc.ABC):
-    """Abstract dataclass base for webhook alert destinations.
+    """Abstract Pydantic base for webhook alert destinations.
 
-    Provides concrete *deliver* and *validate* implementations, and exposes
-    two extension hooks: *_build_payload* (required) for producing the
-    wire-format payload, and *_build_auth* (optional, returns *None* by
-    default) for attaching HTTP Basic-auth credentials.
+    Provides a concrete *deliver* implementation and exposes two extension
+    hooks: *_build_payload* (required) for producing the wire-format payload,
+    and *_build_auth* (optional, returns *None* by default) for attaching HTTP
+    Basic-auth credentials.
 
-    Subclasses set *type* and *allowed_host_suffixes* as class variables, and
-    implement *_build_payload*.
+    Subclasses declare *type* (the literal discriminator) and may override
+    *allowed_host_suffixes*, and implement *_build_payload*.
 
     Class attributes:
         allowed_host_suffixes: Optional list of allowed host suffixes passed
@@ -44,20 +44,21 @@ class WebhookAlertDestination(AlertDestination, abc.ABC):
 
     allowed_host_suffixes: ClassVar[list[str] | None] = None
 
-    name: str
-    webhook_url: str | DQSecret
+    webhook_url: SecretOrStr
 
-    def validate(self) -> None:
-        """Validate *name* and *webhook_url* are non-empty.
+    @model_validator(mode="after")
+    def _validate_webhook_url(self) -> "WebhookAlertDestination":
+        """Validate that *webhook_url* is a non-empty string or a *DQSecret*.
+
+        Returns:
+            This destination instance.
 
         Raises:
-            InvalidActionError: If *name* is empty, or if *webhook_url* is an
-                empty string.
+            InvalidActionError: If *webhook_url* is an empty string.
         """
-        if not self.name:
-            raise InvalidActionError("AlertDestination 'name' must be a non-empty string.")
         if isinstance(self.webhook_url, str) and not self.webhook_url:
             raise InvalidActionError("AlertDestination 'webhook_url' must be a non-empty string or DQSecret.")
+        return self
 
     @abc.abstractmethod
     def _build_payload(self, message: AlertMessage) -> dict[str, object]:

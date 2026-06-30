@@ -9,17 +9,15 @@ enable HTTP Basic-auth.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import ClassVar
+from typing import ClassVar, Literal
 
 from databricks.labs.dqx.actions.base import ActionServices
 from databricks.labs.dqx.actions.delivery import WebhookAuth
 from databricks.labs.dqx.actions.destinations.webhook_base import WebhookAlertDestination
 from databricks.labs.dqx.actions.message import AlertMessage
-from databricks.labs.dqx.config import DQSecret
+from databricks.labs.dqx.actions.secret_field import SecretOrStr
 
 
-@dataclass
 class WebhookDQAlertDestination(WebhookAlertDestination):
     """Generic HTTPS webhook destination with optional Basic-auth.
 
@@ -30,10 +28,10 @@ class WebhookDQAlertDestination(WebhookAlertDestination):
     *WebhookClient*.
 
     Class attributes:
-        type: Always ``"webhook"``.
         allowed_host_suffixes: *None* — no host restriction.
 
     Attributes:
+        type: Discriminator literal, always ``"webhook"``.
         name: Logical name for this destination instance.
         webhook_url: The endpoint URL (plain string or *DQSecret*).
         username: Optional Basic-auth username (plain string or *DQSecret*).
@@ -44,11 +42,11 @@ class WebhookDQAlertDestination(WebhookAlertDestination):
             production.
     """
 
-    type: ClassVar[str] = "webhook"
+    type: Literal["webhook"] = "webhook"
     allowed_host_suffixes: ClassVar[list[str] | None] = None
 
-    username: str | DQSecret | None = field(default=None)
-    password: str | DQSecret | None = field(default=None)
+    username: SecretOrStr | None = None
+    password: SecretOrStr | None = None
 
     def _build_auth(self, services: ActionServices) -> WebhookAuth | None:
         """Build *WebhookAuth* when both *username* and *password* are set.

@@ -7,14 +7,12 @@ and ``office.com`` suffixes.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import ClassVar
+from typing import ClassVar, Literal
 
 from databricks.labs.dqx.actions.destinations.webhook_base import WebhookAlertDestination
 from databricks.labs.dqx.actions.message import AlertMessage
 
 
-@dataclass
 class TeamsDQAlertDestination(WebhookAlertDestination):
     """Microsoft Teams incoming-webhook destination using MessageCard format.
 
@@ -23,16 +21,16 @@ class TeamsDQAlertDestination(WebhookAlertDestination):
     derived from *message.fields*.
 
     Class attributes:
-        type: Always ``"teams"``.
         allowed_host_suffixes: Restricts delivery to ``webhook.office.com``
             and ``office.com`` hosts.
 
     Attributes:
+        type: Discriminator literal, always ``"teams"``.
         name: Logical name for this destination instance.
         webhook_url: The Teams incoming webhook URL (plain string or *DQSecret*).
     """
 
-    type: ClassVar[str] = "teams"
+    type: Literal["teams"] = "teams"
     allowed_host_suffixes: ClassVar[list[str] | None] = ["webhook.office.com", "office.com"]
 
     def _build_payload(self, message: AlertMessage) -> dict[str, object]:

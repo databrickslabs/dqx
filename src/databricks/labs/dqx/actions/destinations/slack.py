@@ -7,14 +7,12 @@ accidental or malicious redirection to non-Slack endpoints.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import ClassVar
+from typing import ClassVar, Literal
 
 from databricks.labs.dqx.actions.destinations.webhook_base import WebhookAlertDestination
 from databricks.labs.dqx.actions.message import AlertMessage
 
 
-@dataclass
 class SlackDQAlertDestination(WebhookAlertDestination):
     """Slack incoming-webhook destination using Slack Block Kit format.
 
@@ -23,15 +21,15 @@ class SlackDQAlertDestination(WebhookAlertDestination):
     table, run metadata, severity, and all observed metrics.
 
     Class attributes:
-        type: Always ``"slack"``.
         allowed_host_suffixes: Restricts delivery to ``hooks.slack.com``.
 
     Attributes:
+        type: Discriminator literal, always ``"slack"``.
         name: Logical name for this destination instance.
         webhook_url: The Slack incoming webhook URL (plain string or *DQSecret*).
     """
 
-    type: ClassVar[str] = "slack"
+    type: Literal["slack"] = "slack"
     allowed_host_suffixes: ClassVar[list[str] | None] = ["hooks.slack.com"]
 
     def _build_payload(self, message: AlertMessage) -> dict[str, object]:

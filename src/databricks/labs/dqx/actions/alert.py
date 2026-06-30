@@ -11,13 +11,17 @@ from __future__ import annotations
 
 import enum
 import logging
-from dataclasses import dataclass
+from typing import Literal
+
+from pydantic import field_serializer, model_validator
 
 from databricks.labs.blueprint.parallel import Threads
 
 from databricks.labs.dqx.actions.base import Action, ActionContext, ActionResult, ActionServices, ActionStatus
 from databricks.labs.dqx.actions.log_sanitize import sanitize_for_log as _sanitize
 from databricks.labs.dqx.actions.destinations.base import AlertDestination
+from databricks.labs.dqx.actions.destinations.callback import CallbackDQAlertDestination
+from databricks.labs.dqx.actions.destinations.union import AnyDestination
 from databricks.labs.dqx.actions.message import AlertMessage, StandardMessageBuilder
 from databricks.labs.dqx.errors import InvalidActionError
 
@@ -84,7 +88,6 @@ def _make_deliver_task(
         error_map[destination.name] = sanitized
 
 
-@dataclass
 class DQAlert(Action):
     """Sends alert notifications to one or more *AlertDestination* instances.
 
@@ -95,8 +98,10 @@ class DQAlert(Action):
     *ActionResult.destination_errors* rather than re-raised.
 
     Attributes:
+        type: Discriminator literal, always ``"alert"``.
         destinations: One or more *AlertDestination* adapters that receive the
-            alert (Slack, Teams, webhook, …).  Must not be empty.
+            alert (Slack, Teams, webhook, …).  Must not be empty, and names
+            must be unique.
         name: Logical identifier for this alert action; defaults to ``"alert"``.
         alert_frequency: Controls how often alerts may be sent; defaults to
             *DQAlertFrequency.ALWAYS*.
@@ -106,36 +111,62 @@ class DQAlert(Action):
             defaults to ``"error"``.
     """
 
-    destinations: list[AlertDestination]
+    type: Literal["alert"] = "alert"
+    destinations: list[AnyDestination]
     name: str = ""
     alert_frequency: DQAlertFrequency = DQAlertFrequency.ALWAYS
     notify_on: NotifyOn = NotifyOn.EACH
     severity: str = "error"
 
-    def __post_init__(self) -> None:
-        if not self.name:
-            self.name = "alert"
-
-    def validate(self) -> None:
-        """Validate that at least one destination is configured, names are unique, and each destination is valid.
+    @model_validator(mode="after")
+    def _validate_alert(self) -> "DQAlert":
+        """Derive the default name and validate the destination list.
 
         Destination names must be unique because delivery failures are keyed by
         destination name in *ActionResult.destination_errors*; duplicate names
         would silently overwrite one another and lose error information.
 
+        Returns:
+            This *DQAlert* instance, with *name* populated.
+
         Raises:
-            InvalidActionError: If *destinations* is empty.
-            InvalidActionError: If two or more destinations share the same *name*.
-            InvalidActionError: If any destination's own *validate()* raises.
+            InvalidActionError: If *destinations* is empty, or if two or more
+                destinations share the same *name*.
         """
+        if not self.name:
+            self.name = "alert"
         if not self.destinations:
             raise InvalidActionError("DQAlert must have at least one destination configured.")
         names = [destination.name for destination in self.destinations]
         duplicates = sorted({name for name in names if names.count(name) > 1})
         if duplicates:
             raise InvalidActionError(f"DQAlert destination names must be unique; duplicates found: {duplicates}")
-        for destination in self.destinations:
-            destination.validate()
+        return self
+
+    @field_serializer("destinations")
+    def _serialize_destinations(self, destinations: list[AlertDestination]) -> list[dict[str, object]]:
+        """Serialize destinations, excluding non-persistable callbacks.
+
+        *CallbackDQAlertDestination* instances hold a live Python callable that
+        cannot be persisted, so they are skipped with a sanitized warning — the
+        same behaviour as the legacy serializer.
+
+        Args:
+            destinations: The configured destinations.
+
+        Returns:
+            A list of serializable destination dicts, callbacks excluded.
+        """
+        serialized: list[dict[str, object]] = []
+        for destination in destinations:
+            if isinstance(destination, CallbackDQAlertDestination):
+                safe_name = _sanitize(destination.name)
+                logger.warning(
+                    f"Destination '{safe_name}' is a CallbackDQAlertDestination and cannot be serialized; skipping."
+                )
+                continue
+            serialized.append(destination.model_dump(mode="json"))
+        return serialized
 
     def execute(self, context: ActionContext, services: ActionServices) -> ActionResult:
         """Build an alert message and deliver it concurrently to all destinations.

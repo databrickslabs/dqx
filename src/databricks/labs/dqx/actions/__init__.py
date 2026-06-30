@@ -17,8 +17,8 @@ from databricks.labs.dqx.actions.base import (
     ActionResult,
     ActionServices,
     ActionStatus,
-    DQAction,
 )
+from databricks.labs.dqx.actions.dq_action import DQAction
 from databricks.labs.dqx.actions.alert import DQAlert, DQAlertFrequency, NotifyOn
 from databricks.labs.dqx.actions.fail_pipeline import FailPipeline
 from databricks.labs.dqx.actions.destinations import (

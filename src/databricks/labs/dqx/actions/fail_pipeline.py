@@ -9,13 +9,12 @@ completed.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from typing import Literal
 
 from databricks.labs.dqx.actions.base import Action, ActionContext, ActionResult, ActionServices
 from databricks.labs.dqx.errors import PipelineFailedError
 
 
-@dataclass
 class FailPipeline(Action):
     """Raises *PipelineFailedError* to terminate the current DQX run.
 
@@ -25,6 +24,7 @@ class FailPipeline(Action):
     all other actions have run and then propagates the error.
 
     Attributes:
+        type: Discriminator literal, always ``"fail_pipeline"``.
         message: Custom failure message to embed in the raised error.  When
             *None* (the default) a message is generated automatically from the
             observed metrics in *context*.
@@ -32,6 +32,7 @@ class FailPipeline(Action):
             ``"fail_pipeline"``.
     """
 
+    type: Literal["fail_pipeline"] = "fail_pipeline"
     message: str | None = None
     name: str = "fail_pipeline"
 

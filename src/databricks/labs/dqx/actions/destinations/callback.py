@@ -1,15 +1,16 @@
 """Callback alert destination for DQX actions.
 
 Delivers DQX alert messages by invoking an in-process Python callable.
-This destination is not serializable; Task 11's serializer skips it with
-a warning when persisting destination configurations to storage.
+This destination is not persistable; the serializer skips it with a
+warning when persisting destination configurations to storage.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
-from typing import ClassVar
+from typing import Any, Literal
+
+from pydantic import ValidationError, model_validator
 
 from databricks.labs.dqx.actions.base import ActionContext, ActionServices
 from databricks.labs.dqx.actions.destinations.base import AlertDestination
@@ -17,7 +18,6 @@ from databricks.labs.dqx.actions.message import AlertMessage
 from databricks.labs.dqx.errors import InvalidActionError
 
 
-@dataclass(eq=False)
 class CallbackDQAlertDestination(AlertDestination):
     """In-process callback destination that invokes a Python callable on delivery.
 
@@ -25,35 +25,41 @@ class CallbackDQAlertDestination(AlertDestination):
     in the same process (e.g. raising exceptions, writing to an in-memory
     buffer, or triggering a custom side effect).
 
-    This destination is intentionally not serializable.  Task 11's
-    serializer skips instances of this class with a warning rather than
-    attempting to persist the *callback* field.
-
-    Class attributes:
-        type: Always ``"callback"``.
+    This destination is intentionally not persistable.  The serializer skips
+    instances of this class with a warning rather than attempting to persist
+    the *callback* field.  It is still a valid runtime destination.
 
     Attributes:
+        type: Discriminator literal, always ``"callback"``.
         name: Logical name for this destination instance.
         callback: Python callable invoked by *deliver*.  Must accept an
             *AlertMessage* and an *ActionContext* and return *None*.
     """
 
-    type: ClassVar[str] = "callback"
-    name: str
+    type: Literal["callback"] = "callback"
     callback: Callable[[AlertMessage, ActionContext], None]
 
-    def validate(self) -> None:
-        """Validate that *name* is non-empty and *callback* is callable.
+    def __init__(self, **data: Any) -> None:
+        try:
+            super().__init__(**data)
+        except ValidationError as exc:
+            raise InvalidActionError(str(exc)) from exc
+
+    @model_validator(mode="after")
+    def _validate_callback(self) -> "CallbackDQAlertDestination":
+        """Validate that *callback* is callable.
+
+        Returns:
+            This destination instance.
 
         Raises:
-            InvalidActionError: If *name* is empty or *callback* is not callable.
+            InvalidActionError: If *callback* is not callable.
         """
-        if not self.name:
-            raise InvalidActionError("CallbackDQAlertDestination.name must not be empty")
         if not callable(self.callback):
             raise InvalidActionError(
                 f"CallbackDQAlertDestination.callback must be callable, got {type(self.callback).__name__!r}"
             )
+        return self
 
     def deliver(self, message: AlertMessage, context: ActionContext, _services: ActionServices) -> None:
         """Invoke *callback* with *message* and *context*.
