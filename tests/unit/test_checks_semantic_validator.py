@@ -279,6 +279,61 @@ def test_malformed_checks_do_not_crash_validation():
     assert not ChecksSemanticValidator.validate_ruleset(checks)
 
 
+@pytest.mark.parametrize(
+    "checks",
+    [
+        # list-valued filter
+        [
+            {
+                "criticality": "error",
+                "check": {"function": "is_not_null", "arguments": {"column": "x"}},
+                "filter": ["a"],
+            },
+            {
+                "criticality": "error",
+                "check": {"function": "is_not_null", "arguments": {"column": "x"}},
+                "filter": ["a"],
+            },
+        ],
+        # list-valued criticality
+        [
+            {"criticality": ["error"], "check": {"function": "is_not_null", "arguments": {"column": "x"}}},
+            {"criticality": ["error"], "check": {"function": "is_not_null", "arguments": {"column": "x"}}},
+        ],
+        # nested list inside the 'columns' argument (conflict path)
+        [
+            {"criticality": "error", "check": {"function": "f", "arguments": {"columns": [["a", "b"]], "x": 1}}},
+            {"criticality": "error", "check": {"function": "f", "arguments": {"columns": [["a", "b"]], "x": 2}}},
+        ],
+        # dict-valued argument
+        [
+            {"criticality": "error", "check": {"function": "f", "arguments": {"column": "x", "opts": {"k": [1, 2]}}}},
+            {"criticality": "error", "check": {"function": "f", "arguments": {"column": "x", "opts": {"k": [1, 2]}}}},
+        ],
+    ],
+)
+def test_unhashable_values_do_not_crash_validation(checks):
+    """List/dict-valued fields must not raise 'unhashable type' when building rule keys."""
+    # Must not raise, regardless of mode.
+    ChecksSemanticValidator.validate_ruleset(checks)
+    ChecksSemanticValidator.apply(checks, mode=ChecksSemanticValidationMode.WARN)
+    ChecksSemanticValidator.detect_duplicates(checks)
+    ChecksSemanticValidator.detect_conflicts(checks)
+
+
+def test_unhashable_value_beyond_normalization_is_skipped(caplog):
+    """A value that stays unhashable (e.g. a set) is skipped and logged, not raised."""
+    checks = [
+        {"criticality": "error", "check": {"function": "is_not_null", "arguments": {"column": "x"}}, "filter": {"a"}},
+        {"criticality": "error", "check": {"function": "is_not_null", "arguments": {"column": "x"}}, "filter": {"a"}},
+    ]
+    with caplog.at_level(logging.WARNING, logger="databricks.labs.dqx.checks_semantic_validator"):
+        # Must not raise; the malformed checks are skipped.
+        assert ChecksSemanticValidator.detect_duplicates(checks) == []
+        assert ChecksSemanticValidator.detect_conflicts(checks) == []
+    assert any("Skipping" in r.message for r in caplog.records)
+
+
 # ---------------------------------------------------------------------------
 # validate_ruleset
 # ---------------------------------------------------------------------------
