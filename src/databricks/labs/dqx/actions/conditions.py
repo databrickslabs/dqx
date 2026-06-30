@@ -13,12 +13,105 @@ The evaluator is purely structural, operating on the parsed AST.
 """
 
 import ast
-import operator
+import collections.abc
+
+from typing import cast
 
 from databricks.labs.dqx.errors import InvalidConditionError
 
 # ---------------------------------------------------------------------------
-# Operator maps
+# Typed operator wrapper functions
+# ---------------------------------------------------------------------------
+# These thin wrappers give each operator an explicit signature that mypy can
+# verify.  Arithmetic/ordering operators require numeric operands; they cast
+# to float here — the existing _coerce_numeric call in _eval_name already
+# converts numeric strings, so a non-float/int at this point means the user
+# passed a non-numeric metric value, which Python will surface as TypeError
+# and the callers convert to InvalidConditionError.
+
+
+def _op_not(val: object) -> bool:
+    """Logical not of *val*."""
+    return not val
+
+
+def _op_neg(val: object) -> object:
+    """Arithmetic negation of *val* (must be numeric)."""
+    return -cast(float, val)
+
+
+def _op_pos(val: object) -> object:
+    """Arithmetic identity of *val* (must be numeric)."""
+    return +cast(float, val)
+
+
+def _op_add(lhs: object, rhs: object) -> object:
+    """Add *lhs* and *rhs* (must be numeric)."""
+    return cast(float, lhs) + cast(float, rhs)
+
+
+def _op_sub(lhs: object, rhs: object) -> object:
+    """Subtract *rhs* from *lhs* (must be numeric)."""
+    return cast(float, lhs) - cast(float, rhs)
+
+
+def _op_mul(lhs: object, rhs: object) -> object:
+    """Multiply *lhs* and *rhs* (must be numeric)."""
+    return cast(float, lhs) * cast(float, rhs)
+
+
+def _op_truediv(lhs: object, rhs: object) -> object:
+    """Divide *lhs* by *rhs* (must be numeric)."""
+    return cast(float, lhs) / cast(float, rhs)
+
+
+def _op_floordiv(lhs: object, rhs: object) -> object:
+    """Floor-divide *lhs* by *rhs* (must be numeric)."""
+    return cast(float, lhs) // cast(float, rhs)
+
+
+def _op_mod(lhs: object, rhs: object) -> object:
+    """Modulo *lhs* by *rhs* (must be numeric)."""
+    return cast(float, lhs) % cast(float, rhs)
+
+
+def _op_pow(lhs: object, rhs: object) -> object:
+    """Raise *lhs* to the power *rhs* (must be numeric)."""
+    return cast(float, lhs) ** cast(float, rhs)
+
+
+def _op_lt(lhs: object, rhs: object) -> bool:
+    """Return *lhs* < *rhs* (must be numeric)."""
+    return cast(float, lhs) < cast(float, rhs)
+
+
+def _op_le(lhs: object, rhs: object) -> bool:
+    """Return *lhs* <= *rhs* (must be numeric)."""
+    return cast(float, lhs) <= cast(float, rhs)
+
+
+def _op_gt(lhs: object, rhs: object) -> bool:
+    """Return *lhs* > *rhs* (must be numeric)."""
+    return cast(float, lhs) > cast(float, rhs)
+
+
+def _op_ge(lhs: object, rhs: object) -> bool:
+    """Return *lhs* >= *rhs* (must be numeric)."""
+    return cast(float, lhs) >= cast(float, rhs)
+
+
+def _op_eq(lhs: object, rhs: object) -> bool:
+    """Return *lhs* == *rhs* (valid for any object)."""
+    return lhs == rhs
+
+
+def _op_ne(lhs: object, rhs: object) -> bool:
+    """Return *lhs* != *rhs* (valid for any object)."""
+    return lhs != rhs
+
+
+# ---------------------------------------------------------------------------
+# Operator maps — typed Callable values so callers need no type: ignore
 # ---------------------------------------------------------------------------
 
 _BOOL_OPS: dict[type, str] = {
@@ -26,29 +119,29 @@ _BOOL_OPS: dict[type, str] = {
     ast.Or: "or",
 }
 
-_UNARY_OPS: dict[type, object] = {
-    ast.Not: operator.not_,
-    ast.USub: operator.neg,
-    ast.UAdd: operator.pos,
+_UNARY_OPS: dict[type[ast.unaryop], collections.abc.Callable[[object], object]] = {
+    ast.Not: _op_not,
+    ast.USub: _op_neg,
+    ast.UAdd: _op_pos,
 }
 
-_BIN_OPS: dict[type, object] = {
-    ast.Add: operator.add,
-    ast.Sub: operator.sub,
-    ast.Mult: operator.mul,
-    ast.Div: operator.truediv,
-    ast.FloorDiv: operator.floordiv,
-    ast.Mod: operator.mod,
-    ast.Pow: operator.pow,
+_BIN_OPS: dict[type[ast.operator], collections.abc.Callable[[object, object], object]] = {
+    ast.Add: _op_add,
+    ast.Sub: _op_sub,
+    ast.Mult: _op_mul,
+    ast.Div: _op_truediv,
+    ast.FloorDiv: _op_floordiv,
+    ast.Mod: _op_mod,
+    ast.Pow: _op_pow,
 }
 
-_CMP_OPS: dict[type, object] = {
-    ast.Lt: operator.lt,
-    ast.LtE: operator.le,
-    ast.Gt: operator.gt,
-    ast.GtE: operator.ge,
-    ast.Eq: operator.eq,
-    ast.NotEq: operator.ne,
+_CMP_OPS: dict[type[ast.cmpop], collections.abc.Callable[[object, object], bool]] = {
+    ast.Lt: _op_lt,
+    ast.LtE: _op_le,
+    ast.Gt: _op_gt,
+    ast.GtE: _op_ge,
+    ast.Eq: _op_eq,
+    ast.NotEq: _op_ne,
 }
 
 # Constant types allowed in conditions
@@ -152,15 +245,18 @@ def _coerce_numeric(value: object) -> object:
 # Node-specific evaluation helpers
 # ---------------------------------------------------------------------------
 
+# Shared evaluator signature: takes an AST node and optional metrics, returns object.
+_EvaluatorFn = collections.abc.Callable[["ast.AST", "dict[str, object] | None"], object]
 
-def _eval_constant(node: ast.Constant, _metrics: dict[str, object] | None = None) -> object:
+
+def _eval_constant(node: ast.AST, _metrics: dict[str, object] | None = None) -> object:
     """Evaluate a :class:`ast.Constant` node.
 
     The *_metrics* parameter is accepted (and ignored) so that all evaluators
     in the dispatch table share the same ``(node, metrics)`` signature.
     Constant-type validation has already been performed by the pre-pass.
     """
-    return node.value
+    return cast(ast.Constant, node).value
 
 
 def _eval_name(node: ast.Name, metrics: dict[str, object] | None) -> object:
@@ -176,64 +272,68 @@ def _eval_name(node: ast.Name, metrics: dict[str, object] | None) -> object:
     return _coerce_numeric(metrics[name])
 
 
-def _eval_boolop(node: ast.BoolOp, metrics: dict[str, object] | None) -> object:
+def _eval_boolop(node: ast.AST, metrics: dict[str, object] | None) -> object:
     """Evaluate a :class:`ast.BoolOp` (``and`` / ``or``) node.
 
     Short-circuit evaluation is safe here because the full-tree pre-pass has
     already validated every node in the tree before any evaluation begins.
     """
-    if isinstance(node.op, ast.And):
+    boolop_node = cast(ast.BoolOp, node)
+    if isinstance(boolop_node.op, ast.And):
         result: object = True
-        for value_node in node.values:
+        for value_node in boolop_node.values:
             result = _walk(value_node, metrics)
             if not result:
                 return result
         return result
     # Or
     result = False
-    for value_node in node.values:
+    for value_node in boolop_node.values:
         result = _walk(value_node, metrics)
         if result:
             return result
     return result
 
 
-def _eval_unaryop(node: ast.UnaryOp, metrics: dict[str, object] | None) -> object:
+def _eval_unaryop(node: ast.AST, metrics: dict[str, object] | None) -> object:
     """Evaluate a :class:`ast.UnaryOp` (``not``, ``-``, ``+``) node."""
-    op_func = _UNARY_OPS.get(type(node.op))
+    unary_node = cast(ast.UnaryOp, node)
+    op_func = _UNARY_OPS.get(type(unary_node.op))
     if op_func is None:
-        raise InvalidConditionError(f"Unary operator '{type(node.op).__name__}' is not allowed in conditions")
-    operand = _walk(node.operand, metrics)
+        raise InvalidConditionError(f"Unary operator '{type(unary_node.op).__name__}' is not allowed in conditions")
+    operand = _walk(unary_node.operand, metrics)
     try:
-        return op_func(operand)  # type: ignore[operator]
+        return op_func(operand)
     except (TypeError, OverflowError) as exc:
         raise InvalidConditionError(f"Operator error in condition: {exc}") from exc
 
 
-def _eval_binop(node: ast.BinOp, metrics: dict[str, object] | None) -> object:
+def _eval_binop(node: ast.AST, metrics: dict[str, object] | None) -> object:
     """Evaluate a :class:`ast.BinOp` (+, -, *, /, //, %, **) node."""
-    op_func = _BIN_OPS.get(type(node.op))
+    bin_node = cast(ast.BinOp, node)
+    op_func = _BIN_OPS.get(type(bin_node.op))
     if op_func is None:
-        raise InvalidConditionError(f"Binary operator '{type(node.op).__name__}' is not allowed in conditions")
-    left = _walk(node.left, metrics)
-    right = _walk(node.right, metrics)
+        raise InvalidConditionError(f"Binary operator '{type(bin_node.op).__name__}' is not allowed in conditions")
+    left = _walk(bin_node.left, metrics)
+    right = _walk(bin_node.right, metrics)
     try:
-        return op_func(left, right)  # type: ignore[operator]
+        return op_func(left, right)
     except (ZeroDivisionError, TypeError, OverflowError) as exc:
         raise InvalidConditionError(f"Operator error in condition: {exc}") from exc
 
 
-def _eval_compare(node: ast.Compare, metrics: dict[str, object] | None) -> object:
+def _eval_compare(node: ast.AST, metrics: dict[str, object] | None) -> object:
     """Evaluate a :class:`ast.Compare` node, including chained comparisons."""
-    for cmp_op in node.ops:
+    cmp_node = cast(ast.Compare, node)
+    for cmp_op in cmp_node.ops:
         if type(cmp_op) not in _CMP_OPS:
             raise InvalidConditionError(f"Comparison operator '{type(cmp_op).__name__}' is not allowed in conditions")
-    left = _walk(node.left, metrics)
-    for cmp_op, comparator_node in zip(node.ops, node.comparators):
+    left = _walk(cmp_node.left, metrics)
+    for cmp_op, comparator_node in zip(cmp_node.ops, cmp_node.comparators):
         right = _walk(comparator_node, metrics)
         op_func = _CMP_OPS[type(cmp_op)]
         try:
-            if not op_func(left, right):  # type: ignore[operator]
+            if not op_func(left, right):
                 return False
         except (TypeError, OverflowError) as exc:
             raise InvalidConditionError(f"Operator error in condition: {exc}") from exc
@@ -245,7 +345,7 @@ def _eval_compare(node: ast.Compare, metrics: dict[str, object] | None) -> objec
 # Dispatch table  (node type → evaluator)
 # ---------------------------------------------------------------------------
 
-_EVALUATORS: dict[type, object] = {
+_EVALUATORS: dict[type[ast.AST], _EvaluatorFn] = {
     ast.Constant: _eval_constant,
     ast.BoolOp: _eval_boolop,
     ast.UnaryOp: _eval_unaryop,
@@ -275,7 +375,7 @@ def _walk(node: ast.AST, metrics: dict[str, object] | None) -> object:
 
     evaluator = _EVALUATORS.get(type(node))
     if evaluator is not None:
-        return evaluator(node, metrics)  # type: ignore[call-arg,operator]
+        return evaluator(node, metrics)
 
     raise InvalidConditionError(
         f"AST node type '{type(node).__name__}' is not allowed in conditions; "
