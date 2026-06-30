@@ -1683,6 +1683,7 @@ class DQEngine(DQEngineBase):
 
         # The listener reads observed metrics from the query progress events, so an observer is
         # required whether it writes a metrics table or only evaluates actions.
+        self._validate_metrics_observer(metrics_config)
         if self._engine.observer is None:
             raise InvalidParameterError("A metrics observer is required to create a streaming metrics listener")
 
