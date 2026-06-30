@@ -36,7 +36,7 @@ from databricks.labs.dqx.actions.conditions import ConditionEvaluator
 from databricks.labs.dqx.actions.secrets import SecretResolver
 
 if TYPE_CHECKING:
-    from databricks.labs.dqx.actions.delivery import WebhookClient  # type: ignore[import-untyped]
+    from databricks.labs.dqx.actions.delivery import WebhookClient
     from pyspark.sql import SparkSession
 
 
