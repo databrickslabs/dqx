@@ -19,7 +19,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from databricks.labs.dqx.actions.alert import DQAlert, DQAlertFrequency, NotifyOn
-from databricks.labs.dqx.actions.base import ActionContext, ActionStatus, DQAction
+from databricks.labs.dqx.actions.base import ActionContext, ActionStatus
+from databricks.labs.dqx.actions.dq_action import DQAction
 
 logger = logging.getLogger(__name__)
 

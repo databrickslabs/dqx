@@ -25,7 +25,8 @@ from __future__ import annotations
 
 import logging
 
-from databricks.labs.dqx.actions.base import ActionContext, ActionResult, ActionServices, ActionStatus, DQAction
+from databricks.labs.dqx.actions.base import ActionContext, ActionResult, ActionServices, ActionStatus
+from databricks.labs.dqx.actions.dq_action import DQAction
 from databricks.labs.dqx.actions.log_sanitize import sanitize_for_log as _sanitize
 from databricks.labs.dqx.actions.conditions import ConditionEvaluator
 from databricks.labs.dqx.actions.message import StandardMessageBuilder

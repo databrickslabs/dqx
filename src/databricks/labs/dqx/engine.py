@@ -58,7 +58,8 @@ from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.errors import InvalidCheckError, InvalidConfigError, InvalidParameterError
 from databricks.labs.dqx.utils import list_tables, safe_strip_file_from_path, resolve_variables, VariableValue
 from databricks.labs.dqx.io import is_one_time_trigger
-from databricks.labs.dqx.actions.base import ActionContext, ActionResult, ActionServices, DQAction
+from databricks.labs.dqx.actions.base import ActionContext, ActionResult, ActionServices
+from databricks.labs.dqx.actions.dq_action import DQAction
 from databricks.labs.dqx.actions.evaluator import ActionEvaluator
 from databricks.labs.dqx.actions.state import ActionStateStore
 from databricks.labs.dqx.actions.event_storage import ActionEventStoreFactory

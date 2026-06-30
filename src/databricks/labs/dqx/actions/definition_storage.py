@@ -41,7 +41,7 @@ from sqlalchemy.schema import CreateSchema
 
 from databricks.sdk import WorkspaceClient
 
-from databricks.labs.dqx.actions.base import DQAction
+from databricks.labs.dqx.actions.dq_action import DQAction
 from databricks.labs.dqx.actions.log_sanitize import sanitize_for_log as _sanitize
 from databricks.labs.dqx.actions.serializer import ActionSerializer
 from databricks.labs.dqx.config import LakebaseActionsStorageConfig, TableActionsStorageConfig

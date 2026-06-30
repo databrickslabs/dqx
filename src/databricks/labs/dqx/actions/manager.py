@@ -9,7 +9,7 @@ Typical usage::
     from databricks.sdk import WorkspaceClient
     from pyspark.sql import SparkSession
     from databricks.labs.dqx.actions.alert import DQAlert, DQAlertFrequency, NotifyOn
-    from databricks.labs.dqx.actions.base import DQAction
+    from databricks.labs.dqx.actions.dq_action import DQAction
     from databricks.labs.dqx.actions.destinations.slack import SlackDQAlertDestination
     from databricks.labs.dqx.actions.manager import DQActionManager
     from databricks.labs.dqx.config import TableActionsStorageConfig
@@ -34,7 +34,7 @@ from pyspark.sql import SparkSession
 
 from databricks.sdk import WorkspaceClient
 
-from databricks.labs.dqx.actions.base import DQAction
+from databricks.labs.dqx.actions.dq_action import DQAction
 from databricks.labs.dqx.actions.definition_storage import ActionsStorageHandlerFactory
 from databricks.labs.dqx.config import LakebaseActionsStorageConfig, TableActionsStorageConfig
 
