@@ -148,6 +148,20 @@ class TestValidateWebhookUrl:
     def test_suffix_allowlist_case_insensitive(self) -> None:
         validate_webhook_url("https://Hooks.Slack.Com/x", allowed_host_suffixes=["hooks.slack.com"])
 
+    def test_error_message_contains_sanitized_host(self) -> None:
+        """Host with newlines must be stripped from error message (CWE-117)."""
+        with pytest.raises(UnsafeWebhookUrlError) as exc_info:
+            validate_webhook_url("https://127.0.0.1/x")
+        assert "\n" not in str(exc_info.value)
+        assert "\r" not in str(exc_info.value)
+
+
+# ---------------------------------------------------------------------------
+# validate_webhook_url — SSRF encoding/spoofing edge cases
+# ---------------------------------------------------------------------------
+
+
+class TestValidateWebhookUrlSsrfEncodings:
     def test_suffix_allowlist_rejects_unanchored_spoof(self) -> None:
         """'eviloffice.com' must NOT match the suffix 'office.com' (dot-anchored)."""
         with pytest.raises(UnsafeWebhookUrlError):
@@ -180,13 +194,6 @@ class TestValidateWebhookUrl:
     def test_rejects_shorthand_loopback(self) -> None:
         with pytest.raises(UnsafeWebhookUrlError):
             validate_webhook_url("https://127.1/x")
-
-    def test_error_message_contains_sanitized_host(self) -> None:
-        """Host with newlines must be stripped from error message (CWE-117)."""
-        with pytest.raises(UnsafeWebhookUrlError) as exc_info:
-            validate_webhook_url("https://127.0.0.1/x")
-        assert "\n" not in str(exc_info.value)
-        assert "\r" not in str(exc_info.value)
 
 
 # ---------------------------------------------------------------------------
