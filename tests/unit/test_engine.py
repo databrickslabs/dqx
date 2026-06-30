@@ -23,8 +23,9 @@ from databricks.labs.dqx.base import DQEngineBase
 from databricks.labs.dqx.engine import DQEngine, DQEngineCore
 from databricks.labs.dqx.engine import InvalidCheckError, InvalidParameterError
 from databricks.labs.dqx.metrics_observer import DQMetricsObserver
+from databricks.labs.dqx.rule import DQDatasetRule, CHECK_FUNC_REGISTRY_ORIGINAL_COLUMNS_PRESELECTION
 from databricks.labs.dqx.check_funcs import make_condition
-from databricks.labs.dqx.rule import DQDatasetRule, DQRowRule, register_rule, requires_dbr_version
+from databricks.labs.dqx.rule import DQRowRule, register_rule, requires_dbr_version
 
 
 def test_engine_creation():
@@ -366,6 +367,80 @@ def test_apply_checks_by_metadata_and_save_in_table_raises_when_no_destination_c
             input_config=InputConfig(location="catalog.schema.input"),
             checks=[],
         )
+
+
+# ---------------------------------------------------------------------------
+# Regression: _preselect_original_columns uses DQRule.replace() correctly
+# ---------------------------------------------------------------------------
+
+
+def _preselect_dataset_check():
+    """Minimal dataset check accepted by _preselect_original_columns tests."""
+    return F.lit(True), lambda df, col_name: df.withColumn(col_name, F.lit(True))
+
+
+def test_preselect_original_columns_no_op_when_func_not_registered():
+    """_preselect_original_columns returns the same rule object when the check function
+    is not in CHECK_FUNC_REGISTRY_ORIGINAL_COLUMNS_PRESELECTION."""
+    spark_mock = create_autospec(SparkSession)
+    ws = create_autospec(WorkspaceClient)
+    engine = DQEngineCore(spark=spark_mock, workspace_client=ws)
+
+    rule = DQDatasetRule(check_func=_preselect_dataset_check)
+    assert _preselect_dataset_check.__name__ not in CHECK_FUNC_REGISTRY_ORIGINAL_COLUMNS_PRESELECTION
+
+    df = Mock()
+    df.columns = ["id", "name", "_errors", "_warnings"]
+    result = engine._preselect_original_columns(df, rule)
+
+    assert result is rule  # no change — same object returned
+
+
+def test_preselect_original_columns_injects_df_columns(monkeypatch):
+    """_preselect_original_columns must inject df columns (minus result columns) into
+    check_func_kwargs["columns"] via DQRule.replace() when the check function is registered
+    for original-columns preselection and no columns are already provided."""
+    spark_mock = create_autospec(SparkSession)
+    ws = create_autospec(WorkspaceClient)
+    engine = DQEngineCore(spark=spark_mock, workspace_client=ws)
+
+    monkeypatch.setattr(
+        engine_module,
+        "CHECK_FUNC_REGISTRY_ORIGINAL_COLUMNS_PRESELECTION",
+        {_preselect_dataset_check.__name__},
+    )
+
+    rule = DQDatasetRule(check_func=_preselect_dataset_check)
+
+    df = Mock()
+    df.columns = ["id", "name", "_errors", "_warnings"]
+
+    result = engine._preselect_original_columns(df, rule)
+
+    assert result is not rule  # new object produced by replace()
+    assert result.check_func_kwargs["columns"] == ["id", "name"]
+
+
+def test_preselect_original_columns_no_op_when_columns_already_in_kwargs(monkeypatch):
+    """_preselect_original_columns must not overwrite columns already in check_func_kwargs."""
+    spark_mock = create_autospec(SparkSession)
+    ws = create_autospec(WorkspaceClient)
+    engine = DQEngineCore(spark=spark_mock, workspace_client=ws)
+
+    monkeypatch.setattr(
+        engine_module,
+        "CHECK_FUNC_REGISTRY_ORIGINAL_COLUMNS_PRESELECTION",
+        {_preselect_dataset_check.__name__},
+    )
+
+    rule = DQDatasetRule(check_func=_preselect_dataset_check, check_func_kwargs={"columns": ["id"]})
+
+    df = Mock()
+    df.columns = ["id", "name", "_errors", "_warnings"]
+
+    result = engine._preselect_original_columns(df, rule)
+
+    assert result is rule  # early-return — columns already provided
 
 
 # --- DBR version validation error path tests ---

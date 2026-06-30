@@ -1,6 +1,5 @@
 import json
 import time
-from dataclasses import dataclass
 from decimal import Decimal
 
 import pytest
@@ -558,9 +557,13 @@ def test_save_load_checks_from_table_in_user_installation(ws, installation_ctx, 
     assert EXPECTED_CHECKS_FROM_TABLE_LOAD == checks, "Checks were not saved correctly"
 
 
-@dataclass
 class ChecksDummyStorageConfig(BaseChecksStorageConfig):
-    """Dummy storage config for testing unsupported storage type."""
+    """Dummy storage config for testing unsupported storage type.
+
+    BaseChecksStorageConfig is a Pydantic model, so this subclass must not be decorated with
+    @dataclass — doing so generates a conflicting __init__ that shadows Pydantic's and breaks
+    construction. A plain Pydantic subclass with a default *location* is sufficient.
+    """
 
     location: str = "test_location"
 

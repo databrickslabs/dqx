@@ -1874,7 +1874,7 @@ class TestDryRunRoutes:
         mock_settings_svc: AppSettingsService,
     ) -> None:
         """submit_dry_run should raise HTTP 400 when check validation reports errors."""
-        validation = ChecksValidationStatus(_errors=["Unknown function: bad_func"])
+        validation = ChecksValidationStatus(errors=["Unknown function: bad_func"])
         body = DryRunIn(table_fqn="cat.sch.tbl", checks=_SAMPLE_CHECKS)
 
         app_conf = AppConfig(catalog="cat", schema_name="sch", job_id="")

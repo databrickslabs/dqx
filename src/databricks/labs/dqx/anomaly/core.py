@@ -37,7 +37,6 @@ from databricks.labs.dqx.errors import ComputationError, InvalidParameterError
 logger = logging.getLogger(__name__)
 
 DEFAULT_SAMPLE_FRACTION = 0.3
-DEFAULT_MAX_ROWS = 1_000_000
 DEFAULT_TRAIN_RATIO = 0.8
 SCORE_QUANTILE_PROBS = [0.0, 0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95, 0.99, 1.0]
 SCORE_QUANTILE_KEYS = ["p00", "p01", "p05", "p10", "p25", "p50", "p75", "p90", "p95", "p99", "p100"]
