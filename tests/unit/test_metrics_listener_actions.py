@@ -244,3 +244,26 @@ def test_on_query_progress_no_observed_metrics_skips_evaluator():
         lsn.onQueryProgress(event)
 
     fake_evaluator.evaluate.assert_not_called()
+
+
+def test_on_query_progress_evaluates_actions_without_metrics_config():
+    """With metrics_config=None the listener skips the metrics write but still evaluates actions."""
+    spark = create_autospec(SparkSession)
+    evaluator = create_autospec(ActionEvaluator)
+    evaluator.evaluate.return_value = []
+    listener = StreamingMetricsListener(
+        metrics_config=None,
+        metrics_observation=_make_observation(),
+        spark=spark,
+        target_query_id=_QUERY_ID,
+        action_evaluator=evaluator,
+    )
+    event = _make_event(metrics={"error_row_count": 2})
+
+    with patch.object(ml_module, "save_dataframe_as_table") as save_mock:
+        listener.onQueryProgress(event)
+
+    save_mock.assert_not_called()  # no metrics destination -> no write
+    evaluator.evaluate.assert_called_once()  # actions still evaluated
+    ctx = evaluator.evaluate.call_args.args[0]
+    assert ctx.metrics == {"error_row_count": 2}

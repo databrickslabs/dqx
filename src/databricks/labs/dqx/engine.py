@@ -1032,7 +1032,7 @@ class DQEngine(DQEngineBase):
         _populate_batch_observation(metrics_config, batch_observation, metrics_only_df)
 
         # Add listener for streaming metrics, targeting the specific query to avoid duplicates
-        if self._engine.observer and metrics_config and target_streaming_query is not None:
+        if self._engine.observer and (metrics_config or self._actions) and target_streaming_query is not None:
             listener = self.get_streaming_metrics_listener(
                 input_config=input_config,
                 output_config=output_config,
@@ -1170,7 +1170,7 @@ class DQEngine(DQEngineBase):
         _populate_batch_observation(metrics_config, batch_observation, metrics_only_df)
 
         # Add listener for streaming metrics, targeting the specific query to avoid duplicates
-        if self._engine.observer and metrics_config and target_streaming_query is not None:
+        if self._engine.observer and (metrics_config or self._actions) and target_streaming_query is not None:
             listener = self.get_streaming_metrics_listener(
                 input_config=input_config,
                 output_config=output_config,
@@ -1471,7 +1471,7 @@ class DQEngine(DQEngineBase):
         target_query = quarantine_query if quarantine_query else output_query
 
         # Add listener for streaming metrics, targeting the specific query to avoid duplicates
-        if self._engine.observer and metrics_config is not None and target_query is not None:
+        if self._engine.observer and (metrics_config is not None or self._actions) and target_query is not None:
             listener = self.get_streaming_metrics_listener(
                 output_config=output_config,
                 quarantine_config=quarantine_config,
@@ -1647,7 +1647,7 @@ class DQEngine(DQEngineBase):
     @telemetry_logger("engine", "get_streaming_metrics_listener")
     def get_streaming_metrics_listener(
         self,
-        metrics_config: OutputConfig,
+        metrics_config: OutputConfig | None = None,
         input_config: InputConfig | None = None,
         output_config: OutputConfig | None = None,
         quarantine_config: OutputConfig | None = None,
@@ -1659,7 +1659,9 @@ class DQEngine(DQEngineBase):
         Gets a `StreamingMetricsListener` object for writing metrics to an output table.
 
         Args:
-            metrics_config: Configuration for writing summary metrics, including table name, mode, and options.
+            metrics_config: Optional configuration for writing summary metrics (table name, mode, options).
+                When *None*, no metrics table is written; the listener still evaluates configured actions
+                per micro-batch.
             input_config: Optional configuration for input data containing location.
             output_config: Optional configuration for output data containing location.
             quarantine_config: Optional configuration for quarantine data containing location.
@@ -1679,8 +1681,10 @@ class DQEngine(DQEngineBase):
                 f"Metrics cannot be collected for engine with type '{self._engine.__class__.__name__}'"
             )
 
-        self._validate_metrics_observer(metrics_config)
-        assert self._engine.observer is not None  # guaranteed by _validate_metrics_observer above (required by mypy)
+        # The listener reads observed metrics from the query progress events, so an observer is
+        # required whether it writes a metrics table or only evaluates actions.
+        if self._engine.observer is None:
+            raise InvalidParameterError("A metrics observer is required to create a streaming metrics listener")
 
         metrics_observation = DQMetricsObservation(
             run_id=self._engine.run_id,

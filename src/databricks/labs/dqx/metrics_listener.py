@@ -32,7 +32,7 @@ class StreamingMetricsListener(listener.StreamingQueryListener):
             other exceptions are logged and swallowed so a single bad alert cannot kill the stream.
     """
 
-    metrics_config: OutputConfig
+    metrics_config: OutputConfig | None
     metrics_observation: DQMetricsObservation
     spark: SparkSession
     target_query_id: str | None
@@ -40,7 +40,7 @@ class StreamingMetricsListener(listener.StreamingQueryListener):
 
     def __init__(
         self,
-        metrics_config: OutputConfig,
+        metrics_config: OutputConfig | None,
         metrics_observation: DQMetricsObservation,
         spark: SparkSession,
         target_query_id: str | None = None,
@@ -95,8 +95,12 @@ class StreamingMetricsListener(listener.StreamingQueryListener):
             rule_set_fingerprint=self.metrics_observation.rule_set_fingerprint,
             user_metadata=self.metrics_observation.user_metadata,
         )
-        metrics_df = DQMetricsObserver.build_metrics_df(self.spark, metrics_observation)
-        save_dataframe_as_table(metrics_df, self.metrics_config)
+        # Persist metrics only when a destination is configured. The listener may also be
+        # registered solely to evaluate actions (no metrics_config), in which case the write
+        # is skipped but per-micro-batch action evaluation still runs below.
+        if self.metrics_config is not None:
+            metrics_df = DQMetricsObserver.build_metrics_df(self.spark, metrics_observation)
+            save_dataframe_as_table(metrics_df, self.metrics_config)
 
         if self.action_evaluator is not None:
             context = ActionContext(
