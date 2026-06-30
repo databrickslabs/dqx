@@ -8,14 +8,17 @@ Tests cover:
 """
 
 import threading
-from unittest.mock import create_autospec
+from unittest.mock import create_autospec, patch
 
 import pytest
 from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.actions.base import ActionContext, DQAction, ActionResult, ActionStatus
 from databricks.labs.dqx.actions.evaluator import ActionEvaluator
+from databricks.labs.dqx.actions.event_storage import ActionEventStoreFactory
 from databricks.labs.dqx.actions.fail_pipeline import FailPipeline
+from databricks.labs.dqx.actions.state import ActionEventStore
+from databricks.labs.dqx.config import ActionEventsConfig
 from databricks.labs.dqx.engine import DQEngine, DQEngineCore
 from databricks.labs.dqx.errors import InvalidParameterError, PipelineFailedError
 from databricks.labs.dqx.metrics_observer import DQMetricsObserver
@@ -230,3 +233,38 @@ def test_concurrent_get_action_evaluator_builds_single_instance(mock_workspace_c
         thread.join()
 
     assert len(instances) == 1, "Factory must build exactly one evaluator under concurrency"
+
+
+# ---------------------------------------------------------------------------
+# Test: action_events_config seeds an event-store-backed state store
+# ---------------------------------------------------------------------------
+
+
+def test_action_events_config_seeds_state_from_event_store(mock_workspace_client):
+    """When action_events_config is set, the default state store is seeded from the event store.
+
+    Driven through the public evaluate_actions path: a non-firing condition means no action
+    executes, but building the (default) evaluator must still create an event-store-backed store
+    and seed it, which calls load_latest_per_action exactly once.
+    """
+    fake_event_store = create_autospec(ActionEventStore, instance=True)
+    fake_event_store.load_latest_per_action.return_value = {}
+
+    spark = create_autospec(SparkSession)
+    observer = _make_observer()
+    # Condition is False for the metrics below, so no action executes (no FailPipeline raise).
+    action = DQAction(condition="error_row_count > 100", action=FailPipeline(), name="fail_on_many_errors")
+
+    with patch.object(ActionEventStoreFactory, "create", return_value=fake_event_store) as create_mock:
+        engine = DQEngine(
+            mock_workspace_client,
+            spark=spark,
+            observer=observer,
+            actions=[action],
+            action_events_config=ActionEventsConfig(location="catalog.schema.events"),
+        )
+        results = engine.evaluate_actions({"error_row_count": 0})
+
+    assert results == []  # condition false -> nothing fired
+    create_mock.assert_called_once()  # event store built from the config
+    fake_event_store.load_latest_per_action.assert_called_once()  # seed() ran

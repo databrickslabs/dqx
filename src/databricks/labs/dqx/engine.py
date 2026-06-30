@@ -36,6 +36,8 @@ from databricks.labs.dqx.config import (
     BaseChecksStorageConfig,
     RunConfig,
     ExtraParams,
+    ActionEventsConfig,
+    LakebaseActionsStorageConfig,
 )
 from databricks.labs.dqx.manager import DQRuleManager
 from databricks.labs.dqx.reporting_columns import ColumnArguments, DefaultColumnNames, merge_info_columns
@@ -57,6 +59,7 @@ from databricks.labs.dqx.io import is_one_time_trigger
 from databricks.labs.dqx.actions.base import ActionContext, ActionResult, ActionServices, DQAction
 from databricks.labs.dqx.actions.evaluator import ActionEvaluator
 from databricks.labs.dqx.actions.state import ActionStateStore
+from databricks.labs.dqx.actions.event_storage import ActionEventStoreFactory
 from databricks.labs.dqx.actions.secrets import SecretResolver
 from databricks.labs.dqx.actions.delivery import WebhookClient
 
@@ -602,6 +605,10 @@ class DQEngine(DQEngineBase):
             returns an *ActionEvaluator*. Used to inject a custom or test evaluator. When *None*, the default
             factory builds a real *ActionEvaluator* with *ActionStateStore*, *SecretResolver*, and
             *WebhookClient*.
+        action_events_config: Optional *ActionEventsConfig* (or *LakebaseActionsStorageConfig*) for a persistent
+            action-events table. When provided, the action state store is seeded from it on first use and every
+            fired action is appended to it, so frequency (*HOURLY* / *DAILY*) and *STATUS_CHANGE* suppression
+            survive engine restarts. When *None*, alert state is in-memory only for the engine's lifetime.
     """
 
     def __init__(
@@ -615,6 +622,7 @@ class DQEngine(DQEngineBase):
         observer: DQMetricsObserver | None = None,
         actions: list[DQAction] | None = None,
         action_evaluator_factory: Callable[[list[DQAction]], ActionEvaluator] | None = None,
+        action_events_config: ActionEventsConfig | LakebaseActionsStorageConfig | None = None,
     ):
         super().__init__(workspace_client)
 
@@ -630,6 +638,9 @@ class DQEngine(DQEngineBase):
             checks_handler_factory or ChecksStorageHandlerFactory(self.ws, self.spark)
         )
         self._action_evaluator_factory = action_evaluator_factory
+        # Optional persistent event store. When set, the action state store is seeded from it on
+        # first use so frequency / status-change suppression survives engine restarts.
+        self._action_events_config = action_events_config
         self._action_evaluator: ActionEvaluator | None = None
         self._action_evaluator_lock = threading.Lock()
 
@@ -752,7 +763,7 @@ class DQEngine(DQEngineBase):
                     else:
                         self._action_evaluator = ActionEvaluator(
                             self._actions,
-                            state_store=ActionStateStore(),
+                            state_store=self._build_action_state_store(),
                             services=ActionServices(
                                 secret_resolver=SecretResolver(self.ws),
                                 webhook_client=WebhookClient(),
@@ -761,6 +772,20 @@ class DQEngine(DQEngineBase):
                             ),
                         )
         return self._action_evaluator
+
+    def _build_action_state_store(self) -> ActionStateStore:
+        """Build the action state store, backed by a persistent event store when configured.
+
+        When *action_events_config* is set, the store is seeded from the events table so that
+        frequency (*HOURLY* / *DAILY*) and *STATUS_CHANGE* suppression survive engine restarts;
+        otherwise an in-memory-only store is returned.
+        """
+        if self._action_events_config is None:
+            return ActionStateStore()
+        event_store = ActionEventStoreFactory.create(self._action_events_config, self.spark, self.ws)
+        state_store = ActionStateStore(event_store=event_store)
+        state_store.seed()
+        return state_store
 
     @telemetry_logger("engine", "evaluate_actions")
     def evaluate_actions(

@@ -210,6 +210,23 @@ alert = DQAlert(
 )
 ```
 
+### Persisting alert state across runs
+
+By default, frequency and status-change state is held in memory for the lifetime of the `DQEngine`, so a new engine instance (e.g. each scheduled job run) starts with empty state. To make `HOURLY` / `DAILY` / `STATUS_CHANGE` suppression survive restarts, pass an *action_events_config* pointing at a UC (or Lakebase) events table. The engine seeds its state from that table on first use and appends every fired action to it:
+
+```python
+from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.metrics_observer import DQMetricsObserver
+from databricks.labs.dqx.config import ActionEventsConfig
+
+engine = DQEngine(
+    ws,
+    observer=DQMetricsObserver(),
+    actions=actions,
+    action_events_config=ActionEventsConfig(location="catalog.schema.dqx_action_events"),
+)
+```
+
 ## Using actions with DQEngine
 
 ### Auto-fire on save methods (recommended)
