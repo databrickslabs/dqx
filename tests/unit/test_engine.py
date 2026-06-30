@@ -25,7 +25,7 @@ from databricks.labs.dqx.engine import InvalidCheckError, InvalidParameterError
 from databricks.labs.dqx.metrics_observer import DQMetricsObserver
 from databricks.labs.dqx.rule import DQDatasetRule, CHECK_FUNC_REGISTRY_ORIGINAL_COLUMNS_PRESELECTION
 from databricks.labs.dqx.check_funcs import make_condition
-from databricks.labs.dqx.rule import DQDatasetRule, DQRowRule, register_rule, requires_dbr_version
+from databricks.labs.dqx.rule import DQRowRule, register_rule, requires_dbr_version
 
 
 def test_engine_creation():
