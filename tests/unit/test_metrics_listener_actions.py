@@ -13,10 +13,12 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import create_autospec, patch
 
 import pytest
 from pyspark.sql import SparkSession
+from pyspark.sql.streaming.listener import QueryProgressEvent
 
 from databricks.labs.dqx import metrics_listener as ml_module
 from databricks.labs.dqx.actions.base import ActionContext, ActionResult, ActionStatus
@@ -46,7 +48,7 @@ def _make_event(
     run_id: str = _RUN_ID,
     metrics: dict[str, object] | None = None,
     timestamp: str = _TIMESTAMP,
-) -> object:
+) -> QueryProgressEvent:
     """Build a fake QueryProgressEvent.
 
     Structure mirrors the real PySpark object:
@@ -62,7 +64,8 @@ def _make_event(
         timestamp=timestamp,
         observedMetrics=observed,
     )
-    return SimpleNamespace(progress=progress)
+    # The duck-typed fake exposes the attributes onQueryProgress reads; cast so callers type-check.
+    return cast(QueryProgressEvent, SimpleNamespace(progress=progress))
 
 
 def _make_observation(run_id: str = _RUN_ID) -> DQMetricsObservation:
@@ -97,7 +100,7 @@ def _make_listener(evaluator: ActionEvaluator | None = None) -> StreamingMetrics
 # ---------------------------------------------------------------------------
 
 
-def test_on_query_progress_calls_evaluator_with_correct_context():
+def test_on_query_progress_calls_evaluator_with_correct_context() -> None:
     """evaluator.evaluate is called once with an ActionContext carrying the micro-batch metrics."""
     fake_result = ActionResult(action_name="alert", fired=True, status=ActionStatus.UNHEALTHY)
     fake_evaluator = create_autospec(ActionEvaluator)
@@ -134,7 +137,7 @@ def test_on_query_progress_calls_evaluator_with_correct_context():
 # ---------------------------------------------------------------------------
 
 
-def test_on_query_progress_skips_evaluator_on_query_id_mismatch():
+def test_on_query_progress_skips_evaluator_on_query_id_mismatch() -> None:
     """When event.progress.id does not match target_query_id, evaluator must NOT be called."""
     fake_evaluator = create_autospec(ActionEvaluator)
     fake_evaluator.evaluate.return_value = []
@@ -158,7 +161,7 @@ def test_on_query_progress_skips_evaluator_on_query_id_mismatch():
 # ---------------------------------------------------------------------------
 
 
-def test_on_query_progress_no_evaluator_does_not_crash():
+def test_on_query_progress_no_evaluator_does_not_crash() -> None:
     """When action_evaluator is None the listener is a no-op for actions (backward-compat).
 
     Metrics writing must NOT be gated on the evaluator: with no evaluator the metrics
@@ -183,7 +186,7 @@ def test_on_query_progress_no_evaluator_does_not_crash():
 # ---------------------------------------------------------------------------
 
 
-def test_on_query_progress_propagates_pipeline_failed_error():
+def test_on_query_progress_propagates_pipeline_failed_error() -> None:
     """A PipelineFailedError raised by evaluate must propagate — it stops the stream."""
     fake_evaluator = create_autospec(ActionEvaluator)
     fake_evaluator.evaluate.side_effect = PipelineFailedError("pipeline aborted")
@@ -204,7 +207,7 @@ def test_on_query_progress_propagates_pipeline_failed_error():
 # ---------------------------------------------------------------------------
 
 
-def test_on_query_progress_swallows_generic_exception(caplog):
+def test_on_query_progress_swallows_generic_exception(caplog) -> None:
     """A non-terminal Exception raised by evaluate is logged and swallowed — stream is not killed."""
     fake_evaluator = create_autospec(ActionEvaluator)
     fake_evaluator.evaluate.side_effect = RuntimeError("transient network error")
@@ -228,7 +231,7 @@ def test_on_query_progress_swallows_generic_exception(caplog):
 # ---------------------------------------------------------------------------
 
 
-def test_on_query_progress_no_observed_metrics_skips_evaluator():
+def test_on_query_progress_no_observed_metrics_skips_evaluator() -> None:
     """When observedMetrics for the run_id is absent, evaluator is not called."""
     fake_evaluator = create_autospec(ActionEvaluator)
     fake_evaluator.evaluate.return_value = []
@@ -246,7 +249,7 @@ def test_on_query_progress_no_observed_metrics_skips_evaluator():
     fake_evaluator.evaluate.assert_not_called()
 
 
-def test_on_query_progress_evaluates_actions_without_metrics_config():
+def test_on_query_progress_evaluates_actions_without_metrics_config() -> None:
     """With metrics_config=None the listener skips the metrics write but still evaluates actions."""
     spark = create_autospec(SparkSession)
     evaluator = create_autospec(ActionEvaluator)

@@ -64,7 +64,7 @@ def _make_services() -> ActionServices:
 # ---------------------------------------------------------------------------
 
 
-def test_callback_type_classvar():
+def test_callback_type_classvar() -> None:
     assert CallbackDQAlertDestination.type == "callback"
 
 
@@ -73,7 +73,7 @@ def test_callback_type_classvar():
 # ---------------------------------------------------------------------------
 
 
-def test_deliver_calls_callback_exactly_once():
+def test_deliver_calls_callback_exactly_once() -> None:
     captured: list[tuple[AlertMessage, ActionContext]] = []
 
     def my_callback(msg: AlertMessage, ctx: ActionContext) -> None:
@@ -89,7 +89,7 @@ def test_deliver_calls_callback_exactly_once():
     assert len(captured) == 1, "callback must be called exactly once"
 
 
-def test_deliver_passes_same_message_and_context_objects():
+def test_deliver_passes_same_message_and_context_objects() -> None:
     captured: list[tuple[AlertMessage, ActionContext]] = []
 
     def my_callback(msg: AlertMessage, ctx: ActionContext) -> None:
@@ -114,7 +114,7 @@ class _CallbackSpec:
         pass  # pragma: no cover
 
 
-def test_deliver_with_mock_callable():
+def test_deliver_with_mock_callable() -> None:
     mock_cb = create_autospec(_CallbackSpec)
     message = _make_message()
     context = _make_context()
@@ -131,7 +131,7 @@ def test_deliver_with_mock_callable():
 # ---------------------------------------------------------------------------
 
 
-def test_validate_raises_for_empty_name():
+def test_validate_raises_for_empty_name() -> None:
     def noop(_msg: AlertMessage, _ctx: ActionContext) -> None:
         pass
 
@@ -140,7 +140,7 @@ def test_validate_raises_for_empty_name():
         dest.validate()
 
 
-def test_validate_raises_for_non_callable_callback():
+def test_validate_raises_for_non_callable_callback() -> None:
     # Use typing.cast to construct the dataclass with a non-callable value
     # without introducing a type-ignore suppression.
     bad: Callable[[AlertMessage, ActionContext], None] = cast(Callable[[AlertMessage, ActionContext], None], 123)
@@ -149,7 +149,7 @@ def test_validate_raises_for_non_callable_callback():
         dest.validate()
 
 
-def test_validate_passes_for_valid_destination():
+def test_validate_passes_for_valid_destination() -> None:
     def my_callback(_msg: AlertMessage, _ctx: ActionContext) -> None:
         pass
 
@@ -157,7 +157,7 @@ def test_validate_passes_for_valid_destination():
     dest.validate()  # must not raise
 
 
-def test_validate_passes_for_lambda_callback():
+def test_validate_passes_for_lambda_callback() -> None:
     dest = CallbackDQAlertDestination(
         name="lambda_dest",
         callback=lambda msg, ctx: None,

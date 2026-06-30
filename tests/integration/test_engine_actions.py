@@ -40,7 +40,7 @@ from tests.constants import TEST_CATALOG
 # ---------------------------------------------------------------------------
 
 
-def test_apply_checks_and_save_raises_pipeline_failed_error(ws, spark, make_schema, make_random):
+def test_apply_checks_and_save_raises_pipeline_failed_error(ws, spark, make_schema, make_random) -> None:
     """*FailPipeline* with a matching condition aborts the run with *PipelineFailedError*."""
     catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
@@ -83,7 +83,7 @@ def test_apply_checks_and_save_raises_pipeline_failed_error(ws, spark, make_sche
 # ---------------------------------------------------------------------------
 
 
-def test_apply_checks_and_save_fires_callback_with_metrics(ws, spark, make_schema, make_random):
+def test_apply_checks_and_save_fires_callback_with_metrics(ws, spark, make_schema, make_random) -> None:
     """*CallbackDQAlertDestination* receives a populated *ActionContext* with metrics."""
     catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
@@ -150,7 +150,7 @@ def _make_streaming_action(received_contexts: list[ActionContext]) -> DQAction:
     return DQAction(action=alert, condition="error_row_count > 0", name="alert_on_errors_streaming")
 
 
-def test_streaming_apply_checks_fires_callback_per_microbatch(ws, spark, make_schema, make_volume, make_random):
+def test_streaming_apply_checks_fires_callback_per_microbatch(ws, spark, make_schema, make_volume, make_random) -> None:
     """*CallbackDQAlertDestination* receives an *ActionContext* from each streaming micro-batch.
 
     This test uses *availableNow=True* so the stream processes all available

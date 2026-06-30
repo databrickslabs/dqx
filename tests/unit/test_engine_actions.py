@@ -38,7 +38,7 @@ def _make_observer() -> DQMetricsObserver:
 # ---------------------------------------------------------------------------
 
 
-def test_dqengine_actions_without_observer_raises(mock_workspace_client):
+def test_dqengine_actions_without_observer_raises(mock_workspace_client) -> None:
     spark = create_autospec(SparkSession)
     action = create_autospec(DQAction, instance=True)
 
@@ -46,7 +46,7 @@ def test_dqengine_actions_without_observer_raises(mock_workspace_client):
         DQEngine(mock_workspace_client, spark=spark, actions=[action])
 
 
-def test_dqenginecore_actions_without_observer_raises(mock_workspace_client):
+def test_dqenginecore_actions_without_observer_raises(mock_workspace_client) -> None:
     spark = create_autospec(SparkSession)
     action = DQAction(action=FailPipeline(), name="fail_on_errors")
 
@@ -59,7 +59,7 @@ def test_dqenginecore_actions_without_observer_raises(mock_workspace_client):
 # ---------------------------------------------------------------------------
 
 
-def test_evaluate_actions_calls_evaluator_with_correct_context(mock_workspace_client):
+def test_evaluate_actions_calls_evaluator_with_correct_context(mock_workspace_client) -> None:
     spark = create_autospec(SparkSession)
     observer = _make_observer()
     action = create_autospec(DQAction, instance=True)
@@ -114,7 +114,7 @@ def test_evaluate_actions_calls_evaluator_with_correct_context(mock_workspace_cl
 # ---------------------------------------------------------------------------
 
 
-def test_evaluate_actions_no_actions_returns_empty_list(mock_workspace_client):
+def test_evaluate_actions_no_actions_returns_empty_list(mock_workspace_client) -> None:
     spark = create_autospec(SparkSession)
 
     factory_call_count = 0
@@ -142,7 +142,7 @@ def test_evaluate_actions_no_actions_returns_empty_list(mock_workspace_client):
 # ---------------------------------------------------------------------------
 
 
-def test_evaluate_actions_propagates_pipeline_failed_error(mock_workspace_client):
+def test_evaluate_actions_propagates_pipeline_failed_error(mock_workspace_client) -> None:
     spark = create_autospec(SparkSession)
     observer = _make_observer()
     action = create_autospec(DQAction, instance=True)
@@ -167,7 +167,7 @@ def test_evaluate_actions_propagates_pipeline_failed_error(mock_workspace_client
 # ---------------------------------------------------------------------------
 
 
-def test_evaluate_actions_evaluator_is_cached(mock_workspace_client):
+def test_evaluate_actions_evaluator_is_cached(mock_workspace_client) -> None:
     spark = create_autospec(SparkSession)
     observer = _make_observer()
     action = create_autospec(DQAction, instance=True)
@@ -199,7 +199,7 @@ def test_evaluate_actions_evaluator_is_cached(mock_workspace_client):
 # ---------------------------------------------------------------------------
 
 
-def test_concurrent_get_action_evaluator_builds_single_instance(mock_workspace_client):
+def test_concurrent_get_action_evaluator_builds_single_instance(mock_workspace_client) -> None:
     """Under parallel run-config processing, the lazy init must build ONE evaluator/state store."""
     spark = create_autospec(SparkSession)
     observer = _make_observer()
@@ -240,7 +240,7 @@ def test_concurrent_get_action_evaluator_builds_single_instance(mock_workspace_c
 # ---------------------------------------------------------------------------
 
 
-def test_action_events_config_seeds_state_from_event_store(mock_workspace_client):
+def test_action_events_config_seeds_state_from_event_store(mock_workspace_client) -> None:
     """When action_events_config is set, the default state store is seeded from the event store.
 
     Driven through the public evaluate_actions path: a non-firing condition means no action
