@@ -2,6 +2,7 @@ import copy
 import inspect
 import logging
 import os
+import threading
 from concurrent import futures
 from collections.abc import Callable
 from dataclasses import replace
@@ -630,6 +631,7 @@ class DQEngine(DQEngineBase):
         )
         self._action_evaluator_factory = action_evaluator_factory
         self._action_evaluator: ActionEvaluator | None = None
+        self._action_evaluator_lock = threading.Lock()
 
     @telemetry_logger("engine", "apply_checks")
     def apply_checks(
@@ -739,20 +741,25 @@ class DQEngine(DQEngineBase):
         """
         if not self._actions:
             return None
+        # Double-checked locking: apply_checks_and_save_in_tables evaluates run configs on a thread
+        # pool, so without this lock each thread would build its own evaluator (and its own
+        # ActionStateStore), defeating frequency/status-change deduplication.
         if self._action_evaluator is None:
-            if self._action_evaluator_factory is not None:
-                self._action_evaluator = self._action_evaluator_factory(self._actions)
-            else:
-                self._action_evaluator = ActionEvaluator(
-                    self._actions,
-                    state_store=ActionStateStore(),
-                    services=ActionServices(
-                        secret_resolver=SecretResolver(self.ws),
-                        webhook_client=WebhookClient(),
-                        ws=self.ws,
-                        spark=self.spark,
-                    ),
-                )
+            with self._action_evaluator_lock:
+                if self._action_evaluator is None:
+                    if self._action_evaluator_factory is not None:
+                        self._action_evaluator = self._action_evaluator_factory(self._actions)
+                    else:
+                        self._action_evaluator = ActionEvaluator(
+                            self._actions,
+                            state_store=ActionStateStore(),
+                            services=ActionServices(
+                                secret_resolver=SecretResolver(self.ws),
+                                webhook_client=WebhookClient(),
+                                ws=self.ws,
+                                spark=self.spark,
+                            ),
+                        )
         return self._action_evaluator
 
     @telemetry_logger("engine", "evaluate_actions")

@@ -7,6 +7,7 @@ Tests cover:
 - PipelineFailedError raised by the evaluator propagates out of evaluate_actions.
 """
 
+import threading
 from unittest.mock import create_autospec
 
 import pytest
@@ -188,3 +189,44 @@ def test_evaluate_actions_evaluator_is_cached(mock_workspace_client):
     engine.evaluate_actions({})
 
     assert len(instances) == 1, "Factory must be called only once; evaluator must be cached"
+
+
+# ---------------------------------------------------------------------------
+# Test: concurrent _get_action_evaluator builds exactly one evaluator (thread-safe)
+# ---------------------------------------------------------------------------
+
+
+def test_concurrent_get_action_evaluator_builds_single_instance(mock_workspace_client):
+    """Under parallel run-config processing, the lazy init must build ONE evaluator/state store."""
+    spark = create_autospec(SparkSession)
+    observer = _make_observer()
+    action = create_autospec(DQAction, instance=True)
+
+    instances: list[ActionEvaluator] = []
+    barrier = threading.Barrier(8)
+
+    def factory(_actions: list[DQAction]) -> ActionEvaluator:
+        evaluator = create_autospec(ActionEvaluator)
+        evaluator.evaluate.return_value = []
+        instances.append(evaluator)
+        return evaluator
+
+    engine = DQEngine(
+        mock_workspace_client,
+        spark=spark,
+        observer=observer,
+        actions=[action],
+        action_evaluator_factory=factory,
+    )
+
+    def worker() -> None:
+        barrier.wait()  # maximize contention on the lazy-init
+        engine.evaluate_actions({"error_row_count": 1})  # drives _get_action_evaluator under the lock
+
+    threads = [threading.Thread(target=worker) for _ in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert len(instances) == 1, "Factory must build exactly one evaluator under concurrency"

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import abc
 import logging
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -123,6 +124,9 @@ class ActionStateStore:
         self._last_fired: dict[str, datetime] = {}
         # action_name -> last recorded ActionStatus
         self._last_status: dict[str, ActionStatus] = {}
+        # Guards the in-memory maps: one engine shares a single store across run configs
+        # evaluated on a thread pool, so should_fire/record/seed must be serialized.
+        self._lock = threading.RLock()
 
     def seed(self) -> None:
         """Hydrate in-memory state from the persistent event store.
@@ -138,10 +142,11 @@ class ActionStateStore:
             return
 
         latest = self._event_store.load_latest_per_action()
-        for action_name, event in latest.items():
-            if event.fired:
-                self._last_fired[action_name] = event.run_time
-            self._last_status[action_name] = event.status
+        with self._lock:
+            for action_name, event in latest.items():
+                if event.fired:
+                    self._last_fired[action_name] = event.run_time
+                self._last_status[action_name] = event.status
         logger.info(f"Seeded action state for {len(latest)} action(s) from event store.")
 
     def should_fire(self, dq_action: DQAction, context: ActionContext, condition_result: bool) -> bool:
@@ -214,12 +219,13 @@ class ActionStateStore:
         Args:
             event: The *AlertEvent* to record.
         """
-        if event.fired:
-            self._last_fired[event.action_name] = event.run_time
-        self._last_status[event.action_name] = event.status
+        with self._lock:
+            if event.fired:
+                self._last_fired[event.action_name] = event.run_time
+            self._last_status[event.action_name] = event.status
 
-        if self._event_store is not None:
-            self._event_store.append([event])
+            if self._event_store is not None:
+                self._event_store.append([event])
 
     # ------------------------------------------------------------------
     # Private helpers
