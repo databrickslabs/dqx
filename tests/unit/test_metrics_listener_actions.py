@@ -159,16 +159,23 @@ def test_on_query_progress_skips_evaluator_on_query_id_mismatch():
 
 
 def test_on_query_progress_no_evaluator_does_not_crash():
-    """When action_evaluator is None the listener is a no-op for actions (backward-compat)."""
+    """When action_evaluator is None the listener is a no-op for actions (backward-compat).
+
+    Metrics writing must NOT be gated on the evaluator: with no evaluator the metrics
+    row is still written exactly once.
+    """
     lsn = _make_listener(evaluator=None)
     event = _make_event(metrics={"error_row_count": 0})
 
     with (
         patch.object(DQMetricsObserver, "build_metrics_df"),
-        patch.object(ml_module, "save_dataframe_as_table"),
+        patch.object(ml_module, "save_dataframe_as_table") as save_mock,
     ):
         # Must not raise
         lsn.onQueryProgress(event)
+
+    # Metrics are still written even though no action evaluator is configured.
+    save_mock.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

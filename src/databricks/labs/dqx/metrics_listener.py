@@ -115,7 +115,10 @@ class StreamingMetricsListener(listener.StreamingQueryListener):
                 raise
             except Exception as exc:
                 safe_run_id = self.metrics_observation.run_id.replace("\r", "").replace("\n", "")
-                logger.warning(f"Action evaluation failed for streaming micro-batch (run_id={safe_run_id}): {exc}")
+                # Sanitize the exception text too: an evaluator error may embed user-supplied
+                # values (column/rule names) that could contain newlines (CWE-117).
+                safe_exc = str(exc).replace("\r", "").replace("\n", " ")
+                logger.warning(f"Action evaluation failed for streaming micro-batch (run_id={safe_run_id}): {safe_exc}")
 
     def onQueryIdle(self, event: listener.QueryIdleEvent) -> None:
         """
