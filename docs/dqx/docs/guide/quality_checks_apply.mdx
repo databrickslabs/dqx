@@ -43,7 +43,7 @@ The end-to-end `apply_checks_and_save_in_table` and `apply_checks_by_metadata_an
 
 The engine ensures that the specified `column`, `columns`, `filter`, or sql 'expression' fields can be resolved in the input DataFrame. If any of these fields are invalid, the check evaluation is skipped, and the results include the check failure with a message identifying the invalid fields and `skipped=True` in the result struct. You can suppress these entries entirely or identify them downstream — see [Suppressing skipped check entries](/docs/guide/additional_configuration#suppressing-skipped-check-entries).
 The engine will raise an error if you try to apply checks with invalid definition (e.g. wrong syntax).
-In addition, you can also perform a standalone syntax validation of the checks as described [here](/docs/guide/quality_checks_definition#validating-syntax-of-quality-checks).
+In addition, you can also perform standalone validation of the checks as described [here](/docs/guide/quality_checks_definition#validating-quality-checks).
 
 You can apply quality checks to streaming pipelines using the same methods as for batch processing.
 You can either use the end-to-end methods or manage the input stream and output directly with native Spark APIs (e.g. `spark.readStream` and `writeStream`).
