@@ -122,6 +122,24 @@ Use this flow when your check operates on the columns of one table — for examp
 
 For a complete list of built-in checks and their arguments, see [Quality Checks Reference](/docs/reference/quality_checks).
 
+#### Schema and reference-table checks
+
+Checks that compare the target table against a reference — [`has_valid_schema`](/docs/reference/quality_checks#dataset-level-checks-reference) (schema validation) and `foreign_key` — are authored from the **same single-table editor**. Pick the check from the catalog and the editor reveals the extra fields it needs; there is no separate schema-validation page, so everything you build for one table lives in one place.
+
+For `has_valid_schema` you pin the expected shape of the table — its columns, their order, and their data types — and DQX flags drift the next time the table runs through a check:
+
+- **Expected schema** — supply it either as a Spark DDL string (e.g. `id BIGINT, email STRING`) or by pointing at a **reference table** whose schema is the contract (loaded at run time). The two are mutually exclusive. In DDL mode, click **Snapshot from target table** to pre-fill the editor with the table's current shape — handy for "canonical/golden" tables you want to freeze.
+- **Match mode** — **Compatible** (every expected column must exist with a type-compatible counterpart; extra columns and minor type widenings such as `int → long` pass) or **Strict** (same columns, same order, same exact types — anything different fails).
+- **Column subset** *(optional)* — limit the check with **Validate only these columns** or ignore noise with **Ignore these columns**. In DDL mode the expected schema is auto-trimmed to match your subset so both sides of the comparison stay aligned; in reference-table mode the subset only filters the actual side, and the studio warns you when that mismatch could surprise you.
+
+As with any rule, run a **dry run** against a small row sample to confirm the check behaves as expected before saving.
+
+<Admonition type="tip" title="When schema validation pays off">
+- **Contracts** — keep producers and consumers honest by failing the run the moment a column is renamed, dropped, or retyped.
+- **Onboarding/migrations** — snapshot the source table's schema before a migration; pin the target's expected schema after; let the rule prove the move was clean.
+- **Combining with row-level checks** — schema validation answers "does the *shape* match?" while `is_not_null` / `is_in_list` / `regex_match` answer "does the *content* match?". You usually want both.
+</Admonition>
+
 ### Cross-table rules
 
 Use this flow when a check needs to compare data across multiple tables — for example, referential integrity ("every `order_id` must exist in `orders`"), reconciliation ("sum of `amount` in `payments` equals total in `invoices`"), or any custom SQL condition.
@@ -135,27 +153,6 @@ Use this flow when a check needs to compare data across multiple tables — for 
 - The SQL is executed on your behalf using your Databricks identity — it can reference any tables you have access to.
 - Keep checks focused: one rule per invariant is easier to triage when it fails.
 - Prefer fully qualified table names (`catalog.schema.table`) for clarity.
-</Admonition>
-
-### Schema validation
-
-Use this flow when you want to lock down the shape of a table — its columns, their order, and their data types — and have DQX flag drift the next time the table runs through a check. Each rule is a single dataset-level [`has_valid_schema`](/docs/reference/quality_checks#dataset-level-checks-reference) check that compares the live table against a pinned expected schema.
-
-1. Pick the **Target table** to validate.
-2. Choose the **expected schema source**:
-   - **DDL** — paste or type a Spark DDL string (e.g. `id BIGINT, email STRING`). Click **Snapshot from target table** to pre-fill the editor with the table's current shape — handy for "canonical/golden" tables you want to freeze.
-   - **Reference table** — pick another UC table whose schema is the contract; the check will load it at run time.
-3. Pick a **match mode**:
-   - **Compatible** — every expected column must exist with a type-compatible counterpart. Extra columns in the actual table are allowed, and minor type widenings (`int → long`, etc.) pass.
-   - **Strict** — same columns, same order, same exact types. Anything different fails.
-4. *(Optional)* Limit the check to a subset of columns with **Validate only these columns**, or ignore noise columns with **Ignore these columns**. In DDL mode the expected schema is auto-trimmed to match your subset so both sides of the comparison stay aligned. In reference-table mode the subset only filters the actual side — the studio surfaces a warning when that mismatch could surprise you.
-5. Run a **dry run** against a small row sample to confirm the rule behaves as expected before saving.
-6. Save as draft (or submit for review).
-
-<Admonition type="tip" title="When schema validation pays off">
-- **Contracts** — keep producers and consumers honest by failing the run the moment a column is renamed, dropped, or retyped.
-- **Onboarding/migrations** — snapshot the source table's schema before a migration; pin the target's expected schema after; let the rule prove the move was clean.
-- **Combining with row-level checks** — schema validation answers "does the *shape* match?" while `is_not_null` / `is_in_list` / `regex_match` answer "does the *content* match?". You usually want both.
 </Admonition>
 
 ### Profile and generate
@@ -196,7 +193,7 @@ The old standalone `/rules/from-contract` URL still works; it redirects to the *
 
 ### Dry-run before committing
 
-Every rule flow — single-table, cross-table SQL, schema validation, contract import, and YAML import — exposes a **Dry run** affordance that evaluates the check against a small sample of the target table without persisting anything to run history. Use it to sanity-check that the rule behaves as expected before submitting it for approval. Dry-run results show the pass / error / warning counts, a per-check breakdown, and up to ten sample violating rows.
+Every rule flow — single-table (including schema and reference-table checks), cross-table SQL, contract import, and YAML import — exposes a **Dry run** affordance that evaluates the check against a small sample of the target table without persisting anything to run history. Use it to sanity-check that the rule behaves as expected before submitting it for approval. Dry-run results show the pass / error / warning counts, a per-check breakdown, and up to ten sample violating rows.
 
 ## Reviewing and approving drafts
 
@@ -213,7 +210,7 @@ By design, a draft author who does not also hold approval rights cannot approve 
 
 ## Browsing active rules
 
-The **Active Rules** page lists every approved rule grouped by target table. Dataset-level rules — cross-table SQL checks and schema-validation rules — live under the **Cross-table rules** group, each with a small badge that tells you which flavour it is. The **Edit / View** action on any rule opens the editor for the flow it was created with (single-table editor, SQL editor, or schema-validation editor), so a `has_valid_schema` rule never lands on the wrong page.
+The **Active Rules** page lists every approved rule grouped by target table. Schema-validation and other reference-table checks (`has_valid_schema`, `foreign_key`) group under their target table alongside the rest of that table's rules — they target a single table, so they are *not* shown under the **Cross-table rules** group. Only cross-table SQL checks, which aren't tied to one table, live under that group. The **Edit / View** action on any rule opens the editor for the flow it belongs to (single-table editor, SQL editor, or schema-validation editor), so a `has_valid_schema` rule never lands on the wrong page.
 
 From here you can:
 
@@ -234,7 +231,7 @@ Both are managed from the **Run Rules** page, which is visible to users with the
 ### Manual runs
 
 1. Open the **Run Rules** page.
-2. Pick the rules you want to run — filter by catalog, schema, label, or text to select a coherent set. Single-table rules are grouped by their target table; dataset-level rules (cross-table SQL and schema validation) live under the **Cross-table rules** group.
+2. Pick the rules you want to run — filter by catalog, schema, label, or text to select a coherent set. Single-table rules — including schema-validation and reference-table checks — are grouped by their target table; only cross-table SQL checks live under the **Cross-table rules** group.
 3. Choose how many sample rows the runner should evaluate.
 4. Click **Run selected** to submit. DQX Studio creates a Databricks Job run per table and shows a progress indicator.
 
