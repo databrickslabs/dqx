@@ -286,3 +286,38 @@ def test_lakebase_config_valid_modes():
         mode="overwrite",
     )
     assert config_overwrite.mode == "overwrite"
+
+
+def test_replace_returns_new_validated_instance_and_preserves_other_fields():
+    """`replace()` returns a new config of the same type with overrides applied, other fields
+    preserved, and the original (frozen) instance untouched."""
+    config = LakebaseChecksStorageConfig(
+        location="db.schema.table",
+        instance_name="instance",
+        client_id="00000000-0000-0000-0000-000000000000",
+        mode="append",
+    )
+
+    replaced = config.replace(mode="overwrite")
+
+    assert replaced is not config
+    assert isinstance(replaced, LakebaseChecksStorageConfig)
+    assert replaced.mode == "overwrite"  # overridden
+    assert replaced.location == "db.schema.table"  # preserved
+    assert replaced.instance_name == "instance"  # preserved
+    assert config.mode == "append"  # original untouched
+
+
+def test_replace_reruns_validation():
+    """`replace()` rebuilds through the constructor, so validators re-run against the new fields.
+
+    Unlike `model_copy(update=...)`, which shallow-copies and skips validation, an invalid override
+    must be rejected at the point of the change rather than silently producing an invalid config."""
+    config = LakebaseChecksStorageConfig(
+        location="db.schema.table",
+        instance_name="instance",
+        client_id="00000000-0000-0000-0000-000000000000",
+    )
+
+    with pytest.raises(InvalidConfigError, match="Invalid mode 'BOGUS'. Must be 'append' or 'overwrite'."):
+        config.replace(mode="BOGUS")
