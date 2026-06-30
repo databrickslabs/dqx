@@ -117,6 +117,10 @@ class DQEngineCore(DQEngineCoreBase):
             self.run_id = extra_params.run_id_overwrite or str(uuid4())  # auto-generate if not provided
 
         self._actions = actions or []
+        # Stored for construction-time validation (see below) and reserved for lower-level use.
+        # Batch action evaluation is orchestrated by DQEngine, not DQEngineCore.
+        if self._actions and self.observer is None:
+            raise InvalidParameterError("Actions require a metrics observer; provide observer=...")
 
     @cached_property
     def result_column_names(self) -> dict[ColumnArguments, str]:
@@ -852,9 +856,11 @@ class DQEngine(DQEngineBase):
             checks_location: Path/URI of the checks file, or *None*.
             rule_set_fingerprint: Fingerprint of the applied rule set, or *None*.
         """
-        # In the metrics-only path (no output/quarantine write), the observation needs to be triggered
-        # before actions can read metrics. When actions are configured but metrics_config is absent,
-        # force the observation via a count() on the checked DataFrame.
+        # Actions-only path: when actions are configured but metrics_config is absent, the Spark
+        # Observation has not yet been triggered (no output/quarantine write was done, and
+        # _populate_batch_observation only fires count() when metrics_config is set).  The two
+        # count() triggers are therefore mutually exclusive — this branch handles the complementary
+        # actions-only path to ensure the observation is populated before evaluate_actions reads it.
         if self._actions and batch_observation is not None and metrics_config is None and metrics_only_df is not None:
             metrics_only_df.count()
 

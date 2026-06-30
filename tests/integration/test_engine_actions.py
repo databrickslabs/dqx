@@ -15,8 +15,6 @@ Run with::
 
 from __future__ import annotations
 
-from collections.abc import Callable
-
 import pytest
 
 from databricks.labs.dqx import check_funcs
@@ -131,13 +129,3 @@ def test_apply_checks_and_save_fires_callback_with_metrics(ws, spark, make_schem
     error_count = ctx.metrics.get("error_row_count")
     assert isinstance(error_count, int) and error_count > 0, f"Expected error_row_count > 0, got {error_count!r}"
     assert ctx.input_location == input_table
-
-
-# ---------------------------------------------------------------------------
-# Helper: DQAlert signature compatibility check (type annotation)
-# ---------------------------------------------------------------------------
-
-
-def _check_dq_alert_callable(callback: Callable[[AlertMessage, ActionContext], None]) -> None:
-    """Type-annotation helper — validates that CallbackDQAlertDestination accepts the right signature."""
-    CallbackDQAlertDestination(name="check", callback=callback)

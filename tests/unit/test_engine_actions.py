@@ -14,7 +14,8 @@ from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.actions.base import ActionContext, DQAction, ActionResult, ActionStatus
 from databricks.labs.dqx.actions.evaluator import ActionEvaluator
-from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.actions.fail_pipeline import FailPipeline
+from databricks.labs.dqx.engine import DQEngine, DQEngineCore
 from databricks.labs.dqx.errors import InvalidParameterError, PipelineFailedError
 from databricks.labs.dqx.metrics_observer import DQMetricsObserver
 
@@ -39,6 +40,14 @@ def test_dqengine_actions_without_observer_raises(mock_workspace_client):
 
     with pytest.raises(InvalidParameterError, match="Actions require a metrics observer"):
         DQEngine(mock_workspace_client, spark=spark, actions=[action])
+
+
+def test_dqenginecore_actions_without_observer_raises(mock_workspace_client):
+    spark = create_autospec(SparkSession)
+    action = DQAction(action=FailPipeline(), name="fail_on_errors")
+
+    with pytest.raises(InvalidParameterError, match="Actions require a metrics observer"):
+        DQEngineCore(mock_workspace_client, spark=spark, actions=[action])
 
 
 # ---------------------------------------------------------------------------
