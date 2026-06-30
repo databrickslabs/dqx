@@ -112,6 +112,19 @@ class ChecksSemanticValidator:
         return value
 
     @staticmethod
+    def _normalize_arguments(arguments: dict) -> dict:
+        """Return a copy of *arguments* with the column-targeting list order normalized.
+
+        Column order is not semantically significant, so the plural *columns* argument
+        is sorted to a canonical order. This keeps duplicate and conflict detection
+        consistent when comparing arguments.
+        """
+        normalized = dict(arguments)
+        if "columns" in normalized:
+            normalized["columns"] = ChecksSemanticValidator._normalize_columns(normalized["columns"])
+        return normalized
+
+    @staticmethod
     def _full_key(check: dict) -> tuple | None:
         """Return a hashable key representing a rule's complete identity.
 
@@ -129,11 +142,7 @@ class ChecksSemanticValidator:
         )
         # Normalize the column-targeting argument so that reordered column lists are
         # treated as the same rule (column order is not semantically significant).
-        normalized_arguments = dict(arguments)
-        if "columns" in normalized_arguments:
-            normalized_arguments["columns"] = ChecksSemanticValidator._normalize_columns(
-                normalized_arguments["columns"]
-            )
+        normalized_arguments = ChecksSemanticValidator._normalize_arguments(arguments)
         # Serialize the targeting parts (arguments + for_each_column) to a stable,
         # hashable string so that list- or dict-valued values (e.g. is_in_list
         # allowed=[...], for_each_column=[...]) do not raise "unhashable type" when
@@ -216,15 +225,18 @@ class ChecksSemanticValidator:
             if conflict_key is None:
                 continue
 
-            arguments = ChecksSemanticValidator._get_arguments(check)
+            # Compare normalized arguments so that rules differing only by column order
+            # are treated as identical (a duplicate), not as a conflict.
+            arguments = ChecksSemanticValidator._normalize_arguments(ChecksSemanticValidator._get_arguments(check))
 
             if conflict_key in seen:
                 prev_idx, prev_arguments = seen[conflict_key]
                 if arguments != prev_arguments:
                     function, column = conflict_key
+                    column_label = ", ".join(column) if isinstance(column, tuple) else column
                     issues.append(
                         f"Conflicting rules detected: rule at index {idx} and rule at index {prev_idx} "
-                        f"both apply '{function}' to column '{column}' but with different arguments "
+                        f"both apply '{function}' to column '{column_label}' but with different arguments "
                         f"(index {prev_idx}: {prev_arguments}, index {idx}: {arguments})."
                     )
             else:

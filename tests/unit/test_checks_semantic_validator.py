@@ -251,6 +251,22 @@ def test_plural_columns_reordered_same_set_flagged_as_conflict():
     assert len(ChecksSemanticValidator.detect_conflicts(checks)) == 1
 
 
+def test_reordered_columns_identical_args_not_conflict():
+    """Reordered columns with otherwise identical args are a duplicate, not a conflict."""
+    checks = [
+        {
+            "criticality": "error",
+            "check": {"function": "is_unique", "arguments": {"columns": ["a", "b"], "nulls_distinct": True}},
+        },
+        {
+            "criticality": "error",
+            "check": {"function": "is_unique", "arguments": {"columns": ["b", "a"], "nulls_distinct": True}},
+        },
+    ]
+    assert not ChecksSemanticValidator.detect_conflicts(checks)
+    assert len(ChecksSemanticValidator.detect_duplicates(checks)) == 1
+
+
 def test_malformed_checks_do_not_crash_validation():
     """Malformed checks (non-dict check block or arguments) must not raise (regression).
 
