@@ -29,11 +29,15 @@ __all__ = [
     "SingleColumnMixin",
     "normalize_bound_args",
     "register_for_original_columns_preselection",
+    "CHECK_FUNC_MIN_DBR_VERSION_ATTRIBUTE",
     "register_rule",
+    "requires_dbr_version",
 ]
 
 CHECK_FUNC_REGISTRY: dict[str, str] = {}
 CHECK_FUNC_REGISTRY_ORIGINAL_COLUMNS_PRESELECTION: set[str] = set()
+
+CHECK_FUNC_MIN_DBR_VERSION_ATTRIBUTE = "dqx_requires_dbr_version"
 
 
 def register_rule(rule_type: str) -> Callable:
@@ -47,6 +51,53 @@ def register_rule(rule_type: str) -> Callable:
 def register_for_original_columns_preselection() -> Callable:
     def wrapper(func: Callable) -> Callable:
         CHECK_FUNC_REGISTRY_ORIGINAL_COLUMNS_PRESELECTION.add(func.__name__)
+        return func
+
+    return wrapper
+
+
+def requires_dbr_version(version: str) -> Callable:
+    """Annotates a check function with a minimum Databricks Runtime version requirement.
+
+    Parses *version* into a *(major, minor)* tuple and sets it as the
+    *dqx_requires_dbr_version* attribute on the decorated function. The engine reads
+    this attribute before execution and raises an error if the current Databricks
+    Runtime version is lower than the required one, failing the entire run.
+
+    Example usage:
+
+    ```python
+    @requires_dbr_version("15.1")
+    @register_rule("row")
+    def my_check(column: str) -> Column:
+        ...
+    ```
+
+    Args:
+        version: The minimum required Databricks Runtime version in *"major.minor"* format (e.g., *"15.1"*).
+
+    Returns:
+        A decorator that annotates the function with the DBR version requirement.
+
+    Raises:
+        ValueError: If *version* is not a valid *"major.minor"* string with non-negative integer components.
+    """
+    parts = version.split(".")
+    if len(parts) != 2:
+        raise ValueError(f"DBR version must be in 'major.minor' format, got: '{version}'")
+
+    try:
+        major, minor = int(parts[0]), int(parts[1])
+    except ValueError as e:
+        raise ValueError(f"DBR version components must be integers, got: '{version}'") from e
+
+    if major < 0 or minor < 0:
+        raise ValueError(f"DBR version components must be non-negative, got: '{version}'")
+
+    parsed: tuple[int, int] = (major, minor)
+
+    def wrapper(func: Callable) -> Callable:
+        setattr(func, CHECK_FUNC_MIN_DBR_VERSION_ATTRIBUTE, parsed)
         return func
 
     return wrapper
