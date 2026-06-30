@@ -22,11 +22,13 @@ from .migrations import MigrationRunner
 from .runtime import rt
 from .services.ai_rules_service import AiRulesService
 from .services.app_settings_service import AppSettingsService
+from .services.contract_rules_service import ContractRulesService
 from .services.discovery import DiscoveryService
 from .services.job_service import JobService
 from .services.role_service import RoleService
 from .services.rules_catalog_service import RulesCatalogService
 from .services.comments_service import CommentsService
+from .services.review_status_service import ReviewStatusService
 from .services.schedule_config_service import ScheduleConfigService
 from .services.view_service import ViewService
 from .sql_executor import OltpExecutorProtocol, SqlExecutor
@@ -230,6 +232,22 @@ async def get_ai_rules_service(
     return AiRulesService(obo_ws=obo_ws, sp_ws=sp_ws)
 
 
+async def get_contract_rules_service(
+    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
+    ai_service: Annotated[AiRulesService, Depends(get_ai_rules_service)],
+) -> ContractRulesService:
+    """Create a ContractRulesService.
+
+    Contract parsing is local and the generator doesn't touch UC, so we
+    use the SP client — same pattern as the AI generator's LLM call leg.
+    The AI service is injected so natural-language (``type: text``) quality
+    expectations can be converted through the same ChatDatabricks leg the
+    AI-Assisted Generation page uses (DQX's own text path needs dspy + Spark,
+    which the app container lacks).
+    """
+    return ContractRulesService(sp_ws=sp_ws, ai_service=ai_service)
+
+
 async def get_rules_catalog_service(
     sql: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
 ) -> RulesCatalogService:
@@ -264,6 +282,19 @@ async def get_comments_service(
 ) -> CommentsService:
     """Create a CommentsService routed at the OLTP executor."""
     return CommentsService(sql=sql)
+
+
+async def get_review_status_service(
+    sql: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
+    settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+) -> ReviewStatusService:
+    """Create a ReviewStatusService routed at the OLTP executor.
+
+    Takes the same ``AppSettingsService`` we use everywhere else as a
+    transitive dep so the catalogue of allowed status values comes from
+    the same singleton (and same cache) as the Configuration page reads.
+    """
+    return ReviewStatusService(sql=sql, settings=settings)
 
 
 async def get_schedule_config_service(
@@ -457,6 +488,7 @@ __all__ = [
     "get_app_settings_service",
     "get_role_service",
     "get_ai_rules_service",
+    "get_contract_rules_service",
     "get_rules_catalog_service",
     "get_discovery_service",
     "get_view_service",
@@ -464,6 +496,7 @@ __all__ = [
     "get_sql_connector",
     "get_user_role",
     "get_comments_service",
+    "get_review_status_service",
     "get_schedule_config_service",
     "require_role",
     "require_runner",

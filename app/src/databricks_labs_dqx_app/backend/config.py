@@ -31,7 +31,28 @@ class AppConfig(BaseSettings):
     tmp_schema_name: str = Field(default="dqx_studio_tmp", validation_alias="DQX_TMP_SCHEMA")
     job_id: str = Field(default="", validation_alias="DQX_JOB_ID")
     wheels_volume: str = Field(default="", validation_alias="DQX_WHEELS_VOLUME")
+    # Production deploys bind ``job_id`` and ``wheels_volume`` from
+    # bundle resources, so missing values there indicate a misconfigured
+    # deploy that would otherwise silently break profiler / dry-run /
+    # schedules at first use. Setting ``DQX_REQUIRE_TASK_RUNNER=1``
+    # promotes the missing-env warnings in :func:`backend.app.lifespan`
+    # to fail-fast startup errors. Leave unset (default) for local dev
+    # so the API can still boot without the task-runner wheels.
+    require_task_runner: bool = Field(
+        default=False,
+        validation_alias="DQX_REQUIRE_TASK_RUNNER",
+        description="Require DQX_JOB_ID and DQX_WHEELS_VOLUME at startup (production deploys).",
+    )
     llm_endpoint: str = Field(default="databricks-claude-sonnet-4-5", validation_alias="DQX_LLM_ENDPOINT")
+    # Hard cap on tokens generated per LLM call. Bounds cost/latency and
+    # mitigates LLM denial-of-service from pathological prompts (OWASP LLM04);
+    # rule-generation responses are small JSON payloads, so this is generous.
+    llm_max_tokens: int = Field(
+        default=4096,
+        validation_alias="DQX_LLM_MAX_TOKENS",
+        gt=0,
+        description="Maximum output tokens per ChatDatabricks call (LLM budget cap).",
+    )
     admin_group: str | None = Field(
         default=None,
         validation_alias="DQX_ADMIN_GROUP",
@@ -41,6 +62,20 @@ class AppConfig(BaseSettings):
     profiler_default_sample_limit: int = Field(default=50_000)
     dryrun_max_sample_size: int = Field(default=10_000)
     dryrun_default_sample_size: int = Field(default=1_000)
+
+    # ------------------------------------------------------------------
+    # Embedded dashboard (Insights page)
+    # ------------------------------------------------------------------
+    # The Insights page renders a Databricks AI/BI dashboard inside an
+    # iframe. Admins set the dashboard ID via the Configuration page,
+    # which writes to ``dq_app_settings`` and overrides this default.
+    # When unset, this env var lets the bundle ship a starter
+    # dashboard ID so the page works out-of-the-box.
+    default_dashboard_id: str = Field(
+        default="",
+        validation_alias="DQX_DEFAULT_DASHBOARD_ID",
+        description="Fallback dashboard ID for the Insights page when no admin override is set.",
+    )
 
     # ------------------------------------------------------------------
     # Lakebase (Postgres) backend
@@ -58,7 +93,15 @@ class AppConfig(BaseSettings):
     lakebase_instance_name: str = Field(
         default="",
         validation_alias="DQX_LAKEBASE_INSTANCE_NAME",
-        description="Lakebase instance name. Empty disables Lakebase routing.",
+        description=(
+            "Lakebase instance name. Empty — or any of the sentinel "
+            "values ``-`` / ``disabled`` / ``off`` / ``none`` "
+            "(case-insensitive) — disables Lakebase routing. The "
+            "sentinel form exists because Databricks Apps rejects "
+            "env vars with an empty ``value`` string, so deployments "
+            "that want to disable Lakebase must pass a non-empty "
+            "placeholder."
+        ),
     )
     # Default must match the ``lakebase_database_name`` bundle var in
     # ``app/databricks.yml`` (``databricks_postgres`` — the always-present
@@ -135,15 +178,22 @@ class AppConfig(BaseSettings):
     def static_assets_path(self) -> Path:
         return Path(str(resources.files(app_slug))).joinpath("__dist__")
 
+    # Sentinel values that explicitly disable Lakebase routing even
+    # though the env var has to be non-empty (Databricks Apps rejects
+    # ``value: ""``). Comparison is case-insensitive after stripping.
+    _LAKEBASE_DISABLED_SENTINELS = frozenset({"", "-", "disabled", "off", "none"})
+
     @property
     def lakebase_enabled(self) -> bool:
         """``True`` when the deployment was provisioned with Lakebase.
 
         Falls back to ``False`` (legacy UC-only mode) when the
-        instance name is empty so existing tests and dev setups keep
-        working with no Postgres dependency.
+        instance name is empty or set to a recognised "disabled"
+        sentinel so existing tests, dev setups, and Lakebase-less
+        Databricks Apps deployments keep working with no Postgres
+        dependency.
         """
-        return bool(self.lakebase_instance_name.strip())
+        return self.lakebase_instance_name.strip().lower() not in self._LAKEBASE_DISABLED_SENTINELS
 
 
 conf = AppConfig()

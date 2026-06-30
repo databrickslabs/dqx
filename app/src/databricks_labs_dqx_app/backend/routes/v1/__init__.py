@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from .me import router as me_router
 from .check_functions import router as check_functions_router
 from .config import router as config_router
+from .contract import router as contract_router
 from .discovery import router as discovery_router
 from .generate import router as generate_router
 from .rules import router as rules_router
@@ -14,6 +15,7 @@ from .roles import router as roles_router
 from .comments import router as comments_router
 from .quarantine import router as quarantine_router
 from .metrics import router as metrics_router
+from .review_status import router as review_status_router
 from .schedules import router as schedules_router
 
 v1_router = APIRouter()
@@ -23,6 +25,7 @@ v1_router.include_router(schedules_router, prefix="/schedules", tags=["schedules
 v1_router.include_router(roles_router, prefix="/roles", tags=["roles"])
 v1_router.include_router(discovery_router, prefix="/discovery", tags=["discovery"])
 v1_router.include_router(generate_router, prefix="/ai", tags=["ai"])
+v1_router.include_router(contract_router, prefix="/contract", tags=["contract"])
 v1_router.include_router(rules_router, prefix="/rules", tags=["rules"])
 v1_router.include_router(import_rules_router, prefix="/rules", tags=["rules"])
 v1_router.include_router(check_functions_router, prefix="/check-functions", tags=["check-functions"])
@@ -32,3 +35,4 @@ v1_router.include_router(settings_router, prefix="/settings", tags=["settings"])
 v1_router.include_router(comments_router, prefix="/comments", tags=["comments"])
 v1_router.include_router(quarantine_router, prefix="/quarantine", tags=["quarantine"])
 v1_router.include_router(metrics_router, prefix="/metrics", tags=["metrics"])
+v1_router.include_router(review_status_router, prefix="/runs", tags=["review-status"])

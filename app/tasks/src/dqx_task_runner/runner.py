@@ -493,14 +493,30 @@ def _run_dryrun_sql_check(
     check_name = checks[0].get("name", source_table_fqn) if checks else source_table_fqn
     error_summary: list[dict[str, Any]] = []
     if invalid_rows > 0:
+        # ``error_count`` / ``warning_count`` are what the Failed-checks
+        # summary table reads (the bare ``count`` is kept for back-compat
+        # with any older readers). SQL checks have no warning concept, so
+        # every violation is an error.
         error_summary = [
-            {"error": f"SQL check '{check_name}' returned {invalid_rows} violation row(s)", "count": invalid_rows}
+            {
+                "error": f"SQL check '{check_name}' returned {invalid_rows} violation row(s)",
+                "count": invalid_rows,
+                "error_count": invalid_rows,
+                "warning_count": 0,
+            }
         ]
 
     sample_invalid: list[dict[str, Any]] = []
     if invalid_rows > 0:
         sample_rows = violation_df.limit(10).collect()
-        sample_invalid = [row.asDict(recursive=True) for row in sample_rows]
+        # Stamp a synthesised ``_errors`` payload that matches DQX's
+        # ``dq_result_item_schema`` (list of ``{name, message, ...}``
+        # structs) so the per-row Errors column renders the violation
+        # message when the UI falls back to ``sample_invalid`` — either
+        # because the run was a preview (no quarantine written) or
+        # because the caller lacks the role to read ``dq_quarantine_records``.
+        err_payload = [{"name": str(check_name), "message": "SQL check violation"}]
+        sample_invalid = [{**row.asDict(recursive=True), "_errors": err_payload} for row in sample_rows]
 
     from pyspark.sql import functions as F
 
@@ -667,11 +683,13 @@ def _write_sql_quarantine_records(
     """Persist cross-table SQL-check violations to ``dq_quarantine_records``.
 
     Unlike row-level checks, SQL violations don't carry DQX's per-row
-    ``_errors`` map — every row in ``violation_df`` *is* a violation
+    ``_errors`` array — every row in ``violation_df`` *is* a violation
     against the single named check. We synthesise a small JSON errors
-    payload using the same ``{check_name: message}`` shape DQX produces
-    for column checks, so the quarantine schema and the downstream UI /
-    export path stay uniform across check kinds.
+    payload using DQX's public ``dq_result_item_schema`` shape (a list
+    of ``{name, message, ...}`` structs) so the quarantine schema and
+    the downstream UI / export path stay uniform across check kinds and
+    the API model (``QuarantineRecordOut.errors: list[Any]``) validates
+    cleanly.
 
     Volume safety: row-level checks are naturally bounded by
     ``sample_size`` on the input read, but a SQL check's violation set
@@ -701,7 +719,11 @@ def _write_sql_quarantine_records(
     # values land as typed JSON rather than opaque strings.
     data_cols = [c for c in capped_df.columns if c not in ("_warnings", "_errors", "_rule_name")]
     row_data_expr = F.parse_json(F.to_json(F.struct(*data_cols))) if data_cols else F.parse_json(F.lit("{}"))
-    errors_expr = F.parse_json(F.lit(_json_dumps({check_name: "SQL check violation"})))
+    # List of one struct, matching DQX's ``dq_result_item_schema`` so the
+    # frontend's ``row.errors.map(formatError)`` and the Pydantic
+    # ``QuarantineRecordOut.errors: list[Any]`` both work without
+    # special-casing SQL checks.
+    errors_expr = F.parse_json(F.lit(_json_dumps([{"name": check_name, "message": "SQL check violation"}])))
 
     # SQL checks have no warning-level distinction — every violation is
     # treated as an error. Persist ``warnings`` as JSON null so the

@@ -8,7 +8,7 @@ dependencies = [
     "fastapi~=0.119",
     "pydantic-settings~=2.11",
     "uvicorn~=0.37",
-    "databricks-labs-dqx[llm]",
+    "databricks-labs-dqx[llm,datacontract]",
     "databricks-sdk~=0.73",
     "databricks-sql-connector[pyarrow]==4.2.5",
     "openpyxl>=3.1",

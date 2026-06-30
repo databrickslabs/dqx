@@ -3,7 +3,13 @@ import { useTranslation } from "react-i18next";
 import { usePermissions } from "@/hooks/use-permissions";
 import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Sparkles, Database, BarChart3, Upload, ArrowRight } from "lucide-react";
+import {
+  Sparkles,
+  Database,
+  BarChart3,
+  Upload,
+  ArrowRight,
+} from "lucide-react";
 
 export const Route = createFileRoute("/_sidebar/rules/create")({
   component: CreateRulesLanding,
@@ -14,6 +20,15 @@ function CreateRulesLanding() {
   const { canCreateRules } = usePermissions();
   if (!canCreateRules) return <Navigate to="/rules/active" replace />;
 
+  // ``/rules/import`` is now a tabbed landing that hosts both DQX YAML
+  // imports and ODCS data-contract generation — the standalone "From
+  // data contract" tile was removed to keep this grid focused on
+  // distinct *kinds* of rule sources rather than file formats.
+  //
+  // The standalone "Validate table schema" tile was also removed: schema
+  // validation and other reference-table checks (foreign_key, …) are
+  // authored and edited inside the single-table editor, so users have one
+  // place to build and maintain per-table rules.
   const OPTIONS = [
     {
       to: "/rules/single-table",

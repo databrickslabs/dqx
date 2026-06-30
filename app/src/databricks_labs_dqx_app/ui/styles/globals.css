@@ -19,7 +19,11 @@
   --accent: oklch(0.97 0 0);
   --accent-foreground: oklch(0.205 0 0);
   --destructive: oklch(0.577 0.245 27.325);
-  --destructive-foreground: oklch(0.577 0.245 27.325);
+  /* Text/icon colour rendered on top of ``--destructive`` (e.g. the
+     Delete schedule confirm button). Must contrast against the red
+     background — the original token mistakenly mirrored the background
+     so labels and icons were invisible. */
+  --destructive-foreground: oklch(0.985 0 0);
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
   --ring: oklch(0.708 0 0);
@@ -55,7 +59,9 @@
   --accent: oklch(0.269 0 0);
   --accent-foreground: oklch(0.985 0 0);
   --destructive: oklch(0.396 0.141 25.723);
-  --destructive-foreground: oklch(0.637 0.237 25.331);
+  /* Same contrast rationale as the light theme — destructive buttons
+     need a near-white label so the destructive intent is readable. */
+  --destructive-foreground: oklch(0.985 0 0);
   --border: oklch(0.269 0 0);
   --input: oklch(0.269 0 0);
   --ring: oklch(0.439 0 0);

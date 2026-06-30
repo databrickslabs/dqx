@@ -145,32 +145,44 @@ def submit_profile_run(
         # Create view using OBO token — inherits user's table permissions
         view_fqn = view_svc.create_view(body.table_fqn, sample_limit=body.sample_limit)
 
-        # Submit job using SP credentials
-        config = {
-            "sample_limit": body.sample_limit,
-            "source_table_fqn": body.table_fqn,
-            "columns": body.columns,
-            "profile_options": body.profile_options,
-        }
-        job_run_id = job_svc.submit_run(
-            task_type="profile",
-            view_fqn=view_fqn,
-            config=config,
-            run_id=run_id,
-            requesting_user=requesting_user,
-        )
+        # From here on ``view_fqn`` is a UC side-effect we own. Any failure
+        # before we return MUST drop the view, otherwise a half-submitted
+        # run leaks a temp view in ``dqx_studio_tmp``.
+        try:
+            config = {
+                "sample_limit": body.sample_limit,
+                "source_table_fqn": body.table_fqn,
+                "columns": body.columns,
+                "profile_options": body.profile_options,
+            }
+            job_run_id = job_svc.submit_run(
+                task_type="profile",
+                view_fqn=view_fqn,
+                config=config,
+                run_id=run_id,
+                requesting_user=requesting_user,
+            )
 
-        # Write a RUNNING placeholder row immediately so the job appears in history
-        results_table = f"{app_conf.catalog}.{app_conf.schema_name}.dq_profiling_results"
-        job_svc.record_run_started(
-            table=results_table,
-            run_id=run_id,
-            requesting_user=requesting_user,
-            source_table_fqn=body.table_fqn,
-            view_fqn=view_fqn,
-            sample_limit=body.sample_limit,
-            job_run_id=job_run_id,
-        )
+            results_table = f"{app_conf.catalog}.{app_conf.schema_name}.dq_profiling_results"
+            job_svc.record_run_started(
+                table=results_table,
+                run_id=run_id,
+                requesting_user=requesting_user,
+                source_table_fqn=body.table_fqn,
+                view_fqn=view_fqn,
+                sample_limit=body.sample_limit,
+                job_run_id=job_run_id,
+            )
+        except Exception:
+            try:
+                view_svc.drop_view(view_fqn)
+            except Exception as cleanup_err:
+                logger.warning(
+                    "Failed to drop temp view %s after profile submit failure: %s",
+                    view_fqn,
+                    cleanup_err,
+                )
+            raise
 
         return ProfileRunOut(run_id=run_id, job_run_id=job_run_id, view_fqn=view_fqn)
     except HTTPException:
@@ -214,34 +226,47 @@ def submit_batch_profile_run(
 
                 view_fqn = view_svc.create_view(table_fqn, sample_limit=body.sample_limit)
 
-                config = {
-                    "sample_limit": body.sample_limit,
-                    "source_table_fqn": table_fqn,
-                    "columns": None,
-                    "profile_options": body.profile_options,
-                }
-                job_run_id = job_svc.submit_run(
-                    task_type="profile",
-                    view_fqn=view_fqn,
-                    config=config,
-                    run_id=run_id,
-                    requesting_user=requesting_user,
-                )
+                # See submit_profile_run: anything past create_view must
+                # drop the view on failure or we leak it.
+                try:
+                    config = {
+                        "sample_limit": body.sample_limit,
+                        "source_table_fqn": table_fqn,
+                        "columns": None,
+                        "profile_options": body.profile_options,
+                    }
+                    job_run_id = job_svc.submit_run(
+                        task_type="profile",
+                        view_fqn=view_fqn,
+                        config=config,
+                        run_id=run_id,
+                        requesting_user=requesting_user,
+                    )
 
-                runs.append(ProfileRunOut(run_id=run_id, job_run_id=job_run_id, view_fqn=view_fqn))
-                logger.info("Submitted batch profile run for %s (run_id=%s)", table_fqn, run_id)
+                    runs.append(ProfileRunOut(run_id=run_id, job_run_id=job_run_id, view_fqn=view_fqn))
+                    logger.info("Submitted batch profile run for %s (run_id=%s)", table_fqn, run_id)
 
-                # Write RUNNING placeholder so job appears in history immediately
-                results_table = f"{app_conf.catalog}.{app_conf.schema_name}.dq_profiling_results"
-                job_svc.record_run_started(
-                    table=results_table,
-                    run_id=run_id,
-                    requesting_user=requesting_user,
-                    source_table_fqn=table_fqn,
-                    view_fqn=view_fqn,
-                    sample_limit=body.sample_limit,
-                    job_run_id=job_run_id,
-                )
+                    results_table = f"{app_conf.catalog}.{app_conf.schema_name}.dq_profiling_results"
+                    job_svc.record_run_started(
+                        table=results_table,
+                        run_id=run_id,
+                        requesting_user=requesting_user,
+                        source_table_fqn=table_fqn,
+                        view_fqn=view_fqn,
+                        sample_limit=body.sample_limit,
+                        job_run_id=job_run_id,
+                    )
+                except Exception:
+                    try:
+                        view_svc.drop_view(view_fqn)
+                    except Exception as cleanup_err:
+                        logger.warning(
+                            "Failed to drop temp view %s after batch profile submit failure for %s: %s",
+                            view_fqn,
+                            table_fqn,
+                            cleanup_err,
+                        )
+                    raise
             except Exception as table_err:
                 # Classify the per-table failure so the response carries
                 # a stable error code (``INSUFFICIENT_PERMISSIONS`` etc.)

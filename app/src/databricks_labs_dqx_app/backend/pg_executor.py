@@ -164,6 +164,12 @@ class PgExecutor:
 
     dialect: str = "postgres"
 
+    # Alias applied to the conflict target in :meth:`upsert_with_audit` so a
+    # self-referencing increment can address the existing row without a
+    # schema-qualified reference (which Postgres rejects in DO UPDATE SET).
+    # Deliberately prefixed to avoid colliding with any real relation name.
+    _UPSERT_TARGET_ALIAS: str = "dqx_upsert_target"
+
     def __init__(
         self,
         *,
@@ -515,9 +521,19 @@ class PgExecutor:
         """Postgres ``INSERT ... ON CONFLICT ... DO UPDATE`` with audit semantics.
 
         See :meth:`backend.sql_executor.OltpExecutorProtocol.upsert_with_audit`
-        for the contract. The increment self-reference uses the bare
-        column form (``"col" + 1``) which Postgres resolves against
-        the existing row inside DO UPDATE — no table prefix needed.
+        for the contract. The increment self-reference must point at the
+        *existing* row (not ``EXCLUDED``, which carries the proposed
+        value). A bare column name (``"col" = "col" + 1``) is ambiguous
+        when the same column also appears in ``EXCLUDED``, but a
+        schema-qualified reference (``"dq"."tbl"."col"``) is **not** a
+        valid existing-row reference inside ``DO UPDATE SET`` — Postgres
+        resolves it as a FROM-clause entry and errors with "invalid
+        reference to FROM-clause entry for table ...". We therefore alias
+        the conflict target (``INSERT INTO <fqn> AS <alias>``, supported
+        since the ON CONFLICT feature shipped in PG 9.5) and reference the
+        alias, which resolves unambiguously to the existing row. Aliasing
+        also sidesteps having to recover the bare relation name from the
+        already-quoted FQN string.
         """
         if not key_cols:
             raise ValueError("upsert_with_audit requires at least one key column")
@@ -531,19 +547,25 @@ class PgExecutor:
         all_vals = [_pg_render_value(v) for v in list(key_cols.values()) + list(value_cols.values())]
         quoted_cols = [self.q(c) for c in all_cols]
         quoted_keys = [self.q(c) for c in key_cols]
+        alias = self.q(self._UPSERT_TARGET_ALIAS)
 
         # DO UPDATE SET excludes created_* columns when preserve_created;
-        # the increment column (if any) gets the bare-column
-        # self-reference form Postgres resolves inside ON CONFLICT DO
-        # UPDATE — no table prefix needed.
+        # the increment column (if any) references the aliased conflict
+        # target so it resolves to the existing row rather than EXCLUDED.
         update_pairs: list[str] = []
+        needs_alias = False
         for col, val in value_cols.items():
             if preserve_created and col.startswith("created_"):
                 continue
             qcol = self.q(col)
             if col == increment_on_update:
-                # Bare column reference resolves to the existing row.
-                update_pairs.append(f"{qcol} = {qcol} + 1")
+                # Alias-qualified reference resolves unambiguously to the
+                # existing row — even when ``EXCLUDED`` also exposes the
+                # same column name (which is always the case for
+                # ``increment_on_update`` since it has to be in
+                # ``value_cols``).
+                update_pairs.append(f"{qcol} = {alias}.{qcol} + 1")
+                needs_alias = True
             else:
                 update_pairs.append(f"{qcol} = {_pg_render_value(val)}")
 
@@ -555,7 +577,12 @@ class PgExecutor:
             # "create-if-missing" audit row).
             conflict_clause = f"ON CONFLICT ({', '.join(quoted_keys)}) DO NOTHING"
 
-        sql = f"INSERT INTO {table} ({', '.join(quoted_cols)}) " f"VALUES ({', '.join(all_vals)}) " f"{conflict_clause}"
+        # Only alias the target when a self-reference needs it, so the
+        # non-increment path keeps its existing rendered shape.
+        target = f"{table} AS {alias}" if needs_alias else table
+        sql = (
+            f"INSERT INTO {target} ({', '.join(quoted_cols)}) " f"VALUES ({', '.join(all_vals)}) " f"{conflict_clause}"
+        )
         self.execute(sql, timeout_seconds=timeout_seconds)
 
     def select_json_text(self, col: str) -> str:
