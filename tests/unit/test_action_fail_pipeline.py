@@ -17,7 +17,7 @@ from unittest.mock import create_autospec
 import pytest
 
 from databricks.labs.dqx.actions.base import ActionContext, ActionServices
-from databricks.labs.dqx.actions.delivery import WebhookClient  # type: ignore[import-untyped]
+from databricks.labs.dqx.actions.delivery import WebhookClient
 from databricks.labs.dqx.actions.fail_pipeline import FailPipeline
 from databricks.labs.dqx.actions.secrets import SecretResolver
 from databricks.labs.dqx.errors import PipelineFailedError, TerminalActionError

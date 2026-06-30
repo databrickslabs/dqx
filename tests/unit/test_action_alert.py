@@ -16,7 +16,7 @@ Tests cover:
 from __future__ import annotations
 
 import enum
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import ClassVar
 from unittest.mock import create_autospec
@@ -25,7 +25,7 @@ import pytest
 
 from databricks.labs.dqx.actions.alert import DQAlert, DQAlertFrequency, NotifyOn
 from databricks.labs.dqx.actions.base import ActionContext, ActionServices, ActionStatus
-from databricks.labs.dqx.actions.delivery import WebhookClient  # type: ignore[import-untyped]
+from databricks.labs.dqx.actions.delivery import WebhookClient
 from databricks.labs.dqx.actions.destinations.base import AlertDestination
 from databricks.labs.dqx.actions.message import AlertMessage
 from databricks.labs.dqx.actions.secrets import SecretResolver
@@ -43,11 +43,7 @@ class _RecordingDestination(AlertDestination):
 
     type: ClassVar[str] = "recording"
     name: str
-    deliver_calls: list[AlertMessage] = None  # type: ignore[assignment]
-
-    def __post_init__(self) -> None:
-        if self.deliver_calls is None:
-            self.deliver_calls = []
+    deliver_calls: list[AlertMessage] = field(default_factory=list)
 
     def deliver(self, message: AlertMessage, context: ActionContext, services: ActionServices) -> None:
         self.deliver_calls.append(message)
@@ -123,6 +119,10 @@ def test_dq_alert_validate_raises_for_empty_destinations() -> None:
 def test_dq_alert_validate_calls_each_destination_validate() -> None:
     dest_a = create_autospec(_RecordingDestination, instance=True)
     dest_b = create_autospec(_RecordingDestination, instance=True)
+    # 'name' is a reserved Mock kwarg, so set it explicitly (and distinctly, so the
+    # uniqueness check in validate() passes).
+    dest_a.name = "dest_a"
+    dest_b.name = "dest_b"
     alert = DQAlert(destinations=[dest_a, dest_b])
     alert.validate()
     dest_a.validate.assert_called_once()
@@ -152,6 +152,13 @@ def test_dq_alert_validate_passes_for_valid_destinations() -> None:
     dest = _RecordingDestination(name="good")
     alert = DQAlert(destinations=[dest])
     alert.validate()  # must not raise
+
+
+def test_dq_alert_validate_raises_for_duplicate_destination_names() -> None:
+    """Duplicate destination names would clobber each other in destination_errors."""
+    alert = DQAlert(destinations=[_RecordingDestination(name="ops"), _FailingDestination(name="ops")])
+    with pytest.raises(InvalidActionError, match="unique"):
+        alert.validate()
 
 
 # ---------------------------------------------------------------------------
@@ -227,12 +234,12 @@ def test_dq_alert_execute_failing_destination_recorded_in_errors() -> None:
 
 def test_dq_alert_execute_error_text_has_no_newlines() -> None:
     """Sanitization: stored error text must contain no newline characters (CWE-117)."""
-    bad_dest = _FailingDestination(name="nl_dest", error_message="line1\nline2\r\nline3")
+    bad_dest = _FailingDestination(name="nl_dest", error_message="line1\nline2\r\nline3\ttab\x1b[31mansi\x00null")
     alert = DQAlert(destinations=[bad_dest])
     result = alert.execute(_make_context(), _make_services())
     error_text = result.destination_errors.get("nl_dest", "")
-    assert "\n" not in error_text
-    assert "\r" not in error_text
+    for control_char in ("\n", "\r", "\t", "\x1b", "\x00"):
+        assert control_char not in error_text
 
 
 def test_dq_alert_execute_fired_true_even_when_all_destinations_fail() -> None:

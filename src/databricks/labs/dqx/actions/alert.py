@@ -132,14 +132,23 @@ class DQAlert(Action):
             self.name = "alert"
 
     def validate(self) -> None:
-        """Validate that at least one destination is configured and each destination is valid.
+        """Validate that at least one destination is configured, names are unique, and each destination is valid.
+
+        Destination names must be unique because delivery failures are keyed by
+        destination name in *ActionResult.destination_errors*; duplicate names
+        would silently overwrite one another and lose error information.
 
         Raises:
             InvalidActionError: If *destinations* is empty.
+            InvalidActionError: If two or more destinations share the same *name*.
             InvalidActionError: If any destination's own *validate()* raises.
         """
         if not self.destinations:
             raise InvalidActionError("DQAlert must have at least one destination configured.")
+        names = [destination.name for destination in self.destinations]
+        duplicates = sorted({name for name in names if names.count(name) > 1})
+        if duplicates:
+            raise InvalidActionError(f"DQAlert destination names must be unique; duplicates found: {duplicates}")
         for destination in self.destinations:
             destination.validate()
 
