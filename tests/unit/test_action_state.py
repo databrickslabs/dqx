@@ -189,6 +189,18 @@ def test_hourly_allowed_after_hour() -> None:
     assert store.should_fire(dq_action, ctx, condition_result=True) is True
 
 
+def test_hourly_allowed_at_exact_boundary() -> None:
+    """HOURLY alert fires at exactly the 1-hour boundary (suppression is strictly < 1h)."""
+    base_time = datetime(2024, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
+    store = ActionStateStore()
+    _pre_seed_store(store, action_name="default-action", fired=True, status=ActionStatus.UNHEALTHY, run_time=base_time)
+
+    alert = _make_dq_alert(frequency=DQAlertFrequency.HOURLY)
+    dq_action = DQAction(action=alert, name="default-action")
+    ctx = _make_context(run_time=base_time + timedelta(hours=1))
+    assert store.should_fire(dq_action, ctx, condition_result=True) is True
+
+
 # ---------------------------------------------------------------------------
 # should_fire: DAILY frequency
 # ---------------------------------------------------------------------------

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Callable
 
 from pyspark.sql import SparkSession, functions as F
 from pyspark.sql.window import Window
@@ -224,7 +225,7 @@ class LakebaseActionEventStore(ActionEventStore):
         user = self._config.client_id if self._config.client_id else self._ws.current_user.me().user_name
         return f"postgresql+psycopg2://{user}@{host}:{self._config.port}/{self._config.database_name}"
 
-    def _before_connect_listener(self):
+    def _before_connect_listener(self) -> Callable[..., None]:
         """Return a *do_connect* event listener that injects a fresh credential token.
 
         Returns:

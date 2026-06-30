@@ -51,10 +51,7 @@ def make_events_table(ws, spark, make_schema, make_random):
         return full_name
 
     def delete(full_name: str) -> None:
-        try:
-            spark.sql(f"DROP TABLE IF EXISTS {full_name}")
-        except Exception:
-            pass
+        spark.sql(f"DROP TABLE IF EXISTS {full_name}")
 
     yield from factory("events_table", create, delete)
 
