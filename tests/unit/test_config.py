@@ -2,6 +2,7 @@ import pytest
 from databricks.labs.dqx.config import (
     WorkspaceConfig,
     RunConfig,
+    BaseChecksStorageConfig,
     InstallationChecksStorageConfig,
     FileChecksStorageConfig,
     LakebaseChecksStorageConfig,
@@ -553,3 +554,85 @@ def test_lakebase_checks_storage_config_with_custom_run_config_and_fingerprint()
     assert config.instance_name == "my_instance"
     assert config.run_config_name == "prod"
     assert config.rule_set_fingerprint == rule_set_fingerprint
+
+
+@pytest.mark.parametrize(
+    "config,changes,changed_field,expected_value,preserved_field,preserved_value",
+    [
+        (
+            FileChecksStorageConfig(location="/p/checks.yml"),
+            {"location": "/p/other.yml"},
+            "location",
+            "/p/other.yml",
+            None,
+            None,
+        ),
+        (
+            WorkspaceFileChecksStorageConfig(location="/Workspace/checks.yml"),
+            {"location": "/Workspace/other.yml"},
+            "location",
+            "/Workspace/other.yml",
+            None,
+            None,
+        ),
+        (
+            TableChecksStorageConfig(location="cat.sch.tbl", mode="append", run_config_name="rc"),
+            {"mode": "overwrite"},
+            "mode",
+            "overwrite",
+            "run_config_name",
+            "rc",
+        ),
+        (
+            VolumeFileChecksStorageConfig(location="/Volumes/c/s/v/checks.yml"),
+            {"location": "/Volumes/c/s/v/other.yml"},
+            "location",
+            "/Volumes/c/s/v/other.yml",
+            None,
+            None,
+        ),
+        (
+            InstallationChecksStorageConfig(run_config_name="rc", product_name="dqx"),
+            {"run_config_name": "rc2"},
+            "run_config_name",
+            "rc2",
+            "product_name",
+            "dqx",
+        ),
+    ],
+)
+def test_base_storage_config_replace_returns_new_same_type_with_overrides(
+    config, changes, changed_field, expected_value, preserved_field, preserved_value
+):
+    """`replace()` works for every storage-config subclass (incl. the diamond-inheritance
+    `InstallationChecksStorageConfig`): it returns a new instance of the same concrete type with the
+    override applied, other fields preserved, and the original (frozen) instance untouched."""
+    original_changed_value = getattr(config, changed_field)
+
+    replaced = config.replace(**changes)
+
+    assert replaced is not config
+    assert type(replaced) is type(config)
+    assert getattr(replaced, changed_field) == expected_value
+    assert getattr(config, changed_field) == original_changed_value  # original untouched
+    if preserved_field is not None:
+        assert getattr(replaced, preserved_field) == preserved_value
+
+
+# ---------------------------------------------------------------------------
+# ValidationError → InvalidConfigError wrapping (Task 4)
+# ---------------------------------------------------------------------------
+
+
+def test_base_checks_storage_config_wrong_type_raises_invalid_config_error() -> None:
+    """Constructing a BaseChecksStorageConfig subclass with a wrong-typed field must raise
+    InvalidConfigError, not the raw pydantic_core.ValidationError.  DQX callers should not
+    need to import pydantic to handle construction errors from config models.
+    """
+
+    class _StrictConfig(BaseChecksStorageConfig):
+        location: str = "test"
+        count: int  # int field — "not_a_number" cannot be coerced
+
+    with pytest.raises(InvalidConfigError):
+        _StrictConfig(location="test", count="not_a_number")  # type: ignore[arg-type]
