@@ -210,9 +210,13 @@ alert = DQAlert(
 )
 ```
 
-### Persisting alert state across runs
+### Recording action event history
 
-By default, frequency and status-change state is held in memory for the lifetime of the `DQEngine`, so a new engine instance (e.g. each scheduled job run) starts with empty state. To make `HOURLY` / `DAILY` / `STATUS_CHANGE` suppression survive restarts, pass an *action_events_config* pointing at a UC (or Lakebase) events table. The engine seeds its state from that table on first use and appends every fired action to it:
+Pass an *action_events_config* pointing at a Unity Catalog (or Lakebase) events table to keep a
+durable, auditable history of every action DQX evaluates. On each run the engine appends one row
+per action evaluation to this table — **including evaluations that did not fire** (condition
+false, or suppressed by frequency / status-change gating) — so the table is a complete audit log
+of what was checked, what fired, where it was delivered, and what failed.
 
 ```python
 from databricks.labs.dqx.engine import DQEngine
@@ -226,6 +230,45 @@ engine = DQEngine(
     action_events_config=ActionEventsConfig(location="catalog.schema.dqx_action_events"),
 )
 ```
+
+For a Lakebase (PostgreSQL) backend instead of a Delta table, pass a
+*LakebaseActionsStorageConfig* in the same *action_events_config* parameter; DQX selects the
+backend automatically.
+
+Each row is an *AlertEvent* with the following columns:
+
+| Column | Description |
+|---|---|
+| *action_name* | Logical name of the evaluated action |
+| *condition* | The gating condition expression, or *null* when the action is unconditional |
+| *fired* | Whether the action actually executed and delivered |
+| *status* | Aggregate *ActionStatus* of the execution (for example *healthy* / *unhealthy*) |
+| *observed_metrics* | Snapshot of the metrics observed during the run |
+| *run_id* | Unique identifier of the DQX run that produced the event |
+| *run_time* | Timestamp of the run |
+| *input_location* | Source path or table of the checked data, or *null* |
+| *destinations* | Names of the destinations that were targeted |
+| *delivery_errors* | Error messages for any destinations that failed delivery |
+
+Because it is an ordinary table, you can query the history directly — for example, to review the
+most recent alerts that actually fired:
+
+```sql
+SELECT run_time, action_name, status, observed_metrics, destinations, delivery_errors
+FROM catalog.schema.dqx_action_events
+WHERE fired = true
+ORDER BY run_time DESC
+LIMIT 50
+```
+
+### Persisting alert state across runs
+
+The same events table also makes alert suppression durable. By default, frequency and
+status-change state is held in memory for the lifetime of the *DQEngine*, so a new engine
+instance (for example each scheduled job run) starts with empty state. When *action_events_config*
+is set, the engine seeds its suppression state from the events table on first use, so
+*HOURLY* / *DAILY* frequency windows and *STATUS_CHANGE* alerting behave correctly across engine
+restarts. Without it, alert state resets on every run.
 
 ## Using actions with DQEngine
 
