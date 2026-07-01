@@ -24,9 +24,11 @@ from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.actions.alert import DQAlert
 from databricks.labs.dqx.actions.base import ActionContext
 from databricks.labs.dqx.actions.dq_action import DQAction
-from databricks.labs.dqx.actions.destinations import CallbackDQAlertDestination
+from databricks.labs.dqx.actions.destinations import CallbackDQAlertDestination, SlackDQAlertDestination
 from databricks.labs.dqx.actions.fail_pipeline import FailPipeline
+from databricks.labs.dqx.actions.manager import DQActionManager
 from databricks.labs.dqx.actions.message import AlertMessage
+from databricks.labs.dqx.actions.secret_field import DQSecret
 from databricks.labs.dqx.config import InputConfig, OutputConfig
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.errors import PipelineFailedError
@@ -196,3 +198,83 @@ def test_streaming_apply_checks_fires_callback_per_microbatch(ws, spark, make_sc
     error_count = ctx.metrics.get("error_row_count")
     assert isinstance(error_count, int) and error_count > 0, f"Expected error_row_count > 0, got {error_count!r}"
     assert ctx.input_location == input_table
+
+
+# ---------------------------------------------------------------------------
+# Test: actions defined as declarative metadata dicts fire end-to-end
+# ---------------------------------------------------------------------------
+
+
+def test_apply_checks_and_save_fires_action_from_metadata(ws, spark, make_schema, make_random) -> None:
+    """A *FailPipeline* action defined as a metadata dict aborts the run against real metrics.
+
+    Exercises the *DQEngine* dict-normalization path (*actions* passed as
+    ``list[dict]`` rather than *DQAction* instances) end-to-end: the dict is
+    deserialized at construction time and evaluated against the observed
+    ``error_row_count`` after the batch save completes.
+    """
+    catalog_name = TEST_CATALOG
+    schema = make_schema(catalog_name=catalog_name)
+    input_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+    output_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+
+    test_df = spark.createDataFrame([[1, "alice"], [None, "bob"]], "id: int, name: string")
+    test_df.write.format("delta").mode("overwrite").saveAsTable(input_table)
+
+    checks = [
+        DQRowRule(name="id_not_null", criticality="error", check_func=check_funcs.is_not_null, column="id"),
+    ]
+
+    action_dicts: list[DQAction | dict[str, object]] = [
+        {
+            "action": {"type": "fail_pipeline", "message": "Metadata-defined failure"},
+            "condition": "error_row_count > 0",
+            "name": "fail_from_metadata",
+        }
+    ]
+
+    observer = DQMetricsObserver()
+    engine = DQEngine(ws, spark=spark, observer=observer, actions=action_dicts)
+
+    with pytest.raises(PipelineFailedError, match="Metadata-defined failure"):
+        engine.apply_checks_and_save_in_table(
+            checks=checks,
+            input_config=InputConfig(location=input_table),
+            output_config=OutputConfig(location=output_table, mode="overwrite"),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Test: local-file save / load round-trip reconstructs actions
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("filename", ["actions.yml", "actions.json"])
+def test_local_file_action_round_trip(tmp_path, filename) -> None:
+    """*save_actions_in_local_file* / *load_actions_from_local_file* round-trip for YAML and JSON."""
+    actions = [
+        DQAction(
+            action=DQAlert(
+                destinations=[SlackDQAlertDestination(name="ops", webhook_url=DQSecret(scope="s", key="k"))]
+            ),
+            condition="error_row_count > 0",
+            name="alert_from_file",
+        ),
+        DQAction(action=FailPipeline(message="boom"), condition="error_row_count > 10", name="fail_from_file"),
+    ]
+
+    filepath = str(tmp_path / filename)
+    DQActionManager.save_actions_in_local_file(actions, filepath)
+    loaded = DQActionManager.load_actions_from_local_file(filepath)
+
+    assert len(loaded) == 2
+    alert = loaded[0].action
+    assert isinstance(alert, DQAlert)
+    destination = alert.destinations[0]
+    assert isinstance(destination, SlackDQAlertDestination)
+    assert isinstance(destination.webhook_url, DQSecret)
+    fail = loaded[1].action
+    assert isinstance(fail, FailPipeline)
+    assert fail.message == "boom"
+    assert loaded[1].condition == "error_row_count > 10"
+    assert loaded[1].name == "fail_from_file"
