@@ -442,6 +442,92 @@ and pass them to the engine via `DQEngine(ws, observer=..., actions=loaded_actio
 programmatic API described above is the supported path.
 :::
 
+## Defining actions with metadata (YAML)
+
+Actions can also be defined declaratively as a list of plain dicts — either loaded from a YAML
+or JSON file, or written inline in Python — mirroring the way DQX checks support both
+programmatic classes and metadata lists.
+
+Each dict must match the wire format used by *ActionSerializer*: an *action* key whose value
+contains a *type* discriminator (*"alert"* or *"fail_pipeline"*), plus an optional *condition*
+key.  A *DQSecret* credential is expressed as a nested mapping with a single *secret* key
+whose value is a *scope/key* reference.
+
+Example YAML file:
+
+```yaml
+- action:
+    type: alert
+    destinations:
+      - type: slack
+        name: ops-channel
+        webhook_url:
+          secret: my_scope/slack_webhook
+  condition: error_row_count > 0
+- action:
+    type: fail_pipeline
+  condition: error_row_count > 10
+```
+
+### Loading from a local file
+
+Use *DQActionManager.load_actions_from_local_file* to deserialize a *.yml*, *.yaml*, or *.json*
+file into a list of *DQAction* instances.  The complementary
+*DQActionManager.save_actions_in_local_file* method persists a list back to disk:
+
+```python
+from databricks.labs.dqx.actions import DQActionManager
+
+# Load actions from a YAML file
+actions = DQActionManager.load_actions_from_local_file("actions.yml")
+
+# Save actions to a JSON file
+DQActionManager.save_actions_in_local_file(actions, "actions_backup.json")
+```
+
+### Passing action dicts directly to DQEngine
+
+*DQEngine* also accepts raw action dicts in place of (or mixed with) *DQAction* instances.
+Each dict is deserialized via *ActionSerializer.from_dict* at construction time, so any
+validation error (unknown type, missing required field) surfaces immediately rather than at
+evaluation time.  Mixed lists of *DQAction* objects and dicts are supported:
+
+```python
+from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.metrics_observer import DQMetricsObserver
+from databricks.sdk import WorkspaceClient
+
+observer = DQMetricsObserver(name="my_pipeline")
+
+# Define actions as plain dicts
+action_dicts = [
+    {
+        "action": {
+            "type": "alert",
+            "destinations": [
+                {
+                    "type": "slack",
+                    "name": "ops-channel",
+                    "webhook_url": {"secret": "my_scope/slack_webhook"},
+                }
+            ],
+        },
+        "condition": "error_row_count > 0",
+    },
+    {
+        "action": {"type": "fail_pipeline"},
+        "condition": "error_row_count > 10",
+    },
+]
+
+engine = DQEngine(WorkspaceClient(), observer=observer, actions=action_dicts)
+```
+
+<Admonition type="note" title="Callback destinations cannot be expressed in metadata">
+*CallbackDQAlertDestination* holds a live Python callable and has no metadata representation.
+Callback-based destinations can only be configured programmatically via the class API.
+</Admonition>
+
 ## Security and secrets
 
 ### Using DQSecret for credentials
