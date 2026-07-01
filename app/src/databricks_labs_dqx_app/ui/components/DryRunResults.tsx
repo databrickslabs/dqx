@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,8 @@ import {
   ChevronRight,
   Download,
   Info,
+  X,
+  Filter,
 } from "lucide-react";
 import type { DryRunResultsOut } from "@/lib/api";
 import {
@@ -18,6 +20,13 @@ import {
   exportQuarantineRecords,
   type QuarantineRecordOut,
 } from "@/lib/api-custom";
+
+// DQX check identifiers come in two shapes: a bare ``check_function`` name
+// (``is_not_null``) or a ``name`` field assigned by the rule author
+// (``fare_amount_not_in_range``). Both round-trip through the quarantine
+// ``errors[]`` / ``warnings[]`` arrays under the ``name`` key, so a single
+// substring is enough to identify either flavour.
+type CheckId = string;
 
 interface DryRunResultsProps {
   result: DryRunResultsOut;
@@ -41,6 +50,17 @@ function formatError(err: unknown): string {
     }
   }
   return String(err ?? "");
+}
+
+// Format a percentage so the failed-check rows stay aligned in a fixed
+// width column. Small ratios get one decimal so a check that fired on a
+// handful of rows out of millions doesn't collapse to "0%" and look
+// equivalent to one that fired on none.
+function formatRatio(pct: number): string {
+  if (!isFinite(pct) || pct <= 0) return "0";
+  if (pct < 0.1) return "<0.1";
+  if (pct < 10) return pct.toFixed(1);
+  return Math.round(pct).toString();
 }
 
 function summarizeErrorText(raw: string): string {
@@ -143,13 +163,29 @@ export function DryRunResults({ result }: DryRunResultsProps) {
   const [currentPage, setCurrentPage] = useState(0);
   const offset = currentPage * pageSize;
 
+  // Active check-name filter. Set by clicking a row in the failed-checks
+  // table; clears via the chip next to "Failed rows". When set, both the
+  // listing endpoint and the count endpoint apply the same
+  // server-side filter so pagination stays consistent.
+  const [activeCheck, setActiveCheck] = useState<CheckId | null>(null);
+
+  // Reset back to page 0 whenever the filter changes — otherwise the
+  // user could land on page 4 of a filtered set that only has page 0.
+  useEffect(() => {
+    setCurrentPage(0);
+  }, [activeCheck]);
+
   const { data: quarantineResp, isLoading: quarantineLoading } =
-    useListQuarantineRecords(result.run_id, { offset, limit: pageSize }, {
-      query: { enabled: hasFailedRows },
-    });
-  const { data: countResp } = useQuarantineCount(result.run_id, {
-    query: { enabled: hasFailedRows },
-  });
+    useListQuarantineRecords(
+      result.run_id,
+      { offset, limit: pageSize, check_name: activeCheck ?? undefined },
+      { query: { enabled: hasFailedRows } },
+    );
+  const { data: countResp } = useQuarantineCount(
+    result.run_id,
+    { check_name: activeCheck ?? undefined },
+    { query: { enabled: hasFailedRows } },
+  );
 
   const quarantineRecords: QuarantineRecordOut[] = quarantineResp?.data?.records ?? [];
   const quarantineTotal = countResp?.data?.count ?? quarantineResp?.data?.total_count ?? 0;
@@ -229,7 +265,6 @@ export function DryRunResults({ result }: DryRunResultsProps) {
           <div className="text-2xl font-bold tabular-nums text-red-600">{errorRows}</div>
           <div className="text-xs text-muted-foreground flex items-center justify-center gap-1">
             <XCircle className="h-3 w-3" />
-            {t("dryRun.invalid")}
             Errors
           </div>
         </div>
@@ -265,51 +300,99 @@ export function DryRunResults({ result }: DryRunResultsProps) {
           into ``error_count`` / ``warning_count`` columns so a
           warning-level check is visually distinct from an error-level
           one (otherwise warning-only checks look identical to errors,
-          which is what users hit in practice). */}
+          which is what users hit in practice).
+
+          Each row is also clickable: it sets ``activeCheck`` so the
+          failed-rows table below filters down to that single check's
+          quarantine rows — the click target on the screen the user
+          asked about ("click a failed check → open quarantined
+          samples"). */}
       {errorSummary.length > 0 && (
         <div className="space-y-2">
           <h4 className="text-sm font-medium flex items-center gap-1.5">
             <AlertTriangle className="h-4 w-4 text-amber-500" />
-            {t("dryRun.errorSummary")}
+            {t("dryRun.failedChecksHeader")}
             <span className="text-muted-foreground font-normal">
               ({errorSummary.length} {t("dryRun.distinctSuffix")})
+            </span>
+            <span className="ml-auto text-[10px] text-muted-foreground/70 font-normal hidden sm:inline">
+              {t("dryRun.clickRowHint")}
             </span>
           </h4>
           <div className="border rounded-lg overflow-hidden">
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b bg-muted/50">
-                  <th className="text-left p-2 font-medium">Check</th>
-                  <th className="text-right p-2 font-medium w-24">Errors</th>
-                  <th className="text-right p-2 font-medium w-24">Warnings</th>
+                  <th className="text-left p-2 font-medium">{t("dryRun.checkColumn")}</th>
+                  <th className="text-right p-2 font-medium w-32">{t("dryRun.errorsHeader")}</th>
+                  <th className="text-right p-2 font-medium w-32">{t("dryRun.warningsHeader")}</th>
                 </tr>
               </thead>
               <tbody>
                 {visibleErrorSummary.map((item, idx) => {
                   const errCount = Number(item.error_count ?? 0);
                   const warnCount = Number(item.warning_count ?? 0);
+                  // ``checkName`` is the click target. The summary
+                  // shape doesn't expose the original DQX ``name``
+                  // explicitly, but the API populates ``error`` with
+                  // the same identifier — fall back to the formatted
+                  // text only if for some reason it's missing.
+                  const checkName = String(item.error ?? "").trim();
+                  const isActive = activeCheck !== null && activeCheck === checkName;
+                  const errRatio = totalRows > 0 ? (errCount / totalRows) * 100 : 0;
+                  const warnRatio = totalRows > 0 ? (warnCount / totalRows) * 100 : 0;
                   return (
-                    <tr key={idx} className="border-b last:border-b-0">
-                      <td className="p-2 text-muted-foreground" title={String(item.error ?? "")}>
-                        {summarizeErrorText(String(item.error ?? ""))}
+                    <tr
+                      key={idx}
+                      className={[
+                        "border-b last:border-b-0 cursor-pointer transition-colors",
+                        isActive
+                          ? "bg-primary/5 ring-1 ring-inset ring-primary/30"
+                          : "hover:bg-muted/40",
+                      ].join(" ")}
+                      onClick={() =>
+                        setActiveCheck((prev) =>
+                          prev === checkName ? null : checkName,
+                        )
+                      }
+                      title={
+                        isActive
+                          ? t("dryRun.clickRowHintClear")
+                          : t("dryRun.clickRowHintFull", { name: checkName })
+                      }
+                    >
+                      <td className="p-2 text-muted-foreground">
+                        <span className="font-mono">
+                          {summarizeErrorText(checkName)}
+                        </span>
                       </td>
                       <td className="p-2 text-right tabular-nums">
                         {errCount > 0 ? (
-                          <Badge variant="destructive" className="text-xs">
-                            {errCount}
-                          </Badge>
+                          <span className="inline-flex items-center gap-1.5 justify-end">
+                            <Badge variant="destructive" className="text-xs">
+                              {errCount.toLocaleString()}
+                            </Badge>
+                            <span className="text-[10px] text-muted-foreground tabular-nums w-12 text-right">
+                              ({formatRatio(errRatio)}%)
+                            </span>
+                          </span>
                         ) : (
                           <span className="text-muted-foreground">—</span>
                         )}
                       </td>
                       <td className="p-2 text-right tabular-nums">
                         {warnCount > 0 ? (
-                          <Badge
-                            variant="outline"
-                            className="text-xs border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-300"
-                          >
-                            {warnCount}
-                          </Badge>
+                          <span className="inline-flex items-center gap-1.5 justify-end">
+                            <Badge
+                              variant="outline"
+                              className="text-xs border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+                            >
+                              {warnCount.toLocaleString()}
+                            </Badge>
+                            <span className="text-[10px] text-muted-foreground tabular-nums w-12 text-right">
+                              ({formatRatio(warnRatio)}%)
+                            </span>
+                          </span>
                         ) : (
                           <span className="text-muted-foreground">—</span>
                         )}
@@ -333,16 +416,34 @@ export function DryRunResults({ result }: DryRunResultsProps) {
 
       {/* Failed rows data table — includes both error rows and warning rows
           since DQX's split puts anything that failed a check into the same
-          quarantine bucket. */}
+          quarantine bucket. When ``activeCheck`` is set the title chip
+          makes the filter obvious and clicking the X clears it. */}
       {hasFailedRows && (
         <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <h4 className="text-sm font-medium flex items-center gap-1.5">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <h4 className="text-sm font-medium flex items-center gap-1.5 flex-wrap">
               <AlertTriangle className="h-4 w-4 text-amber-500" />
-              Failed rows
+              {t("dryRun.failedRowsHeader")}
               <span className="text-muted-foreground font-normal">
                 ({hasQuarantine ? `${quarantineTotal} ${t("dryRun.quarantinedSuffix")}` : `${sampleInvalid.length} ${t("dryRun.samplesSuffix")}`})
               </span>
+              {activeCheck && (
+                <Badge
+                  variant="secondary"
+                  className="ml-1 gap-1 font-normal text-[11px]"
+                >
+                  <Filter className="h-3 w-3" />
+                  <span className="font-mono">{activeCheck}</span>
+                  <button
+                    type="button"
+                    aria-label={t("dryRun.clearCheckFilter")}
+                    className="ml-0.5 -mr-0.5 rounded hover:bg-muted-foreground/20 p-0.5"
+                    onClick={() => setActiveCheck(null)}
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </Badge>
+              )}
             </h4>
             <div className="flex items-center gap-1.5 flex-wrap">
               {hasQuarantine ? (
@@ -356,7 +457,13 @@ export function DryRunResults({ result }: DryRunResultsProps) {
                     variant="outline"
                     size="sm"
                     className="h-7 gap-1.5 text-xs"
-                    onClick={() => exportQuarantineRecords(result.run_id, "csv")}
+                    onClick={() =>
+                      exportQuarantineRecords(
+                        result.run_id,
+                        "csv",
+                        activeCheck ?? undefined,
+                      )
+                    }
                   >
                     <Download className="h-3.5 w-3.5" />
                     {t("dryRun.csv")}
@@ -365,7 +472,13 @@ export function DryRunResults({ result }: DryRunResultsProps) {
                     variant="outline"
                     size="sm"
                     className="h-7 gap-1.5 text-xs"
-                    onClick={() => exportQuarantineRecords(result.run_id, "xlsx")}
+                    onClick={() =>
+                      exportQuarantineRecords(
+                        result.run_id,
+                        "xlsx",
+                        activeCheck ?? undefined,
+                      )
+                    }
                   >
                     <Download className="h-3.5 w-3.5" />
                     {t("dryRun.excel")}

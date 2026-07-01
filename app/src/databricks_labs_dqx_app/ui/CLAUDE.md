@@ -11,19 +11,34 @@ ui/
 ├── main.tsx                    # App bootstrap (QueryClient, Router, AuthGuard)
 ├── routes/                     # File-based routing (TanStack Router)
 │   ├── __root.tsx              # Root layout (ThemeProvider, AIAssistantProvider, Toaster)
-│   ├── index.tsx               # Home page — welcome screen, create config
+│   ├── index.tsx               # Home redirect
 │   └── _sidebar/              # Sidebar layout group (prefix _ = layout route)
-│       ├── route.tsx           # Sidebar nav (Config, Runs, Discovery)
-│       ├── config.tsx          # Config editor + settings modal
-│       ├── runs.tsx            # Run list + editor + AI assistant
-│       ├── runs.index.tsx      # Runs placeholder/redirect
-│       ├── runs.$runName.tsx   # Dynamic route for specific run
+│       ├── route.tsx           # Sidebar nav + persistent in-app docs link
+│       ├── home.tsx            # Landing page (welcome, primary CTAs)
+│       ├── config.tsx          # Workspace config + storage settings
 │       ├── discovery.tsx       # Catalog browser (catalog → schema → table → columns)
-│       └── profile.tsx         # User profile
+│       ├── insights.tsx        # Stub route (renders null); dashboard hosted persistently in the layout (see components/insights/)
+│       ├── profile.tsx         # User profile + language preference
+│       ├── profiler.tsx        # Profiler launch + Profiler & Generate results modal
+│       ├── rules.tsx           # Rules layout (tabs)
+│       ├── rules.index.tsx     # Redirect to default rules tab
+│       ├── rules.active.tsx    # Active rules library (grouped by target table; __sql_check__ bucket)
+│       ├── rules.drafts.tsx    # Drafts & Review
+│       ├── rules.create.tsx    # Create rules landing (tiles)
+│       ├── rules.single-table.tsx   # Single-table rule editor (incl. has_valid_schema / foreign_key reference checks)
+│       ├── rules.create-sql.tsx     # Cross-table SQL editor (synthetic __sql_check__ FQN)
+│       ├── rules.create-reusable.tsx # Reusable-rule template editor
+│       ├── rules.import.tsx    # Bulk import — TABBED: "yaml" + "contract" (?tab=)
+│       ├── rules.from-contract.tsx  # Legacy URL → Navigate redirect to /rules/import?tab=contract
+│       ├── runs.tsx            # Run editor + AI assistant
+│       ├── runs.index.tsx      # Runs placeholder/redirect
+│       ├── runs.$runName.tsx   # Manual-run launcher + per-table error details
+│       └── runs-history.tsx    # Run history with ratio bars + click-failed-check filter; schedules tab w/ pause/delete row actions
 ├── components/
 │   ├── ui/                     # shadcn/ui primitives (button, card, dialog, select, etc.)
 │   ├── layout/                 # Shell components (Navbar, SidebarLayout, ThemeProvider, Logo)
 │   ├── anim/                   # Animation components (FadeIn, ShinyText)
+│   ├── insights/               # Persistent Insights dashboard host (iframe survives navigation)
 │   ├── backgrounds/            # Decorative backgrounds (gradient, stars)
 │   ├── AuthGuard.tsx           # Blocks render until OBO auth confirmed (exponential backoff)
 │   ├── AIAssistantProvider.tsx # Context + Sheet modal for AI rule generator
@@ -100,7 +115,7 @@ yarn vite preview      # Preview production build
 
 ### Data Flow
 
-1. Route component mounts → calls React Query hook (e.g., `useConfig()`)
+1. Route component mounts → calls React Query hook (e.g., `useGetConfig()`)
 2. Hook makes Axios request to `/api/v1/*` (OBO token in header automatically)
 3. orval-generated hook transforms response via `selector` (extracts `.data`)
 4. Component renders with cached data
@@ -145,6 +160,31 @@ The UI is fully localized with **react-i18next**. Locale bundles live in `lib/i1
 - **Add every new key to all four locales** — `en.json`, `pt-BR.json`, `it.json`, `es.json`. `en.json` is the source of truth. A key present in `en` but missing from the others falls back to English at runtime (a silent partial-translation bug), so keep the key sets in sync and translate the value in each file — don't leave the English string behind in a non-English file.
 - **Pluralize with native i18next, not string concatenation.** Use `_one` / `_other` suffix keys with `{{count}}` (e.g. `columnsCount_one` / `columnsCount_other`). Never build plurals with a hard-coded `"s"` suffix or an interpolated `{{somethingPlural}}` placeholder — that bakes English grammar into the translation layer and breaks other locales.
 - **Adding a new language:** add it to `SUPPORTED_LANGUAGES` and register a loader in `localeLoaders` (both in `lib/i18n/index.ts`), then create the matching `locales/<code>.json`. Only `en` ships in the initial JS bundle; other locales lazy-load on demand via `ensureLocaleLoaded`, so don't statically import them.
+
+### Theming (CSS custom properties)
+
+Themes are CSS custom properties on `:root` and `.dark` in `styles/globals.css`. shadcn `Button` (and friends) read `--<role>` (background) and `--<role>-foreground` (text) — **both must contrast**. We've already shipped a bug where `--destructive-foreground` matched `--destructive` and the "Delete" button text was invisible on red. If you change a `--*-foreground` token, eyeball the corresponding role in both light and dark themes before merging.
+
+### Dataset-level rules: routing & editing
+
+Only **cross-table SQL checks** use the synthetic `__sql_check__/<name>` `table_fqn`, so they're the only rules bucketed under the **Cross-table rules** group on the Active Rules page. Reference checks (`has_valid_schema`, `foreign_key`) carry a **real target-table FQN** — they group under their target table and are authored *and* edited in the single-table editor. The Edit/View dispatch (in `routes/_sidebar/rules.active.tsx` and `rules.drafts.tsx`) keys off the FQN prefix only:
+
+- synthetic `__sql_check__/` FQN → `/rules/create-sql?...`
+- real table FQN → `/rules/single-table?...` (loads every check on the table, schema validation included)
+
+There is **no** separate schema-validation route — `has_valid_schema` is just another check in the single-table editor's catalog. When you add another dataset-level (table-less) rule kind, give it a synthetic FQN and extend the cross-table dispatch; per-table reference checks need no special routing.
+
+### Schema rule subset filtering (DDL trimming)
+
+`has_valid_schema` only filters the *actual* DataFrame when you pass `columns` / `exclude_columns` — it does **not** trim the *expected* schema. To keep both sides aligned in DDL mode, `routes/_sidebar/rules.single-table.tsx#checkToDict()` calls `filterDdlByColumns()` from `lib/format-utils.ts` to trim `expected_schema` before saving. Reference-table mode can't trim a remote schema client-side, so it's left as-is. Don't remove this without porting the trimming server-side first.
+
+### Import rules: tabbed page (?tab=yaml|contract)
+
+`/rules/import` is a single tabbed page hosting two flows; `/rules/from-contract` is now just a `Navigate` redirect to `/rules/import?tab=contract` to keep old bookmarks working. The contract flow's main component (`ContractWorkspace`) is exported from `rules.from-contract.tsx` and imported by `rules.import.tsx`. If you split or rename either file, update both the redirect and the import — and remember to re-run `make app-build` (or the dev server) so `routeTree.gen.ts` picks up new files.
+
+### Insights dashboard: persistent iframe host
+
+The Insights page embeds a Lakeview dashboard in an `<iframe>`, and a browser reloads an iframe whenever it is detached/re-attached to the DOM. To stop the dashboard reloading on every visit, the iframe is **not** rendered by the `/insights` route — that route is a stub (`component: () => null`). Instead `components/insights/InsightsDashboard.tsx` exports `InsightsDashboardHost`, rendered once inside the persistent `_sidebar` layout (`components/layout/SidebarLayout.tsx`). The host lazily mounts the iframe on first visit and then keeps it mounted, toggling `display` with the route (`display:none` keeps the iframe's document alive). While on `/insights` the layout hides the empty route `<Outlet/>` wrapper and shows the host. Don't move the iframe back into the route component or wrap it in anything that reparents it, or the reload-on-navigation regression returns.
 
 ## Vite Config Notes
 

@@ -1,10 +1,12 @@
 import json
+import os
 import re
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 
 from databricks_labs_dqx_app.backend.common.authorization import UserRole, get_user_email
+from databricks_labs_dqx_app.backend.config import conf
 from databricks_labs_dqx_app.backend.dependencies import get_app_settings_service, require_role
 from databricks_labs_dqx_app.backend.logger import logger
 from pydantic import BaseModel, Field
@@ -16,6 +18,14 @@ from databricks_labs_dqx_app.backend.models import (
     RunConfigOut,
 )
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
+
+# Everyone except VIEWER. Used to gate the embedded-dashboard GET: the
+# Lakeview iframe is published with ``embed_credentials: true``
+# (app/databricks.yml), so it renders with the publisher's credentials
+# rather than the caller's — the "underlying dashboard enforces UC
+# permissions" assumption does not hold, and a VIEWER could otherwise see
+# data they lack UC grants for. Mirrors ``_NON_VIEWERS`` in routes/v1/dryrun.py.
+_NON_VIEWERS = [UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTHOR]
 
 _TZ_SETTING_KEY = "display_timezone"
 _TZ_DEFAULT = "UTC"
@@ -87,7 +97,7 @@ router = APIRouter()
 @router.get(
     "",
     response_model=ConfigOut,
-    operation_id="config",
+    operation_id="getConfig",
     dependencies=[require_role(UserRole.ADMIN)],
 )
 def get_config(
@@ -537,3 +547,297 @@ def save_custom_metrics(
     saved = svc.save_custom_metrics(cleaned, user_email=email)
     logger.info("Saved %d custom metric expression(s)", len(saved))
     return CustomMetricsOut(metrics=saved)
+
+
+# ----------------------------------------------------------------------
+# Embedded dashboard — the Insights page renders a Databricks AI/BI
+# dashboard inside an iframe. Admins set the dashboard ID (and an
+# optional display title) here; the GET endpoint falls back to the env
+# default (``conf.default_dashboard_id`` from ``DQX_DEFAULT_DASHBOARD_ID``)
+# so the bundle can ship a starter dashboard without preventing
+# customer overrides. The workspace host is read from
+# ``DATABRICKS_HOST`` (always set inside a Databricks App container)
+# and included in the response so the frontend can build the embed
+# URL without a second roundtrip.
+# ----------------------------------------------------------------------
+
+# Conservative ID validation: Databricks AI/BI dashboard IDs are
+# UUIDs or shorter slugs, so we accept letters, digits, hyphens, and
+# underscores. We deliberately reject anything that could be a URL
+# fragment or path traversal so admins can't accidentally paste a full
+# URL and break iframe rendering downstream.
+_DASHBOARD_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+
+
+class EmbeddedDashboardOut(BaseModel):
+    """Current embedded-dashboard configuration + the bits the UI needs to render the iframe."""
+
+    dashboard_id: str = Field(
+        default="",
+        description="Effective dashboard ID. Empty string means 'nothing configured'.",
+    )
+    title: str | None = Field(
+        default=None,
+        description="Optional admin-provided display title. The UI falls back to a generic label when null.",
+    )
+    workspace_host: str = Field(
+        default="",
+        description="Workspace host (e.g. 'https://e2-...cloud.databricks.com') used to build the iframe URL.",
+    )
+    is_set: bool = Field(
+        default=False,
+        description="True when the admin has saved an explicit setting (independent of the env default).",
+    )
+    is_default: bool = Field(
+        default=False,
+        description="True when the response is serving the env-provided default rather than an admin override.",
+    )
+
+
+class EmbeddedDashboardIn(BaseModel):
+    """Update payload — admins write the dashboard ID and optionally a display title."""
+
+    dashboard_id: str
+    title: str | None = None
+
+
+def _workspace_host() -> str:
+    """Read the workspace host from the env Databricks Apps populates at runtime.
+
+    Returns an empty string if unset (e.g. local dev without DATABRICKS_HOST);
+    the UI handles this by showing a config-required message rather than a
+    broken iframe.
+    """
+    host = (os.environ.get("DATABRICKS_HOST") or "").strip()
+    if host and not host.startswith(("http://", "https://")):
+        host = f"https://{host}"
+    return host.rstrip("/")
+
+
+@router.get(
+    "/embedded-dashboard",
+    response_model=EmbeddedDashboardOut,
+    operation_id="getEmbeddedDashboard",
+    dependencies=[require_role(*_NON_VIEWERS)],
+)
+def get_embedded_dashboard(
+    svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+) -> EmbeddedDashboardOut:
+    """Return the current embedded-dashboard config.
+
+    Gated to non-VIEWER roles. The Lakeview iframe is published with
+    ``embed_credentials: true`` (app/databricks.yml), so it renders with
+    the publisher's credentials rather than the caller's — the dashboard
+    does NOT re-enforce UC permissions per viewer, so handing a VIEWER the
+    dashboard id + workspace host would let them see data they lack UC
+    grants for. See ``_NON_VIEWERS``.
+    """
+    saved = svc.get_embedded_dashboard()
+    workspace_host = _workspace_host()
+    if saved:
+        return EmbeddedDashboardOut(
+            dashboard_id=saved["dashboard_id"],
+            title=saved.get("title"),
+            workspace_host=workspace_host,
+            is_set=True,
+            is_default=False,
+        )
+    env_default = (conf.default_dashboard_id or "").strip()
+    return EmbeddedDashboardOut(
+        dashboard_id=env_default,
+        title=None,
+        workspace_host=workspace_host,
+        is_set=False,
+        is_default=bool(env_default),
+    )
+
+
+@router.put(
+    "/embedded-dashboard",
+    response_model=EmbeddedDashboardOut,
+    operation_id="saveEmbeddedDashboard",
+    dependencies=[require_role(UserRole.ADMIN)],
+)
+def save_embedded_dashboard(
+    body: EmbeddedDashboardIn,
+    svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    email: Annotated[str, Depends(get_user_email)],
+) -> EmbeddedDashboardOut:
+    """Save the embedded-dashboard configuration (admin only)."""
+    dashboard_id = (body.dashboard_id or "").strip()
+    if not dashboard_id:
+        raise HTTPException(status_code=400, detail="dashboard_id is required.")
+    if not _DASHBOARD_ID_RE.match(dashboard_id):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Invalid dashboard_id. Paste the ID portion only "
+                "(letters, digits, hyphens, underscores; up to 128 chars) — "
+                "not a full dashboard URL."
+            ),
+        )
+    title = (body.title or "").strip() or None
+    if title and len(title) > 200:
+        raise HTTPException(status_code=400, detail="title must be 200 characters or fewer.")
+
+    svc.save_embedded_dashboard(dashboard_id, title, user_email=email)
+    logger.info("Saved embedded dashboard id=%s title=%r (by=%s)", dashboard_id, title, email)
+    return EmbeddedDashboardOut(
+        dashboard_id=dashboard_id,
+        title=title,
+        workspace_host=_workspace_host(),
+        is_set=True,
+        is_default=False,
+    )
+
+
+@router.delete(
+    "/embedded-dashboard",
+    response_model=EmbeddedDashboardOut,
+    operation_id="deleteEmbeddedDashboard",
+    dependencies=[require_role(UserRole.ADMIN)],
+)
+def delete_embedded_dashboard(
+    svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    email: Annotated[str, Depends(get_user_email)],
+) -> EmbeddedDashboardOut:
+    """Clear the admin override (admin only).
+
+    The env-provided default — if any — takes over again. Useful when
+    the bundle ships a starter dashboard and the admin wants to revert
+    to it after a botched custom ID.
+    """
+    svc.delete_embedded_dashboard(user_email=email)
+    logger.info("Cleared embedded dashboard override (by=%s)", email)
+    return get_embedded_dashboard(svc)
+
+
+# ----------------------------------------------------------------------
+# Run review statuses — admin-managed catalogue of values for the per-run
+# review label shown on the Runs detail page and filterable on the Runs
+# History page. Stored as a JSON list under ``run_review_statuses_v1``
+# (see :meth:`AppSettingsService.get_run_review_statuses`). The catalogue
+# always includes exactly one entry marked ``is_default``; the service
+# enforces that invariant on save so the Runs detail dropdown is never
+# empty and listing endpoints always have something to surface for
+# unreviewed runs.
+# ----------------------------------------------------------------------
+
+# Conservative value validation: the catalogue values become filter
+# chips on the History page and audit-log strings, so we want them
+# printable and short. Letters/digits/spaces/hyphens/underscores covers
+# "Pending review", "Acknowledged", "False positive", custom domain
+# terms, while rejecting newlines, control chars, and quote characters
+# that would break our raw-SQL escape path on the history table.
+_REVIEW_STATUS_VALUE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 _\-/.]{0,79}$")
+
+
+class RunReviewStatusOption(BaseModel):
+    """One catalogue entry. ``is_default`` flags the value auto-surfaced for unreviewed runs."""
+
+    value: str
+    description: str = ""
+    color: str = "gray"
+    is_default: bool = False
+
+
+class RunReviewStatusesOut(BaseModel):
+    statuses: list[RunReviewStatusOption]
+
+
+class RunReviewStatusesIn(BaseModel):
+    statuses: list[RunReviewStatusOption]
+
+
+def _statuses_to_out(entries: list[dict]) -> RunReviewStatusesOut:
+    """Coerce the service's dict-shaped entries into the pydantic out model."""
+    return RunReviewStatusesOut(
+        statuses=[
+            RunReviewStatusOption(
+                value=e.get("value") or "",
+                description=e.get("description") or "",
+                color=e.get("color") or "gray",
+                is_default=bool(e.get("is_default")),
+            )
+            for e in entries
+        ]
+    )
+
+
+@router.get(
+    "/run-review-statuses",
+    response_model=RunReviewStatusesOut,
+    operation_id="getRunReviewStatuses",
+)
+def get_run_review_statuses(
+    svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+) -> RunReviewStatusesOut:
+    """Return the admin-managed list of run review status values.
+
+    Visible to any authenticated user — both the Runs detail dropdown
+    and the Runs History filter need this list, and neither is
+    admin-gated. The list is seeded on first read so the UI never
+    sees an empty dropdown on a fresh deploy.
+    """
+    return _statuses_to_out(svc.get_run_review_statuses())
+
+
+@router.put(
+    "/run-review-statuses",
+    response_model=RunReviewStatusesOut,
+    operation_id="saveRunReviewStatuses",
+    dependencies=[require_role(UserRole.ADMIN)],
+)
+def save_run_review_statuses(
+    body: RunReviewStatusesIn,
+    svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    email: Annotated[str, Depends(get_user_email)],
+) -> RunReviewStatusesOut:
+    """Replace the full catalogue (admin only).
+
+    Each value is validated against ``_REVIEW_STATUS_VALUE_RE`` (printable
+    short strings, no quotes/control chars), descriptions are trimmed,
+    duplicates are rejected, and exactly one ``is_default`` is enforced
+    by :meth:`AppSettingsService.save_run_review_statuses`.
+
+    NOTE: renaming an existing value does *not* update historical
+    references in ``dq_run_review_status`` / ``dq_run_review_status_history``;
+    those rows keep the original string so the audit trail stays
+    accurate. The UI surfaces orphaned historical values as-is. If a
+    workspace operator wants to retire a value cleanly they should
+    either keep it in the list (without ``is_default``) until the
+    affected runs age out, or do a one-off UPDATE through the SQL
+    warehouse.
+    """
+    cleaned_payload: list[dict] = []
+    for option in body.statuses or []:
+        value = (option.value or "").strip()
+        if not value:
+            raise HTTPException(status_code=400, detail="Run review status 'value' cannot be blank.")
+        if not _REVIEW_STATUS_VALUE_RE.match(value):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Invalid review status value {value!r}. Use printable ASCII "
+                    "(letters, digits, spaces, hyphens, underscores, dots, slashes), "
+                    "1–80 characters, starting with a letter or digit."
+                ),
+            )
+        cleaned_payload.append(
+            {
+                "value": value,
+                "description": (option.description or "").strip(),
+                "color": (option.color or "gray").strip() or "gray",
+                "is_default": bool(option.is_default),
+            }
+        )
+
+    try:
+        saved = svc.save_run_review_statuses(cleaned_payload, user_email=email)
+    except ValueError as e:
+        # The service's invariants (at-least-one entry, unique values,
+        # exactly one default) surface as ValueError. Route surface
+        # them as 400 so the UI can show the human-readable message.
+        raise HTTPException(status_code=400, detail=str(e))
+    logger.info("Saved %d run review status(es)", len(saved))
+    return _statuses_to_out(saved)

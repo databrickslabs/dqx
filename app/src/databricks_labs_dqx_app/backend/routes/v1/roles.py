@@ -19,9 +19,13 @@ from databricks_labs_dqx_app.backend.logger import logger
 from databricks_labs_dqx_app.backend.models import (
     CreateRoleMappingIn,
     GroupOut,
+    RoleMappingHistoryOut,
     RoleMappingOut,
 )
-from databricks_labs_dqx_app.backend.services.role_service import RoleService
+from databricks_labs_dqx_app.backend.services.role_service import (
+    RoleMappingHistoryEntry,
+    RoleService,
+)
 
 router = APIRouter(dependencies=[require_role(UserRole.ADMIN)])
 
@@ -34,6 +38,16 @@ def _mapping_to_out(mapping) -> RoleMappingOut:
         created_at=mapping.created_at.isoformat() if mapping.created_at else None,
         updated_by=mapping.updated_by,
         updated_at=mapping.updated_at.isoformat() if mapping.updated_at else None,
+    )
+
+
+def _history_to_out(entry: RoleMappingHistoryEntry) -> RoleMappingHistoryOut:
+    return RoleMappingHistoryOut(
+        role=entry.role,
+        group_name=entry.group_name,
+        action=entry.action,
+        changed_by=entry.changed_by,
+        changed_at=entry.changed_at.isoformat() if entry.changed_at else None,
     )
 
 
@@ -74,18 +88,65 @@ def delete_role_mapping(
     role: str,
     group_name: str,
     svc: Annotated[RoleService, Depends(get_role_service)],
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
 ) -> dict[str, str]:
-    """Delete a role-to-group mapping (Admin only)."""
+    """Delete a role-to-group mapping (Admin only).
+
+    The acting admin's email is captured into ``dq_role_mappings_history``
+    so the audit log answers "who removed this mapping?" without having to
+    cross-reference workspace audit events.
+    """
     valid_roles = {r.value for r in UserRole}
     if role not in valid_roles:
         raise HTTPException(status_code=400, detail=f"Invalid role: {role}. Must be one of {sorted(valid_roles)}")
 
     try:
-        svc.delete_mapping(role, group_name)
+        user = obo_ws.current_user.me()
+        user_email = user.user_name or "unknown"
+        svc.delete_mapping(role, group_name, user_email)
         return {"status": "deleted", "role": role, "group_name": group_name}
     except Exception as e:
         logger.error(f"Failed to delete role mapping: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to delete role mapping: {e}")
+
+
+@router.get(
+    "/history",
+    response_model=list[RoleMappingHistoryOut],
+    operation_id="listRoleMappingHistory",
+)
+def list_role_mapping_history(
+    svc: Annotated[RoleService, Depends(get_role_service)],
+    role: Annotated[
+        str | None,
+        Query(description="Optional exact-match filter on role name."),
+    ] = None,
+    group_name: Annotated[
+        str | None,
+        Query(description="Optional exact-match filter on Databricks workspace group name."),
+    ] = None,
+    limit: Annotated[
+        int,
+        Query(
+            ge=1,
+            le=1000,
+            description="Maximum number of history rows to return (default 200, max 1000).",
+        ),
+    ] = 200,
+) -> list[RoleMappingHistoryOut]:
+    """List role-mapping audit history, newest first (Admin only).
+
+    Returns rows from ``dq_role_mappings_history`` — the append-only
+    audit trail of every create/delete against ``dq_role_mappings``.
+    Independent of the live mapping table, so deleted mappings still
+    appear in the timeline.
+    """
+    try:
+        entries = svc.list_history(role=role, group_name=group_name, limit=limit)
+        return [_history_to_out(e) for e in entries]
+    except Exception as e:
+        logger.error(f"Failed to list role mapping history: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to list role mapping history: {e}")
 
 
 @router.get("/groups", response_model=list[GroupOut], operation_id="listWorkspaceGroups")

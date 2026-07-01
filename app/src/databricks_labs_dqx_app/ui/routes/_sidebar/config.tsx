@@ -4,7 +4,7 @@ import { ErrorBoundary } from "react-error-boundary";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
-import { AlertCircle, Clock, Globe, Loader2, Search, Tags, Plus, Trash2, X } from "lucide-react";
+import { AlertCircle, CheckCircle2, Circle, Clock, Globe, LayoutDashboard, Loader2, Search, Tags, Plus, Trash2, X, ExternalLink, RotateCcw, ShieldCheck } from "lucide-react";
 import { FadeIn } from "@/components/anim/FadeIn";
 import { ShinyText } from "@/components/anim/ShinyText";
 import { RoleManagement } from "@/components/RoleManagement";
@@ -18,6 +18,16 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import {
   useTimezone,
@@ -29,8 +39,16 @@ import {
   useRetentionSettings,
   useSaveRetentionSettings,
   getRetentionSettingsQueryKey,
+  useEmbeddedDashboard,
+  useSaveEmbeddedDashboard,
+  useDeleteEmbeddedDashboard,
+  getEmbeddedDashboardQueryKey,
+  useRunReviewStatuses,
+  useSaveRunReviewStatuses,
+  getRunReviewStatusesQueryKey,
   type LabelDefinition,
   type RetentionSettingsOut,
+  type RunReviewStatusOption,
 } from "@/lib/api-custom";
 import type { AxiosError } from "axios";
 import { toast } from "sonner";
@@ -605,6 +623,7 @@ function DefinitionEditorCard({
 // ─────────────────────────────────────────────────────────────────────────────
 
 function RetentionSettings() {
+  const { t } = useTranslation();
   const { data, isLoading } = useRetentionSettings();
   const queryClient = useQueryClient();
   const saveMutation = useSaveRetentionSettings();
@@ -667,11 +686,11 @@ function RetentionSettings() {
           queryClient.invalidateQueries({ queryKey: getRetentionSettingsQueryKey() });
           setGlobal(String(resp.data.retention_days));
           setQuarantine(String(resp.data.quarantine_retention_days));
-          toast.success("Retention settings saved.");
+          toast.success(t("config.retentionSaved"));
         },
         onError: (err: unknown) => {
           const axErr = err as AxiosError<{ detail?: string }>;
-          toast.error(axErr?.response?.data?.detail ?? "Failed to save retention settings.");
+          toast.error(axErr?.response?.data?.detail ?? t("config.failedSaveRetention"));
         },
       },
     );
@@ -806,6 +825,636 @@ function RetentionSettings() {
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Embedded Dashboard — pins a Databricks AI/BI dashboard ID into app state so
+// the Insights page can render it inside an iframe. Falls back to the env
+// default (set by the bundle's DQX_DEFAULT_DASHBOARD_ID) when unset, so a
+// shipped starter dashboard works out-of-the-box.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function EmbeddedDashboardSettings() {
+  const { t } = useTranslation();
+  const { data, isLoading } = useEmbeddedDashboard();
+  const queryClient = useQueryClient();
+  const saveMutation = useSaveEmbeddedDashboard();
+  const deleteMutation = useDeleteEmbeddedDashboard();
+  const { data: role } = useCurrentUserRoleSuspense();
+  const isAdmin = role?.data?.role === "admin";
+
+  const [dashboardId, setDashboardId] = useState<string>("");
+  const [title, setTitle] = useState<string>("");
+  const [hydrated, setHydrated] = useState(false);
+  // Clearing the dashboard override affects every user immediately —
+  // gate it behind a confirm dialog so a stray click doesn't blow away
+  // a pinned dashboard.
+  const [confirmClearOpen, setConfirmClearOpen] = useState(false);
+
+  useEffect(() => {
+    if (data && !hydrated) {
+      // Only seed the inputs with admin-saved values. If only the env
+      // default is in play, leave the inputs blank so the placeholder
+      // copy makes clear the field is empty (and saving an empty value
+      // would be rejected).
+      if (data.is_set) {
+        setDashboardId(data.dashboard_id);
+        setTitle(data.title ?? "");
+      }
+      setHydrated(true);
+    }
+  }, [data, hydrated]);
+
+  const trimmedId = dashboardId.trim();
+  const trimmedTitle = title.trim();
+
+  const isDirty = useMemo(() => {
+    if (!data) return false;
+    if (!data.is_set) return trimmedId !== "";
+    return trimmedId !== data.dashboard_id || trimmedTitle !== (data.title ?? "");
+  }, [data, trimmedId, trimmedTitle]);
+
+  const validationError = useMemo(() => {
+    if (!trimmedId) return null;
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(trimmedId)) {
+      return "Use the ID only (letters/digits/_/-, ≤128 chars) — not a full URL.";
+    }
+    return null;
+  }, [trimmedId]);
+
+  const previewUrl = useMemo(() => {
+    if (!data?.workspace_host || !trimmedId || validationError) return null;
+    return `${data.workspace_host}/dashboardsv3/${trimmedId}`;
+  }, [data?.workspace_host, trimmedId, validationError]);
+
+  const handleSave = () => {
+    if (!trimmedId || validationError) return;
+    saveMutation.mutate(
+      { data: { dashboard_id: trimmedId, title: trimmedTitle || null } },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getEmbeddedDashboardQueryKey() });
+          toast.success(t("config.dashboardSaved"));
+        },
+        onError: (err: unknown) => {
+          const axErr = err as AxiosError<{ detail?: string }>;
+          toast.error(axErr?.response?.data?.detail ?? t("config.failedSaveDashboard"));
+        },
+      },
+    );
+  };
+
+  const handleClear = () => {
+    setConfirmClearOpen(true);
+  };
+
+  const confirmClear = () => {
+    setConfirmClearOpen(false);
+    deleteMutation.mutate(undefined, {
+      onSuccess: () => {
+        setDashboardId("");
+        setTitle("");
+        setHydrated(false);
+        queryClient.invalidateQueries({ queryKey: getEmbeddedDashboardQueryKey() });
+        toast.success(t("config.clearedDashboardOverride"));
+      },
+      onError: () => toast.error(t("config.failedClearDashboardOverride")),
+    });
+  };
+
+  if (isLoading || !data) return <Skeleton className="h-40 w-full" />;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <LayoutDashboard className="h-5 w-5" />
+          Insights dashboard
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          Pin a Databricks AI/BI dashboard to the <strong className="text-foreground">Insights</strong> page.
+          Anyone with access to this app sees the dashboard rendered as an iframe; row-level visibility
+          is enforced by Unity Catalog on the underlying tables. Build your dashboard against{" "}
+          <code>dq_validation_runs</code>, <code>dq_metrics</code>, <code>dq_quarantine_records</code>, and{" "}
+          <code>dq_profiling_results</code>, then paste the ID below.
+        </p>
+
+        {data.is_default && !data.is_set && (
+          <div className="rounded-md border border-blue-200/60 bg-blue-50/30 p-3 text-xs text-blue-900">
+            A default dashboard is configured by the deployment bundle. Saving below overrides it
+            for this workspace; "Restore default" reverts.
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 sm:grid-cols-[1fr_300px] gap-3">
+          <div className="space-y-1.5">
+            <Label htmlFor="embedded-dashboard-id" className="text-xs">
+              Dashboard ID
+            </Label>
+            <Input
+              id="embedded-dashboard-id"
+              value={dashboardId}
+              onChange={(e) => setDashboardId(e.target.value)}
+              placeholder={
+                data.is_default
+                  ? `e.g. ${data.dashboard_id} (default)`
+                  : "e.g. 01abc23d456789..."
+              }
+              disabled={!isAdmin || saveMutation.isPending || deleteMutation.isPending}
+              className={cn("h-8 font-mono text-xs", validationError && "border-destructive")}
+              autoComplete="off"
+            />
+            {validationError && (
+              <p className="text-[11px] text-destructive flex items-center gap-1">
+                <AlertCircle className="h-3 w-3" />
+                {validationError}
+              </p>
+            )}
+            <p className="text-[11px] text-muted-foreground">
+              Find the ID in the dashboard URL after <code>/dashboardsv3/</code>.
+            </p>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="embedded-dashboard-title" className="text-xs">
+              Display title <span className="text-muted-foreground">(optional)</span>
+            </Label>
+            <Input
+              id="embedded-dashboard-title"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="e.g. Quality Overview"
+              maxLength={200}
+              disabled={!isAdmin || saveMutation.isPending || deleteMutation.isPending}
+              className="h-8 text-xs"
+            />
+            <p className="text-[11px] text-muted-foreground">Shown on the Insights page header.</p>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 pt-2 border-t">
+          <Button
+            size="sm"
+            onClick={handleSave}
+            disabled={
+              !isAdmin ||
+              !isDirty ||
+              !!validationError ||
+              !trimmedId ||
+              saveMutation.isPending ||
+              deleteMutation.isPending
+            }
+          >
+            {saveMutation.isPending && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}
+            Save changes
+          </Button>
+          {data.is_set && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={handleClear}
+              disabled={!isAdmin || saveMutation.isPending || deleteMutation.isPending}
+              title={
+                data.is_default
+                  ? "Clear the workspace override and fall back to the default shipped by the bundle"
+                  : "Clear the saved dashboard ID — the Insights page will show an empty state"
+              }
+              className="gap-1.5"
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+              {data.is_default ? "Restore default" : "Clear"}
+            </Button>
+          )}
+          {previewUrl && (
+            <Button
+              size="sm"
+              variant="ghost"
+              asChild
+              className="gap-1.5 text-xs text-muted-foreground"
+              title="Open the dashboard in a new tab to verify the ID is correct and you have access"
+            >
+              <a href={previewUrl} target="_blank" rel="noopener noreferrer">
+                <ExternalLink className="h-3.5 w-3.5" />
+                Preview in Databricks
+              </a>
+            </Button>
+          )}
+          {!isAdmin && (
+            <span className="text-xs text-muted-foreground">Only admins can change this setting</span>
+          )}
+        </div>
+      </CardContent>
+
+      <AlertDialog open={confirmClearOpen} onOpenChange={setConfirmClearOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {data?.is_default ? "Restore default dashboard?" : "Clear the dashboard override?"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {data?.is_default
+                ? "This removes the workspace-level override. The Insights page will fall back to the default dashboard shipped by the deployment bundle."
+                : "This clears the saved dashboard ID for every user of this app. The Insights page will show an empty state until a new dashboard is pinned."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmClear}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {data?.is_default ? "Restore default" : "Clear"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </Card>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Run review statuses — admin-managed catalogue surfaced as the per-run
+// review dropdown (Runs detail page) and as a filter on the Runs History
+// page. The backend enforces the invariant "exactly one entry has
+// is_default == true"; the UI mirrors that with a single radio group
+// rather than per-row toggles so the constraint is obvious and the save
+// button can stay enabled.
+//
+// Colors are mapped through a small token table here so the catalogue
+// data only ever stores token names ("amber", "green", ...) — the
+// design system can rebrand without a data migration.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Token → tailwind classes. Adding a new color elsewhere in the UI
+// means adding one entry here; everything else stays data-only.
+const REVIEW_STATUS_COLOR_TOKENS = ["gray", "amber", "green", "blue", "red", "purple"] as const;
+type ReviewStatusColorToken = (typeof REVIEW_STATUS_COLOR_TOKENS)[number];
+
+const REVIEW_STATUS_COLOR_CLASSES: Record<ReviewStatusColorToken, { swatch: string; badge: string }> = {
+  gray: {
+    swatch: "bg-gray-300 dark:bg-gray-700 border-gray-400 dark:border-gray-600",
+    badge: "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200 border-gray-300 dark:border-gray-700",
+  },
+  amber: {
+    swatch: "bg-amber-400 border-amber-500",
+    badge: "bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200 border-amber-300 dark:border-amber-800",
+  },
+  green: {
+    swatch: "bg-green-500 border-green-600",
+    badge: "bg-green-100 text-green-900 dark:bg-green-950 dark:text-green-200 border-green-300 dark:border-green-800",
+  },
+  blue: {
+    swatch: "bg-blue-500 border-blue-600",
+    badge: "bg-blue-100 text-blue-900 dark:bg-blue-950 dark:text-blue-200 border-blue-300 dark:border-blue-800",
+  },
+  red: {
+    swatch: "bg-red-500 border-red-600",
+    badge: "bg-red-100 text-red-900 dark:bg-red-950 dark:text-red-200 border-red-300 dark:border-red-800",
+  },
+  purple: {
+    swatch: "bg-purple-500 border-purple-600",
+    badge: "bg-purple-100 text-purple-900 dark:bg-purple-950 dark:text-purple-200 border-purple-300 dark:border-purple-800",
+  },
+};
+
+/** Normalise an arbitrary color string to a known token; unknown values fall back to gray. */
+function normaliseReviewStatusColor(value: string | undefined | null): ReviewStatusColorToken {
+  const lower = (value || "").trim().toLowerCase();
+  return (REVIEW_STATUS_COLOR_TOKENS as readonly string[]).includes(lower)
+    ? (lower as ReviewStatusColorToken)
+    : "gray";
+}
+
+function ReviewStatusColorSwatch({ color }: { color: string }) {
+  const token = normaliseReviewStatusColor(color);
+  return (
+    <span
+      className={cn(
+        "inline-block h-3.5 w-3.5 rounded-full border",
+        REVIEW_STATUS_COLOR_CLASSES[token].swatch,
+      )}
+      aria-hidden
+    />
+  );
+}
+
+// Exported helpers — re-used by the Runs detail dropdown and the
+// Runs History badge so all three places render consistent colors
+// without each one duplicating the token table.
+export function reviewStatusBadgeClasses(color: string) {
+  return REVIEW_STATUS_COLOR_CLASSES[normaliseReviewStatusColor(color)].badge;
+}
+export { REVIEW_STATUS_COLOR_TOKENS };
+
+function RunReviewStatusesSettings() {
+  const { t } = useTranslation();
+  const { data, isLoading } = useRunReviewStatuses();
+  const queryClient = useQueryClient();
+  const saveMutation = useSaveRunReviewStatuses();
+  const { data: role } = useCurrentUserRoleSuspense();
+  const isAdmin = role?.data?.role === "admin";
+
+  // Local working copy; never mutated in-place. We re-hydrate from
+  // the server response on first load and after every successful save
+  // so concurrent edits from another admin don't get clobbered if the
+  // user navigates away and back.
+  const [draft, setDraft] = useState<RunReviewStatusOption[]>([]);
+  const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
+    if (data && !hydrated) {
+      setDraft(data.statuses.map((s) => ({ ...s })));
+      setHydrated(true);
+    }
+  }, [data, hydrated]);
+
+  // Re-derive whether the form has unsaved changes from the canonical
+  // server response rather than tracking a separate dirty flag —
+  // cheaper and avoids drift after a partial save.
+  const isDirty = useMemo(() => {
+    if (!data) return false;
+    if (data.statuses.length !== draft.length) return true;
+    return data.statuses.some((s, i) => {
+      const d = draft[i];
+      return (
+        !d ||
+        d.value !== s.value ||
+        d.description !== s.description ||
+        d.color !== s.color ||
+        d.is_default !== s.is_default
+      );
+    });
+  }, [data, draft]);
+
+  // The save endpoint enforces exactly-one-default; mirror that in the
+  // UI so the button stays disabled when the constraint can't be met.
+  const validationError = useMemo<string | null>(() => {
+    if (draft.length === 0) {
+      return "At least one status is required.";
+    }
+    const seen = new Set<string>();
+    for (const entry of draft) {
+      const trimmed = entry.value.trim();
+      if (!trimmed) return "Every status needs a value.";
+      if (!/^[A-Za-z0-9][A-Za-z0-9 _\-/.]{0,79}$/.test(trimmed)) {
+        return `Invalid value "${trimmed}". Use letters, digits, spaces, hyphens (max 80 chars).`;
+      }
+      if (seen.has(trimmed)) return `Duplicate value: "${trimmed}".`;
+      seen.add(trimmed);
+    }
+    const defaults = draft.filter((d) => d.is_default).length;
+    if (defaults === 0) return "Pick one status as the default for unreviewed runs.";
+    if (defaults > 1) return "Only one status can be marked default.";
+    return null;
+  }, [draft]);
+
+  const handleAdd = () => {
+    setDraft((d) => [
+      ...d,
+      { value: "", description: "", color: "gray", is_default: false },
+    ]);
+  };
+
+  const handleRemove = (idx: number) => {
+    setDraft((d) => d.filter((_, i) => i !== idx));
+  };
+
+  const handlePatch = (idx: number, patch: Partial<RunReviewStatusOption>) => {
+    setDraft((d) => d.map((entry, i) => (i === idx ? { ...entry, ...patch } : entry)));
+  };
+
+  // Radio-group semantics on top of an array — selecting a default
+  // unsets the previous one rather than allowing the constraint
+  // violation to slip into the validation message.
+  const handleMakeDefault = (idx: number) => {
+    setDraft((d) => d.map((entry, i) => ({ ...entry, is_default: i === idx })));
+  };
+
+  const handleSave = () => {
+    if (validationError) return;
+    const cleaned = draft.map((entry) => ({
+      value: entry.value.trim(),
+      description: (entry.description || "").trim(),
+      color: normaliseReviewStatusColor(entry.color),
+      is_default: Boolean(entry.is_default),
+    }));
+    saveMutation.mutate(
+      { data: { statuses: cleaned } },
+      {
+        onSuccess: (resp) => {
+          queryClient.invalidateQueries({ queryKey: getRunReviewStatusesQueryKey() });
+          setDraft(resp.data.statuses.map((s) => ({ ...s })));
+          toast.success(t("config.reviewStatusesSaved"));
+        },
+        onError: (err: unknown) => {
+          const axErr = err as AxiosError<{ detail?: string }>;
+          toast.error(axErr?.response?.data?.detail ?? t("config.failedSaveReviewStatuses"));
+        },
+      },
+    );
+  };
+
+  const handleReset = () => {
+    if (data) setDraft(data.statuses.map((s) => ({ ...s })));
+  };
+
+  if (isLoading || !data) {
+    return <Skeleton className="h-40 w-full" />;
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <ShieldCheck className="h-5 w-5" />
+          Run review statuses
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          Reviewers tag each validation run with one of these values on the{" "}
+          <strong className="text-foreground">Runs detail</strong> page (next to comments).
+          The dropdown is filterable on the <strong className="text-foreground">Runs History</strong>{" "}
+          page so the team can answer questions like "what's been acknowledged?" at a glance.
+          One value is the <em>default</em> — newly completed runs surface that value until a reviewer
+          changes it, so dashboards never see an empty state.
+        </p>
+
+        <div className="space-y-2">
+          {draft.map((entry, idx) => {
+            const colorToken = normaliseReviewStatusColor(entry.color);
+            return (
+              <div
+                key={idx}
+                className={cn(
+                  "rounded-md border p-3 space-y-2",
+                  entry.is_default && "border-primary/40 bg-primary/5",
+                )}
+              >
+                <div className="grid grid-cols-1 sm:grid-cols-[1fr_2fr_auto_auto] gap-2 items-start">
+                  <div className="space-y-1">
+                    <Label className="text-[11px] text-muted-foreground">Value</Label>
+                    <Input
+                      value={entry.value}
+                      onChange={(e) => handlePatch(idx, { value: e.target.value })}
+                      placeholder="e.g. Acknowledged"
+                      maxLength={80}
+                      disabled={!isAdmin || saveMutation.isPending}
+                      className="h-8 text-xs"
+                      autoComplete="off"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-[11px] text-muted-foreground">Description (optional)</Label>
+                    <Input
+                      value={entry.description}
+                      onChange={(e) => handlePatch(idx, { description: e.target.value })}
+                      placeholder="Shown as a tooltip on the dropdown"
+                      maxLength={200}
+                      disabled={!isAdmin || saveMutation.isPending}
+                      className="h-8 text-xs"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-[11px] text-muted-foreground">Color</Label>
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={!isAdmin || saveMutation.isPending}
+                          className="h-8 gap-1.5 text-xs"
+                        >
+                          <ReviewStatusColorSwatch color={colorToken} />
+                          <span className="capitalize">{colorToken}</span>
+                          <ChevronDown className="h-3 w-3 opacity-60" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent align="end" className="w-44 p-1">
+                        <div className="space-y-0.5">
+                          {REVIEW_STATUS_COLOR_TOKENS.map((tok) => (
+                            <button
+                              key={tok}
+                              type="button"
+                              className={cn(
+                                "flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs hover:bg-muted",
+                                colorToken === tok && "bg-muted font-medium",
+                              )}
+                              onClick={() => handlePatch(idx, { color: tok })}
+                            >
+                              <ReviewStatusColorSwatch color={tok} />
+                              <span className="capitalize">{tok}</span>
+                              {colorToken === tok && <Check className="h-3 w-3 ml-auto" />}
+                            </button>
+                          ))}
+                        </div>
+                      </PopoverContent>
+                    </Popover>
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-[11px] text-muted-foreground sm:opacity-0 sm:pointer-events-none">.</Label>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleRemove(idx)}
+                      disabled={!isAdmin || saveMutation.isPending || draft.length <= 1}
+                      title={draft.length <= 1 ? "At least one status is required" : "Remove this status"}
+                      className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className={cn(
+                    "flex items-center gap-1.5 text-xs",
+                    entry.is_default
+                      ? "text-primary font-medium"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                  onClick={() => handleMakeDefault(idx)}
+                  disabled={!isAdmin || saveMutation.isPending || entry.is_default}
+                  title={
+                    entry.is_default
+                      ? "Default for new runs"
+                      : "Make this the default surfaced for unreviewed runs"
+                  }
+                >
+                  {entry.is_default ? (
+                    <>
+                      <CheckCircle2 className="h-3.5 w-3.5" /> Default for new runs
+                    </>
+                  ) : (
+                    <>
+                      <Circle className="h-3.5 w-3.5" /> Make default
+                    </>
+                  )}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={handleAdd}
+          disabled={!isAdmin || saveMutation.isPending}
+          className="gap-1.5"
+        >
+          <Plus className="h-3.5 w-3.5" />
+          Add status
+        </Button>
+
+        {validationError && (
+          <p className="text-[11px] text-destructive flex items-center gap-1">
+            <AlertCircle className="h-3 w-3" />
+            {validationError}
+          </p>
+        )}
+
+        <div className="flex flex-wrap items-center gap-2 pt-2 border-t">
+          <Button
+            size="sm"
+            onClick={handleSave}
+            disabled={!isAdmin || !isDirty || !!validationError || saveMutation.isPending}
+          >
+            {saveMutation.isPending && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}
+            Save changes
+          </Button>
+          {isDirty && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={handleReset}
+              disabled={!isAdmin || saveMutation.isPending}
+              className="gap-1.5"
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+              Reset
+            </Button>
+          )}
+          {!isAdmin && (
+            <span className="text-xs text-muted-foreground">Only admins can change this setting</span>
+          )}
+        </div>
+
+        <div className="rounded-md border border-muted-foreground/20 bg-muted/40 p-3 text-[11px] text-muted-foreground space-y-1">
+          <p>
+            <strong className="text-foreground">Renaming a value</strong> doesn't rewrite existing
+            run history — historical entries keep the old text so the audit trail stays accurate.
+            To retire a value cleanly, leave it in the list (not as default) until the affected
+            runs age out.
+          </p>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function ConfigPage() {
   const { t } = useTranslation();
   const { isAdmin } = usePermissions();
@@ -855,11 +1504,25 @@ function ConfigPage() {
             <FadeIn delay={0.15}>
               <ErrorBoundary onReset={reset} fallbackRender={SectionError}>
                 <Suspense fallback={<Skeleton className="h-40 w-full" />}>
-                  <RetentionSettings />
+                  <RunReviewStatusesSettings />
                 </Suspense>
               </ErrorBoundary>
             </FadeIn>
             <FadeIn delay={0.2}>
+              <ErrorBoundary onReset={reset} fallbackRender={SectionError}>
+                <Suspense fallback={<Skeleton className="h-40 w-full" />}>
+                  <EmbeddedDashboardSettings />
+                </Suspense>
+              </ErrorBoundary>
+            </FadeIn>
+            <FadeIn delay={0.25}>
+              <ErrorBoundary onReset={reset} fallbackRender={SectionError}>
+                <Suspense fallback={<Skeleton className="h-40 w-full" />}>
+                  <RetentionSettings />
+                </Suspense>
+              </ErrorBoundary>
+            </FadeIn>
+            <FadeIn delay={0.3}>
               <ErrorBoundary onReset={reset} fallbackRender={SectionError}>
                 <RoleManagement />
               </ErrorBoundary>

@@ -12,12 +12,12 @@ from databricks_labs_dqx_app.backend.settings import SettingsManager
 router = APIRouter()
 
 
-@router.get("", response_model=InstallationSettings, operation_id="get_settings")
+@router.get("", response_model=InstallationSettings, operation_id="getSettings")
 def get_settings(obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)]):
     return SettingsManager(obo_ws).get_settings()
 
 
-@router.post("", response_model=InstallationSettings, operation_id="save_settings")
+@router.post("", response_model=InstallationSettings, operation_id="saveSettings")
 def save_settings(settings: InstallationSettings, obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)]):
     try:
         return SettingsManager(obo_ws).save_settings(settings)

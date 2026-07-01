@@ -13,6 +13,7 @@ re-triggering runs that already completed.
 from __future__ import annotations
 
 import asyncio
+import calendar
 import json
 import re
 from datetime import datetime, timedelta, timezone
@@ -29,6 +30,11 @@ logger = get_logger("scheduler")
 _SQL_CHECK_PREFIX = "__sql_check__/"
 
 _VALID_TRACKER_STATUSES = {"pending", "success", "partial_failure", "failed"}
+
+# Fallback gap used to push ``next_run_at`` into the future when a schedule's
+# trigger fails *and* its next occurrence cannot be computed. Prevents a
+# deterministic failure from re-firing the schedule on every tick.
+_FAILURE_BACKOFF = timedelta(hours=1)
 
 # Length of the hex suffix on ``tmp_view_*`` names. ``uuid4().hex`` is
 # always 32 lowercase hex chars; we slice to keep schema-qualified
@@ -245,6 +251,13 @@ class SchedulerService:
             freq = cfg.get("frequency", "manual")
             if freq == "manual":
                 continue
+            # ``paused`` is a soft kill switch toggled from the Schedules
+            # list. Skipping here (rather than at config-save time) means a
+            # paused schedule keeps its existing ``next_run_at`` tracker, so
+            # resuming it does not retroactively fire any missed runs — the
+            # next tick simply picks the schedule back up.
+            if cfg.get("paused"):
+                continue
 
             try:
                 tracker = await asyncio.to_thread(self._get_tracker, name)
@@ -284,16 +297,52 @@ class SchedulerService:
                 run_id = uuid4().hex[:16]
                 logger.info("Schedule '%s' is due (next_run_at=%s), triggering run %s", name, next_run, run_id)
 
-                errors = await asyncio.to_thread(self._trigger_run, name, cfg, run_id)
+                try:
+                    errors = await asyncio.to_thread(self._trigger_run, name, cfg, run_id)
 
-                new_next = self._compute_next_run(cfg, now)
-                status = "success" if not errors else "partial_failure"
-                if errors:
-                    logger.warning("Schedule '%s' run %s had errors: %s", name, run_id, errors)
+                    new_next = self._compute_next_run(cfg, now)
+                    status = "success" if not errors else "partial_failure"
+                    if errors:
+                        logger.warning("Schedule '%s' run %s had errors: %s", name, run_id, errors)
 
-                await asyncio.to_thread(self._upsert_tracker, name, now, new_next, run_id, status)
+                    await asyncio.to_thread(self._upsert_tracker, name, now, new_next, run_id, status)
+                except Exception:
+                    # A hard failure inside ``_trigger_run`` (e.g. ``_resolve_scope``,
+                    # ``_load_custom_metrics``, or DB access) — anything outside the
+                    # per-table try that returns ``errors`` — would otherwise skip the
+                    # ``_upsert_tracker`` above and leave ``next_run_at`` in the past.
+                    # The schedule then stays "due" and re-fires every tick, turning a
+                    # deterministic error into a tight retry loop that keeps submitting
+                    # jobs. Advance ``next_run_at`` (persisting a ``failed`` status) so
+                    # the schedule resumes at its next occurrence instead of hammering.
+                    logger.exception(
+                        "Schedule '%s' run %s failed to trigger; advancing next_run_at to avoid a retry loop",
+                        name,
+                        run_id,
+                    )
+                    await asyncio.to_thread(self._advance_after_failure, name, cfg, now, run_id)
             except Exception:
                 logger.exception("Scheduler failed processing schedule '%s'", name)
+
+    def _advance_after_failure(self, name: str, cfg: dict[str, Any], now: datetime, run_id: str) -> None:
+        """Persist a failed run and push ``next_run_at`` forward after a trigger failure.
+
+        Computes the next scheduled occurrence so a deterministic failure does not
+        re-fire every tick. If even the next-run computation fails, falls back to a
+        fixed backoff so the schedule still moves off "due".
+        """
+        try:
+            new_next = self._compute_next_run(cfg, now)
+        except Exception:
+            logger.exception(
+                "Schedule '%s': could not compute next_run_at after a failure; using backoff",
+                name,
+            )
+            new_next = now + _FAILURE_BACKOFF
+        try:
+            self._upsert_tracker(name, now, new_next, run_id, "failed")
+        except Exception:
+            logger.exception("Schedule '%s': failed to persist tracker after a trigger failure", name)
 
     # ------------------------------------------------------------------
     # Config loading
@@ -447,20 +496,30 @@ class SchedulerService:
                     continue
 
                 run_id = f"{run_id_prefix}_{i}"
-                is_sql_check = table_fqn.startswith(_SQL_CHECK_PREFIX)
-
+                # The synthetic ``__sql_check__/<name>`` namespace holds
+                # cross-table SQL checks only: the task runner builds a Spark
+                # temp view from the embedded query, so ``view_fqn`` can stay
+                # as the synthetic key. Reference checks (``has_valid_schema``
+                # / ``foreign_key``) carry a real target-table FQN, which the
+                # runner reads directly through the standard row-level path
+                # (``is_sql_check=False``). ``source_table_fqn`` keeps the
+                # original key so run history groups under the rule.
+                is_synthetic = table_fqn.startswith(_SQL_CHECK_PREFIX)
                 sql_query: str | None = None
-                if is_sql_check:
+
+                if is_synthetic:
                     sql_query = self._extract_sql_query(entry["checks"])
-                    if not sql_query:
-                        errors.append(f"{table_fqn}: SQL check has no query")
+                    if sql_query is None:
+                        errors.append(f"{table_fqn}: cross-table rule is missing its sql_query")
                         continue
 
                 config = {
                     "checks": entry["checks"],
                     "sample_size": sample_size,
                     "source_table_fqn": table_fqn,
-                    "is_sql_check": is_sql_check,
+                    # Only cross-table SQL queries take the SQL fast-path in
+                    # the runner; everything else uses the row-level engine.
+                    "is_sql_check": sql_query is not None,
                 }
 
                 if custom_metrics:
@@ -1036,12 +1095,30 @@ class SchedulerService:
 
         if freq == "monthly":
             dom = int(cfg.get("day_of_month") or 1)
-            candidate = after.replace(day=min(dom, 28), hour=hour, minute=minute, second=0, microsecond=0)
+
+            # Clamp the configured day to the actual number of days in the
+            # target month (e.g. day 31 → 30 in April, 28/29 in February)
+            # rather than always capping at 28 — capping made schedules set
+            # for the 29th–31st silently fire on the 28th every month while
+            # the UI still showed the configured day.
+            def _clamp_day(year: int, month: int) -> int:
+                return min(dom, calendar.monthrange(year, month)[1])
+
+            candidate = after.replace(
+                day=_clamp_day(after.year, after.month),
+                hour=hour,
+                minute=minute,
+                second=0,
+                microsecond=0,
+            )
             if candidate <= after:
                 if after.month == 12:
-                    candidate = candidate.replace(year=after.year + 1, month=1)
+                    year, month = after.year + 1, 1
                 else:
-                    candidate = candidate.replace(month=after.month + 1)
+                    year, month = after.year, after.month + 1
+                # Re-clamp for the next month before setting the day so a 31 →
+                # 30/28 rollover doesn't raise ValueError on a short month.
+                candidate = candidate.replace(year=year, month=month, day=_clamp_day(year, month))
             return candidate
 
         return after + timedelta(hours=1)

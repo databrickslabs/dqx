@@ -22,6 +22,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   Upload,
   Loader2,
@@ -33,6 +34,9 @@ import {
   Play,
   Square,
   Info,
+  FileCode2,
+  FileText,
+  ExternalLink,
 } from "lucide-react";
 import { toast } from "sonner";
 import yaml from "js-yaml";
@@ -55,6 +59,10 @@ import { CatalogBrowser } from "@/components/CatalogBrowser";
 import { LabelsBadges } from "@/components/Labels";
 import { DryRunResults } from "@/components/DryRunResults";
 import { getUserMetadata } from "@/lib/format-utils";
+import {
+  ContractWorkspace,
+  DOCS_URL as CONTRACT_DOCS_URL,
+} from "./rules.from-contract";
 
 /**
  * Naming convention for cross-table (a.k.a. dataset-level) SQL rules.
@@ -66,39 +74,117 @@ import { getUserMetadata } from "@/lib/format-utils";
  */
 const SQL_CHECK_PREFIX = "__sql_check__/";
 
+// ``tab`` controls which import flow is shown by default. The two tabs
+// share a single landing because both are "bulk import" workflows — one
+// from a DQX YAML file, the other from an ODCS v3 data contract — and
+// the user's mental model is "I want to import a bunch of rules from a
+// file" regardless of file format. Old ``/rules/from-contract`` bookmarks
+// redirect to ``?tab=contract``.
+type ImportTab = "yaml" | "contract";
+
 interface ImportSearchParams {
   from?: string;
+  tab?: ImportTab;
+}
+
+function _coerceTab(value: unknown): ImportTab | undefined {
+  return value === "yaml" || value === "contract" ? value : undefined;
 }
 
 export const Route = createFileRoute("/_sidebar/rules/import")({
   component: ImportRulesPage,
   validateSearch: (search: Record<string, unknown>): ImportSearchParams => ({
     from: typeof search.from === "string" ? search.from : undefined,
+    tab: _coerceTab(search.tab),
   }),
 });
 
 function ImportRulesPage() {
-  const { t } = useTranslation();
+  // Thin guard so the inner component's hook count is stable across
+  // permission-cache refreshes — otherwise a mid-session role change
+  // would alter the post-guard hook sequence and violate Rules of
+  // Hooks.
   const { canCreateRules } = usePermissions();
   if (!canCreateRules) return <Navigate to="/rules/active" replace />;
+  return <ImportRulesPageInner />;
+}
 
+function ImportRulesPageInner() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
+  const { tab: tabParam } = Route.useSearch();
+  // Drive the tab from the URL so browser back/forward (and any
+  // external deep link) always agrees with what's rendered. Previously
+  // ``useState(tabParam ?? "yaml")`` only seeded once and went stale on
+  // history navigation.
+  const tab: ImportTab = tabParam ?? "yaml";
+
+  // Track explicit user navigation back to /rules/drafts after the flow
+  // finishes so both tabs share the same exit affordance.
+  const onDone = () => navigate({ to: "/rules/drafts" });
+
   return (
     <div className="space-y-6">
       <PageBreadcrumb
         items={[{ label: t("rulesCreate.breadcrumb"), to: "/rules/create" }]}
         page={t("rulesImport.breadcrumb")}
       />
-      <div className="flex items-center justify-between">
+      <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">{t("rulesImport.title")}</h1>
           <p className="text-muted-foreground">
-            {t("rulesImport.subtitle")}
+            {tab === "contract"
+              ? t("rulesImport.subtitleContract")
+              : t("rulesImport.subtitleYaml")}
           </p>
         </div>
+        {tab === "contract" && (
+          <a
+            href={CONTRACT_DOCS_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1.5 mt-1"
+          >
+            {t("rulesFromContract.viewDocs")}
+            <ExternalLink className="h-3 w-3" />
+          </a>
+        )}
       </div>
 
-      <YamlImportCard onDone={() => navigate({ to: "/rules/drafts" })} />
+      <Tabs
+        value={tab}
+        onValueChange={(value) => {
+          const next = _coerceTab(value) ?? "yaml";
+          // Reflect the current tab in the URL so deep links / back-
+          // forward navigation land on the same flow the user was on.
+          // ``replace`` keeps history clean — tab switches aren't
+          // semantically distinct navigation events. The tab variable
+          // is derived from the URL on the next render.
+          navigate({
+            to: "/rules/import",
+            search: (prev) => ({ ...prev, tab: next }),
+            replace: true,
+          });
+        }}
+      >
+        <TabsList>
+          <TabsTrigger value="yaml" className="gap-2">
+            <FileCode2 className="h-3.5 w-3.5" />
+            {t("rulesImport.tabYaml")}
+          </TabsTrigger>
+          <TabsTrigger value="contract" className="gap-2">
+            <FileText className="h-3.5 w-3.5" />
+            {t("rulesImport.tabContract")}
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="yaml" className="mt-4">
+          <YamlImportCard onDone={onDone} />
+        </TabsContent>
+        <TabsContent value="contract" className="mt-4">
+          <ContractWorkspace onDone={onDone} />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

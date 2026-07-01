@@ -394,22 +394,21 @@ class TestWriteSqlQuarantineRecords:
         df.limit.assert_called_once_with(100)
         chain.writeTo.assert_called_once()
 
-    def test_synthetic_errors_payload_uses_check_name_key(self, runner_module):
+    def test_synthetic_errors_payload_matches_dqx_result_schema(self, runner_module):
         # The errors JSON written into ``dq_quarantine_records.errors``
-        # must mirror the column-check format: ``{<check_name>: <message>}``.
-        # We can't introspect the Spark expression directly, but we can
-        # verify the constant payload that's threaded into ``F.lit(...)``
-        # by capturing the lit() argument from a hand-rolled spy on
-        # ``pyspark.sql.functions``.
-        # Rather than monkey-patching pyspark, just verify the Python
-        # constant we emit by re-constructing it deterministically.
-        synth = json.dumps({"my_sql_check": "SQL check violation"})
-        # Re-invoke the same json serialiser the runner uses (it reuses
-        # ``_json_dumps`` so dates/decimals are stable). For a plain
-        # dict this is the same as ``json.dumps``.
-        re_synth = runner_module._json_dumps({"my_sql_check": "SQL check violation"})
-        assert json.loads(synth) == json.loads(re_synth)
-        assert json.loads(re_synth) == {"my_sql_check": "SQL check violation"}
+        # must mirror DQX's ``dq_result_item_schema`` — a list of
+        # ``{name, message, ...}`` structs — so:
+        #   * the Pydantic ``QuarantineRecordOut.errors: list[Any]``
+        #     validates without coercion,
+        #   * the frontend's ``row.errors.map(formatError)`` renders the
+        #     same way as row-level check errors,
+        #   * legacy ``{check_name: message}`` dict-shape rows still
+        #     work via the back-compat coercion in
+        #     ``quarantine._row_to_record``.
+        re_synth = runner_module._json_dumps([{"name": "my_sql_check", "message": "SQL check violation"}])
+        decoded = json.loads(re_synth)
+        assert isinstance(decoded, list)
+        assert decoded == [{"name": "my_sql_check", "message": "SQL check violation"}]
 
     def test_max_rows_constant_default_matches_module(self, runner_module):
         # Regression guard: the function default must mirror the module
