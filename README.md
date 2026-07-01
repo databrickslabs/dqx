@@ -15,10 +15,6 @@ Simplified Data Quality checking at Scale for PySpark Workloads on streaming and
 [![PyPI](https://img.shields.io/pypi/v/databricks-labs-dqx?label=pypi%20package&cacheSeconds=3600)](https://pypi.org/project/databricks-labs-dqx/) 
 ![PyPI Downloads](https://static.pepy.tech/personalized-badge/databricks-labs-dqx?period=month&units=international_system&left_color=grey&right_color=orange&left_text=PyPI%20downloads&cacheSeconds=3600)
 
-# 📖 Documentation
-
-The complete documentation is available at: [https://databrickslabs.github.io/dqx/](https://databrickslabs.github.io/dqx/)
-
 # ✨ Key capabilities
 
 - **Rule-based quality checks** — 80+ built-in checks (null, range, regex, referential, aggregate, geo, PII, and more) for row-level and column/dataset-level validation, with support for custom check functions.
@@ -35,6 +31,10 @@ The complete documentation is available at: [https://databrickslabs.github.io/dq
 - **Flexible checks storage** — save and load quality rules from YAML/JSON files, Unity Catalog tables, Volumes, or Lakebase (PostgreSQL).
 - **DQX Studio** — browser-based no-code UI for authoring, reviewing, running, and monitoring quality rules, deployed as a Databricks App.
 - **Data format agnostic & streaming support** — works with PySpark DataFrames and applies checks to both batch and Spark Structured Streaming (including Lakeflow Pipelines / DLT) using the same API.
+
+# 📖 Documentation
+
+The complete documentation is available at: [https://databrickslabs.github.io/dqx/](https://databrickslabs.github.io/dqx/)
 
 # 🛠️ Contribution
 
