@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from typing import ClassVar, Literal
 
+from pydantic import Field
+
 from databricks.labs.dqx.actions.base import ActionServices
 from databricks.labs.dqx.actions.delivery import WebhookAuth
 from databricks.labs.dqx.actions.destinations.webhook_base import WebhookAlertDestination
@@ -45,8 +47,8 @@ class WebhookDQAlertDestination(WebhookAlertDestination):
     type: Literal["webhook"] = "webhook"
     allowed_host_suffixes: ClassVar[list[str] | None] = None
 
-    username: SecretOrStr | None = None
-    password: SecretOrStr | None = None
+    username: SecretOrStr | None = Field(default=None)
+    password: SecretOrStr | None = Field(default=None)
 
     def _build_auth(self, services: ActionServices) -> WebhookAuth | None:
         """Build *WebhookAuth* when both *username* and *password* are set.
