@@ -1,4 +1,4 @@
-"""Unit tests for action-related config dataclasses and errors (Task 1)."""
+"""Unit tests for action-related config dataclasses and errors."""
 
 import pytest
 

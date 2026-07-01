@@ -3,8 +3,7 @@
 This module defines *FailPipeline*, a terminal action that raises
 *PipelineFailedError* to abort the current DQX run.  Because
 *PipelineFailedError* is a *TerminalActionError* subclass, the evaluator
-(Task 12) defers this error until all other non-terminal actions have
-completed.
+defers this error until all other non-terminal actions have completed.
 """
 
 from __future__ import annotations

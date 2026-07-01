@@ -1,4 +1,4 @@
-"""Unit tests for Task 14: actions wired into DQEngine batch flow.
+"""Unit tests for actions wired into DQEngine batch flow.
 
 Tests cover:
 - DQEngine raises InvalidParameterError when actions are provided but no observer.

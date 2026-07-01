@@ -1,4 +1,4 @@
-"""Unit tests for AlertMessage and StandardMessageBuilder (Task 3)."""
+"""Unit tests for AlertMessage and StandardMessageBuilder."""
 
 import dataclasses
 from datetime import datetime, timezone

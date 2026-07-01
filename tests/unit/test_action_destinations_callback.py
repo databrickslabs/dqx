@@ -1,4 +1,4 @@
-"""Unit tests for callback alert destination (Task 8).
+"""Unit tests for callback alert destination.
 
 Tests cover:
 - deliver() calls the provided callable exactly once with the same AlertMessage

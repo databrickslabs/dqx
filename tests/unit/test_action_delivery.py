@@ -1,4 +1,4 @@
-"""Unit tests for webhook delivery client (Task 6).
+"""Unit tests for webhook delivery client.
 
 Tests cover:
 - validate_webhook_url: scheme, private/loopback/reserved IP, host-suffix allowlist

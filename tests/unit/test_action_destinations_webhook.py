@@ -1,4 +1,4 @@
-"""Unit tests for webhook alert destinations (Task 7).
+"""Unit tests for webhook alert destinations.
 
 Tests cover:
 - AlertDestination and WebhookAlertDestination are abstract (inspect.isabstract)

@@ -1,4 +1,4 @@
-"""Unit tests for Task 15: action evaluation per streaming micro-batch.
+"""Unit tests for action evaluation per streaming micro-batch.
 
 Tests verify that *StreamingMetricsListener.onQueryProgress* correctly
 evaluates actions when an *ActionEvaluator* is supplied, and is a no-op

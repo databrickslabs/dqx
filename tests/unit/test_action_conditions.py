@@ -1,4 +1,4 @@
-"""Unit tests for the safe AST condition evaluator (Task 2)."""
+"""Unit tests for the safe AST condition evaluator."""
 
 import pytest
 

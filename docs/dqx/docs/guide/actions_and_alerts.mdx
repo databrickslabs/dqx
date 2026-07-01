@@ -17,7 +17,7 @@ The two built-in action types are:
 
 Actions require a `DQMetricsObserver` to be configured on the engine because they evaluate metrics collected by that observer.
 
-## Defining a DQAction
+## Defining and applying actions
 
 A `DQAction` binds an inner *action* to an optional gating *condition*. When *condition* is `None` the action fires unconditionally after every DQX run. When *condition* is set it is validated at construction time, so syntax errors surface immediately rather than at evaluation time.
 
@@ -107,15 +107,16 @@ Compound conditions using `and` / `or` are supported:
 DQAction(condition="error_row_count > 0 or warning_row_count > 0", action=DQAlert(destinations=[...]))
 ```
 
-## Using actions with DQEngine
+### Applying actions with DQEngine
 
-Once you have defined actions, attach them to a `DQEngine` to run them. The rest of this page then
-covers the reference detail: the available [destination types](#dqalert-destinations),
+Once you have defined actions, attach them to a `DQEngine` to run them — either automatically via
+the save methods, per micro-batch in streaming, or manually with `evaluate_actions`. The rest of
+this page then covers the reference detail: the available [destination types](#dqalert-destinations),
 [FailPipeline](#failpipeline), [alert frequency and notify_on](#alert-frequency-and-notify_on),
-[recording event history](#recording-action-event-history), [storing and loading actions](#storing-and-loading-actions),
+[persisting actions and their history](#persisting-actions-and-their-history),
 and [defining actions with metadata](#defining-actions-with-metadata).
 
-### Auto-fire on save methods (recommended)
+#### Auto-fire on save methods (recommended)
 
 Pass a list of `DQAction` instances to `DQEngine` together with a `DQMetricsObserver`. Actions fire automatically at the end of `apply_checks_and_save_in_table` and `apply_checks_by_metadata_and_save_in_table` (both batch and streaming) once the Spark observation has been materialized.
 
@@ -148,10 +149,10 @@ actions = [
             alert_frequency=DQAlertFrequency.ALWAYS,
         ),
     ),
-    # Also fail the pipeline when the error ratio exceeds 10 %
+    # Also fail the pipeline when any error row is observed
     DQAction(
         condition="error_row_count > 0",
-        action=FailPipeline(message="Error rate too high — pipeline aborted."),
+        action=FailPipeline(message="Errors detected — pipeline aborted."),
     ),
 ]
 
@@ -172,7 +173,7 @@ engine.apply_checks_and_save_in_table(
 Passing *actions* to *DQEngine* without also passing an *observer* raises `InvalidParameterError` at construction time. Actions evaluate metrics produced by the observer and cannot function without one.
 </Admonition>
 
-### Streaming pipelines
+#### Streaming pipelines
 
 The same pattern works for streaming. Actions fire per micro-batch after the observation for that batch is materialized:
 
@@ -205,7 +206,7 @@ non-terminal delivery failure is logged and never crashes the stream. (Fully asy
 off-thread delivery is a planned enhancement.)
 </Admonition>
 
-### Manual evaluation with evaluate_actions
+#### Manual evaluation with evaluate_actions
 
 For pipelines that do not use the save methods (e.g. Lakeflow Pipelines or custom `writeStream` code), call `evaluate_actions` explicitly after triggering a Spark action on the checked DataFrame:
 
@@ -373,67 +374,28 @@ alert = DQAlert(
 )
 ```
 
-### Recording action event history
+The `DQAlertFrequency.HOURLY` / `DQAlertFrequency.DAILY` windows and `NotifyOn.STATUS_CHANGE`
+gating rely on suppression state that, by default, lives only in memory for the lifetime of the
+`DQEngine`. To make them behave correctly across engine restarts (for example each scheduled job
+run), persist an action-events table — see
+[Recording action event history](#recording-action-event-history).
 
-Pass an *action_events_config* pointing at a Unity Catalog (or Lakebase) events table to keep a
-durable, auditable history of every action DQX evaluates. On each run the engine appends one row
-per action evaluation to this table — **including evaluations that did not fire** (condition
-false, or suppressed by frequency / status-change gating) — so the table is a complete audit log
-of what was checked, what fired, where it was delivered, and what failed.
+## Persisting actions and their history
 
-```python
-from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.metrics_observer import DQMetricsObserver
-from databricks.labs.dqx.config import ActionEventsConfig
+DQX persists action data in **two separate tables**, each with a distinct purpose:
 
-engine = DQEngine(
-    ws,
-    observer=DQMetricsObserver(),
-    actions=actions,
-    action_events_config=ActionEventsConfig(location="catalog.schema.dqx_action_events"),
-)
-```
+- The **action-definitions table** stores the actions themselves (serialized *DQAction* rows) so
+  they can be managed separately from pipeline code and reused across runs. It is written and read
+  with `DQActionManager`.
+- The **action-events table** stores one row per action *evaluation* — a durable, auditable
+  history of what was checked, what fired, and where it was delivered. It is enabled by passing an
+  *action_events_config* to `DQEngine`.
 
-For a Lakebase (PostgreSQL) backend instead of a Delta table, pass a
-*LakebaseActionsStorageConfig* in the same *action_events_config* parameter; DQX selects the
-backend automatically.
+Both tables support the same two storage backends: a **Unity Catalog Delta table** (the default)
+or a **Lakebase (PostgreSQL)** instance. DQX selects the backend automatically from the
+storage-config type you pass, so the surrounding code is identical either way.
 
-Each row is an *AlertEvent* with the following columns:
-
-| Column | Type | Description |
-|---|---|---|
-| *action_name* | *STRING* | Logical name of the evaluated action |
-| *condition* | *STRING* | The gating condition expression, or *null* when the action is unconditional |
-| *fired* | *BOOLEAN* | Whether the action actually executed and delivered |
-| *status* | *STRING* | Aggregate *ActionStatus* of the execution (for example *healthy* / *unhealthy*) |
-| *observed_metrics* | *MAP of STRING to STRING* | Snapshot of the metrics observed during the run (values stored as strings) |
-| *run_id* | *STRING* | Unique identifier of the DQX run that produced the event |
-| *run_time* | *TIMESTAMP* | Timestamp of the run |
-| *input_location* | *STRING* | Source path or table of the checked data, or *null* |
-| *destinations* | *ARRAY of STRING* | Names of the destinations that were targeted |
-| *delivery_errors* | *ARRAY of STRING* | Error messages for any destinations that failed delivery |
-
-Because it is an ordinary table, you can query the history directly — for example, to review the
-most recent alerts that actually fired:
-
-```sql
-SELECT run_time, action_name, status, observed_metrics, destinations, delivery_errors
-FROM catalog.schema.dqx_action_events
-WHERE fired = true
-ORDER BY run_time DESC
-LIMIT 50
-```
-
-### Persisting alert state across runs
-
-The same events table also makes alert suppression durable. By default, frequency and
-status-change state is held in memory for the lifetime of the *DQEngine*, so a new engine
-instance (for example each scheduled job run) starts with empty state. When *action_events_config*
-is set, the engine seeds its suppression state from the events table on first use, so
-*HOURLY* / *DAILY* frequency windows and *STATUS_CHANGE* alerting behave correctly across engine
-restarts. Without it, alert state resets on every run.
-
-## Storing and loading actions
+### Storing and loading action definitions
 
 Actions can be persisted to a Unity Catalog Delta table or a Lakebase PostgreSQL instance using `DQActionManager`. This allows actions to be managed separately from the pipeline code and reused across runs.
 
@@ -441,7 +403,7 @@ Actions can be persisted to a Unity Catalog Delta table or a Lakebase PostgreSQL
 `CallbackDQAlertDestination` instances are skipped when saving because Python callables cannot be serialized. Only webhook-based destinations (Slack, Teams, generic webhook) are persisted.
 </Admonition>
 
-#### Actions table structure
+#### Definitions table structure
 
 Each stored action is one row. The action itself is serialized to a JSON string (the same
 metadata wire format shown in [Defining actions with metadata](#defining-actions-with-metadata))
@@ -459,7 +421,7 @@ deserialize are skipped with a warning rather than aborting the whole load. In *
 only the rows matching the given *run_config_name* are replaced, so actions for other run configs
 in the same table are preserved.
 
-### Unity Catalog Delta table
+#### Unity Catalog Delta table
 
 ```python
 from databricks.sdk import WorkspaceClient
@@ -493,7 +455,7 @@ manager.save_actions(actions, config)
 loaded_actions = manager.load_actions(config)
 ```
 
-### Lakebase (PostgreSQL)
+#### Lakebase (PostgreSQL)
 
 ```python
 from databricks.labs.dqx.config import LakebaseActionsStorageConfig
@@ -510,7 +472,7 @@ manager.save_actions(actions, config)
 loaded_actions = manager.load_actions(config)
 ```
 
-### Declarative configuration with actions_location
+#### Declarative configuration with actions_location
 
 The `RunConfig` carries an *actions_location* field, intended to mirror the *checks_location*
 mechanism so that a run configuration can reference the UC/Lakebase table where its actions are
@@ -538,11 +500,70 @@ and pass them to the engine via `DQEngine(ws, observer=..., actions=loaded_actio
 programmatic API described above is the supported path.
 :::
 
+### Recording action event history
+
+Pass an *action_events_config* pointing at an events table to keep a durable, auditable history of
+every action DQX evaluates. On each run the engine appends one row per action evaluation to this
+table — **including evaluations that did not fire** (condition false, or suppressed by frequency /
+status-change gating) — so the table is a complete audit log of what was checked, what fired,
+where it was delivered, and what failed.
+
+```python
+from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.metrics_observer import DQMetricsObserver
+from databricks.labs.dqx.config import ActionEventsConfig
+
+engine = DQEngine(
+    ws,
+    observer=DQMetricsObserver(),
+    actions=actions,
+    action_events_config=ActionEventsConfig(location="catalog.schema.dqx_action_events"),
+)
+```
+
+For a Lakebase (PostgreSQL) backend, pass a *LakebaseActionsStorageConfig* in the
+*action_events_config* parameter instead of *ActionEventsConfig*.
+
+Each row is an *AlertEvent* with the following columns:
+
+| Column | Type | Description |
+|---|---|---|
+| *action_name* | *STRING* | Logical name of the evaluated action |
+| *condition* | *STRING* | The gating condition expression, or *null* when the action is unconditional |
+| *fired* | *BOOLEAN* | Whether the action actually executed and delivered |
+| *status* | *STRING* | Aggregate *ActionStatus* of the execution (for example *healthy* / *unhealthy*) |
+| *observed_metrics* | *MAP of STRING to STRING* | Snapshot of the metrics observed during the run (values stored as strings) |
+| *run_id* | *STRING* | Unique identifier of the DQX run that produced the event |
+| *run_time* | *TIMESTAMP* | Timestamp of the run |
+| *input_location* | *STRING* | Source path or table of the checked data, or *null* |
+| *destinations* | *ARRAY of STRING* | Names of the destinations that were targeted |
+| *delivery_errors* | *ARRAY of STRING* | Error messages for any destinations that failed delivery |
+
+Because it is an ordinary table, you can query the history directly — for example, to review the
+most recent alerts that actually fired:
+
+```sql
+SELECT run_time, action_name, status, observed_metrics, destinations, delivery_errors
+FROM catalog.schema.dqx_action_events
+WHERE fired = true
+ORDER BY run_time DESC
+LIMIT 50
+```
+
+#### Persisting alert state across runs
+
+The same events table also makes alert suppression durable. By default, frequency and
+status-change state is held in memory for the lifetime of the *DQEngine*, so a new engine
+instance (for example each scheduled job run) starts with empty state. When *action_events_config*
+is set, the engine seeds its suppression state from the events table on first use, so
+*HOURLY* / *DAILY* frequency windows and *STATUS_CHANGE* alerting behave correctly across engine
+restarts. Without it, alert state resets on every run.
+
 ## Defining actions with metadata
 
 Every action shown so far can be expressed as declarative metadata — a list of plain dicts,
-typically loaded from a YAML or JSON file — instead of the DQX classes. The [Defining a
-DQAction](#defining-a-dqaction) section shows the Python and YAML forms side by side; this
+typically loaded from a YAML or JSON file — instead of the DQX classes. The [Defining and applying
+actions](#defining-and-applying-actions) section shows the Python and YAML forms side by side; this
 section covers the wire format and how to load metadata and pass it to the engine.
 
 Each dict must match the wire format used by *ActionSerializer*: an *action* key whose value

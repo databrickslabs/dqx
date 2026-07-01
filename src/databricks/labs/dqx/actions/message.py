@@ -5,10 +5,9 @@ that destination adapters (Slack, Teams, webhook, …) receive and render into
 their own wire formats, together with *StandardMessageBuilder* — a stateless
 factory that assembles an *AlertMessage* from run-time primitives.
 
-Keeping the builder free of any reference to *ActionContext* (defined in a
-later task) prevents circular imports: the evaluator in Task 12 can call
-*StandardMessageBuilder.build(...)* using only primitive values already
-available at evaluation time.
+Keeping the builder free of any reference to *ActionContext* prevents circular
+imports: the evaluator can call *StandardMessageBuilder.build(...)* using only
+primitive values already available at evaluation time.
 """
 
 from __future__ import annotations

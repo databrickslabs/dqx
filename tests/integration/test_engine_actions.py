@@ -1,4 +1,4 @@
-"""Integration tests for Task 14 and 15: actions wired into DQEngine batch and streaming flows.
+"""Integration tests for actions wired into DQEngine batch and streaming flows.
 
 These tests verify that *evaluate_actions* is called correctly by
 *apply_checks_and_save_in_table* after a batch run completes and that actions
