@@ -8,7 +8,7 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 import re
 from functools import cached_property
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 import pyspark.sql.functions as F
@@ -38,6 +38,7 @@ from databricks.labs.dqx.config import (
     RunConfig,
     ExtraParams,
     ActionEventsConfig,
+    TableActionsStorageConfig,
     LakebaseActionsStorageConfig,
 )
 from databricks.labs.dqx.manager import DQRuleManager
@@ -60,6 +61,7 @@ from databricks.labs.dqx.utils import list_tables, safe_strip_file_from_path, re
 from databricks.labs.dqx.io import is_one_time_trigger
 from databricks.labs.dqx.actions.base import ActionContext, ActionResult, ActionServices
 from databricks.labs.dqx.actions.dq_action import DQAction
+from databricks.labs.dqx.actions.manager import DQActionManager
 from databricks.labs.dqx.actions.evaluator import ActionEvaluator
 from databricks.labs.dqx.actions.serializer import ActionSerializer
 from databricks.labs.dqx.actions.state import ActionStateStore
@@ -1885,7 +1887,11 @@ class DQEngine(DQEngineBase):
         custom_check_functions = resolve_custom_check_functions_from_path(run_config.custom_check_functions)
         ref_dfs = get_reference_dataframes(self.spark, run_config.reference_tables)
 
-        self.apply_checks_by_metadata_and_save_in_table(
+        # Actions are configured per run config via *actions_location*, so a run config with actions is
+        # applied through a dedicated engine carrying that run config's actions, observer, and (optional)
+        # event store. This keeps the shared engine thread-safe under the parallel multi-run-config runner.
+        engine = self._engine_for_run_config(run_config)
+        engine.apply_checks_by_metadata_and_save_in_table(
             checks=checks,
             input_config=run_config.input_config,
             output_config=run_config.output_config,
@@ -1895,6 +1901,143 @@ class DQEngine(DQEngineBase):
             ref_dfs=ref_dfs,
             checks_location=storage_config.location,
         )
+
+    def _engine_for_run_config(self, run_config: RunConfig) -> "DQEngine":
+        """Return the engine used to apply checks for *run_config*.
+
+        When *run_config.actions_location* is set, this loads that run config's action definitions and
+        returns a dedicated *DQEngine* carrying those actions, a fresh observer, and an optional action
+        event store (from *action_events_location*). Otherwise it returns *self* unchanged.
+
+        A dedicated engine is used (rather than mutating *self._actions*) because the multi-run-config
+        runner applies run configs on a thread pool sharing a single engine; per-run-config action state
+        must not leak across threads.
+
+        Args:
+            run_config: The run configuration being applied.
+
+        Returns:
+            *self* when the run config has no actions, otherwise a new *DQEngine* scoped to it.
+        """
+        if not run_config.actions_location:
+            return self
+        actions = self._load_actions_for_run_config(run_config)
+        return self._build_scoped_engine(run_config, actions)
+
+    def _build_scoped_engine(self, run_config: RunConfig, actions: list[DQAction]) -> "DQEngine":
+        """Build a per-run-config *DQEngine* carrying *actions*, a fresh observer, and an event store.
+
+        Returns *self* when *actions* is empty (nothing to fire), so no redundant engine is created.
+
+        Args:
+            run_config: The run configuration being applied.
+            actions: The action definitions loaded for this run config.
+
+        Returns:
+            A new *DQEngine* scoped to *run_config*, or *self* when *actions* is empty.
+        """
+        if not actions:
+            return self
+        base_observer = self._engine.observer
+        observer = DQMetricsObserver(custom_metrics=base_observer.custom_metrics if base_observer else None)
+        return DQEngine(
+            workspace_client=self.ws,
+            spark=self.spark,
+            extra_params=self._extra_params,
+            observer=observer,
+            # DQEngine only reads the actions list; the widening from list[DQAction] is safe.
+            actions=cast("list[DQAction | dict[str, object]]", actions),
+            action_events_config=self._run_config_action_events_config(run_config),
+        )
+
+    def _load_actions_for_run_config(self, run_config: RunConfig) -> list[DQAction]:
+        """Load action definitions declared by *run_config.actions_location*.
+
+        A table (or Lakebase) location is loaded via *DQActionManager.load_actions*; any other location
+        is treated as a workspace/volume/local file and loaded via *load_actions_from_local_file*.
+
+        Args:
+            run_config: The run configuration whose *actions_location* is loaded.
+
+        Returns:
+            The loaded *DQAction* instances, or an empty list when no location is configured.
+        """
+        location = run_config.actions_location
+        if not location:
+            return []
+        storage_config = self._run_config_actions_storage_config(run_config)
+        manager = DQActionManager(ws=self.ws, spark=self.spark)
+        if storage_config is not None:
+            return manager.load_actions(storage_config)
+        return DQActionManager.load_actions_from_local_file(location)
+
+    @staticmethod
+    def _run_config_actions_storage_config(
+        run_config: RunConfig,
+    ) -> TableActionsStorageConfig | LakebaseActionsStorageConfig | None:
+        """Resolve the definitions storage config for *run_config.actions_location*.
+
+        Returns *None* when the location is empty or is a file path (loaded via the local-file reader
+        rather than a table backend).
+
+        Args:
+            run_config: The run configuration whose *actions_location* is resolved.
+
+        Returns:
+            A *LakebaseActionsStorageConfig* when the location is a table and Lakebase connection
+            params are set, a *TableActionsStorageConfig* for a plain table location, or *None* for a
+            file/empty location (loaded via the local-file reader).
+        """
+        location = run_config.actions_location
+        # A non-table location is a workspace/volume/local file loaded via load_actions_from_local_file;
+        # the table backends (including Lakebase) only apply to table locations. Checking this before the
+        # Lakebase branch prevents a file path from being wrapped in a table config when Lakebase is set.
+        if not location or not is_table_location(location):
+            return None
+        if run_config.lakebase_instance_name:
+            return LakebaseActionsStorageConfig(
+                location=location,
+                instance_name=run_config.lakebase_instance_name,
+                client_id=run_config.lakebase_client_id,
+                port=run_config.lakebase_port or "5432",
+                run_config_name=run_config.name,
+            )
+        return TableActionsStorageConfig(location=location, run_config_name=run_config.name)
+
+    @staticmethod
+    def _run_config_action_events_config(
+        run_config: RunConfig,
+    ) -> ActionEventsConfig | LakebaseActionsStorageConfig | None:
+        """Resolve the event-store config for *run_config.action_events_location*.
+
+        Args:
+            run_config: The run configuration whose *action_events_location* is resolved.
+
+        Returns:
+            A *LakebaseActionsStorageConfig* when Lakebase connection params are set, an
+            *ActionEventsConfig* for a UC table, or *None* when no events location is configured.
+
+        Raises:
+            InvalidConfigError: If *action_events_location* is set to a non-table (file) location;
+                action events are always written to a Unity Catalog or Lakebase table.
+        """
+        location = run_config.action_events_location
+        if not location:
+            return None
+        if run_config.lakebase_instance_name:
+            return LakebaseActionsStorageConfig(
+                location=location,
+                instance_name=run_config.lakebase_instance_name,
+                client_id=run_config.lakebase_client_id,
+                port=run_config.lakebase_port or "5432",
+                run_config_name=run_config.name,
+            )
+        if not is_table_location(location):
+            raise InvalidConfigError(
+                "action_events_location must be a Unity Catalog table (catalog.schema.table) or a Lakebase table; "
+                "file locations are not supported for action events."
+            )
+        return ActionEventsConfig(location=location)
 
     @staticmethod
     def _wait_for_one_time_trigger_streaming_queries(

@@ -713,33 +713,69 @@ actions = DQActionManager.load_actions_from_local_file("actions.yml")
 DQActionManager.save_actions_in_local_file(actions, "actions_backup.json")
 ```
 
-#### Declarative configuration with actions_location
+#### Run-config-driven actions (actions_location)
 
-The `RunConfig` carries an *actions_location* field, intended to mirror the *checks_location*
-mechanism so that a run configuration can reference the UC/Lakebase table where its actions are
-stored:
+Instead of attaching actions to the engine, a `RunConfig` can point at the actions to load:
+
+- **actions_location** — table, YAML/JSON file, or Lakebase table holding the action definitions. DQX loads them with `DQActionManager` and fires them for that run config. Omit it to run checks with no actions.
+- **action_events_location** — UC or Lakebase table for [event history](#recording-action-event-history) and durable suppression across runs. Omit it to keep suppression state in memory for that run only.
+
+Each run config is applied with its own actions and a dedicated observer, so the parallel multi-run-config runner stays isolated. This works both in the installed DQX Workflows (via `config.yml`) and when you call the runner directly.
+
+<Tabs>
+  <TabItem value="Python" label="Python (runner)" default>
+
+```python
+from databricks.sdk import WorkspaceClient
+from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.config import RunConfig, InputConfig, OutputConfig
+
+engine = DQEngine(WorkspaceClient())
+
+run_configs = [
+    RunConfig(
+        name="orders",
+        checks_location="catalog.schema.dq_checks",
+        actions_location="catalog.schema.dqx_actions",              # definitions: loaded + fired
+        action_events_location="catalog.schema.dqx_action_events",  # history + durable suppression
+        input_config=InputConfig(location="catalog.schema.orders"),
+        output_config=OutputConfig(location="catalog.schema.orders_valid", mode="append"),
+    ),
+]
+
+# For each run config, DQX loads its actions and applies them for that run —
+# no engine-level observer or actions argument is required.
+engine.apply_checks_and_save_in_tables(run_configs)
+```
+
+  </TabItem>
+  <TabItem value="YAML" label="Installed Workflows (config.yml)">
 
 ```yaml
 run_configs:
   - name: default
     checks_location: catalog.schema.dq_checks
-    actions_location: catalog.schema.dqx_actions  # UC table with persisted actions
+    actions_location: catalog.schema.dqx_actions             # definitions: loaded + fired
+    action_events_location: catalog.schema.dqx_action_events # history + durable suppression
     input_config:
       location: catalog.schema.input
     output_config:
       location: catalog.schema.valid
       mode: append
-    metrics_config:
-      location: catalog.schema.dq_metrics
-      mode: append
 ```
 
-:::note
-Automatic loading of *actions_location* by the installed DQX Workflows is not yet wired — the
-field is reserved for that integration. Today, load actions explicitly with `DQActionManager`
-and pass them to the engine via `DQEngine(ws, observer=..., actions=loaded_actions)`. The
-programmatic API described above is the supported path.
-:::
+  </TabItem>
+</Tabs>
+
+Loading actions yourself with `DQActionManager` and passing them to `DQEngine(actions=...)` remains fully supported for pipelines that do not use run configs.
+
+<Admonition type="note" title="Per-run-config action behaviour">
+When a run config sets *actions_location*, its loaded actions are applied for that run config
+**instead of** any engine-level *actions* passed to the shared `DQEngine`; run configs without
+*actions_location* still use the engine-level actions. Action event history is keyed by action name,
+so if several run configs share one *action_events_location*, give their actions distinct names (or
+use a separate events table per run config) to keep alert suppression independent.
+</Admonition>
 
 ### Recording action event history
 

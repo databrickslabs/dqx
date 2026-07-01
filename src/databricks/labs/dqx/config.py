@@ -248,7 +248,12 @@ class RunConfig:
     lakebase_client_id: str | None = None
     lakebase_port: str | None = None
 
-    actions_location: str | None = None  # UC table for action events; None disables action event persistence
+    # UC/Lakebase table (or workspace/volume file) holding action definitions to auto-load and apply
+    # during workflow runs. None disables actions for this run config.
+    actions_location: str | None = None
+    # UC/Lakebase table for action event history and durable alert suppression across runs.
+    # None keeps alert suppression state in-memory only (resets each run).
+    action_events_location: str | None = None
 
 
 @dataclass
