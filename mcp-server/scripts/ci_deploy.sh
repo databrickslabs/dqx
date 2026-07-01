@@ -7,11 +7,14 @@
 # so this never collides with a real deployment.
 #
 # Env:
-#   NAME_PREFIX           resource name prefix (default: mcp-dqx-ci)
-#   DQX_MCP_TEST_CATALOG  catalog the setup job may create/drop a temp schema in (required)
-#   CONFIG_SECRET_SCOPE   secret scope holding catalog_name (default: dqx-config-ci)
-#   BUNDLE_TARGET         bundle target (default: dev)
-#   DATABRICKS_PROFILE    optional CLI profile (else relies on DATABRICKS_HOST/TOKEN)
+#   NAME_PREFIX                          resource name prefix (default: mcp-dqx-ci)
+#   DQX_MCP_TEST_CATALOG                 catalog the setup job may create/drop a temp schema in (required)
+#   DQX_MCP_RUNNER_SERVICE_PRINCIPAL_ID  application id of the workspace SP the runner job runs as
+#                                        (required — the runner job's run_as; the deploying identity
+#                                        needs the "User" role on it)
+#   CONFIG_SECRET_SCOPE                  secret scope holding catalog_name (default: dqx-config-ci)
+#   BUNDLE_TARGET                        bundle target (default: dev)
+#   DATABRICKS_PROFILE                   optional CLI profile (else relies on DATABRICKS_HOST/TOKEN)
 #
 # Emits: DQX_MCP_SERVER_URL=<url> to stdout and, if set, to $GITHUB_OUTPUT.
 set -euo pipefail
@@ -23,12 +26,14 @@ BUNDLE_TARGET="${BUNDLE_TARGET:-dev}"
 : "${DATABRICKS_HOST:?DATABRICKS_HOST is not set (workspace URL)}"
 : "${DATABRICKS_TOKEN:?DATABRICKS_TOKEN is not set (workspace auth)}"
 : "${DQX_MCP_TEST_CATALOG:?DQX_MCP_TEST_CATALOG is not set (a catalog the deployer can create schemas in)}"
+: "${DQX_MCP_RUNNER_SERVICE_PRINCIPAL_ID:?DQX_MCP_RUNNER_SERVICE_PRINCIPAL_ID is not set (application id of the runner-job run_as SP)}"
 PROFILE_ARG=()
 [ -n "${DATABRICKS_PROFILE:-}" ] && PROFILE_ARG=(--profile "$DATABRICKS_PROFILE")
 
 VARS=(--var "name_prefix=${NAME_PREFIX}"
       --var "catalog_name=${DQX_MCP_TEST_CATALOG}"
-      --var "config_secret_scope=${CONFIG_SECRET_SCOPE}")
+      --var "config_secret_scope=${CONFIG_SECRET_SCOPE}"
+      --var "runner_service_principal_id=${DQX_MCP_RUNNER_SERVICE_PRINCIPAL_ID}")
 
 cd "$(dirname "$0")/.."  # mcp-server/
 

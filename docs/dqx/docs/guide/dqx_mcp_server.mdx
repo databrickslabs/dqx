@@ -67,12 +67,12 @@ sequenceDiagram
     Client->>App: call a data tool
     App->>WH: create temp view as the user (UC enforced)
     App->>App: OBO pre-check — caller may read/write the target?
-    App->>Job: app SP submits; job runs as the runner SP
+    App->>Job: app SP submits, job runs as the runner SP
     App-->>Client: run_id
 
     Note over Client,Job: Metadata tools — async<br/>generate_rules · generate_rules_from_contract · validate_checks<br/>list_available_checks · load_checks · save_checks
     Client->>App: call a metadata tool
-    App->>Job: app SP submits; job runs as the runner SP
+    App->>Job: app SP submits, job runs as the runner SP
     App-->>Client: run_id
 
     Note over Client,Job: Poll until complete
