@@ -107,6 +107,140 @@ Compound conditions using `and` / `or` are supported:
 DQAction(condition="error_row_count > 0 or warning_row_count > 0", action=DQAlert(destinations=[...]))
 ```
 
+## Using actions with DQEngine
+
+Once you have defined actions, attach them to a `DQEngine` to run them. The rest of this page then
+covers the reference detail: the available [destination types](#dqalert-destinations),
+[FailPipeline](#failpipeline), [alert frequency and notify_on](#alert-frequency-and-notify_on),
+[recording event history](#recording-action-event-history), [storing and loading actions](#storing-and-loading-actions),
+and [defining actions with metadata](#defining-actions-with-metadata).
+
+### Auto-fire on save methods (recommended)
+
+Pass a list of `DQAction` instances to `DQEngine` together with a `DQMetricsObserver`. Actions fire automatically at the end of `apply_checks_and_save_in_table` and `apply_checks_by_metadata_and_save_in_table` (both batch and streaming) once the Spark observation has been materialized.
+
+```python
+from databricks.sdk import WorkspaceClient
+from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.metrics_observer import DQMetricsObserver
+from databricks.labs.dqx.config import InputConfig, OutputConfig
+from databricks.labs.dqx.actions import (
+    DQAction,
+    DQAlert,
+    DQAlertFrequency,
+    FailPipeline,
+    SlackDQAlertDestination,
+)
+
+observer = DQMetricsObserver(name="my_pipeline")
+
+actions = [
+    # Send a Slack alert whenever any error row is observed
+    DQAction(
+        condition="error_row_count > 0",
+        action=DQAlert(
+            destinations=[
+                SlackDQAlertDestination(
+                    name="slack",
+                    webhook_url="https://hooks.slack.com/services/T000/B000/xxxx",
+                )
+            ],
+            alert_frequency=DQAlertFrequency.ALWAYS,
+        ),
+    ),
+    # Also fail the pipeline when the error ratio exceeds 10 %
+    DQAction(
+        condition="error_row_count > 0",
+        action=FailPipeline(message="Error rate too high — pipeline aborted."),
+    ),
+]
+
+# Actions require an observer
+engine = DQEngine(WorkspaceClient(), observer=observer, actions=actions)
+
+# Actions fire automatically after the save completes
+engine.apply_checks_and_save_in_table(
+    checks=checks,
+    input_config=InputConfig(location="catalog.schema.input"),
+    output_config=OutputConfig(location="catalog.schema.valid"),
+    quarantine_config=OutputConfig(location="catalog.schema.quarantine"),
+    metrics_config=OutputConfig(location="catalog.schema.metrics"),
+)
+```
+
+<Admonition type="warning" title="Observer required">
+Passing *actions* to *DQEngine* without also passing an *observer* raises `InvalidParameterError` at construction time. Actions evaluate metrics produced by the observer and cannot function without one.
+</Admonition>
+
+### Streaming pipelines
+
+The same pattern works for streaming. Actions fire per micro-batch after the observation for that batch is materialized:
+
+```python
+from databricks.labs.dqx.config import InputConfig, OutputConfig
+
+# Streaming input — actions still fire automatically after each micro-batch
+engine.apply_checks_and_save_in_table(
+    checks=checks,
+    input_config=InputConfig(location="catalog.schema.input", is_streaming=True),
+    output_config=OutputConfig(
+        location="catalog.schema.valid",
+        trigger={"availableNow": True},
+        options={"checkpointLocation": "/path/to/checkpoint"},
+    ),
+    quarantine_config=OutputConfig(
+        location="catalog.schema.quarantine",
+        trigger={"availableNow": True},
+        options={"checkpointLocation": "/path/to/checkpoint_q"},
+    ),
+)
+```
+
+<Admonition type="note" title="Streaming delivery is synchronous per micro-batch">
+Action evaluation runs inside the streaming query's progress callback, so webhook delivery
+(including retries) blocks that micro-batch until it completes. For streaming destinations,
+keep the webhook *timeout* and retry budget small so a slow or unreachable endpoint cannot
+stall progress; `FailPipeline` itself is cheap and aborts the stream immediately. A
+non-terminal delivery failure is logged and never crashes the stream. (Fully asynchronous
+off-thread delivery is a planned enhancement.)
+</Admonition>
+
+### Manual evaluation with evaluate_actions
+
+For pipelines that do not use the save methods (e.g. Lakeflow Pipelines or custom `writeStream` code), call `evaluate_actions` explicitly after triggering a Spark action on the checked DataFrame:
+
+```python
+from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.metrics_observer import DQMetricsObserver
+from databricks.labs.dqx.actions import DQAction, DQAlert, SlackDQAlertDestination
+
+observer = DQMetricsObserver(name="manual_eval")
+engine = DQEngine(WorkspaceClient(), observer=observer, actions=[
+    DQAction(
+        condition="error_row_count > 0",
+        action=DQAlert(
+            destinations=[SlackDQAlertDestination(name="slack", webhook_url="https://hooks.slack.com/…")]
+        ),
+    )
+])
+
+# Apply checks — returns the DataFrame and an observation handle
+checked_df, observation = engine.apply_checks_by_metadata(input_df, checks)
+
+# Trigger a Spark action to materialize the observation
+checked_df.count()  # or write to a table, etc.
+
+# Now evaluate actions against the populated metrics
+results = engine.evaluate_actions(
+    observation.get,
+    input_location="catalog.schema.input",
+)
+```
+
+<Admonition type="warning" title="Trigger a Spark action first">
+Call *evaluate_actions* only after a Spark action (count, write, etc.) has been triggered on the checked DataFrame. If the observation has not been materialized, metrics will be empty and actions will not receive meaningful values.
+</Admonition>
+
 ## DQAlert destinations
 
 `DQAlert` dispatches a single alert message concurrently to all configured destinations. A delivery failure in one destination is isolated — the remaining destinations still receive the alert, and per-destination errors are captured in `ActionResult.destination_errors`.
@@ -298,134 +432,6 @@ instance (for example each scheduled job run) starts with empty state. When *act
 is set, the engine seeds its suppression state from the events table on first use, so
 *HOURLY* / *DAILY* frequency windows and *STATUS_CHANGE* alerting behave correctly across engine
 restarts. Without it, alert state resets on every run.
-
-## Using actions with DQEngine
-
-### Auto-fire on save methods (recommended)
-
-Pass a list of `DQAction` instances to `DQEngine` together with a `DQMetricsObserver`. Actions fire automatically at the end of `apply_checks_and_save_in_table` and `apply_checks_by_metadata_and_save_in_table` (both batch and streaming) once the Spark observation has been materialized.
-
-```python
-from databricks.sdk import WorkspaceClient
-from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.metrics_observer import DQMetricsObserver
-from databricks.labs.dqx.config import InputConfig, OutputConfig
-from databricks.labs.dqx.actions import (
-    DQAction,
-    DQAlert,
-    DQAlertFrequency,
-    FailPipeline,
-    SlackDQAlertDestination,
-)
-
-observer = DQMetricsObserver(name="my_pipeline")
-
-actions = [
-    # Send a Slack alert whenever any error row is observed
-    DQAction(
-        condition="error_row_count > 0",
-        action=DQAlert(
-            destinations=[
-                SlackDQAlertDestination(
-                    name="slack",
-                    webhook_url="https://hooks.slack.com/services/T000/B000/xxxx",
-                )
-            ],
-            alert_frequency=DQAlertFrequency.ALWAYS,
-        ),
-    ),
-    # Also fail the pipeline when the error ratio exceeds 10 %
-    DQAction(
-        condition="error_row_count > 0",
-        action=FailPipeline(message="Error rate too high — pipeline aborted."),
-    ),
-]
-
-# Actions require an observer
-engine = DQEngine(WorkspaceClient(), observer=observer, actions=actions)
-
-# Actions fire automatically after the save completes
-engine.apply_checks_and_save_in_table(
-    checks=checks,
-    input_config=InputConfig(location="catalog.schema.input"),
-    output_config=OutputConfig(location="catalog.schema.valid"),
-    quarantine_config=OutputConfig(location="catalog.schema.quarantine"),
-    metrics_config=OutputConfig(location="catalog.schema.metrics"),
-)
-```
-
-<Admonition type="warning" title="Observer required">
-Passing *actions* to *DQEngine* without also passing an *observer* raises `InvalidParameterError` at construction time. Actions evaluate metrics produced by the observer and cannot function without one.
-</Admonition>
-
-### Streaming pipelines
-
-The same pattern works for streaming. Actions fire per micro-batch after the observation for that batch is materialized:
-
-```python
-from databricks.labs.dqx.config import InputConfig, OutputConfig
-
-# Streaming input — actions still fire automatically after each micro-batch
-engine.apply_checks_and_save_in_table(
-    checks=checks,
-    input_config=InputConfig(location="catalog.schema.input", is_streaming=True),
-    output_config=OutputConfig(
-        location="catalog.schema.valid",
-        trigger={"availableNow": True},
-        options={"checkpointLocation": "/path/to/checkpoint"},
-    ),
-    quarantine_config=OutputConfig(
-        location="catalog.schema.quarantine",
-        trigger={"availableNow": True},
-        options={"checkpointLocation": "/path/to/checkpoint_q"},
-    ),
-)
-```
-
-<Admonition type="note" title="Streaming delivery is synchronous per micro-batch">
-Action evaluation runs inside the streaming query's progress callback, so webhook delivery
-(including retries) blocks that micro-batch until it completes. For streaming destinations,
-keep the webhook *timeout* and retry budget small so a slow or unreachable endpoint cannot
-stall progress; `FailPipeline` itself is cheap and aborts the stream immediately. A
-non-terminal delivery failure is logged and never crashes the stream. (Fully asynchronous
-off-thread delivery is a planned enhancement.)
-</Admonition>
-
-### Manual evaluation with evaluate_actions
-
-For pipelines that do not use the save methods (e.g. Lakeflow Pipelines or custom `writeStream` code), call `evaluate_actions` explicitly after triggering a Spark action on the checked DataFrame:
-
-```python
-from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.metrics_observer import DQMetricsObserver
-from databricks.labs.dqx.actions import DQAction, DQAlert, SlackDQAlertDestination
-
-observer = DQMetricsObserver(name="manual_eval")
-engine = DQEngine(WorkspaceClient(), observer=observer, actions=[
-    DQAction(
-        condition="error_row_count > 0",
-        action=DQAlert(
-            destinations=[SlackDQAlertDestination(name="slack", webhook_url="https://hooks.slack.com/…")]
-        ),
-    )
-])
-
-# Apply checks — returns the DataFrame and an observation handle
-checked_df, observation = engine.apply_checks_by_metadata(input_df, checks)
-
-# Trigger a Spark action to materialize the observation
-checked_df.count()  # or write to a table, etc.
-
-# Now evaluate actions against the populated metrics
-results = engine.evaluate_actions(
-    observation.get,
-    input_location="catalog.schema.input",
-)
-```
-
-<Admonition type="warning" title="Trigger a Spark action first">
-Call *evaluate_actions* only after a Spark action (count, write, etc.) has been triggered on the checked DataFrame. If the observation has not been materialized, metrics will be empty and actions will not receive meaningful values.
-</Admonition>
 
 ## Storing and loading actions
 
