@@ -69,9 +69,7 @@ def _make_fake_evaluator_factory() -> (
     """
     captured: list[DQAction] = []
     fake_evaluator = create_autospec(ActionEvaluator)
-    fake_evaluator.evaluate.return_value = [
-        ActionResult(action_name="test", fired=True, status=ActionStatus.UNHEALTHY)
-    ]
+    fake_evaluator.evaluate.return_value = [ActionResult(action_name="test", fired=True, status=ActionStatus.UNHEALTHY)]
 
     def factory(actions: list[DQAction]) -> ActionEvaluator:
         captured.extend(actions)
@@ -140,7 +138,7 @@ def test_deserialize_raises_on_non_dict() -> None:
 def test_deserialize_raises_on_unknown_type() -> None:
     """deserialize_actions raises *InvalidActionError* for unknown action type."""
     with pytest.raises(InvalidActionError):
-        deserialize_actions([{"type": "unknown_action_type"}])
+        deserialize_actions([{"action": {"type": "unknown_action_type"}, "condition": None}])
 
 
 # ---------------------------------------------------------------------------
@@ -255,7 +253,7 @@ def test_engine_accepts_action_dicts(mock_workspace_client: WorkspaceClient) -> 
         mock_workspace_client,
         spark=spark,
         observer=observer,
-        actions=cast(list[dict[str, object]], [action_dict]),
+        actions=cast(list[DQAction | dict[str, object]], [action_dict]),
         action_evaluator_factory=factory,
     )
 
@@ -289,7 +287,7 @@ def test_engine_accepts_mixed_list(mock_workspace_client: WorkspaceClient) -> No
         mock_workspace_client,
         spark=spark,
         observer=observer,
-        actions=cast(list[dict[str, object]], [dq_action, action_dict]),
+        actions=cast(list[DQAction | dict[str, object]], [dq_action, action_dict]),
         action_evaluator_factory=factory,
     )
 
@@ -314,5 +312,5 @@ def test_engine_bad_action_dict_raises(mock_workspace_client: WorkspaceClient) -
             mock_workspace_client,
             spark=spark,
             observer=observer,
-            actions=cast(list[dict[str, object]], [bad_dict]),
+            actions=cast(list[DQAction | dict[str, object]], [bad_dict]),
         )

@@ -709,7 +709,7 @@ class DQEngine(DQEngineBase):
         checks_handler_factory: BaseChecksStorageHandlerFactory | None = None,
         config_serializer: ConfigSerializer | None = None,
         observer: DQMetricsObserver | None = None,
-        actions: list[DQAction] | list[dict[str, object]] | None = None,
+        actions: list[DQAction | dict[str, object]] | None = None,
         action_evaluator_factory: Callable[[list[DQAction]], ActionEvaluator] | None = None,
         action_events_config: ActionEventsConfig | LakebaseActionsStorageConfig | None = None,
     ):

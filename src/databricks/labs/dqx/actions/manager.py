@@ -99,14 +99,16 @@ class DQActionManager:
         Example YAML file:
 
         ```yaml
-        - type: dq_alert
-          destinations:
+        - action:
+            type: alert
+            destinations:
             - type: slack
               name: ops-channel
               webhook_url:
                 secret: my_scope/slack_webhook
           condition: error_row_count > 0
-        - type: fail_pipeline
+        - action:
+            type: fail_pipeline
           condition: error_row_count > 10
         ```
 
