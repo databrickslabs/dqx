@@ -91,7 +91,12 @@ class TestToolInvocation:
 
     @pytest.mark.anyio
     async def test_save_checks_submits_job(self):
-        with patch("server.tools.utils.submit_job_async", return_value=23) as mock_submit:
+        with (
+            patch("server.tools.utils.get_obo_client"),
+            patch("server.tools.utils.get_warehouse_id", return_value="wh123"),
+            patch("server.tools.utils.verify_obo_write_access"),
+            patch("server.tools.utils.submit_job_async", return_value=23) as mock_submit,
+        ):
             async with Client(mcp_server) as client:
                 res = await client.call_tool(
                     "save_checks", {"checks": [{"check": "foo"}], "location": "c.s.checks", "mode": "overwrite"}

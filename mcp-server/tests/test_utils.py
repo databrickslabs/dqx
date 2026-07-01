@@ -8,14 +8,12 @@ from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.jobs import (
     Run,
     RunOutput,
-    NotebookOutput,
     RunState,
     RunLifeCycleState,
     RunResultState,
 )
 
-
-_JOB_ID_ENV = {"DQX_RUNNER_JOB_ID": "42"}
+_JOB_ID_ENV = {"DQX_RUNNER_JOB_ID": "42", "DQX_CATALOG": "cat", "DQX_TMP_SCHEMA": "tmp"}
 
 
 def _make_terminated_run(result_state: RunResultState, run_id: int = 123) -> MagicMock:
@@ -290,7 +288,7 @@ class TestSubmitJobAsync:
         ws.jobs.run_now.assert_called_once()
         assert ws.jobs.run_now.call_args.kwargs["job_id"] == 42
 
-    def test_passes_operation_and_params_as_notebook_params(self):
+    def test_passes_operation_params_and_results_volume_as_job_parameters(self):
         from server.utils import submit_job_async
 
         ws = create_autospec(WorkspaceClient)
@@ -303,9 +301,11 @@ class TestSubmitJobAsync:
         ):
             submit_job_async("profile_table", {"view_name": "c.s.v_abc", "columns": ["a"]})
 
-        notebook_params = ws.jobs.run_now.call_args.kwargs["notebook_params"]
-        assert notebook_params["operation"] == "profile_table"
-        assert json.loads(notebook_params["params"]) == {"view_name": "c.s.v_abc", "columns": ["a"]}
+        # Wheel task → job_parameters (not notebook_params), incl. the results volume path.
+        job_parameters = ws.jobs.run_now.call_args.kwargs["job_parameters"]
+        assert job_parameters["operation"] == "profile_table"
+        assert json.loads(job_parameters["params"]) == {"view_name": "c.s.v_abc", "columns": ["a"]}
+        assert job_parameters["results_volume"] == "/Volumes/cat/tmp/mcp_results"
 
     def test_raises_when_no_job_id(self):
         from server.utils import submit_job_async
@@ -323,58 +323,121 @@ class TestSubmitJobAsync:
 
 
 class TestGetRunStatus:
-    def test_completed_returns_result_with_table_name(self):
+    def test_completed_reads_result_file_from_volume(self):
         from server.utils import get_run_status
 
         ws = create_autospec(WorkspaceClient)
         ws.jobs.get_run.return_value = _make_terminated_run(RunResultState.SUCCESS)
-        output = MagicMock(spec=RunOutput)
-        output.notebook_output = MagicMock(spec=NotebookOutput)
         # table_name is echoed by the runner into its result; get_run_status returns it as-is.
-        output.notebook_output.result = json.dumps({"profiles": [], "table_name": "c.s.t"})
-        ws.jobs.get_run_output.return_value = output
+        ws.files.download.return_value.contents.read.return_value = json.dumps(
+            {"profiles": [], "table_name": "c.s.t"}
+        ).encode()
 
-        with patch("server.utils._get_sp_client", return_value=ws):
+        with (
+            patch("server.utils._get_sp_client", return_value=ws),
+            patch.dict("os.environ", {"DQX_CATALOG": "cat", "DQX_TMP_SCHEMA": "tmp"}),
+        ):
             result = get_run_status(123)
 
         assert result["status"] == "completed"
         assert result["run_id"] == 123
         assert result["result"]["profiles"] == []
         assert result["result"]["table_name"] == "c.s.t"
-        ws.jobs.get_run_output.assert_called_once_with(456)
+        # Result is read from the results volume, keyed by run id.
+        assert ws.files.download.call_args[0][0] == "/Volumes/cat/tmp/mcp_results/123.json"
 
-    def test_does_not_drop_view_or_keep_state(self):
-        # Cleanup moved into the runner job; get_run_status must not attempt any view drop.
+    def test_completed_but_missing_result_file_is_failed(self):
         from server.utils import get_run_status
 
         ws = create_autospec(WorkspaceClient)
         ws.jobs.get_run.return_value = _make_terminated_run(RunResultState.SUCCESS)
-        output = MagicMock(spec=RunOutput)
-        output.notebook_output = MagicMock(spec=NotebookOutput)
-        output.notebook_output.result = json.dumps({"ok": True})
-        ws.jobs.get_run_output.return_value = output
+        ws.files.download.side_effect = Exception("not found")
 
         with (
             patch("server.utils._get_sp_client", return_value=ws),
-            patch("server.utils.drop_view") as mock_drop,
+            patch.dict("os.environ", {"DQX_CATALOG": "cat", "DQX_TMP_SCHEMA": "tmp"}),
         ):
             result = get_run_status(123)
 
-        assert result["status"] == "completed"
-        mock_drop.assert_not_called()
+        assert result["status"] == "failed"
+        assert "result file could not be read" in result["error"]
 
-    def test_failed_run_returns_error(self):
+    def test_failed_run_surfaces_task_detail(self):
         from server.utils import get_run_status
 
         ws = create_autospec(WorkspaceClient)
         ws.jobs.get_run.return_value = _make_terminated_run(RunResultState.FAILED)
+        out = MagicMock(spec=RunOutput)
+        out.error = "PERMISSION_DENIED: User does not have SELECT on Table foo. SQLSTATE: 42501"
+        ws.jobs.get_run_output.return_value = out
 
         with patch("server.utils._get_sp_client", return_value=ws):
             result = get_run_status(123)
 
         assert result["status"] == "failed"
-        assert "boom" in result["error"]
+        assert "boom" in result["error"]  # job-level state_message
+        assert "PERMISSION_DENIED" in result["error"]  # task-level detail now surfaced
+        ws.jobs.get_run_output.assert_called_once_with(456)
+
+    def test_not_found_when_run_does_not_exist(self):
+        from server.utils import get_run_status
+        from databricks.sdk.errors import ResourceDoesNotExist
+
+        ws = create_autospec(WorkspaceClient)
+        ws.jobs.get_run.side_effect = ResourceDoesNotExist("Run 999 does not exist.")
+
+        with patch("server.utils._get_sp_client", return_value=ws):
+            result = get_run_status(999)
+
+        assert result["status"] == "not_found"
+        assert result["run_id"] == 999
+        assert "999" in result["error"]
         ws.jobs.get_run_output.assert_not_called()
+
+    def test_unexpected_databricks_error_is_reraised(self):
+        from server.utils import get_run_status
+        from databricks.sdk.errors import PermissionDenied
+
+        ws = create_autospec(WorkspaceClient)
+        ws.jobs.get_run.side_effect = PermissionDenied("nope")
+
+        with patch("server.utils._get_sp_client", return_value=ws):
+            with pytest.raises(PermissionDenied):
+                get_run_status(123)
+
+    def test_not_found_when_run_belongs_to_other_job(self):
+        from server.utils import get_run_status
+
+        ws = create_autospec(WorkspaceClient)
+        run = _make_terminated_run(RunResultState.SUCCESS)
+        run.job_id = 999  # not the runner job (DQX_RUNNER_JOB_ID=42)
+        ws.jobs.get_run.return_value = run
+
+        with (
+            patch("server.utils._get_sp_client", return_value=ws),
+            patch.dict("os.environ", _JOB_ID_ENV),
+        ):
+            result = get_run_status(123)
+
+        assert result["status"] == "not_found"
+        ws.jobs.get_run_output.assert_not_called()
+
+    def test_matching_job_id_is_accepted(self):
+        from server.utils import get_run_status
+
+        ws = create_autospec(WorkspaceClient)
+        run = _make_terminated_run(RunResultState.SUCCESS)
+        run.job_id = 42  # matches DQX_RUNNER_JOB_ID
+        ws.jobs.get_run.return_value = run
+        ws.files.download.return_value.contents.read.return_value = json.dumps({"ok": True}).encode()
+
+        with (
+            patch("server.utils._get_sp_client", return_value=ws),
+            patch.dict("os.environ", _JOB_ID_ENV),
+        ):
+            result = get_run_status(123)
+
+        assert result["status"] == "completed"
 
 
 class TestSweepStaleViews:
@@ -558,3 +621,174 @@ class TestOBOAuthMiddleware:
 
         # send_wrapper must forward every message untouched to the real send.
         assert [m["type"] for m in sent] == ["http.response.start", "http.response.body"]
+
+
+class TestClassifyLocation:
+    def test_table(self):
+        from server.utils import classify_location
+
+        assert classify_location("catalog.schema.table") == "table"
+
+    def test_volume(self):
+        from server.utils import classify_location
+
+        assert classify_location("/Volumes/c/s/v/checks.yml") == "volume"
+
+    def test_workspace(self):
+        from server.utils import classify_location
+
+        assert classify_location("/Workspace/Users/me/checks.yml") == "workspace"
+
+
+class TestToLocalFusePath:
+    def test_volume_unchanged(self):
+        from server.utils import to_local_fuse_path
+
+        assert to_local_fuse_path("/Volumes/c/s/v/contract.yml") == "/Volumes/c/s/v/contract.yml"
+
+    def test_already_workspace_prefixed_unchanged(self):
+        from server.utils import to_local_fuse_path
+
+        assert to_local_fuse_path("/Workspace/Users/me/contract.yml") == "/Workspace/Users/me/contract.yml"
+
+    def test_workspace_path_gets_prefix(self):
+        from server.utils import to_local_fuse_path
+
+        assert to_local_fuse_path("/Users/me/contract.yml") == "/Workspace/Users/me/contract.yml"
+
+    def test_table_unchanged(self):
+        from server.utils import to_local_fuse_path
+
+        # Not a file path; classify_location -> table, so it is returned as-is.
+        assert to_local_fuse_path("c.s.t") == "c.s.t"
+
+
+class TestVerifyOboReadAccess:
+    def test_volume_calls_files_get_metadata(self):
+        from server.utils import verify_obo_read_access
+
+        ws = create_autospec(WorkspaceClient)
+        verify_obo_read_access(ws, "/Volumes/c/s/v/f.yml")
+        ws.files.get_metadata.assert_called_once_with("/Volumes/c/s/v/f.yml")
+
+    def test_workspace_calls_get_status(self):
+        from server.utils import verify_obo_read_access
+
+        ws = create_autospec(WorkspaceClient)
+        verify_obo_read_access(ws, "/Workspace/x.yml")
+        ws.workspace.get_status.assert_called_once_with("/Workspace/x.yml")
+
+    def test_table_is_noop(self):
+        from server.utils import verify_obo_read_access
+
+        ws = create_autospec(WorkspaceClient)
+        verify_obo_read_access(ws, "c.s.t")
+        ws.files.get_metadata.assert_not_called()
+        ws.workspace.get_status.assert_not_called()
+
+    def test_raises_permission_error_on_failure(self):
+        from server.utils import verify_obo_read_access
+
+        ws = create_autospec(WorkspaceClient)
+        ws.files.get_metadata.side_effect = Exception("denied")
+        with pytest.raises(PermissionError):
+            verify_obo_read_access(ws, "/Volumes/c/s/v/f.yml")
+
+
+class TestVerifyOboWriteAccessTable:
+    def test_owner_match_allows(self):
+        from server.utils import verify_obo_write_access, _user_email_var
+
+        ws = create_autospec(WorkspaceClient)
+        with patch("server.utils.execute_sql", return_value=[{"col_name": "Owner", "data_type": "me@x.com"}]):
+            tok = _user_email_var.set("me@x.com")
+            try:
+                verify_obo_write_access(ws, "c.s.t", "wh")  # must not raise
+            finally:
+                _user_email_var.reset(tok)
+
+    def test_owner_mismatch_raises(self):
+        from server.utils import verify_obo_write_access, _user_email_var
+
+        ws = create_autospec(WorkspaceClient)
+        with patch("server.utils.execute_sql", return_value=[{"col_name": "Owner", "data_type": "someone@x.com"}]):
+            tok = _user_email_var.set("me@x.com")
+            try:
+                with pytest.raises(PermissionError, match="owned by"):
+                    verify_obo_write_access(ws, "c.s.t", "wh")
+            finally:
+                _user_email_var.reset(tok)
+
+    def test_nonexistent_table_create_probe_success_allows(self):
+        from server.utils import verify_obo_write_access
+
+        ws = create_autospec(WorkspaceClient)
+        queries: list[str] = []
+
+        def fake_sql(_ws, query, warehouse_id):  # noqa: ANN001, ANN202
+            queries.append(query)
+            if query.startswith("DESCRIBE"):
+                raise RuntimeError("TABLE_OR_VIEW_NOT_FOUND")
+            return []
+
+        with patch("server.utils.execute_sql", side_effect=fake_sql):
+            verify_obo_write_access(ws, "c.s.newt", "wh")  # must not raise
+
+        assert any(q.startswith("CREATE TABLE") for q in queries)
+        assert any(q.startswith("DROP TABLE IF EXISTS") for q in queries)
+
+    def test_existing_table_no_access_denied(self):
+        from server.utils import verify_obo_write_access, _user_email_var
+
+        ws = create_autospec(WorkspaceClient)
+        # DESCRIBE as the caller fails with a permission error → table exists, caller can't touch it.
+        perm_err = "UNAUTHORIZED_ACCESS PERMISSION_DENIED: User does not have SELECT on Table foo. SQLSTATE: 42501"
+        with patch("server.utils.execute_sql", side_effect=RuntimeError(perm_err)):
+            tok = _user_email_var.set("me@x.com")
+            try:
+                with pytest.raises(PermissionError, match="do not have access"):
+                    verify_obo_write_access(ws, "c.s.foreign", "wh")
+            finally:
+                _user_email_var.reset(tok)
+
+    def test_create_probe_failure_raises(self):
+        from server.utils import verify_obo_write_access
+
+        ws = create_autospec(WorkspaceClient)
+
+        def fake_sql(_ws, query, warehouse_id):  # noqa: ANN001, ANN202
+            if query.startswith("DESCRIBE"):
+                raise RuntimeError("TABLE_OR_VIEW_NOT_FOUND")
+            if query.startswith("CREATE TABLE"):
+                raise RuntimeError("permission denied")
+            return []
+
+        with patch("server.utils.execute_sql", side_effect=fake_sql):
+            with pytest.raises(PermissionError, match="CREATE TABLE"):
+                verify_obo_write_access(ws, "c.s.newt", "wh")
+
+
+class TestVerifyOboWriteAccessFile:
+    def test_volume_write_probe_uploads_and_deletes(self):
+        from server.utils import verify_obo_write_access
+
+        ws = create_autospec(WorkspaceClient)
+        verify_obo_write_access(ws, "/Volumes/c/s/v/checks.yml", "wh")
+        assert ws.files.upload.called
+        assert ws.files.delete.called
+
+    def test_volume_write_probe_denied_raises(self):
+        from server.utils import verify_obo_write_access
+
+        ws = create_autospec(WorkspaceClient)
+        ws.files.upload.side_effect = Exception("denied")
+        with pytest.raises(PermissionError):
+            verify_obo_write_access(ws, "/Volumes/c/s/v/checks.yml", "wh")
+
+    def test_workspace_write_probe_uploads_and_deletes(self):
+        from server.utils import verify_obo_write_access
+
+        ws = create_autospec(WorkspaceClient)
+        verify_obo_write_access(ws, "/Workspace/Users/me/checks.yml", "wh")
+        assert ws.workspace.upload.called
+        assert ws.workspace.delete.called

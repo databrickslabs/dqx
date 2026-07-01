@@ -18,7 +18,8 @@ def _get_tmp_view_config() -> tuple[str, str]:
 def load_tools(mcp_server):
     """Register all DQX MCP tools with the server.
 
-    All DQX operations run in a notebook job — the app has no pyspark dependency.
+    All DQX operations run in a wheel-task job (as a dedicated runner SP) — the app has no
+    pyspark dependency.
     Tools that access tables create a temporary view via the user's OBO token
     (enforcing UC governance), then the SP job reads through the view.
 
@@ -132,12 +133,16 @@ def load_tools(mcp_server):
         contract_file: str,
         contract_format: str = "odcs",
         default_criticality: str = "error",
-        process_text_rules: bool = False,
     ):
         """Generate DQX check definitions from a data contract (ODCS).
 
-        Derives checks from the contract's schema and quality expectations — a
-        deterministic alternative to profiling when a data contract already exists.
+        Derives checks deterministically from the contract's schema and quality expectations —
+        a deterministic alternative to profiling when a data contract already exists.
+
+        Note: free-text expectations in the contract (DQX's LLM "text rules" path) are NOT
+        processed by this MCP server — that path needs the DQX [llm] extra (dspy) plus an LLM
+        endpoint, neither of which this deployment wires up. Only deterministic schema/quality
+        rules are generated.
 
         This tool submits a job and returns a run_id immediately.
         Call get_run_result with the run_id to check status and retrieve results.
@@ -146,22 +151,28 @@ def load_tools(mcp_server):
             contract_file: Path to the contract file (workspace, UC volume, or local).
             contract_format: Contract format (default 'odcs').
             default_criticality: Default criticality for generated rules: 'error' or 'warn'.
-            process_text_rules: If True, also derive rules from free-text expectations via
-                the LLM (requires the [llm] extra). Default False keeps generation deterministic.
 
         Returns a dict with:
             - 'status': 'submitted'
             - 'run_id': job run ID to pass to get_run_result
         """
         logger.info(f"Generating rules from contract: {utils.sanitize_for_log(contract_file)}")
+        # Governance: the runner reads the contract file as the SP, so first confirm the *caller*
+        # can read it (via their OBO client). Tables aren't a contract source, so this covers the
+        # UC-volume / workspace-file paths the tool actually accepts.
+        utils.verify_obo_read_access(utils.get_obo_client(), contract_file)
 
+        # DQX reads the contract via a local open(); a workspace path must use the cluster's FUSE
+        # mount prefix (/Workspace/...). The pre-check above used the Workspace API form, so map
+        # the path the runner opens to its on-cluster form.
         run_id = utils.submit_job_async(
             "generate_rules_from_contract",
             {
-                "contract_file": contract_file,
+                "contract_file": utils.to_local_fuse_path(contract_file),
                 "contract_format": contract_format,
                 "default_criticality": default_criticality,
-                "process_text_rules": process_text_rules,
+                # process_text_rules is intentionally not exposed/sent: deterministic-only. The
+                # runner defaults it to False and guards against direct submissions that set it.
             },
         )
 
@@ -191,11 +202,25 @@ def load_tools(mcp_server):
             - 'run_id': job run ID to pass to get_run_result
         """
         logger.info(f"Loading checks from: {utils.sanitize_for_log(location)}")
+        obo_ws = utils.get_obo_client()
 
-        run_id = utils.submit_job_async(
-            "load_checks",
-            {"location": location, "run_config_name": run_config_name},
-        )
+        # Governance: the runner loads as the SP, so enforce the caller's read permission first.
+        # For a table backend, route the read through a definer's-rights OBO view (same pattern as
+        # source-table reads) so the SP reads the checks table *as the caller*. For file backends,
+        # verify the caller's access to the path directly.
+        job_params: dict = {"run_config_name": run_config_name}
+        if utils.classify_location(location) == "table":
+            warehouse_id = utils.get_warehouse_id(obo_ws)
+            catalog, schema = _get_tmp_view_config()
+            view_fqn = utils.create_temp_view(obo_ws, location, catalog, schema, warehouse_id)
+            # Read through the view; let the runner drop it in its finally (stateless cleanup).
+            job_params["location"] = view_fqn
+            job_params["view_name"] = view_fqn
+        else:
+            utils.verify_obo_read_access(obo_ws, location)
+            job_params["location"] = location
+
+        run_id = utils.submit_job_async("load_checks", job_params)
 
         return {
             "status": "submitted",
@@ -214,8 +239,9 @@ def load_tools(mcp_server):
 
         The backend is inferred from the location: a 'catalog.schema.table' name is a
         Delta table, a '/Volumes/...' path is a UC volume file, any other '/...' path is
-        a workspace file. Writes run as the app service principal, so it must have write
-        access to the target location.
+        a workspace file. The write is performed by the runner service principal, but only after
+        verifying — via your own Unity Catalog permissions — that you may write to the
+        destination; the call is rejected if you could not write there yourself.
 
         This tool submits a job and returns a run_id immediately.
         Call get_run_result with the run_id to check status and retrieve results.
@@ -231,6 +257,10 @@ def load_tools(mcp_server):
             - 'run_id': job run ID to pass to get_run_result
         """
         logger.info(f"Saving {len(checks)} checks to: {utils.sanitize_for_log(location)}")
+        # Governance: the runner writes as the SP, so confirm the *caller* may write to the
+        # destination before submitting (closes the "SP writes where the user can't" gap).
+        obo_ws = utils.get_obo_client()
+        utils.verify_obo_write_access(obo_ws, location, utils.get_warehouse_id(obo_ws))
 
         run_id = utils.submit_job_async(
             "save_checks",
@@ -322,8 +352,10 @@ def load_tools(mcp_server):
         Unlike run_checks (which returns a sample), this operationalizes the checks:
         results are written to Delta tables. If quarantine_table is given, valid rows go
         to output_table and invalid rows to quarantine_table; otherwise all rows (with
-        _errors/_warnings columns) go to output_table. Writes run as the app service
-        principal, which must have write access to the target schema.
+        _errors/_warnings columns) go to output_table. The write is performed by the runner
+        service principal, but only after verifying — via your own Unity Catalog permissions —
+        that you may write to output_table (and quarantine_table); the call is rejected if you
+        could not write there yourself.
 
         This tool submits a job and returns a run_id immediately.
         Call get_run_result with the run_id to check status and retrieve results.
@@ -348,6 +380,13 @@ def load_tools(mcp_server):
         catalog, schema = _get_tmp_view_config()
 
         view_fqn = utils.create_temp_view(obo_ws, table_name, catalog, schema, warehouse_id)
+
+        # Governance: the runner writes the output/quarantine tables as the SP, so confirm the
+        # *caller* may write to each destination before submitting (the source read is already
+        # governed by the definer's-rights view above).
+        utils.verify_obo_write_access(obo_ws, output_table, warehouse_id)
+        if quarantine_table:
+            utils.verify_obo_write_access(obo_ws, quarantine_table, warehouse_id)
 
         run_id = utils.submit_job_async(
             "apply_checks_and_save_to_table",
@@ -381,10 +420,13 @@ def load_tools(mcp_server):
             run_id: The run_id returned by a prior tool call.
 
         Returns a dict with:
-            - 'status': 'running', 'completed', or 'failed'
+            - 'status': 'running', 'completed', 'failed', or 'not_found'
             - 'run_id': the run ID
             - 'result': the operation result (only when status is 'completed')
-            - 'error': error message (only when status is 'failed')
+            - 'error': error message (when status is 'failed' or 'not_found')
+
+        A 'not_found' status means the run_id is invalid, expired, or not from this server —
+        re-check the run_id returned by the original submit call rather than retrying blindly.
         """
         logger.info(f"Checking run result: run_id={run_id}")
         return utils.get_run_status(run_id)

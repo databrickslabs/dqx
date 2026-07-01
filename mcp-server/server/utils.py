@@ -5,7 +5,7 @@ Key patterns:
 - Pure ASGI middleware for OBO (not BaseHTTPMiddleware — avoids streaming timeouts)
 - Extracts user identity from Databricks Apps proxy headers
 - User OBO token creates temp views (UC governance) and runs direct SQL
-- SP submits notebook jobs that read through definer's-rights views
+- App SP submits wheel-task jobs (run as a dedicated runner SP) that read through definer's-rights views
 - Async job pattern: submit returns run_id, get_run_result fetches output
 - auth_type="pat" to avoid conflict with auto-injected SP env vars
 """
@@ -117,7 +117,8 @@ class OBOAuthMiddleware:
     """Pure ASGI middleware for on-behalf-of authentication.
 
     Extracts user identity from Databricks Apps proxy headers:
-    - X-Forwarded-Access-Token: user's OBO token (used to call run_now() as user)
+    - X-Forwarded-Access-Token: user's OBO token (creates temp views + enforces the caller's
+      UC permissions before the app SP submits the runner job)
     - X-Forwarded-Email: user's email (grant principal + log context)
 
     Also establishes a per-request correlation id (honoring an inbound ``X-Request-Id``,
@@ -409,6 +410,200 @@ def drop_view(ws: Any, view_fqn: str, warehouse_id: str) -> None:
         logger.warning(f"Failed to drop temp view {sanitize_for_log(view_fqn)}", exc_info=True)
 
 
+# ── Caller-permission enforcement (OBO) ──────────────────────────────
+#
+# The runner job runs as a dedicated runner service principal. For *source-table* reads it reads
+# through a definer's-rights view created with the caller's OBO token, so UC governance holds.
+# But load_checks / save_checks / apply_checks_and_save_to_table / generate_rules_from_contract
+# also touch caller-supplied check tables, files, and output tables that do NOT go through that
+# view. Without a check, the SP would read/write them with the SP's grants, not the caller's —
+# letting a user reach data they couldn't touch directly. These helpers close that gap by
+# verifying the caller's own UC permissions (via their OBO client) BEFORE the SP job is submitted.
+
+
+def classify_location(location: str) -> str:
+    """Classify a checks/contract location the same way DQX's storage factory does.
+
+    Returns one of ``"table"`` (a ``catalog.schema.table`` name), ``"volume"`` (a
+    ``/Volumes/...`` path), or ``"workspace"`` (any other ``/...`` path).
+    """
+    if location.startswith("/Volumes/"):
+        return "volume"
+    if location.startswith("/"):
+        return "workspace"
+    return "table"
+
+
+def to_local_fuse_path(location: str) -> str:
+    """Map a file location to the path the runner's cluster filesystem sees.
+
+    DQX reads a data contract via a local ``open()``, so a workspace path must use the FUSE
+    mount prefix (``/Workspace/...``). The Workspace API form (``/Users/...``) does not exist
+    on the cluster filesystem. UC-volume paths (``/Volumes/...``) are already FUSE-mounted as-is.
+
+    - ``/Volumes/...``  -> unchanged (mounted at the same path on the cluster)
+    - ``/Workspace/...`` -> unchanged (already the FUSE form)
+    - any other ``/...`` workspace path (e.g. ``/Users/...``) -> prefixed with ``/Workspace``
+    """
+    if classify_location(location) == "workspace" and not location.startswith("/Workspace/"):
+        return "/Workspace" + location
+    return location
+
+
+# Substrings used to classify a failed SQL probe. Databricks surfaces a missing object as
+# TABLE_OR_VIEW_NOT_FOUND and a denied one as UNAUTHORIZED_ACCESS / PERMISSION_DENIED / 42501.
+_PERMISSION_ERROR_MARKERS = ("permission_denied", "unauthorized", "does not have", "access denied", "42501")
+_NOT_FOUND_MARKERS = ("not_found", "does not exist", "not found", "cannot be found")
+
+
+def _looks_like_permission_error(message: str) -> bool:
+    m = message.lower()
+    return any(k in m for k in _PERMISSION_ERROR_MARKERS)
+
+
+def _looks_like_not_found(message: str) -> bool:
+    m = message.lower()
+    return any(k in m for k in _NOT_FOUND_MARKERS)
+
+
+def verify_obo_read_access(ws: Any, location: str) -> None:
+    """Verify the calling user can read *location* (file backends), as the caller via OBO.
+
+    Tables are governed via a definer's-rights temp view (see :func:`create_temp_view`), so this
+    only covers UC-volume and workspace-file paths. Raises if the caller cannot access the path.
+
+    Raises:
+        PermissionError: If the caller cannot read the path (or it does not exist).
+    """
+    kind = classify_location(location)
+    try:
+        if kind == "volume":
+            ws.files.get_metadata(location)
+        elif kind == "workspace":
+            ws.workspace.get_status(location)
+        else:
+            # Tables are enforced separately via an OBO temp view; nothing to do here.
+            return
+    except Exception as e:
+        raise PermissionError(
+            f"You do not have access to {sanitize_for_log(location)} (or it does not exist): {e}"
+        ) from e
+
+
+def verify_obo_write_access(ws: Any, location: str, warehouse_id: str) -> None:
+    """Verify, as the calling user (OBO), that they may write to *location*.
+
+    Closes the write-side governance gap: the SP must not write to a destination the caller
+    could not write themselves. Enforcement per backend:
+
+    - **table**: if the table already exists and is visible to the caller, allow only when the
+      caller is its owner (we cannot prove MODIFY on someone else's table without mutating it, so
+      we are conservative); otherwise prove the caller can CREATE a table in the target schema via
+      a transient empty probe table (created and immediately dropped under the caller's identity).
+    - **volume / workspace file**: prove the caller can write to the parent directory via a
+      transient empty probe file (uploaded and immediately deleted under the caller's identity).
+
+    Raises:
+        PermissionError: If the caller lacks permission to write the destination.
+        ValueError: If *location* is a malformed table name.
+    """
+    kind = classify_location(location)
+    if kind == "table":
+        _verify_table_write_access(ws, location, warehouse_id)
+    else:
+        _verify_file_write_access(ws, location, kind)
+
+
+def _verify_table_write_access(ws: Any, table_name: str, warehouse_id: str) -> None:
+    safe_table = validate_and_quote_table_name(table_name)  # validates the 3-part shape / charset
+    catalog, schema, _table = table_name.split(".")
+    safe_catalog = _validate_sql_identifier(catalog, "catalog")
+    safe_schema = _validate_sql_identifier(schema, "schema")
+
+    # Describe the table as the caller to learn whether it exists and who owns it.
+    try:
+        rows: list[dict[str, Any]] | None = execute_sql(
+            ws, f"DESCRIBE TABLE EXTENDED {safe_table}", warehouse_id=warehouse_id
+        )
+    except Exception as e:
+        text = str(e)
+        if _looks_like_permission_error(text):
+            # The table EXISTS but the caller can't access it — never let the SP write it for them.
+            raise PermissionError(
+                f"You do not have access to existing table {sanitize_for_log(table_name)}, so the "
+                f"service principal will not write to it on your behalf. Choose a destination you "
+                f"own or one that does not yet exist."
+            ) from e
+        if _looks_like_not_found(text):
+            rows = None  # genuinely absent → fall through to the create-probe below
+        else:
+            # Unknown failure — fail closed rather than risk an unauthorized SP write.
+            raise PermissionError(f"Could not verify your write access to {sanitize_for_log(table_name)}: {e}") from e
+
+    if rows is not None:
+        owner = None
+        for row in rows:
+            if (row.get("col_name") or "").strip() == "Owner":
+                owner = (row.get("data_type") or "").strip() or None
+                break
+        caller = get_user_email()
+        if caller and owner and owner.lower() == caller.lower():
+            return  # caller owns the existing table → may write
+        raise PermissionError(
+            f"Refusing to write to existing table {sanitize_for_log(table_name)}: it is owned by "
+            f"'{sanitize_for_log(str(owner))}', not you ('{sanitize_for_log(str(caller))}'). Choose a "
+            f"destination you own or one that does not yet exist."
+        )
+
+    # Table does not exist: prove the caller can create a table in the schema.
+    probe_name = _validate_sql_identifier(f"_dqx_mcp_probe_{uuid.uuid4().hex[:12]}", "probe view")
+    probe_fqn = f"{safe_catalog}.{safe_schema}.{probe_name}"
+    try:
+        execute_sql(ws, f"CREATE TABLE {probe_fqn} (x INT)", warehouse_id=warehouse_id)
+    except Exception as e:
+        raise PermissionError(
+            f"You do not have permission to create the destination table {sanitize_for_log(table_name)} "
+            f"(need CREATE TABLE on {sanitize_for_log(f'{catalog}.{schema}')}): {e}"
+        ) from e
+    finally:
+        try:
+            execute_sql(ws, f"DROP TABLE IF EXISTS {probe_fqn}", warehouse_id=warehouse_id)
+        except Exception:
+            logger.warning(f"Failed to drop write-access probe table {sanitize_for_log(probe_fqn)}", exc_info=True)
+
+
+def _verify_file_write_access(ws: Any, location: str, kind: str) -> None:
+    parent = location.rsplit("/", 1)[0] or "/"
+    # Carry the target's extension on the probe so a workspace upload (ImportFormat.AUTO infers
+    # from the extension) behaves like the real save — otherwise an extension-less probe could
+    # fail for format reasons and be mistaken for a permission denial.
+    _, ext = os.path.splitext(location)
+    probe = f"{parent}/_dqx_mcp_probe_{uuid.uuid4().hex[:12]}{ext}"
+    try:
+        if kind == "volume":
+            # files.upload expects a binary file-like object (it calls .seekable()), not raw bytes.
+            import io
+
+            ws.files.upload(probe, io.BytesIO(b""), overwrite=True)
+            try:
+                ws.files.delete(probe)
+            except Exception:
+                logger.warning(f"Failed to delete write-access probe {sanitize_for_log(probe)}", exc_info=True)
+        else:  # workspace
+            from databricks.sdk.service.workspace import ImportFormat
+
+            ws.workspace.upload(probe, b"", overwrite=True, format=ImportFormat.AUTO)
+            try:
+                ws.workspace.delete(probe)
+            except Exception:
+                logger.warning(f"Failed to delete write-access probe {sanitize_for_log(probe)}", exc_info=True)
+    except Exception as e:
+        raise PermissionError(
+            f"You do not have permission to write to {sanitize_for_log(location)} "
+            f"(could not write to {sanitize_for_log(parent)}): {e}"
+        ) from e
+
+
 # ── Temp-view sweeper (backstop cleanup) ─────────────────────────────
 
 # View names are v_<epoch>_<uuid>. The runner job drops its own view in a finally,
@@ -454,8 +649,42 @@ def sweep_stale_views(
     return dropped
 
 
+def sweep_stale_result_files(ws: Any, ttl_seconds: int = _VIEW_TTL_SECONDS) -> int:
+    """Delete result files older than *ttl_seconds* from the results volume. Best-effort.
+
+    Backstop for result files whose caller never polled get_run_result. Uses each file's
+    last-modified time (the runner names files <run_id>.json, which carries no timestamp).
+    Never raises — logs and moves on so cleanup can't break request handling.
+    """
+    import time
+
+    now = time.time()
+    dropped = 0
+    try:
+        volume = _get_results_volume()
+        entries = ws.files.list_directory_contents(volume)
+    except Exception:
+        logger.warning("Result-file sweep: failed to list results volume", exc_info=True)
+        return 0
+
+    for entry in entries:
+        if getattr(entry, "is_directory", False):
+            continue
+        last_modified = getattr(entry, "last_modified", None)  # epoch millis
+        age = now - (last_modified / 1000) if last_modified else 0
+        if age > ttl_seconds:
+            try:
+                ws.files.delete(entry.path)
+                dropped += 1
+            except Exception:
+                logger.warning(f"Result-file sweep: failed to delete {sanitize_for_log(entry.path)}", exc_info=True)
+    if dropped:
+        logger.info(f"Result-file sweep: deleted {dropped} stale result file(s)")
+    return dropped
+
+
 def _maybe_sweep_stale_views() -> None:
-    """Run the stale-view sweep at most once per interval. Never raises."""
+    """Run the stale-view and stale-result-file sweeps at most once per interval. Never raises."""
     import time
 
     global _last_sweep_at
@@ -474,6 +703,10 @@ def _maybe_sweep_stale_views() -> None:
         sweep_stale_views(ws, catalog, schema, warehouse_id)
     except Exception:
         logger.warning("View sweep: skipped due to error", exc_info=True)
+    try:
+        sweep_stale_result_files(_get_sp_client())
+    except Exception:
+        logger.warning("Result-file sweep: skipped due to error", exc_info=True)
 
 
 # ── Jobs API — async submit + poll ───────────────────────────────────
@@ -487,6 +720,19 @@ def _get_runner_job_id() -> int:
     return int(job_id)
 
 
+def _get_results_volume() -> str:
+    """UC-volume path where the runner writes result files: /Volumes/<catalog>/<schema>/mcp_results.
+
+    The runner (wheel task) writes ``<run_id>.json`` here; the app reads it back via the Files API
+    (no SQL warehouse needed). Catalog/schema come from the same env the temp-view config uses.
+    """
+    catalog = os.environ.get("DQX_CATALOG", "")
+    schema = os.environ.get("DQX_TMP_SCHEMA", "tmp")
+    if not catalog:
+        raise RuntimeError("DQX_CATALOG not set. Deploy the bundle first.")
+    return f"/Volumes/{catalog}/{schema}/mcp_results"
+
+
 def submit_job_async(operation: str, params: dict[str, Any]) -> int:
     """Submit a DQX operation and return the run_id immediately (non-blocking).
 
@@ -497,15 +743,13 @@ def submit_job_async(operation: str, params: dict[str, Any]) -> int:
 
     Args:
         operation: The DQX operation name (e.g. 'profile_table', 'run_checks').
-        params: Dict of parameters to pass to the notebook as JSON. For table-backed
-            operations, include 'view_name' (dropped by the runner) and 'table_name'
-            (echoed back in the result).
+        params: Dict of parameters passed to the runner as JSON. For table-backed operations,
+            include 'view_name' (dropped by the runner) and 'table_name' (echoed into the result).
 
     Returns:
         The Databricks job run_id.
     """
-    # Opportunistically reap orphaned temp views (throttled). Backstop for views whose
-    # job never started or was killed before its own cleanup ran.
+    # Opportunistically reap orphaned temp views and stale result files (throttled).
     _maybe_sweep_stale_views()
 
     ws = _get_sp_client()
@@ -513,17 +757,32 @@ def submit_job_async(operation: str, params: dict[str, Any]) -> int:
 
     logger.info(f"Submitting async job {job_id}: operation={operation}")
 
+    # job_parameters (not notebook_params): the runner is a python_wheel_task. results_volume tells
+    # the runner where to write <run_id>.json; the app reads it back in get_run_status.
     wait = ws.jobs.run_now(
         job_id=job_id,
-        notebook_params={
+        job_parameters={
             "operation": operation,
             "params": json.dumps(params),
+            "results_volume": _get_results_volume(),
         },
     )
 
     run_id = wait.run_id
     logger.info(f"Job submitted: run_id={run_id}")
     return run_id
+
+
+def _run_not_found(run_id: int) -> dict[str, Any]:
+    """Structured 'not_found' result for an invalid/expired/foreign run_id."""
+    return {
+        "status": "not_found",
+        "run_id": run_id,
+        "error": (
+            f"No run found for run_id={run_id}. It may be invalid, expired, or from a different "
+            f"job. Use the run_id returned by the submit call (profile_table, run_checks, etc.)."
+        ),
+    }
 
 
 def get_run_status(run_id: int) -> dict[str, Any]:
@@ -540,11 +799,34 @@ def get_run_status(run_id: int) -> dict[str, Any]:
         run_id: The Databricks job run_id from a prior submit call.
 
     Returns:
-        Dict with 'status' ('running', 'completed', 'failed') and optionally 'result'.
+        Dict with 'status' ('running', 'completed', 'failed', 'not_found') and optionally 'result'.
+        'not_found' means the run_id is invalid, expired, or not from this MCP's runner job.
     """
+    from databricks.sdk.errors import DatabricksError
+
     ws = _get_sp_client()
 
-    run = ws.jobs.get_run(run_id)
+    try:
+        run = ws.jobs.get_run(run_id)
+    except DatabricksError as e:
+        # An unknown/expired run_id surfaces as RESOURCE_DOES_NOT_EXIST (404) or, on some
+        # API/SDK versions, INVALID_PARAMETER_VALUE (400) "Run ... does not exist". Return a
+        # structured not_found so the calling agent fixes the run_id instead of treating an
+        # unstructured exception as a job failure.
+        error_code = getattr(e, "error_code", "") or ""
+        if error_code in ("RESOURCE_DOES_NOT_EXIST", "INVALID_PARAMETER_VALUE") or "does not exist" in str(e).lower():
+            return _run_not_found(run_id)
+        raise
+
+    # Guard against polling a run that belongs to some other job the SP can see — only the
+    # MCP runner job's runs are valid here. Best-effort: skip the check if the job id is unset.
+    try:
+        runner_job_id = _get_runner_job_id()
+        if run.job_id is not None and run.job_id != runner_job_id:
+            return _run_not_found(run_id)
+    except RuntimeError:
+        pass
+
     life_cycle = run.state.life_cycle_state.value if run.state and run.state.life_cycle_state else "UNKNOWN"
     if life_cycle in ("PENDING", "RUNNING", "QUEUED", "BLOCKED"):
         return {"status": "running", "run_id": run_id, "message": "Job is still running. Call get_run_result again."}
@@ -555,27 +837,38 @@ def get_run_status(run_id: int) -> dict[str, Any]:
     # Check for failure
     result_state = run.state.result_state.value if run.state and run.state.result_state else "UNKNOWN"
     if result_state != "SUCCESS":
-        error_msg = run.state.state_message if run.state else "Unknown error"
+        state_msg = (run.state.state_message if run.state else "") or ""
+        run_url = run.run_page_url or ""
+        # The job-level state_message is generic ("Workload failed, see run output for details").
+        # Pull the failed task's actual error (e.g. a PERMISSION_DENIED on a table) so the calling
+        # agent gets an actionable reason instead of an opaque failure.
+        detail = state_msg
+        try:
+            task_run_id = run.tasks[0].run_id if run.tasks else run.run_id
+            task_err = (ws.jobs.get_run_output(task_run_id).error or "").strip()
+            if task_err:
+                detail = f"{state_msg} {task_err}".strip()
+        except Exception:
+            logger.warning(f"Could not fetch task error for failed run {run_id}", exc_info=True)
+        return {
+            "status": "failed",
+            "run_id": run_id,
+            "error": f"Job failed: {detail or 'Unknown error'}. Debug at: {run_url}",
+        }
+
+    # Read the result the runner (wheel task) wrote to the results volume, keyed by run id.
+    # (Wheel tasks have no notebook_output; the runner writes <run_id>.json via the Files API.)
+    result_path = f"{_get_results_volume()}/{run_id}.json"
+    try:
+        content = ws.files.download(result_path).contents.read()
+        result = json.loads(content)
+        # table_name is echoed by the runner into the result, so nothing to re-attach here.
+        return {"status": "completed", "run_id": run_id, "result": result}
+    except Exception as e:
         run_url = run.run_page_url or ""
         return {
             "status": "failed",
             "run_id": run_id,
-            "error": f"Job failed: {error_msg}. Debug at: {run_url}",
+            "error": f"Run succeeded but its result file could not be read ({sanitize_for_log(result_path)}): "
+            f"{e}. Debug at: {run_url}",
         }
-
-    # Extract notebook output
-    task_run_id = run.tasks[0].run_id if run.tasks else run.run_id
-    output = ws.jobs.get_run_output(task_run_id)
-
-    if output.notebook_output and output.notebook_output.result:
-        result = json.loads(output.notebook_output.result)
-        # table_name is echoed by the runner into the result, so nothing to re-attach here.
-        return {"status": "completed", "run_id": run_id, "result": result}
-
-    error_msg = output.error or "No output from notebook"
-    run_url = run.run_page_url or ""
-    return {
-        "status": "failed",
-        "run_id": run_id,
-        "error": f"No output: {error_msg}. Debug at: {run_url}",
-    }

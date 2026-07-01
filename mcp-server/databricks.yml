@@ -20,27 +20,73 @@ variables:
   # Secret scope holding the catalog name (and any other config). Override per deployment.
   config_secret_scope:
     default: "dqx-config"
+  # Application ID of the **dedicated workspace service principal** the runner job runs as.
+  # This is NOT the app's auto-created SP — an app-scoped SP cannot be a job run_as identity,
+  # so a separate workspace SP is required (see README "Runner identity"). The placeholder
+  # default keeps the bundle syntactically valid; every real deploy MUST override it, e.g.
+  #   databricks bundle deploy --var runner_service_principal_id=<app-id-of-the-runner-sp>
+  # The deploying identity needs the "Service Principal: User" role on this SP (admins have it
+  # implicitly) or `bundle deploy` fails with "User is not authorized to use this service principal".
+  runner_service_principal_id:
+    default: "00000000-0000-0000-0000-000000000000"
 resources:
   jobs:
     dqx_runner:
       name: "${var.name_prefix}-runner"
       max_concurrent_runs: 10
+      # Run the per-request data job as a dedicated, least-privilege workspace SP — NOT the
+      # deploying user. Otherwise every caller's job would execute with the deployer's (often
+      # admin) permissions on the non-view paths (file reads, output writes). Source-table reads
+      # stay governed by the caller via definer's-rights views regardless of this identity.
+      run_as:
+        service_principal_name: ${var.runner_service_principal_id}
       tasks:
+        # A python_wheel_task (not a notebook_task): the job runs as the dedicated runner SP, and a
+        # wheel ships as an environment dependency — so the SP needs no read ACL on a workspace
+        # notebook object. Mirrors the DQX Studio task runner. The entry point writes its JSON
+        # result to the results UC volume keyed by {{job.run_id}}; the app reads it back.
         - task_key: dqx_run
-          notebook_task:
-            notebook_path: "./notebooks/runner.py"
+          python_wheel_task:
+            package_name: dqx_mcp_runner
+            entry_point: dqx-mcp-runner
+            parameters:
+              - "--operation"
+              - "{{job.parameters.operation}}"
+              - "--params"
+              - "{{job.parameters.params}}"
+              - "--results-volume"
+              - "{{job.parameters.results_volume}}"
+              - "--run-id"
+              - "{{job.run_id}}"
           environment_key: default
       environments:
         - environment_key: default
           spec:
             environment_version: "2"
             dependencies:
-              # Install the DQX library wheel built from THIS repo (see artifacts.dqx_library_wheel),
-              # not a published PyPI release, so the runner exercises in-repo (possibly unreleased)
-              # source and never drifts from what the PR actually changes. The [datacontract] extra's
-              # dependency is listed explicitly because pip extras can't be applied to a wheel path.
+              # The runner wheel (this sub-project) + the DQX library wheel built from THIS repo
+              # (see artifacts), not a published PyPI release, so the runner exercises in-repo
+              # (possibly unreleased) source. The [datacontract] extra's dependency is listed
+              # explicitly because pip extras can't be applied to a wheel path.
+              #
+              # The [llm] extra (dspy) is intentionally NOT installed — the runner stays lean and
+              # deterministic, mirroring the DQX Studio task runner. As a result the
+              # generate_rules_from_contract tool is deterministic-only: it does not process the
+              # contract's free-text expectations (DQX's LLM "text rules" path). Enabling that is a
+              # follow-up: add the dspy/litellm deps from the DQX [llm] extra here, plumb an LLM
+              # endpoint config through to the runner, and re-expose the parameter in server/tools.py.
+              - ./.build/dqx_mcp_runner-*.whl
               - ./.build/databricks_labs_dqx-*.whl
               - datacontract-cli>=0.11.1,<1.0
+      parameters:
+        - name: operation
+          default: ""
+        - name: params
+          default: "{}"
+        # Full UC-volume path for result files, e.g. /Volumes/<catalog>/tmp/mcp_results. The app
+        # sets this per-submit from its catalog config; the runner writes <run_id>.json there.
+        - name: results_volume
+          default: ""
 
     # One-time setup job — grants USE CATALOG to users and app SP.
     # Run after first deploy: databricks bundle run dqx_setup --profile <profile>
@@ -55,6 +101,12 @@ resources:
               catalog_name: "${var.catalog_name}"
               secret_scope: "${var.config_secret_scope}"
               users_group: ${var.users_group}
+              # The runner job's run_as SP — setup grants it the tmp-schema access it needs.
+              runner_service_principal_id: "${var.runner_service_principal_id}"
+              # The runner job id — setup grants the app SP CAN_MANAGE_RUN on it so the app can
+              # submit runs and poll results. (The app→job resource binding alone did not reliably
+              # land this grant in the job ACL, so setup applies it explicitly.)
+              runner_job_id: "${resources.jobs.dqx_runner.id}"
           environment_key: default
       environments:
         - environment_key: default
@@ -70,6 +122,10 @@ resources:
       user_api_scopes:
         - sql
         - files
+        # 'workspace.workspace' lets the user's OBO token read/stat/write workspace-file paths
+        # (e.g. a contract or checks YAML under /Workspace or /Users). Without it the OBO
+        # read/write pre-checks for workspace-file backends fail with 403 "Invalid scope".
+        - workspace.workspace
 
       resources:
         - name: dqx-runner-job
@@ -91,12 +147,14 @@ sync:
     - "notebooks/**"
     - ".build/**"
 
-# Build the DQX library wheel from the repo root (../) so the runner job installs
-# this branch's source rather than a published PyPI release. Mirrors the app/ bundle,
-# which also builds the parent wheel via `uv build ../ --wheel`.
+# Build the wheels the runner job installs from THIS branch's source (not published PyPI releases):
+# the DQX library wheel (from the repo root) and the MCP runner wheel (this sub-project's ./runner).
+# Mirrors the app/ bundle, which also builds the parent wheel via `uv build ../ --wheel`.
 artifacts:
   dqx_library_wheel:
     build: uv build ../ --wheel --out-dir ./.build
+  dqx_mcp_runner_wheel:
+    build: uv build ./runner --wheel --out-dir ./.build
 
 targets:
   dev:

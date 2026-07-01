@@ -12,11 +12,20 @@ Grants:
   Catalog level:
     - users          → USE CATALOG
     - app SP         → USE CATALOG
-  Schema level (catalog.tmp):
+  Schema level (catalog.tmp) — the deploy principal OWNS the schema (so setup can create the
+  results volume + manage grants on every run); the SPs get MANAGE, which is enough to DROP
+  temp views in UC (owner / parent-schema owner / MANAGE can DROP):
     - users          → USE SCHEMA, CREATE TABLE (so OBO token can create views)
-    - app SP         → USE SCHEMA, SELECT (so SP job can read through views)
-    - app SP         → OWNER of the schema (so it can drop temp views created by
-                       any user — only the owner / parent-schema owner can DROP in UC)
+    - app SP         → USE SCHEMA, SELECT, MANAGE (in-app stale-view sweeper)
+    - runner SP      → USE SCHEMA, SELECT, MANAGE (the runner job runs as this dedicated
+                       workspace SP: it reads through definer's-rights views and drops its own
+                       temp view at the end of each run). Only granted when provided.
+  Volume level (catalog.tmp.mcp_results):
+    - app SP, runner SP → READ VOLUME, WRITE VOLUME (result-file exchange)
+
+Note: the runner SP needs write access wherever callers ask it to write outputs
+(apply_checks_and_save_to_table / save_checks) and read access to any contract/checks files —
+grant those per deployment, or keep outputs/files in locations the runner SP can reach.
 
 Parameters:
   - catalog_name: UC catalog for temp views (optional — reads from secret if not provided)
@@ -24,6 +33,7 @@ Parameters:
   - users_group: Group name for all users (default: 'account users')
   - secret_scope: Secret scope for catalog name (default: 'dqx-config')
   - secret_key: Secret key for catalog name (default: 'catalog_name')
+  - runner_service_principal_id: application id of the runner job's run_as SP (optional)
 """
 
 # COMMAND ----------
@@ -35,6 +45,10 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("dqx-mcp-setup")
 
 _SAFE_IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9_ ]+$")
+# Service principal application ids are UUIDs (hex + hyphens). Validated separately because the
+# identifier charset above disallows hyphens.
+_SP_ID_RE = re.compile(r"^[0-9a-fA-F-]+$")
+_PLACEHOLDER_SP_ID = "00000000-0000-0000-0000-000000000000"
 
 
 def _validate_identifier(value, label):
@@ -46,6 +60,24 @@ def _validate_identifier(value, label):
     return value
 
 
+def _validate_sp_id(value, label):
+    """Validate a service-principal application id (UUID) before SQL interpolation."""
+    if not _SP_ID_RE.match(value):
+        raise ValueError(f"Invalid {label}: '{value}'. Expected a service principal application id (UUID).")
+    return value
+
+
+# A user/SP/group principal (email addresses, application ids, group names) for GRANT/ALTER OWNER.
+_SAFE_PRINCIPAL_RE = re.compile(r"^[A-Za-z0-9._%+\-@ ]+$")
+
+
+def _validate_principal(value, label):
+    """Validate a UC principal name before SQL interpolation (backtick-breakout guard)."""
+    if not _SAFE_PRINCIPAL_RE.match(value):
+        raise ValueError(f"Invalid {label}: '{value}'.")
+    return value
+
+
 # COMMAND ----------
 
 dbutils.widgets.text("catalog_name", "")
@@ -53,10 +85,14 @@ dbutils.widgets.text("app_name", "mcp-dqx")
 dbutils.widgets.text("users_group", "account users")
 dbutils.widgets.text("secret_scope", "dqx-config")
 dbutils.widgets.text("secret_key", "catalog_name")
+dbutils.widgets.text("runner_service_principal_id", "")
+dbutils.widgets.text("runner_job_id", "")
 
 catalog_name = dbutils.widgets.get("catalog_name")
 app_name = dbutils.widgets.get("app_name")
 users_group = dbutils.widgets.get("users_group")
+runner_sp = dbutils.widgets.get("runner_service_principal_id").strip()
+runner_job_id = dbutils.widgets.get("runner_job_id").strip()
 
 # Read catalog name from secret if not provided directly
 if not catalog_name:
@@ -68,8 +104,23 @@ if not catalog_name:
     raise ValueError("catalog_name must be provided as a parameter or stored in the secret scope")
 
 _validate_identifier(catalog_name, "catalog_name")
+# users_group is interpolated into the GRANT statements below, so it must be validated too
+# (a backtick would otherwise break out of the quoted identifier). app_name is NOT validated
+# here: it is only passed to ws.apps.get() (never interpolated into SQL) and legitimately
+# contains hyphens (e.g. 'mcp-dqx'), which this identifier charset disallows.
+_validate_identifier(users_group, "users_group")
 
-logger.info(f"Setting up DQX MCP: catalog={catalog_name}, app={app_name}, users_group={users_group}")
+# The runner job's run_as service principal (a dedicated workspace SP, distinct from the app SP).
+# Empty or the all-zeros placeholder means it was not configured for this deploy — skip its grants
+# (the job's run_as would then be misconfigured, which the bundle deploy surfaces separately).
+runner_sp_configured = bool(runner_sp) and runner_sp != _PLACEHOLDER_SP_ID
+if runner_sp_configured:
+    _validate_sp_id(runner_sp, "runner_service_principal_id")
+
+logger.info(
+    f"Setting up DQX MCP: catalog={catalog_name}, app={app_name}, users_group={users_group}, "
+    f"runner_sp={'<set>' if runner_sp_configured else '<unset>'}"
+)
 
 # COMMAND ----------
 
@@ -88,10 +139,21 @@ logger.info(f"App SP: display_name={sp.display_name}, application_id={sp_princip
 # COMMAND ----------
 
 schema_name = "tmp"
+# Constant today, but validated as defense-in-depth since it is interpolated into the DDL below.
+_validate_identifier(schema_name, "schema_name")
 
 # Create schema if it doesn't exist
 spark.sql(f"CREATE SCHEMA IF NOT EXISTS `{catalog_name}`.`{schema_name}`")
 logger.info(f"Schema `{catalog_name}`.`{schema_name}` ready")
+
+# Keep the temp schema owned by the setup (deploy) principal so this job can create the results
+# volume and manage grants on every run. Earlier versions transferred ownership to the app SP; we
+# now keep it with the deployer and grant the SPs MANAGE instead (enough to drop temp views), which
+# also lets the deployer CREATE VOLUME below. Reclaiming here is idempotent and fixes workspaces
+# where a prior run already handed ownership to the app SP.
+deploy_principal = _validate_principal(ws.current_user.me().user_name, "deploy principal")
+spark.sql(f"ALTER SCHEMA `{catalog_name}`.`{schema_name}` OWNER TO `{deploy_principal}`")
+logger.info(f"Schema owner set to deploy principal {deploy_principal}")
 
 # COMMAND ----------
 
@@ -103,10 +165,23 @@ grants = [
     # Schema-level: users can create views via OBO token
     f"GRANT USE SCHEMA ON SCHEMA `{catalog_name}`.`{schema_name}` TO `{users_group}`",
     f"GRANT CREATE TABLE ON SCHEMA `{catalog_name}`.`{schema_name}` TO `{users_group}`",
-    # Schema-level: app SP can read through views
+    # Schema-level: app SP reads through views and drops stale views (the in-app sweeper). MANAGE
+    # (not ownership) is enough to DROP views created by any user, so the deployer keeps ownership.
     f"GRANT USE SCHEMA ON SCHEMA `{catalog_name}`.`{schema_name}` TO `{sp_principal}`",
     f"GRANT SELECT ON SCHEMA `{catalog_name}`.`{schema_name}` TO `{sp_principal}`",
+    f"GRANT MANAGE ON SCHEMA `{catalog_name}`.`{schema_name}` TO `{sp_principal}`",
 ]
+
+if runner_sp_configured:
+    # The runner job runs as a dedicated workspace SP. It must: use the catalog; read through the
+    # definer's-rights views (USE SCHEMA + SELECT); and DROP its own temp view at the end of each
+    # run (MANAGE — a non-owner with MANAGE can drop, same as the app SP / schema owner).
+    grants += [
+        f"GRANT USE CATALOG ON CATALOG `{catalog_name}` TO `{runner_sp}`",
+        f"GRANT USE SCHEMA ON SCHEMA `{catalog_name}`.`{schema_name}` TO `{runner_sp}`",
+        f"GRANT SELECT ON SCHEMA `{catalog_name}`.`{schema_name}` TO `{runner_sp}`",
+        f"GRANT MANAGE ON SCHEMA `{catalog_name}`.`{schema_name}` TO `{runner_sp}`",
+    ]
 
 for sql in grants:
     logger.info(f"Executing: {sql}")
@@ -114,17 +189,46 @@ for sql in grants:
 
 # COMMAND ----------
 
-# Transfer ownership of the temp schema to the app SP so it can manage the
-# lifecycle of the temp views (drop them after a run / sweep stale ones).
-# Temp views are created by the OBO user and are owned by that user; in Unity
-# Catalog only the view owner, a principal with MANAGE, the parent-schema owner,
-# or a metastore admin can DROP a view. Making the SP the schema owner lets the
-# app clean up views created by any user. Data governance is unaffected: the
-# views are definer's-rights, so the SP still reads source data *as the creating
-# user*, never directly. Run last so the GRANTs above are issued while the
-# setup principal still owns the schema. Idempotent.
-alter_owner_sql = f"ALTER SCHEMA `{catalog_name}`.`{schema_name}` OWNER TO `{sp_principal}`"
-logger.info(f"Executing: {alter_owner_sql}")
-spark.sql(alter_owner_sql)
+# Results volume: the runner job (python_wheel_task) writes each operation's JSON result here,
+# keyed by run id, and the app reads it back via the Files API (no SQL warehouse needed — the app
+# has no warehouse of its own). Both SPs get READ+WRITE: the runner writes results, the app reads
+# them and sweeps stale files. The setup principal owns the schema (above), so it can create this.
+results_volume = "mcp_results"
+_validate_identifier(results_volume, "results_volume")
+volume_fqn = f"`{catalog_name}`.`{schema_name}`.`{results_volume}`"
+spark.sql(f"CREATE VOLUME IF NOT EXISTS {volume_fqn}")
+logger.info(f"Results volume {volume_fqn} ready")
 
-logger.info("Setup complete — all grants applied and schema ownership assigned to the app SP.")
+volume_grants = [f"GRANT READ VOLUME, WRITE VOLUME ON VOLUME {volume_fqn} TO `{sp_principal}`"]
+if runner_sp_configured:
+    volume_grants.append(f"GRANT READ VOLUME, WRITE VOLUME ON VOLUME {volume_fqn} TO `{runner_sp}`")
+for sql in volume_grants:
+    logger.info(f"Executing: {sql}")
+    spark.sql(sql)
+
+# COMMAND ----------
+
+# Grant the app SP CAN_MANAGE_RUN on the runner job so the app can submit runs and poll their
+# results. The app→job resource binding (databricks.yml apps.resources) did not reliably land this
+# grant in the job ACL, so apply it explicitly here. Idempotent (update_permissions is additive).
+if runner_job_id:
+    from databricks.sdk.service.jobs import JobAccessControlRequest, JobPermissionLevel
+
+    ws.jobs.update_permissions(
+        job_id=runner_job_id,
+        access_control_list=[
+            JobAccessControlRequest(
+                service_principal_name=sp_principal, permission_level=JobPermissionLevel.CAN_MANAGE_RUN
+            )
+        ],
+    )
+    logger.info(f"Granted app SP {sp_principal} CAN_MANAGE_RUN on runner job {runner_job_id}")
+else:
+    logger.warning("runner_job_id not provided — skipping app-SP CAN_MANAGE_RUN grant on the runner job")
+
+# COMMAND ----------
+
+logger.info(
+    "Setup complete — schema owned by the deploy principal; app SP and runner SP granted MANAGE "
+    "(temp-view cleanup) and volume READ/WRITE; app SP granted CAN_MANAGE_RUN on the runner job."
+)

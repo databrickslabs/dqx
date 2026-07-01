@@ -1,6 +1,5 @@
 from unittest.mock import MagicMock, patch
 
-
 _ENV = {
     "DQX_RUNNER_JOB_ID": "42",
     "DQX_CATALOG": "dqx_mcp",
@@ -207,28 +206,87 @@ class TestJobOnlyTools:
     def test_generate_rules_from_contract(self):
         tools = _register_tools()
 
-        with patch("server.tools.utils.submit_job_async", return_value=21) as mock_submit:
+        with (
+            patch("server.tools.utils.get_obo_client"),
+            patch("server.tools.utils.verify_obo_read_access") as mock_verify,
+            patch("server.tools.utils.submit_job_async", return_value=21) as mock_submit,
+        ):
             result = tools["generate_rules_from_contract"]("/Volumes/c/s/v/contract.yml")
 
+        # The caller's read access to the contract file is enforced before submitting.
+        assert mock_verify.call_args[0][1] == "/Volumes/c/s/v/contract.yml"
+        # Deterministic-only: process_text_rules is not exposed and not sent to the runner.
         mock_submit.assert_called_once_with(
             "generate_rules_from_contract",
             {
                 "contract_file": "/Volumes/c/s/v/contract.yml",
                 "contract_format": "odcs",
                 "default_criticality": "error",
-                "process_text_rules": False,
             },
         )
         assert result["run_id"] == 21
 
-    def test_load_checks(self):
+    def test_generate_rules_from_contract_workspace_path_normalized(self):
         tools = _register_tools()
 
-        with patch("server.tools.utils.submit_job_async", return_value=22) as mock_submit:
+        with (
+            patch("server.tools.utils.get_obo_client"),
+            patch("server.tools.utils.verify_obo_read_access"),
+            patch("server.tools.utils.submit_job_async", return_value=21) as mock_submit,
+        ):
+            tools["generate_rules_from_contract"]("/Users/me/dqx_demo/customers_contract.yaml")
+
+        # Workspace path is mapped to the cluster FUSE form for DQX's local open().
+        assert mock_submit.call_args[0][1]["contract_file"] == "/Workspace/Users/me/dqx_demo/customers_contract.yaml"
+
+    def test_generate_rules_from_contract_has_no_text_rules_param(self):
+        """The deterministic-only tool must not expose a process_text_rules knob."""
+        import inspect
+
+        tools = _register_tools()
+        params = inspect.signature(tools["generate_rules_from_contract"]).parameters
+        assert "process_text_rules" not in params
+
+    def test_load_checks_table_backend_routes_through_obo_view(self):
+        tools = _register_tools()
+
+        with (
+            patch("server.tools.utils.get_obo_client"),
+            patch("server.tools.utils.get_warehouse_id", return_value="wh123"),
+            patch("server.tools.utils.create_temp_view", return_value="dqx_mcp.tmp.v_chk") as mock_create,
+            patch("server.tools.utils.submit_job_async", return_value=22) as mock_submit,
+            patch.dict("os.environ", _ENV),
+        ):
             result = tools["load_checks"]("catalog.schema.checks")
 
+        # Table-backed reads go through a definer's-rights OBO view; the runner drops it.
+        mock_create.assert_called_once()
         mock_submit.assert_called_once_with(
-            "load_checks", {"location": "catalog.schema.checks", "run_config_name": "default"}
+            "load_checks",
+            {
+                "run_config_name": "default",
+                "location": "dqx_mcp.tmp.v_chk",
+                "view_name": "dqx_mcp.tmp.v_chk",
+            },
+        )
+        assert result["run_id"] == 22
+
+    def test_load_checks_file_backend_verifies_read_access(self):
+        tools = _register_tools()
+
+        with (
+            patch("server.tools.utils.get_obo_client"),
+            patch("server.tools.utils.verify_obo_read_access") as mock_verify,
+            patch("server.tools.utils.create_temp_view") as mock_create,
+            patch("server.tools.utils.submit_job_async", return_value=22) as mock_submit,
+        ):
+            result = tools["load_checks"]("/Volumes/c/s/v/checks.yml")
+
+        # No view for file backends — read access is verified directly, location passes through.
+        mock_create.assert_not_called()
+        assert mock_verify.call_args[0][1] == "/Volumes/c/s/v/checks.yml"
+        mock_submit.assert_called_once_with(
+            "load_checks", {"run_config_name": "default", "location": "/Volumes/c/s/v/checks.yml"}
         )
         assert result["run_id"] == 22
 
@@ -236,11 +294,16 @@ class TestJobOnlyTools:
         tools = _register_tools()
 
         with (
+            patch("server.tools.utils.get_obo_client"),
+            patch("server.tools.utils.get_warehouse_id", return_value="wh123"),
+            patch("server.tools.utils.verify_obo_write_access") as mock_verify,
             patch("server.tools.utils.submit_job_async", return_value=23) as mock_submit,
             patch("server.tools.utils.get_user_email", return_value="user@example.com"),
         ):
             result = tools["save_checks"]([{"check": "foo"}], "/Workspace/checks.yml", mode="overwrite")
 
+        # The caller's write access to the destination is enforced before submitting.
+        assert mock_verify.call_args[0][1] == "/Workspace/checks.yml"
         mock_submit.assert_called_once_with(
             "save_checks",
             {
@@ -264,6 +327,7 @@ class TestApplyChecksAndSaveToTable:
             patch("server.tools.utils.get_obo_client"),
             patch("server.tools.utils.get_warehouse_id", return_value="wh123"),
             patch("server.tools.utils.create_temp_view", return_value="dqx_mcp.tmp.v_abc") as mock_create,
+            patch("server.tools.utils.verify_obo_write_access") as mock_verify,
             patch("server.tools.utils.submit_job_async", return_value=24) as mock_submit,
             patch("server.tools.utils.get_user_email", return_value="user@example.com"),
             patch.dict("os.environ", _ENV),
@@ -276,6 +340,9 @@ class TestApplyChecksAndSaveToTable:
             )
 
         mock_create.assert_called_once()
+        # Write access enforced for both output and quarantine destinations before submit.
+        verified = {call.args[1] for call in mock_verify.call_args_list}
+        assert verified == {"catalog.schema.orders_out", "catalog.schema.orders_quarantine"}
         assert mock_submit.call_args[0][0] == "apply_checks_and_save_to_table"
         job_params = mock_submit.call_args[0][1]
         assert job_params["view_name"] == "dqx_mcp.tmp.v_abc"
