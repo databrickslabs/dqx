@@ -21,6 +21,11 @@ Actions require a `DQMetricsObserver` to be configured on the engine because the
 
 A `DQAction` binds an inner *action* to an optional gating *condition*. When *condition* is `None` the action fires unconditionally after every DQX run. When *condition* is set it is validated at construction time, so syntax errors surface immediately rather than at evaluation time.
 
+Actions can be defined either programmatically with the DQX classes or declaratively as metadata (plain dicts, typically loaded from YAML or JSON) — exactly like DQX checks. The two tabs below define the **same** pair of actions. In the metadata form each entry has an *action* key carrying a *type* discriminator (*alert* or *fail_pipeline*) plus an optional *condition*; a *DQSecret* credential is written as a nested mapping with a single *secret* key. See [Defining actions with metadata](#defining-actions-with-metadata) for how to load and pass metadata.
+
+<Tabs>
+  <TabItem value="Python" label="Python (classes)" default>
+
 ```python
 from databricks.labs.dqx.actions import DQAction, DQAlert, SlackDQAlertDestination
 
@@ -39,6 +44,30 @@ on_errors = DQAction(
     )
 )
 ```
+
+  </TabItem>
+  <TabItem value="YAML" label="YAML (metadata)">
+
+```yaml
+# Fires on every run (no condition)
+- action:
+    type: alert
+    destinations:
+      - type: slack
+        name: slack
+        webhook_url: https://hooks.slack.com/…
+# Fires only when at least one error row is observed
+- action:
+    type: alert
+    destinations:
+      - type: slack
+        name: slack
+        webhook_url: https://hooks.slack.com/…
+  condition: error_row_count > 0
+```
+
+  </TabItem>
+</Tabs>
 
 ### Condition syntax and available metrics
 
@@ -485,49 +514,17 @@ and pass them to the engine via `DQEngine(ws, observer=..., actions=loaded_actio
 programmatic API described above is the supported path.
 :::
 
-## Defining actions with metadata (YAML)
+## Defining actions with metadata
 
-Actions can also be defined declaratively as a list of plain dicts — either loaded from a YAML
-or JSON file, or written inline in Python — mirroring the way DQX checks support both
-programmatic classes and metadata lists.
+Every action shown so far can be expressed as declarative metadata — a list of plain dicts,
+typically loaded from a YAML or JSON file — instead of the DQX classes. The [Defining a
+DQAction](#defining-a-dqaction) section shows the Python and YAML forms side by side; this
+section covers the wire format and how to load metadata and pass it to the engine.
 
 Each dict must match the wire format used by *ActionSerializer*: an *action* key whose value
-contains a *type* discriminator (*"alert"* or *"fail_pipeline"*), plus an optional *condition*
-key.  A *DQSecret* credential is expressed as a nested mapping with a single *secret* key
-whose value is a *scope/key* reference.
-
-The two tabs below define the **same** pair of actions — a Slack *DQAlert* and a *FailPipeline* —
-first with the programmatic class API and then as the equivalent declarative metadata. Both
-produce identical *DQAction* instances:
-
-<Tabs>
-  <TabItem value="Python" label="Python (classes)" default>
-
-```python
-from databricks.labs.dqx.actions.dq_action import DQAction
-from databricks.labs.dqx.actions.alert import DQAlert
-from databricks.labs.dqx.actions.fail_pipeline import FailPipeline
-from databricks.labs.dqx.actions.destinations.slack import SlackDQAlertDestination
-from databricks.labs.dqx.actions.secret_field import DQSecret
-
-actions = [
-    DQAction(
-        action=DQAlert(
-            destinations=[
-                SlackDQAlertDestination(
-                    name="ops-channel",
-                    webhook_url=DQSecret(scope="my_scope", key="slack_webhook"),
-                )
-            ],
-        ),
-        condition="error_row_count > 0",
-    ),
-    DQAction(action=FailPipeline(), condition="error_row_count > 10"),
-]
-```
-
-  </TabItem>
-  <TabItem value="YAML" label="YAML (metadata)">
+contains a *type* discriminator (*alert* or *fail_pipeline*), plus an optional *condition* key.
+A *DQSecret* credential is expressed as a nested mapping with a single *secret* key whose value
+is a *scope/key* reference:
 
 ```yaml
 - action:
@@ -542,9 +539,6 @@ actions = [
     type: fail_pipeline
   condition: error_row_count > 10
 ```
-
-  </TabItem>
-</Tabs>
 
 ### Loading from a local file
 
