@@ -86,4 +86,47 @@ class ActionSerializer:
             raise InvalidActionError(str(exc)) from exc
 
 
-__all__ = ["ActionSerializer"]
+def serialize_actions(actions: list[DQAction]) -> list[dict[str, object]]:
+    """Serialize a list of *DQAction* instances to plain Python dicts.
+
+    Convenience wrapper around *ActionSerializer.to_dict* for operating on
+    a whole list at once.  The output is suitable for YAML or JSON
+    persistence.
+
+    Args:
+        actions: List of *DQAction* instances to serialize.
+
+    Returns:
+        List of JSON-serializable dicts, one per action.
+    """
+    return [ActionSerializer.to_dict(a) for a in actions]
+
+
+def deserialize_actions(metadata: list[dict[str, object]]) -> list[DQAction]:
+    """Deserialize a list of plain dicts into *DQAction* instances.
+
+    Convenience wrapper around *ActionSerializer.from_dict* for operating on
+    a whole list at once.
+
+    Args:
+        metadata: List of dicts produced by *serialize_actions* (or loaded
+            from YAML / JSON).  Each element must be a *dict*; passing a
+            non-dict element raises *InvalidActionError*.
+
+    Returns:
+        List of fully reconstructed *DQAction* instances.
+
+    Raises:
+        InvalidActionError: If any element is not a *dict*, or if a dict
+            cannot be validated as a *DQAction* (unknown *type*, missing
+            required field, etc.).
+    """
+    result: list[DQAction] = []
+    for i, item in enumerate(metadata):
+        if not isinstance(item, dict):
+            raise InvalidActionError(f"Expected a dict at index {i} of the actions list, got {type(item).__name__}")
+        result.append(ActionSerializer.from_dict(item))
+    return result
+
+
+__all__ = ["ActionSerializer", "deserialize_actions", "serialize_actions"]

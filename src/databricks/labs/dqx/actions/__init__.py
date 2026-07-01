@@ -31,7 +31,7 @@ from databricks.labs.dqx.actions.destinations import (
 )
 from databricks.labs.dqx.actions.evaluator import ActionEvaluator
 from databricks.labs.dqx.actions.manager import DQActionManager
-from databricks.labs.dqx.actions.serializer import ActionSerializer
+from databricks.labs.dqx.actions.serializer import ActionSerializer, deserialize_actions, serialize_actions
 from databricks.labs.dqx.actions.state import ActionStateStore, AlertEvent
 
 __all__ = [
@@ -56,4 +56,6 @@ __all__ = [
     "TeamsDQAlertDestination",
     "WebhookAlertDestination",
     "WebhookDQAlertDestination",
+    "deserialize_actions",
+    "serialize_actions",
 ]
