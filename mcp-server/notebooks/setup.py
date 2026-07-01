@@ -87,12 +87,14 @@ dbutils.widgets.text("secret_scope", "dqx-config")
 dbutils.widgets.text("secret_key", "catalog_name")
 dbutils.widgets.text("runner_service_principal_id", "")
 dbutils.widgets.text("runner_job_id", "")
+dbutils.widgets.text("artifact_path", "")
 
 catalog_name = dbutils.widgets.get("catalog_name")
 app_name = dbutils.widgets.get("app_name")
 users_group = dbutils.widgets.get("users_group")
 runner_sp = dbutils.widgets.get("runner_service_principal_id").strip()
 runner_job_id = dbutils.widgets.get("runner_job_id").strip()
+artifact_path = dbutils.widgets.get("artifact_path").strip()
 
 # Read catalog name from secret if not provided directly
 if not catalog_name:
@@ -225,6 +227,30 @@ if runner_job_id:
     logger.info(f"Granted app SP {sp_principal} CAN_MANAGE_RUN on runner job {runner_job_id}")
 else:
     logger.warning("runner_job_id not provided — skipping app-SP CAN_MANAGE_RUN grant on the runner job")
+
+# COMMAND ----------
+
+# Grant the runner SP read access to the bundle artifact path so the serverless environment can
+# install the runner wheel. The wheel lives under the deployer's workspace bundle folder, which a
+# least-privilege run_as SP cannot read by default — without this the job fails at library install
+# with "library file does not exist or ... no permission". CAN_READ on the artifacts directory
+# propagates to the wheel underneath it.
+if runner_sp_configured and artifact_path:
+    from databricks.sdk.service.workspace import WorkspaceObjectAccessControlRequest, WorkspaceObjectPermissionLevel
+
+    art = ws.workspace.get_status(artifact_path)
+    ws.workspace.update_permissions(
+        workspace_object_type="directories",
+        workspace_object_id=str(art.object_id),
+        access_control_list=[
+            WorkspaceObjectAccessControlRequest(
+                service_principal_name=runner_sp, permission_level=WorkspaceObjectPermissionLevel.CAN_READ
+            )
+        ],
+    )
+    logger.info(f"Granted runner SP {runner_sp} CAN_READ on artifact path {artifact_path}")
+else:
+    logger.warning("artifact_path or runner SP not provided — skipping runner-SP read grant on artifacts")
 
 # COMMAND ----------
 

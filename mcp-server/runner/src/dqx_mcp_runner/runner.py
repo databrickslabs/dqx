@@ -5,9 +5,11 @@ MCP's results UC volume, keyed by the job run id. The MCP server (app) submits t
 ``python_wheel_task`` (see databricks.yml) and reads the result file back in ``get_run_result``.
 
 Why a wheel task (not a notebook): the job runs as a dedicated, least-privilege workspace service
-principal (``run_as``). A notebook_task would require that SP to have read access to the notebook
-*object* in the deployer's workspace folder; a wheel ships as an environment dependency, so there
-is no workspace-object ACL to manage. This mirrors the DQX Studio task runner.
+principal (``run_as``), and the runner is a proper, unit-testable package rather than a notebook
+full of ``dbutils`` — mirroring the DQX Studio task runner. Either task type needs the run_as SP
+to read its code from the deployer's workspace bundle folder: a notebook_task needs CAN_READ on
+the notebook *object*, and this wheel task needs read on the wheel in the bundle artifact path.
+The setup job grants the runner SP that artifact-path read (see notebooks/setup.py).
 
 Result passing: notebook ``dbutils.notebook.exit`` is unavailable to wheel tasks, so results go to
 ``{catalog}.{schema}.mcp_results`` (a UC volume) as ``<run_id>.json``. The app reads them via the

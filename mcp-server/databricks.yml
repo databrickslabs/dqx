@@ -41,10 +41,11 @@ resources:
       run_as:
         service_principal_name: ${var.runner_service_principal_id}
       tasks:
-        # A python_wheel_task (not a notebook_task): the job runs as the dedicated runner SP, and a
-        # wheel ships as an environment dependency — so the SP needs no read ACL on a workspace
-        # notebook object. Mirrors the DQX Studio task runner. The entry point writes its JSON
-        # result to the results UC volume keyed by {{job.run_id}}; the app reads it back.
+        # A python_wheel_task (not a notebook_task): the job runs as the dedicated runner SP, and
+        # the runner is a proper unit-testable package (mirrors the DQX Studio task runner). The
+        # run_as SP still needs read access to the wheel in the bundle artifact path — the setup
+        # job grants that (see notebooks/setup.py). The entry point writes its JSON result to the
+        # results UC volume keyed by {{job.run_id}}; the app reads it back.
         - task_key: dqx_run
           python_wheel_task:
             package_name: dqx_mcp_runner
@@ -107,6 +108,10 @@ resources:
               # submit runs and poll results. (The app→job resource binding alone did not reliably
               # land this grant in the job ACL, so setup applies it explicitly.)
               runner_job_id: "${resources.jobs.dqx_runner.id}"
+              # The bundle's artifact path (where the runner wheel is uploaded, under the deployer's
+              # workspace folder). setup grants the runner SP read here so the serverless env can
+              # install the wheel — the run_as SP otherwise can't read the deployer's bundle folder.
+              artifact_path: "${workspace.artifact_path}"
           environment_key: default
       environments:
         - environment_key: default

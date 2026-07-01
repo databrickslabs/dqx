@@ -82,7 +82,7 @@ sequenceDiagram
     App-->>Client: status / result (read from the volume)
 ```
 
-**Async pattern:** Long-running tools (profiling, rule generation, validation, running/applying checks, save/load) submit a Databricks job and return a `run_id` immediately — this avoids HTTP timeouts in clients like Genie Code. The runner is a **`python_wheel_task`**, not a notebook, so its `run_as` identity needs no workspace-object ACLs. It writes its JSON result to a **UC volume** (`<catalog>.tmp.mcp_results`) keyed by run id; the client then calls `get_run_result(run_id)`, and the app reads that file back via the Files API (no SQL warehouse needed). If the job is still running, `get_run_result` returns `{"status": "running"}`; if the `run_id` is invalid/expired it returns `{"status": "not_found"}`.
+**Async pattern:** Long-running tools (profiling, rule generation, validation, running/applying checks, save/load) submit a Databricks job and return a `run_id` immediately — this avoids HTTP timeouts in clients like Genie Code. The runner is a **`python_wheel_task`** (a proper, unit-testable package, mirroring the Studio task runner); the setup job grants the runner SP read access to the bundle artifact path so the serverless environment can install its wheel. It writes its JSON result to a **UC volume** (`<catalog>.tmp.mcp_results`) keyed by run id; the client then calls `get_run_result(run_id)`, and the app reads that file back via the Files API (no SQL warehouse needed). If the job is still running, `get_run_result` returns `{"status": "running"}`; if the `run_id` is invalid/expired it returns `{"status": "not_found"}`.
 
 **Two service principals (why):** the app's auto-created SP is *app-scoped* and **cannot** be a job's `run_as` identity, so the runner job runs as a separate, least-privilege **workspace service principal** (`runner_service_principal_id`). The **app SP** runs the app process (submits the job, polls status, reads result files, sweeps stale views/files); the **runner SP** runs the job (reads through views, applies checks, writes outputs, drops its own view). The job never runs as the deploying human.
 
@@ -213,6 +213,7 @@ The **setup job** reads the catalog name from the secret and:
 - Grants `USE SCHEMA` + `SELECT` + `MANAGE` on the tmp schema to the app SP and the runner SP (`MANAGE` lets them drop the OBO-created temp views without owning the schema)
 - Grants `READ VOLUME` + `WRITE VOLUME` on the results volume to both SPs
 - Grants the **app SP** `CAN_MANAGE_RUN` on the runner job (so the app can submit runs and poll results)
+- Grants the **runner SP** `CAN_READ` on the bundle artifact path (so the serverless env can install the runner wheel)
 
 ### 4. Find your MCP endpoint
 
