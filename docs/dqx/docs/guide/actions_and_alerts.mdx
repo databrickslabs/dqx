@@ -19,106 +19,20 @@ Actions require a `DQMetricsObserver` to be configured on the engine because the
 
 ## Defining and applying actions
 
-A `DQAction` binds an inner *action* to an optional gating *condition*. When *condition* is `None` the action fires unconditionally after every DQX run. When *condition* is set it is validated at construction time, so syntax errors surface immediately rather than at evaluation time.
+A `DQAction` binds an inner *action* to an optional gating *condition*. When *condition* is `None` the action fires unconditionally after every DQX run; when it is set, it is validated at construction time so syntax errors surface immediately rather than at evaluation time.
 
-Actions can be defined either programmatically with the DQX classes or declaratively as metadata (plain dicts, typically loaded from YAML or JSON) — exactly like DQX checks. The two tabs below define the **same** pair of actions. In the metadata form each entry has an *action* key carrying a *type* discriminator (*alert* or *fail_pipeline*) plus an optional *condition*; a *DQSecret* credential is written as a nested mapping with a single *secret* key. See [Defining actions with metadata](#defining-actions-with-metadata) for how to load and pass metadata.
+Actions can be defined **either** programmatically with the DQX classes **or** declaratively as metadata — a list of plain dicts, typically loaded from a YAML or JSON file — exactly like DQX checks. The two forms are equivalent, and every example on this page shows both. In the metadata form each list entry has an `action` key carrying a `type` discriminator (`alert` or `fail_pipeline`) plus an optional `condition`; a `DQSecret` credential is written as a nested mapping with a single `secret` key whose value is a `scope/key` reference. Callback destinations are the one exception — they hold a live Python callable and have no metadata form, so they can only be configured in code.
+
+To run actions, attach them to a `DQEngine` together with a `DQMetricsObserver`. `DQEngine` accepts `DQAction` instances, raw metadata dicts, or a list loaded from a file with `DQActionManager` — and mixed lists of instances and dicts are supported.
+
+The reference sections below cover the available [destination types](#dqalert-destinations), [FailPipeline](#failpipeline), [alert frequency and notify_on](#alert-frequency-and-notify_on), and [persisting actions and their history](#persisting-actions-and-their-history).
+
+### Auto-fire on save methods (recommended)
+
+Attach a list of actions to `DQEngine` together with a `DQMetricsObserver`. Actions fire automatically at the end of `apply_checks_and_save_in_table` and `apply_checks_by_metadata_and_save_in_table` (both batch and streaming) once the Spark observation has been materialized.
 
 <Tabs>
   <TabItem value="Python" label="Python (classes)" default>
-
-```python
-from databricks.labs.dqx.actions import DQAction, DQAlert, SlackDQAlertDestination
-
-# Fires on every run (no condition)
-unconditional = DQAction(
-    action=DQAlert(
-        destinations=[SlackDQAlertDestination(name="slack", webhook_url="https://hooks.slack.com/…")]
-    )
-)
-
-# Fires only when at least one error row is observed
-on_errors = DQAction(
-    condition="error_row_count > 0",
-    action=DQAlert(
-        destinations=[SlackDQAlertDestination(name="slack", webhook_url="https://hooks.slack.com/…")]
-    )
-)
-```
-
-  </TabItem>
-  <TabItem value="YAML" label="YAML (metadata)">
-
-```yaml
-# Fires on every run (no condition)
-- action:
-    type: alert
-    destinations:
-      - type: slack
-        name: slack
-        webhook_url: https://hooks.slack.com/…
-# Fires only when at least one error row is observed
-- action:
-    type: alert
-    destinations:
-      - type: slack
-        name: slack
-        webhook_url: https://hooks.slack.com/…
-  condition: error_row_count > 0
-```
-
-  </TabItem>
-</Tabs>
-
-### Condition syntax and available metrics
-
-Conditions are SQL-like boolean expressions evaluated against the observed metrics dictionary. The evaluator uses a safe expression parser — it does **not** execute arbitrary Python.
-
-Built-in metrics available in every condition:
-
-| Metric name | Description |
-|---|---|
-| `input_row_count` | Total rows processed |
-| `error_row_count` | Rows that triggered at least one error-level check |
-| `warning_row_count` | Rows that triggered at least one warning-level check |
-| `valid_row_count` | Rows with no errors and no warnings |
-
-Per-check breakdown metrics (`check_metrics`) are available as a JSON string; they are most useful for monitoring or alerting via SQL queries on the metrics table, not directly in action conditions.
-
-Custom metrics defined on `DQMetricsObserver` (via `custom_metrics`) are also available by their SQL alias:
-
-```python
-from databricks.labs.dqx.metrics_observer import DQMetricsObserver
-
-observer = DQMetricsObserver(
-    name="my_pipeline",
-    custom_metrics=["error_row_count * 1.0 / input_row_count as error_row_ratio"],
-)
-
-# Now "error_row_ratio" can be referenced in conditions
-action = DQAction(
-    condition="error_row_ratio > 0.10",
-    action=DQAlert(destinations=[...]),
-)
-```
-
-Compound conditions using `and` / `or` are supported:
-
-```python
-DQAction(condition="error_row_count > 0 or warning_row_count > 0", action=DQAlert(destinations=[...]))
-```
-
-### Applying actions with DQEngine
-
-Once you have defined actions, attach them to a `DQEngine` to run them — either automatically via
-the save methods, per micro-batch in streaming, or manually with `evaluate_actions`. The rest of
-this page then covers the reference detail: the available [destination types](#dqalert-destinations),
-[FailPipeline](#failpipeline), [alert frequency and notify_on](#alert-frequency-and-notify_on),
-[persisting actions and their history](#persisting-actions-and-their-history),
-and [defining actions with metadata](#defining-actions-with-metadata).
-
-#### Auto-fire on save methods (recommended)
-
-Pass a list of `DQAction` instances to `DQEngine` together with a `DQMetricsObserver`. Actions fire automatically at the end of `apply_checks_and_save_in_table` and `apply_checks_by_metadata_and_save_in_table` (both batch and streaming) once the Spark observation has been materialized.
 
 ```python
 from databricks.sdk import WorkspaceClient
@@ -169,13 +83,62 @@ engine.apply_checks_and_save_in_table(
 )
 ```
 
+  </TabItem>
+  <TabItem value="YAML" label="YAML (metadata)">
+
+```yaml
+# actions.yml
+# Send a Slack alert whenever any error row is observed
+- action:
+    type: alert
+    destinations:
+      - type: slack
+        name: slack
+        webhook_url: https://hooks.slack.com/services/T000/B000/xxxx
+    alert_frequency: always
+  condition: error_row_count > 0
+# Also fail the pipeline when any error row is observed
+- action:
+    type: fail_pipeline
+    message: Errors detected — pipeline aborted.
+  condition: error_row_count > 0
+```
+
+```python
+from databricks.sdk import WorkspaceClient
+from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.metrics_observer import DQMetricsObserver
+from databricks.labs.dqx.config import InputConfig, OutputConfig
+from databricks.labs.dqx.actions import DQActionManager
+
+observer = DQMetricsObserver(name="my_pipeline")
+
+# Load the actions defined in actions.yml
+actions = DQActionManager.load_actions_from_local_file("actions.yml")
+
+# Actions require an observer
+engine = DQEngine(WorkspaceClient(), observer=observer, actions=actions)
+
+# Actions fire automatically after the save completes
+engine.apply_checks_and_save_in_table(
+    checks=checks,
+    input_config=InputConfig(location="catalog.schema.input"),
+    output_config=OutputConfig(location="catalog.schema.valid"),
+    quarantine_config=OutputConfig(location="catalog.schema.quarantine"),
+    metrics_config=OutputConfig(location="catalog.schema.metrics"),
+)
+```
+
+  </TabItem>
+</Tabs>
+
 <Admonition type="warning" title="Observer required">
 Passing *actions* to *DQEngine* without also passing an *observer* raises `InvalidParameterError` at construction time. Actions evaluate metrics produced by the observer and cannot function without one.
 </Admonition>
 
-#### Streaming pipelines
+### Streaming pipelines
 
-The same pattern works for streaming. Actions fire per micro-batch after the observation for that batch is materialized:
+The same pattern works for streaming: attach the actions to the engine exactly as above, then run a streaming save. Actions fire per micro-batch after the observation for that batch is materialized. The example below reuses the `engine` configured in the previous section:
 
 ```python
 from databricks.labs.dqx.config import InputConfig, OutputConfig
@@ -206,11 +169,15 @@ non-terminal delivery failure is logged and never crashes the stream. (Fully asy
 off-thread delivery is a planned enhancement.)
 </Admonition>
 
-#### Manual evaluation with evaluate_actions
+### Manual evaluation with evaluate_actions
 
 For pipelines that do not use the save methods (e.g. Lakeflow Pipelines or custom `writeStream` code), call `evaluate_actions` explicitly after triggering a Spark action on the checked DataFrame:
 
+<Tabs>
+  <TabItem value="Python" label="Python (classes)" default>
+
 ```python
+from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.metrics_observer import DQMetricsObserver
 from databricks.labs.dqx.actions import DQAction, DQAlert, SlackDQAlertDestination
@@ -238,9 +205,130 @@ results = engine.evaluate_actions(
 )
 ```
 
+  </TabItem>
+  <TabItem value="YAML" label="YAML (metadata)">
+
+```yaml
+# actions.yml
+- action:
+    type: alert
+    destinations:
+      - type: slack
+        name: slack
+        webhook_url: https://hooks.slack.com/…
+  condition: error_row_count > 0
+```
+
+```python
+from databricks.sdk import WorkspaceClient
+from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.metrics_observer import DQMetricsObserver
+from databricks.labs.dqx.actions import DQActionManager
+
+observer = DQMetricsObserver(name="manual_eval")
+actions = DQActionManager.load_actions_from_local_file("actions.yml")
+engine = DQEngine(WorkspaceClient(), observer=observer, actions=actions)
+
+# Apply checks — returns the DataFrame and an observation handle
+checked_df, observation = engine.apply_checks_by_metadata(input_df, checks)
+
+# Trigger a Spark action to materialize the observation
+checked_df.count()  # or write to a table, etc.
+
+# Now evaluate actions against the populated metrics
+results = engine.evaluate_actions(
+    observation.get,
+    input_location="catalog.schema.input",
+)
+```
+
+  </TabItem>
+</Tabs>
+
 <Admonition type="warning" title="Trigger a Spark action first">
 Call *evaluate_actions* only after a Spark action (count, write, etc.) has been triggered on the checked DataFrame. If the observation has not been materialized, metrics will be empty and actions will not receive meaningful values.
 </Admonition>
+
+### Condition syntax and available metrics
+
+Conditions are SQL-like boolean expressions evaluated against the observed metrics dictionary. The evaluator uses a safe expression parser — it does **not** execute arbitrary Python.
+
+Built-in metrics available in every condition:
+
+| Metric name | Description |
+|---|---|
+| `input_row_count` | Total rows processed |
+| `error_row_count` | Rows that triggered at least one error-level check |
+| `warning_row_count` | Rows that triggered at least one warning-level check |
+| `valid_row_count` | Rows with no errors and no warnings |
+
+Per-check breakdown metrics (`check_metrics`) are available as a JSON string; they are most useful for monitoring or alerting via SQL queries on the metrics table, not directly in action conditions.
+
+Custom metrics defined on `DQMetricsObserver` (via `custom_metrics`) are also available by their SQL alias. Define the custom metric on the observer, then reference its alias in a condition:
+
+```python
+from databricks.labs.dqx.metrics_observer import DQMetricsObserver
+
+observer = DQMetricsObserver(
+    name="my_pipeline",
+    custom_metrics=["error_row_count * 1.0 / input_row_count as error_row_ratio"],
+)
+```
+
+<Tabs>
+  <TabItem value="Python" label="Python (classes)" default>
+
+```python
+# "error_row_ratio" can now be referenced in conditions
+action = DQAction(
+    condition="error_row_ratio > 0.10",
+    action=DQAlert(destinations=[SlackDQAlertDestination(name="slack", webhook_url="https://hooks.slack.com/…")]),
+)
+```
+
+  </TabItem>
+  <TabItem value="YAML" label="YAML (metadata)">
+
+```yaml
+- action:
+    type: alert
+    destinations:
+      - type: slack
+        name: slack
+        webhook_url: https://hooks.slack.com/…
+  condition: error_row_ratio > 0.10
+```
+
+  </TabItem>
+</Tabs>
+
+Compound conditions using `and` / `or` are supported:
+
+<Tabs>
+  <TabItem value="Python" label="Python (classes)" default>
+
+```python
+DQAction(
+    condition="error_row_count > 0 or warning_row_count > 0",
+    action=DQAlert(destinations=[SlackDQAlertDestination(name="slack", webhook_url="https://hooks.slack.com/…")]),
+)
+```
+
+  </TabItem>
+  <TabItem value="YAML" label="YAML (metadata)">
+
+```yaml
+- action:
+    type: alert
+    destinations:
+      - type: slack
+        name: slack
+        webhook_url: https://hooks.slack.com/…
+  condition: error_row_count > 0 or warning_row_count > 0
+```
+
+  </TabItem>
+</Tabs>
 
 ## DQAlert destinations
 
@@ -249,6 +337,9 @@ Call *evaluate_actions* only after a Spark action (count, write, etc.) has been 
 ### Slack
 
 `SlackDQAlertDestination` posts a Block Kit message to a Slack incoming webhook. Delivery is restricted to `hooks.slack.com`.
+
+<Tabs>
+  <TabItem value="Python" label="Python (classes)" default>
 
 ```python
 from databricks.labs.dqx.actions import DQAlert, DQAlertFrequency, NotifyOn, SlackDQAlertDestination
@@ -266,12 +357,33 @@ alert = DQAlert(
 )
 ```
 
+  </TabItem>
+  <TabItem value="YAML" label="YAML (metadata)">
+
+```yaml
+- action:
+    type: alert
+    destinations:
+      - type: slack
+        name: data-quality-alerts
+        webhook_url: https://hooks.slack.com/services/T000/B000/xxxx
+    severity: error
+    alert_frequency: always
+    notify_on: each
+```
+
+  </TabItem>
+</Tabs>
+
 ### Microsoft Teams
 
 `TeamsDQAlertDestination` posts a MessageCard to a Teams incoming webhook. Delivery is restricted to `webhook.office.com` and `office.com`.
 
+<Tabs>
+  <TabItem value="Python" label="Python (classes)" default>
+
 ```python
-from databricks.labs.dqx.actions import TeamsDQAlertDestination
+from databricks.labs.dqx.actions import DQAlert, TeamsDQAlertDestination
 
 alert = DQAlert(
     destinations=[
@@ -283,12 +395,30 @@ alert = DQAlert(
 )
 ```
 
+  </TabItem>
+  <TabItem value="YAML" label="YAML (metadata)">
+
+```yaml
+- action:
+    type: alert
+    destinations:
+      - type: teams
+        name: teams-dq-channel
+        webhook_url: https://webhook.office.com/webhookb2/…
+```
+
+  </TabItem>
+</Tabs>
+
 ### Generic HTTPS webhook
 
 `WebhookDQAlertDestination` sends a canonical DQX JSON payload to any HTTPS endpoint. No host restriction is applied. Optional HTTP Basic-auth can be supplied via *username* and *password*.
 
+<Tabs>
+  <TabItem value="Python" label="Python (classes)" default>
+
 ```python
-from databricks.labs.dqx.actions import WebhookDQAlertDestination
+from databricks.labs.dqx.actions import DQAlert, WebhookDQAlertDestination
 from databricks.labs.dqx.config import DQSecret
 
 alert = DQAlert(
@@ -304,12 +434,32 @@ alert = DQAlert(
 )
 ```
 
+  </TabItem>
+  <TabItem value="YAML" label="YAML (metadata)">
+
+```yaml
+- action:
+    type: alert
+    destinations:
+      - type: webhook
+        name: pagerduty
+        webhook_url: https://events.pagerduty.com/v2/enqueue
+        # In production, reference secrets rather than plaintext credentials
+        username:
+          secret: dq-secrets/pd-user
+        password:
+          secret: dq-secrets/pd-token
+```
+
+  </TabItem>
+</Tabs>
+
 ### In-process callback
 
-`CallbackDQAlertDestination` invokes a Python callable in the same process. It is useful for testing and for custom side effects (e.g. writing to a buffer, triggering another function). Callback destinations are **not serializable** and are skipped when actions are saved to storage.
+`CallbackDQAlertDestination` invokes a Python callable in the same process. It is useful for testing and for custom side effects (e.g. writing to a buffer, triggering another function). Callback destinations hold a live Python callable, so they have **no metadata form** — they can only be configured in code, and they are skipped when actions are saved to storage.
 
 ```python
-from databricks.labs.dqx.actions import CallbackDQAlertDestination
+from databricks.labs.dqx.actions import DQAlert, CallbackDQAlertDestination
 from databricks.labs.dqx.actions.message import AlertMessage
 from databricks.labs.dqx.actions.base import ActionContext
 
@@ -329,6 +479,9 @@ alert = DQAlert(
 
 `FailPipeline` raises `PipelineFailedError` to abort the current run. The evaluator defers the error until all other non-terminal actions (e.g. alert notifications) have completed, so alerts are always delivered before the pipeline is stopped.
 
+<Tabs>
+  <TabItem value="Python" label="Python (classes)" default>
+
 ```python
 from databricks.labs.dqx.actions import DQAction, FailPipeline
 
@@ -344,6 +497,24 @@ fail_action_auto = DQAction(
     action=FailPipeline(),  # message generated automatically from context.metrics
 )
 ```
+
+  </TabItem>
+  <TabItem value="YAML" label="YAML (metadata)">
+
+```yaml
+# Fail with a custom message when error row count exceeds 1 000
+- action:
+    type: fail_pipeline
+    message: Too many errors — aborting pipeline.
+  condition: error_row_count > 1000
+# Fail with an auto-generated message that includes observed metrics
+- action:
+    type: fail_pipeline
+  condition: error_row_count > 0
+```
+
+  </TabItem>
+</Tabs>
 
 ## Alert frequency and notify_on
 
@@ -364,6 +535,9 @@ Two knobs control when `DQAlert` actually sends a notification after its conditi
 | `NotifyOn.EACH` (default) | Notify every time the condition fires |
 | `NotifyOn.STATUS_CHANGE` | Notify only on the transition into unhealthy (first fire after a healthy/unseen run); repeats suppressed while unhealthy. Recovery is not notified. |
 
+<Tabs>
+  <TabItem value="Python" label="Python (classes)" default>
+
 ```python
 from databricks.labs.dqx.actions import DQAlert, DQAlertFrequency, NotifyOn, SlackDQAlertDestination
 
@@ -373,6 +547,23 @@ alert = DQAlert(
     notify_on=NotifyOn.STATUS_CHANGE,         # only on the transition into unhealthy
 )
 ```
+
+  </TabItem>
+  <TabItem value="YAML" label="YAML (metadata)">
+
+```yaml
+- action:
+    type: alert
+    destinations:
+      - type: slack
+        name: slack
+        webhook_url: https://hooks.slack.com/…
+    alert_frequency: daily        # at most once per day
+    notify_on: status_change      # only on the transition into unhealthy
+```
+
+  </TabItem>
+</Tabs>
 
 The `DQAlertFrequency.HOURLY` / `DQAlertFrequency.DAILY` windows and `NotifyOn.STATUS_CHANGE`
 gating rely on suppression state that, by default, lives only in memory for the lifetime of the
@@ -405,10 +596,10 @@ Actions can be persisted to a Unity Catalog Delta table or a Lakebase PostgreSQL
 
 #### Definitions table structure
 
-Each stored action is one row. The action itself is serialized to a JSON string (the same
-metadata wire format shown in [Defining actions with metadata](#defining-actions-with-metadata))
-and stored alongside the run config it belongs to and a creation timestamp. The same layout is
-used for both the Delta and Lakebase backends:
+Each stored action is one row. The action itself is serialized to a JSON string (the metadata
+wire format described in [Defining and applying actions](#defining-and-applying-actions)) and
+stored alongside the run config it belongs to and a creation timestamp. The same layout is used
+for both the Delta and Lakebase backends:
 
 | Column | Type | Description |
 |---|---|---|
@@ -470,6 +661,24 @@ config = LakebaseActionsStorageConfig(
 
 manager.save_actions(actions, config)
 loaded_actions = manager.load_actions(config)
+```
+
+#### Loading and saving actions with a local file
+
+`DQActionManager` can also read and write action metadata directly to a local `.yml`, `.yaml`, or
+`.json` file — handy for version-controlling actions alongside your code and for the YAML examples
+throughout this page. `load_actions_from_local_file` deserializes a file into a list of
+*DQAction* instances (ready to pass to `DQEngine`); `save_actions_in_local_file` writes a list
+back to disk:
+
+```python
+from databricks.labs.dqx.actions import DQActionManager
+
+# Load actions from a YAML file
+actions = DQActionManager.load_actions_from_local_file("actions.yml")
+
+# Save actions to a JSON file
+DQActionManager.save_actions_in_local_file(actions, "actions_backup.json")
 ```
 
 #### Declarative configuration with actions_location
@@ -559,96 +768,14 @@ is set, the engine seeds its suppression state from the events table on first us
 *HOURLY* / *DAILY* frequency windows and *STATUS_CHANGE* alerting behave correctly across engine
 restarts. Without it, alert state resets on every run.
 
-## Defining actions with metadata
-
-Every action shown so far can be expressed as declarative metadata — a list of plain dicts,
-typically loaded from a YAML or JSON file — instead of the DQX classes. The [Defining and applying
-actions](#defining-and-applying-actions) section shows the Python and YAML forms side by side; this
-section covers the wire format and how to load metadata and pass it to the engine.
-
-Each dict must match the wire format used by *ActionSerializer*: an *action* key whose value
-contains a *type* discriminator (*alert* or *fail_pipeline*), plus an optional *condition* key.
-A *DQSecret* credential is expressed as a nested mapping with a single *secret* key whose value
-is a *scope/key* reference:
-
-```yaml
-- action:
-    type: alert
-    destinations:
-      - type: slack
-        name: ops-channel
-        webhook_url:
-          secret: my_scope/slack_webhook
-  condition: error_row_count > 0
-- action:
-    type: fail_pipeline
-  condition: error_row_count > 10
-```
-
-### Loading from a local file
-
-Use *DQActionManager.load_actions_from_local_file* to deserialize a *.yml*, *.yaml*, or *.json*
-file into a list of *DQAction* instances.  The complementary
-*DQActionManager.save_actions_in_local_file* method persists a list back to disk:
-
-```python
-from databricks.labs.dqx.actions import DQActionManager
-
-# Load actions from a YAML file
-actions = DQActionManager.load_actions_from_local_file("actions.yml")
-
-# Save actions to a JSON file
-DQActionManager.save_actions_in_local_file(actions, "actions_backup.json")
-```
-
-### Passing action dicts directly to DQEngine
-
-*DQEngine* also accepts raw action dicts in place of (or mixed with) *DQAction* instances.
-Each dict is deserialized via *ActionSerializer.from_dict* at construction time, so any
-validation error (unknown type, missing required field) surfaces immediately rather than at
-evaluation time.  Mixed lists of *DQAction* objects and dicts are supported:
-
-```python
-from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.metrics_observer import DQMetricsObserver
-from databricks.sdk import WorkspaceClient
-
-observer = DQMetricsObserver(name="my_pipeline")
-
-# Define actions as plain dicts
-action_dicts = [
-    {
-        "action": {
-            "type": "alert",
-            "destinations": [
-                {
-                    "type": "slack",
-                    "name": "ops-channel",
-                    "webhook_url": {"secret": "my_scope/slack_webhook"},
-                }
-            ],
-        },
-        "condition": "error_row_count > 0",
-    },
-    {
-        "action": {"type": "fail_pipeline"},
-        "condition": "error_row_count > 10",
-    },
-]
-
-engine = DQEngine(WorkspaceClient(), observer=observer, actions=action_dicts)
-```
-
-<Admonition type="note" title="Callback destinations cannot be expressed in metadata">
-*CallbackDQAlertDestination* holds a live Python callable and has no metadata representation.
-Callback-based destinations can only be configured programmatically via the class API.
-</Admonition>
-
 ## Security and secrets
 
 ### Using DQSecret for credentials
 
-Webhook URLs, usernames, and passwords accept either a plain `str` or a `DQSecret(scope, key)` reference. In production, always use `DQSecret` to avoid storing credentials in source code or configuration files.
+Webhook URLs, usernames, and passwords accept either a plain `str` or a `DQSecret(scope, key)` reference. In production, always use `DQSecret` to avoid storing credentials in source code or configuration files. In metadata, a secret reference is written as a nested mapping with a single `secret` key whose value is a `scope/key` reference.
+
+<Tabs>
+  <TabItem value="Python" label="Python (classes)" default>
 
 ```python
 from databricks.labs.dqx.config import DQSecret
@@ -668,6 +795,32 @@ webhook_dest = WebhookDQAlertDestination(
     password=DQSecret(scope="dq-secrets", key="webhook-password"),
 )
 ```
+
+  </TabItem>
+  <TabItem value="YAML" label="YAML (metadata)">
+
+```yaml
+- action:
+    type: alert
+    destinations:
+      # Slack webhook URL from a Databricks secret scope
+      - type: slack
+        name: slack
+        webhook_url:
+          secret: dq-secrets/slack-webhook-url
+      # Generic webhook with Basic-auth credentials from secret scope
+      - type: webhook
+        name: my-webhook
+        webhook_url:
+          secret: dq-secrets/webhook-url
+        username:
+          secret: dq-secrets/webhook-user
+        password:
+          secret: dq-secrets/webhook-password
+```
+
+  </TabItem>
+</Tabs>
 
 ### SSRF protection
 
