@@ -10,7 +10,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import selector from "@/lib/selector";
-import { type User, type UserRoleOut, useVersion } from "@/lib/api";
+import { type User, type UserRoleOut, useGetVersion } from "@/lib/api";
 import { Settings } from "lucide-react";
 
 function SidebarUserFooterSkeleton() {
@@ -46,7 +46,7 @@ function SidebarUserFooterContent() {
   const isProfileActive = location.pathname === "/profile";
   const isConfigActive = location.pathname === "/config";
 
-  const { data: versionResp } = useVersion();
+  const { data: versionResp } = useGetVersion();
   const versionData = versionResp?.data;
 
   return (

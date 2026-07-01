@@ -179,6 +179,33 @@ app-test: ## Run app backend pytest suite (K=<expr> filter, COV=1 for coverage)
 
 ##@ App deploy (require PROFILE=<databricks-profile>; most also need TARGET=<bundle-target>)
 
+# Minimum Databricks CLI version required to deploy. The ``postgres_roles``
+# resource in ``app/databricks.yml`` (one-button Lakebase provisioning) was
+# added in CLI v1.4.0 (https://github.com/databricks/cli/pull/5467); older
+# CLIs reject the unknown field at ``bundle validate`` with a confusing
+# error deep inside the deploy. Fail fast here with an actionable message.
+DATABRICKS_MIN_VERSION := 1.4.0
+
+# Preflight: assert the CLI exists and is new enough. Used as a prerequisite
+# of app-deploy / app-bind so the version gate runs before any build or
+# network call. The sort -V trick: the smallest of {MIN, installed} equals
+# MIN exactly when installed >= MIN (handles 1.10 > 1.4 unlike a string sort).
+app-check-cli: ## Verify the Databricks CLI meets the minimum version for deploy
+	@command -v databricks >/dev/null 2>&1 || \
+	  { echo "ERROR: 'databricks' CLI not found on PATH. Install: https://docs.databricks.com/dev-tools/cli/install.html"; exit 1; }
+	@ver=$$(databricks --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1); \
+	  if [ -z "$$ver" ]; then \
+	    echo "ERROR: could not parse a version from 'databricks --version'."; exit 1; \
+	  fi; \
+	  if [ "$$(printf '%s\n%s\n' "$(DATABRICKS_MIN_VERSION)" "$$ver" | sort -V | head -1)" != "$(DATABRICKS_MIN_VERSION)" ]; then \
+	    echo "ERROR: Databricks CLI v$$ver is too old; v$(DATABRICKS_MIN_VERSION)+ is required to deploy DQX Studio."; \
+	    echo "       app/databricks.yml uses the 'postgres_roles' resource (one-button Lakebase),"; \
+	    echo "       which older CLIs reject at 'bundle validate' with an unknown-field error."; \
+	    echo "       Upgrade:  brew upgrade databricks   (or https://docs.databricks.com/dev-tools/cli/install.html)"; \
+	    exit 1; \
+	  fi; \
+	  echo "✓ Databricks CLI v$$ver (>= $(DATABRICKS_MIN_VERSION))"
+
 # Grant Unity Catalog permissions after bundle deploy.
 #
 # Usage: make app-grant-permissions PROFILE=my-profile
@@ -216,7 +243,7 @@ app-grant-permissions: ## Run post-deploy GRANTs (called by app-deploy; standalo
 # to ``make app-deploy`` — the bind step reads the resolved bundle
 # variables to know which instance/schema name to bind to, so an
 # override applied only at deploy time would bind the wrong resource.
-app-bind: ## Adopt pre-existing UC schemas / volume / Lakebase into bundle (run ONCE per workspace)
+app-bind: app-check-cli ## Adopt pre-existing UC schemas / volume / Lakebase into bundle (run ONCE per workspace)
 	@test -n "$(PROFILE)" || (echo "Usage: make app-bind PROFILE=<databricks-profile> TARGET=<bundle-target>"; exit 1)
 	@test -n "$(TARGET)" || (echo "Usage: make app-bind PROFILE=<databricks-profile> TARGET=<bundle-target>"; exit 1)
 	app/scripts/bind_resources.sh -p $(PROFILE) -t $(TARGET) $(if $(BUNDLE_VARS),-- $(BUNDLE_VARS))
@@ -245,10 +272,17 @@ app-bind: ## Adopt pre-existing UC schemas / volume / Lakebase into bundle (run 
 # after a manual delete (the deploy errors out with "Instance name is
 # not unique" otherwise). Per-deploy CLI overrides keep ``databricks.yml``
 # clean.
-app-deploy: app-build ## Build, deploy bundle, grant permissions, and start app
+#
+# FORCE=1 appends ``--force`` to ``bundle deploy``. Use it when the deploy
+# aborts because a resource was modified in the workspace UI since the last
+# deploy (e.g. "dashboard ... has been modified remotely") — ``--force``
+# overwrites the remote copy with the bundle's local definition. This DROPS
+# any in-UI edits, so only set it once you've confirmed the local version is
+# the one you want to ship.
+app-deploy: app-check-cli app-build ## Build, deploy bundle, grant permissions, and start app (FORCE=1 to overwrite remote edits)
 	@test -n "$(PROFILE)" || (echo "Usage: make app-deploy PROFILE=<databricks-profile> TARGET=<bundle-target>"; exit 1)
 	@test -n "$(TARGET)" || (echo "Usage: make app-deploy PROFILE=<databricks-profile> TARGET=<bundle-target>"; exit 1)
-	cd app && databricks bundle deploy -p $(PROFILE) -t $(TARGET) $(BUNDLE_VARS)
+	cd app && databricks bundle deploy -p $(PROFILE) -t $(TARGET) $(if $(FORCE),--force) $(BUNDLE_VARS)
 	app/scripts/post_deploy_grants.sh -p $(PROFILE) -t $(TARGET) $(if $(BUNDLE_VARS),-- $(BUNDLE_VARS))
 	cd app && databricks bundle run $(APP_NAME) -p $(PROFILE) -t $(TARGET) $(BUNDLE_VARS)
 
@@ -294,4 +328,4 @@ fork-sync: ## Mirror a fork PR to a branch in the main repo for full CI (PR=<num
 	./.github/scripts/fork-sync-pr.sh $(PR)
 
 .DEFAULT: all
-.PHONY: help all clean dev lint fmt test integration e2e perf anomaly coverage combine-coverage docs-build docs-serve-dev docs-install docs-serve docs-clean app-install app-build app-start-dev app-stop-dev app-regen-api app-check app-test app-grant-permissions app-bind app-deploy fork-sync build lock-dependencies lock-app-dependencies
+.PHONY: help all clean dev lint fmt test integration e2e perf anomaly coverage combine-coverage docs-build docs-serve-dev docs-install docs-serve docs-clean app-install app-build app-start-dev app-stop-dev app-regen-api app-check app-test app-check-cli app-grant-permissions app-bind app-deploy fork-sync build lock-dependencies lock-app-dependencies

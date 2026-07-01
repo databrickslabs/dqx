@@ -49,7 +49,7 @@ DQX_CATALOG=dqx                             # Unity Catalog catalog name
 DQX_SCHEMA=dqx_studio                       # schema inside the catalog
 DQX_JOB_ID=<task-runner-job-id>             # required for profiler/dry-run
 DQX_WHEELS_VOLUME=/Volumes/dqx/dqx_studio/wheels  # UC volume path; auto-set by DABs in production
-DQX_ADMIN_GROUP=admins                      # workspace group granted bootstrap Admin access
+DQX_ADMIN_GROUP=admins                      # workspace group granted bootstrap Admin access; AppConfig default is unset (no bootstrap admin locally) — set this to your test admin group
 
 # Lakebase (optional — leave DQX_LAKEBASE_INSTANCE_NAME empty to run OLTP tables on Delta locally)
 DQX_LAKEBASE_INSTANCE_NAME=                 # e.g. dqx-studio-lakebase; empty = Delta-only mode
@@ -69,6 +69,18 @@ DQX_LAKEBASE_TOKEN_REFRESH_MINUTES=50       # OAuth token refresh cadence (token
 | Wheel sync | `DQX_WHEELS_VOLUME` |
 
 > **Lakebase locally:** The same OAuth token-refresh logic that runs in production also runs locally. The app authenticates as your CLI user (via `databricks-sdk` default auth chain), so your CLI principal must have `CAN_CONNECT_AND_CREATE` on the Lakebase database. Easiest path: run the bundle once against your dev workspace so the bundle's `database` resource binds the permissions, then point `DQX_LAKEBASE_INSTANCE_NAME` at the deployed instance.
+
+### Bring your own SQL warehouse, catalog, and Lakebase
+
+Local dev **never provisions** anything — it always points at resources that already exist (created by a `bundle deploy` or by hand). So the production "bundle-managed vs. bring-your-own" choice collapses locally to "which value do I put in `app/.env`":
+
+| Resource | Local knob | Notes |
+|---|---|---|
+| **SQL warehouse** | `DATABRICKS_WAREHOUSE_ID=<existing-id>` | Any warehouse you have `CAN_USE` on. Required for queries, profiling, and dry-runs. |
+| **Catalog** | `DQX_CATALOG=<existing-catalog>` (+ `DQX_SCHEMA`, `DQX_TMP_SCHEMA`) | The catalog and schemas must already exist; local dev does **not** create them. You need `USE CATALOG` + `USE SCHEMA` (+ `SELECT` to profile tables). |
+| **Lakebase** | `DQX_LAKEBASE_INSTANCE_NAME=<existing-instance>` | Point at an existing instance you can `CAN_CONNECT_AND_CREATE` on. **Leave it empty** to skip Lakebase and run OLTP tables on Delta — the simplest local setup. |
+
+In production these are configurable per deploy target — the bundle can provision the warehouse and Lakebase for you, or you can bring existing ones, giving **6 warehouse × Lakebase combinations** (the catalog is always pre-existing). See [DEPLOYMENT.md → Deployment scenarios: warehouse and Lakebase combinations](DEPLOYMENT.md#deployment-scenarios-warehouse-and-lakebase-combinations). The fastest way to get a matching warehouse + catalog + Lakebase for local dev is to run `make app-deploy` once against a dev workspace, then copy the resulting IDs/names into `app/.env`.
 
 ## 2. Install Dependencies
 

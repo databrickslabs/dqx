@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 from dataclasses import dataclass
 
 from databricks.sdk import WorkspaceClient
@@ -66,6 +67,32 @@ class DiscoveryService:
             for col in table_info.columns
         ]
 
+    def get_table_schema_ddl(self, table_fqn: str) -> str:
+        """Return the Spark DDL string for a UC table, ordered by column position.
+
+        Used by the schema-validation rule builder to snapshot the current
+        shape of a table so the user has something concrete to start from.
+        We prefer ``type_text`` because it preserves parameterised and
+        nested types (``DECIMAL(10,2)``, ``ARRAY<STRING>``, ``STRUCT<...>``)
+        — the SDK ``type_name`` enum loses precision on those.
+        """
+        table_info = self._ws.tables.get(full_name=table_fqn)
+        columns = table_info.columns or []
+        ordered = sorted(columns, key=lambda c: c.position or 0)
+        parts: list[str] = []
+        for col in ordered:
+            name = (col.name or "").strip()
+            if not name:
+                continue
+            type_text = (getattr(col, "type_text", None) or "").strip()
+            if not type_text and col.type_name:
+                # Fallback for older SDKs that don't surface ``type_text``.
+                type_text = col.type_name.value
+            if not type_text:
+                continue
+            parts.append(f"{_quote_ddl_identifier(name)} {type_text}")
+        return ", ".join(parts)
+
     def get_table_tags(self, catalog: str, schema: str, table: str) -> TableTags:
         """Get tags for a table and its columns from Unity Catalog."""
         full_name = f"{catalog}.{schema}.{table}"
@@ -128,3 +155,19 @@ class DiscoveryService:
     @app_cache.cached("discovery:{_user}:tags:{catalog}:{schema}:{table}", ttl=_TAGS_TTL)
     async def get_table_tags_async(self, catalog: str, schema: str, table: str) -> TableTags:
         return await asyncio.to_thread(self.get_table_tags, catalog, schema, table)
+
+    @app_cache.cached("discovery:{_user}:schema_ddl:{table_fqn}", ttl=_COLUMN_TTL)
+    async def get_table_schema_ddl_async(self, table_fqn: str) -> str:
+        return await asyncio.to_thread(self.get_table_schema_ddl, table_fqn)
+
+
+# Identifiers with characters outside ``[A-Za-z0-9_]`` must be back-tick
+# quoted in DDL, otherwise ``has_valid_schema`` will fail to parse the
+# expected schema. Embedded back-ticks are doubled per Spark's grammar.
+_SAFE_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _quote_ddl_identifier(name: str) -> str:
+    if _SAFE_IDENTIFIER.match(name):
+        return name
+    return "`" + name.replace("`", "``") + "`"

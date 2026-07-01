@@ -3,6 +3,16 @@ import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Loader2, MessageSquare, Send, Trash2 } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { formatDateTime } from "@/lib/format-utils";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
@@ -24,6 +34,10 @@ export function CommentThread({ entityType, entityId }: CommentThreadProps) {
   const queryClient = useQueryClient();
   const [newComment, setNewComment] = useState("");
   const [isOpen, setIsOpen] = useState(false);
+  // Deletion is destructive — gate it behind a confirm dialog so an
+  // accidental click on the trash icon (which appears on hover) doesn't
+  // silently nuke a comment.
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
 
   const { data: commentsResp, isLoading } = useListComments(entityType, entityId, {
     query: { enabled: isOpen },
@@ -52,6 +66,8 @@ export function CommentThread({ entityType, entityId }: CommentThreadProps) {
       queryClient.invalidateQueries({ queryKey: getListCommentsQueryKey(entityType, entityId) });
     } catch {
       toast.error(t("commentThread.failedDelete"));
+    } finally {
+      setPendingDeleteId(null);
     }
   };
 
@@ -95,8 +111,9 @@ export function CommentThread({ entityType, entityId }: CommentThreadProps) {
                   variant="ghost"
                   size="sm"
                   className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
-                  onClick={() => handleDelete(c.comment_id)}
+                  onClick={() => setPendingDeleteId(c.comment_id)}
                   disabled={deleteMutation.isPending}
+                  aria-label={t("commentThread.deleteAria")}
                 >
                   <Trash2 className="h-3 w-3 text-muted-foreground" />
                 </Button>
@@ -106,15 +123,6 @@ export function CommentThread({ entityType, entityId }: CommentThreadProps) {
           ))}
 
           <div className="flex items-start gap-2">
-            <Textarea
-              value={newComment}
-              onChange={(e) => setNewComment(e.target.value)}
-              placeholder={t("commentThread.placeholder")}
-              className="text-sm min-h-[60px] flex-1"
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) handleAdd();
-              }}
-            />
             <Button
               size="sm"
               onClick={handleAdd}
@@ -127,9 +135,50 @@ export function CommentThread({ entityType, entityId }: CommentThreadProps) {
                 <Send className="h-3.5 w-3.5" />
               )}
             </Button>
+            <Textarea
+              value={newComment}
+              onChange={(e) => setNewComment(e.target.value)}
+              placeholder={t("commentThread.placeholder")}
+              className="text-sm min-h-[60px] flex-1"
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) handleAdd();
+              }}
+            />
           </div>
         </div>
       )}
+
+      <AlertDialog
+        open={pendingDeleteId !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingDeleteId(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("commentThread.deleteConfirmTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("commentThread.deleteConfirmBody")}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (pendingDeleteId) void handleDelete(pendingDeleteId);
+              }}
+              disabled={deleteMutation.isPending}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleteMutation.isPending ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                t("common.delete")
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

@@ -19,7 +19,7 @@ from databricks_labs_dqx_app.backend.models import UserRoleOut, VersionOut
 router = APIRouter()
 
 
-@router.get("/version", response_model=VersionOut, operation_id="version")
+@router.get("/version", response_model=VersionOut, operation_id="getVersion")
 async def version():
     return VersionOut.from_metadata()
 

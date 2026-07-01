@@ -179,6 +179,10 @@ export interface ValidationRunSummaryOut {
   created_at: string | null;
   error_message: string | null;
   checks: Record<string, unknown>[];
+  review_status?: string | null;
+  review_status_is_default?: boolean;
+  review_status_updated_by?: string | null;
+  review_status_updated_at?: string | null;
 }
 
 export const listValidationRuns = (
@@ -580,9 +584,16 @@ export interface QuarantineListOut {
   limit: number;
 }
 
+export interface QuarantineQueryParams {
+  offset?: number;
+  limit?: number;
+  /** Filter to rows that failed only this check (matches errors or warnings). */
+  check_name?: string;
+}
+
 export const listQuarantineRecords = (
   runId: string,
-  params?: { offset?: number; limit?: number },
+  params?: QuarantineQueryParams,
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<QuarantineListOut>> => {
   return axios.default.get(`/api/v1/quarantine/runs/${runId}`, {
@@ -591,15 +602,19 @@ export const listQuarantineRecords = (
   });
 };
 
-export const getQuarantineRecordsQueryKey = (runId: string, offset?: number, limit?: number) =>
-  [`/api/v1/quarantine/runs`, runId, offset, limit] as const;
+export const getQuarantineRecordsQueryKey = (
+  runId: string,
+  offset?: number,
+  limit?: number,
+  checkName?: string,
+) => [`/api/v1/quarantine/runs`, runId, offset, limit, checkName ?? null] as const;
 
 export const useListQuarantineRecords = <
   TData = Awaited<ReturnType<typeof listQuarantineRecords>>,
   TError = AxiosError<unknown>,
 >(
   runId: string,
-  params?: { offset?: number; limit?: number },
+  params?: QuarantineQueryParams,
   options?: {
     query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof listQuarantineRecords>>, TError, TData>>;
     axios?: AxiosRequestConfig;
@@ -607,7 +622,13 @@ export const useListQuarantineRecords = <
 ): UseQueryResult<TData, TError> => {
   const { query: queryOptions, axios: axiosOptions } = options ?? {};
   const queryKey =
-    queryOptions?.queryKey ?? getQuarantineRecordsQueryKey(runId, params?.offset, params?.limit);
+    queryOptions?.queryKey ??
+    getQuarantineRecordsQueryKey(
+      runId,
+      params?.offset,
+      params?.limit,
+      params?.check_name,
+    );
 
   const queryFn = () => listQuarantineRecords(runId, params, axiosOptions);
 
@@ -621,27 +642,33 @@ export const useListQuarantineRecords = <
 
 export const getQuarantineCount = (
   runId: string,
+  params?: { check_name?: string },
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<{ count: number }>> => {
-  return axios.default.get(`/api/v1/quarantine/runs/${runId}/count`, options);
+  return axios.default.get(`/api/v1/quarantine/runs/${runId}/count`, {
+    ...options,
+    params,
+  });
 };
 
-export const getQuarantineCountQueryKey = (runId: string) =>
-  [`/api/v1/quarantine/runs/count`, runId] as const;
+export const getQuarantineCountQueryKey = (runId: string, checkName?: string) =>
+  [`/api/v1/quarantine/runs/count`, runId, checkName ?? null] as const;
 
 export const useQuarantineCount = <
   TData = Awaited<ReturnType<typeof getQuarantineCount>>,
   TError = AxiosError<unknown>,
 >(
   runId: string,
+  params?: { check_name?: string },
   options?: {
     query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof getQuarantineCount>>, TError, TData>>;
     axios?: AxiosRequestConfig;
   },
 ): UseQueryResult<TData, TError> => {
   const { query: queryOptions, axios: axiosOptions } = options ?? {};
-  const queryKey = queryOptions?.queryKey ?? getQuarantineCountQueryKey(runId);
-  const queryFn = () => getQuarantineCount(runId, axiosOptions);
+  const queryKey =
+    queryOptions?.queryKey ?? getQuarantineCountQueryKey(runId, params?.check_name);
+  const queryFn = () => getQuarantineCount(runId, params, axiosOptions);
   return useQuery({
     queryKey,
     queryFn,
@@ -653,9 +680,11 @@ export const useQuarantineCount = <
 export const exportQuarantineRecords = (
   runId: string,
   format: "csv" | "json" | "xlsx" = "csv",
+  checkName?: string,
 ): void => {
-  const url = `/api/v1/quarantine/runs/${runId}/export?format=${format}`;
-  window.open(url, "_blank");
+  const params = new URLSearchParams({ format });
+  if (checkName) params.set("check_name", checkName);
+  window.open(`/api/v1/quarantine/runs/${runId}/export?${params.toString()}`, "_blank");
 };
 
 // ---------------------------------------------------------------------------
@@ -973,4 +1002,359 @@ export const useSaveRetentionSettings = <
     mutationFn: ({ data }: { data: RetentionSettingsIn }) => saveRetentionSettings(data, axiosOptions),
     ...mutationOptions,
   });
+};
+
+// ---------------------------------------------------------------------------
+// Embedded dashboard (Insights page). The dashboard ID can be set by an
+// admin via the Configuration page; when unset, the backend falls back to
+// the env-provided DQX_DEFAULT_DASHBOARD_ID (so the bundle can ship a
+// starter dashboard). ``is_set`` distinguishes admin override from env
+// default in the UI.
+// ---------------------------------------------------------------------------
+
+export interface EmbeddedDashboardOut {
+  dashboard_id: string;
+  title: string | null;
+  workspace_host: string;
+  is_set: boolean;
+  is_default: boolean;
+}
+
+export interface EmbeddedDashboardIn {
+  dashboard_id: string;
+  title?: string | null;
+}
+
+export const getEmbeddedDashboard = (
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<EmbeddedDashboardOut>> =>
+  axios.default.get("/api/v1/config/embedded-dashboard", options);
+
+export const getEmbeddedDashboardQueryKey = () => ["embedded-dashboard"] as const;
+
+export const useEmbeddedDashboard = <
+  TData = Awaited<ReturnType<typeof getEmbeddedDashboard>>["data"],
+  TError = AxiosError<unknown>,
+>(
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof getEmbeddedDashboard>>, TError, TData>>;
+    axios?: AxiosRequestConfig;
+  },
+): UseQueryResult<TData, TError> => {
+  const { query: queryOptions, axios: axiosOptions } = options ?? {};
+  return useQuery({
+    queryKey: queryOptions?.queryKey ?? getEmbeddedDashboardQueryKey(),
+    queryFn: () => getEmbeddedDashboard(axiosOptions),
+    select: ((resp: Awaited<ReturnType<typeof getEmbeddedDashboard>>) => resp.data) as never,
+    staleTime: 60 * 1000,
+    ...queryOptions,
+  }) as UseQueryResult<TData, TError>;
+};
+
+export const saveEmbeddedDashboard = (
+  body: EmbeddedDashboardIn,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<EmbeddedDashboardOut>> =>
+  axios.default.put("/api/v1/config/embedded-dashboard", body, options);
+
+export const useSaveEmbeddedDashboard = <
+  TError = AxiosError<unknown>,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof saveEmbeddedDashboard>>,
+      TError,
+      { data: EmbeddedDashboardIn },
+      TContext
+    >;
+    axios?: AxiosRequestConfig;
+  },
+): UseMutationResult<
+  Awaited<ReturnType<typeof saveEmbeddedDashboard>>,
+  TError,
+  { data: EmbeddedDashboardIn },
+  TContext
+> => {
+  const { mutation: mutationOptions, axios: axiosOptions } = options ?? {};
+  return useMutation({
+    mutationFn: ({ data }: { data: EmbeddedDashboardIn }) => saveEmbeddedDashboard(data, axiosOptions),
+    ...mutationOptions,
+  });
+};
+
+export const deleteEmbeddedDashboard = (
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<EmbeddedDashboardOut>> =>
+  axios.default.delete("/api/v1/config/embedded-dashboard", options);
+
+export const useDeleteEmbeddedDashboard = <
+  TError = AxiosError<unknown>,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof deleteEmbeddedDashboard>>,
+      TError,
+      void,
+      TContext
+    >;
+    axios?: AxiosRequestConfig;
+  },
+): UseMutationResult<
+  Awaited<ReturnType<typeof deleteEmbeddedDashboard>>,
+  TError,
+  void,
+  TContext
+> => {
+  const { mutation: mutationOptions, axios: axiosOptions } = options ?? {};
+  return useMutation({
+    mutationFn: () => deleteEmbeddedDashboard(axiosOptions),
+    ...mutationOptions,
+  });
+};
+
+// ---------------------------------------------------------------------------
+// Run review statuses — admin-managed catalogue of values surfaced as the
+// per-run review dropdown on the Runs detail page and as a multi-select
+// filter on the Runs History page. Exactly one entry is flagged
+// ``is_default`` (backend invariant); that value is what the listing
+// endpoint returns virtually for unreviewed runs.
+//
+// The ``color`` field carries a design-system token name (gray, amber,
+// green, blue, red, purple, ...) that the UI maps to a tailwind palette
+// so we can rebrand without touching backend data.
+// ---------------------------------------------------------------------------
+
+export interface RunReviewStatusOption {
+  value: string;
+  description: string;
+  color: string;
+  is_default: boolean;
+}
+
+export interface RunReviewStatusesOut {
+  statuses: RunReviewStatusOption[];
+}
+
+export interface RunReviewStatusesIn {
+  statuses: RunReviewStatusOption[];
+}
+
+export const getRunReviewStatuses = (
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<RunReviewStatusesOut>> =>
+  axios.default.get("/api/v1/config/run-review-statuses", options);
+
+export const getRunReviewStatusesQueryKey = () => ["run-review-statuses"] as const;
+
+export const useRunReviewStatuses = <
+  TData = Awaited<ReturnType<typeof getRunReviewStatuses>>["data"],
+  TError = AxiosError<unknown>,
+>(
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof getRunReviewStatuses>>, TError, TData>>;
+    axios?: AxiosRequestConfig;
+  },
+): UseQueryResult<TData, TError> => {
+  const { query: queryOptions, axios: axiosOptions } = options ?? {};
+  return useQuery({
+    queryKey: queryOptions?.queryKey ?? getRunReviewStatusesQueryKey(),
+    queryFn: () => getRunReviewStatuses(axiosOptions),
+    select: ((resp: Awaited<ReturnType<typeof getRunReviewStatuses>>) => resp.data) as never,
+    // The dropdown is rendered in three places (Config card, Runs
+    // detail, Runs History filter) — a 5-min stale window keeps the
+    // navigation fast while letting admin saves propagate naturally
+    // through React Query's invalidation on the mutation hook below.
+    staleTime: 5 * 60 * 1000,
+    ...queryOptions,
+  }) as UseQueryResult<TData, TError>;
+};
+
+export const saveRunReviewStatuses = (
+  body: RunReviewStatusesIn,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<RunReviewStatusesOut>> =>
+  axios.default.put("/api/v1/config/run-review-statuses", body, options);
+
+export const useSaveRunReviewStatuses = <
+  TError = AxiosError<unknown>,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof saveRunReviewStatuses>>,
+      TError,
+      { data: RunReviewStatusesIn },
+      TContext
+    >;
+    axios?: AxiosRequestConfig;
+  },
+): UseMutationResult<
+  Awaited<ReturnType<typeof saveRunReviewStatuses>>,
+  TError,
+  { data: RunReviewStatusesIn },
+  TContext
+> => {
+  const { mutation: mutationOptions, axios: axiosOptions } = options ?? {};
+  return useMutation({
+    mutationFn: ({ data }: { data: RunReviewStatusesIn }) => saveRunReviewStatuses(data, axiosOptions),
+    ...mutationOptions,
+  });
+};
+
+// ---------------------------------------------------------------------------
+// Per-run review status — set/clear/get/history endpoints for the dropdown
+// + audit list on the Runs detail page. ``is_default`` distinguishes the
+// virtual catalogue default (no row in dq_run_review_status) from an
+// explicit value — the UI uses it to render "(auto)" hints and skip
+// meaningless updated_by/updated_at metadata.
+// ---------------------------------------------------------------------------
+
+export interface RunReviewStatusOut {
+  run_id: string;
+  status: string;
+  updated_by: string | null;
+  updated_at: string | null;
+  is_default: boolean;
+}
+
+export interface SetRunReviewStatusIn {
+  status: string;
+}
+
+export interface RunReviewStatusHistoryEntry {
+  run_id: string;
+  status: string;
+  previous_status: string | null;
+  changed_by: string;
+  changed_at: string | null;
+}
+
+export interface RunReviewStatusHistoryOut {
+  history: RunReviewStatusHistoryEntry[];
+}
+
+export const getRunReviewStatus = (
+  runId: string,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<RunReviewStatusOut>> =>
+  axios.default.get(`/api/v1/runs/${encodeURIComponent(runId)}/review-status`, options);
+
+export const getRunReviewStatusQueryKey = (runId: string) =>
+  ["run-review-status", runId] as const;
+
+export const useRunReviewStatus = <
+  TData = Awaited<ReturnType<typeof getRunReviewStatus>>["data"],
+  TError = AxiosError<unknown>,
+>(
+  runId: string,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof getRunReviewStatus>>, TError, TData>>;
+    axios?: AxiosRequestConfig;
+  },
+): UseQueryResult<TData, TError> => {
+  const { query: queryOptions, axios: axiosOptions } = options ?? {};
+  return useQuery({
+    queryKey: queryOptions?.queryKey ?? getRunReviewStatusQueryKey(runId),
+    queryFn: () => getRunReviewStatus(runId, axiosOptions),
+    select: ((resp: Awaited<ReturnType<typeof getRunReviewStatus>>) => resp.data) as never,
+    enabled: Boolean(runId),
+    ...queryOptions,
+  }) as UseQueryResult<TData, TError>;
+};
+
+export const setRunReviewStatus = (
+  runId: string,
+  body: SetRunReviewStatusIn,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<RunReviewStatusOut>> =>
+  axios.default.put(`/api/v1/runs/${encodeURIComponent(runId)}/review-status`, body, options);
+
+export const useSetRunReviewStatus = <
+  TError = AxiosError<unknown>,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof setRunReviewStatus>>,
+      TError,
+      { runId: string; data: SetRunReviewStatusIn },
+      TContext
+    >;
+    axios?: AxiosRequestConfig;
+  },
+): UseMutationResult<
+  Awaited<ReturnType<typeof setRunReviewStatus>>,
+  TError,
+  { runId: string; data: SetRunReviewStatusIn },
+  TContext
+> => {
+  const { mutation: mutationOptions, axios: axiosOptions } = options ?? {};
+  return useMutation({
+    mutationFn: ({ runId, data }: { runId: string; data: SetRunReviewStatusIn }) =>
+      setRunReviewStatus(runId, data, axiosOptions),
+    ...mutationOptions,
+  });
+};
+
+export const clearRunReviewStatus = (
+  runId: string,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<RunReviewStatusOut>> =>
+  axios.default.delete(`/api/v1/runs/${encodeURIComponent(runId)}/review-status`, options);
+
+export const useClearRunReviewStatus = <
+  TError = AxiosError<unknown>,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof clearRunReviewStatus>>,
+      TError,
+      { runId: string },
+      TContext
+    >;
+    axios?: AxiosRequestConfig;
+  },
+): UseMutationResult<
+  Awaited<ReturnType<typeof clearRunReviewStatus>>,
+  TError,
+  { runId: string },
+  TContext
+> => {
+  const { mutation: mutationOptions, axios: axiosOptions } = options ?? {};
+  return useMutation({
+    mutationFn: ({ runId }: { runId: string }) => clearRunReviewStatus(runId, axiosOptions),
+    ...mutationOptions,
+  });
+};
+
+export const getRunReviewStatusHistory = (
+  runId: string,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<RunReviewStatusHistoryOut>> =>
+  axios.default.get(`/api/v1/runs/${encodeURIComponent(runId)}/review-status/history`, options);
+
+export const getRunReviewStatusHistoryQueryKey = (runId: string) =>
+  ["run-review-status-history", runId] as const;
+
+export const useRunReviewStatusHistory = <
+  TData = Awaited<ReturnType<typeof getRunReviewStatusHistory>>["data"],
+  TError = AxiosError<unknown>,
+>(
+  runId: string,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof getRunReviewStatusHistory>>, TError, TData>>;
+    axios?: AxiosRequestConfig;
+  },
+): UseQueryResult<TData, TError> => {
+  const { query: queryOptions, axios: axiosOptions } = options ?? {};
+  return useQuery({
+    queryKey: queryOptions?.queryKey ?? getRunReviewStatusHistoryQueryKey(runId),
+    queryFn: () => getRunReviewStatusHistory(runId, axiosOptions),
+    select: ((resp: Awaited<ReturnType<typeof getRunReviewStatusHistory>>) => resp.data) as never,
+    enabled: Boolean(runId),
+    ...queryOptions,
+  }) as UseQueryResult<TData, TError>;
 };

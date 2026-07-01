@@ -33,6 +33,7 @@ import {
   RotateCcw,
   Loader2,
   Play,
+  Pause,
   History,
   CheckCircle2,
   XCircle,
@@ -75,6 +76,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
@@ -90,7 +92,7 @@ import { useActiveRuns, type ActiveRun } from "@/hooks/use-active-runs";
 import { getDryRunStatus, type RunStatusOut } from "@/lib/api";
 import { cancelDryRun } from "@/lib/api-custom";
 import { CircleStop, ShieldAlert } from "lucide-react";
-import { parseFqn, formatDateTime as formatDate, getUserMetadata, labelToken, tokenToLabel } from "@/lib/format-utils";
+import { parseFqn, formatDateTime as formatDate, getUserMetadata, labelToken, tokenToLabel, formatLabel } from "@/lib/format-utils";
 import { LabelFilter, LabelsBadges, labelsMatchFilter } from "@/components/Labels";
 import { usePermissions } from "@/hooks/use-permissions";
 import { requireRunnerOrRedirect } from "@/lib/route-guards";
@@ -187,6 +189,10 @@ interface ScheduleConfig {
   // YAML round-trips cleanly and values containing ``=`` don't collide.
   scope_labels?: { key: string; value: string }[];
   sample_size?: number;
+  // Soft kill switch. When true the scheduler tick keeps the row in
+  // ``dq_schedule_configs`` (and its tracker history) but skips it on
+  // every wake-up, so resuming does not retroactively fire missed runs.
+  paused?: boolean;
 }
 
 const DEFAULT_SCHEDULE: ScheduleConfig = {
@@ -664,19 +670,25 @@ function resolveScheduleScope(
 // ---------------------------------------------------------------------------
 
 function RunsPage() {
-  const { t } = useTranslation();
-  const navigate = useNavigate();
-  const { canRunRules, isAdmin } = usePermissions();
-  const params = useParams({ strict: false }) as { runName?: string };
-  const currentRunName = params.runName;
-
   // The Run Rules page is gated on the orthogonal RUNNER role (admins
   // are implicit runners). Anyone who lands here without the privilege —
   // whether by typing the URL or via a stale link — gets bounced to
-  // Runs History, which is universally readable.
+  // Runs History, which is universally readable. The guard lives in a
+  // thin wrapper so the inner component's hook count stays stable
+  // across permission-cache refreshes (see Rules of Hooks).
+  const { canRunRules } = usePermissions();
   if (!canRunRules) {
     return <Navigate to="/runs-history" replace />;
   }
+  return <RunsPageInner />;
+}
+
+function RunsPageInner() {
+  const { t } = useTranslation();
+  const navigate = useNavigate();
+  const { isAdmin } = usePermissions();
+  const params = useParams({ strict: false }) as { runName?: string };
+  const currentRunName = params.runName;
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isDeletingRun, setIsDeletingRun] = useState(false);
   const queryClient = useQueryClient();
@@ -812,7 +824,10 @@ function RunsPage() {
                   {({ reset }) => (
                     <ErrorBoundary onReset={reset} fallbackRender={RunsListError}>
                       <Suspense fallback={<RunsListSkeleton />}>
-                        <SchedulesListView isDeleting={isDeletingRun} />
+                        <SchedulesListView
+                          isDeleting={isDeletingRun}
+                          isAdmin={isAdmin}
+                        />
                       </Suspense>
                     </ErrorBoundary>
                   )}
@@ -841,6 +856,10 @@ function RunsPage() {
 interface RunNotification {
   count: number;
   errors: number;
+  // Per-table error messages returned by the backend so the user can see
+  // *why* a submission failed (e.g. "cross-table rule is missing its
+  // sql_query") instead of just an aggregate count.
+  errorDetails?: string[];
 }
 
 function ExecuteTab({ onGoToHistory }: { onGoToHistory: () => void }) {
@@ -1030,6 +1049,7 @@ function ExecuteTab({ onGoToHistory }: { onGoToHistory: () => void }) {
       setRunNotification({
         count: result.submitted.length,
         errors: result.errors.length,
+        errorDetails: result.errors,
       });
       setSelectedTables(new Set());
     } catch (err) {
@@ -1053,50 +1073,64 @@ function ExecuteTab({ onGoToHistory }: { onGoToHistory: () => void }) {
       </div>
 
       {runNotification && (
-        <div className="flex items-center justify-between rounded-lg border px-4 py-3 bg-muted/40">
-          <div className="flex items-center gap-2 text-sm">
-            {runNotification.count > 0 ? (
-              <>
-                <CheckCircle2 className="h-4 w-4 text-green-600 shrink-0" />
-                <span>
-                  {t("runs.startedRuns", { count: runNotification.count })}
-                  {runNotification.errors > 0 && (
-                    <span className="text-destructive ml-1">
-                      {t("runs.runsFailedToSubmit", { count: runNotification.errors })}
-                    </span>
-                  )}
-                </span>
-              </>
-            ) : (
-              <>
-                <XCircle className="h-4 w-4 text-destructive shrink-0" />
-                <span className="text-destructive">
-                  {t("runs.allTablesFailedToSubmit", { count: runNotification.errors })}
-                </span>
-              </>
-            )}
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            {runNotification.count > 0 && (
+        <div className="rounded-lg border bg-muted/40">
+          <div className="flex items-center justify-between px-4 py-3">
+            <div className="flex items-center gap-2 text-sm">
+              {runNotification.count > 0 ? (
+                <>
+                  <CheckCircle2 className="h-4 w-4 text-green-600 shrink-0" />
+                  <span>
+                    {t("runs.startedRuns", { count: runNotification.count })}
+                    {runNotification.errors > 0 && (
+                      <span className="text-destructive ml-1">
+                        {t("runs.runsFailedToSubmit", { count: runNotification.errors })}
+                      </span>
+                    )}
+                  </span>
+                </>
+              ) : (
+                <>
+                  <XCircle className="h-4 w-4 text-destructive shrink-0" />
+                  <span className="text-destructive">
+                    {t("runs.allTablesFailedToSubmit", { count: runNotification.errors })}
+                  </span>
+                </>
+              )}
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              {runNotification.count > 0 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5 text-xs"
+                  onClick={onGoToHistory}
+                >
+                  <History className="h-3.5 w-3.5" />
+                  {t("runs.viewInHistory")}
+                </Button>
+              )}
               <Button
-                variant="outline"
+                variant="ghost"
                 size="sm"
-                className="gap-1.5 text-xs"
-                onClick={onGoToHistory}
+                className="h-7 w-7 p-0 text-muted-foreground"
+                onClick={() => setRunNotification(null)}
               >
-                <History className="h-3.5 w-3.5" />
-                {t("runs.viewInHistory")}
+                <X className="h-3.5 w-3.5" />
               </Button>
-            )}
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 w-7 p-0 text-muted-foreground"
-              onClick={() => setRunNotification(null)}
-            >
-              <X className="h-3.5 w-3.5" />
-            </Button>
+            </div>
           </div>
+          {runNotification.errorDetails && runNotification.errorDetails.length > 0 && (
+            // Surface the per-table reason strings so users can self-diagnose
+            // (previously the aggregate count was the only signal — a schema-
+            // rule submission failure looked identical to a permission failure).
+            <ul className="border-t border-border/60 px-4 py-2 space-y-1 text-xs font-mono text-destructive max-h-32 overflow-y-auto">
+              {runNotification.errorDetails.map((err, idx) => (
+                <li key={idx} className="break-words">
+                  {err}
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
 
@@ -1799,25 +1833,57 @@ function RunEditorError({ resetErrorBoundary }: { resetErrorBoundary: () => void
 // ===========================================================================
 
 function scopeLabel(cfg: ScheduleConfig, t: Translator): string {
-  switch (cfg.scope_mode) {
-    case "all": return t("runs.scopeAll");
-    case "catalog": return (cfg.scope_catalogs ?? []).join(", ") || t("runs.scopeNoCatalogs");
-    case "schema": return (cfg.scope_schemas ?? []).join(", ") || t("runs.scopeNoSchemas");
-    case "tables": {
-      const tables = cfg.scope_tables ?? [];
-      if (tables.length <= 2) return tables.join(", ") || t("runs.scopeNoTables");
-      return t("runs.scopeMoreSummary", { a: tables[0], b: tables[1], count: tables.length - 2 });
+  const base = (() => {
+    switch (cfg.scope_mode) {
+      case "all": return t("runs.scopeAll");
+      case "catalog": return (cfg.scope_catalogs ?? []).join(", ") || t("runs.scopeNoCatalogs");
+      case "schema": return (cfg.scope_schemas ?? []).join(", ") || t("runs.scopeNoSchemas");
+      case "tables": {
+        const tables = cfg.scope_tables ?? [];
+        if (tables.length <= 2) return tables.join(", ") || t("runs.scopeNoTables");
+        return t("runs.scopeMoreSummary", { a: tables[0], b: tables[1], count: tables.length - 2 });
+      }
+      default: return t("runs.scopeAllLabel");
     }
-    default: return t("runs.scopeAllLabel");
-  }
+  })();
+  const labels = cfg.scope_labels ?? [];
+  if (labels.length === 0) return base;
+  const labelStr = labels.map(({ key, value }) => formatLabel(key, value)).join(", ");
+  return `${base} · labels: ${labelStr}`;
 }
 
-function SchedulesListView({ isDeleting }: { isDeleting?: boolean }) {
+function SchedulesListView({
+  isDeleting,
+  isAdmin,
+}: {
+  isDeleting?: boolean;
+  isAdmin?: boolean;
+}) {
   const { t } = useTranslation();
+  const queryClient = useQueryClient();
   const [schedules, setSchedules] = useState<ScheduleConfigEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<"permission" | "other" | null>(null);
   const prevDeleting = useRef(isDeleting);
+
+  // Per-row mutation state. Keyed by ``schedule_name`` so concurrent
+  // pause/delete clicks on different rows don't trample each other.
+  const [pausingNames, setPausingNames] = useState<Set<string>>(new Set());
+  const [deletingNames, setDeletingNames] = useState<Set<string>>(new Set());
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+
+  const setBusy = (
+    setter: React.Dispatch<React.SetStateAction<Set<string>>>,
+    name: string,
+    busy: boolean,
+  ) => {
+    setter((prev) => {
+      const next = new Set(prev);
+      if (busy) next.add(name);
+      else next.delete(name);
+      return next;
+    });
+  };
 
   const handleFetchError = (err: unknown) => {
     setFetchError(isAxiosError(err) && err.response?.status === 403 ? "permission" : "other");
@@ -1838,6 +1904,59 @@ function SchedulesListView({ isDeleting }: { isDeleting?: boolean }) {
         .finally(() => setLoading(false));
     }
   }, [isDeleting]);
+
+  const handleTogglePause = async (sched: ScheduleConfigEntry) => {
+    const willPause = !sched.config.paused;
+    setBusy(setPausingNames, sched.schedule_name, true);
+    try {
+      const updated = await saveScheduleApi(sched.schedule_name, {
+        ...sched.config,
+        paused: willPause,
+      });
+      setSchedules((prev) =>
+        prev.map((s) =>
+          s.schedule_name === sched.schedule_name ? updated : s,
+        ),
+      );
+      await queryClient.refetchQueries({ queryKey: [...SCHEDULES_KEY] });
+      toast.success(
+        willPause
+          ? t("runs.schedulePaused", { name: sched.schedule_name })
+          : t("runs.scheduleResumed", { name: sched.schedule_name }),
+      );
+    } catch (err) {
+      if (isAxiosError(err) && err.response?.status === 403) {
+        toast.error(t("runs.permissionsManageSchedules"));
+      } else {
+        toast.error(
+          willPause
+            ? t("runs.failedPauseSchedule")
+            : t("runs.failedResumeSchedule"),
+        );
+      }
+    } finally {
+      setBusy(setPausingNames, sched.schedule_name, false);
+    }
+  };
+
+  const handleDelete = async (name: string) => {
+    setBusy(setDeletingNames, name, true);
+    try {
+      await deleteScheduleApi(name);
+      setSchedules((prev) => prev.filter((s) => s.schedule_name !== name));
+      await queryClient.refetchQueries({ queryKey: [...SCHEDULES_KEY] });
+      toast.success(t("runs.scheduleDeleted", { name }));
+    } catch (err) {
+      if (isAxiosError(err) && err.response?.status === 403) {
+        toast.error(t("runs.permissionsManageSchedules"));
+      } else {
+        toast.error(t("runs.failedDeleteSchedule"));
+      }
+    } finally {
+      setBusy(setDeletingNames, name, false);
+      setDeleteTarget(null);
+    }
+  };
 
   if (loading) {
     return (
@@ -1884,55 +2003,187 @@ function SchedulesListView({ isDeleting }: { isDeleting?: boolean }) {
   }
 
   return (
-    <div className="border rounded-lg overflow-hidden">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b bg-muted/50">
-            <th className="text-left font-medium text-muted-foreground px-4 py-3">{t("runs.headerName")}</th>
-            <th className="text-left font-medium text-muted-foreground px-4 py-3">{t("runs.headerFrequency")}</th>
-            <th className="text-left font-medium text-muted-foreground px-4 py-3">{t("runs.headerScope")}</th>
-            <th className="text-left font-medium text-muted-foreground px-4 py-3">{t("runs.headerSampleSize")}</th>
-            <th className="text-left font-medium text-muted-foreground px-4 py-3">{t("runs.headerLastUpdated")}</th>
-            <th className="text-left font-medium text-muted-foreground px-4 py-3">{t("runs.headerUpdatedBy")}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {schedules.map((sched) => (
-            <tr key={sched.schedule_name} className="border-b last:border-b-0 hover:bg-muted/30 transition-colors">
-              <td className="px-4 py-3">
-                <Link
-                  to="/runs/$runName"
-                  params={{ runName: sched.schedule_name }}
-                  className="font-medium text-primary hover:underline flex items-center gap-2"
-                >
-                  <CalendarClock className="h-4 w-4 shrink-0" />
-                  {sched.schedule_name}
-                </Link>
-              </td>
-              <td className="px-4 py-3 text-muted-foreground">
-                <Badge variant="outline" className="font-normal capitalize">
-                  {sched.config.frequency === "manual" ? t("runs.manual") : cronPreview(sched.config, t)}
-                </Badge>
-              </td>
-              <td className="px-4 py-3 text-muted-foreground">
-                <span className="truncate block max-w-[240px]" title={scopeLabel(sched.config, t)}>
-                  {scopeLabel(sched.config, t)}
-                </span>
-              </td>
-              <td className="px-4 py-3 text-muted-foreground">
-                {sched.config.sample_size != null ? sched.config.sample_size.toLocaleString() : t("runs.allRows")}
-              </td>
-              <td className="px-4 py-3 text-muted-foreground text-xs">
-                {sched.updated_at ? formatDate(sched.updated_at) : sched.created_at ? formatDate(sched.created_at) : "—"}
-              </td>
-              <td className="px-4 py-3 text-muted-foreground text-xs">
-                {sched.updated_by || sched.created_by || "—"}
-              </td>
+    <TooltipProvider delayDuration={150}>
+      <div className="border rounded-lg overflow-hidden">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b bg-muted/50">
+              <th className="text-left font-medium text-muted-foreground px-4 py-3">{t("runs.headerName")}</th>
+              <th className="text-left font-medium text-muted-foreground px-4 py-3">{t("runs.headerFrequency")}</th>
+              <th className="text-left font-medium text-muted-foreground px-4 py-3">{t("runs.headerScope")}</th>
+              <th className="text-left font-medium text-muted-foreground px-4 py-3">{t("runs.headerSampleSize")}</th>
+              <th className="text-left font-medium text-muted-foreground px-4 py-3">{t("runs.headerLastUpdated")}</th>
+              <th className="text-left font-medium text-muted-foreground px-4 py-3">{t("runs.headerUpdatedBy")}</th>
+              <th className="text-right font-medium text-muted-foreground px-4 py-3 w-[120px]">
+                <span className="sr-only">{t("runs.headerActions")}</span>
+              </th>
             </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+          </thead>
+          <tbody>
+            {schedules.map((sched) => {
+              const isPaused = !!sched.config.paused;
+              const pausing = pausingNames.has(sched.schedule_name);
+              const deleting = deletingNames.has(sched.schedule_name);
+              const rowBusy = pausing || deleting;
+              return (
+                <tr
+                  key={sched.schedule_name}
+                  className={cn(
+                    "border-b last:border-b-0 hover:bg-muted/30 transition-colors",
+                    isPaused && "bg-muted/20",
+                  )}
+                >
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-2">
+                      <Link
+                        to="/runs/$runName"
+                        params={{ runName: sched.schedule_name }}
+                        className="font-medium text-primary hover:underline flex items-center gap-2"
+                      >
+                        <CalendarClock className="h-4 w-4 shrink-0" />
+                        {sched.schedule_name}
+                      </Link>
+                      {isPaused && (
+                        <Badge variant="secondary" className="text-[10px] gap-1">
+                          <Pause className="h-3 w-3" />
+                          {t("runs.pausedBadge")}
+                        </Badge>
+                      )}
+                    </div>
+                  </td>
+                  <td className="px-4 py-3 text-muted-foreground">
+                    <Badge variant="outline" className="font-normal capitalize">
+                      {sched.config.frequency === "manual" ? t("runs.manual") : cronPreview(sched.config, t)}
+                    </Badge>
+                  </td>
+                  <td className="px-4 py-3 text-muted-foreground">
+                    <span className="truncate block max-w-[240px]" title={scopeLabel(sched.config, t)}>
+                      {scopeLabel(sched.config, t)}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-muted-foreground">
+                    {sched.config.sample_size != null ? sched.config.sample_size.toLocaleString() : t("runs.allRows")}
+                  </td>
+                  <td className="px-4 py-3 text-muted-foreground text-xs">
+                    {sched.updated_at ? formatDate(sched.updated_at) : sched.created_at ? formatDate(sched.created_at) : "—"}
+                  </td>
+                  <td className="px-4 py-3 text-muted-foreground text-xs">
+                    {sched.updated_by || sched.created_by || "—"}
+                  </td>
+                  <td className="px-2 py-2 text-right">
+                    {isAdmin ? (
+                      <div className="flex items-center justify-end gap-1">
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-8 w-8 p-0"
+                              onClick={() => handleTogglePause(sched)}
+                              disabled={rowBusy}
+                              aria-label={
+                                isPaused
+                                  ? t("runs.resumeSchedule")
+                                  : t("runs.pauseSchedule")
+                              }
+                            >
+                              {pausing ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : isPaused ? (
+                                <Play className="h-4 w-4" />
+                              ) : (
+                                <Pause className="h-4 w-4" />
+                              )}
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            {isPaused
+                              ? t("runs.resumeScheduleHint")
+                              : t("runs.pauseScheduleHint")}
+                          </TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-8 w-8 p-0 text-destructive hover:text-destructive hover:bg-destructive/10"
+                              onClick={() => setDeleteTarget(sched.schedule_name)}
+                              disabled={rowBusy}
+                              aria-label={t("runs.deleteSchedule")}
+                            >
+                              {deleting ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <Trash2 className="h-4 w-4" />
+                              )}
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            {t("runs.deleteScheduleHint")}
+                          </TooltipContent>
+                        </Tooltip>
+                      </div>
+                    ) : (
+                      <span className="text-[11px] text-muted-foreground/60 pr-2">
+                        {t("runs.adminOnly")}
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <AlertDialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeleteTarget(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t("runs.deleteScheduleConfirmTitle", { name: deleteTarget ?? "" })}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("runs.deleteScheduleConfirmBody")}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              disabled={
+                deleteTarget !== null && deletingNames.has(deleteTarget)
+              }
+            >
+              {t("runs.cancel")}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                // Don't let the dialog auto-close — we close it from
+                // ``handleDelete`` once the network round-trip resolves
+                // so the user sees the spinner.
+                e.preventDefault();
+                if (deleteTarget) handleDelete(deleteTarget);
+              }}
+              disabled={
+                deleteTarget !== null && deletingNames.has(deleteTarget)
+              }
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleteTarget !== null && deletingNames.has(deleteTarget) ? (
+                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+              ) : (
+                <Trash2 className="h-4 w-4 mr-2" />
+              )}
+              {t("runs.deleteSchedule")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </TooltipProvider>
   );
 }
 
@@ -1969,17 +2220,29 @@ function RunEditorContainer({
       setEntryNotFound(false);
       return;
     }
+    // Guard against fast navigation between schedules: if the user
+    // switches before the previous fetch resolves we don't want the
+    // late response to overwrite the newer schedule's state.
+    let cancelled = false;
     setLoadingEntry(true);
     fetchSchedule(currentRunName)
       .then((entry) => {
+        if (cancelled) return;
         setScheduleEntry(entry);
         setEntryNotFound(false);
       })
       .catch(() => {
+        if (cancelled) return;
         setScheduleEntry(null);
         setEntryNotFound(true);
       })
-      .finally(() => setLoadingEntry(false));
+      .finally(() => {
+        if (cancelled) return;
+        setLoadingEntry(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [currentRunName]);
 
   const [yamlContent, setYamlContent] = useState("");

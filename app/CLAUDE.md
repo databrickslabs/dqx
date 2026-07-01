@@ -32,7 +32,17 @@ RBAC is enforced — routes use `require_role(*roles)` from `backend/dependencie
 2. **Business user adjusts existing rules** — load → edit → optional dry-run → save (creates new version + approval request)
 3. **Engineer reviews and approves rules** — review GUI/YAML → optional dry-run → configure checks storage → approve → export to Delta table
 4. **Engineer generates rules via profiler** — select table → configure sampling → run profiler → review candidates → save
-5. **User browses and discovers rules** — filter by table/domain/owner/status → view versions → compare → import/export
+5. **Engineer pins a schema contract** — single-table editor → pick target table → add a `has_valid_schema` check → expected schema as DDL or reference table → strict/compatible mode → dry-run → save
+6. **Data product owner imports rules** — Import rules page → pick **From DQX YAML** or **From data contract** tab → review preview → save drafts
+7. **User browses and discovers rules** — filter by table/domain/owner/status → view versions → compare → import/export
+
+### Synthetic FQN convention (`__sql_check__/<name>`)
+
+Per-table rules carry a real `table_fqn`. **Cross-table SQL checks** are the only rules without a single home table, so they use the synthetic prefix `__sql_check__/<name>` and bucket under the **Cross-table rules** group in the UI catalog and edit-router. The runner reads their query body from `arguments.sql_query` and builds the input view from it (SQL fast-path, `is_sql_check=True`).
+
+Reference checks such as `has_valid_schema` and `foreign_key` are **per-table** — they carry a real `table_fqn`, are authored/edited in the single-table editor, group under their target table, and run through the standard row-level engine via the normal `create_view(table_fqn)` path. They are *not* synthetic and need no special dispatch.
+
+The cross-table dispatch lives in `backend/routes/v1/dryrun.py` and `backend/services/scheduler_service.py`. If you add another table-less rule kind, follow the synthetic-FQN convention and update both dispatchers in lock-step.
 
 ## Internal Storage
 

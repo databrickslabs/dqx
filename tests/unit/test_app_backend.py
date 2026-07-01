@@ -1949,6 +1949,7 @@ class TestDryRunRoutes:
             view_svc=mock_view_svc,
             app_conf=app_conf,
             sql=sql,
+            user_role=UserRole.VIEWER,
         )
 
         assert isinstance(result, RunStatusOut)
@@ -1973,6 +1974,7 @@ class TestDryRunRoutes:
                 view_svc=mock_view_svc,
                 app_conf=app_conf,
                 sql=sql,
+                user_role=UserRole.VIEWER,
             )
 
         assert exc.value.status_code == 500

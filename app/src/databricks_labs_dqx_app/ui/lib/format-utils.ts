@@ -135,3 +135,86 @@ export function tokenToLabel(token: string): { key: string; value: string } {
   if (idx < 0) return { key: token, value: "" };
   return { key: token.slice(0, idx), value: token.slice(idx + 1) };
 }
+
+/**
+ * Split a Spark DDL string into top-level field definitions.
+ *
+ * We split on commas at bracket-depth 0 only, so nested types keep
+ * their inner commas intact. Examples that must survive:
+ *
+ *   STRUCT<a: INT, b: STRING>
+ *   ARRAY<STRING>
+ *   MAP<STRING, INT>
+ *   DECIMAL(10, 2)
+ *
+ * Pure string parsing, no Spark dependency on the client.
+ */
+export function splitDdlFields(ddl: string): string[] {
+  const fields: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < ddl.length; i++) {
+    const c = ddl[i];
+    if (c === "<" || c === "(" || c === "[") depth++;
+    else if (c === ">" || c === ")" || c === "]") depth = Math.max(0, depth - 1);
+    else if (c === "," && depth === 0) {
+      const chunk = ddl.slice(start, i).trim();
+      if (chunk) fields.push(chunk);
+      start = i + 1;
+    }
+  }
+  const tail = ddl.slice(start).trim();
+  if (tail) fields.push(tail);
+  return fields;
+}
+
+/**
+ * Extract the top-level field name from a single DDL field definition,
+ * stripping backticks. Returns ``null`` for chunks that don't start
+ * with a valid identifier (defensive — malformed input shouldn't
+ * silently drop the whole filter).
+ */
+export function extractDdlFieldName(fieldDef: string): string | null {
+  const trimmed = fieldDef.trimStart();
+  const m = trimmed.match(/^(`[^`]+`|[A-Za-z_][A-Za-z0-9_]*)/);
+  if (!m) return null;
+  return m[1].replace(/^`|`$/g, "");
+}
+
+/**
+ * Trim a Spark DDL string to a subset of its top-level columns.
+ *
+ * - ``mode = "include"``: keep only columns whose name (case-insensitive)
+ *   is in *names*.
+ * - ``mode = "exclude"``: drop columns whose name is in *names*; keep
+ *   everything else.
+ *
+ * Returns the rewritten DDL preserving original ordering. Unparseable
+ * chunks (no leading identifier) are passed through unchanged so we
+ * don't silently mangle exotic input — caller can still validate.
+ *
+ * This is the workaround for the DQX ``has_valid_schema`` quirk where
+ * the ``columns`` argument only filters the *actual* dataframe and
+ * leaves the *expected* schema intact: trimming the expected schema
+ * on this side keeps both sides of the comparison aligned.
+ */
+export function filterDdlByColumns(
+  ddl: string,
+  names: string[],
+  mode: "include" | "exclude",
+): string {
+  if (names.length === 0) return ddl;
+  const lookup = new Set(names.map((s) => s.toLowerCase()));
+  const fields = splitDdlFields(ddl);
+  const kept = fields.filter((def) => {
+    const name = extractDdlFieldName(def);
+    if (!name) {
+      // Unparseable chunk — drop on include (we can't prove it matches)
+      // and keep on exclude (it's not in our exclude list either way).
+      return mode === "exclude";
+    }
+    const matched = lookup.has(name.toLowerCase());
+    return mode === "include" ? matched : !matched;
+  });
+  return kept.join(", ");
+}
