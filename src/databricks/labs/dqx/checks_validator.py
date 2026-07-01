@@ -5,12 +5,73 @@ from collections.abc import Callable
 from types import UnionType
 from typing import Any, get_origin, get_args
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
+from pydantic_core import ErrorDetails
 
 from databricks.labs.dqx.checks_resolver import resolve_check_function
 from databricks.labs.dqx.rule import Criticality
 
 logger = logging.getLogger(__name__)
+
+
+class CheckBlock(BaseModel):
+    """Pydantic schema for the inner 'check' block of a rule metadata dict.
+
+    Validates the structural shape (function name present, for_each_column is a non-empty list,
+    arguments is a dict) but does NOT validate that the function exists in the registry or that
+    the arguments satisfy the function signature — those checks happen in *ChecksValidator*.
+
+    Uses *extra="ignore"* to preserve the pre-migration behaviour: unknown keys in the check block
+    are tolerated (the hand-rolled validator never rejected them). Unknown check-function
+    *arguments* are still reported by *ChecksValidator* via signature validation.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    function: str
+    arguments: dict[str, Any] = {}
+    for_each_column: list[Any] | None = None
+
+    @field_validator("for_each_column")
+    @classmethod
+    def _non_empty_for_each_column(cls, value: list[Any] | None) -> list[Any] | None:
+        if value is not None and len(value) == 0:
+            raise ValueError("'for_each_column' must not be empty")
+        return value
+
+
+class CheckSpec(BaseModel):
+    """Pydantic schema for a single top-level rule metadata dict.
+
+    Validates the structural shape (required 'check' key, optional known keys, criticality enum)
+    but does NOT resolve functions or validate argument types — those are done by *ChecksValidator*
+    after structural validation passes.
+
+    Uses *extra="ignore"* to preserve the pre-migration behaviour: unknown top-level keys are
+    tolerated (the hand-rolled validator never rejected them, and storage backends persist extra
+    columns alongside the check). Rejecting them would be a breaking change for existing check
+    definitions and would fail the load -> apply round-trip for stored checks.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    check: CheckBlock
+    criticality: str = Criticality.ERROR.value
+    name: str | None = None
+    filter: str | None = None
+    user_metadata: dict[str, str] | None = None
+    message_expr: str | None = None
+
+    @field_validator("criticality")
+    @classmethod
+    def _valid_criticality(cls, value: str) -> str:
+        valid = {c.value for c in Criticality}
+        if value not in valid:
+            raise ValueError(
+                f"Invalid 'criticality' value: '{value}'. "
+                f"Expected '{Criticality.WARN.value}' or '{Criticality.ERROR.value}'."
+            )
+        return value
 
 
 class ChecksValidationStatus(BaseModel):
@@ -55,10 +116,12 @@ class ChecksValidator:
     """
     Validates declarative quality rules (checks).
 
-    Ensures each check references a defined function and that merged *arguments* satisfy the
-    function signature: required parameters must be present (*for_each_column* may supply
-    *column* or *columns*); a top-level rule *filter* is not a substitute for missing
-    arguments. Unknown argument names and type mismatches (where annotations exist) are reported.
+    Structural shape (required keys, known top-level keys, criticality enum value, for_each_column
+    type) is validated via Pydantic (*CheckSpec*).  After structural validation passes, per-check-
+    function argument validation is run against *inspect.signature*: required parameters must be
+    present (*for_each_column* may supply *column* or *columns*); a top-level rule *filter* is not
+    a substitute for missing arguments.  Unknown argument names and type mismatches (where
+    annotations exist) are also reported.
     """
 
     @staticmethod
@@ -67,6 +130,17 @@ class ChecksValidator:
         custom_check_functions: dict[str, Callable] | None = None,
         validate_custom_check_functions: bool = True,
     ) -> ChecksValidationStatus:
+        """Validate a list of check metadata dicts.
+
+        Args:
+            checks: List of check metadata dicts to validate.
+            custom_check_functions: Optional mapping of custom function names to callables.
+            validate_custom_check_functions: If False, unknown/unregistered functions are tolerated
+                (used by LLM and profiler paths).
+
+        Returns:
+            A *ChecksValidationStatus* accumulating all errors found.
+        """
         status = ChecksValidationStatus()
 
         for check in checks:
@@ -86,60 +160,119 @@ class ChecksValidator:
     def _validate_checks_dict(
         check: dict, custom_check_functions: dict[str, Callable] | None, validate_custom_check_functions: bool
     ) -> list[str]:
-        """
-        Validates the structure and content of a given check dictionary.
+        """Validate the structure and content of a single check metadata dict.
+
+        First runs Pydantic structural validation (*CheckSpec.model_validate*) to catch shape
+        errors (missing 'check' key, bad criticality, unexpected top-level fields, for_each_column
+        not a list / empty).  Then runs signature-based argument validation against the resolved
+        check function.
 
         Args:
-            check: The check dictionary to validate.
-            custom_check_functions: A dictionary containing custom check functions.
-            validate_custom_check_functions: If True, validate custom check functions.
+            check: The check dict to validate.
+            custom_check_functions: Optional mapping of custom function names to callables.
+            validate_custom_check_functions: If False, unknown functions are silently skipped.
 
         Returns:
-            A list of error messages if any validation fails, otherwise an empty list.
+            A list of error messages (empty on success).
         """
-        errors: list[str] = []
+        # --- Structural validation via Pydantic ---
+        structural_errors = ChecksValidator._pydantic_validate_structure(check)
+        if structural_errors:
+            return structural_errors
 
-        if "criticality" in check and check["criticality"] not in [c.value for c in Criticality]:
-            errors.append(
-                f"Invalid 'criticality' value: '{check['criticality']}'. "
-                f"Expected '{Criticality.WARN.value}' or '{Criticality.ERROR.value}'. "
-                f"Check details: {check}"
-            )
+        # Structure is valid; now run signature-based argument validation.
+        return ChecksValidator._validate_check_block(check, custom_check_functions, validate_custom_check_functions)
 
-        if "check" not in check:
-            errors.append(f"'check' field is missing: {check}")
-        elif not isinstance(check["check"], dict):
-            errors.append(f"'check' field should be a dictionary: {check}")
-        else:
-            errors.extend(
-                ChecksValidator._validate_check_block(check, custom_check_functions, validate_custom_check_functions)
-            )
+    @staticmethod
+    def _pydantic_validate_structure(check: dict) -> list[str]:
+        """Run *CheckSpec.model_validate* on a single check dict and collect errors.
 
-        return errors
+        Translates Pydantic *ValidationError* into human-readable strings that match the
+        existing error format expected by callers and tests.  The original *check* dict is
+        included in error messages for context, as the hand-rolled validator did before.
+
+        Args:
+            check: The raw check dict to validate structurally.
+
+        Returns:
+            A list of error message strings (empty when the check passes structural validation).
+        """
+        try:
+            CheckSpec.model_validate(check)
+            return []
+        except ValidationError as exc:
+            return [
+                msg
+                for pydantic_error in exc.errors()
+                for msg in (ChecksValidator._translate_pydantic_error(pydantic_error, check),)
+                if msg
+            ]
+
+    @staticmethod
+    def _translate_pydantic_error(error: ErrorDetails, check: dict) -> str | None:
+        """Translate a single Pydantic validation error dict into a human-readable message.
+
+        Args:
+            error: One error entry from *ValidationError.errors()*.
+            check: The original check dict, included in messages for context.
+
+        Returns:
+            A human-readable error string, or *None* if the error should be skipped.
+        """
+        loc = " -> ".join(str(loc_part) for loc_part in error["loc"]) if error["loc"] else ""
+        msg = error["msg"]
+        error_type = error.get("type", "")
+
+        if error_type == "missing" and loc == "check":
+            return f"'check' field is missing: {check}"
+        if error_type in {"dict_type", "model_type"} and loc == "check":
+            return f"'check' field should be a dictionary: {check}"
+        if error_type == "missing" and loc == "check -> function":
+            return f"'function' field is missing in the 'check' block: {check}"
+        if "criticality" in loc:
+            # Strip Pydantic's "Value error, " prefix to match the existing message format.
+            clean_msg = msg.replace("Value error, ", "")
+            return f"{clean_msg} Check details: {check}"
+        if "for_each_column" in loc:
+            return ChecksValidator._translate_for_each_column_error(msg, check)
+        if loc == "check -> arguments" and error_type == "dict_type":
+            return f"'arguments' should be a dictionary in the 'check' block: {check}"
+        return f"{msg}: {check}"
+
+    @staticmethod
+    def _translate_for_each_column_error(pydantic_msg: str, check: dict) -> str:
+        """Translate a Pydantic for_each_column validation error into the expected message.
+
+        Args:
+            pydantic_msg: The raw Pydantic error message string.
+            check: The original check dict, included in messages for context.
+
+        Returns:
+            The human-readable error string in the expected format.
+        """
+        clean = pydantic_msg.replace("Value error, ", "")
+        if "non-empty" in clean or "must not be empty" in clean:
+            return f"'for_each_column' should not be empty in the 'check' block: {check}"
+        return f"'for_each_column' should be a list in the 'check' block: {check}"
 
     @staticmethod
     def _validate_check_block(
         check: dict, custom_check_functions: dict[str, Callable] | None, validate_custom_check_functions: bool
     ) -> list[str]:
-        """
-        Validates a check block within a configuration.
+        """Validate the function reference and per-function argument types/presence.
+
+        Structural validation (via Pydantic) has already passed, so 'check' and 'function' are
+        guaranteed to be present and well-typed here.
 
         Args:
             check: The check configuration to validate.
-            custom_check_functions: A dictionary containing custom check functions.
-            validate_custom_check_functions: If True, validate custom check functions.
+            custom_check_functions: Optional mapping of custom function names to callables.
+            validate_custom_check_functions: If False, unknown functions are silently skipped.
 
         Returns:
             A list of error messages if any validation fails, otherwise an empty list.
-
-        Raises:
-            InvalidCheckError: if the function is not found and fail_on_missing is True.
         """
         check_block = check["check"]
-
-        if "function" not in check_block:
-            return [f"'function' field is missing in the 'check' block: {check}"]
-
         func_name = check_block["function"]
         func = resolve_check_function(func_name, custom_check_functions, fail_on_missing=False)
         if not callable(func):
@@ -150,21 +283,13 @@ class ChecksValidator:
         arguments = check_block.get("arguments", {})
         for_each_column = check_block.get("for_each_column", [])
 
-        if "for_each_column" in check_block and for_each_column is not None:
-            if not isinstance(for_each_column, list):
-                return [f"'for_each_column' should be a list in the 'check' block: {check}"]
-
-            if len(for_each_column) == 0:
-                return [f"'for_each_column' should not be empty in the 'check' block: {check}"]
-
         return ChecksValidator._validate_check_function_arguments(arguments, func, for_each_column, check)
 
     @staticmethod
     def _validate_check_function_arguments(
         arguments: dict, func: Callable, for_each_column: list, check: dict
     ) -> list[str]:
-        """
-        Validates the provided arguments for a given function and updates the errors list if any validation fails.
+        """Validate arguments against the function signature.
 
         Args:
             arguments: A dictionary of arguments to validate.
@@ -198,8 +323,7 @@ class ChecksValidator:
 
     @staticmethod
     def _validate_func_args(arguments: dict, func: Callable, check: dict, func_parameters: Any) -> list[str]:
-        """
-        Validates the arguments passed to a function against its signature.
+        """Validate argument names and types against the function signature.
 
         Args:
             arguments: A dictionary of argument names and their values to be validated.
@@ -242,10 +366,18 @@ class ChecksValidator:
     def _missing_required_arguments(
         arguments: dict[str, Any], func: Callable, check: dict, func_parameters: Any
     ) -> list[str]:
-        """
-        Ensure every parameter without a default is present in *arguments*.
+        """Ensure every parameter without a default is present in *arguments*.
 
-        Metadata must supply all required check-function parameters (e.g. *column* for *regex_match*)
+        Metadata must supply all required check-function parameters (e.g. *column* for *regex_match*).
+
+        Args:
+            arguments: Provided argument dict.
+            func: The check function being validated.
+            check: The full check dict for error context.
+            func_parameters: Signature parameters of the function.
+
+        Returns:
+            A list of error messages for missing required arguments.
         """
         errors: list[str] = []
         for name, param in func_parameters.items():
@@ -320,8 +452,7 @@ class ChecksValidator:
     def _validate_func_list_args(
         arguments: dict, func: Callable, check: dict, expected_type_args: tuple[type, ...], value: list[Any]
     ) -> list[str]:
-        """
-        Validates the list arguments passed to a function against its signature.
+        """Validate list-typed arguments against expected item types.
 
         Args:
             arguments: A dictionary of argument names and their values to be validated.

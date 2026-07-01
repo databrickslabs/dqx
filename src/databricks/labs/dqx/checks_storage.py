@@ -60,6 +60,7 @@ from databricks.labs.dqx.checks_serializer import (
     SerializerFactory,
     ChecksNormalizer,
     deserialize_checks,
+    project_to_check_schema,
 )
 from databricks.labs.dqx.checks_validator import ChecksValidator
 from databricks.labs.dqx.rule_fingerprint import compute_rule_set_fingerprint_by_metadata
@@ -779,7 +780,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
                     f"for run_config_name='{config.run_config_name}'. "
                     f"Make sure the profiler has run successfully and saved checks to this location."
                 )
-            checks_dict = [dict(check) for check in checks]
+            checks_dict = [project_to_check_schema(dict(check)) for check in checks]
 
             # Denormalize special markers back to objects
             return ChecksNormalizer.denormalize(checks_dict)

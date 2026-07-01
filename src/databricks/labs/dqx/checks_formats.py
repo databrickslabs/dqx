@@ -1,18 +1,24 @@
-import json
-from collections.abc import Callable
+"""Convenience format maps derived from *SerializerFactory*.
+
+*FILE_SERIALIZERS* and *FILE_DESERIALIZERS* are kept for backwards-compatibility with
+callers that expect plain callables keyed by file extension.  Their content is now
+derived from *SerializerFactory* — the single source of truth for supported extensions
+and serializer implementations — so that adding a new format requires only one change.
+"""
+
 from typing import Any
+from collections.abc import Callable
 
-import yaml
+from databricks.labs.dqx.checks_serializer import SerializerFactory
 
-# Keep format constants isolated to avoid import cycles (config <-> checks_serializer).
+# Build FILE_SERIALIZERS: ext -> (list[dict]) -> str
 FILE_SERIALIZERS: dict[str, Callable[[list[dict[Any, Any]]], str]] = {
-    ".json": json.dumps,
-    ".yml": yaml.safe_dump,
-    ".yaml": yaml.safe_dump,
+    ext: SerializerFactory.create_serializer(ext).serialize for ext in SerializerFactory.get_supported_extensions()
 }
 
+# Build FILE_DESERIALIZERS: ext -> (file_like_or_str) -> list[dict]
+# yaml.safe_load accepts both str and file-like objects; json.load requires a file-like.
+# The raw callables from the serializer classes already handle these conventions.
 FILE_DESERIALIZERS: dict[str, Callable] = {
-    ".json": json.load,
-    ".yaml": yaml.safe_load,
-    ".yml": yaml.safe_load,
+    ext: SerializerFactory.create_serializer(ext).deserialize for ext in SerializerFactory.get_supported_extensions()
 }
