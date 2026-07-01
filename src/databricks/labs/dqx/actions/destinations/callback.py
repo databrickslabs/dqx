@@ -30,7 +30,7 @@ class CallbackDQAlertDestination(AlertDestination):
     the *callback* field.  It is still a valid runtime destination.
 
     Attributes:
-        type: Discriminator literal, always ``"callback"``.
+        type: Discriminator literal, always *"callback"*.
         name: Logical name for this destination instance.
         callback: Python callable invoked by *deliver*.  Must accept an
             *AlertMessage* and an *ActionContext* and return *None*.

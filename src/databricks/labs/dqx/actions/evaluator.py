@@ -12,7 +12,7 @@ all configured *DQAction* instances through their full lifecycle:
    the action (not-fired event recorded, continue).
 
 3. **Polymorphic dispatch** — *dq.action.execute(context, services)* is called
-   uniformly for all action types.  No ``isinstance`` checks are performed here;
+   uniformly for all action types.  No *isinstance* checks are performed here;
    new action types extend the system without modifying this evaluator
    (Open/Closed principle).
 
@@ -46,7 +46,7 @@ class ActionEvaluator:
     2. Call *state_store.should_fire*.  On *False*: record a not-fired
        *AlertEvent* and continue.
     3. Execute the action via *dq.action.execute(context, services)* —
-       **no** ``isinstance`` checks, purely polymorphic dispatch.  Record
+       **no** *isinstance* checks, purely polymorphic dispatch.  Record
        a fired *AlertEvent* and append the *ActionResult*.
     4. Catch *TerminalActionError* into a deferred list.
 

@@ -7,7 +7,7 @@ factory that assembles an *AlertMessage* from run-time primitives.
 
 Keeping the builder free of any reference to *ActionContext* (defined in a
 later task) prevents circular imports: the evaluator in Task 12 can call
-``StandardMessageBuilder.build(...)`` using only primitive values already
+*StandardMessageBuilder.build(...)* using only primitive values already
 available at evaluation time.
 """
 
@@ -41,7 +41,7 @@ class AlertMessage:
             in notification payloads.  Contains one entry per observed metric
             under a key of the form *metric.NAME* (for example, *metric.error_row_count*)
             plus un-prefixed reserved entries for *condition*, *run_id*,
-            *run_time*, and *table*.  The ``"metric."`` prefix ensures metric
+            *run_time*, and *table*.  The *"metric."* prefix ensures metric
             names never silently overwrite the reserved metadata keys.
     """
 
@@ -63,7 +63,7 @@ class StandardMessageBuilder:
     circular import.  Call it as a static method — no constructor arguments
     are needed:
 
-    ```python
+    **python
     msg = StandardMessageBuilder.build(
         action_name="notify_on_errors",
         condition="error_row_count > 0",
@@ -72,7 +72,7 @@ class StandardMessageBuilder:
         run_time=datetime.now(timezone.utc),
         table="catalog.schema.my_table",
     )
-    ```
+    **
     """
 
     @staticmethod

@@ -13,9 +13,9 @@ Wire format
   to a *scope/key* reference (via *SecretOrStr*), so it round-trips losslessly
   without being confused with a plain string.
 - *CallbackDQAlertDestination* instances are skipped during *to_dict* with a
-  ``WARNING``-level log message because they hold a live Python callable that
+  *WARNING*-level log message because they hold a live Python callable that
   cannot be persisted (see *DQAlert._serialize_destinations*).
-- The ``"condition"`` field is omitted from the output of *to_dict* when it is
+- The *"condition"* field is omitted from the output of *to_dict* when it is
   *None*, and defaults back to *None* when absent on *from_dict*.
 
 Security
@@ -46,7 +46,7 @@ class ActionSerializer:
 
     *CallbackDQAlertDestination* instances are skipped during *to_dict* because
     they hold a live Python callable that cannot be persisted.  The
-    ``"condition"`` field is omitted when *None*.
+    *"condition"* field is omitted when *None*.
     """
 
     @staticmethod
@@ -57,7 +57,7 @@ class ActionSerializer:
             action: The *DQAction* to serialize.
 
         Returns:
-            A JSON-serializable dict representing *action*.  The ``"condition"``
+            A JSON-serializable dict representing *action*.  The *"condition"*
             key is omitted when the condition is *None*.
         """
         result: dict[str, object] = action.model_dump(mode="json")
@@ -77,7 +77,7 @@ class ActionSerializer:
 
         Raises:
             InvalidActionError: If the payload is invalid — for example an
-                unknown action or destination ``"type"``, or a missing required
+                unknown action or destination *"type"*, or a missing required
                 field.
         """
         try:

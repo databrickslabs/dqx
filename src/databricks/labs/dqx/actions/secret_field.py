@@ -17,7 +17,7 @@ from databricks.labs.dqx.config import DQSecret
 
 
 def _parse_secret_or_str(value: object) -> object:
-    """Convert a tagged ``{"secret": "scope/key"}`` dict into a *DQSecret*.
+    """Convert a tagged dict (whose only key is *secret*, mapping to a *scope/key* reference) into a *DQSecret*.
 
     Plain strings and existing *DQSecret* instances pass through unchanged.
 
@@ -33,7 +33,7 @@ def _parse_secret_or_str(value: object) -> object:
 
 
 def _dump_secret_or_str(value: object) -> object:
-    """Serialize a *DQSecret* to its tagged ``{"secret": "scope/key"}`` form.
+    """Serialize a *DQSecret* to its tagged dict form (the key *secret* mapping to a *scope/key* reference).
 
     Plain strings (and *None*) are returned unchanged so the tagged form is only
     used for *DQSecret* values.

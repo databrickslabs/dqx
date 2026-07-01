@@ -1,14 +1,14 @@
 """Safe AST-based condition evaluator for DQX action gating.
 
 Conditions are arithmetic/boolean expressions evaluated against a metrics dict
-(e.g. ``"error_row_count > 0 or warning_row_count > 0"``).  They are parsed
-with :func:`ast.parse` in ``"eval"`` mode and walked by a restricted visitor
+(e.g. *"error_row_count > 0 or warning_row_count > 0"*).  They are parsed
+with *ast.parse* in *"eval"* mode and walked by a restricted visitor
 that allows only a small, safe subset of AST nodes.  Any node outside that
-allowlist — including :class:`ast.Call`, :class:`ast.Attribute`,
-:class:`ast.Subscript`, lambdas, and all comprehensions — raises
-:class:`~databricks.labs.dqx.errors.InvalidConditionError`.
+allowlist — including *ast.Call*, *ast.Attribute*,
+*ast.Subscript*, lambdas, and all comprehensions — raises
+*InvalidConditionError*.
 
-Security: ``eval()`` / ``exec()`` / ``compile(mode="exec")`` are never used.
+Security: *eval()* / *exec()* / *compile(mode="exec")* are never used.
 The evaluator is purely structural, operating on the parsed AST.
 """
 
@@ -79,9 +79,9 @@ def _op_pow(lhs: object, rhs: object) -> object:
     """Raise *lhs* to the power *rhs* (must be numeric).
 
     Operands are coerced to *float* before exponentiation. *typing.cast* is a runtime
-    no-op, so casting alone would leave ``int ** int`` to build an unbounded
+    no-op, so casting alone would leave integer-to-integer exponentiation to build an unbounded
     arbitrary-precision integer (a CPU/memory denial-of-service for conditions such as
-    ``a ** b`` with large integer metrics). Real *float* coercion bounds the result —
+    *a* raised to the power *b* with large integer metrics). Real *float* coercion bounds the result —
     an oversized exponentiation raises *OverflowError*, which the caller maps to
     *InvalidConditionError*.
     """
@@ -210,10 +210,10 @@ def _validate_tree(tree: ast.AST) -> None:
     This full-tree pre-pass is unconditionally called before any evaluation so
     that short-circuit evaluation cannot bypass the structural check.  A single
     disallowed node anywhere in the tree — even in a branch that would never be
-    reached at runtime — causes an :class:`~databricks.labs.dqx.errors.InvalidConditionError`.
+    reached at runtime — causes an *InvalidConditionError*.
 
     Args:
-        tree: The root AST node (typically an :class:`ast.Expression`).
+        tree: The root AST node (typically an *ast.Expression*).
 
     Raises:
         InvalidConditionError: If any node type is not in the allowlist.
@@ -237,7 +237,7 @@ def _coerce_numeric(value: object) -> object:
     If *value* is already a number, it is returned as-is.  If it is a
     *str* that parses as a float, the float is returned.  All other types are
     returned unchanged so that the normal Python operator will produce a
-    meaningful ``TypeError`` if the expression is type-incompatible.
+    meaningful *TypeError* if the expression is type-incompatible.
     """
     if isinstance(value, (int, float, bool)):
         return value
@@ -258,17 +258,17 @@ _EvaluatorFn = collections.abc.Callable[["ast.AST", "dict[str, object] | None"],
 
 
 def _eval_constant(node: ast.AST, _metrics: dict[str, object] | None = None) -> object:
-    """Evaluate a :class:`ast.Constant` node.
+    """Evaluate a *ast.Constant* node.
 
     The *_metrics* parameter is accepted (and ignored) so that all evaluators
-    in the dispatch table share the same ``(node, metrics)`` signature.
+    in the dispatch table share the same *(node, metrics)* signature.
     Constant-type validation has already been performed by the pre-pass.
     """
     return cast(ast.Constant, node).value
 
 
 def _eval_name(node: ast.Name, metrics: dict[str, object] | None) -> object:
-    """Evaluate a :class:`ast.Name` node against *metrics*.
+    """Evaluate a *ast.Name* node against *metrics*.
 
     Returns a placeholder when *metrics* is *None* (validate-only mode).
     """
@@ -281,7 +281,7 @@ def _eval_name(node: ast.Name, metrics: dict[str, object] | None) -> object:
 
 
 def _eval_boolop(node: ast.AST, metrics: dict[str, object] | None) -> object:
-    """Evaluate a :class:`ast.BoolOp` (``and`` / ``or``) node.
+    """Evaluate a *ast.BoolOp* (*and* / *or*) node.
 
     Short-circuit evaluation is safe here because the full-tree pre-pass has
     already validated every node in the tree before any evaluation begins.
@@ -304,7 +304,7 @@ def _eval_boolop(node: ast.AST, metrics: dict[str, object] | None) -> object:
 
 
 def _eval_unaryop(node: ast.AST, metrics: dict[str, object] | None) -> object:
-    """Evaluate a :class:`ast.UnaryOp` (``not``, ``-``, ``+``) node."""
+    """Evaluate a *ast.UnaryOp* (*not*, *-*, *+*) node."""
     unary_node = cast(ast.UnaryOp, node)
     op_func = _UNARY_OPS.get(type(unary_node.op))
     if op_func is None:
@@ -317,7 +317,7 @@ def _eval_unaryop(node: ast.AST, metrics: dict[str, object] | None) -> object:
 
 
 def _eval_binop(node: ast.AST, metrics: dict[str, object] | None) -> object:
-    """Evaluate a :class:`ast.BinOp` (+, -, *, /, //, %, **) node."""
+    """Evaluate a *ast.BinOp* (+, -, *, /, //, %, **) node."""
     bin_node = cast(ast.BinOp, node)
     op_func = _BIN_OPS.get(type(bin_node.op))
     if op_func is None:
@@ -331,7 +331,7 @@ def _eval_binop(node: ast.AST, metrics: dict[str, object] | None) -> object:
 
 
 def _eval_compare(node: ast.AST, metrics: dict[str, object] | None) -> object:
-    """Evaluate a :class:`ast.Compare` node, including chained comparisons."""
+    """Evaluate a *ast.Compare* node, including chained comparisons."""
     cmp_node = cast(ast.Compare, node)
     for cmp_op in cmp_node.ops:
         if type(cmp_op) not in _CMP_OPS:
@@ -371,9 +371,9 @@ def _walk(node: ast.AST, metrics: dict[str, object] | None) -> object:
     """Recursively evaluate *node* against *metrics*.
 
     When *metrics* is *None* (validate-only mode) the function performs a
-    structural walk without resolving :class:`ast.Name` nodes — unknown names
+    structural walk without resolving *ast.Name* nodes — unknown names
     are not flagged at this stage.  The full-tree allowlist check is performed
-    by :func:`_validate_tree` before this function is ever called.
+    by *_validate_tree* before this function is ever called.
     """
     if isinstance(node, ast.Expression):
         return _walk(node.body, metrics)
@@ -397,7 +397,7 @@ def _walk(node: ast.AST, metrics: dict[str, object] | None) -> object:
 
 
 def _parse_condition(condition: str) -> ast.Expression:
-    """Parse *condition* string into an :class:`ast.Expression` tree.
+    """Parse *condition* string into an *ast.Expression* tree.
 
     Raises:
         InvalidConditionError: If *condition* is empty or has a syntax error.
@@ -419,30 +419,30 @@ class ConditionEvaluator:
     """Safe evaluator for DQX action-gating condition expressions.
 
     Conditions are simple arithmetic/boolean expressions of the form
-    ``"error_row_count > 0 or warning_row_count > 0"``.  They are parsed via
-    :func:`ast.parse` (``mode="eval"``) and evaluated by a restricted AST
+    *"error_row_count > 0 or warning_row_count > 0"*.  They are parsed via
+    *ast.parse* (*mode="eval"*) and evaluated by a restricted AST
     walker that allows only:
 
-    - Literals: :class:`ast.Constant` with *int*, *float*, *bool*, or *str*
-    - Names: :class:`ast.Name` — resolved from the *metrics* dict at evaluate
+    - Literals: *ast.Constant* with *int*, *float*, *bool*, or *str*
+    - Names: *ast.Name* — resolved from the *metrics* dict at evaluate
       time; numeric strings are coerced to *float* automatically
-    - Boolean ops: ``and``, ``or``
-    - Unary ops: ``not``, ``-``, ``+``
-    - Binary ops: ``+``, ``-``, ``*``, ``/``, ``//``, ``%``, ``**``
-    - Comparisons: ``<``, ``<=``, ``>``, ``>=``, ``==``, ``!=``
+    - Boolean ops: and, or
+    - Unary ops: not, unary minus, unary plus
+    - Binary ops: add, subtract, multiply, divide, floor-divide, modulo, power
+    - Comparisons: lt, le, gt, ge, eq, ne
 
     Any other node type (calls, attribute access, subscripts, lambdas,
-    comprehensions, …) raises :class:`~databricks.labs.dqx.errors.InvalidConditionError`.
+    comprehensions, …) raises *InvalidConditionError*.
 
     A full-tree structural pre-pass is performed unconditionally before any
     evaluation, so short-circuit evaluation cannot bypass the allowlist.
 
     Usage:
 
-    ```python
+    **python
     ConditionEvaluator.validate("error_row_count > 0")
     result = ConditionEvaluator.evaluate("error_row_count > 0", {"error_row_count": 5})
-    ```
+    **
     """
 
     @staticmethod
@@ -451,7 +451,7 @@ class ConditionEvaluator:
 
         Parses and walks every node in the AST, rejecting disallowed node types
         and syntax errors.  Name resolution is *not* performed — unknown metric
-        names are only caught at :meth:`evaluate` time.  Call this method at
+        names are only caught at *evaluate* time.  Call this method at
         *DQAction* construction time to surface malformed conditions early.
 
         Args:
@@ -470,7 +470,7 @@ class ConditionEvaluator:
         """Evaluate *condition* against *metrics* and return a bool result.
 
         Parses *condition*, performs a full-tree structural validation pass,
-        resolves :class:`ast.Name` nodes from *metrics* (coercing numeric
+        resolves *ast.Name* nodes from *metrics* (coercing numeric
         strings to *float*), and returns the final truth value.
 
         Args:

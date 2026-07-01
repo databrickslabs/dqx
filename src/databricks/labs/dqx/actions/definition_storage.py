@@ -14,9 +14,9 @@ Schema
 Both handlers store each *DQAction* as a serialized JSON string alongside the
 *run_config_name* and a *created_at* timestamp:
 
-- ``action_json`` — JSON string produced by *ActionSerializer.to_dict*.
-- ``run_config_name`` — run configuration name for multi-run isolation.
-- ``created_at`` — timestamp at write time.
+- *action_json* — JSON string produced by *ActionSerializer.to_dict*.
+- *run_config_name* — run configuration name for multi-run isolation.
+- *created_at* — timestamp at write time.
 
 Security
 --------
@@ -57,10 +57,10 @@ ACTIONS_TABLE_SCHEMA = "action_json STRING, run_config_name STRING, created_at T
 
 
 def build_replace_where_predicate(run_config_name: str) -> str:
-    """Build a safe Delta ``replaceWhere`` predicate for *run_config_name*.
+    """Build a safe Delta *replaceWhere* predicate for *run_config_name*.
 
     Validates that *run_config_name* contains only characters in the set
-    ``[A-Za-z0-9_.-]`` to prevent SQL injection (CWE-89) in the predicate
+    *[A-Za-z0-9_.-]* to prevent SQL injection (CWE-89) in the predicate
     string.  If the name contains any other character, *UnsafeSqlQueryError*
     is raised before the predicate is constructed.
 
@@ -76,7 +76,7 @@ def build_replace_where_predicate(run_config_name: str) -> str:
 
     Raises:
         UnsafeSqlQueryError: If *run_config_name* contains characters outside
-            ``[A-Za-z0-9_.-]``.
+            *[A-Za-z0-9_.-]*.
     """
     if not re.fullmatch(r"[\w.\-]+", run_config_name):
         raise UnsafeSqlQueryError(
@@ -135,8 +135,8 @@ class TableActionsStorageHandler(ActionsStorageHandler[TableActionsStorageConfig
     *created_at* timestamp.
 
     On *save*, the write mode from *config.mode* controls whether existing
-    rows for the *run_config_name* are replaced (``"overwrite"``) or kept
-    (``"append"``).
+    rows for the *run_config_name* are replaced (*"overwrite"*) or kept
+    (*"append"*).
 
     On *load*, all rows matching *config.run_config_name* are read and
     deserialized.
@@ -161,9 +161,9 @@ class TableActionsStorageHandler(ActionsStorageHandler[TableActionsStorageConfig
 
         Raises:
             UnsafeSqlQueryError: If *run_config_name* contains characters outside
-                ``[A-Za-z0-9_.-]`` when *mode* is ``"overwrite"``, raised by
+                *[A-Za-z0-9_.-]* when *mode* is *"overwrite"*, raised by
                 *_build_replace_where* to prevent SQL injection in the Delta
-                ``replaceWhere`` predicate (CWE-89).
+                *replaceWhere* predicate (CWE-89).
         """
         if not actions:
             logger.info("No actions provided; skipping save.")
@@ -296,7 +296,7 @@ class LakebaseActionsStorageHandler(LakebaseConnectionMixin, ActionsStorageHandl
         """Serialize and write *actions* to the Lakebase table.
 
         Bootstraps the schema and table on first use.  When *config.mode* is
-        ``"overwrite"``, all existing rows for *config.run_config_name* are
+        *"overwrite"*, all existing rows for *config.run_config_name* are
         deleted before inserting the new rows.
 
         Args:

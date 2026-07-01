@@ -24,12 +24,12 @@ class FailPipeline(Action):
     all other actions have run and then propagates the error.
 
     Attributes:
-        type: Discriminator literal, always ``"fail_pipeline"``.
+        type: Discriminator literal, always *"fail_pipeline"*.
         message: Custom failure message to embed in the raised error.  When
             *None* (the default) a message is generated automatically from the
             observed metrics in *context*.
         name: Logical identifier for this action; defaults to
-            ``"fail_pipeline"``.
+            *"fail_pipeline"*.
     """
 
     type: Literal["fail_pipeline"] = "fail_pipeline"

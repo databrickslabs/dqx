@@ -1,8 +1,8 @@
 """Microsoft Teams MessageCard alert destination.
 
 Delivers DQX alert messages to Microsoft Teams incoming webhook URLs using
-the legacy MessageCard format.  Hosts are restricted to ``webhook.office.com``
-and ``office.com`` suffixes.
+the legacy MessageCard format.  Hosts are restricted to *webhook.office.com*
+and *office.com* suffixes.
 """
 
 from __future__ import annotations
@@ -21,11 +21,11 @@ class TeamsDQAlertDestination(WebhookAlertDestination):
     derived from *message.fields*.
 
     Class attributes:
-        allowed_host_suffixes: Restricts delivery to ``webhook.office.com``
-            and ``office.com`` hosts.
+        allowed_host_suffixes: Restricts delivery to *webhook.office.com*
+            and *office.com* hosts.
 
     Attributes:
-        type: Discriminator literal, always ``"teams"``.
+        type: Discriminator literal, always *"teams"*.
         name: Logical name for this destination instance.
         webhook_url: The Teams incoming webhook URL (plain string or *DQSecret*).
     """
@@ -44,7 +44,7 @@ class TeamsDQAlertDestination(WebhookAlertDestination):
 
         Returns:
             A dict representing a valid Teams MessageCard payload with
-            ``"@type"``, ``"@context"``, ``"summary"``, and ``"sections"``
+            *"@type"*, *"@context"*, *"summary"*, and *"sections"*
             keys.
         """
         facts = [{"name": k, "value": v} for k, v in message.fields.items()]

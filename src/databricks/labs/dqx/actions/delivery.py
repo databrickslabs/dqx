@@ -47,7 +47,7 @@ def validate_webhook_url(url: str, allowed_host_suffixes: list[str] | None = Non
 
     Args:
         url: The webhook URL to validate.
-        allowed_host_suffixes: Optional list of host suffixes (e.g. ``["hooks.slack.com"]``).
+        allowed_host_suffixes: Optional list of host suffixes (e.g. *["hooks.slack.com"]*).
             When provided the URL host must end with one of them (case-insensitive).
 
     Raises:
@@ -134,7 +134,7 @@ class WebhookAuth:
         username: The username portion of the Basic-auth credential.
         password: The password portion of the Basic-auth credential.
             Treat plaintext values as development-only; prefer secret-scope references
-            in production (e.g. ``secret_scope/key``).  This field is never logged.
+            in production (e.g. *secret_scope/key*).  This field is never logged.
     """
 
     username: str
@@ -144,8 +144,8 @@ class WebhookAuth:
         """Return an HTTP Authorization header for Basic authentication.
 
         Returns:
-            A dict with a single ``Authorization`` key whose value is
-            a ``Basic`` scheme header containing the base64-encoded *username:password*.
+            A dict with a single *Authorization* key whose value is
+            a *Basic* scheme header containing the base64-encoded *username:password*.
         """
         token = base64.b64encode(f"{self.username}:{self.password}".encode("utf-8")).decode("ascii")
         return {"Authorization": f"Basic {token}"}
@@ -154,7 +154,7 @@ class WebhookAuth:
 class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
     """urllib redirect handler that blocks all redirects.
 
-    Overrides *redirect_request* to return ``None``, preventing the opener
+    Overrides *redirect_request* to return *None*, preventing the opener
     from following any HTTP 3xx response.  This closes a class of SSRF
     vectors where an initially-safe URL redirects to an internal address.
     """
@@ -249,9 +249,9 @@ class WebhookClient:
         """POST a JSON *payload* to *url* with retry on transient failures.
 
         The URL is validated before any network call.  On repeated failures the
-        client waits *base_delay * 2**attempt* seconds (capped at *max_delay*)
-        between attempts and raises *AlertDeliveryError* after all retries are
-        exhausted.
+        client waits an exponentially increasing delay between attempts — starting
+        at *base_delay* and doubling each attempt, capped at *max_delay* — and
+        raises *AlertDeliveryError* after all retries are exhausted.
 
         Args:
             url: The webhook endpoint URL.  Must pass SSRF validation.

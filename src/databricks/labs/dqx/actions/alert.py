@@ -69,7 +69,7 @@ def _make_deliver_task(
 
     This function is called as a *Threads.gather* task.  Errors are captured
     inside the task body so that *Threads.gather* sees a successful return (the
-    ``None`` sentinel) for every destination — the isolation logic lives here,
+    *None* sentinel) for every destination — the isolation logic lives here,
     not in the caller.
 
     Args:
@@ -98,17 +98,17 @@ class DQAlert(Action):
     *ActionResult.destination_errors* rather than re-raised.
 
     Attributes:
-        type: Discriminator literal, always ``"alert"``.
+        type: Discriminator literal, always *"alert"*.
         destinations: One or more *AlertDestination* adapters that receive the
             alert (Slack, Teams, webhook, …).  Must not be empty, and names
             must be unique.
-        name: Logical identifier for this alert action; defaults to ``"alert"``.
+        name: Logical identifier for this alert action; defaults to *"alert"*.
         alert_frequency: Controls how often alerts may be sent; defaults to
             *DQAlertFrequency.ALWAYS*.
         notify_on: Controls which state transitions trigger a notification;
             defaults to *NotifyOn.EACH*.
         severity: Alert severity level included in the message payload;
-            defaults to ``"error"``.
+            defaults to *"error"*.
     """
 
     type: Literal["alert"] = "alert"

@@ -1,7 +1,7 @@
 """Secret resolution for DQX action destinations.
 
 Destination configs may carry credentials as either plain strings (suitable
-for local development) or :class:`~databricks.labs.dqx.config.DQSecret`
+for local development) or *DQSecret*
 references that are resolved at delivery time via the Databricks secrets API.
 """
 
@@ -21,7 +21,7 @@ class SecretResolver:
     """Resolves credential values from plain strings or Databricks secret references.
 
     Plain strings are returned unchanged.  *DQSecret* references are resolved
-    via ``ws.dbutils.secrets.get`` so that sensitive values are never stored in
+    via *ws.dbutils.secrets.get* so that sensitive values are never stored in
     DQX configuration files.
 
     Args:

@@ -1,7 +1,7 @@
 """Core action types for the DQX actions & alerting subsystem.
 
 This module defines the foundational building blocks used throughout the
-``databricks.labs.dqx.actions`` package:
+*databricks.labs.dqx.actions* package:
 
 - *ActionStatus* — outcome enum (healthy / unhealthy).
 - *ActionContext* — frozen snapshot of run-time state passed to every action.
@@ -16,12 +16,12 @@ which import this module, so declaring it here would create an import cycle.
 
 Forward-reference strategy
 --------------------------
-*WebhookClient* (defined in ``actions/delivery.py``) and *SparkSession*
-(from ``pyspark.sql``) would introduce heavy or cyclic imports if resolved at
+*WebhookClient* (defined in *actions/delivery.py*) and *SparkSession*
+(from *pyspark.sql*) would introduce heavy or cyclic imports if resolved at
 module load time.  Both are therefore imported **only** inside the
-``TYPE_CHECKING`` guard so that static type checkers can resolve them while the
+*TYPE_CHECKING* guard so that static type checkers can resolve them while the
 module remains importable in any environment — including unit-test environments
-where neither ``delivery.py`` nor PySpark exists.
+where neither *delivery.py* nor PySpark exists.
 """
 
 from __future__ import annotations
@@ -78,7 +78,7 @@ class ActionContext:
             metric *error_row_count* with a value of 12).
         run_id: Unique identifier for the DQX run that produced these metrics.
         run_time: Timestamp when the DQX run executed.
-        run_name: Human-readable name for the run; defaults to ``"dqx"``.
+        run_name: Human-readable name for the run; defaults to *"dqx"*.
         input_location: Source path/URI of the data being checked, or *None*.
         output_location: Destination path/URI of checked output, or *None*.
         quarantine_location: Path/URI where quarantined rows are written, or *None*.
@@ -133,10 +133,10 @@ class ActionResult:
 class ActionServices:
     """Frozen container of injectable services available to action implementations.
 
-    *WebhookClient* and *SparkSession* are typed via ``TYPE_CHECKING``-only
+    *WebhookClient* and *SparkSession* are typed via *TYPE_CHECKING*-only
     imports to avoid heavy or cyclic imports at module load time.  At runtime
-    the type annotations are strings (due to ``from __future__ import
-    annotations``), so the dataclass fields accept any value assignable to
+    the type annotations are strings (due to *from __future__ import
+    annotations*), so the dataclass fields accept any value assignable to
     those types without requiring the actual classes to be present.
 
     Attributes:

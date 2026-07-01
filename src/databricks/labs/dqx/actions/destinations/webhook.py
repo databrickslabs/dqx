@@ -31,7 +31,7 @@ class WebhookDQAlertDestination(WebhookAlertDestination):
         allowed_host_suffixes: *None* — no host restriction.
 
     Attributes:
-        type: Discriminator literal, always ``"webhook"``.
+        type: Discriminator literal, always *"webhook"*.
         name: Logical name for this destination instance.
         webhook_url: The endpoint URL (plain string or *DQSecret*).
         username: Optional Basic-auth username (plain string or *DQSecret*).

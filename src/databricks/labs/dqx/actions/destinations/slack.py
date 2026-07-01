@@ -1,7 +1,7 @@
 """Slack Block Kit alert destination.
 
 Delivers DQX alert messages to Slack incoming webhook URLs as Block Kit
-payloads.  The host is restricted to ``hooks.slack.com`` to prevent
+payloads.  The host is restricted to *hooks.slack.com* to prevent
 accidental or malicious redirection to non-Slack endpoints.
 """
 
@@ -21,10 +21,10 @@ class SlackDQAlertDestination(WebhookAlertDestination):
     table, run metadata, severity, and all observed metrics.
 
     Class attributes:
-        allowed_host_suffixes: Restricts delivery to ``hooks.slack.com``.
+        allowed_host_suffixes: Restricts delivery to *hooks.slack.com*.
 
     Attributes:
-        type: Discriminator literal, always ``"slack"``.
+        type: Discriminator literal, always *"slack"*.
         name: Logical name for this destination instance.
         webhook_url: The Slack incoming webhook URL (plain string or *DQSecret*).
     """
@@ -35,7 +35,7 @@ class SlackDQAlertDestination(WebhookAlertDestination):
     def _build_payload(self, message: AlertMessage) -> dict[str, object]:
         """Build a Slack Block Kit payload from *message*.
 
-        Constructs a ``blocks`` list with a header block containing the alert
+        Constructs a *blocks* list with a header block containing the alert
         title, followed by section blocks for summary, condition, table,
         run_id, run_time, severity, and observed metrics.
 
@@ -43,7 +43,7 @@ class SlackDQAlertDestination(WebhookAlertDestination):
             message: The alert message to render.
 
         Returns:
-            A dict with a top-level ``"blocks"`` key containing a valid Slack
+            A dict with a top-level *"blocks"* key containing a valid Slack
             Block Kit block array.
         """
         condition_text = message.condition if message.condition is not None else "unconditional"
