@@ -266,18 +266,18 @@ backend automatically.
 
 Each row is an *AlertEvent* with the following columns:
 
-| Column | Description |
-|---|---|
-| *action_name* | Logical name of the evaluated action |
-| *condition* | The gating condition expression, or *null* when the action is unconditional |
-| *fired* | Whether the action actually executed and delivered |
-| *status* | Aggregate *ActionStatus* of the execution (for example *healthy* / *unhealthy*) |
-| *observed_metrics* | Snapshot of the metrics observed during the run |
-| *run_id* | Unique identifier of the DQX run that produced the event |
-| *run_time* | Timestamp of the run |
-| *input_location* | Source path or table of the checked data, or *null* |
-| *destinations* | Names of the destinations that were targeted |
-| *delivery_errors* | Error messages for any destinations that failed delivery |
+| Column | Type | Description |
+|---|---|---|
+| *action_name* | *STRING* | Logical name of the evaluated action |
+| *condition* | *STRING* | The gating condition expression, or *null* when the action is unconditional |
+| *fired* | *BOOLEAN* | Whether the action actually executed and delivered |
+| *status* | *STRING* | Aggregate *ActionStatus* of the execution (for example *healthy* / *unhealthy*) |
+| *observed_metrics* | *MAP of STRING to STRING* | Snapshot of the metrics observed during the run (values stored as strings) |
+| *run_id* | *STRING* | Unique identifier of the DQX run that produced the event |
+| *run_time* | *TIMESTAMP* | Timestamp of the run |
+| *input_location* | *STRING* | Source path or table of the checked data, or *null* |
+| *destinations* | *ARRAY of STRING* | Names of the destinations that were targeted |
+| *delivery_errors* | *ARRAY of STRING* | Error messages for any destinations that failed delivery |
 
 Because it is an ordinary table, you can query the history directly — for example, to review the
 most recent alerts that actually fired:
@@ -434,6 +434,24 @@ Actions can be persisted to a Unity Catalog Delta table or a Lakebase PostgreSQL
 <Admonition type="note" title="Callback destinations not serializable">
 `CallbackDQAlertDestination` instances are skipped when saving because Python callables cannot be serialized. Only webhook-based destinations (Slack, Teams, generic webhook) are persisted.
 </Admonition>
+
+#### Actions table structure
+
+Each stored action is one row. The action itself is serialized to a JSON string (the same
+metadata wire format shown in [Defining actions with metadata](#defining-actions-with-metadata))
+and stored alongside the run config it belongs to and a creation timestamp. The same layout is
+used for both the Delta and Lakebase backends:
+
+| Column | Type | Description |
+|---|---|---|
+| *action_json* | *STRING* / *TEXT* | The serialized *DQAction* (its metadata dict encoded as JSON) |
+| *run_config_name* | *STRING* | Run configuration the action belongs to; used to scope loads and *overwrite* writes |
+| *created_at* | *TIMESTAMP* | UTC time the row was written |
+
+On *load*, each *action_json* value is deserialized back into a *DQAction*; rows that fail to
+deserialize are skipped with a warning rather than aborting the whole load. In *overwrite* mode
+only the rows matching the given *run_config_name* are replaced, so actions for other run configs
+in the same table are preserved.
 
 ### Unity Catalog Delta table
 
