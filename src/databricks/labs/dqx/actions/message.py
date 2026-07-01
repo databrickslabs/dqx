@@ -63,7 +63,7 @@ class StandardMessageBuilder:
     circular import.  Call it as a static method — no constructor arguments
     are needed:
 
-    **python
+    ```python
     msg = StandardMessageBuilder.build(
         action_name="notify_on_errors",
         condition="error_row_count > 0",
@@ -72,7 +72,7 @@ class StandardMessageBuilder:
         run_time=datetime.now(timezone.utc),
         table="catalog.schema.my_table",
     )
-    **
+    ```
     """
 
     @staticmethod

@@ -453,7 +453,38 @@ contains a *type* discriminator (*"alert"* or *"fail_pipeline"*), plus an option
 key.  A *DQSecret* credential is expressed as a nested mapping with a single *secret* key
 whose value is a *scope/key* reference.
 
-Example YAML file:
+The two tabs below define the **same** pair of actions — a Slack *DQAlert* and a *FailPipeline* —
+first with the programmatic class API and then as the equivalent declarative metadata. Both
+produce identical *DQAction* instances:
+
+<Tabs>
+  <TabItem value="Python" label="Python (classes)" default>
+
+```python
+from databricks.labs.dqx.actions.dq_action import DQAction
+from databricks.labs.dqx.actions.alert import DQAlert
+from databricks.labs.dqx.actions.fail_pipeline import FailPipeline
+from databricks.labs.dqx.actions.destinations.slack import SlackDQAlertDestination
+from databricks.labs.dqx.actions.secret_field import DQSecret
+
+actions = [
+    DQAction(
+        action=DQAlert(
+            destinations=[
+                SlackDQAlertDestination(
+                    name="ops-channel",
+                    webhook_url=DQSecret(scope="my_scope", key="slack_webhook"),
+                )
+            ],
+        ),
+        condition="error_row_count > 0",
+    ),
+    DQAction(action=FailPipeline(), condition="error_row_count > 10"),
+]
+```
+
+  </TabItem>
+  <TabItem value="YAML" label="YAML (metadata)">
 
 ```yaml
 - action:
@@ -468,6 +499,9 @@ Example YAML file:
     type: fail_pipeline
   condition: error_row_count > 10
 ```
+
+  </TabItem>
+</Tabs>
 
 ### Loading from a local file
 

@@ -439,10 +439,10 @@ class ConditionEvaluator:
 
     Usage:
 
-    **python
+    ```python
     ConditionEvaluator.validate("error_row_count > 0")
     result = ConditionEvaluator.evaluate("error_row_count > 0", {"error_row_count": 5})
-    **
+    ```
     """
 
     @staticmethod
