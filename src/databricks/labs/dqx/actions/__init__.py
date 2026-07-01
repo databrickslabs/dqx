@@ -24,6 +24,7 @@ from databricks.labs.dqx.actions.fail_pipeline import FailPipeline
 from databricks.labs.dqx.actions.destinations import (
     AlertDestination,
     CallbackDQAlertDestination,
+    LogDQAlertDestination,
     SlackDQAlertDestination,
     TeamsDQAlertDestination,
     WebhookAlertDestination,
@@ -51,6 +52,7 @@ __all__ = [
     "DQAlert",
     "DQAlertFrequency",
     "FailPipeline",
+    "LogDQAlertDestination",
     "NotifyOn",
     "SlackDQAlertDestination",
     "TeamsDQAlertDestination",

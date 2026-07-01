@@ -14,12 +14,17 @@ from typing import Annotated
 from pydantic import Field
 
 from databricks.labs.dqx.actions.destinations.callback import CallbackDQAlertDestination
+from databricks.labs.dqx.actions.destinations.log import LogDQAlertDestination
 from databricks.labs.dqx.actions.destinations.slack import SlackDQAlertDestination
 from databricks.labs.dqx.actions.destinations.teams import TeamsDQAlertDestination
 from databricks.labs.dqx.actions.destinations.webhook import WebhookDQAlertDestination
 
 AnyDestination = Annotated[
-    SlackDQAlertDestination | TeamsDQAlertDestination | WebhookDQAlertDestination | CallbackDQAlertDestination,
+    SlackDQAlertDestination
+    | TeamsDQAlertDestination
+    | WebhookDQAlertDestination
+    | LogDQAlertDestination
+    | CallbackDQAlertDestination,
     Field(discriminator="type"),
 ]
 

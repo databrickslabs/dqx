@@ -454,6 +454,38 @@ alert = DQAlert(
   </TabItem>
 </Tabs>
 
+### Log (driver logger)
+
+`LogDQAlertDestination` writes the alert to the standard Python logger on the Spark driver instead of contacting an external system. Because it performs no network I/O it never triggers SSRF validation and cannot stall a streaming micro-batch, which makes it the ideal destination for local development, demos, and end-to-end tests. Unlike the callback destination it is fully serializable, so it has a `type: log` metadata form and can be persisted. The optional `level` controls the log level (`debug`, `info`, `warning`, `error`, or `critical`; defaults to `warning`).
+
+<Tabs>
+  <TabItem value="Python" label="Python (classes)" default>
+
+```python
+from databricks.labs.dqx.actions import DQAlert, LogDQAlertDestination
+
+alert = DQAlert(
+    destinations=[
+        LogDQAlertDestination(name="driver-log", level="warning")
+    ]
+)
+```
+
+  </TabItem>
+  <TabItem value="YAML" label="YAML (metadata)">
+
+```yaml
+- action:
+    type: alert
+    destinations:
+      - type: log
+        name: driver-log
+        level: warning
+```
+
+  </TabItem>
+</Tabs>
+
 ### In-process callback
 
 `CallbackDQAlertDestination` invokes a Python callable in the same process. It is useful for testing and for custom side effects (e.g. writing to a buffer, triggering another function). Callback destinations hold a live Python callable, so they have **no metadata form** — they can only be configured in code, and they are skipped when actions are saved to storage.

@@ -10,6 +10,8 @@ Classes:
     TeamsDQAlertDestination: Microsoft Teams MessageCard webhook destination.
     WebhookDQAlertDestination: Generic HTTPS webhook destination with optional
         Basic-auth support.
+    LogDQAlertDestination: Serializable destination that logs the alert to the
+        driver logger (no external system).
     CallbackDQAlertDestination: In-process callback destination.
 """
 
@@ -17,6 +19,7 @@ from __future__ import annotations
 
 from databricks.labs.dqx.actions.destinations.base import AlertDestination
 from databricks.labs.dqx.actions.destinations.callback import CallbackDQAlertDestination
+from databricks.labs.dqx.actions.destinations.log import LogDQAlertDestination
 from databricks.labs.dqx.actions.destinations.slack import SlackDQAlertDestination
 from databricks.labs.dqx.actions.destinations.teams import TeamsDQAlertDestination
 from databricks.labs.dqx.actions.destinations.union import AnyDestination
@@ -30,5 +33,6 @@ __all__ = [
     "SlackDQAlertDestination",
     "TeamsDQAlertDestination",
     "WebhookDQAlertDestination",
+    "LogDQAlertDestination",
     "CallbackDQAlertDestination",
 ]

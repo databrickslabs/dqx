@@ -441,6 +441,25 @@ def test_run_dqx_demo_summary_metrics(ws, make_notebook, make_schema, make_job, 
     logging.info(f"Job run {run.run_id} completed successfully for dqx_demo_summary_metrics")
 
 
+def test_run_dqx_demo_alerting(ws, make_notebook, make_job, library_ref):
+    path = Path(__file__).parent.parent.parent / "demos" / "dqx_demo_alerting.py"
+    with open(path, "rb") as f:
+        notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
+
+    notebook_path = notebook.as_fuse().as_posix()
+    # No slack_webhook_url is passed, so the demo logs alerts only (no external calls).
+    notebook_task = NotebookTask(notebook_path=notebook_path, base_parameters={"test_library_ref": library_ref})
+    job = make_job(tasks=[Task(task_key="dqx_demo_alerting", notebook_task=notebook_task)])
+
+    waiter = ws.jobs.run_now_and_wait(job.job_id)
+    run = ws.jobs.wait_get_run_job_terminated_or_skipped(
+        run_id=waiter.run_id,
+        timeout=timedelta(minutes=30),
+        callback=lambda r: validate_run_status(r, ws),
+    )
+    logging.info(f"Job run {run.run_id} completed successfully for dqx_demo_alerting")
+
+
 def test_run_dqx_ai_assisted_quality_checks_generation(ws, make_notebook, make_job, library_ref):
     path = Path(__file__).parent.parent.parent / "demos" / "dqx_demo_ai_assisted_checks_generation.py"
     with open(path, "rb") as f:
