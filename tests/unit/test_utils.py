@@ -14,6 +14,7 @@ from databricks.labs.dqx.io import read_input_data, get_reference_dataframes
 from databricks.labs.dqx.utils import (
     get_column_name_or_alias,
     is_sql_query_safe,
+    safe_filter_expr,
     normalize_col_str,
     safe_json_load,
     get_columns_as_strings,
@@ -24,7 +25,7 @@ from databricks.labs.dqx.utils import (
     resolve_variables,
 )
 from databricks.labs.dqx.rule import normalize_bound_args
-from databricks.labs.dqx.errors import InvalidParameterError, InvalidConfigError
+from databricks.labs.dqx.errors import InvalidParameterError, InvalidConfigError, UnsafeSqlQueryError
 from databricks.labs.dqx.config import InputConfig
 from databricks.labs.dqx.pii.nlp_engine_config import NLPEngineConfig
 
@@ -271,7 +272,11 @@ def test_select_substring_safe_when_forbid_select():
     assert is_sql_query_safe("select_flag = true AND selected_count > 0", forbid_select=True)
 
 def test_plain_predicate_safe_when_forbid_select():
-    assert is_sql_query_safe("country = 'US' AND amount > 100", forbid_select=True)    
+    assert is_sql_query_safe("country = 'US' AND amount > 100", forbid_select=True)   
+
+def test_safe_filter_expr_raises_on_select():
+    with pytest.raises(UnsafeSqlQueryError):
+        safe_filter_expr("id IN (SELECT id FROM users)")     
 
 def test_safe_json_load_dict():
     value = '{"key": "value"}'

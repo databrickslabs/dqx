@@ -23,7 +23,7 @@ except ImportError:
 import pyspark.sql.functions as F
 from databricks.sdk import WorkspaceClient
 from databricks.labs.blueprint.limiter import rate_limited
-from databricks.labs.dqx.errors import InvalidParameterError
+from databricks.labs.dqx.errors import InvalidParameterError, UnsafeSqlQueryError
 from databricks.labs.dqx.table_manager import SparkTableDataProvider
 from databricks.sdk.errors import NotFound
 
@@ -241,6 +241,25 @@ def is_sql_query_safe(query: str, forbid_select: bool = False) -> bool:
         forbidden_statements = forbidden_statements + ["select"]
     return not any(re.search(rf"\b{kw}\b", normalized_query) for kw in forbidden_statements)
 
+def safe_filter_expr(filter_expr: str | None) -> Column:
+    """Build a Spark column from a filter expression, rejecting unsafe SQL.
+
+    Validates the filter with *is_sql_query_safe* using *forbid_select=True* before
+    compiling it, since a filter must be a simple predicate and never a full query
+    (e.g. a subquery). Used for both check filters and *row_filter* parameters.
+
+    Args:
+        filter_expr: The filter predicate as a string, or None.
+
+    Returns:
+        The compiled filter column, or a literal true column when no filter is given.
+
+    Raises:
+        UnsafeSqlQueryError: If the filter contains a forbidden statement such as SELECT.
+    """
+    if filter_expr and not is_sql_query_safe(filter_expr, forbid_select=True):
+        raise UnsafeSqlQueryError(f"Unsafe filter expression: '{filter_expr}'")
+    return F.expr(filter_expr) if filter_expr else F.lit(True)
 
 def safe_json_load(value: str):
     """
