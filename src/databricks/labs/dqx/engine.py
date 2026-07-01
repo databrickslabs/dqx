@@ -61,6 +61,7 @@ from databricks.labs.dqx.io import is_one_time_trigger
 from databricks.labs.dqx.actions.base import ActionContext, ActionResult, ActionServices
 from databricks.labs.dqx.actions.dq_action import DQAction
 from databricks.labs.dqx.actions.evaluator import ActionEvaluator
+from databricks.labs.dqx.actions.serializer import ActionSerializer
 from databricks.labs.dqx.actions.state import ActionStateStore
 from databricks.labs.dqx.actions.event_storage import ActionEventStoreFactory
 from databricks.labs.dqx.actions.secrets import SecretResolver
@@ -683,9 +684,12 @@ class DQEngine(DQEngineBase):
             a default factory is created.
         config_serializer: Optional ConfigSerializer instance to use. If not provided, a new instance is created.
         observer: Optional DQMetricsObserver for tracking data quality summary metrics.
-        actions: Optional list of *DQAction* instances to evaluate after checks are applied in the batch path.
-            Requires an *observer* to be provided (actions need observed metrics to evaluate conditions).
-            When provided without an *observer*, raises *InvalidParameterError* at construction time.
+        actions: Optional list of *DQAction* instances or raw action dicts to evaluate after checks
+            are applied in the batch path.  Dict entries are deserialized to *DQAction* via
+            *ActionSerializer.from_dict* at construction time; mixed lists are supported.
+            Requires an *observer* to be provided (actions need observed metrics to evaluate
+            conditions).  When provided without an *observer*, raises *InvalidParameterError* at
+            construction time.
         action_evaluator_factory: Optional factory callable that receives the list of *DQAction* instances and
             returns an *ActionEvaluator*. Used to inject a custom or test evaluator. When *None*, the default
             factory builds a real *ActionEvaluator* with *ActionStateStore*, *SecretResolver*, and
@@ -705,13 +709,13 @@ class DQEngine(DQEngineBase):
         checks_handler_factory: BaseChecksStorageHandlerFactory | None = None,
         config_serializer: ConfigSerializer | None = None,
         observer: DQMetricsObserver | None = None,
-        actions: list[DQAction] | None = None,
+        actions: list[DQAction] | list[dict[str, object]] | None = None,
         action_evaluator_factory: Callable[[list[DQAction]], ActionEvaluator] | None = None,
         action_events_config: ActionEventsConfig | LakebaseActionsStorageConfig | None = None,
     ):
         super().__init__(workspace_client)
 
-        self._actions = actions or []
+        self._actions = [a if isinstance(a, DQAction) else ActionSerializer.from_dict(a) for a in (actions or [])]
         if self._actions and observer is None:
             raise InvalidParameterError("Actions require a metrics observer; construct DQEngine with observer=...")
 
