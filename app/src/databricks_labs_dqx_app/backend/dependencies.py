@@ -27,6 +27,7 @@ from .services.discovery import DiscoveryService
 from .services.job_service import JobService
 from .services.role_service import RoleService
 from .services.registry_service import RegistryService
+from .services.monitored_table_service import MonitoredTableService
 from .services.rules_catalog_service import RulesCatalogService
 from .services.comments_service import CommentsService
 from .services.review_status_service import ReviewStatusService
@@ -261,6 +262,21 @@ async def get_registry_service(
 ) -> RegistryService:
     """Create a RegistryService routed at the OLTP executor."""
     return RegistryService(sql=sql)
+
+
+async def get_monitored_table_service(
+    sql: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
+    profiling_sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+) -> MonitoredTableService:
+    """Create a MonitoredTableService.
+
+    The OLTP tables (``dq_monitored_tables``/``dq_applied_rules``) are routed
+    at the OLTP executor (Lakebase or Delta fallback); the profiling READ
+    path always targets the Delta ``dq_profiling_results`` table via the SP
+    SQL executor, since that table is written by the profiler job
+    regardless of whether Lakebase is enabled.
+    """
+    return MonitoredTableService(sql=sql, profiling_sql=profiling_sql)
 
 
 async def get_discovery_service(
@@ -499,6 +515,7 @@ __all__ = [
     "get_contract_rules_service",
     "get_rules_catalog_service",
     "get_registry_service",
+    "get_monitored_table_service",
     "get_discovery_service",
     "get_view_service",
     "get_job_service",

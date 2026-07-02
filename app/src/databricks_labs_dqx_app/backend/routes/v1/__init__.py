@@ -8,6 +8,7 @@ from .discovery import router as discovery_router
 from .generate import router as generate_router
 from .rules import router as rules_router
 from .registry_rules import router as registry_rules_router
+from .monitored_tables import router as monitored_tables_router
 from .import_rules import router as import_rules_router
 from .dryrun import router as dryrun_router
 from .profiler import router as profiler_router
@@ -29,6 +30,7 @@ v1_router.include_router(generate_router, prefix="/ai", tags=["ai"])
 v1_router.include_router(contract_router, prefix="/contract", tags=["contract"])
 v1_router.include_router(rules_router, prefix="/rules", tags=["rules"])
 v1_router.include_router(registry_rules_router, prefix="/registry-rules", tags=["registry-rules"])
+v1_router.include_router(monitored_tables_router, prefix="/monitored-tables", tags=["monitored-tables"])
 v1_router.include_router(import_rules_router, prefix="/rules", tags=["rules"])
 v1_router.include_router(check_functions_router, prefix="/check-functions", tags=["check-functions"])
 v1_router.include_router(dryrun_router, prefix="/dryrun", tags=["dryrun"])

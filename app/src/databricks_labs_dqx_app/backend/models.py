@@ -11,6 +11,14 @@ from .registry_models import RuleDefinition as RegistryRuleDefinition
 from .registry_models import RuleMode as RegistryRuleMode
 from .registry_models import RuleStatus as RegistryRuleStatus
 from .registry_models import RuleVersion as RegistryRuleVersionDomain
+from .registry_models import MonitoredTable as MonitoredTableDomain
+from .registry_models import MonitoredTableStatus as MonitoredTableStatusDomain
+from .services.monitored_table_service import (
+    AppliedRuleSummary,
+    LatestProfile,
+    MonitoredTableDetail,
+    MonitoredTableSummary,
+)
 
 
 class VersionOut(BaseModel):
@@ -326,6 +334,134 @@ class RegistryRuleDetailOut(BaseModel):
 
     rule: RegistryRuleOut
     current_version: RegistryRuleVersionOut | None = None
+
+
+class RegisterMonitoredTableIn(BaseModel):
+    """Request body for registering a table under Rules Registry governance."""
+
+    table_fqn: str = Field(description="Fully qualified table name (catalog.schema.table)")
+    steward: str | None = Field(default=None, description="Owning steward's email/username")
+
+
+class AppliedRuleOut(BaseModel):
+    """A ``dq_applied_rules`` row, denormalized with its registry rule's descriptive tags."""
+
+    id: str | None = None
+    binding_id: str
+    rule_id: str
+    pinned_version: int | None = None
+    severity_override: str | None = None
+    column_mapping: list[dict[str, str]] = Field(default_factory=list)
+    user_metadata: dict[str, Any] = Field(default_factory=dict)
+    mapping_hash: str | None = None
+    created_by: str | None = None
+    created_at: str | None = None
+    rule_name: str | None = None
+    rule_dimension: str | None = None
+    rule_severity: str | None = None
+
+    @classmethod
+    def from_summary(cls, summary: AppliedRuleSummary) -> "AppliedRuleOut":
+        applied_rule = summary.applied_rule
+        return cls(
+            id=applied_rule.id,
+            binding_id=applied_rule.binding_id,
+            rule_id=applied_rule.rule_id,
+            pinned_version=applied_rule.pinned_version,
+            severity_override=applied_rule.severity_override,
+            column_mapping=applied_rule.column_mapping,
+            user_metadata=applied_rule.user_metadata,
+            mapping_hash=applied_rule.mapping_hash,
+            created_by=applied_rule.created_by,
+            created_at=applied_rule.created_at.isoformat() if applied_rule.created_at else None,
+            rule_name=summary.rule_name,
+            rule_dimension=summary.rule_dimension,
+            rule_severity=summary.rule_severity,
+        )
+
+
+class MonitoredTableOut(BaseModel):
+    """A ``dq_monitored_tables`` row as returned to the frontend."""
+
+    binding_id: str
+    table_fqn: str
+    steward: str | None = None
+    status: MonitoredTableStatusDomain
+    last_profiled_at: str | None = None
+    created_by: str | None = None
+    created_at: str | None = None
+    updated_by: str | None = None
+    updated_at: str | None = None
+
+    @classmethod
+    def from_domain(cls, table: MonitoredTableDomain) -> "MonitoredTableOut":
+        return cls(
+            binding_id=table.binding_id,
+            table_fqn=table.table_fqn,
+            steward=table.steward,
+            status=table.status,
+            last_profiled_at=table.last_profiled_at.isoformat() if table.last_profiled_at else None,
+            created_by=table.created_by,
+            created_at=table.created_at.isoformat() if table.created_at else None,
+            updated_by=table.updated_by,
+            updated_at=table.updated_at.isoformat() if table.updated_at else None,
+        )
+
+
+class MonitoredTableSummaryOut(BaseModel):
+    """A monitored table plus a lightweight list-view counter, for ``listMonitoredTables``."""
+
+    table: MonitoredTableOut
+    applied_rule_count: int = 0
+
+    @classmethod
+    def from_domain(cls, summary: MonitoredTableSummary) -> "MonitoredTableSummaryOut":
+        return cls(
+            table=MonitoredTableOut.from_domain(summary.table),
+            applied_rule_count=summary.applied_rule_count,
+        )
+
+
+class MonitoredTableDetailOut(BaseModel):
+    """A monitored table plus its applied rules, for ``getMonitoredTable``."""
+
+    table: MonitoredTableOut
+    applied_rules: list[AppliedRuleOut] = Field(default_factory=list)
+
+    @classmethod
+    def from_domain(cls, detail: MonitoredTableDetail) -> "MonitoredTableDetailOut":
+        return cls(
+            table=MonitoredTableOut.from_domain(detail.table),
+            applied_rules=[AppliedRuleOut.from_summary(s) for s in detail.applied_rules],
+        )
+
+
+class MonitoredTableProfileOut(BaseModel):
+    """A read-only projection of the latest ``dq_profiling_results`` row for a monitored table."""
+
+    run_id: str
+    source_table_fqn: str
+    status: str | None = None
+    rows_profiled: int | None = None
+    columns_profiled: int | None = None
+    duration_seconds: float | None = None
+    summary: dict[str, Any] = Field(default_factory=dict)
+    generated_rules: list[dict[str, Any]] = Field(default_factory=list)
+    profiled_at: str | None = None
+
+    @classmethod
+    def from_domain(cls, profile: LatestProfile) -> "MonitoredTableProfileOut":
+        return cls(
+            run_id=profile.run_id,
+            source_table_fqn=profile.source_table_fqn,
+            status=profile.status,
+            rows_profiled=profile.rows_profiled,
+            columns_profiled=profile.columns_profiled,
+            duration_seconds=profile.duration_seconds,
+            summary=profile.summary,
+            generated_rules=profile.generated_rules,
+            profiled_at=profile.profiled_at,
+        )
 
 
 class DryRunIn(BaseModel):

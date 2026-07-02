@@ -60,6 +60,47 @@ export interface AnomalyConfig {
   registry_table?: AnomalyConfigRegistryTable;
 }
 
+export type AppliedRuleOutId = string | null;
+
+export type AppliedRuleOutPinnedVersion = number | null;
+
+export type AppliedRuleOutSeverityOverride = string | null;
+
+export type AppliedRuleOutColumnMappingItem = {[key: string]: string};
+
+export type AppliedRuleOutUserMetadata = { [key: string]: unknown };
+
+export type AppliedRuleOutMappingHash = string | null;
+
+export type AppliedRuleOutCreatedBy = string | null;
+
+export type AppliedRuleOutCreatedAt = string | null;
+
+export type AppliedRuleOutRuleName = string | null;
+
+export type AppliedRuleOutRuleDimension = string | null;
+
+export type AppliedRuleOutRuleSeverity = string | null;
+
+/**
+ * A ``dq_applied_rules`` row, denormalized with its registry rule's descriptive tags.
+ */
+export interface AppliedRuleOut {
+  id?: AppliedRuleOutId;
+  binding_id: string;
+  rule_id: string;
+  pinned_version?: AppliedRuleOutPinnedVersion;
+  severity_override?: AppliedRuleOutSeverityOverride;
+  column_mapping?: AppliedRuleOutColumnMappingItem[];
+  user_metadata?: AppliedRuleOutUserMetadata;
+  mapping_hash?: AppliedRuleOutMappingHash;
+  created_by?: AppliedRuleOutCreatedBy;
+  created_at?: AppliedRuleOutCreatedAt;
+  rule_name?: AppliedRuleOutRuleName;
+  rule_dimension?: AppliedRuleOutRuleDimension;
+  rule_severity?: AppliedRuleOutRuleSeverity;
+}
+
 /**
  * Stable identifier for known error classes — currently one of ``INSUFFICIENT_PERMISSIONS``, ``TABLE_OR_VIEW_NOT_FOUND``, or ``UNKNOWN``. The UI uses this to surface a friendlier headline.
  */
@@ -768,6 +809,87 @@ export interface MetricsSummaryOut {
   latest_created_at?: MetricsSummaryOutLatestCreatedAt;
 }
 
+/**
+ * A monitored table plus its applied rules, for ``getMonitoredTable``.
+ */
+export interface MonitoredTableDetailOut {
+  table: MonitoredTableOut;
+  applied_rules?: AppliedRuleOut[];
+}
+
+export type MonitoredTableOutSteward = string | null;
+
+export type MonitoredTableOutStatus = typeof MonitoredTableOutStatus[keyof typeof MonitoredTableOutStatus];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const MonitoredTableOutStatus = {
+  draft: 'draft',
+  published: 'published',
+} as const;
+
+export type MonitoredTableOutLastProfiledAt = string | null;
+
+export type MonitoredTableOutCreatedBy = string | null;
+
+export type MonitoredTableOutCreatedAt = string | null;
+
+export type MonitoredTableOutUpdatedBy = string | null;
+
+export type MonitoredTableOutUpdatedAt = string | null;
+
+/**
+ * A ``dq_monitored_tables`` row as returned to the frontend.
+ */
+export interface MonitoredTableOut {
+  binding_id: string;
+  table_fqn: string;
+  steward?: MonitoredTableOutSteward;
+  status: MonitoredTableOutStatus;
+  last_profiled_at?: MonitoredTableOutLastProfiledAt;
+  created_by?: MonitoredTableOutCreatedBy;
+  created_at?: MonitoredTableOutCreatedAt;
+  updated_by?: MonitoredTableOutUpdatedBy;
+  updated_at?: MonitoredTableOutUpdatedAt;
+}
+
+export type MonitoredTableProfileOutStatus = string | null;
+
+export type MonitoredTableProfileOutRowsProfiled = number | null;
+
+export type MonitoredTableProfileOutColumnsProfiled = number | null;
+
+export type MonitoredTableProfileOutDurationSeconds = number | null;
+
+export type MonitoredTableProfileOutSummary = { [key: string]: unknown };
+
+export type MonitoredTableProfileOutGeneratedRulesItem = { [key: string]: unknown };
+
+export type MonitoredTableProfileOutProfiledAt = string | null;
+
+/**
+ * A read-only projection of the latest ``dq_profiling_results`` row for a monitored table.
+ */
+export interface MonitoredTableProfileOut {
+  run_id: string;
+  source_table_fqn: string;
+  status?: MonitoredTableProfileOutStatus;
+  rows_profiled?: MonitoredTableProfileOutRowsProfiled;
+  columns_profiled?: MonitoredTableProfileOutColumnsProfiled;
+  duration_seconds?: MonitoredTableProfileOutDurationSeconds;
+  summary?: MonitoredTableProfileOutSummary;
+  generated_rules?: MonitoredTableProfileOutGeneratedRulesItem[];
+  profiled_at?: MonitoredTableProfileOutProfiledAt;
+}
+
+/**
+ * A monitored table plus a lightweight list-view counter, for ``listMonitoredTables``.
+ */
+export interface MonitoredTableSummaryOut {
+  table: MonitoredTableOut;
+  applied_rule_count?: number;
+}
+
 export type NameFamilyName = string | null;
 
 export type NameGivenName = string | null;
@@ -935,6 +1057,21 @@ export interface QuarantineRecordOut {
   errors?: QuarantineRecordOutErrors;
   warnings?: QuarantineRecordOutWarnings;
   created_at?: QuarantineRecordOutCreatedAt;
+}
+
+/**
+ * Owning steward's email/username
+ */
+export type RegisterMonitoredTableInSteward = string | null;
+
+/**
+ * Request body for registering a table under Rules Registry governance.
+ */
+export interface RegisterMonitoredTableIn {
+  /** Fully qualified table name (catalog.schema.table) */
+  table_fqn: string;
+  /** Owning steward's email/username */
+  steward?: RegisterMonitoredTableInSteward;
 }
 
 export type RegistryRuleDetailOutCurrentVersion = RegistryRuleVersionOut | null;
@@ -1810,6 +1947,31 @@ tag?: string | null;
 };
 
 export type DeleteRegistryRule200 = {[key: string]: string};
+
+export type ListMonitoredTablesParams = {
+/**
+ * Filter by status
+ */
+status?: string | null;
+/**
+ * Filter by steward
+ */
+steward?: string | null;
+/**
+ * Filter by catalog part of table_fqn
+ */
+catalog?: string | null;
+/**
+ * Filter by schema part of table_fqn
+ */
+schema?: string | null;
+/**
+ * Substring search over table_fqn
+ */
+name?: string | null;
+};
+
+export type DeleteMonitoredTable200 = {[key: string]: string};
 
 export type ListValidationRunsParams = {
 /**
@@ -8475,6 +8637,578 @@ export const useUndeprecateRegistryRule = <TError = AxiosError<HTTPValidationErr
       return useMutation(mutationOptions, queryClient);
     }
     
+/**
+ * List monitored tables, optionally filtered, with per-table applied-rule counts.
+ * @summary List Monitored Tables
+ */
+export const listMonitoredTables = (
+    params?: ListMonitoredTablesParams, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<MonitoredTableSummaryOut[]>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/monitored-tables`,{
+    ...options,
+        params: {...params, ...options?.params},}
+    );
+  }
+
+
+
+
+export const getListMonitoredTablesQueryKey = (params?: ListMonitoredTablesParams,) => {
+    return [
+    `/api/v1/monitored-tables`, ...(params ? [params]: [])
+    ] as const;
+    }
+
+    
+export const getListMonitoredTablesQueryOptions = <TData = Awaited<ReturnType<typeof listMonitoredTables>>, TError = AxiosError<HTTPValidationError>>(params?: ListMonitoredTablesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMonitoredTables>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListMonitoredTablesQueryKey(params);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listMonitoredTables>>> = ({ signal }) => listMonitoredTables(params, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listMonitoredTables>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListMonitoredTablesQueryResult = NonNullable<Awaited<ReturnType<typeof listMonitoredTables>>>
+export type ListMonitoredTablesQueryError = AxiosError<HTTPValidationError>
+
+
+export function useListMonitoredTables<TData = Awaited<ReturnType<typeof listMonitoredTables>>, TError = AxiosError<HTTPValidationError>>(
+ params: undefined |  ListMonitoredTablesParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMonitoredTables>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listMonitoredTables>>,
+          TError,
+          Awaited<ReturnType<typeof listMonitoredTables>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListMonitoredTables<TData = Awaited<ReturnType<typeof listMonitoredTables>>, TError = AxiosError<HTTPValidationError>>(
+ params?: ListMonitoredTablesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMonitoredTables>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listMonitoredTables>>,
+          TError,
+          Awaited<ReturnType<typeof listMonitoredTables>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListMonitoredTables<TData = Awaited<ReturnType<typeof listMonitoredTables>>, TError = AxiosError<HTTPValidationError>>(
+ params?: ListMonitoredTablesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMonitoredTables>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List Monitored Tables
+ */
+
+export function useListMonitoredTables<TData = Awaited<ReturnType<typeof listMonitoredTables>>, TError = AxiosError<HTTPValidationError>>(
+ params?: ListMonitoredTablesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMonitoredTables>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListMonitoredTablesQueryOptions(params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getListMonitoredTablesSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof listMonitoredTables>>, TError = AxiosError<HTTPValidationError>>(params?: ListMonitoredTablesParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listMonitoredTables>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListMonitoredTablesQueryKey(params);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listMonitoredTables>>> = ({ signal }) => listMonitoredTables(params, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof listMonitoredTables>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListMonitoredTablesSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof listMonitoredTables>>>
+export type ListMonitoredTablesSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useListMonitoredTablesSuspense<TData = Awaited<ReturnType<typeof listMonitoredTables>>, TError = AxiosError<HTTPValidationError>>(
+ params: undefined |  ListMonitoredTablesParams, options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listMonitoredTables>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListMonitoredTablesSuspense<TData = Awaited<ReturnType<typeof listMonitoredTables>>, TError = AxiosError<HTTPValidationError>>(
+ params?: ListMonitoredTablesParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listMonitoredTables>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListMonitoredTablesSuspense<TData = Awaited<ReturnType<typeof listMonitoredTables>>, TError = AxiosError<HTTPValidationError>>(
+ params?: ListMonitoredTablesParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listMonitoredTables>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List Monitored Tables
+ */
+
+export function useListMonitoredTablesSuspense<TData = Awaited<ReturnType<typeof listMonitoredTables>>, TError = AxiosError<HTTPValidationError>>(
+ params?: ListMonitoredTablesParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listMonitoredTables>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListMonitoredTablesSuspenseQueryOptions(params,options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Register a table under Rules Registry governance (status ``draft``).
+ * @summary Register Monitored Table
+ */
+export const registerMonitoredTable = (
+    registerMonitoredTableIn: RegisterMonitoredTableIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<MonitoredTableSummaryOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/monitored-tables`,
+      registerMonitoredTableIn,options
+    );
+  }
+
+
+
+export const getRegisterMonitoredTableMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof registerMonitoredTable>>, TError,{data: RegisterMonitoredTableIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof registerMonitoredTable>>, TError,{data: RegisterMonitoredTableIn}, TContext> => {
+
+const mutationKey = ['registerMonitoredTable'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof registerMonitoredTable>>, {data: RegisterMonitoredTableIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  registerMonitoredTable(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RegisterMonitoredTableMutationResult = NonNullable<Awaited<ReturnType<typeof registerMonitoredTable>>>
+    export type RegisterMonitoredTableMutationBody = RegisterMonitoredTableIn
+    export type RegisterMonitoredTableMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Register Monitored Table
+ */
+export const useRegisterMonitoredTable = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof registerMonitoredTable>>, TError,{data: RegisterMonitoredTableIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof registerMonitoredTable>>,
+        TError,
+        {data: RegisterMonitoredTableIn},
+        TContext
+      > => {
+
+      const mutationOptions = getRegisterMonitoredTableMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Get a monitored table binding plus its applied rules (joined to rule name/dimension/severity tags).
+ * @summary Get Monitored Table
+ */
+export const getMonitoredTable = (
+    bindingId: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<MonitoredTableDetailOut>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/monitored-tables/${bindingId}`,options
+    );
+  }
+
+
+
+
+export const getGetMonitoredTableQueryKey = (bindingId?: string,) => {
+    return [
+    `/api/v1/monitored-tables/${bindingId}`
+    ] as const;
+    }
+
+    
+export const getGetMonitoredTableQueryOptions = <TData = Awaited<ReturnType<typeof getMonitoredTable>>, TError = AxiosError<HTTPValidationError>>(bindingId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMonitoredTable>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetMonitoredTableQueryKey(bindingId);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getMonitoredTable>>> = ({ signal }) => getMonitoredTable(bindingId, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, enabled: !!(bindingId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getMonitoredTable>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetMonitoredTableQueryResult = NonNullable<Awaited<ReturnType<typeof getMonitoredTable>>>
+export type GetMonitoredTableQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetMonitoredTable<TData = Awaited<ReturnType<typeof getMonitoredTable>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMonitoredTable>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getMonitoredTable>>,
+          TError,
+          Awaited<ReturnType<typeof getMonitoredTable>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetMonitoredTable<TData = Awaited<ReturnType<typeof getMonitoredTable>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMonitoredTable>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getMonitoredTable>>,
+          TError,
+          Awaited<ReturnType<typeof getMonitoredTable>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetMonitoredTable<TData = Awaited<ReturnType<typeof getMonitoredTable>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMonitoredTable>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Monitored Table
+ */
+
+export function useGetMonitoredTable<TData = Awaited<ReturnType<typeof getMonitoredTable>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMonitoredTable>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetMonitoredTableQueryOptions(bindingId,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getGetMonitoredTableSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getMonitoredTable>>, TError = AxiosError<HTTPValidationError>>(bindingId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getMonitoredTable>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetMonitoredTableQueryKey(bindingId);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getMonitoredTable>>> = ({ signal }) => getMonitoredTable(bindingId, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof getMonitoredTable>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetMonitoredTableSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof getMonitoredTable>>>
+export type GetMonitoredTableSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetMonitoredTableSuspense<TData = Awaited<ReturnType<typeof getMonitoredTable>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string, options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getMonitoredTable>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetMonitoredTableSuspense<TData = Awaited<ReturnType<typeof getMonitoredTable>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getMonitoredTable>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetMonitoredTableSuspense<TData = Awaited<ReturnType<typeof getMonitoredTable>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getMonitoredTable>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Monitored Table
+ */
+
+export function useGetMonitoredTableSuspense<TData = Awaited<ReturnType<typeof getMonitoredTable>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getMonitoredTable>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetMonitoredTableSuspenseQueryOptions(bindingId,options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Delete a monitored table binding and its applied rules.
+
+TODO(Phase 3C): once the materializer exists, block/handle
+de-materialization of any ``dq_quality_rules`` rows tied to this
+binding's applications before allowing deletion.
+ * @summary Delete Monitored Table
+ */
+export const deleteMonitoredTable = (
+    bindingId: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<DeleteMonitoredTable200>> => {
+    
+    
+    return axios.default.delete(
+      `/api/v1/monitored-tables/${bindingId}`,options
+    );
+  }
+
+
+
+export const getDeleteMonitoredTableMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteMonitoredTable>>, TError,{bindingId: string}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteMonitoredTable>>, TError,{bindingId: string}, TContext> => {
+
+const mutationKey = ['deleteMonitoredTable'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteMonitoredTable>>, {bindingId: string}> = (props) => {
+          const {bindingId} = props ?? {};
+
+          return  deleteMonitoredTable(bindingId,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteMonitoredTableMutationResult = NonNullable<Awaited<ReturnType<typeof deleteMonitoredTable>>>
+    
+    export type DeleteMonitoredTableMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Delete Monitored Table
+ */
+export const useDeleteMonitoredTable = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteMonitoredTable>>, TError,{bindingId: string}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof deleteMonitoredTable>>,
+        TError,
+        {bindingId: string},
+        TContext
+      > => {
+
+      const mutationOptions = getDeleteMonitoredTableMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Return the most recent profiling result for this monitored table's underlying table.
+ * @summary Get Monitored Table Profile
+ */
+export const getMonitoredTableProfile = (
+    bindingId: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<MonitoredTableProfileOut>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/monitored-tables/${bindingId}/profile`,options
+    );
+  }
+
+
+
+
+export const getGetMonitoredTableProfileQueryKey = (bindingId?: string,) => {
+    return [
+    `/api/v1/monitored-tables/${bindingId}/profile`
+    ] as const;
+    }
+
+    
+export const getGetMonitoredTableProfileQueryOptions = <TData = Awaited<ReturnType<typeof getMonitoredTableProfile>>, TError = AxiosError<HTTPValidationError>>(bindingId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMonitoredTableProfile>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetMonitoredTableProfileQueryKey(bindingId);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getMonitoredTableProfile>>> = ({ signal }) => getMonitoredTableProfile(bindingId, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, enabled: !!(bindingId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getMonitoredTableProfile>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetMonitoredTableProfileQueryResult = NonNullable<Awaited<ReturnType<typeof getMonitoredTableProfile>>>
+export type GetMonitoredTableProfileQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetMonitoredTableProfile<TData = Awaited<ReturnType<typeof getMonitoredTableProfile>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMonitoredTableProfile>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getMonitoredTableProfile>>,
+          TError,
+          Awaited<ReturnType<typeof getMonitoredTableProfile>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetMonitoredTableProfile<TData = Awaited<ReturnType<typeof getMonitoredTableProfile>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMonitoredTableProfile>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getMonitoredTableProfile>>,
+          TError,
+          Awaited<ReturnType<typeof getMonitoredTableProfile>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetMonitoredTableProfile<TData = Awaited<ReturnType<typeof getMonitoredTableProfile>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMonitoredTableProfile>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Monitored Table Profile
+ */
+
+export function useGetMonitoredTableProfile<TData = Awaited<ReturnType<typeof getMonitoredTableProfile>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMonitoredTableProfile>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetMonitoredTableProfileQueryOptions(bindingId,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getGetMonitoredTableProfileSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getMonitoredTableProfile>>, TError = AxiosError<HTTPValidationError>>(bindingId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getMonitoredTableProfile>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetMonitoredTableProfileQueryKey(bindingId);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getMonitoredTableProfile>>> = ({ signal }) => getMonitoredTableProfile(bindingId, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof getMonitoredTableProfile>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetMonitoredTableProfileSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof getMonitoredTableProfile>>>
+export type GetMonitoredTableProfileSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetMonitoredTableProfileSuspense<TData = Awaited<ReturnType<typeof getMonitoredTableProfile>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string, options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getMonitoredTableProfile>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetMonitoredTableProfileSuspense<TData = Awaited<ReturnType<typeof getMonitoredTableProfile>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getMonitoredTableProfile>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetMonitoredTableProfileSuspense<TData = Awaited<ReturnType<typeof getMonitoredTableProfile>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getMonitoredTableProfile>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Monitored Table Profile
+ */
+
+export function useGetMonitoredTableProfileSuspense<TData = Awaited<ReturnType<typeof getMonitoredTableProfile>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getMonitoredTableProfile>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetMonitoredTableProfileSuspenseQueryOptions(bindingId,options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
 /**
  * Validate a list of check definitions without saving them.
  * @summary Validate Checks
