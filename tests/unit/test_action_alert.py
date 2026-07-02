@@ -57,12 +57,13 @@ def _failing_destination(name: str, error_message: str = "delivery failed\nwith 
 # ---------------------------------------------------------------------------
 
 
-def _make_context(*, metrics: dict[str, object] | None = None) -> ActionContext:
+def _make_context(*, metrics: dict[str, object] | None = None, condition: str | None = None) -> ActionContext:
     return ActionContext(
         metrics=metrics or {"error_row_count": 5},
         run_id="run-test-001",
         run_time=datetime(2024, 6, 1, 12, 0, 0, tzinfo=timezone.utc),
         input_location="catalog.schema.my_table",
+        condition=condition,
     )
 
 
@@ -141,6 +142,17 @@ def test_dq_alert_execute_calls_deliver_on_all_destinations() -> None:
     assert len(received_a) == 1
     assert len(received_b) == 1
     assert result.fired is True
+
+
+def test_dq_alert_execute_includes_gating_condition_in_message() -> None:
+    """The delivered message carries the gating condition from the context (not a hardcoded None)."""
+    dest, received = _recording_destination("dest")
+    alert = DQAlert(destinations=[dest])
+
+    alert.execute(_make_context(condition="error_row_count > 0"), _make_services())
+
+    assert len(received) == 1
+    assert received[0].condition == "error_row_count > 0"
 
 
 def test_dq_alert_execute_returns_action_result_with_action_name() -> None:

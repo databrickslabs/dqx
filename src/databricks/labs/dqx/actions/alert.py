@@ -193,7 +193,7 @@ class DQAlert(Action):
         """
         message = StandardMessageBuilder.build(
             action_name=self.name,
-            condition=None,
+            condition=context.condition,
             metrics=context.metrics,
             run_id=context.run_id,
             run_time=context.run_time,

@@ -472,5 +472,8 @@ class TestNoRedirectHandlerContract:
     def test_redirect_request_returns_none(self) -> None:
         handler = NoRedirectHandler()
         mock_req = create_autospec(urllib.request.Request, instance=True)
-        handler.redirect_request(mock_req, io.BytesIO(b""), 301, "Moved", HTTPMessage(), "https://other.com/")
-        # Method always returns None — the call itself is the assertion (no exception, no redirect)
+        # Returning None suppresses the redirect (blocks redirect-to-internal SSRF).
+        assert (
+            handler.redirect_request(mock_req, io.BytesIO(b""), 301, "Moved", HTTPMessage(), "https://other.com/")
+            is None
+        )

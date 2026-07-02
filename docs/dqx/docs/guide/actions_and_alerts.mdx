@@ -642,6 +642,13 @@ alert = DQAlert(
   </TabItem>
 </Tabs>
 
+<Admonition type="note" title="alert_frequency is an absolute cap">
+The two knobs compose, and `alert_frequency` is applied **first** as a hard cap: while an
+`HOURLY` / `DAILY` window is still active, the alert is suppressed **even if** `notify_on` is
+`STATUS_CHANGE` and the run is a genuine recovery→failure transition. If you need every transition
+into unhealthy to notify, use `DQAlertFrequency.ALWAYS` with `NotifyOn.STATUS_CHANGE`.
+</Admonition>
+
 The `DQAlertFrequency.HOURLY` / `DQAlertFrequency.DAILY` windows and `NotifyOn.STATUS_CHANGE`
 gating rely on suppression state that, by default, lives only in memory for the lifetime of the
 `DQEngine`. To make them behave correctly across engine restarts (for example each scheduled job
@@ -860,6 +867,7 @@ Each row is an *AlertEvent* with the following columns:
 | *input_location* | *STRING* | Source path or table of the checked data, or *null* |
 | *destinations* | *ARRAY of STRING* | Names of the destinations that were targeted |
 | *delivery_errors* | *ARRAY of STRING* | Error messages for any destinations that failed delivery |
+| *run_config_name* | *STRING* | Run configuration the event belongs to; events are stamped with and loaded filtered by this value |
 
 Because it is an ordinary table, you can query the history directly — for example, to review the
 most recent alerts that actually fired:

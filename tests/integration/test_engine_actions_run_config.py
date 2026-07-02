@@ -126,6 +126,7 @@ def test_shared_action_events_location_scopes_events_per_run_config(ws, spark, m
 
     # Each run config's fired event is stamped with its own run_config_name in the shared table.
     fired = [row for row in spark.read.table(events_table).collect() if row["fired"]]
+    assert len(fired) == 2, f"Expected exactly one fired event per run config, got {len(fired)}"
     scoped = {row["run_config_name"] for row in fired}
     assert scoped == {"rc_a", "rc_b"}, f"Expected events scoped to both run configs, got {scoped}"
 

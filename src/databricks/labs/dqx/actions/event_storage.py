@@ -14,6 +14,7 @@ This module provides:
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 
 from pyspark.sql import SparkSession, functions as F
 from pyspark.sql.window import Window
@@ -37,6 +38,7 @@ from databricks.sdk import WorkspaceClient
 
 from databricks.labs.dqx.actions.state import ActionEventStore, AlertEvent
 from databricks.labs.dqx.actions.base import ActionStatus
+from databricks.labs.dqx.actions.log_sanitize import sanitize_for_log
 from databricks.labs.dqx.config import ActionEventsConfig, LakebaseActionsStorageConfig
 from databricks.labs.dqx.io import save_dataframe_as_table
 from databricks.labs.dqx.config import OutputConfig
@@ -116,7 +118,7 @@ class TableActionEventStore(ActionEventStore):
         # which would wipe prior history). This matches the Lakebase store, which always inserts.
         output_config = OutputConfig(location=self._config.location, mode="append")
         save_dataframe_as_table(df, output_config)
-        logger.info(f"Appended {len(events)} event(s) to '{self._config.location}'.")
+        logger.info(f"Appended {len(events)} event(s) to '{sanitize_for_log(self._config.location)}'.")
 
     def load_latest_per_action(self) -> dict[str, AlertEvent]:
         """Read the Delta table and return the most recent *AlertEvent* per action.
@@ -126,8 +128,9 @@ class TableActionEventStore(ActionEventStore):
         Returns:
             Mapping of *action_name* to its latest *AlertEvent*.
         """
+        safe_location = sanitize_for_log(self._config.location)
         if not self._spark.catalog.tableExists(self._config.location):
-            logger.info(f"Table '{self._config.location}' does not exist; returning empty state.")
+            logger.info(f"Table '{safe_location}' does not exist; returning empty state.")
             return {}
 
         df = self._spark.read.table(self._config.location).filter(
@@ -154,8 +157,25 @@ class TableActionEventStore(ActionEventStore):
             )
             result[row["action_name"]] = alert_event
 
-        logger.info(f"Loaded latest events for {len(result)} action(s) from '{self._config.location}'.")
+        logger.info(f"Loaded latest events for {len(result)} action(s) from '{safe_location}'.")
         return result
+
+    def load_last_fired_per_action(self) -> dict[str, datetime]:
+        """Return the *run_time* of the most recent fired event per action for this run config.
+
+        Returns an empty dict when the table does not exist or has no fired events.
+
+        Returns:
+            Mapping of *action_name* to the latest fired *run_time*.
+        """
+        if not self._spark.catalog.tableExists(self._config.location):
+            return {}
+
+        fired = self._spark.read.table(self._config.location).filter(
+            (F.col("run_config_name") == self._config.run_config_name) & (F.col("fired"))
+        )
+        grouped = fired.groupBy("action_name").agg(F.max("run_time").alias("last_fired"))
+        return {row["action_name"]: row["last_fired"] for row in grouped.collect()}
 
 
 # ---------------------------------------------------------------------------
@@ -230,11 +250,11 @@ class LakebaseActionEventStore(LakebaseConnectionMixin, ActionEventStore):
         with engine.begin() as conn:
             if not conn.dialect.has_schema(conn, self._config.schema_name):
                 conn.execute(CreateSchema(self._config.schema_name))
-                logger.info(f"Created schema '{self._config.schema_name}'.")
+                logger.info(f"Created schema '{sanitize_for_log(self._config.schema_name)}'.")
 
         table = self._get_table_definition(self._config.schema_name, self._config.table_name)
         table.metadata.create_all(engine, checkfirst=True)
-        logger.info(f"Bootstrapped table '{self._config.location}'.")
+        logger.info(f"Bootstrapped table '{sanitize_for_log(self._config.location)}'.")
 
     def append(self, events: list[AlertEvent]) -> None:
         """Persist *events* to the Lakebase table.
@@ -271,7 +291,7 @@ class LakebaseActionEventStore(LakebaseConnectionMixin, ActionEventStore):
 
         with engine.begin() as conn:
             conn.execute(insert(table), rows)
-        logger.info(f"Appended {len(events)} event(s) to Lakebase table '{self._config.location}'.")
+        logger.info(f"Appended {len(events)} event(s) to Lakebase table '{sanitize_for_log(self._config.location)}'.")
 
     def load_latest_per_action(self) -> dict[str, AlertEvent]:
         """Read the Lakebase table and return the most recent *AlertEvent* per action.
@@ -284,7 +304,9 @@ class LakebaseActionEventStore(LakebaseConnectionMixin, ActionEventStore):
         engine = self._get_engine()
         inspector = inspect(engine)
         if not inspector.has_table(self._config.table_name, schema=self._config.schema_name):
-            logger.info(f"Table '{self._config.location}' not found in Lakebase; returning empty state.")
+            logger.info(
+                f"Table '{sanitize_for_log(self._config.location)}' not found in Lakebase; returning empty state."
+            )
             return {}
 
         table = self._get_table_definition(self._config.schema_name, self._config.table_name)
@@ -320,8 +342,39 @@ class LakebaseActionEventStore(LakebaseConnectionMixin, ActionEventStore):
                 run_config_name=row["run_config_name"],
             )
 
-        logger.info(f"Loaded latest events for {len(result)} action(s) from Lakebase '{self._config.location}'.")
+        logger.info(
+            f"Loaded latest events for {len(result)} action(s) from Lakebase '{sanitize_for_log(self._config.location)}'."
+        )
         return result
+
+    def load_last_fired_per_action(self) -> dict[str, datetime]:
+        """Return the *run_time* of the most recent fired event per action for this run config.
+
+        Returns an empty dict when the table does not exist or has no fired events.
+
+        Returns:
+            Mapping of *action_name* to the latest fired *run_time*.
+        """
+        engine = self._get_engine()
+        inspector = inspect(engine)
+        if not inspector.has_table(self._config.table_name, schema=self._config.schema_name):
+            return {}
+
+        table = self._get_table_definition(self._config.schema_name, self._config.table_name)
+        stmt = (
+            select(table.c.action_name, table.c.run_time)
+            .where((table.c.run_config_name == self._config.run_config_name) & (table.c.fired.is_(True)))
+            .order_by(table.c.run_time.desc())
+        )
+
+        last_fired: dict[str, datetime] = {}
+        with engine.connect() as conn:
+            rows = conn.execute(stmt).mappings().all()
+        for row in rows:
+            action_name = row["action_name"]
+            if action_name not in last_fired:  # rows are run_time-descending, so first seen is latest
+                last_fired[action_name] = row["run_time"]
+        return last_fired
 
 
 # ---------------------------------------------------------------------------

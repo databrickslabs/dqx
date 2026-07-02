@@ -42,15 +42,27 @@ from databricks.labs.dqx.actions.state import ActionEventStore, ActionStateStore
 class FakeEventStore(ActionEventStore):
     """In-memory event store for testing."""
 
-    def __init__(self, initial_events: dict[str, AlertEvent] | None = None) -> None:
+    def __init__(
+        self,
+        initial_events: dict[str, AlertEvent] | None = None,
+        last_fired: dict[str, datetime] | None = None,
+    ) -> None:
         self.appended: list[AlertEvent] = []
         self._initial: dict[str, AlertEvent] = initial_events or {}
+        # Explicit last-fired map decouples "latest event" from "latest fired event"; when None it is
+        # derived from the fired initial events (matching the real stores' semantics).
+        self._last_fired: dict[str, datetime] | None = last_fired
 
     def append(self, events: list[AlertEvent]) -> None:
         self.appended.extend(events)
 
     def load_latest_per_action(self) -> dict[str, AlertEvent]:
         return dict(self._initial)
+
+    def load_last_fired_per_action(self) -> dict[str, datetime]:
+        if self._last_fired is not None:
+            return dict(self._last_fired)
+        return {name: event.run_time for name, event in self._initial.items() if event.fired}
 
 
 def _make_destination() -> CallbackDQAlertDestination:
@@ -307,6 +319,34 @@ def test_seed_does_not_set_last_fired_for_unfired_event() -> None:
     dq_action = DQAction(action=alert, name="my-action")
     ctx = _make_context(run_time=base_time + timedelta(minutes=30))
     assert store.should_fire(dq_action, ctx, condition_result=True) is True
+
+
+def test_seed_keeps_frequency_suppression_when_latest_event_not_fired() -> None:
+    """HOURLY suppression survives a restart even when the latest persisted event was suppressed (not fired).
+
+    For a chronically unhealthy action the most recent event is a suppressed, non-fired UNHEALTHY row, so
+    seeding *_last_fired* must come from the last *fired* event (load_last_fired_per_action), not the latest
+    event. Otherwise the frequency window would be lost on restart and the alert would re-fire early.
+    """
+    base_time = datetime(2024, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
+    # Latest persisted event: unhealthy but suppressed (fired=False), 30 min after the last actual fire.
+    latest_event = _make_event(
+        action_name="my-action",
+        fired=False,
+        status=ActionStatus.UNHEALTHY,
+        run_time=base_time + timedelta(minutes=30),
+    )
+    # The action actually fired at base_time.
+    fake_store = FakeEventStore(initial_events={"my-action": latest_event}, last_fired={"my-action": base_time})
+
+    store = ActionStateStore(event_store=fake_store)
+    store.seed()
+
+    alert = _make_dq_alert(frequency=DQAlertFrequency.HOURLY)
+    dq_action = DQAction(action=alert, name="my-action")
+    # A run 45 min after the last fire is still inside the 1h window -> must stay suppressed.
+    ctx = _make_context(run_time=base_time + timedelta(minutes=45))
+    assert store.should_fire(dq_action, ctx, condition_result=True) is False
 
 
 # ---------------------------------------------------------------------------

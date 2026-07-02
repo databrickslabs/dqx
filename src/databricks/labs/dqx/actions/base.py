@@ -86,6 +86,9 @@ class ActionContext:
         rule_set_fingerprint: Fingerprint of the rule set applied, or *None*.
         user_metadata: Arbitrary string-valued metadata supplied by the caller,
             or *None* when not provided.
+        condition: The gating condition expression of the action being executed, or *None* when the
+            action fires unconditionally. Set per-action by the evaluator so an action (e.g. an alert
+            message) can report *why* it fired; the engine leaves it *None* on the shared run context.
     """
 
     metrics: dict[str, object]
@@ -98,6 +101,7 @@ class ActionContext:
     checks_location: str | None = None
     rule_set_fingerprint: str | None = None
     user_metadata: dict[str, str] | None = None
+    condition: str | None = None
 
 
 # ---------------------------------------------------------------------------

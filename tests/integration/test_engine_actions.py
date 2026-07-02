@@ -16,9 +16,11 @@ Run with::
 
 from __future__ import annotations
 
-import time
+from datetime import timedelta
 
 import pytest
+
+from databricks.sdk.retries import retried
 
 from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.actions.alert import DQAlert
@@ -190,10 +192,15 @@ def test_streaming_apply_checks_fires_callback_per_microbatch(ws, spark, make_sc
         metrics_config=OutputConfig(location=metrics_table),
     )
 
-    # Allow the streaming listener to flush its micro-batch callback.
-    time.sleep(30)
+    # The listener bus flushes onQueryProgress callbacks asynchronously after the (availableNow) query
+    # terminates, so poll with a bounded deadline rather than a fixed sleep (deterministic: returns as
+    # soon as the callback fires, fails fast if it never does).
+    @retried(on=[AssertionError], timeout=timedelta(minutes=2))
+    def _wait_for_callback() -> None:
+        assert received_contexts, "Callback must fire at least once for the streaming micro-batch"
 
-    assert len(received_contexts) >= 1, "Callback must fire at least once for the streaming micro-batch"
+    _wait_for_callback()
+
     ctx = received_contexts[0]
     error_count = ctx.metrics.get("error_row_count")
     assert isinstance(error_count, int) and error_count > 0, f"Expected error_row_count > 0, got {error_count!r}"

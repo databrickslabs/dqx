@@ -23,6 +23,7 @@ all configured *DQAction* instances through their full lifecycle:
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 
 from databricks.labs.dqx.actions.base import ActionContext, ActionResult, ActionServices, ActionStatus
@@ -134,7 +135,10 @@ class ActionEvaluator:
             # Step 3: execute — polymorphic dispatch, no isinstance
             # ------------------------------------------------------------------
             try:
-                result = dq_action.action.execute(context, self._services)
+                # Pass the action's own gating condition so the action (e.g. an alert message) can
+                # report why it fired; the shared run context carries no per-action condition.
+                action_context = dataclasses.replace(context, condition=dq_action.condition)
+                result = dq_action.action.execute(action_context, self._services)
                 results.append(result)
                 self._state_store.record(
                     self._build_event(

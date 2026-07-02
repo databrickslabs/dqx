@@ -250,6 +250,7 @@ def test_action_events_config_seeds_state_from_event_store(mock_workspace_client
     """
     fake_event_store = create_autospec(ActionEventStore, instance=True)
     fake_event_store.load_latest_per_action.return_value = {}
+    fake_event_store.load_last_fired_per_action.return_value = {}
 
     spark = create_autospec(SparkSession)
     observer = _make_observer()

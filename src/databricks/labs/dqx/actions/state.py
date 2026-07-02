@@ -21,6 +21,7 @@ from datetime import datetime, timedelta
 from databricks.labs.dqx.actions.alert import DQAlert, DQAlertFrequency, NotifyOn
 from databricks.labs.dqx.actions.base import ActionContext, ActionStatus
 from databricks.labs.dqx.actions.dq_action import DQAction
+from databricks.labs.dqx.actions.log_sanitize import sanitize_for_log
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +96,21 @@ class ActionEventStore(abc.ABC):
             action.  Returns an empty dict when the store has no data.
         """
 
+    @abc.abstractmethod
+    def load_last_fired_per_action(self) -> dict[str, datetime]:
+        """Load the *run_time* of the most recent **fired** event for each *action_name*.
+
+        Unlike *load_latest_per_action* — whose latest row may be a non-fired, suppressed
+        evaluation — this surfaces the last time each action actually fired. Seeding
+        *_last_fired* from it keeps *HOURLY* / *DAILY* frequency suppression durable across a
+        process restart even while an action stays unhealthy (and thus keeps recording
+        non-fired events).
+
+        Returns:
+            A mapping of *action_name* to the *run_time* of its most recent fired event.
+            Returns an empty dict when the store has no fired events.
+        """
+
 
 # ---------------------------------------------------------------------------
 # ActionStateStore
@@ -140,22 +156,28 @@ class ActionStateStore:
     def seed(self) -> None:
         """Hydrate in-memory state from the persistent event store.
 
-        If no *event_store* was provided, this is a no-op.  Otherwise, the
-        latest *AlertEvent* per action is loaded and used to populate:
+        If no *event_store* was provided, this is a no-op.  Otherwise the in-memory maps are
+        reset and repopulated:
 
-        - *_last_fired*: set to *event.run_time* only when *event.fired* is
-          *True*; left absent otherwise.
-        - *_last_status*: always set to *event.status*.
+        - *_last_status*: set from the latest *AlertEvent* per action.
+        - *_last_fired*: set from the latest **fired** event per action, loaded independently
+          (*load_last_fired_per_action*) so a streak of suppressed, non-fired unhealthy
+          evaluations does not erase the durable last-fired timestamp that *HOURLY* / *DAILY*
+          suppression relies on.
         """
         if self._event_store is None:
             return
 
         latest = self._event_store.load_latest_per_action()
+        last_fired = self._event_store.load_last_fired_per_action()
         with self._lock:
+            # Reset before repopulating so a re-seed cannot layer stale state under new data.
+            self._last_fired.clear()
+            self._last_status.clear()
             for action_name, event in latest.items():
-                if event.fired:
-                    self._last_fired[action_name] = event.run_time
                 self._last_status[action_name] = event.status
+            for action_name, run_time in last_fired.items():
+                self._last_fired[action_name] = run_time
         logger.info(f"Seeded action state for {len(latest)} action(s) from event store.")
 
     def should_fire(self, dq_action: DQAction, context: ActionContext, condition_result: bool) -> bool:
@@ -176,7 +198,10 @@ class ActionStateStore:
               - *STATUS_CHANGE*: fire only when the recorded *last_status* is
                 **not** *UNHEALTHY* (i.e., fire on transition to UNHEALTHY;
                 suppress if already UNHEALTHY).
-           Both checks must pass for the action to fire.
+           Both checks must pass for the action to fire. The frequency window is an **absolute
+           cap** evaluated *before* the notify-on gate: while an *HOURLY* / *DAILY* window is
+           active the action is suppressed even when *STATUS_CHANGE* would otherwise fire on a
+           genuine recovery→failure transition. Use *ALWAYS* if every transition must alert.
 
         All time comparisons use *context.run_time*; *datetime.now()* is never
         called.
@@ -199,17 +224,18 @@ class ActionStateStore:
 
         alert: DQAlert = dq_action.action
         action_name = dq_action.name
+        safe_name = sanitize_for_log(action_name)  # action_name is operator-supplied (CWE-117)
 
         # --- Frequency gate ---
         frequency_allows = self._check_frequency(alert.alert_frequency, action_name, context.run_time)
         if not frequency_allows:
-            logger.debug(f"Action '{action_name}' suppressed by frequency window ({alert.alert_frequency}).")
+            logger.debug(f"Action '{safe_name}' suppressed by frequency window ({alert.alert_frequency}).")
             return False
 
         # --- Notify-on gate ---
         notify_allows = self._check_notify_on(alert.notify_on, action_name)
         if not notify_allows:
-            logger.debug(f"Action '{action_name}' suppressed by notify_on={alert.notify_on} (already UNHEALTHY).")
+            logger.debug(f"Action '{safe_name}' suppressed by notify_on={alert.notify_on} (already UNHEALTHY).")
             return False
 
         return True
