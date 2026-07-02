@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from databricks_labs_dqx_app.backend.common.authorization import UserRole
 from databricks_labs_dqx_app.backend.dependencies import (
+    get_materializer,
     get_obo_ws,
     get_registry_service,
     get_rule_embeddings_service,
@@ -28,6 +29,7 @@ from databricks_labs_dqx_app.backend.models import (
     RegistryRuleVersionOut,
     UpdateRegistryRuleIn,
 )
+from databricks_labs_dqx_app.backend.services.materializer import Materializer
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
 from databricks_labs_dqx_app.backend.services.rule_embeddings import RuleEmbeddingsService
 
@@ -241,6 +243,7 @@ def approve_registry_rule(
     rule_id: str,
     svc: Annotated[RegistryService, Depends(get_registry_service)],
     embeddings: Annotated[RuleEmbeddingsService, Depends(get_rule_embeddings_service)],
+    materializer: Annotated[Materializer, Depends(get_materializer)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
 ) -> RegistryRuleOut:
     """Approve (publish) a pending registry rule — bumps version and freezes a snapshot.
@@ -251,11 +254,18 @@ def approve_registry_rule(
     is itself a documented no-op when no embedding endpoint is configured
     and swallows call failures internally, so in practice this can never
     turn a successful publish into a 500.
+
+    Also re-materializes every FOLLOWING (unpinned) application of this
+    rule (design spec §5) so their ``dq_quality_rules`` copies pick up the
+    new version — see ``Materializer.rematerialize_for_rule``. PINNED
+    applications are untouched by a publish; they only change via a
+    direct edit.
     """
     try:
         user_email = _current_user_email(obo_ws)
         rule = svc.approve(rule_id, user_email)
         embeddings.embed_and_store(rule)
+        materializer.rematerialize_for_rule(rule_id)
         return RegistryRuleOut.from_domain(rule)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

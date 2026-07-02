@@ -136,7 +136,10 @@ class TestLifecycleRoutes:
         svc = MagicMock()
         svc.approve.return_value = _rule(status="approved", version=1)
         embeddings = MagicMock()
-        result = approve_registry_rule("r1", svc=svc, embeddings=embeddings, obo_ws=_mock_obo_ws())
+        materializer = MagicMock()
+        result = approve_registry_rule(
+            "r1", svc=svc, embeddings=embeddings, materializer=materializer, obo_ws=_mock_obo_ws()
+        )
         assert result.status == "approved"
         assert result.version == 1
 
@@ -145,7 +148,8 @@ class TestLifecycleRoutes:
         published = _rule(status="approved", version=1)
         svc.approve.return_value = published
         embeddings = MagicMock()
-        approve_registry_rule("r1", svc=svc, embeddings=embeddings, obo_ws=_mock_obo_ws())
+        materializer = MagicMock()
+        approve_registry_rule("r1", svc=svc, embeddings=embeddings, materializer=materializer, obo_ws=_mock_obo_ws())
         embeddings.embed_and_store.assert_called_once_with(published)
 
     def test_approve_propagates_unexpected_embedding_errors_as_500(self):
@@ -156,8 +160,35 @@ class TestLifecycleRoutes:
         svc.approve.return_value = _rule(status="approved", version=1)
         embeddings = MagicMock()
         embeddings.embed_and_store.side_effect = TypeError("boom")
+        materializer = MagicMock()
         with pytest.raises(HTTPException) as excinfo:
-            approve_registry_rule("r1", svc=svc, embeddings=embeddings, obo_ws=_mock_obo_ws())
+            approve_registry_rule(
+                "r1", svc=svc, embeddings=embeddings, materializer=materializer, obo_ws=_mock_obo_ws()
+            )
+        assert excinfo.value.status_code == 500
+
+    def test_approve_rematerializes_following_applications(self):
+        """Publishing a registry rule must propagate to every FOLLOWING
+        (unpinned) application so their materialized ``dq_quality_rules``
+        rows pick up the new version (design spec §5)."""
+        svc = MagicMock()
+        published = _rule(status="approved", version=2)
+        svc.approve.return_value = published
+        embeddings = MagicMock()
+        materializer = MagicMock()
+        approve_registry_rule("r1", svc=svc, embeddings=embeddings, materializer=materializer, obo_ws=_mock_obo_ws())
+        materializer.rematerialize_for_rule.assert_called_once_with("r1")
+
+    def test_approve_propagates_unexpected_materializer_errors_as_500(self):
+        svc = MagicMock()
+        svc.approve.return_value = _rule(status="approved", version=1)
+        embeddings = MagicMock()
+        materializer = MagicMock()
+        materializer.rematerialize_for_rule.side_effect = TypeError("boom")
+        with pytest.raises(HTTPException) as excinfo:
+            approve_registry_rule(
+                "r1", svc=svc, embeddings=embeddings, materializer=materializer, obo_ws=_mock_obo_ws()
+            )
         assert excinfo.value.status_code == 500
 
     def test_reject_success(self):
@@ -182,8 +213,11 @@ class TestLifecycleRoutes:
         svc = MagicMock()
         svc.approve.side_effect = RuntimeError("Registry rule not found: r1")
         embeddings = MagicMock()
+        materializer = MagicMock()
         with pytest.raises(HTTPException) as excinfo:
-            approve_registry_rule("r1", svc=svc, embeddings=embeddings, obo_ws=_mock_obo_ws())
+            approve_registry_rule(
+                "r1", svc=svc, embeddings=embeddings, materializer=materializer, obo_ws=_mock_obo_ws()
+            )
         assert excinfo.value.status_code == 404
 
 

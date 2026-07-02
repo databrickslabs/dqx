@@ -9,6 +9,22 @@ checks was not touched by the Rules Registry work and only understands
 that shape — see
 ``docs/superpowers/specs/2026-07-02-rules-registry-design.md`` §7 and §9.
 
+Materialization is **publish-gated, not live-synced**: nothing in this
+module runs automatically as a side effect of authoring actions on
+``dq_applied_rules`` (apply a rule, pin/unpin a version, set a severity
+override). A binding's applied rules only get (re-)materialized when:
+
+* a steward explicitly publishes the monitored table
+  (``POST /monitored-tables/{binding_id}/publish``, ``publishMonitoredTable``
+  -> :meth:`Materializer.materialize_binding`), or
+* a registry rule is approved/published and that propagates to its
+  FOLLOWING (unpinned) applications (``POST /registry-rules/{rule_id}/approve``
+  -> :meth:`Materializer.rematerialize_for_rule`).
+
+Applying, pinning, or overriding a rule only ever writes to
+``dq_applied_rules``; it never touches ``dq_quality_rules`` until one of
+the two publish-triggered calls above runs.
+
 For each ``dq_applied_rules`` row under a monitored table binding, this
 renders ONE ``dq_quality_rules`` row per mapping GROUP in
 ``column_mapping`` (slots substituted with real columns, non-``None``
@@ -460,18 +476,13 @@ class Materializer:
         """Re-materialize every binding with a FOLLOWING (unpinned) application of *rule_id*.
 
         Wired as the "publish a registry rule -> propagate to followers"
-        entry point (design spec §5). Callable from
-        ``RegistryService.approve`` (or its route) right after a
-        publish — kept as a separate explicit call rather than an
-        automatic side effect of ``approve()`` so ``RegistryService``
-        doesn't need a circular dependency on ``MonitoredTableService``/
-        ``Materializer``.
-
-        TODO(Phase 3C follow-up): wire this call into the registry-rules
-        publish route (``routes/v1/registry_rules.py:approve_registry_rule``)
-        once that route has access to a ``Materializer`` dependency —
-        left as an explicit, documented call site rather than adding the
-        dependency here to avoid widening this phase's blast radius.
+        entry point (design spec §5): called from
+        ``routes/v1/registry_rules.py:approve_registry_rule`` right after
+        ``RegistryService.approve()`` — kept as a separate explicit call
+        (injected via its own ``Depends(get_materializer)``) rather than an
+        automatic side effect of ``RegistryService.approve()`` itself, so
+        ``RegistryService`` doesn't need a circular dependency on
+        ``MonitoredTableService``/``Materializer``.
 
         Returns:
             The sorted list of ``binding_id``s that were re-materialized.

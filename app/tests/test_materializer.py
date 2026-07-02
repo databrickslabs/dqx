@@ -524,6 +524,112 @@ class TestCleanup:
         sql.execute.assert_not_called()
 
 
+class TestRematerializeForRule:
+    """``rematerialize_for_rule`` — the "publish -> propagate to followers" entry
+    point (design spec §5). Wired into ``approve_registry_rule`` so publishing a
+    new registry-rule version re-materializes every FOLLOWING (unpinned)
+    application; PINNED applications are excluded from the query entirely and
+    only ever change via a direct edit (see ``TestAutoUpgradeBehaviour``).
+    """
+
+    def test_queries_only_following_unpinned_applications(self, materializer, sql, monitored_tables, registry):
+        applied = AppliedRule(
+            id="ar1", binding_id="b1", rule_id="r1", column_mapping=[{"column": "customer_id"}], mapping_hash="h"
+        )
+        monitored_tables.get.return_value = _detail(applied)
+        registry.get_rule.return_value = _published_rule(version=2)
+        registry.get_version.return_value = _version_snapshot(version=2)
+
+        def fake_query(sql_text: str):
+            if "dq_applied_rules" in sql_text:
+                return [["b1"]]
+            return []
+
+        sql.query.side_effect = fake_query
+        result = materializer.rematerialize_for_rule("r1")
+
+        assert result == ["b1"]
+        applied_rules_query = next(c.args[0] for c in sql.query.call_args_list if "dq_applied_rules" in c.args[0])
+        assert "pinned_version IS NULL" in applied_rules_query
+        assert "'r1'" in applied_rules_query
+        monitored_tables.get.assert_called_once_with("b1")
+
+    def test_rematerializes_every_distinct_binding(self, materializer, sql, monitored_tables, registry):
+        registry.get_rule.return_value = _published_rule(version=2)
+        registry.get_version.return_value = _version_snapshot(version=2)
+
+        def get_detail(binding_id: str):
+            applied = AppliedRule(
+                id=f"ar-{binding_id}",
+                binding_id=binding_id,
+                rule_id="r1",
+                column_mapping=[{"column": "customer_id"}],
+                mapping_hash="h",
+            )
+            return _detail(applied, table_fqn=f"cat.schema.{binding_id}")
+
+        monitored_tables.get.side_effect = get_detail
+
+        def fake_query(sql_text: str):
+            if "dq_applied_rules" in sql_text:
+                return [["b1"], ["b2"]]
+            return []
+
+        sql.query.side_effect = fake_query
+        result = materializer.rematerialize_for_rule("r1")
+
+        assert result == ["b1", "b2"]
+        assert monitored_tables.get.call_args_list == [(("b1",),), (("b2",),)]
+
+    def test_skips_binding_that_no_longer_exists(self, materializer, sql, monitored_tables):
+        monitored_tables.get.return_value = None  # binding was deleted after publish
+
+        def fake_query(sql_text: str):
+            if "dq_applied_rules" in sql_text:
+                return [["gone"]]
+            return []
+
+        sql.query.side_effect = fake_query
+        result = materializer.rematerialize_for_rule("r1")
+
+        # The binding_id is still reported (caller-visible), but nothing raises.
+        assert result == ["gone"]
+
+    def test_no_following_applications_is_a_noop(self, materializer, sql, monitored_tables):
+        sql.query.return_value = []
+        result = materializer.rematerialize_for_rule("r1")
+        assert result == []
+        monitored_tables.get.assert_not_called()
+
+    def test_respects_auto_upgrade_behaviour_b_via_materialize_binding(
+        self, materializer, sql, registry, monitored_tables, app_settings
+    ):
+        """Re-materializing through the publish path still honours Behaviour B
+        (auto-upgrade OFF): a previously-approved following row whose content
+        changed is pushed back to pending_approval, same as a direct
+        ``materialize_binding`` call."""
+        app_settings.get_auto_upgrade_without_approval.return_value = False
+        applied = AppliedRule(
+            id="ar1", binding_id="b1", rule_id="r1", column_mapping=[{"column": "customer_id"}], mapping_hash="h"
+        )
+        monitored_tables.get.return_value = _detail(applied)
+        registry.get_rule.return_value = _published_rule(version=2)
+        registry.get_version.return_value = _version_snapshot(version=2, severity="Critical")
+
+        def fake_query(sql_text: str):
+            if "dq_applied_rules" in sql_text:
+                return [["b1"]]
+            if "SELECT status" in sql_text:
+                return [["approved", json.dumps({"different": "content"})]]
+            return []
+
+        sql.query.side_effect = fake_query
+        materializer.rematerialize_for_rule("r1")
+
+        update_sql = next(c.args[0] for c in sql.execute.call_args_list if c.args[0].startswith("UPDATE"))
+        assert "status = 'pending_approval'" in update_sql
+
+
 def _extract_json_literal(sql_text: str) -> dict:
     start = sql_text.index("parse_json('") + len("parse_json('")
     end = sql_text.index("')", start)
