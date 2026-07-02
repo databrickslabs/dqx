@@ -856,6 +856,16 @@ export interface LabelDefinition {
   description?: string | null;
   values: string[];
   allow_custom_values: boolean;
+  /** Optional value → "#RRGGBB" color map for badge rendering. */
+  value_colors?: Record<string, string> | null;
+  /**
+   * True for reserved, pre-seeded keys (e.g. the Rules Registry
+   * ``dimension``/``severity`` tags). Such keys cannot be deleted or
+   * renamed via `saveLabelDefinitions`, though their values, colors, and
+   * description may still be freely edited. Authoritative from the
+   * server — a client cannot grant/strip this flag via the save payload.
+   */
+  is_builtin?: boolean;
 }
 
 export interface LabelDefinitionsOut {
