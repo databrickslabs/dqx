@@ -281,3 +281,52 @@ class TestListAndGet:
         assert result is not None
         rule, version = result
         assert version is None
+
+    def test_get_rule_by_fingerprint_found(self, svc, sql):
+        from databricks_labs_dqx_app.backend.registry_models import RegistryRule
+        from databricks_labs_dqx_app.backend.registry_fingerprint import compute_registry_rule_fingerprint
+
+        rule = RegistryRule(rule_id="r1", mode="dqx_native", status="approved", version=1, definition=_native_definition())
+        rule.fingerprint = compute_registry_rule_fingerprint(rule)
+        sql.query.return_value = [_row_for(rule)]
+        found = svc.get_rule_by_fingerprint(rule.fingerprint)
+        assert found is not None
+        assert found.rule_id == "r1"
+        called_sql = sql.query.call_args[0][0]
+        assert "fingerprint = " in called_sql
+
+    def test_get_rule_by_fingerprint_not_found(self, svc, sql):
+        sql.query.return_value = []
+        assert svc.get_rule_by_fingerprint("deadbeef") is None
+
+
+# ---------------------------------------------------------------------------
+# seed_builtin_rule (Phase 2C)
+# ---------------------------------------------------------------------------
+
+
+class TestSeedBuiltinRule:
+    def test_creates_approved_v1_rule_with_snapshot(self, svc, sql):
+        rule = svc.seed_builtin_rule(
+            definition=_native_definition(),
+            user_metadata={"name": "Is not null", "dimension": "Completeness", "severity": "Medium"},
+        )
+        assert rule.status == "approved"
+        assert rule.version == 1
+        assert rule.is_builtin is True
+        assert rule.source == "builtin"
+        assert rule.fingerprint
+        calls = [c.args[0] for c in sql.execute.call_args_list]
+        assert any("INSERT INTO dqx_test.dqx_app_test.dq_rules " in c for c in calls)
+        assert any("dq_rule_versions" in c for c in calls)
+        assert any("dq_rules_history" in c for c in calls)
+
+    def test_uses_provided_steward_and_user_email(self, svc, sql):
+        rule = svc.seed_builtin_rule(
+            definition=_native_definition(),
+            user_metadata={},
+            user_email="system",
+            steward="system",
+        )
+        assert rule.created_by == "system"
+        assert rule.steward == "system"

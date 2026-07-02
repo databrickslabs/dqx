@@ -116,6 +116,22 @@ class RegistryService:
         """Get a single registry rule (with its typed slots/params) by id."""
         return self._get(rule_id)
 
+    def get_rule_by_fingerprint(self, fingerprint: str) -> RegistryRule | None:
+        """Get the first registry rule (any status) matching *fingerprint*.
+
+        Used by the built-in seeding path (Phase 2C) to detect whether a
+        structurally-identical rule already exists before inserting a
+        duplicate — unlike :meth:`_dedup_warning` (which only looks at
+        *published* rules and merely warns), this is an exact-identity
+        lookup used to skip re-seeding.
+        """
+        e_fp = escape_sql_string(fingerprint)
+        sql = f"SELECT {self._select_cols} FROM {self._table} WHERE fingerprint = '{e_fp}' LIMIT 1"  # noqa: S608
+        rows = self._sql.query(sql)
+        if not rows:
+            return None
+        return self._row_to_rule(rows[0])
+
     def get_rule_with_version(self, rule_id: str) -> tuple[RegistryRule, RuleVersion | None] | None:
         """Get a registry rule plus its current published snapshot, if any."""
         rule = self._get(rule_id)
@@ -193,6 +209,50 @@ class RegistryService:
         self._record_history(rule.rule_id, rule.definition, rule.version, "create", None, "draft", user_email)
         logger.info("Created registry rule %s (mode=%s)", rule.rule_id, rule.mode)
         return rule, warning
+
+    def seed_builtin_rule(
+        self,
+        definition: RuleDefinition,
+        user_metadata: dict[str, Any] | None = None,
+        user_email: str = "system",
+        steward: str | None = "system",
+    ) -> RegistryRule:
+        """Create a pre-published, ``is_builtin`` registry rule (Phase 2C seeding).
+
+        Unlike :meth:`create_rule` (which always starts a rule at
+        ``draft``/version 0), built-in DQX checks ship already published:
+        the row is written directly at ``status='approved'``, ``version=1``,
+        with a frozen ``dq_rule_versions`` snapshot — mirroring what
+        :meth:`approve` does for a normal rule, without the draft/pending
+        detour. Callers are responsible for idempotency (see
+        :meth:`get_rule_by_fingerprint` and
+        ``backend.builtin_rules_seed.seed_builtin_rules_if_absent``) — this
+        method always inserts.
+        """
+        now = datetime.now(timezone.utc)
+        rule = RegistryRule(
+            rule_id=uuid4().hex[:16],
+            mode="dqx_native",
+            status="approved",
+            version=1,
+            polarity=None,
+            author_kind="human",
+            definition=definition,
+            user_metadata=dict(user_metadata or {}),
+            steward=steward,
+            is_builtin=True,
+            source="builtin",
+            created_by=user_email,
+            created_at=now,
+            updated_by=user_email,
+            updated_at=now,
+        )
+        rule.fingerprint = compute_registry_rule_fingerprint(rule)
+        self._insert(rule)
+        self._write_version_snapshot(rule, user_email)
+        self._record_history(rule.rule_id, rule.definition, rule.version, "seed", None, "approved", user_email)
+        logger.info("Seeded built-in registry rule %s (fingerprint=%s)", rule.rule_id, rule.fingerprint)
+        return rule
 
     def update_draft(
         self,
