@@ -92,7 +92,8 @@ dq_monitored_tables(                       -- thin binding; profiling reuses dq_
 dq_applied_rules(                          -- the LIVE LINK
   id PK, binding_id FK, rule_id FK,
   pinned_version int NULL,       -- NULL = follow latest published (auto-upgrade)
-  severity_override_id FK NULL,
+  severity_override text NULL,   -- a severity TAG value (Low/Med/High/Critical), NOT an FK (severity is a tag)
+  mapping_hash text,             -- deterministic hash of column_mapping; UNIQUE(binding_id, rule_id, mapping_hash)
   column_mapping jsonb,          -- [{slot, column}] — one mapping group = one materialized check
   user_metadata jsonb,           -- per-application free-text tags
   audit, UNIQUE(binding_id, rule_id, mapping-hash))
