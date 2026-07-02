@@ -134,9 +134,30 @@ class TestLifecycleRoutes:
     def test_approve_success(self):
         svc = MagicMock()
         svc.approve.return_value = _rule(status="approved", version=1)
-        result = approve_registry_rule("r1", svc=svc, obo_ws=_mock_obo_ws())
+        embeddings = MagicMock()
+        result = approve_registry_rule("r1", svc=svc, embeddings=embeddings, obo_ws=_mock_obo_ws())
         assert result.status == "approved"
         assert result.version == 1
+
+    def test_approve_embeds_the_published_rule(self):
+        svc = MagicMock()
+        published = _rule(status="approved", version=1)
+        svc.approve.return_value = published
+        embeddings = MagicMock()
+        approve_registry_rule("r1", svc=svc, embeddings=embeddings, obo_ws=_mock_obo_ws())
+        embeddings.embed_and_store.assert_called_once_with(published)
+
+    def test_approve_propagates_unexpected_embedding_errors_as_500(self):
+        # In production RuleEmbeddingsService.embed_and_store never raises (it swallows
+        # its own errors) — this documents the route's fallback behaviour if that
+        # invariant were ever broken, rather than silently hiding a bug.
+        svc = MagicMock()
+        svc.approve.return_value = _rule(status="approved", version=1)
+        embeddings = MagicMock()
+        embeddings.embed_and_store.side_effect = TypeError("boom")
+        with pytest.raises(HTTPException) as excinfo:
+            approve_registry_rule("r1", svc=svc, embeddings=embeddings, obo_ws=_mock_obo_ws())
+        assert excinfo.value.status_code == 500
 
     def test_reject_success(self):
         svc = MagicMock()
@@ -159,6 +180,7 @@ class TestLifecycleRoutes:
     def test_approve_missing_rule_raises_404(self):
         svc = MagicMock()
         svc.approve.side_effect = RuntimeError("Registry rule not found: r1")
+        embeddings = MagicMock()
         with pytest.raises(HTTPException) as excinfo:
-            approve_registry_rule("r1", svc=svc, obo_ws=_mock_obo_ws())
+            approve_registry_rule("r1", svc=svc, embeddings=embeddings, obo_ws=_mock_obo_ws())
         assert excinfo.value.status_code == 404

@@ -109,6 +109,12 @@ export type AiSettingsInAiEndpointName = string | null;
 
 export type AiSettingsInAiRateLimitPerUserPerHour = number | null;
 
+export type AiSettingsInEmbeddingEndpointName = string | null;
+
+export type AiSettingsInVsEndpointName = string | null;
+
+export type AiSettingsInVsIndexName = string | null;
+
 /**
  * Update payload — omitted fields are left unchanged.
  */
@@ -116,16 +122,28 @@ export interface AiSettingsIn {
   ai_enabled?: AiSettingsInAiEnabled;
   ai_endpoint_name?: AiSettingsInAiEndpointName;
   ai_rate_limit_per_user_per_hour?: AiSettingsInAiRateLimitPerUserPerHour;
+  embedding_endpoint_name?: AiSettingsInEmbeddingEndpointName;
+  vs_endpoint_name?: AiSettingsInVsEndpointName;
+  vs_index_name?: AiSettingsInVsIndexName;
 }
 
 /**
- * Effective AI Gateway settings.
+ * Effective AI Gateway + Vector Search settings.
+
+``embedding_endpoint_name``/``vs_endpoint_name``/``vs_index_name``
+(Rules Registry Phase 4B/4C) are entirely optional: empty (the default)
+means the rule-mapping suggester reports ``available=False`` rather
+than attempting a call. No Vector Search infrastructure is required
+for any other app feature.
  */
 export interface AiSettingsOut {
   ai_enabled: boolean;
   ai_endpoint_name: string;
   ai_rate_limit_per_user_per_hour: number;
   ai_rate_limit_default?: number;
+  embedding_endpoint_name?: string;
+  vs_endpoint_name?: string;
+  vs_index_name?: string;
 }
 
 /**
@@ -1758,6 +1776,39 @@ export interface SetStatusIn {
   status: string;
   /** If provided, the update is rejected when the current version does not match (optimistic concurrency). */
   expected_version?: SetStatusInExpectedVersion;
+}
+
+/**
+ * Response of ``POST /monitored-tables/{binding_id}/suggest-rules``.
+
+``available=False`` (with a human-readable ``reason``) covers every
+degraded path — Vector Search/embedding/AI not configured, retrieval or
+judge failure — and is always returned with HTTP 200, never a 500.
+ */
+export interface SuggestRulesOut {
+  available: boolean;
+  suggestions?: SuggestedRuleMappingOut[];
+  reason?: string;
+}
+
+export type SuggestedRuleMappingOutRuleName = string | null;
+
+export type SuggestedRuleMappingOutDimension = string | null;
+
+export type SuggestedRuleMappingOutSeverity = string | null;
+
+export type SuggestedRuleMappingOutColumnMapping = {[key: string]: string};
+
+/**
+ * One validated, complete slot->column mapping suggestion (Rules Registry Phase 4C).
+ */
+export interface SuggestedRuleMappingOut {
+  rule_id: string;
+  rule_name?: SuggestedRuleMappingOutRuleName;
+  dimension?: SuggestedRuleMappingOutDimension;
+  severity?: SuggestedRuleMappingOutSeverity;
+  column_mapping: SuggestedRuleMappingOutColumnMapping;
+  explanation?: string;
 }
 
 export type TableOutTableType = string | null;
@@ -4528,7 +4579,7 @@ export const useSaveRunReviewStatuses = <TError = AxiosError<HTTPValidationError
     }
     
 /**
- * Return the current AI Gateway settings (admin only).
+ * Return the current AI Gateway + Vector Search settings (admin only).
  * @summary Get Ai Settings
  */
 export const getAiSettings = (
@@ -4675,7 +4726,7 @@ export function useGetAiSettingsSuspense<TData = Awaited<ReturnType<typeof getAi
 
 
 /**
- * Update one or more AI Gateway settings (admin only).
+ * Update one or more AI Gateway / Vector Search settings (admin only).
  * @summary Save Ai Settings
  */
 export const saveAiSettings = (
@@ -8907,6 +8958,13 @@ export const useSubmitRegistryRule = <TError = AxiosError<HTTPValidationError>,
     
 /**
  * Approve (publish) a pending registry rule — bumps version and freezes a snapshot.
+
+Re-embeds the rule into the ``dq_rule_embeddings`` corpus (Rules
+Registry Phase 4B) right after publish, so the mapping suggester picks
+up the latest text/version. ``RuleEmbeddingsService.embed_and_store``
+is itself a documented no-op when no embedding endpoint is configured
+and swallows call failures internally, so in practice this can never
+turn a successful publish into a 500.
  * @summary Approve Registry Rule
  */
 export const approveRegistryRule = (
@@ -10044,6 +10102,73 @@ export const usePublishMonitoredTable = <TError = AxiosError<HTTPValidationError
       > => {
 
       const mutationOptions = getPublishMonitoredTableMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Suggest published registry rules (with a complete column mapping) for a monitored table.
+
+Always returns HTTP 200 with ``available=False`` + a ``reason`` for every
+degraded path — Vector Search/embedding/AI not configured, retrieval or
+judge failure — so a deployment with no AI/Vector Search infra behaves
+exactly like today. Never raises for a missing-infra deployment.
+ * @summary Suggest Rules For Table
+ */
+export const suggestRulesForTable = (
+    bindingId: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<SuggestRulesOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/monitored-tables/${bindingId}/suggest-rules`,undefined,options
+    );
+  }
+
+
+
+export const getSuggestRulesForTableMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof suggestRulesForTable>>, TError,{bindingId: string}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof suggestRulesForTable>>, TError,{bindingId: string}, TContext> => {
+
+const mutationKey = ['suggestRulesForTable'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof suggestRulesForTable>>, {bindingId: string}> = (props) => {
+          const {bindingId} = props ?? {};
+
+          return  suggestRulesForTable(bindingId,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SuggestRulesForTableMutationResult = NonNullable<Awaited<ReturnType<typeof suggestRulesForTable>>>
+    
+    export type SuggestRulesForTableMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Suggest Rules For Table
+ */
+export const useSuggestRulesForTable = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof suggestRulesForTable>>, TError,{bindingId: string}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof suggestRulesForTable>>,
+        TError,
+        {bindingId: string},
+        TContext
+      > => {
+
+      const mutationOptions = getSuggestRulesForTableMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }

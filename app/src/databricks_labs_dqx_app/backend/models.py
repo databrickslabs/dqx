@@ -21,6 +21,7 @@ from .services.monitored_table_service import (
     MonitoredTableDetail,
     MonitoredTableSummary,
 )
+from .services.rule_suggester import RuleSuggestion, SuggestRulesResult
 
 
 class VersionOut(BaseModel):
@@ -560,6 +561,49 @@ class MonitoredTableProfileOut(BaseModel):
             summary=profile.summary,
             generated_rules=profile.generated_rules,
             profiled_at=profile.profiled_at,
+        )
+
+
+class SuggestedRuleMappingOut(BaseModel):
+    """One validated, complete slot->column mapping suggestion (Rules Registry Phase 4C)."""
+
+    rule_id: str
+    rule_name: str | None = None
+    dimension: str | None = None
+    severity: str | None = None
+    column_mapping: ColumnMappingGroup
+    explanation: str = ""
+
+    @classmethod
+    def from_domain(cls, suggestion: RuleSuggestion) -> "SuggestedRuleMappingOut":
+        return cls(
+            rule_id=suggestion.rule_id,
+            rule_name=suggestion.rule_name,
+            dimension=suggestion.dimension,
+            severity=suggestion.severity,
+            column_mapping=suggestion.column_mapping,
+            explanation=suggestion.explanation,
+        )
+
+
+class SuggestRulesOut(BaseModel):
+    """Response of ``POST /monitored-tables/{binding_id}/suggest-rules``.
+
+    ``available=False`` (with a human-readable ``reason``) covers every
+    degraded path — Vector Search/embedding/AI not configured, retrieval or
+    judge failure — and is always returned with HTTP 200, never a 500.
+    """
+
+    available: bool
+    suggestions: list[SuggestedRuleMappingOut] = Field(default_factory=list)
+    reason: str = ""
+
+    @classmethod
+    def from_domain(cls, result: SuggestRulesResult) -> "SuggestRulesOut":
+        return cls(
+            available=result.available,
+            reason=result.reason,
+            suggestions=[SuggestedRuleMappingOut.from_domain(s) for s in result.suggestions],
         )
 
 

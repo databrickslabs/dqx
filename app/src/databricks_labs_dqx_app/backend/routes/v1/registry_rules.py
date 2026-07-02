@@ -15,6 +15,7 @@ from databricks_labs_dqx_app.backend.common.authorization import UserRole
 from databricks_labs_dqx_app.backend.dependencies import (
     get_obo_ws,
     get_registry_service,
+    get_rule_embeddings_service,
     require_role,
 )
 from databricks_labs_dqx_app.backend.logger import logger
@@ -27,6 +28,7 @@ from databricks_labs_dqx_app.backend.models import (
     UpdateRegistryRuleIn,
 )
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
+from databricks_labs_dqx_app.backend.services.rule_embeddings import RuleEmbeddingsService
 
 router = APIRouter()
 
@@ -237,12 +239,22 @@ def submit_registry_rule(
 def approve_registry_rule(
     rule_id: str,
     svc: Annotated[RegistryService, Depends(get_registry_service)],
+    embeddings: Annotated[RuleEmbeddingsService, Depends(get_rule_embeddings_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
 ) -> RegistryRuleOut:
-    """Approve (publish) a pending registry rule — bumps version and freezes a snapshot."""
+    """Approve (publish) a pending registry rule — bumps version and freezes a snapshot.
+
+    Re-embeds the rule into the ``dq_rule_embeddings`` corpus (Rules
+    Registry Phase 4B) right after publish, so the mapping suggester picks
+    up the latest text/version. ``RuleEmbeddingsService.embed_and_store``
+    is itself a documented no-op when no embedding endpoint is configured
+    and swallows call failures internally, so in practice this can never
+    turn a successful publish into a 500.
+    """
     try:
         user_email = _current_user_email(obo_ws)
         rule = svc.approve(rule_id, user_email)
+        embeddings.embed_and_store(rule)
         return RegistryRuleOut.from_domain(rule)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

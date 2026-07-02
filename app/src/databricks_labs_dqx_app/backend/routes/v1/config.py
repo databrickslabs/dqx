@@ -900,12 +900,22 @@ def save_run_review_statuses(
 
 
 class AiSettingsOut(BaseModel):
-    """Effective AI Gateway settings."""
+    """Effective AI Gateway + Vector Search settings.
+
+    ``embedding_endpoint_name``/``vs_endpoint_name``/``vs_index_name``
+    (Rules Registry Phase 4B/4C) are entirely optional: empty (the default)
+    means the rule-mapping suggester reports ``available=False`` rather
+    than attempting a call. No Vector Search infrastructure is required
+    for any other app feature.
+    """
 
     ai_enabled: bool
     ai_endpoint_name: str
     ai_rate_limit_per_user_per_hour: int
     ai_rate_limit_default: int = AppSettingsService.AI_RATE_LIMIT_DEFAULT
+    embedding_endpoint_name: str = ""
+    vs_endpoint_name: str = ""
+    vs_index_name: str = ""
 
 
 class AiSettingsIn(BaseModel):
@@ -914,6 +924,20 @@ class AiSettingsIn(BaseModel):
     ai_enabled: bool | None = None
     ai_endpoint_name: str | None = None
     ai_rate_limit_per_user_per_hour: int | None = None
+    embedding_endpoint_name: str | None = None
+    vs_endpoint_name: str | None = None
+    vs_index_name: str | None = None
+
+
+def _ai_settings_out(svc: AppSettingsService) -> AiSettingsOut:
+    return AiSettingsOut(
+        ai_enabled=svc.get_ai_enabled(),
+        ai_endpoint_name=svc.get_ai_endpoint_name(),
+        ai_rate_limit_per_user_per_hour=svc.get_ai_rate_limit_per_user_per_hour(),
+        embedding_endpoint_name=svc.get_embedding_endpoint_name(),
+        vs_endpoint_name=svc.get_vs_endpoint_name(),
+        vs_index_name=svc.get_vs_index_name(),
+    )
 
 
 @router.get(
@@ -925,12 +949,8 @@ class AiSettingsIn(BaseModel):
 def get_ai_settings(
     svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
 ) -> AiSettingsOut:
-    """Return the current AI Gateway settings (admin only)."""
-    return AiSettingsOut(
-        ai_enabled=svc.get_ai_enabled(),
-        ai_endpoint_name=svc.get_ai_endpoint_name(),
-        ai_rate_limit_per_user_per_hour=svc.get_ai_rate_limit_per_user_per_hour(),
-    )
+    """Return the current AI Gateway + Vector Search settings (admin only)."""
+    return _ai_settings_out(svc)
 
 
 @router.put(
@@ -944,12 +964,17 @@ def save_ai_settings(
     svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
     email: Annotated[str, Depends(get_user_email)],
 ) -> AiSettingsOut:
-    """Update one or more AI Gateway settings (admin only)."""
-    if body.ai_enabled is None and body.ai_endpoint_name is None and body.ai_rate_limit_per_user_per_hour is None:
-        raise HTTPException(
-            status_code=400,
-            detail="At least one of ai_enabled, ai_endpoint_name, ai_rate_limit_per_user_per_hour must be provided.",
-        )
+    """Update one or more AI Gateway / Vector Search settings (admin only)."""
+    fields = (
+        body.ai_enabled,
+        body.ai_endpoint_name,
+        body.ai_rate_limit_per_user_per_hour,
+        body.embedding_endpoint_name,
+        body.vs_endpoint_name,
+        body.vs_index_name,
+    )
+    if all(field is None for field in fields):
+        raise HTTPException(status_code=400, detail="At least one AI/Vector Search setting must be provided.")
 
     if body.ai_enabled is not None:
         svc.save_ai_enabled(body.ai_enabled, user_email=email)
@@ -959,10 +984,12 @@ def save_ai_settings(
         if body.ai_rate_limit_per_user_per_hour < 0:
             raise HTTPException(status_code=400, detail="ai_rate_limit_per_user_per_hour must be >= 0.")
         svc.save_ai_rate_limit_per_user_per_hour(body.ai_rate_limit_per_user_per_hour, user_email=email)
+    if body.embedding_endpoint_name is not None:
+        svc.save_embedding_endpoint_name(body.embedding_endpoint_name, user_email=email)
+    if body.vs_endpoint_name is not None:
+        svc.save_vs_endpoint_name(body.vs_endpoint_name, user_email=email)
+    if body.vs_index_name is not None:
+        svc.save_vs_index_name(body.vs_index_name, user_email=email)
 
-    logger.info("Saved AI Gateway settings (by=%s)", email)
-    return AiSettingsOut(
-        ai_enabled=svc.get_ai_enabled(),
-        ai_endpoint_name=svc.get_ai_endpoint_name(),
-        ai_rate_limit_per_user_per_hour=svc.get_ai_rate_limit_per_user_per_hour(),
-    )
+    logger.info("Saved AI Gateway / Vector Search settings (by=%s)", email)
+    return _ai_settings_out(svc)

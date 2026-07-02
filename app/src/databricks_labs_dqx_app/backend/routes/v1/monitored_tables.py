@@ -18,6 +18,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_materializer,
     get_monitored_table_service,
     get_obo_ws,
+    get_rule_suggester,
     require_role,
 )
 from databricks_labs_dqx_app.backend.logger import logger
@@ -32,6 +33,7 @@ from databricks_labs_dqx_app.backend.models import (
     RegisterMonitoredTableIn,
     SetAppliedRulePinIn,
     SetAppliedRuleSeverityOverrideIn,
+    SuggestRulesOut,
 )
 from databricks_labs_dqx_app.backend.services.apply_rules_service import (
     ApplyRulesService,
@@ -44,6 +46,7 @@ from databricks_labs_dqx_app.backend.services.monitored_table_service import (
     MonitoredTableService,
     MonitoredTableSummary,
 )
+from databricks_labs_dqx_app.backend.services.rule_suggester import RuleSuggester
 
 router = APIRouter()
 
@@ -345,3 +348,31 @@ def publish_monitored_table(
     except Exception as e:
         logger.error(f"Failed to publish monitored table {binding_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to publish monitored table: {e}")
+
+
+# ------------------------------------------------------------------
+# AI mapping suggester (Phase 4C — design spec §8)
+# ------------------------------------------------------------------
+
+
+@router.post(
+    "/{binding_id}/suggest-rules",
+    response_model=SuggestRulesOut,
+    operation_id="suggestRulesForTable",
+    dependencies=[require_role(*_AUTHORS_AND_ABOVE)],
+)
+async def suggest_rules_for_table(
+    binding_id: str,
+    svc: Annotated[RuleSuggester, Depends(get_rule_suggester)],
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+) -> SuggestRulesOut:
+    """Suggest published registry rules (with a complete column mapping) for a monitored table.
+
+    Always returns HTTP 200 with ``available=False`` + a ``reason`` for every
+    degraded path — Vector Search/embedding/AI not configured, retrieval or
+    judge failure — so a deployment with no AI/Vector Search infra behaves
+    exactly like today. Never raises for a missing-infra deployment.
+    """
+    user_email = _current_user_email(obo_ws)
+    result = await svc.suggest(binding_id, user_email)
+    return SuggestRulesOut.from_domain(result)

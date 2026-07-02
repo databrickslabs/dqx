@@ -31,6 +31,9 @@ from .services.registry_service import RegistryService
 from .services.monitored_table_service import MonitoredTableService
 from .services.apply_rules_service import ApplyRulesService
 from .services.materializer import Materializer
+from .services.rule_embeddings import RuleEmbeddingsService
+from .services.rule_retriever import RuleRetriever, VectorSearchRetriever
+from .services.rule_suggester import RuleSuggester
 from .services.rules_catalog_service import RulesCatalogService
 from .services.comments_service import CommentsService
 from .services.review_status_service import ReviewStatusService
@@ -314,6 +317,45 @@ async def get_materializer(
 ) -> Materializer:
     """Create a Materializer wired to the registry, monitored-table, and settings services."""
     return Materializer(sql=sql, registry=registry, monitored_tables=monitored_tables, app_settings=app_settings)
+
+
+async def get_rule_embeddings_service(
+    sql: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
+    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
+    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+) -> RuleEmbeddingsService:
+    """Create a RuleEmbeddingsService routed at the OLTP executor + SP credentials.
+
+    The SP client is used (not OBO) because embedding calls hit a serving
+    endpoint, mirroring the ``AIGateway`` split-auth rationale.
+    """
+    return RuleEmbeddingsService(sql=sql, sp_ws=sp_ws, app_settings=app_settings)
+
+
+async def get_rule_retriever(
+    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
+    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    embeddings: Annotated[RuleEmbeddingsService, Depends(get_rule_embeddings_service)],
+) -> RuleRetriever:
+    """Create the production Vector Search-backed RuleRetriever (design spec §8 swappable seam)."""
+    return VectorSearchRetriever(sp_ws=sp_ws, app_settings=app_settings, embeddings=embeddings)
+
+
+async def get_rule_suggester(
+    monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
+    registry: Annotated[RegistryService, Depends(get_registry_service)],
+    apply_rules: Annotated[ApplyRulesService, Depends(get_apply_rules_service)],
+    retriever: Annotated[RuleRetriever, Depends(get_rule_retriever)],
+    ai_gateway: Annotated[AIGateway, Depends(get_ai_gateway)],
+) -> RuleSuggester:
+    """Create a RuleSuggester wired to the registry/monitored-table/apply-rules services + AI gateway."""
+    return RuleSuggester(
+        monitored_tables=monitored_tables,
+        registry=registry,
+        apply_rules=apply_rules,
+        retriever=retriever,
+        ai_gateway=ai_gateway,
+    )
 
 
 async def get_discovery_service(

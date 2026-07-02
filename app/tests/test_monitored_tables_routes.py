@@ -9,7 +9,7 @@ behaviour is already covered by ``test_monitored_table_service.py``.
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import HTTPException
@@ -32,12 +32,14 @@ from databricks_labs_dqx_app.backend.routes.v1.monitored_tables import (
     remove_applied_rule,
     set_applied_rule_pin,
     set_applied_rule_severity_override,
+    suggest_rules_for_table,
 )
 from databricks_labs_dqx_app.backend.services.apply_rules_service import (
     MappingIncompleteError,
     RuleNotPublishedError,
 )
 from databricks_labs_dqx_app.backend.services.materializer import MaterializationError
+from databricks_labs_dqx_app.backend.services.rule_suggester import RuleSuggestion, SuggestRulesResult
 from databricks_labs_dqx_app.backend.services.monitored_table_service import (
     AppliedRuleSummary,
     DuplicateMonitoredTableError,
@@ -285,3 +287,45 @@ class TestPublishMonitoredTable:
                 "b1", monitored_tables_svc=monitored_tables_svc, materializer=materializer, obo_ws=_mock_obo_ws()
             )
         assert excinfo.value.status_code == 404
+
+
+class TestSuggestRulesForTable:
+    """The route is a thin async adapter — always returns HTTP 200 (never raises)."""
+
+    async def test_available_suggestions_are_mapped_to_the_response_model(self):
+        svc = MagicMock()
+        svc.suggest = AsyncMock(
+            return_value=SuggestRulesResult(
+                available=True,
+                suggestions=[
+                    RuleSuggestion(
+                        rule_id="r1",
+                        rule_name="Not Null Check",
+                        dimension="Completeness",
+                        severity="High",
+                        column_mapping={"column": "email"},
+                        explanation="email should not be null",
+                    )
+                ],
+            )
+        )
+
+        result = await suggest_rules_for_table("b1", svc=svc, obo_ws=_mock_obo_ws())
+
+        assert result.available is True
+        assert len(result.suggestions) == 1
+        assert result.suggestions[0].rule_id == "r1"
+        assert result.suggestions[0].column_mapping == {"column": "email"}
+        svc.suggest.assert_called_once_with("b1", "alice@x")
+
+    async def test_unavailable_result_returns_200_with_reason(self):
+        svc = MagicMock()
+        svc.suggest = AsyncMock(
+            return_value=SuggestRulesResult(available=False, reason="Vector Search is not configured.")
+        )
+
+        result = await suggest_rules_for_table("b1", svc=svc, obo_ws=_mock_obo_ws())
+
+        assert result.available is False
+        assert result.reason == "Vector Search is not configured."
+        assert result.suggestions == []

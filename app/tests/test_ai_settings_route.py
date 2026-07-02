@@ -24,6 +24,9 @@ class TestGetAiSettings:
         assert result.ai_endpoint_name == ""
         assert result.ai_rate_limit_per_user_per_hour == 30
         assert result.ai_rate_limit_default == 30
+        assert result.embedding_endpoint_name == ""
+        assert result.vs_endpoint_name == ""
+        assert result.vs_index_name == ""
 
 
 class TestSaveAiSettings:
@@ -65,3 +68,32 @@ class TestSaveAiSettings:
         assert result.ai_enabled is True
         assert result.ai_endpoint_name == "my-endpoint"
         assert result.ai_rate_limit_per_user_per_hour == 5
+
+    def test_saves_vector_search_settings(self, svc, sql_executor_mock):
+        store: dict[str, str] = {}
+
+        def _upsert(_table, *, key_cols, value_cols, **_kwargs):
+            store[key_cols["setting_key"]] = value_cols["setting_value"]
+
+        def _query(sql):
+            for key, value in store.items():
+                if f"'{key}'" in sql:
+                    return [(value,)]
+            return []
+
+        sql_executor_mock.upsert.side_effect = _upsert
+        sql_executor_mock.query.side_effect = _query
+
+        result = save_ai_settings(
+            AiSettingsIn(
+                embedding_endpoint_name="embed-endpoint",
+                vs_endpoint_name="vs-endpoint",
+                vs_index_name="catalog.schema.index",
+            ),
+            svc,
+            "admin@x",
+        )
+
+        assert result.embedding_endpoint_name == "embed-endpoint"
+        assert result.vs_endpoint_name == "vs-endpoint"
+        assert result.vs_index_name == "catalog.schema.index"
