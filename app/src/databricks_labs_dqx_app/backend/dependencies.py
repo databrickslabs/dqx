@@ -26,6 +26,7 @@ from .services.contract_rules_service import ContractRulesService
 from .services.discovery import DiscoveryService
 from .services.job_service import JobService
 from .services.role_service import RoleService
+from .services.registry_service import RegistryService
 from .services.rules_catalog_service import RulesCatalogService
 from .services.comments_service import CommentsService
 from .services.review_status_service import ReviewStatusService
@@ -253,6 +254,13 @@ async def get_rules_catalog_service(
 ) -> RulesCatalogService:
     """Create a RulesCatalogService routed at the OLTP executor."""
     return RulesCatalogService(sql=sql)
+
+
+async def get_registry_service(
+    sql: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
+) -> RegistryService:
+    """Create a RegistryService routed at the OLTP executor."""
+    return RegistryService(sql=sql)
 
 
 async def get_discovery_service(
@@ -490,6 +498,7 @@ __all__ = [
     "get_ai_rules_service",
     "get_contract_rules_service",
     "get_rules_catalog_service",
+    "get_registry_service",
     "get_discovery_service",
     "get_view_service",
     "get_job_service",

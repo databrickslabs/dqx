@@ -4,6 +4,13 @@ from databricks.labs.dqx.config import RunConfig, WorkspaceConfig
 from pydantic import BaseModel, Field
 
 from .. import __version__
+from .registry_models import AuthorKind as RegistryAuthorKind
+from .registry_models import Polarity as RegistryPolarity
+from .registry_models import RegistryRule as RegistryRuleDomain
+from .registry_models import RuleDefinition as RegistryRuleDefinition
+from .registry_models import RuleMode as RegistryRuleMode
+from .registry_models import RuleStatus as RegistryRuleStatus
+from .registry_models import RuleVersion as RegistryRuleVersionDomain
 
 
 class VersionOut(BaseModel):
@@ -213,6 +220,112 @@ class SetStatusIn(BaseModel):
         default=None,
         description="If provided, the update is rejected when the current version does not match (optimistic concurrency).",
     )
+
+
+class CreateRegistryRuleIn(BaseModel):
+    """Request body for creating a new draft Rules Registry rule."""
+
+    mode: RegistryRuleMode = Field(description="Authoring type: dqx_native | lowcode | sql")
+    definition: RegistryRuleDefinition = Field(description="Mode-specific body plus typed slots/parameters")
+    polarity: RegistryPolarity | None = Field(default=None, description="pass|fail — meaningful for lowcode/sql only")
+    author_kind: RegistryAuthorKind = Field(default="human", description="human | ai_generated | ai_assisted")
+    user_metadata: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Reserved tag keys (name/description/dimension/severity) + free-text tags",
+    )
+    steward: str | None = Field(default=None, description="Owning steward's email/username")
+
+
+class UpdateRegistryRuleIn(BaseModel):
+    """Request body for updating a draft Rules Registry rule. Only draft rules are editable."""
+
+    mode: RegistryRuleMode | None = None
+    definition: RegistryRuleDefinition | None = None
+    polarity: RegistryPolarity | None = None
+    user_metadata: dict[str, Any] | None = None
+    steward: str | None = None
+
+
+class RegistryRuleOut(BaseModel):
+    """A ``dq_rules`` row as returned to the frontend."""
+
+    rule_id: str
+    mode: RegistryRuleMode
+    status: RegistryRuleStatus
+    version: int
+    polarity: RegistryPolarity | None = None
+    author_kind: RegistryAuthorKind | None = None
+    definition: RegistryRuleDefinition
+    user_metadata: dict[str, Any] = Field(default_factory=dict)
+    fingerprint: str | None = None
+    steward: str | None = None
+    is_builtin: bool = False
+    source: str | None = None
+    created_by: str | None = None
+    created_at: str | None = None
+    updated_by: str | None = None
+    updated_at: str | None = None
+
+    @classmethod
+    def from_domain(cls, rule: RegistryRuleDomain) -> "RegistryRuleOut":
+        return cls(
+            rule_id=rule.rule_id,
+            mode=rule.mode,
+            status=rule.status,
+            version=rule.version,
+            polarity=rule.polarity,
+            author_kind=rule.author_kind,
+            definition=rule.definition,
+            user_metadata=rule.user_metadata,
+            fingerprint=rule.fingerprint,
+            steward=rule.steward,
+            is_builtin=rule.is_builtin,
+            source=rule.source,
+            created_by=rule.created_by,
+            created_at=rule.created_at.isoformat() if rule.created_at else None,
+            updated_by=rule.updated_by,
+            updated_at=rule.updated_at.isoformat() if rule.updated_at else None,
+        )
+
+
+class RegistryRuleVersionOut(BaseModel):
+    """A frozen ``dq_rule_versions`` snapshot as returned to the frontend."""
+
+    rule_id: str
+    version: int
+    definition: RegistryRuleDefinition
+    polarity: RegistryPolarity | None = None
+    user_metadata: dict[str, Any] = Field(default_factory=dict)
+    created_by: str | None = None
+    created_at: str | None = None
+
+    @classmethod
+    def from_domain(cls, version: RegistryRuleVersionDomain) -> "RegistryRuleVersionOut":
+        return cls(
+            rule_id=version.rule_id,
+            version=version.version,
+            definition=version.definition,
+            polarity=version.polarity,
+            user_metadata=version.user_metadata,
+            created_by=version.created_by,
+            created_at=version.created_at.isoformat() if version.created_at else None,
+        )
+
+
+class CreateRegistryRuleOut(BaseModel):
+    """Response for a successful create — includes a non-blocking dedup warning, if any."""
+
+    rule: RegistryRuleOut
+    dedup_warning: str | None = Field(
+        default=None, description="Non-blocking warning when a published rule shares this fingerprint"
+    )
+
+
+class RegistryRuleDetailOut(BaseModel):
+    """A registry rule plus its current published snapshot (None if never published)."""
+
+    rule: RegistryRuleOut
+    current_version: RegistryRuleVersionOut | None = None
 
 
 class DryRunIn(BaseModel):

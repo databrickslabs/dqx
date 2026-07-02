@@ -333,6 +333,79 @@ export interface ContractSchemaRulesOut {
   rules: ContractSchemaRulesOutRulesItem[];
 }
 
+/**
+ * Authoring type: dqx_native | lowcode | sql
+ */
+export type CreateRegistryRuleInMode = typeof CreateRegistryRuleInMode[keyof typeof CreateRegistryRuleInMode];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const CreateRegistryRuleInMode = {
+  dqx_native: 'dqx_native',
+  lowcode: 'lowcode',
+  sql: 'sql',
+} as const;
+
+/**
+ * pass|fail — meaningful for lowcode/sql only
+ */
+export type CreateRegistryRuleInPolarity = 'pass' | 'fail' | null;
+
+/**
+ * human | ai_generated | ai_assisted
+ */
+export type CreateRegistryRuleInAuthorKind = typeof CreateRegistryRuleInAuthorKind[keyof typeof CreateRegistryRuleInAuthorKind];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const CreateRegistryRuleInAuthorKind = {
+  human: 'human',
+  ai_generated: 'ai_generated',
+  ai_assisted: 'ai_assisted',
+} as const;
+
+/**
+ * Reserved tag keys (name/description/dimension/severity) + free-text tags
+ */
+export type CreateRegistryRuleInUserMetadata = { [key: string]: unknown };
+
+/**
+ * Owning steward's email/username
+ */
+export type CreateRegistryRuleInSteward = string | null;
+
+/**
+ * Request body for creating a new draft Rules Registry rule.
+ */
+export interface CreateRegistryRuleIn {
+  /** Authoring type: dqx_native | lowcode | sql */
+  mode: CreateRegistryRuleInMode;
+  /** Mode-specific body plus typed slots/parameters */
+  definition: RuleDefinition;
+  /** pass|fail — meaningful for lowcode/sql only */
+  polarity?: CreateRegistryRuleInPolarity;
+  /** human | ai_generated | ai_assisted */
+  author_kind?: CreateRegistryRuleInAuthorKind;
+  /** Reserved tag keys (name/description/dimension/severity) + free-text tags */
+  user_metadata?: CreateRegistryRuleInUserMetadata;
+  /** Owning steward's email/username */
+  steward?: CreateRegistryRuleInSteward;
+}
+
+/**
+ * Non-blocking warning when a published rule shares this fingerprint
+ */
+export type CreateRegistryRuleOutDedupWarning = string | null;
+
+/**
+ * Response for a successful create — includes a non-blocking dedup warning, if any.
+ */
+export interface CreateRegistryRuleOut {
+  rule: RegistryRuleOut;
+  /** Non-blocking warning when a published rule shares this fingerprint */
+  dedup_warning?: CreateRegistryRuleOutDedupWarning;
+}
+
 export interface CreateRoleMappingIn {
   /** Role name (admin, rule_approver, rule_author, viewer) */
   role: string;
@@ -864,6 +937,101 @@ export interface QuarantineRecordOut {
   created_at?: QuarantineRecordOutCreatedAt;
 }
 
+export type RegistryRuleDetailOutCurrentVersion = RegistryRuleVersionOut | null;
+
+/**
+ * A registry rule plus its current published snapshot (None if never published).
+ */
+export interface RegistryRuleDetailOut {
+  rule: RegistryRuleOut;
+  current_version?: RegistryRuleDetailOutCurrentVersion;
+}
+
+export type RegistryRuleOutMode = typeof RegistryRuleOutMode[keyof typeof RegistryRuleOutMode];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const RegistryRuleOutMode = {
+  dqx_native: 'dqx_native',
+  lowcode: 'lowcode',
+  sql: 'sql',
+} as const;
+
+export type RegistryRuleOutStatus = typeof RegistryRuleOutStatus[keyof typeof RegistryRuleOutStatus];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const RegistryRuleOutStatus = {
+  draft: 'draft',
+  pending_approval: 'pending_approval',
+  approved: 'approved',
+  rejected: 'rejected',
+  deprecated: 'deprecated',
+} as const;
+
+export type RegistryRuleOutPolarity = 'pass' | 'fail' | null;
+
+export type RegistryRuleOutAuthorKind = 'human' | 'ai_generated' | 'ai_assisted' | null;
+
+export type RegistryRuleOutUserMetadata = { [key: string]: unknown };
+
+export type RegistryRuleOutFingerprint = string | null;
+
+export type RegistryRuleOutSteward = string | null;
+
+export type RegistryRuleOutSource = string | null;
+
+export type RegistryRuleOutCreatedBy = string | null;
+
+export type RegistryRuleOutCreatedAt = string | null;
+
+export type RegistryRuleOutUpdatedBy = string | null;
+
+export type RegistryRuleOutUpdatedAt = string | null;
+
+/**
+ * A ``dq_rules`` row as returned to the frontend.
+ */
+export interface RegistryRuleOut {
+  rule_id: string;
+  mode: RegistryRuleOutMode;
+  status: RegistryRuleOutStatus;
+  version: number;
+  polarity?: RegistryRuleOutPolarity;
+  author_kind?: RegistryRuleOutAuthorKind;
+  definition: RuleDefinition;
+  user_metadata?: RegistryRuleOutUserMetadata;
+  fingerprint?: RegistryRuleOutFingerprint;
+  steward?: RegistryRuleOutSteward;
+  is_builtin?: boolean;
+  source?: RegistryRuleOutSource;
+  created_by?: RegistryRuleOutCreatedBy;
+  created_at?: RegistryRuleOutCreatedAt;
+  updated_by?: RegistryRuleOutUpdatedBy;
+  updated_at?: RegistryRuleOutUpdatedAt;
+}
+
+export type RegistryRuleVersionOutPolarity = 'pass' | 'fail' | null;
+
+export type RegistryRuleVersionOutUserMetadata = { [key: string]: unknown };
+
+export type RegistryRuleVersionOutCreatedBy = string | null;
+
+export type RegistryRuleVersionOutCreatedAt = string | null;
+
+/**
+ * A frozen ``dq_rule_versions`` snapshot as returned to the frontend.
+ */
+export interface RegistryRuleVersionOut {
+  rule_id: string;
+  version: number;
+  definition: RuleDefinition;
+  polarity?: RegistryRuleVersionOutPolarity;
+  user_metadata?: RegistryRuleVersionOutUserMetadata;
+  created_by?: RegistryRuleVersionOutCreatedBy;
+  created_at?: RegistryRuleVersionOutCreatedAt;
+}
+
 export type RetentionSettingsInRetentionDays = number | null;
 
 export type RetentionSettingsInQuarantineRetentionDays = number | null;
@@ -1000,6 +1168,110 @@ export interface RuleCatalogEntryOut {
   created_at?: RuleCatalogEntryOutCreatedAt;
   updated_by?: RuleCatalogEntryOutUpdatedBy;
   updated_at?: RuleCatalogEntryOutUpdatedAt;
+}
+
+export type RuleDefinitionBody = { [key: string]: unknown };
+
+/**
+ * Mode-specific rule body plus its typed slots/params.
+
+``body`` holds the mode-specific payload (native: ``{function,
+arguments}`` with ``{{slot}}`` placeholders; lowcode: ``{lowcode_ast,
+predicate}``; sql: ``{predicate}`` or ``{sql_query}``). It is kept as a
+permissive JSON-shaped dict — like ``ChecksOut.checks`` elsewhere in this
+backend — because the three authoring modes have genuinely different
+shapes and validating each one is the ``RegistryService``'s job (a later
+phase), not the domain model's.
+ */
+export interface RuleDefinition {
+  body?: RuleDefinitionBody;
+  slots?: RuleSlot[];
+  parameters?: RuleParameter[];
+}
+
+/**
+ * UI-facing value type
+ */
+export type RuleParameterType = typeof RuleParameterType[keyof typeof RuleParameterType];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const RuleParameterType = {
+  number: 'number',
+  string: 'string',
+  list: 'list',
+  boolean: 'boolean',
+  regex: 'regex',
+  ref_table: 'ref_table',
+  ref_column: 'ref_column',
+} as const;
+
+/**
+ * Concrete value or default
+ */
+export type RuleParameterValue = string | number | number | boolean | string[] | null;
+
+/**
+ * A non-column argument on a registry rule's definition.
+
+``type`` drives which value-input widget the authoring UI renders;
+``value`` is the concrete value (or default) supplied at authoring or
+apply time.
+ */
+export interface RuleParameter {
+  /** Parameter name as it appears in the check-function signature */
+  name: string;
+  /** UI-facing value type */
+  type: RuleParameterType;
+  /** Concrete value or default */
+  value?: RuleParameterValue;
+}
+
+/**
+ * Column family the slot accepts
+ */
+export type RuleSlotFamily = typeof RuleSlotFamily[keyof typeof RuleSlotFamily];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const RuleSlotFamily = {
+  numeric: 'numeric',
+  text: 'text',
+  temporal: 'temporal',
+  boolean: 'boolean',
+  any: 'any',
+} as const;
+
+/**
+ * Whether the slot binds one or many columns
+ */
+export type RuleSlotCardinality = typeof RuleSlotCardinality[keyof typeof RuleSlotCardinality];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const RuleSlotCardinality = {
+  one: 'one',
+  many: 'many',
+} as const;
+
+/**
+ * A ``{{column}}`` placeholder declared on a registry rule's definition.
+
+``family`` drives the family-filtered column picker when a rule is
+applied to a monitored table. ``position`` fixes a stable display/
+substitution order; ``cardinality`` distinguishes a single-column slot
+(``one``) from a composite/multi-column slot (``many``, e.g. ``is_unique``
+over a list of columns).
+ */
+export interface RuleSlot {
+  /** Slot placeholder name, e.g. 'column' */
+  name: string;
+  /** Column family the slot accepts */
+  family: RuleSlotFamily;
+  /** Stable ordering position among a rule's slots */
+  position?: number;
+  /** Whether the slot binds one or many columns */
+  cardinality?: RuleSlotCardinality;
 }
 
 export type RunConfigInputConfig = InputConfig | null;
@@ -1226,6 +1498,29 @@ export interface TimezoneIn {
 
 export interface TimezoneOut {
   timezone: string;
+}
+
+export type UpdateRegistryRuleInMode = 'dqx_native' | 'lowcode' | 'sql' | null;
+
+export type UpdateRegistryRuleInDefinition = RuleDefinition | null;
+
+export type UpdateRegistryRuleInPolarity = 'pass' | 'fail' | null;
+
+export type UpdateRegistryRuleInUserMetadataAnyOf = { [key: string]: unknown };
+
+export type UpdateRegistryRuleInUserMetadata = UpdateRegistryRuleInUserMetadataAnyOf | null;
+
+export type UpdateRegistryRuleInSteward = string | null;
+
+/**
+ * Request body for updating a draft Rules Registry rule. Only draft rules are editable.
+ */
+export interface UpdateRegistryRuleIn {
+  mode?: UpdateRegistryRuleInMode;
+  definition?: UpdateRegistryRuleInDefinition;
+  polarity?: UpdateRegistryRuleInPolarity;
+  user_metadata?: UpdateRegistryRuleInUserMetadata;
+  steward?: UpdateRegistryRuleInSteward;
 }
 
 export type UserActive = boolean | null;
@@ -1490,6 +1785,31 @@ export type ApproveRuleBody = SetStatusIn | null;
 export type BackfillRuleIds200 = {[key: string]: number};
 
 export type RejectRuleBody = SetStatusIn | null;
+
+export type ListRegistryRulesParams = {
+/**
+ * Filter by status
+ */
+status?: string | null;
+/**
+ * Filter by the 'dimension' tag
+ */
+dimension?: string | null;
+/**
+ * Filter by the 'severity' tag
+ */
+severity?: string | null;
+/**
+ * Filter by steward
+ */
+steward?: string | null;
+/**
+ * Filter by presence of a free-text tag key
+ */
+tag?: string | null;
+};
+
+export type DeleteRegistryRule200 = {[key: string]: string};
 
 export type ListValidationRunsParams = {
 /**
@@ -7350,6 +7670,807 @@ export const useRejectRule = <TError = AxiosError<HTTPValidationError>,
       > => {
 
       const mutationOptions = getRejectRuleMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * List Rules Registry entries, optionally filtered.
+ * @summary List Registry Rules
+ */
+export const listRegistryRules = (
+    params?: ListRegistryRulesParams, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<RegistryRuleOut[]>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/registry-rules`,{
+    ...options,
+        params: {...params, ...options?.params},}
+    );
+  }
+
+
+
+
+export const getListRegistryRulesQueryKey = (params?: ListRegistryRulesParams,) => {
+    return [
+    `/api/v1/registry-rules`, ...(params ? [params]: [])
+    ] as const;
+    }
+
+    
+export const getListRegistryRulesQueryOptions = <TData = Awaited<ReturnType<typeof listRegistryRules>>, TError = AxiosError<HTTPValidationError>>(params?: ListRegistryRulesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listRegistryRules>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListRegistryRulesQueryKey(params);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listRegistryRules>>> = ({ signal }) => listRegistryRules(params, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listRegistryRules>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListRegistryRulesQueryResult = NonNullable<Awaited<ReturnType<typeof listRegistryRules>>>
+export type ListRegistryRulesQueryError = AxiosError<HTTPValidationError>
+
+
+export function useListRegistryRules<TData = Awaited<ReturnType<typeof listRegistryRules>>, TError = AxiosError<HTTPValidationError>>(
+ params: undefined |  ListRegistryRulesParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listRegistryRules>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listRegistryRules>>,
+          TError,
+          Awaited<ReturnType<typeof listRegistryRules>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListRegistryRules<TData = Awaited<ReturnType<typeof listRegistryRules>>, TError = AxiosError<HTTPValidationError>>(
+ params?: ListRegistryRulesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listRegistryRules>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listRegistryRules>>,
+          TError,
+          Awaited<ReturnType<typeof listRegistryRules>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListRegistryRules<TData = Awaited<ReturnType<typeof listRegistryRules>>, TError = AxiosError<HTTPValidationError>>(
+ params?: ListRegistryRulesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listRegistryRules>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List Registry Rules
+ */
+
+export function useListRegistryRules<TData = Awaited<ReturnType<typeof listRegistryRules>>, TError = AxiosError<HTTPValidationError>>(
+ params?: ListRegistryRulesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listRegistryRules>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListRegistryRulesQueryOptions(params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getListRegistryRulesSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof listRegistryRules>>, TError = AxiosError<HTTPValidationError>>(params?: ListRegistryRulesParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listRegistryRules>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListRegistryRulesQueryKey(params);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listRegistryRules>>> = ({ signal }) => listRegistryRules(params, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof listRegistryRules>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListRegistryRulesSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof listRegistryRules>>>
+export type ListRegistryRulesSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useListRegistryRulesSuspense<TData = Awaited<ReturnType<typeof listRegistryRules>>, TError = AxiosError<HTTPValidationError>>(
+ params: undefined |  ListRegistryRulesParams, options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listRegistryRules>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListRegistryRulesSuspense<TData = Awaited<ReturnType<typeof listRegistryRules>>, TError = AxiosError<HTTPValidationError>>(
+ params?: ListRegistryRulesParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listRegistryRules>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListRegistryRulesSuspense<TData = Awaited<ReturnType<typeof listRegistryRules>>, TError = AxiosError<HTTPValidationError>>(
+ params?: ListRegistryRulesParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listRegistryRules>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List Registry Rules
+ */
+
+export function useListRegistryRulesSuspense<TData = Awaited<ReturnType<typeof listRegistryRules>>, TError = AxiosError<HTTPValidationError>>(
+ params?: ListRegistryRulesParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listRegistryRules>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListRegistryRulesSuspenseQueryOptions(params,options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Create a new draft registry rule.
+
+A dedup warning (never a hard error) is returned when a published rule
+already shares this rule's structural fingerprint.
+ * @summary Create Registry Rule
+ */
+export const createRegistryRule = (
+    createRegistryRuleIn: CreateRegistryRuleIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<CreateRegistryRuleOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/registry-rules`,
+      createRegistryRuleIn,options
+    );
+  }
+
+
+
+export const getCreateRegistryRuleMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createRegistryRule>>, TError,{data: CreateRegistryRuleIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof createRegistryRule>>, TError,{data: CreateRegistryRuleIn}, TContext> => {
+
+const mutationKey = ['createRegistryRule'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createRegistryRule>>, {data: CreateRegistryRuleIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createRegistryRule(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateRegistryRuleMutationResult = NonNullable<Awaited<ReturnType<typeof createRegistryRule>>>
+    export type CreateRegistryRuleMutationBody = CreateRegistryRuleIn
+    export type CreateRegistryRuleMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Create Registry Rule
+ */
+export const useCreateRegistryRule = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createRegistryRule>>, TError,{data: CreateRegistryRuleIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof createRegistryRule>>,
+        TError,
+        {data: CreateRegistryRuleIn},
+        TContext
+      > => {
+
+      const mutationOptions = getCreateRegistryRuleMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Get a single registry rule with its slots/params and current published snapshot.
+ * @summary Get Registry Rule
+ */
+export const getRegistryRule = (
+    ruleId: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<RegistryRuleDetailOut>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/registry-rules/${ruleId}`,options
+    );
+  }
+
+
+
+
+export const getGetRegistryRuleQueryKey = (ruleId?: string,) => {
+    return [
+    `/api/v1/registry-rules/${ruleId}`
+    ] as const;
+    }
+
+    
+export const getGetRegistryRuleQueryOptions = <TData = Awaited<ReturnType<typeof getRegistryRule>>, TError = AxiosError<HTTPValidationError>>(ruleId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRegistryRule>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetRegistryRuleQueryKey(ruleId);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getRegistryRule>>> = ({ signal }) => getRegistryRule(ruleId, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, enabled: !!(ruleId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getRegistryRule>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetRegistryRuleQueryResult = NonNullable<Awaited<ReturnType<typeof getRegistryRule>>>
+export type GetRegistryRuleQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetRegistryRule<TData = Awaited<ReturnType<typeof getRegistryRule>>, TError = AxiosError<HTTPValidationError>>(
+ ruleId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRegistryRule>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getRegistryRule>>,
+          TError,
+          Awaited<ReturnType<typeof getRegistryRule>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetRegistryRule<TData = Awaited<ReturnType<typeof getRegistryRule>>, TError = AxiosError<HTTPValidationError>>(
+ ruleId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRegistryRule>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getRegistryRule>>,
+          TError,
+          Awaited<ReturnType<typeof getRegistryRule>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetRegistryRule<TData = Awaited<ReturnType<typeof getRegistryRule>>, TError = AxiosError<HTTPValidationError>>(
+ ruleId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRegistryRule>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Registry Rule
+ */
+
+export function useGetRegistryRule<TData = Awaited<ReturnType<typeof getRegistryRule>>, TError = AxiosError<HTTPValidationError>>(
+ ruleId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRegistryRule>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetRegistryRuleQueryOptions(ruleId,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getGetRegistryRuleSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getRegistryRule>>, TError = AxiosError<HTTPValidationError>>(ruleId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getRegistryRule>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetRegistryRuleQueryKey(ruleId);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getRegistryRule>>> = ({ signal }) => getRegistryRule(ruleId, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof getRegistryRule>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetRegistryRuleSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof getRegistryRule>>>
+export type GetRegistryRuleSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetRegistryRuleSuspense<TData = Awaited<ReturnType<typeof getRegistryRule>>, TError = AxiosError<HTTPValidationError>>(
+ ruleId: string, options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getRegistryRule>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetRegistryRuleSuspense<TData = Awaited<ReturnType<typeof getRegistryRule>>, TError = AxiosError<HTTPValidationError>>(
+ ruleId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getRegistryRule>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetRegistryRuleSuspense<TData = Awaited<ReturnType<typeof getRegistryRule>>, TError = AxiosError<HTTPValidationError>>(
+ ruleId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getRegistryRule>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Registry Rule
+ */
+
+export function useGetRegistryRuleSuspense<TData = Awaited<ReturnType<typeof getRegistryRule>>, TError = AxiosError<HTTPValidationError>>(
+ ruleId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getRegistryRule>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetRegistryRuleSuspenseQueryOptions(ruleId,options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Update a draft registry rule. Only draft rules can be edited.
+ * @summary Update Registry Rule
+ */
+export const updateRegistryRule = (
+    ruleId: string,
+    updateRegistryRuleIn: UpdateRegistryRuleIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<RegistryRuleOut>> => {
+    
+    
+    return axios.default.put(
+      `/api/v1/registry-rules/${ruleId}`,
+      updateRegistryRuleIn,options
+    );
+  }
+
+
+
+export const getUpdateRegistryRuleMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateRegistryRule>>, TError,{ruleId: string;data: UpdateRegistryRuleIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof updateRegistryRule>>, TError,{ruleId: string;data: UpdateRegistryRuleIn}, TContext> => {
+
+const mutationKey = ['updateRegistryRule'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateRegistryRule>>, {ruleId: string;data: UpdateRegistryRuleIn}> = (props) => {
+          const {ruleId,data} = props ?? {};
+
+          return  updateRegistryRule(ruleId,data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateRegistryRuleMutationResult = NonNullable<Awaited<ReturnType<typeof updateRegistryRule>>>
+    export type UpdateRegistryRuleMutationBody = UpdateRegistryRuleIn
+    export type UpdateRegistryRuleMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Update Registry Rule
+ */
+export const useUpdateRegistryRule = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateRegistryRule>>, TError,{ruleId: string;data: UpdateRegistryRuleIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof updateRegistryRule>>,
+        TError,
+        {ruleId: string;data: UpdateRegistryRuleIn},
+        TContext
+      > => {
+
+      const mutationOptions = getUpdateRegistryRuleMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Delete a registry rule.
+
+TODO(Phase 3): block (409) deletion of a rule currently applied to any
+monitored table once ``dq_applied_rules`` exists.
+ * @summary Delete Registry Rule
+ */
+export const deleteRegistryRule = (
+    ruleId: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<DeleteRegistryRule200>> => {
+    
+    
+    return axios.default.delete(
+      `/api/v1/registry-rules/${ruleId}`,options
+    );
+  }
+
+
+
+export const getDeleteRegistryRuleMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteRegistryRule>>, TError,{ruleId: string}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteRegistryRule>>, TError,{ruleId: string}, TContext> => {
+
+const mutationKey = ['deleteRegistryRule'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteRegistryRule>>, {ruleId: string}> = (props) => {
+          const {ruleId} = props ?? {};
+
+          return  deleteRegistryRule(ruleId,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteRegistryRuleMutationResult = NonNullable<Awaited<ReturnType<typeof deleteRegistryRule>>>
+    
+    export type DeleteRegistryRuleMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Delete Registry Rule
+ */
+export const useDeleteRegistryRule = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteRegistryRule>>, TError,{ruleId: string}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof deleteRegistryRule>>,
+        TError,
+        {ruleId: string},
+        TContext
+      > => {
+
+      const mutationOptions = getDeleteRegistryRuleMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Submit a draft registry rule for approval.
+ * @summary Submit Registry Rule
+ */
+export const submitRegistryRule = (
+    ruleId: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<RegistryRuleOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/registry-rules/${ruleId}/submit`,undefined,options
+    );
+  }
+
+
+
+export const getSubmitRegistryRuleMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof submitRegistryRule>>, TError,{ruleId: string}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof submitRegistryRule>>, TError,{ruleId: string}, TContext> => {
+
+const mutationKey = ['submitRegistryRule'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof submitRegistryRule>>, {ruleId: string}> = (props) => {
+          const {ruleId} = props ?? {};
+
+          return  submitRegistryRule(ruleId,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SubmitRegistryRuleMutationResult = NonNullable<Awaited<ReturnType<typeof submitRegistryRule>>>
+    
+    export type SubmitRegistryRuleMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Submit Registry Rule
+ */
+export const useSubmitRegistryRule = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof submitRegistryRule>>, TError,{ruleId: string}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof submitRegistryRule>>,
+        TError,
+        {ruleId: string},
+        TContext
+      > => {
+
+      const mutationOptions = getSubmitRegistryRuleMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Approve (publish) a pending registry rule — bumps version and freezes a snapshot.
+ * @summary Approve Registry Rule
+ */
+export const approveRegistryRule = (
+    ruleId: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<RegistryRuleOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/registry-rules/${ruleId}/approve`,undefined,options
+    );
+  }
+
+
+
+export const getApproveRegistryRuleMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof approveRegistryRule>>, TError,{ruleId: string}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof approveRegistryRule>>, TError,{ruleId: string}, TContext> => {
+
+const mutationKey = ['approveRegistryRule'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof approveRegistryRule>>, {ruleId: string}> = (props) => {
+          const {ruleId} = props ?? {};
+
+          return  approveRegistryRule(ruleId,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ApproveRegistryRuleMutationResult = NonNullable<Awaited<ReturnType<typeof approveRegistryRule>>>
+    
+    export type ApproveRegistryRuleMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Approve Registry Rule
+ */
+export const useApproveRegistryRule = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof approveRegistryRule>>, TError,{ruleId: string}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof approveRegistryRule>>,
+        TError,
+        {ruleId: string},
+        TContext
+      > => {
+
+      const mutationOptions = getApproveRegistryRuleMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Reject a pending registry rule.
+ * @summary Reject Registry Rule
+ */
+export const rejectRegistryRule = (
+    ruleId: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<RegistryRuleOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/registry-rules/${ruleId}/reject`,undefined,options
+    );
+  }
+
+
+
+export const getRejectRegistryRuleMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rejectRegistryRule>>, TError,{ruleId: string}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof rejectRegistryRule>>, TError,{ruleId: string}, TContext> => {
+
+const mutationKey = ['rejectRegistryRule'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof rejectRegistryRule>>, {ruleId: string}> = (props) => {
+          const {ruleId} = props ?? {};
+
+          return  rejectRegistryRule(ruleId,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RejectRegistryRuleMutationResult = NonNullable<Awaited<ReturnType<typeof rejectRegistryRule>>>
+    
+    export type RejectRegistryRuleMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Reject Registry Rule
+ */
+export const useRejectRegistryRule = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rejectRegistryRule>>, TError,{ruleId: string}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof rejectRegistryRule>>,
+        TError,
+        {ruleId: string},
+        TContext
+      > => {
+
+      const mutationOptions = getRejectRegistryRuleMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Deprecate a published registry rule.
+ * @summary Deprecate Registry Rule
+ */
+export const deprecateRegistryRule = (
+    ruleId: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<RegistryRuleOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/registry-rules/${ruleId}/deprecate`,undefined,options
+    );
+  }
+
+
+
+export const getDeprecateRegistryRuleMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deprecateRegistryRule>>, TError,{ruleId: string}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof deprecateRegistryRule>>, TError,{ruleId: string}, TContext> => {
+
+const mutationKey = ['deprecateRegistryRule'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deprecateRegistryRule>>, {ruleId: string}> = (props) => {
+          const {ruleId} = props ?? {};
+
+          return  deprecateRegistryRule(ruleId,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeprecateRegistryRuleMutationResult = NonNullable<Awaited<ReturnType<typeof deprecateRegistryRule>>>
+    
+    export type DeprecateRegistryRuleMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Deprecate Registry Rule
+ */
+export const useDeprecateRegistryRule = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deprecateRegistryRule>>, TError,{ruleId: string}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof deprecateRegistryRule>>,
+        TError,
+        {ruleId: string},
+        TContext
+      > => {
+
+      const mutationOptions = getDeprecateRegistryRuleMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Reinstate a deprecated registry rule back to approved.
+ * @summary Undeprecate Registry Rule
+ */
+export const undeprecateRegistryRule = (
+    ruleId: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<RegistryRuleOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/registry-rules/${ruleId}/undeprecate`,undefined,options
+    );
+  }
+
+
+
+export const getUndeprecateRegistryRuleMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof undeprecateRegistryRule>>, TError,{ruleId: string}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof undeprecateRegistryRule>>, TError,{ruleId: string}, TContext> => {
+
+const mutationKey = ['undeprecateRegistryRule'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof undeprecateRegistryRule>>, {ruleId: string}> = (props) => {
+          const {ruleId} = props ?? {};
+
+          return  undeprecateRegistryRule(ruleId,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UndeprecateRegistryRuleMutationResult = NonNullable<Awaited<ReturnType<typeof undeprecateRegistryRule>>>
+    
+    export type UndeprecateRegistryRuleMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Undeprecate Registry Rule
+ */
+export const useUndeprecateRegistryRule = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof undeprecateRegistryRule>>, TError,{ruleId: string}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof undeprecateRegistryRule>>,
+        TError,
+        {ruleId: string},
+        TContext
+      > => {
+
+      const mutationOptions = getUndeprecateRegistryRuleMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }
