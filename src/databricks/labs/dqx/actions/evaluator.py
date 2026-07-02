@@ -121,8 +121,12 @@ class ActionEvaluator:
             # ------------------------------------------------------------------
             if not self._state_store.should_fire(dq_action, context, condition_result=condition_result):
                 logger.debug(f"Action '{safe_name}' suppressed by state store.")
+                # The condition fired (the data is unhealthy) but the notification was suppressed by
+                # frequency / status-change gating. Record UNHEALTHY — not HEALTHY — so *last_status*
+                # stays unhealthy across consecutive suppressed runs; otherwise STATUS_CHANGE would
+                # treat the next unhealthy run as a fresh transition and re-fire without a recovery.
                 self._state_store.record(
-                    self._build_event(dq_action, context, fired=False, status=ActionStatus.HEALTHY)
+                    self._build_event(dq_action, context, fired=False, status=ActionStatus.UNHEALTHY)
                 )
                 continue
 

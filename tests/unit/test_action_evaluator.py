@@ -14,9 +14,12 @@ from databricks.labs.dqx.actions.base import (
     ActionServices,
     ActionStatus,
 )
+from databricks.labs.dqx.actions.alert import DQAlert, NotifyOn
+from databricks.labs.dqx.actions.destinations.callback import CallbackDQAlertDestination
 from databricks.labs.dqx.actions.dq_action import DQAction
 from databricks.labs.dqx.actions.evaluator import ActionEvaluator
 from databricks.labs.dqx.actions.fail_pipeline import FailPipeline
+from databricks.labs.dqx.actions.message import AlertMessage
 from databricks.labs.dqx.actions.state import ActionStateStore, AlertEvent
 from databricks.labs.dqx.errors import PipelineFailedError
 
@@ -259,11 +262,12 @@ def test_should_fire_false_suppresses() -> None:
     action_mock.execute.assert_not_called()
     assert not results
 
-    # record called with fired=False
+    # record called with fired=False, but status is UNHEALTHY: the condition fired (data is
+    # unhealthy) and only the notification was suppressed — so last_status must stay unhealthy.
     assert state_store.record.call_count == 1
     event: AlertEvent = state_store.record.call_args[0][0]
     assert event.fired is False
-    assert event.status == ActionStatus.HEALTHY
+    assert event.status == ActionStatus.UNHEALTHY
 
 
 # ---------------------------------------------------------------------------
@@ -438,3 +442,42 @@ def test_alert_fires_before_terminal_abort() -> None:
 
     # Alert action must have run before the pipeline was aborted
     assert executed == ["ran"]
+
+
+# ---------------------------------------------------------------------------
+# Test: STATUS_CHANGE full cycle — healthy -> unhealthy -> unhealthy -> healthy -> unhealthy
+# ---------------------------------------------------------------------------
+
+
+def test_status_change_full_cycle_fires_only_on_transitions_into_unhealthy() -> None:
+    """A STATUS_CHANGE alert fires on each transition into unhealthy and suppresses repeats until recovery.
+
+    Drives a real ActionStateStore through healthy -> unhealthy -> unhealthy -> healthy -> unhealthy.
+    The alert must fire only on the two transitions into unhealthy (the first unhealthy run and the
+    unhealthy run after recovery), and stay suppressed across consecutive unhealthy runs.
+    """
+    fires: list[object] = []
+
+    def _count(_message: AlertMessage, context: ActionContext) -> None:
+        fires.append(context.metrics["error_row_count"])
+
+    alert = DQAlert(
+        destinations=[CallbackDQAlertDestination(name="counter", callback=_count)],
+        notify_on=NotifyOn.STATUS_CHANGE,
+    )
+    dq_action = DQAction(condition="error_row_count > 0", action=alert, name="cycle")
+    store = ActionStateStore()  # real in-memory store, no persistent event store
+    evaluator = ActionEvaluator(actions=[dq_action], state_store=store, services=_make_services())
+
+    run_time = datetime(2024, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
+
+    def _run(error_row_count: int) -> None:
+        evaluator.evaluate(ActionContext(metrics={"error_row_count": error_row_count}, run_id="run", run_time=run_time))
+
+    _run(0)  # healthy         -> condition False, no fire
+    _run(5)  # -> unhealthy     -> transition into unhealthy, fires
+    _run(7)  # still unhealthy  -> suppressed (no recovery)
+    _run(0)  # -> healthy       -> recovery
+    _run(3)  # -> unhealthy     -> transition into unhealthy again, fires
+
+    assert fires == [5, 3]
