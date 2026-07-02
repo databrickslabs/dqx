@@ -17,6 +17,7 @@ import {
   LayoutDashboard,
   BookOpen,
   ExternalLink,
+  Library,
 } from "lucide-react";
 import {
   SidebarGroup,
@@ -82,6 +83,26 @@ function Layout() {
       <SidebarGroup className="pt-2">
         <SidebarGroupContent>
           <SidebarMenu>
+            {/* Rules Registry — reusable, versioned, governed rule
+                definitions (Phase 2). Sits above the legacy Create/
+                Drafts/Active group per the design spec's nav layout;
+                that group is removed in a later nav-consolidation
+                phase once Monitored Tables ships. */}
+            <SidebarMenuItem>
+              <Link
+                to="/registry-rules"
+                className={cn(
+                  "flex items-center gap-2 p-2 rounded-lg",
+                  location.pathname.startsWith("/registry-rules")
+                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                    : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                )}
+              >
+                <Library size={16} />
+                <span>{t("sidebar.rulesRegistry")}</span>
+              </Link>
+            </SidebarMenuItem>
+
             {/* Create Rules — expandable (hidden for viewers) */}
             {canCreateRules && (
             <SidebarMenuItem>
