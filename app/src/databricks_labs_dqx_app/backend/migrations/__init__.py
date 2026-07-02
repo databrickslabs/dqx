@@ -414,7 +414,7 @@ _V2_OLTP_FALLBACK = (
     f"  CHECK (status IN ('draft','pending_approval','approved','rejected'));"
     f"ALTER TABLE {_PLACEHOLDER}.dq_quality_rules "
     f"  ADD CONSTRAINT chk_dq_quality_rules_source "
-    f"  CHECK (source IN ('ui','sql','profiler','import','ai'));"
+    f"  CHECK (source IN ('ui','sql','profiler','import','ai','registry'));"
     #
     # Append-only audit trail for rule changes. Carries the post-state
     # ``check`` payload on every row plus an explicit

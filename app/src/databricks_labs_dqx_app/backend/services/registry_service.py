@@ -142,6 +142,16 @@ class RegistryService:
             return None
         return self._row_to_rule(rows[0])
 
+    def get_version(self, rule_id: str, version: int) -> RuleVersion | None:
+        """Get a specific frozen ``dq_rule_versions`` snapshot by rule id + version number.
+
+        Unlike :meth:`get_rule_with_version` (which always returns the
+        LIVE rule's *current* version), this fetches an arbitrary historical
+        snapshot — used by the materializer to resolve a ``pinned_version``
+        that is older than the rule's current published version.
+        """
+        return self._get_version(rule_id, version)
+
     def get_rule_with_version(self, rule_id: str) -> tuple[RegistryRule, RuleVersion | None] | None:
         """Get a registry rule plus its current published snapshot, if any."""
         rule = self._get(rule_id)

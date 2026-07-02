@@ -118,6 +118,9 @@ PG_MIGRATIONS: list[PgMigration] = [
             # source ``dq_rules`` row, the published version substituted,
             # and the ``dq_applied_rules`` link — all NULL for rules
             # authored directly against a table (unchanged legacy path).
+            # ``source='registry'`` marks a materialized row (Phase 3C
+            # ``Materializer``); the runner ignores ``source`` entirely so
+            # this is purely provenance for the UI/audit trail.
             # ----------------------------------------------------------
             f"CREATE TABLE IF NOT EXISTS {_S}.dq_quality_rules ("
             "  rule_id           TEXT PRIMARY KEY,"
@@ -136,7 +139,7 @@ PG_MIGRATIONS: list[PgMigration] = [
             "  CONSTRAINT chk_dq_quality_rules_status "
             "    CHECK (status IN ('draft','pending_approval','approved','rejected')),"
             "  CONSTRAINT chk_dq_quality_rules_source "
-            "    CHECK (source IN ('ui','sql','profiler','import','ai'))"
+            "    CHECK (source IN ('ui','sql','profiler','import','ai','registry'))"
             ");"
             # Two read-paths dominate: by table_fqn (rules-list page) and
             # by status filter (review queue). One composite index covers

@@ -201,6 +201,34 @@ class AppSettingsService:
             return None
 
     # ------------------------------------------------------------------
+    # Rules Registry — auto-upgrade-without-approval (design spec §5).
+    #
+    # Governs re-materialization behaviour when a FOLLOWING (i.e.
+    # ``pinned_version IS NULL``) applied rule's registry rule is
+    # republished and the newly rendered check differs from what's
+    # currently stored:
+    #   * ``False`` (default = "Behaviour B"): the materialized row is
+    #     pushed back to ``pending_approval`` for per-table re-review.
+    #   * ``True`` ("Behaviour A"): the materialized row silently
+    #     re-approves — central registry approval is treated as
+    #     sufficient. Pinned applications are never affected either way.
+    # ------------------------------------------------------------------
+
+    _AUTO_UPGRADE_WITHOUT_APPROVAL_KEY = "auto_upgrade_without_approval"
+
+    def get_auto_upgrade_without_approval(self) -> bool:
+        """Return the configured auto-upgrade behaviour; defaults to ``False`` (Behaviour B) when unset."""
+        raw = self.get_setting(self._AUTO_UPGRADE_WITHOUT_APPROVAL_KEY)
+        return raw is not None and raw.strip().lower() == "true"
+
+    def save_auto_upgrade_without_approval(self, enabled: bool, *, user_email: str | None = None) -> bool:
+        """Persist the auto-upgrade-without-approval setting. Returns the saved value."""
+        self.save_setting(
+            self._AUTO_UPGRADE_WITHOUT_APPROVAL_KEY, "true" if enabled else "false", user_email=user_email
+        )
+        return enabled
+
+    # ------------------------------------------------------------------
     # Embedded dashboard — Insights page renders a Databricks AI/BI
     # dashboard inside an iframe. Admins set the dashboard ID + an
     # optional display title via the Configuration page; the GET

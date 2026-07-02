@@ -316,3 +316,45 @@ def get_rule_dimension(user_metadata: dict[str, Any]) -> str | None:
 def get_rule_severity(user_metadata: dict[str, Any]) -> str | None:
     """Read the reserved ``severity`` tag."""
     return get_reserved_tag(user_metadata, RESERVED_SEVERITY_KEY)
+
+
+# ---------------------------------------------------------------------------
+# Severity -> DQX criticality mapping (§9 / materializer)
+# ---------------------------------------------------------------------------
+#
+# DQX ``criticality`` (warn/error) is the separate execution-facing field
+# that decides which output DataFrame a failing row lands in — it is NOT
+# the same axis as the registry's ``severity`` tag (Low/Medium/High/
+# Critical), but the materializer has to pick *some* concrete criticality
+# when it renders a ``dq_quality_rules`` row, so this is the single mapping
+# used everywhere that conversion happens. Matches the per-function severity
+# seed map's own implicit scale (``builtin_rules_seed._SEVERITY_SEED_MAP``:
+# High for integrity/consistency checks, Low for informational geo checks).
+
+DEFAULT_CRITICALITY = "warn"
+
+SEVERITY_TO_CRITICALITY: dict[str, str] = {
+    "Low": "warn",
+    "Medium": "warn",
+    "High": "error",
+    "Critical": "error",
+}
+
+
+def resolve_criticality(severity: str | None) -> str:
+    """Map a registry ``severity`` tag value to a DQX ``criticality`` value.
+
+    Falls back to :data:`DEFAULT_CRITICALITY` ("warn") for ``None`` or any
+    value not in :data:`SEVERITY_TO_CRITICALITY` (e.g. a custom severity
+    value an admin added to the reserved ``severity`` label definition).
+
+    Args:
+        severity: The effective severity tag value (already resolved from
+            ``severity_override`` or the rule's own tag by the caller).
+
+    Returns:
+        ``"error"`` or ``"warn"``.
+    """
+    if severity is None:
+        return DEFAULT_CRITICALITY
+    return SEVERITY_TO_CRITICALITY.get(severity, DEFAULT_CRITICALITY)
