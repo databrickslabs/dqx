@@ -1,18 +1,11 @@
 import SidebarLayout from "@/components/layout/SidebarLayout";
 import { createFileRoute, Link, useLocation } from "@tanstack/react-router";
-import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import { usePermissions } from "@/hooks/use-permissions";
 import {
-  Sparkles,
-  Database,
-  BarChart3,
   PlayCircle,
-  ShieldCheck,
   ClipboardCheck,
-  ChevronDown,
-  PenLine,
   History,
   LayoutDashboard,
   BookOpen,
@@ -25,9 +18,6 @@ import {
   SidebarGroupContent,
   SidebarMenu,
   SidebarMenuItem,
-  SidebarMenuSub,
-  SidebarMenuSubItem,
-  SidebarMenuSubButton,
 } from "@/components/ui/sidebar";
 
 export const Route = createFileRoute("/_sidebar")({
@@ -36,48 +26,20 @@ export const Route = createFileRoute("/_sidebar")({
 
 function Layout() {
   const location = useLocation();
-  const { canCreateRules, canRunRules } = usePermissions();
+  const { canRunRules } = usePermissions();
   const { t } = useTranslation();
 
-  // Import rules (``/rules/import``, plus the legacy ``/rules/from-contract``
-  // redirect) moved to the Config/Settings page — it's reachable from the
-  // user menu, not this group — so it no longer drives the Create group's
-  // active state.
-  const isCreateActive =
-    location.pathname.startsWith("/rules/create") ||
-    location.pathname.startsWith("/rules/single-table") ||
-    location.pathname.startsWith("/profiler");
-
-  const [createOpen, setCreateOpen] = useState(isCreateActive);
-
-  const createChildren = [
-    {
-      to: "/rules/single-table",
-      label: t("sidebar.singleTableRules"),
-      icon: <Sparkles size={14} />,
-      match: (path: string) =>
-        path.startsWith("/rules/single-table") || path.startsWith("/rules/create"),
-    },
-    {
-      to: "/rules/create-sql",
-      label: t("sidebar.crossTableRules"),
-      icon: <Database size={14} />,
-      match: (path: string) => path.startsWith("/rules/create-sql"),
-    },
-    // Schema validation and other reference-table checks (``has_valid_schema``,
-    // ``foreign_key``) are authored and edited in the single-table editor, so
-    // there is no standalone sidebar entry for them.
-    {
-      to: "/profiler",
-      label: t("sidebar.profileAndGenerate"),
-      icon: <BarChart3 size={14} />,
-      match: (path: string) => path.startsWith("/profiler"),
-    },
-    // Import rules (``/rules/import``, DQX YAML + data-contract tabs, plus the
-    // legacy ``/rules/from-contract`` redirect) moved into the Config/Settings
-    // page — see ``ImportRulesSettings`` in config.tsx. The route itself is
-    // unchanged; only this sidebar shortcut was removed.
-  ];
+  // The old "Create Rules" expandable group (Single-table rules,
+  // Cross-table rules, Profile & Generate) and the standalone "Active
+  // Rules" item were removed as part of the nav-consolidation cleanup
+  // (Phase 5) — authoring and browsing now live in Rules Registry +
+  // Monitored Tables. The underlying route files still exist (some as
+  // redirects, some as still-reachable-by-URL pages) so old bookmarks
+  // don't 404; see ``rules.single-table.tsx``, ``rules.create-sql.tsx``,
+  // ``rules.active.tsx``, and ``discovery.tsx``. Import rules
+  // (``/rules/import``, plus the legacy ``/rules/from-contract``
+  // redirect) lives in the Config/Settings page, reachable from the
+  // header menu.
 
   return (
     <SidebarLayout>
@@ -85,10 +47,10 @@ function Layout() {
         <SidebarGroupContent>
           <SidebarMenu>
             {/* Rules Registry — reusable, versioned, governed rule
-                definitions (Phase 2). Sits above the legacy Create/
-                Drafts/Active group per the design spec's nav layout;
-                that group is removed in a later nav-consolidation
-                phase once Monitored Tables ships. */}
+                definitions (Phase 2). Target sidebar per the design
+                spec (§10): Rules Registry · Monitored Tables · Drafts
+                & Review — separator — Run Rules · Runs History ·
+                Insights. */}
             <SidebarMenuItem>
               <Link
                 to="/registry-rules"
@@ -123,50 +85,8 @@ function Layout() {
               </Link>
             </SidebarMenuItem>
 
-            {/* Create Rules — expandable (hidden for viewers) */}
-            {canCreateRules && (
-            <SidebarMenuItem>
-              <button
-                type="button"
-                onClick={() => setCreateOpen((prev) => !prev)}
-                className={cn(
-                  "flex w-full items-center gap-2 p-2 rounded-lg text-sm font-medium transition-colors",
-                  isCreateActive
-                    ? "text-sidebar-accent-foreground"
-                    : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
-                )}
-              >
-                <PenLine size={16} />
-                <span className="flex-1 text-left">{t("sidebar.createRules")}</span>
-                <ChevronDown
-                  size={14}
-                  className={cn(
-                    "text-muted-foreground transition-transform duration-200",
-                    createOpen && "rotate-180",
-                  )}
-                />
-              </button>
-              {createOpen && (
-                <SidebarMenuSub>
-                  {createChildren.map((child) => (
-                    <SidebarMenuSubItem key={child.to}>
-                      <SidebarMenuSubButton
-                        asChild
-                        isActive={child.match(location.pathname)}
-                      >
-                        <Link to={child.to} className="flex items-center gap-2">
-                          {child.icon}
-                          <span>{child.label}</span>
-                        </Link>
-                      </SidebarMenuSubButton>
-                    </SidebarMenuSubItem>
-                  ))}
-                </SidebarMenuSub>
-              )}
-            </SidebarMenuItem>
-            )}
-
-            {/* Drafts & Review */}
+            {/* Drafts & Review — approvals for registry rules AND
+                per-table applications. */}
             <SidebarMenuItem>
               <Link
                 to="/rules/drafts"
@@ -179,23 +99,6 @@ function Layout() {
               >
                 <ClipboardCheck size={16} />
                 <span>{t("sidebar.draftsAndReview")}</span>
-              </Link>
-            </SidebarMenuItem>
-
-            {/* Active Rules */}
-            <SidebarMenuItem>
-              <Link
-                to="/rules/active"
-                className={cn(
-                  "flex items-center gap-2 p-2 rounded-lg",
-                  location.pathname === "/rules/active" ||
-                    location.pathname === "/rules"
-                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                    : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
-                )}
-              >
-                <ShieldCheck size={16} />
-                <span>{t("sidebar.activeRules")}</span>
               </Link>
             </SidebarMenuItem>
 

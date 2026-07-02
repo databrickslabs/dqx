@@ -50,7 +50,6 @@
     "singleTableRules": "Single table rules",
     "crossTableRules": "Cross-table rules",
     "profileAndGenerate": "Profile & generate",
-    "importRules": "Import rules",
     "fromContract": "From data contract",
     "schemaValidation": "Schema validation",
     "draftsAndReview": "Drafts & Review",
