@@ -228,6 +228,66 @@ PG_MIGRATIONS: list[PgMigration] = [
             ");"
             f"CREATE INDEX IF NOT EXISTS idx_dq_schedule_configs_history_schedule_changed_at "
             f"  ON {_S}.dq_schedule_configs_history (schedule_name, changed_at DESC);"
+            # ----------------------------------------------------------
+            # dq_rules — Rules Registry: table-agnostic, versioned rule
+            # templates (the authoring/governance layer). Descriptive
+            # metadata (name, description, dimension, severity) is NOT
+            # a column — it lives as reserved TAG keys inside
+            # ``user_metadata`` (see ``label_definitions``/Phase 1),
+            # same as arbitrary free-text tags. ``rule_id`` is a
+            # hex-string id generated in Python (``uuid4().hex[:16]``,
+            # matching ``dq_quality_rules.rule_id`` / ``dq_comments.comment_id``)
+            # stored as TEXT rather than the native ``UUID`` type, so all
+            # entity ids share one representation across the schema.
+            # ----------------------------------------------------------
+            f"CREATE TABLE IF NOT EXISTS {_S}.dq_rules ("
+            "  rule_id       TEXT PRIMARY KEY,"
+            "  mode          TEXT NOT NULL,"
+            "  status        TEXT NOT NULL,"
+            "  version       INTEGER NOT NULL DEFAULT 0,"
+            "  polarity      TEXT,"
+            "  author_kind   TEXT,"
+            "  definition    JSONB NOT NULL,"
+            "  user_metadata JSONB,"
+            "  fingerprint   TEXT,"
+            "  steward       TEXT,"
+            "  is_builtin    BOOLEAN NOT NULL DEFAULT FALSE,"
+            "  source        TEXT,"
+            "  created_by    TEXT,"
+            "  created_at    TIMESTAMPTZ,"
+            "  updated_by    TEXT,"
+            "  updated_at    TIMESTAMPTZ,"
+            "  CONSTRAINT chk_dq_rules_mode "
+            "    CHECK (mode IN ('dqx_native','lowcode','sql')),"
+            "  CONSTRAINT chk_dq_rules_status "
+            "    CHECK (status IN ('draft','pending_approval','approved','rejected','deprecated')),"
+            "  CONSTRAINT chk_dq_rules_polarity "
+            "    CHECK (polarity IS NULL OR polarity IN ('pass','fail'))"
+            ");"
+            # Three read paths dominate: the registry list filtered by
+            # status (review queue), fingerprint dedup lookups on
+            # create/update, and per-steward filtering.
+            f"CREATE INDEX IF NOT EXISTS idx_dq_rules_status ON {_S}.dq_rules (status);"
+            f"CREATE INDEX IF NOT EXISTS idx_dq_rules_fingerprint ON {_S}.dq_rules (fingerprint);"
+            f"CREATE INDEX IF NOT EXISTS idx_dq_rules_steward ON {_S}.dq_rules (steward);"
+            # ----------------------------------------------------------
+            # dq_rule_versions — frozen snapshot written on every publish
+            # of a ``dq_rules`` row (pinnable artifact + audit trail).
+            # ``user_metadata`` here is a full frozen copy of the tags at
+            # publish time, including the reserved dimension/severity keys.
+            # ----------------------------------------------------------
+            f"CREATE TABLE IF NOT EXISTS {_S}.dq_rule_versions ("
+            "  id            BIGSERIAL PRIMARY KEY,"
+            "  rule_id       TEXT NOT NULL,"
+            "  version       INTEGER NOT NULL,"
+            "  definition    JSONB NOT NULL,"
+            "  polarity      TEXT,"
+            "  user_metadata JSONB,"
+            "  created_by    TEXT,"
+            "  created_at    TIMESTAMPTZ,"
+            "  CONSTRAINT uq_dq_rule_versions_rule_version UNIQUE (rule_id, version)"
+            ");"
+            f"CREATE INDEX IF NOT EXISTS idx_dq_rule_versions_rule_id ON {_S}.dq_rule_versions (rule_id);"
         ),
     ),
     PgMigration(

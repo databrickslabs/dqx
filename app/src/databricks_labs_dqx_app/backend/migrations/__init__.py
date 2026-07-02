@@ -490,7 +490,60 @@ _V2_OLTP_FALLBACK = (
     "  action STRING NOT NULL,"
     "  changed_by STRING,"
     "  changed_at TIMESTAMP"
-    ") CLUSTER BY (schedule_name, changed_at)"
+    ") CLUSTER BY (schedule_name, changed_at);"
+    #
+    # Rules Registry: table-agnostic, versioned rule templates (the
+    # authoring/governance layer, see docs/superpowers/specs/2026-07-02-
+    # rules-registry-design.md §3.1). Descriptive metadata (name,
+    # description, dimension, severity) is NOT a column — it lives as
+    # reserved TAG keys inside ``user_metadata``, alongside arbitrary
+    # free-text tags, mirroring ``dq_quality_rules.check``/``user_metadata``
+    # conventions. ``rule_id`` is a hex-string id generated in Python
+    # (``uuid4().hex[:16]``), matching every other id column in this
+    # schema (``dq_quality_rules.rule_id``, ``dq_comments.comment_id``).
+    f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_rules ("
+    "  rule_id STRING NOT NULL,"
+    "  mode STRING NOT NULL,"
+    "  status STRING NOT NULL,"
+    "  version INT NOT NULL,"
+    "  polarity STRING,"
+    "  author_kind STRING,"
+    "  definition VARIANT NOT NULL,"
+    "  user_metadata VARIANT,"
+    "  fingerprint STRING,"
+    "  steward STRING,"
+    "  is_builtin BOOLEAN NOT NULL,"
+    "  source STRING,"
+    "  created_by STRING,"
+    "  created_at TIMESTAMP,"
+    "  updated_by STRING,"
+    "  updated_at TIMESTAMP,"
+    "  CONSTRAINT pk_dq_rules PRIMARY KEY (rule_id) RELY"
+    ") CLUSTER BY (status, fingerprint, steward);"
+    f"ALTER TABLE {_PLACEHOLDER}.dq_rules "
+    f"  ADD CONSTRAINT chk_dq_rules_mode "
+    f"  CHECK (mode IN ('dqx_native','lowcode','sql'));"
+    f"ALTER TABLE {_PLACEHOLDER}.dq_rules "
+    f"  ADD CONSTRAINT chk_dq_rules_status "
+    f"  CHECK (status IN ('draft','pending_approval','approved','rejected','deprecated'));"
+    f"ALTER TABLE {_PLACEHOLDER}.dq_rules "
+    f"  ADD CONSTRAINT chk_dq_rules_polarity "
+    f"  CHECK (polarity IS NULL OR polarity IN ('pass','fail'));"
+    #
+    # Frozen snapshot written on every publish of a ``dq_rules`` row
+    # (pinnable artifact + audit trail). No PK column on Delta (rows are
+    # ordered by ``rule_id``/``version`` for display), mirroring the
+    # other *_history tables in this baseline.
+    f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_rule_versions ("
+    "  id STRING NOT NULL,"
+    "  rule_id STRING NOT NULL,"
+    "  version INT NOT NULL,"
+    "  definition VARIANT NOT NULL,"
+    "  polarity STRING,"
+    "  user_metadata VARIANT,"
+    "  created_by STRING,"
+    "  created_at TIMESTAMP"
+    ") CLUSTER BY (rule_id, version)"
 )
 
 
