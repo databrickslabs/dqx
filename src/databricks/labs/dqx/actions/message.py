@@ -10,8 +10,6 @@ imports: the evaluator can call *StandardMessageBuilder.build(...)* using only
 primitive values already available at evaluation time.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from datetime import datetime
 

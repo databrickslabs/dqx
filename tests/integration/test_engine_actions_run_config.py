@@ -10,8 +10,6 @@ Prerequisites:
 - A UC catalog named by *TEST_CATALOG*.
 """
 
-from __future__ import annotations
-
 from databricks.labs.dqx.actions.dq_action import DQAction
 from databricks.labs.dqx.actions.noop import NoOpAction
 from databricks.labs.dqx.actions.manager import DQActionManager
@@ -122,7 +120,10 @@ def test_shared_action_events_location_scopes_events_per_run_config(ws, spark, m
             )
         )
 
-    engine.apply_checks_and_save_in_tables(run_configs)
+    # Run sequentially: the two run configs share one events table, and applying them in parallel
+    # would have both create the (not-yet-existing) shared table at once. This test validates
+    # per-run-config event scoping, not concurrent table creation.
+    engine.apply_checks_and_save_in_tables(run_configs, max_parallelism=1)
 
     # Each run config's fired event is stamped with its own run_config_name in the shared table.
     fired = [row for row in spark.read.table(events_table).collect() if row["fired"]]

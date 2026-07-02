@@ -15,8 +15,6 @@ Classes:
     CallbackDQAlertDestination: In-process callback destination.
 """
 
-from __future__ import annotations
-
 from databricks.labs.dqx.actions.destinations.base import AlertDestination
 from databricks.labs.dqx.actions.destinations.callback import CallbackDQAlertDestination
 from databricks.labs.dqx.actions.destinations.log import LogDQAlertDestination

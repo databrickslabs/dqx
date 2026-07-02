@@ -7,8 +7,6 @@ These tests verify:
 - Forward-reference isolation: base.py imports cleanly even though delivery.py does not exist
 """
 
-from __future__ import annotations
-
 import dataclasses
 import enum
 import inspect

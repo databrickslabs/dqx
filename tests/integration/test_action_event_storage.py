@@ -15,8 +15,6 @@ Note: these tests create and drop a UC Delta table per test using the
 *factory* cleanup pattern so that failures still clean up.
 """
 
-from __future__ import annotations
-
 from datetime import datetime, timezone
 
 import pytest

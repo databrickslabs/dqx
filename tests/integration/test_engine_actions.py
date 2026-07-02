@@ -14,8 +14,6 @@ Run with::
     .venv/bin/pytest tests/integration/test_engine_actions.py -v
 """
 
-from __future__ import annotations
-
 from datetime import timedelta
 
 import pytest

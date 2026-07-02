@@ -5,8 +5,6 @@ auto-loading of RunConfig.actions_location / action_events_location in the workf
 runner. Actual loading + end-to-end firing is covered by integration tests.
 """
 
-from __future__ import annotations
-
 from unittest.mock import create_autospec
 
 import pytest

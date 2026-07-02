@@ -7,8 +7,6 @@ member of the union (it is a valid runtime destination) even though the
 serializer excludes it from persisted output, since it holds a live callable.
 """
 
-from __future__ import annotations
-
 from typing import Annotated
 
 from pydantic import Field

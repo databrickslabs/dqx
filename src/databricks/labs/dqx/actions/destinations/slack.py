@@ -5,8 +5,6 @@ payloads.  The host is restricted to *hooks.slack.com* to prevent
 accidental or malicious redirection to non-Slack endpoints.
 """
 
-from __future__ import annotations
-
 from typing import ClassVar, Literal
 
 from databricks.labs.dqx.actions.destinations.webhook_base import WebhookAlertDestination

@@ -7,8 +7,6 @@ round-trip those values while preserving the tagged wire format
 (a dict mapping the key *secret* to a *scope/key* reference) used in storage.
 """
 
-from __future__ import annotations
-
 from typing import Annotated
 
 from pydantic import BeforeValidator, PlainSerializer

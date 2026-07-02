@@ -11,8 +11,6 @@ the binding here imports in a single direction
 (*dq_action* depends on *alert*, *fail_pipeline*, and *noop*, which depend on *base*).
 """
 
-from __future__ import annotations
-
 from typing import Annotated, Any
 
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator

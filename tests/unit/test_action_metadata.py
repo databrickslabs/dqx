@@ -7,8 +7,6 @@ Covers:
 - DQEngine normalization: dict entries are deserialized to DQAction at construction time
 """
 
-from __future__ import annotations
-
 import collections.abc
 import json
 from pathlib import Path

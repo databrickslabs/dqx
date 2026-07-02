@@ -1,7 +1,5 @@
 """Unit tests for the public databricks.labs.dqx.actions API surface."""
 
-from __future__ import annotations
-
 from databricks.labs.dqx import actions
 from databricks.labs.dqx.actions import (
     ActionContext,

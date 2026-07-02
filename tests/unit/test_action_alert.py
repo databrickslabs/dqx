@@ -11,8 +11,6 @@ Tests cover:
 - Recorded error text in destination_errors has no newlines.
 """
 
-from __future__ import annotations
-
 import enum
 from datetime import datetime, timezone
 from unittest.mock import create_autospec

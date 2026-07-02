@@ -1,7 +1,5 @@
 """Unit tests for ActionEvaluator: condition gating, suppression, polymorphic dispatch, terminal-error deferral, and alert-before-abort ordering."""
 
-from __future__ import annotations
-
 from datetime import datetime, timezone
 from unittest.mock import create_autospec
 

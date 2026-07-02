@@ -8,8 +8,6 @@ No real Spark session or streaming query is required — all Spark and
 streaming primitives are faked with plain Python namespaces or autospec mocks.
 """
 
-from __future__ import annotations
-
 import logging
 from datetime import datetime
 from types import SimpleNamespace

@@ -6,8 +6,6 @@ This module defines *FailPipeline*, a terminal action that raises
 defers this error until all other non-terminal actions have completed.
 """
 
-from __future__ import annotations
-
 from typing import Literal
 
 from databricks.labs.dqx.actions.base import Action, ActionContext, ActionResult, ActionServices

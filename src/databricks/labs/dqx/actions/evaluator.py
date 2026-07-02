@@ -21,8 +21,6 @@ all configured *DQAction* instances through their full lifecycle:
    ensures every alert is delivered before the pipeline is terminated.
 """
 
-from __future__ import annotations
-
 import dataclasses
 import logging
 

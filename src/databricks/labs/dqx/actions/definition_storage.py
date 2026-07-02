@@ -23,8 +23,6 @@ Security
 User-supplied values are sanitized before appearing in log messages (CWE-117).
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import re

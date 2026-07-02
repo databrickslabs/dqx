@@ -19,8 +19,6 @@ Tests cover:
 - Non-DQAlert action always fires when condition True.
 """
 
-from __future__ import annotations
-
 import dataclasses
 from datetime import datetime, timedelta, timezone
 

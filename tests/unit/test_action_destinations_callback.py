@@ -9,8 +9,6 @@ Tests cover:
 - type class variable equals "callback".
 """
 
-from __future__ import annotations
-
 from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import cast

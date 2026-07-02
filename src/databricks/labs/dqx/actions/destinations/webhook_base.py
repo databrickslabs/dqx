@@ -5,8 +5,6 @@ auth building, and the actual HTTP POST — while delegating payload assembly to
 concrete subclasses via *_build_payload*.
 """
 
-from __future__ import annotations
-
 import abc
 from typing import ClassVar
 

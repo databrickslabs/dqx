@@ -9,8 +9,6 @@ a metadata (*type: log*) form and can be persisted and loaded like any other
 destination.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import ClassVar, Literal
 

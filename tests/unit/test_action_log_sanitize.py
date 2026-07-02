@@ -1,7 +1,5 @@
 """Unit tests for the shared log-sanitization helper."""
 
-from __future__ import annotations
-
 from databricks.labs.dqx.actions.log_sanitize import sanitize_for_log
 
 

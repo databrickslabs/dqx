@@ -9,8 +9,6 @@ Tests cover:
 - ActionResult is never returned (always raises before returning).
 """
 
-from __future__ import annotations
-
 from datetime import datetime, timezone
 from unittest.mock import create_autospec
 

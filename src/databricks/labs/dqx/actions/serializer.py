@@ -24,8 +24,6 @@ User-supplied names are sanitized before they appear in log messages to
 prevent log injection (CWE-117).
 """
 
-from __future__ import annotations
-
 import pydantic
 
 from databricks.labs.dqx.actions.dq_action import DQAction

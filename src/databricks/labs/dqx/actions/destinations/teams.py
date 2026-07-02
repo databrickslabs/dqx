@@ -5,8 +5,6 @@ the legacy MessageCard format.  Hosts are restricted to *webhook.office.com*
 and *office.com* suffixes.
 """
 
-from __future__ import annotations
-
 from typing import ClassVar, Literal
 
 from databricks.labs.dqx.actions.destinations.webhook_base import WebhookAlertDestination

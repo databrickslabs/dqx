@@ -13,8 +13,6 @@ Run with::
     .venv/bin/pytest tests/integration/test_action_manager.py -v
 """
 
-from __future__ import annotations
-
 import pytest
 from databricks.labs.pytester.fixtures.baseline import factory
 from databricks.sdk import WorkspaceClient

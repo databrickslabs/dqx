@@ -7,8 +7,6 @@ is no host restriction — any HTTPS endpoint is accepted.  Optional
 enable HTTP Basic-auth.
 """
 
-from __future__ import annotations
-
 from typing import ClassVar, Literal
 
 from pydantic import Field

@@ -5,8 +5,6 @@ Tests are written in TDD order: they must FAIL before the implementation exists.
 No Spark session, no workspace connection — pure Python unit tests.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import cast
 

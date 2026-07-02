@@ -11,8 +11,6 @@ Tests cover:
 - validate() raises InvalidActionError for empty name / missing/empty url
 """
 
-from __future__ import annotations
-
 import inspect
 from dataclasses import dataclass
 from datetime import datetime, timezone

@@ -4,8 +4,6 @@ Defines *AlertDestination*, the contract that all concrete destination
 adapters (Slack, Teams, generic webhook, …) must satisfy.
 """
 
-from __future__ import annotations
-
 import abc
 
 from pydantic import BaseModel, model_validator

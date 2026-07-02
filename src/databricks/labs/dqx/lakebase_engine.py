@@ -19,8 +19,6 @@ Credential tokens are injected only into the *cparams* dict immediately before
 each connection attempt and are never logged (CWE-532).
 """
 
-from __future__ import annotations
-
 import uuid
 from collections.abc import Callable
 

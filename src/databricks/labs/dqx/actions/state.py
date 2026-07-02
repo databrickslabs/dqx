@@ -10,8 +10,6 @@ This module defines:
   *ActionEventStore* so that state survives process restarts.
 """
 
-from __future__ import annotations
-
 import abc
 import logging
 import threading

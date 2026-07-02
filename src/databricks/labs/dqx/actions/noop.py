@@ -8,8 +8,6 @@ an observe-only / dry-run mode that records what *would* have fired to the event
 table without acting on it.
 """
 
-from __future__ import annotations
-
 from typing import Literal
 
 from databricks.labs.dqx.actions.base import Action, ActionContext, ActionResult, ActionServices, ActionStatus

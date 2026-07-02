@@ -7,8 +7,6 @@ using *Threads.gather* so that a single delivery failure cannot block the
 remaining destinations.
 """
 
-from __future__ import annotations
-
 import enum
 import logging
 from typing import Literal

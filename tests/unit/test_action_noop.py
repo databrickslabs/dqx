@@ -5,8 +5,6 @@ discriminated union, and round-trips through its metadata (*type: noop*) form.
 The *action_context* / *action_services* fixtures come from tests/unit/conftest.py.
 """
 
-from __future__ import annotations
-
 from databricks.labs.dqx.actions import DQAction, NoOpAction
 from databricks.labs.dqx.actions.base import ActionContext, ActionServices, ActionStatus
 

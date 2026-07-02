@@ -26,8 +26,6 @@ Typical usage::
     loaded = manager.load_actions(config)
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import os

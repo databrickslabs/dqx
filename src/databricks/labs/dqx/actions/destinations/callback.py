@@ -5,8 +5,6 @@ This destination is not persistable; the serializer skips it with a
 warning when persisting destination configurations to storage.
 """
 
-from __future__ import annotations
-
 from collections.abc import Callable
 from typing import Any, Literal
 

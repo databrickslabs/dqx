@@ -13,34 +13,20 @@ This module defines the foundational building blocks used throughout the
 The *DQAction* binding lives in *actions/dq_action.py* rather than here: its
 *action* field is the discriminated union over the concrete action classes,
 which import this module, so declaring it here would create an import cycle.
-
-Forward-reference strategy
---------------------------
-*WebhookClient* (defined in *actions/delivery.py*) and *SparkSession*
-(from *pyspark.sql*) would introduce heavy or cyclic imports if resolved at
-module load time.  Both are therefore imported **only** inside the
-*TYPE_CHECKING* guard so that static type checkers can resolve them while the
-module remains importable in any environment — including unit-test environments
-where neither *delivery.py* nor PySpark exists.
 """
-
-from __future__ import annotations
 
 import abc
 import enum
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
+from pyspark.sql import SparkSession
 
 from databricks.sdk import WorkspaceClient
 
+from databricks.labs.dqx.actions.delivery import WebhookClient
 from databricks.labs.dqx.actions.secrets import SecretResolver
-
-if TYPE_CHECKING:
-    from databricks.labs.dqx.actions.delivery import WebhookClient
-    from pyspark.sql import SparkSession
 
 
 # ---------------------------------------------------------------------------
@@ -136,12 +122,6 @@ class ActionResult:
 @dataclass(frozen=True)
 class ActionServices:
     """Frozen container of injectable services available to action implementations.
-
-    *WebhookClient* and *SparkSession* are typed via *TYPE_CHECKING*-only
-    imports to avoid heavy or cyclic imports at module load time.  At runtime
-    the type annotations are strings (due to *from __future__ import
-    annotations*), so the dataclass fields accept any value assignable to
-    those types without requiring the actual classes to be present.
 
     Attributes:
         secret_resolver: Resolver for plain-string or *DQSecret* credentials.
