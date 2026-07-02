@@ -110,15 +110,25 @@ PG_MIGRATIONS: list[PgMigration] = [
             "  updated_by    TEXT"
             ");"
             # ----------------------------------------------------------
-            # dq_quality_rules — active rule catalog.
+            # dq_quality_rules — active rule catalog. ``registry_rule_id``/
+            # ``registry_version``/``applied_rule_id`` are provenance
+            # columns (Phase 3A, see docs/superpowers/specs/2026-07-02-
+            # rules-registry-design.md §3.1): when a row was materialized
+            # from a Rules Registry application, they point back at the
+            # source ``dq_rules`` row, the published version substituted,
+            # and the ``dq_applied_rules`` link — all NULL for rules
+            # authored directly against a table (unchanged legacy path).
             # ----------------------------------------------------------
             f"CREATE TABLE IF NOT EXISTS {_S}.dq_quality_rules ("
-            "  rule_id    TEXT PRIMARY KEY,"
-            "  table_fqn  TEXT NOT NULL,"
-            '  "check"    JSONB NOT NULL,'
-            "  version    INTEGER NOT NULL,"
-            "  status     TEXT NOT NULL,"
-            "  source     TEXT NOT NULL,"
+            "  rule_id           TEXT PRIMARY KEY,"
+            "  table_fqn         TEXT NOT NULL,"
+            '  "check"           JSONB NOT NULL,'
+            "  version           INTEGER NOT NULL,"
+            "  status            TEXT NOT NULL,"
+            "  source            TEXT NOT NULL,"
+            "  registry_rule_id  TEXT,"
+            "  registry_version  INTEGER,"
+            "  applied_rule_id   TEXT,"
             "  created_by TEXT,"
             "  created_at TIMESTAMPTZ,"
             "  updated_by TEXT,"
@@ -306,6 +316,64 @@ PG_MIGRATIONS: list[PgMigration] = [
             ");"
             f"CREATE INDEX IF NOT EXISTS idx_dq_rules_history_rule_changed_at "
             f"  ON {_S}.dq_rules_history (rule_id, changed_at DESC);"
+            # ----------------------------------------------------------
+            # dq_monitored_tables — Layer 2: thin binding recording that a
+            # table is under active governance (see design spec §3.1/§7).
+            # Profiling data itself lives in the existing
+            # ``dq_profiling_results`` Delta table; this row just tracks
+            # the steward + draft/published lifecycle of the binding.
+            # ----------------------------------------------------------
+            f"CREATE TABLE IF NOT EXISTS {_S}.dq_monitored_tables ("
+            "  binding_id       TEXT PRIMARY KEY,"
+            "  table_fqn        TEXT NOT NULL,"
+            "  steward          TEXT,"
+            "  status           TEXT NOT NULL,"
+            "  last_profiled_at TIMESTAMPTZ,"
+            "  created_by       TEXT,"
+            "  created_at       TIMESTAMPTZ,"
+            "  updated_by       TEXT,"
+            "  updated_at       TIMESTAMPTZ,"
+            "  CONSTRAINT uq_dq_monitored_tables_table_fqn UNIQUE (table_fqn),"
+            "  CONSTRAINT chk_dq_monitored_tables_status "
+            "    CHECK (status IN ('draft','published'))"
+            ");"
+            f"CREATE INDEX IF NOT EXISTS idx_dq_monitored_tables_status "
+            f"  ON {_S}.dq_monitored_tables (status);"
+            # ----------------------------------------------------------
+            # dq_applied_rules — the LIVE LINK between a published
+            # registry rule and a monitored table's column mapping.
+            # ``pinned_version`` NULL means "follow latest published"
+            # (auto-upgrade); a non-NULL value freezes the applied rule to
+            # that ``dq_rule_versions`` snapshot. ``mapping_hash`` is a
+            # deterministic hash of ``column_mapping`` (see
+            # ``registry_models.compute_mapping_hash``) so the same rule
+            # can be applied to the same table with two *different*
+            # column mappings (e.g. checking two different columns with
+            # the same rule) without violating uniqueness, while an exact
+            # duplicate application is rejected. ``binding_id``/``rule_id``
+            # are informal references to ``dq_monitored_tables``/
+            # ``dq_rules`` (service-enforced, no FK constraint — matching
+            # ``dq_rule_versions.rule_id``'s existing convention in this
+            # baseline).
+            # ----------------------------------------------------------
+            f"CREATE TABLE IF NOT EXISTS {_S}.dq_applied_rules ("
+            "  id                 TEXT PRIMARY KEY,"
+            "  binding_id         TEXT NOT NULL,"
+            "  rule_id            TEXT NOT NULL,"
+            "  pinned_version     INTEGER,"
+            "  severity_override  TEXT,"
+            "  column_mapping     JSONB,"
+            "  user_metadata      JSONB,"
+            "  mapping_hash       TEXT NOT NULL,"
+            "  created_by         TEXT,"
+            "  created_at         TIMESTAMPTZ,"
+            "  CONSTRAINT uq_dq_applied_rules_binding_rule_mapping "
+            "    UNIQUE (binding_id, rule_id, mapping_hash)"
+            ");"
+            f"CREATE INDEX IF NOT EXISTS idx_dq_applied_rules_binding_id "
+            f"  ON {_S}.dq_applied_rules (binding_id);"
+            f"CREATE INDEX IF NOT EXISTS idx_dq_applied_rules_rule_id "
+            f"  ON {_S}.dq_applied_rules (rule_id);"
         ),
     ),
     PgMigration(

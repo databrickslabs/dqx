@@ -388,7 +388,11 @@ _V2_OLTP_FALLBACK = (
     # Active rule catalog. ``rule_id`` is a per-check stable identifier;
     # each row holds exactly ONE check serialized as a VARIANT object
     # (no array wrapper). ``source`` records which authoring path
-    # produced the rule.
+    # produced the rule. ``registry_rule_id``/``registry_version``/
+    # ``applied_rule_id`` are provenance columns (Phase 3A, see
+    # docs/superpowers/specs/2026-07-02-rules-registry-design.md §3.1):
+    # set when this row was materialized from a Rules Registry
+    # application, NULL for rules authored directly against a table.
     f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_quality_rules ("
     "  rule_id STRING NOT NULL,"
     "  table_fqn STRING NOT NULL,"
@@ -396,6 +400,9 @@ _V2_OLTP_FALLBACK = (
     "  version INT NOT NULL,"
     "  status STRING NOT NULL,"
     "  source STRING NOT NULL,"
+    "  registry_rule_id STRING,"
+    "  registry_version INT,"
+    "  applied_rule_id STRING,"
     "  created_by STRING,"
     "  created_at TIMESTAMP,"
     "  updated_by STRING,"
@@ -558,7 +565,56 @@ _V2_OLTP_FALLBACK = (
     "  new_status STRING,"
     "  changed_by STRING,"
     "  changed_at TIMESTAMP"
-    ") CLUSTER BY (rule_id, changed_at)"
+    ") CLUSTER BY (rule_id, changed_at);"
+    #
+    # dq_monitored_tables — Layer 2: thin binding recording that a table
+    # is under active governance (design spec §3.1/§7). Profiling data
+    # itself lives in the existing ``dq_profiling_results`` Delta table;
+    # this row just tracks the steward + draft/published lifecycle of
+    # the binding. No UNIQUE constraint on Delta (unsupported) — the
+    # service enforces one binding per ``table_fqn``.
+    f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_monitored_tables ("
+    "  binding_id STRING NOT NULL,"
+    "  table_fqn STRING NOT NULL,"
+    "  steward STRING,"
+    "  status STRING NOT NULL,"
+    "  last_profiled_at TIMESTAMP,"
+    "  created_by STRING,"
+    "  created_at TIMESTAMP,"
+    "  updated_by STRING,"
+    "  updated_at TIMESTAMP,"
+    "  CONSTRAINT pk_dq_monitored_tables PRIMARY KEY (binding_id) RELY"
+    ") CLUSTER BY (table_fqn, status);"
+    f"ALTER TABLE {_PLACEHOLDER}.dq_monitored_tables "
+    f"  ADD CONSTRAINT chk_dq_monitored_tables_status "
+    f"  CHECK (status IN ('draft','published'));"
+    #
+    # dq_applied_rules — the LIVE LINK between a published registry rule
+    # and a monitored table's column mapping. ``pinned_version`` NULL
+    # means "follow latest published" (auto-upgrade); a non-NULL value
+    # freezes the applied rule to that ``dq_rule_versions`` snapshot.
+    # ``mapping_hash`` is a deterministic hash of ``column_mapping`` (see
+    # ``registry_models.compute_mapping_hash``) so the same rule can be
+    # applied to the same table with two *different* column mappings
+    # without colliding, while an exact duplicate application is
+    # rejected — enforced by the service on Delta (no UNIQUE constraint
+    # support here; the Postgres baseline enforces it natively).
+    # ``binding_id``/``rule_id`` are informal references to
+    # ``dq_monitored_tables``/``dq_rules`` (service-enforced, no FK,
+    # matching every other cross-table reference in this baseline).
+    f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_applied_rules ("
+    "  id STRING NOT NULL,"
+    "  binding_id STRING NOT NULL,"
+    "  rule_id STRING NOT NULL,"
+    "  pinned_version INT,"
+    "  severity_override STRING,"
+    "  column_mapping VARIANT,"
+    "  user_metadata VARIANT,"
+    "  mapping_hash STRING NOT NULL,"
+    "  created_by STRING,"
+    "  created_at TIMESTAMP,"
+    "  CONSTRAINT pk_dq_applied_rules PRIMARY KEY (id) RELY"
+    ") CLUSTER BY (binding_id, rule_id)"
 )
 
 
