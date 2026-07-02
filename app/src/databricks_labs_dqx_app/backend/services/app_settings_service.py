@@ -526,6 +526,50 @@ class AppSettingsService:
         logger.info("Seeded reserved label definition(s): %s", [s["key"] for s in missing])
         return True
 
+    # ------------------------------------------------------------------
+    # AI Gateway settings — Rules Registry Phase 4A. Kill-switch, serving
+    # endpoint name, and per-user hourly rate limit for AIGateway
+    # (services/ai_gateway.py). Defaults keep AI OFF and unconfigured until
+    # an admin explicitly turns it on, so a deploy with no AI infra behaves
+    # exactly like today: every AI route returns a clean 503, never a 500.
+    # ------------------------------------------------------------------
+
+    _AI_ENABLED_KEY = "ai_enabled"
+    _AI_ENDPOINT_NAME_KEY = "ai_endpoint_name"
+    _AI_RATE_LIMIT_KEY = "ai_rate_limit_per_user_per_hour"
+
+    AI_RATE_LIMIT_DEFAULT = 30
+
+    def get_ai_enabled(self) -> bool:
+        """Return whether the AI kill-switch is on; defaults to ``False`` (off) when unset."""
+        raw = self.get_setting(self._AI_ENABLED_KEY)
+        return raw is not None and raw.strip().lower() == "true"
+
+    def save_ai_enabled(self, enabled: bool, *, user_email: str | None = None) -> bool:
+        """Persist the AI kill-switch setting. Returns the saved value."""
+        self.save_setting(self._AI_ENABLED_KEY, "true" if enabled else "false", user_email=user_email)
+        return enabled
+
+    def get_ai_endpoint_name(self) -> str:
+        """Return the configured AI serving endpoint name, or ``""`` if unset."""
+        return (self.get_setting(self._AI_ENDPOINT_NAME_KEY) or "").strip()
+
+    def save_ai_endpoint_name(self, endpoint_name: str, *, user_email: str | None = None) -> str:
+        """Persist the AI serving endpoint name. Returns the cleaned (trimmed) value."""
+        cleaned = (endpoint_name or "").strip()
+        self.save_setting(self._AI_ENDPOINT_NAME_KEY, cleaned, user_email=user_email)
+        return cleaned
+
+    def get_ai_rate_limit_per_user_per_hour(self) -> int:
+        """Return the configured per-user hourly AI call cap; defaults to :data:`AI_RATE_LIMIT_DEFAULT`."""
+        value = self._get_int_setting(self._AI_RATE_LIMIT_KEY)
+        return value if value is not None else self.AI_RATE_LIMIT_DEFAULT
+
+    def save_ai_rate_limit_per_user_per_hour(self, limit: int, *, user_email: str | None = None) -> int:
+        """Persist the per-user hourly AI call cap. Returns the saved value."""
+        self.save_setting(self._AI_RATE_LIMIT_KEY, str(int(limit)), user_email=user_email)
+        return int(limit)
+
     @staticmethod
     def _normalise_status_entry(item: dict) -> dict:
         value = (item.get("value") or "").strip() if isinstance(item.get("value"), str) else ""

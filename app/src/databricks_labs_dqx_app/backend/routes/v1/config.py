@@ -91,9 +91,7 @@ class LabelDefinition(BaseModel):
             return None
         for label_value, color in value.items():
             if not _HEX_COLOR_RE.match(color):
-                raise ValueError(
-                    f"Invalid color {color!r} for value {label_value!r}; expected '#RRGGBB' hex format."
-                )
+                raise ValueError(f"Invalid color {color!r} for value {label_value!r}; expected '#RRGGBB' hex format.")
         return value
 
 
@@ -298,7 +296,7 @@ def _validate_retention_days(value: int, *, field: str) -> int:
     if value < _RETENTION_DAYS_MIN:
         raise HTTPException(
             status_code=400,
-            detail=(f"{field} must be at least {_RETENTION_DAYS_MIN} days " "to protect against accidental data loss."),
+            detail=(f"{field} must be at least {_RETENTION_DAYS_MIN} days to protect against accidental data loss."),
         )
     if value > _RETENTION_DAYS_MAX:
         raise HTTPException(
@@ -495,10 +493,7 @@ def save_label_definitions(
     if missing_reserved:
         raise HTTPException(
             status_code=400,
-            detail=(
-                "Cannot delete or rename reserved label key(s): "
-                f"{', '.join(sorted(missing_reserved))}."
-            ),
+            detail=(f"Cannot delete or rename reserved label key(s): {', '.join(sorted(missing_reserved))}."),
         )
 
     svc.save_setting(_LABEL_DEFS_SETTING_KEY, json.dumps([d.model_dump() for d in cleaned]), user_email=email)
@@ -893,3 +888,81 @@ def save_run_review_statuses(
         raise HTTPException(status_code=400, detail=str(e))
     logger.info("Saved %d run review status(es)", len(saved))
     return _statuses_to_out(saved)
+
+
+# ----------------------------------------------------------------------
+# AI Gateway settings — Rules Registry Phase 4A. Kill-switch, serving
+# endpoint name, and per-user hourly rate limit for AIGateway
+# (services/ai_gateway.py). ADMIN only: this is infrastructure config, not
+# an authoring-time preference. A full "AI settings card" UI is Phase 4.5
+# — these endpoints are the read/write surface it will consume.
+# ----------------------------------------------------------------------
+
+
+class AiSettingsOut(BaseModel):
+    """Effective AI Gateway settings."""
+
+    ai_enabled: bool
+    ai_endpoint_name: str
+    ai_rate_limit_per_user_per_hour: int
+    ai_rate_limit_default: int = AppSettingsService.AI_RATE_LIMIT_DEFAULT
+
+
+class AiSettingsIn(BaseModel):
+    """Update payload — omitted fields are left unchanged."""
+
+    ai_enabled: bool | None = None
+    ai_endpoint_name: str | None = None
+    ai_rate_limit_per_user_per_hour: int | None = None
+
+
+@router.get(
+    "/ai-settings",
+    response_model=AiSettingsOut,
+    operation_id="getAiSettings",
+    dependencies=[require_role(UserRole.ADMIN)],
+)
+def get_ai_settings(
+    svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+) -> AiSettingsOut:
+    """Return the current AI Gateway settings (admin only)."""
+    return AiSettingsOut(
+        ai_enabled=svc.get_ai_enabled(),
+        ai_endpoint_name=svc.get_ai_endpoint_name(),
+        ai_rate_limit_per_user_per_hour=svc.get_ai_rate_limit_per_user_per_hour(),
+    )
+
+
+@router.put(
+    "/ai-settings",
+    response_model=AiSettingsOut,
+    operation_id="saveAiSettings",
+    dependencies=[require_role(UserRole.ADMIN)],
+)
+def save_ai_settings(
+    body: AiSettingsIn,
+    svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    email: Annotated[str, Depends(get_user_email)],
+) -> AiSettingsOut:
+    """Update one or more AI Gateway settings (admin only)."""
+    if body.ai_enabled is None and body.ai_endpoint_name is None and body.ai_rate_limit_per_user_per_hour is None:
+        raise HTTPException(
+            status_code=400,
+            detail="At least one of ai_enabled, ai_endpoint_name, ai_rate_limit_per_user_per_hour must be provided.",
+        )
+
+    if body.ai_enabled is not None:
+        svc.save_ai_enabled(body.ai_enabled, user_email=email)
+    if body.ai_endpoint_name is not None:
+        svc.save_ai_endpoint_name(body.ai_endpoint_name, user_email=email)
+    if body.ai_rate_limit_per_user_per_hour is not None:
+        if body.ai_rate_limit_per_user_per_hour < 0:
+            raise HTTPException(status_code=400, detail="ai_rate_limit_per_user_per_hour must be >= 0.")
+        svc.save_ai_rate_limit_per_user_per_hour(body.ai_rate_limit_per_user_per_hour, user_email=email)
+
+    logger.info("Saved AI Gateway settings (by=%s)", email)
+    return AiSettingsOut(
+        ai_enabled=svc.get_ai_enabled(),
+        ai_endpoint_name=svc.get_ai_endpoint_name(),
+        ai_rate_limit_per_user_per_hour=svc.get_ai_rate_limit_per_user_per_hour(),
+    )

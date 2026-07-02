@@ -64,3 +64,69 @@ class TestSeedRunReviewStatuses:
 
         assert wrote is False
         sql_executor_mock.upsert.assert_not_called()
+
+
+class TestAiGatewaySettings:
+    """AI Gateway settings (Rules Registry Phase 4A) — kill-switch, endpoint, rate limit.
+
+    All three default to a safe "AI is off / unconfigured" state when the underlying
+    setting row is absent, so a fresh deploy with no AI infra never accidentally calls a
+    serving endpoint.
+    """
+
+    def test_ai_enabled_defaults_to_false(self, settings_service):
+        svc, sql_executor_mock = settings_service
+        sql_executor_mock.query.return_value = []
+
+        assert svc.get_ai_enabled() is False
+
+    def test_save_and_read_ai_enabled(self, settings_service):
+        svc, sql_executor_mock = settings_service
+
+        svc.save_ai_enabled(True, user_email="admin@x")
+
+        _, kwargs = sql_executor_mock.upsert.call_args
+        assert kwargs["key_cols"] == {"setting_key": "ai_enabled"}
+        assert kwargs["value_cols"]["setting_value"] == "true"
+
+        sql_executor_mock.query.return_value = [["true"]]
+        assert svc.get_ai_enabled() is True
+
+    def test_ai_endpoint_name_defaults_to_empty(self, settings_service):
+        svc, sql_executor_mock = settings_service
+        sql_executor_mock.query.return_value = []
+
+        assert svc.get_ai_endpoint_name() == ""
+
+    def test_save_ai_endpoint_name_trims_whitespace(self, settings_service):
+        svc, sql_executor_mock = settings_service
+
+        saved = svc.save_ai_endpoint_name("  my-endpoint  ", user_email="admin@x")
+
+        assert saved == "my-endpoint"
+        _, kwargs = sql_executor_mock.upsert.call_args
+        assert kwargs["value_cols"]["setting_value"] == "my-endpoint"
+
+    def test_ai_rate_limit_defaults_to_thirty(self, settings_service):
+        svc, sql_executor_mock = settings_service
+        sql_executor_mock.query.return_value = []
+
+        assert svc.get_ai_rate_limit_per_user_per_hour() == 30
+        assert svc.AI_RATE_LIMIT_DEFAULT == 30
+
+    def test_save_and_read_ai_rate_limit(self, settings_service):
+        svc, sql_executor_mock = settings_service
+
+        svc.save_ai_rate_limit_per_user_per_hour(5, user_email="admin@x")
+
+        _, kwargs = sql_executor_mock.upsert.call_args
+        assert kwargs["value_cols"]["setting_value"] == "5"
+
+        sql_executor_mock.query.return_value = [["5"]]
+        assert svc.get_ai_rate_limit_per_user_per_hour() == 5
+
+    def test_ai_rate_limit_ignores_unparsable_value(self, settings_service):
+        svc, sql_executor_mock = settings_service
+        sql_executor_mock.query.return_value = [["not-a-number"]]
+
+        assert svc.get_ai_rate_limit_per_user_per_hour() == 30
