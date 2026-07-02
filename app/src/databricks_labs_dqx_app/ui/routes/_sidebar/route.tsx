@@ -18,6 +18,7 @@ import {
   BookOpen,
   ExternalLink,
   Library,
+  Boxes,
 } from "lucide-react";
 import {
   SidebarGroup,
@@ -100,6 +101,25 @@ function Layout() {
               >
                 <Library size={16} />
                 <span>{t("sidebar.rulesRegistry")}</span>
+              </Link>
+            </SidebarMenuItem>
+
+            {/* Monitored Tables — apply registry rules to real tables
+                (slot->column mapping), profile them, and publish to
+                materialize into dq_quality_rules (Phase 3D). Sits directly
+                below Rules Registry per the design spec's nav layout. */}
+            <SidebarMenuItem>
+              <Link
+                to="/monitored-tables"
+                className={cn(
+                  "flex items-center gap-2 p-2 rounded-lg",
+                  location.pathname.startsWith("/monitored-tables")
+                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                    : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                )}
+              >
+                <Boxes size={16} />
+                <span>{t("sidebar.monitoredTables")}</span>
               </Link>
             </SidebarMenuItem>
 
