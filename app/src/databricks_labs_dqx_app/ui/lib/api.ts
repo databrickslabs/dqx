@@ -101,6 +101,39 @@ export interface AppliedRuleOut {
   rule_severity?: AppliedRuleOutRuleSeverity;
 }
 
+export type ApplyRuleInColumnMappingItem = {[key: string]: string};
+
+/**
+ * None = follow latest published version; a number freezes to that snapshot
+ */
+export type ApplyRuleInPinnedVersion = number | null;
+
+/**
+ * Overrides the rule's tagged severity for this application only
+ */
+export type ApplyRuleInSeverityOverride = string | null;
+
+/**
+ * Per-application free-text tags
+ */
+export type ApplyRuleInTags = { [key: string]: unknown };
+
+/**
+ * Request body for applying a published registry rule to a monitored table.
+ */
+export interface ApplyRuleIn {
+  /** The published (approved) dq_rules row to apply */
+  rule_id: string;
+  /** One slot-name -> column-name mapping group per materialized check; every group's keys must exactly match the rule's slot names */
+  column_mapping: ApplyRuleInColumnMappingItem[];
+  /** None = follow latest published version; a number freezes to that snapshot */
+  pinned_version?: ApplyRuleInPinnedVersion;
+  /** Overrides the rule's tagged severity for this application only */
+  severity_override?: ApplyRuleInSeverityOverride;
+  /** Per-application free-text tags */
+  tags?: ApplyRuleInTags;
+}
+
 /**
  * Stable identifier for known error classes — currently one of ``INSUFFICIENT_PERMISSIONS``, ``TABLE_OR_VIEW_NOT_FOUND``, or ``UNKNOWN``. The UI uses this to surface a friendlier headline.
  */
@@ -1029,6 +1062,14 @@ export interface ProfilerConfig {
   max_empty_ratio?: ProfilerConfigMaxEmptyRatio;
 }
 
+/**
+ * Response for ``publishMonitoredTable`` — the published table plus what got materialized.
+ */
+export interface PublishMonitoredTableOut {
+  table: MonitoredTableOut;
+  materialized_rule_ids?: string[];
+}
+
 export interface QuarantineListOut {
   records?: QuarantineRecordOut[];
   total_count?: number;
@@ -1571,6 +1612,32 @@ export interface SchemaOut {
   comment?: SchemaOutComment;
 }
 
+/**
+ * None clears the pin (follow latest published)
+ */
+export type SetAppliedRulePinInPinnedVersion = number | null;
+
+/**
+ * Request body for pinning/unpinning an applied rule's version.
+ */
+export interface SetAppliedRulePinIn {
+  /** None clears the pin (follow latest published) */
+  pinned_version?: SetAppliedRulePinInPinnedVersion;
+}
+
+/**
+ * None clears the override
+ */
+export type SetAppliedRuleSeverityOverrideInSeverity = string | null;
+
+/**
+ * Request body for setting/clearing an applied rule's severity override.
+ */
+export interface SetAppliedRuleSeverityOverrideIn {
+  /** None clears the override */
+  severity?: SetAppliedRuleSeverityOverrideInSeverity;
+}
+
 export interface SetReviewStatusIn {
   status: string;
 }
@@ -1972,6 +2039,8 @@ name?: string | null;
 };
 
 export type DeleteMonitoredTable200 = {[key: string]: string};
+
+export type RemoveAppliedRule200 = {[key: string]: string};
 
 export type ListValidationRunsParams = {
 /**
@@ -9209,6 +9278,329 @@ export function useGetMonitoredTableProfileSuspense<TData = Awaited<ReturnType<t
 
 
 
+/**
+ * Apply a published registry rule to a monitored table's column mapping.
+ * @summary Apply Rule To Table
+ */
+export const applyRuleToTable = (
+    bindingId: string,
+    applyRuleIn: ApplyRuleIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<AppliedRuleOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/monitored-tables/${bindingId}/applied-rules`,
+      applyRuleIn,options
+    );
+  }
+
+
+
+export const getApplyRuleToTableMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof applyRuleToTable>>, TError,{bindingId: string;data: ApplyRuleIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof applyRuleToTable>>, TError,{bindingId: string;data: ApplyRuleIn}, TContext> => {
+
+const mutationKey = ['applyRuleToTable'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof applyRuleToTable>>, {bindingId: string;data: ApplyRuleIn}> = (props) => {
+          const {bindingId,data} = props ?? {};
+
+          return  applyRuleToTable(bindingId,data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ApplyRuleToTableMutationResult = NonNullable<Awaited<ReturnType<typeof applyRuleToTable>>>
+    export type ApplyRuleToTableMutationBody = ApplyRuleIn
+    export type ApplyRuleToTableMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Apply Rule To Table
+ */
+export const useApplyRuleToTable = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof applyRuleToTable>>, TError,{bindingId: string;data: ApplyRuleIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof applyRuleToTable>>,
+        TError,
+        {bindingId: string;data: ApplyRuleIn},
+        TContext
+      > => {
+
+      const mutationOptions = getApplyRuleToTableMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Remove an applied rule and every ``dq_quality_rules`` row it materialized.
+ * @summary Remove Applied Rule
+ */
+export const removeAppliedRule = (
+    bindingId: string,
+    appliedRuleId: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<RemoveAppliedRule200>> => {
+    
+    
+    return axios.default.delete(
+      `/api/v1/monitored-tables/${bindingId}/applied-rules/${appliedRuleId}`,options
+    );
+  }
+
+
+
+export const getRemoveAppliedRuleMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof removeAppliedRule>>, TError,{bindingId: string;appliedRuleId: string}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof removeAppliedRule>>, TError,{bindingId: string;appliedRuleId: string}, TContext> => {
+
+const mutationKey = ['removeAppliedRule'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof removeAppliedRule>>, {bindingId: string;appliedRuleId: string}> = (props) => {
+          const {bindingId,appliedRuleId} = props ?? {};
+
+          return  removeAppliedRule(bindingId,appliedRuleId,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RemoveAppliedRuleMutationResult = NonNullable<Awaited<ReturnType<typeof removeAppliedRule>>>
+    
+    export type RemoveAppliedRuleMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Remove Applied Rule
+ */
+export const useRemoveAppliedRule = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof removeAppliedRule>>, TError,{bindingId: string;appliedRuleId: string}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof removeAppliedRule>>,
+        TError,
+        {bindingId: string;appliedRuleId: string},
+        TContext
+      > => {
+
+      const mutationOptions = getRemoveAppliedRuleMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Pin (or, with ``pinned_version=None``, unpin) an applied rule's version.
+ * @summary Set Applied Rule Pin
+ */
+export const setAppliedRulePin = (
+    bindingId: string,
+    appliedRuleId: string,
+    setAppliedRulePinIn: SetAppliedRulePinIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<AppliedRuleOut>> => {
+    
+    
+    return axios.default.patch(
+      `/api/v1/monitored-tables/${bindingId}/applied-rules/${appliedRuleId}/pin`,
+      setAppliedRulePinIn,options
+    );
+  }
+
+
+
+export const getSetAppliedRulePinMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setAppliedRulePin>>, TError,{bindingId: string;appliedRuleId: string;data: SetAppliedRulePinIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof setAppliedRulePin>>, TError,{bindingId: string;appliedRuleId: string;data: SetAppliedRulePinIn}, TContext> => {
+
+const mutationKey = ['setAppliedRulePin'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setAppliedRulePin>>, {bindingId: string;appliedRuleId: string;data: SetAppliedRulePinIn}> = (props) => {
+          const {bindingId,appliedRuleId,data} = props ?? {};
+
+          return  setAppliedRulePin(bindingId,appliedRuleId,data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetAppliedRulePinMutationResult = NonNullable<Awaited<ReturnType<typeof setAppliedRulePin>>>
+    export type SetAppliedRulePinMutationBody = SetAppliedRulePinIn
+    export type SetAppliedRulePinMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Set Applied Rule Pin
+ */
+export const useSetAppliedRulePin = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setAppliedRulePin>>, TError,{bindingId: string;appliedRuleId: string;data: SetAppliedRulePinIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof setAppliedRulePin>>,
+        TError,
+        {bindingId: string;appliedRuleId: string;data: SetAppliedRulePinIn},
+        TContext
+      > => {
+
+      const mutationOptions = getSetAppliedRulePinMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Set (or, with ``severity=None``, clear) an applied rule's severity override.
+ * @summary Set Applied Rule Severity Override
+ */
+export const setAppliedRuleSeverityOverride = (
+    bindingId: string,
+    appliedRuleId: string,
+    setAppliedRuleSeverityOverrideIn: SetAppliedRuleSeverityOverrideIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<AppliedRuleOut>> => {
+    
+    
+    return axios.default.patch(
+      `/api/v1/monitored-tables/${bindingId}/applied-rules/${appliedRuleId}/severity-override`,
+      setAppliedRuleSeverityOverrideIn,options
+    );
+  }
+
+
+
+export const getSetAppliedRuleSeverityOverrideMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setAppliedRuleSeverityOverride>>, TError,{bindingId: string;appliedRuleId: string;data: SetAppliedRuleSeverityOverrideIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof setAppliedRuleSeverityOverride>>, TError,{bindingId: string;appliedRuleId: string;data: SetAppliedRuleSeverityOverrideIn}, TContext> => {
+
+const mutationKey = ['setAppliedRuleSeverityOverride'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setAppliedRuleSeverityOverride>>, {bindingId: string;appliedRuleId: string;data: SetAppliedRuleSeverityOverrideIn}> = (props) => {
+          const {bindingId,appliedRuleId,data} = props ?? {};
+
+          return  setAppliedRuleSeverityOverride(bindingId,appliedRuleId,data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetAppliedRuleSeverityOverrideMutationResult = NonNullable<Awaited<ReturnType<typeof setAppliedRuleSeverityOverride>>>
+    export type SetAppliedRuleSeverityOverrideMutationBody = SetAppliedRuleSeverityOverrideIn
+    export type SetAppliedRuleSeverityOverrideMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Set Applied Rule Severity Override
+ */
+export const useSetAppliedRuleSeverityOverride = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setAppliedRuleSeverityOverride>>, TError,{bindingId: string;appliedRuleId: string;data: SetAppliedRuleSeverityOverrideIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof setAppliedRuleSeverityOverride>>,
+        TError,
+        {bindingId: string;appliedRuleId: string;data: SetAppliedRuleSeverityOverrideIn},
+        TContext
+      > => {
+
+      const mutationOptions = getSetAppliedRuleSeverityOverrideMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Publish a monitored table and materialize its applied rules into ``dq_quality_rules``.
+
+Materialized rows always enter the existing per-table ``draft`` review
+flow (never auto-approved) — see ``backend/services/materializer.py``
+for the full approval/auto-upgrade semantics.
+ * @summary Publish Monitored Table
+ */
+export const publishMonitoredTable = (
+    bindingId: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<PublishMonitoredTableOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/monitored-tables/${bindingId}/publish`,undefined,options
+    );
+  }
+
+
+
+export const getPublishMonitoredTableMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof publishMonitoredTable>>, TError,{bindingId: string}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof publishMonitoredTable>>, TError,{bindingId: string}, TContext> => {
+
+const mutationKey = ['publishMonitoredTable'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof publishMonitoredTable>>, {bindingId: string}> = (props) => {
+          const {bindingId} = props ?? {};
+
+          return  publishMonitoredTable(bindingId,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PublishMonitoredTableMutationResult = NonNullable<Awaited<ReturnType<typeof publishMonitoredTable>>>
+    
+    export type PublishMonitoredTableMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Publish Monitored Table
+ */
+export const usePublishMonitoredTable = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof publishMonitoredTable>>, TError,{bindingId: string}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof publishMonitoredTable>>,
+        TError,
+        {bindingId: string},
+        TContext
+      > => {
+
+      const mutationOptions = getPublishMonitoredTableMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
 /**
  * Validate a list of check definitions without saving them.
  * @summary Validate Checks

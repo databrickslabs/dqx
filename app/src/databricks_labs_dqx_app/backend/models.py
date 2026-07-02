@@ -11,6 +11,8 @@ from .registry_models import RuleDefinition as RegistryRuleDefinition
 from .registry_models import RuleMode as RegistryRuleMode
 from .registry_models import RuleStatus as RegistryRuleStatus
 from .registry_models import RuleVersion as RegistryRuleVersionDomain
+from .registry_models import AppliedRule as AppliedRuleDomain
+from .registry_models import ColumnMappingGroup
 from .registry_models import MonitoredTable as MonitoredTableDomain
 from .registry_models import MonitoredTableStatus as MonitoredTableStatusDomain
 from .services.monitored_table_service import (
@@ -379,6 +381,54 @@ class AppliedRuleOut(BaseModel):
             rule_severity=summary.rule_severity,
         )
 
+    @classmethod
+    def from_domain(cls, applied: AppliedRuleDomain) -> "AppliedRuleOut":
+        """Build from a bare ``AppliedRule`` (no joined registry tags) — the shape
+        returned directly by ``ApplyRulesService`` (apply/pin/severity-override),
+        as opposed to :meth:`from_summary`'s ``MonitoredTableService``-joined shape.
+        """
+        return cls(
+            id=applied.id,
+            binding_id=applied.binding_id,
+            rule_id=applied.rule_id,
+            pinned_version=applied.pinned_version,
+            severity_override=applied.severity_override,
+            column_mapping=applied.column_mapping,
+            user_metadata=applied.user_metadata,
+            mapping_hash=applied.mapping_hash,
+            created_by=applied.created_by,
+            created_at=applied.created_at.isoformat() if applied.created_at else None,
+        )
+
+
+class ApplyRuleIn(BaseModel):
+    """Request body for applying a published registry rule to a monitored table."""
+
+    rule_id: str = Field(description="The published (approved) dq_rules row to apply")
+    column_mapping: list[ColumnMappingGroup] = Field(
+        description="One slot-name -> column-name mapping group per materialized check; "
+        "every group's keys must exactly match the rule's slot names"
+    )
+    pinned_version: int | None = Field(
+        default=None, description="None = follow latest published version; a number freezes to that snapshot"
+    )
+    severity_override: str | None = Field(
+        default=None, description="Overrides the rule's tagged severity for this application only"
+    )
+    tags: dict[str, Any] = Field(default_factory=dict, description="Per-application free-text tags")
+
+
+class SetAppliedRulePinIn(BaseModel):
+    """Request body for pinning/unpinning an applied rule's version."""
+
+    pinned_version: int | None = Field(default=None, description="None clears the pin (follow latest published)")
+
+
+class SetAppliedRuleSeverityOverrideIn(BaseModel):
+    """Request body for setting/clearing an applied rule's severity override."""
+
+    severity: str | None = Field(default=None, description="None clears the override")
+
 
 class MonitoredTableOut(BaseModel):
     """A ``dq_monitored_tables`` row as returned to the frontend."""
@@ -406,6 +456,13 @@ class MonitoredTableOut(BaseModel):
             updated_by=table.updated_by,
             updated_at=table.updated_at.isoformat() if table.updated_at else None,
         )
+
+
+class PublishMonitoredTableOut(BaseModel):
+    """Response for ``publishMonitoredTable`` — the published table plus what got materialized."""
+
+    table: MonitoredTableOut
+    materialized_rule_ids: list[str] = Field(default_factory=list)
 
 
 class MonitoredTableSummaryOut(BaseModel):

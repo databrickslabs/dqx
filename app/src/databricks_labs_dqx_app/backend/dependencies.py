@@ -28,6 +28,8 @@ from .services.job_service import JobService
 from .services.role_service import RoleService
 from .services.registry_service import RegistryService
 from .services.monitored_table_service import MonitoredTableService
+from .services.apply_rules_service import ApplyRulesService
+from .services.materializer import Materializer
 from .services.rules_catalog_service import RulesCatalogService
 from .services.comments_service import CommentsService
 from .services.review_status_service import ReviewStatusService
@@ -279,6 +281,24 @@ async def get_monitored_table_service(
     return MonitoredTableService(sql=sql, profiling_sql=profiling_sql)
 
 
+async def get_apply_rules_service(
+    sql: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
+    registry: Annotated[RegistryService, Depends(get_registry_service)],
+) -> ApplyRulesService:
+    """Create an ApplyRulesService routed at the OLTP executor."""
+    return ApplyRulesService(sql=sql, registry=registry)
+
+
+async def get_materializer(
+    sql: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
+    registry: Annotated[RegistryService, Depends(get_registry_service)],
+    monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
+    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+) -> Materializer:
+    """Create a Materializer wired to the registry, monitored-table, and settings services."""
+    return Materializer(sql=sql, registry=registry, monitored_tables=monitored_tables, app_settings=app_settings)
+
+
 async def get_discovery_service(
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
 ) -> DiscoveryService:
@@ -516,6 +536,8 @@ __all__ = [
     "get_rules_catalog_service",
     "get_registry_service",
     "get_monitored_table_service",
+    "get_apply_rules_service",
+    "get_materializer",
     "get_discovery_service",
     "get_view_service",
     "get_job_service",

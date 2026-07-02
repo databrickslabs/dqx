@@ -219,6 +219,27 @@ class TestGet:
 
 
 # ---------------------------------------------------------------------------
+# publish
+# ---------------------------------------------------------------------------
+
+
+class TestPublish:
+    def test_publishes_a_draft_binding(self, svc, sql):
+        sql.query.return_value = [_table_row(binding_id="b1", status="draft")]
+        table = svc.publish("b1", "alice@x")
+        assert table.status == "published"
+        update_sql = sql.execute.call_args[0][0]
+        assert "UPDATE dqx_test.dqx_app_test.dq_monitored_tables" in update_sql
+        assert "status = 'published'" in update_sql
+
+    def test_raises_when_missing(self, svc, sql):
+        sql.query.return_value = []
+        with pytest.raises(RuntimeError):
+            svc.publish("missing", "alice@x")
+        sql.execute.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # delete
 # ---------------------------------------------------------------------------
 

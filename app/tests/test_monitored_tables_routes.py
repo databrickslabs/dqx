@@ -14,15 +14,30 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi import HTTPException
 
-from databricks_labs_dqx_app.backend.models import RegisterMonitoredTableIn
+from databricks_labs_dqx_app.backend.models import (
+    ApplyRuleIn,
+    RegisterMonitoredTableIn,
+    SetAppliedRulePinIn,
+    SetAppliedRuleSeverityOverrideIn,
+)
 from databricks_labs_dqx_app.backend.registry_models import AppliedRule, MonitoredTable
 from databricks_labs_dqx_app.backend.routes.v1.monitored_tables import (
+    apply_rule_to_table,
     delete_monitored_table,
     get_monitored_table,
     get_monitored_table_profile,
     list_monitored_tables,
+    publish_monitored_table,
     register_monitored_table,
+    remove_applied_rule,
+    set_applied_rule_pin,
+    set_applied_rule_severity_override,
 )
+from databricks_labs_dqx_app.backend.services.apply_rules_service import (
+    MappingIncompleteError,
+    RuleNotPublishedError,
+)
+from databricks_labs_dqx_app.backend.services.materializer import MaterializationError
 from databricks_labs_dqx_app.backend.services.monitored_table_service import (
     AppliedRuleSummary,
     DuplicateMonitoredTableError,
@@ -143,4 +158,130 @@ class TestProfile:
         svc.get_latest_profile.return_value = None
         with pytest.raises(HTTPException) as excinfo:
             get_monitored_table_profile("b1", svc=svc)
+        assert excinfo.value.status_code == 404
+
+
+class TestApplyRuleToTable:
+    def test_apply_success(self):
+        svc = MagicMock()
+        applied = AppliedRule(id="ar1", binding_id="b1", rule_id="r1", column_mapping=[{"column": "id"}])
+        svc.apply_rule.return_value = applied
+        body = ApplyRuleIn(rule_id="r1", column_mapping=[{"column": "id"}])
+        result = apply_rule_to_table("b1", body=body, svc=svc, obo_ws=_mock_obo_ws())
+        assert result.id == "ar1"
+        svc.apply_rule.assert_called_once_with(
+            "b1", "r1", [{"column": "id"}], "alice@x", pinned_version=None, severity_override=None, tags={}
+        )
+
+    def test_mapping_incomplete_raises_422(self):
+        svc = MagicMock()
+        svc.apply_rule.side_effect = MappingIncompleteError("missing slot")
+        body = ApplyRuleIn(rule_id="r1", column_mapping=[{}])
+        with pytest.raises(HTTPException) as excinfo:
+            apply_rule_to_table("b1", body=body, svc=svc, obo_ws=_mock_obo_ws())
+        assert excinfo.value.status_code == 422
+
+    def test_unpublished_rule_raises_409(self):
+        svc = MagicMock()
+        svc.apply_rule.side_effect = RuleNotPublishedError("not published")
+        body = ApplyRuleIn(rule_id="r1", column_mapping=[{"column": "id"}])
+        with pytest.raises(HTTPException) as excinfo:
+            apply_rule_to_table("b1", body=body, svc=svc, obo_ws=_mock_obo_ws())
+        assert excinfo.value.status_code == 409
+
+    def test_missing_binding_or_rule_raises_404(self):
+        svc = MagicMock()
+        svc.apply_rule.side_effect = RuntimeError("Monitored table not found: b1")
+        body = ApplyRuleIn(rule_id="r1", column_mapping=[{"column": "id"}])
+        with pytest.raises(HTTPException) as excinfo:
+            apply_rule_to_table("b1", body=body, svc=svc, obo_ws=_mock_obo_ws())
+        assert excinfo.value.status_code == 404
+
+
+class TestRemoveAppliedRule:
+    def test_remove_success(self):
+        svc = MagicMock()
+        result = remove_applied_rule("b1", "ar1", svc=svc)
+        assert result == {"status": "removed", "binding_id": "b1", "applied_rule_id": "ar1"}
+        svc.remove_applied.assert_called_once_with("ar1")
+
+    def test_remove_missing_raises_404(self):
+        svc = MagicMock()
+        svc.remove_applied.side_effect = RuntimeError("Applied rule not found: ar1")
+        with pytest.raises(HTTPException) as excinfo:
+            remove_applied_rule("b1", "ar1", svc=svc)
+        assert excinfo.value.status_code == 404
+
+
+class TestSetAppliedRulePin:
+    def test_sets_pin(self):
+        svc = MagicMock()
+        svc.set_pin.return_value = AppliedRule(id="ar1", binding_id="b1", rule_id="r1", pinned_version=2)
+        result = set_applied_rule_pin("b1", "ar1", body=SetAppliedRulePinIn(pinned_version=2), svc=svc)
+        assert result.pinned_version == 2
+        svc.set_pin.assert_called_once_with("ar1", 2)
+
+    def test_missing_raises_404(self):
+        svc = MagicMock()
+        svc.set_pin.side_effect = RuntimeError("Applied rule not found: ar1")
+        with pytest.raises(HTTPException) as excinfo:
+            set_applied_rule_pin("b1", "ar1", body=SetAppliedRulePinIn(pinned_version=1), svc=svc)
+        assert excinfo.value.status_code == 404
+
+
+class TestSetAppliedRuleSeverityOverride:
+    def test_sets_override(self):
+        svc = MagicMock()
+        svc.set_severity_override.return_value = AppliedRule(
+            id="ar1", binding_id="b1", rule_id="r1", severity_override="Critical"
+        )
+        result = set_applied_rule_severity_override(
+            "b1", "ar1", body=SetAppliedRuleSeverityOverrideIn(severity="Critical"), svc=svc
+        )
+        assert result.severity_override == "Critical"
+        svc.set_severity_override.assert_called_once_with("ar1", "Critical")
+
+    def test_missing_raises_404(self):
+        svc = MagicMock()
+        svc.set_severity_override.side_effect = RuntimeError("Applied rule not found: ar1")
+        with pytest.raises(HTTPException) as excinfo:
+            set_applied_rule_severity_override(
+                "b1", "ar1", body=SetAppliedRuleSeverityOverrideIn(severity="Low"), svc=svc
+            )
+        assert excinfo.value.status_code == 404
+
+
+class TestPublishMonitoredTable:
+    def test_publish_materializes_and_returns_ids(self):
+        monitored_tables_svc = MagicMock()
+        monitored_tables_svc.publish.return_value = _table(status="published")
+        materializer = MagicMock()
+        materializer.materialize_binding.return_value = ["ar1-0", "ar2-0"]
+        result = publish_monitored_table(
+            "b1", monitored_tables_svc=monitored_tables_svc, materializer=materializer, obo_ws=_mock_obo_ws()
+        )
+        assert result.table.status == "published"
+        assert result.materialized_rule_ids == ["ar1-0", "ar2-0"]
+        monitored_tables_svc.publish.assert_called_once_with("b1", "alice@x")
+        materializer.materialize_binding.assert_called_once_with("b1")
+
+    def test_missing_binding_raises_404(self):
+        monitored_tables_svc = MagicMock()
+        monitored_tables_svc.publish.side_effect = RuntimeError("Monitored table not found: b1")
+        materializer = MagicMock()
+        with pytest.raises(HTTPException) as excinfo:
+            publish_monitored_table(
+                "b1", monitored_tables_svc=monitored_tables_svc, materializer=materializer, obo_ws=_mock_obo_ws()
+            )
+        assert excinfo.value.status_code == 404
+
+    def test_materialization_error_raises_404(self):
+        monitored_tables_svc = MagicMock()
+        monitored_tables_svc.publish.return_value = _table(status="published")
+        materializer = MagicMock()
+        materializer.materialize_binding.side_effect = MaterializationError("Monitored table not found: b1")
+        with pytest.raises(HTTPException) as excinfo:
+            publish_monitored_table(
+                "b1", monitored_tables_svc=monitored_tables_svc, materializer=materializer, obo_ws=_mock_obo_ws()
+            )
         assert excinfo.value.status_code == 404

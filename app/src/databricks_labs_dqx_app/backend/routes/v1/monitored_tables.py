@@ -1,11 +1,10 @@
-"""Monitored Tables routes — Phase 3B (register/list/get/delete + profiling read).
+"""Monitored Tables routes — Phase 3B/3C (register/list/get/delete/apply/publish + profiling read).
 
 Layer 2 of the Rules Registry
 (``docs/superpowers/specs/2026-07-02-rules-registry-design.md`` §7): a thin
 binding recording that a table is under active Rules Registry governance,
-plus the live link of applied registry rules. Apply/map/materialize (Phase
-3C) is out of scope here — only CRUD on the binding + a read-only view of
-the existing profiling results.
+plus the live link of applied registry rules and the materializer that
+renders them into ``dq_quality_rules`` (Phase 3C).
 """
 
 from typing import Annotated
@@ -15,17 +14,31 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from databricks_labs_dqx_app.backend.common.authorization import UserRole
 from databricks_labs_dqx_app.backend.dependencies import (
+    get_apply_rules_service,
+    get_materializer,
     get_monitored_table_service,
     get_obo_ws,
     require_role,
 )
 from databricks_labs_dqx_app.backend.logger import logger
 from databricks_labs_dqx_app.backend.models import (
+    AppliedRuleOut,
+    ApplyRuleIn,
     MonitoredTableDetailOut,
+    MonitoredTableOut,
     MonitoredTableProfileOut,
     MonitoredTableSummaryOut,
+    PublishMonitoredTableOut,
     RegisterMonitoredTableIn,
+    SetAppliedRulePinIn,
+    SetAppliedRuleSeverityOverrideIn,
 )
+from databricks_labs_dqx_app.backend.services.apply_rules_service import (
+    ApplyRulesService,
+    MappingIncompleteError,
+    RuleNotPublishedError,
+)
+from databricks_labs_dqx_app.backend.services.materializer import MaterializationError, Materializer
 from databricks_labs_dqx_app.backend.services.monitored_table_service import (
     DuplicateMonitoredTableError,
     MonitoredTableService,
@@ -185,3 +198,150 @@ def get_monitored_table_profile(
     except Exception as e:
         logger.error(f"Failed to get profile for monitored table {binding_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to get profile: {e}")
+
+
+# ------------------------------------------------------------------
+# Apply / unapply / pin / severity-override (Phase 3C)
+# ------------------------------------------------------------------
+
+
+@router.post(
+    "/{binding_id}/applied-rules",
+    response_model=AppliedRuleOut,
+    operation_id="applyRuleToTable",
+    dependencies=[require_role(*_AUTHORS_AND_ABOVE)],
+)
+def apply_rule_to_table(
+    binding_id: str,
+    body: ApplyRuleIn,
+    svc: Annotated[ApplyRulesService, Depends(get_apply_rules_service)],
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+) -> AppliedRuleOut:
+    """Apply a published registry rule to a monitored table's column mapping."""
+    try:
+        user_email = _current_user_email(obo_ws)
+        applied = svc.apply_rule(
+            binding_id,
+            body.rule_id,
+            body.column_mapping,
+            user_email,
+            pinned_version=body.pinned_version,
+            severity_override=body.severity_override,
+            tags=body.tags,
+        )
+        return AppliedRuleOut.from_domain(applied)
+    except MappingIncompleteError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except RuleNotPublishedError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to apply rule to monitored table {binding_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to apply rule: {e}")
+
+
+@router.delete(
+    "/{binding_id}/applied-rules/{applied_rule_id}",
+    operation_id="removeAppliedRule",
+    dependencies=[require_role(*_AUTHORS_AND_ABOVE)],
+)
+def remove_applied_rule(
+    binding_id: str,
+    applied_rule_id: str,
+    svc: Annotated[ApplyRulesService, Depends(get_apply_rules_service)],
+) -> dict[str, str]:
+    """Remove an applied rule and every ``dq_quality_rules`` row it materialized."""
+    try:
+        svc.remove_applied(applied_rule_id)
+        return {"status": "removed", "binding_id": binding_id, "applied_rule_id": applied_rule_id}
+    except RuntimeError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to remove applied rule {applied_rule_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to remove applied rule: {e}")
+
+
+@router.patch(
+    "/{binding_id}/applied-rules/{applied_rule_id}/pin",
+    response_model=AppliedRuleOut,
+    operation_id="setAppliedRulePin",
+    dependencies=[require_role(*_AUTHORS_AND_ABOVE)],
+)
+def set_applied_rule_pin(
+    binding_id: str,
+    applied_rule_id: str,
+    body: SetAppliedRulePinIn,
+    svc: Annotated[ApplyRulesService, Depends(get_apply_rules_service)],
+) -> AppliedRuleOut:
+    """Pin (or, with ``pinned_version=None``, unpin) an applied rule's version."""
+    try:
+        applied = svc.set_pin(applied_rule_id, body.pinned_version)
+        return AppliedRuleOut.from_domain(applied)
+    except RuntimeError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to set pin for applied rule {applied_rule_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to set pin: {e}")
+
+
+@router.patch(
+    "/{binding_id}/applied-rules/{applied_rule_id}/severity-override",
+    response_model=AppliedRuleOut,
+    operation_id="setAppliedRuleSeverityOverride",
+    dependencies=[require_role(*_AUTHORS_AND_ABOVE)],
+)
+def set_applied_rule_severity_override(
+    binding_id: str,
+    applied_rule_id: str,
+    body: SetAppliedRuleSeverityOverrideIn,
+    svc: Annotated[ApplyRulesService, Depends(get_apply_rules_service)],
+) -> AppliedRuleOut:
+    """Set (or, with ``severity=None``, clear) an applied rule's severity override."""
+    try:
+        applied = svc.set_severity_override(applied_rule_id, body.severity)
+        return AppliedRuleOut.from_domain(applied)
+    except RuntimeError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to set severity override for applied rule {applied_rule_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to set severity override: {e}")
+
+
+# ------------------------------------------------------------------
+# Publish (materialize) — Phase 3C
+# ------------------------------------------------------------------
+
+
+@router.post(
+    "/{binding_id}/publish",
+    response_model=PublishMonitoredTableOut,
+    operation_id="publishMonitoredTable",
+    dependencies=[require_role(*_AUTHORS_AND_ABOVE)],
+)
+def publish_monitored_table(
+    binding_id: str,
+    monitored_tables_svc: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
+    materializer: Annotated[Materializer, Depends(get_materializer)],
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+) -> PublishMonitoredTableOut:
+    """Publish a monitored table and materialize its applied rules into ``dq_quality_rules``.
+
+    Materialized rows always enter the existing per-table ``draft`` review
+    flow (never auto-approved) — see ``backend/services/materializer.py``
+    for the full approval/auto-upgrade semantics.
+    """
+    try:
+        user_email = _current_user_email(obo_ws)
+        table = monitored_tables_svc.publish(binding_id, user_email)
+        materialized_ids = materializer.materialize_binding(binding_id)
+        return PublishMonitoredTableOut(
+            table=MonitoredTableOut.from_domain(table), materialized_rule_ids=materialized_ids
+        )
+    except MaterializationError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to publish monitored table {binding_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to publish monitored table: {e}")

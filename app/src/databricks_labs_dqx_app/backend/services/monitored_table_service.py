@@ -288,6 +288,36 @@ class MonitoredTableService:
         return get_rule_name(metadata), get_rule_dimension(metadata), get_rule_severity(metadata)
 
     # ------------------------------------------------------------------
+    # Publish
+    # ------------------------------------------------------------------
+
+    def publish(self, binding_id: str, user_email: str) -> MonitoredTable:
+        """Flip a monitored table binding to ``published``.
+
+        This only flips the binding's own status flag — it does NOT
+        materialize applied rules into ``dq_quality_rules`` itself; the
+        route layer calls
+        :meth:`~databricks_labs_dqx_app.backend.services.materializer.Materializer.materialize_binding`
+        right after this (see ``routes/v1/monitored_tables.py:publish_monitored_table``).
+        Publishing is idempotent — publishing an already-published table is
+        a no-op status-wise but still worth re-running the materializer
+        (e.g. to pick up new applied rules or version upgrades).
+        """
+        table = self._get(binding_id)
+        if table is None:
+            raise RuntimeError(f"Monitored table not found: {binding_id}")
+        e = escape_sql_string(binding_id)
+        self._sql.execute(
+            f"UPDATE {self._table} SET status = 'published', "
+            f"updated_by = {self._opt_str(user_email)}, updated_at = now() "
+            f"WHERE binding_id = '{e}'"
+        )
+        table.status = "published"
+        table.updated_by = user_email
+        logger.info("Published monitored table %s (binding_id=%s, by %s)", table.table_fqn, binding_id, user_email)
+        return table
+
+    # ------------------------------------------------------------------
     # Delete
     # ------------------------------------------------------------------
 
