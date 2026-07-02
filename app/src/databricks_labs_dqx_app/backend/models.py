@@ -564,6 +564,13 @@ class MonitoredTableProfileOut(BaseModel):
         )
 
 
+class BackfillRuleEmbeddingsOut(BaseModel):
+    """Result of a manual re-embed pass over every published registry rule (Rules Registry Phase 4B)."""
+
+    total_published: int
+    embedded: int
+
+
 class SuggestedRuleMappingOut(BaseModel):
     """One validated, complete slot->column mapping suggestion (Rules Registry Phase 4C)."""
 

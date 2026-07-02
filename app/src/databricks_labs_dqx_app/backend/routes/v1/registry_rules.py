@@ -20,6 +20,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
 )
 from databricks_labs_dqx_app.backend.logger import logger
 from databricks_labs_dqx_app.backend.models import (
+    BackfillRuleEmbeddingsOut,
     CreateRegistryRuleIn,
     CreateRegistryRuleOut,
     RegistryRuleDetailOut,
@@ -338,3 +339,36 @@ def undeprecate_registry_rule(
     except Exception as e:
         logger.error(f"Failed to undeprecate registry rule {rule_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to undeprecate registry rule: {e}")
+
+
+# ------------------------------------------------------------------
+# Embeddings backfill (Rules Registry Phase 4B) — manual re-embed pass over
+# every currently-published rule. Approving a rule already re-embeds it
+# (see approve_registry_rule); this exists for the one-time catch-up after
+# an admin configures ``embedding_endpoint_name`` for the first time, or
+# after rotating to a different embedding model.
+# ------------------------------------------------------------------
+
+
+@router.post(
+    "/backfill-embeddings",
+    response_model=BackfillRuleEmbeddingsOut,
+    operation_id="backfillRuleEmbeddings",
+    dependencies=[require_role(UserRole.ADMIN)],
+)
+def backfill_rule_embeddings(
+    svc: Annotated[RegistryService, Depends(get_registry_service)],
+    embeddings: Annotated[RuleEmbeddingsService, Depends(get_rule_embeddings_service)],
+) -> BackfillRuleEmbeddingsOut:
+    """Re-embed every currently-published registry rule (admin only).
+
+    A no-op (``embedded=0``) when no embedding endpoint is configured — see
+    ``RuleEmbeddingsService.is_configured``.
+    """
+    try:
+        published = svc.list_rules(status="approved")
+        embedded = embeddings.backfill(published)
+        return BackfillRuleEmbeddingsOut(total_published=len(published), embedded=embedded)
+    except Exception as e:
+        logger.error(f"Failed to backfill rule embeddings: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to backfill rule embeddings: {e}")

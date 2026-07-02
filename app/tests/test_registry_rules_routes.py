@@ -18,6 +18,7 @@ from databricks_labs_dqx_app.backend.models import CreateRegistryRuleIn, UpdateR
 from databricks_labs_dqx_app.backend.registry_models import RegistryRule, RuleDefinition
 from databricks_labs_dqx_app.backend.routes.v1.registry_rules import (
     approve_registry_rule,
+    backfill_rule_embeddings,
     create_registry_rule,
     delete_registry_rule,
     deprecate_registry_rule,
@@ -184,3 +185,29 @@ class TestLifecycleRoutes:
         with pytest.raises(HTTPException) as excinfo:
             approve_registry_rule("r1", svc=svc, embeddings=embeddings, obo_ws=_mock_obo_ws())
         assert excinfo.value.status_code == 404
+
+
+class TestBackfillRuleEmbeddings:
+    def test_backfills_every_published_rule(self):
+        svc = MagicMock()
+        svc.list_rules.return_value = [_rule(status="approved", version=1), _rule("r2", status="approved", version=1)]
+        embeddings = MagicMock()
+        embeddings.backfill.return_value = 2
+
+        result = backfill_rule_embeddings(svc=svc, embeddings=embeddings)
+
+        svc.list_rules.assert_called_once_with(status="approved")
+        embeddings.backfill.assert_called_once_with(svc.list_rules.return_value)
+        assert result.total_published == 2
+        assert result.embedded == 2
+
+    def test_no_op_when_unconfigured(self):
+        svc = MagicMock()
+        svc.list_rules.return_value = [_rule(status="approved", version=1)]
+        embeddings = MagicMock()
+        embeddings.backfill.return_value = 0
+
+        result = backfill_rule_embeddings(svc=svc, embeddings=embeddings)
+
+        assert result.total_published == 1
+        assert result.embedded == 0

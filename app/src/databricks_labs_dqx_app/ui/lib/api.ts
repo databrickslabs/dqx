@@ -259,6 +259,14 @@ export interface ApplyRuleIn {
 }
 
 /**
+ * Result of a manual re-embed pass over every published registry rule (Rules Registry Phase 4B).
+ */
+export interface BackfillRuleEmbeddingsOut {
+  total_published: number;
+  embedded: number;
+}
+
+/**
  * Stable identifier for known error classes — currently one of ``INSUFFICIENT_PERMISSIONS``, ``TABLE_OR_VIEW_NOT_FOUND``, or ``UNKNOWN``. The UI uses this to surface a friendlier headline.
  */
 export type BatchProfileRunFailureErrorCode = string | null;
@@ -9207,6 +9215,71 @@ export const useUndeprecateRegistryRule = <TError = AxiosError<HTTPValidationErr
       > => {
 
       const mutationOptions = getUndeprecateRegistryRuleMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Re-embed every currently-published registry rule (admin only).
+
+A no-op (``embedded=0``) when no embedding endpoint is configured — see
+``RuleEmbeddingsService.is_configured``.
+ * @summary Backfill Rule Embeddings
+ */
+export const backfillRuleEmbeddings = (
+     options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<BackfillRuleEmbeddingsOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/registry-rules/backfill-embeddings`,undefined,options
+    );
+  }
+
+
+
+export const getBackfillRuleEmbeddingsMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof backfillRuleEmbeddings>>, TError,void, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof backfillRuleEmbeddings>>, TError,void, TContext> => {
+
+const mutationKey = ['backfillRuleEmbeddings'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof backfillRuleEmbeddings>>, void> = () => {
+          
+
+          return  backfillRuleEmbeddings(axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type BackfillRuleEmbeddingsMutationResult = NonNullable<Awaited<ReturnType<typeof backfillRuleEmbeddings>>>
+    
+    export type BackfillRuleEmbeddingsMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Backfill Rule Embeddings
+ */
+export const useBackfillRuleEmbeddings = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof backfillRuleEmbeddings>>, TError,void, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof backfillRuleEmbeddings>>,
+        TError,
+        void,
+        TContext
+      > => {
+
+      const mutationOptions = getBackfillRuleEmbeddingsMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }
