@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import {
@@ -301,10 +301,16 @@ export function RegistryRuleFormDialog({
   const [nameError, setNameError] = useState<string | null>(null);
 
   // (Re)hydrate the local draft whenever the dialog opens for a
-  // different rule (or opens fresh for creation). Keyed on rule_id so we
-  // don't re-run on every parent re-render.
+  // different rule (or opens fresh for creation). Keyed on open + rule_id via
+  // a ref so we don't re-run on every parent re-render that hands us a new
+  // `sourceRule` object identity for the same underlying rule.
+  const rehydrateKeyRef = useRef<string | null>(null);
   useEffect(() => {
     if (!open) return;
+    const key = `${open}:${sourceRule?.rule_id ?? "new"}`;
+    if (rehydrateKeyRef.current === key) return;
+    rehydrateKeyRef.current = key;
+
     const md = (sourceRule?.user_metadata ?? {}) as Record<string, unknown>;
     const asString = (k: string) => (typeof md[k] === "string" ? (md[k] as string) : "");
     setName(asString(RESERVED_NAME_KEY));
@@ -345,8 +351,7 @@ export function RegistryRuleFormDialog({
       setSqlPredicate("");
       setPolarity("pass");
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, sourceRule?.rule_id]);
+  }, [open, sourceRule]);
 
   const selectedFn = useMemo(
     () => checkFunctions.find((f) => f.name === functionName),
