@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - Execution path (`jobs.run_now` on `DQX_JOB_ID` wheel task; runner consumes DQX check dicts) MUST NOT change.
-- New OLTP tables/columns: append one `PgMigration` AND one mirrored `DeltaMigration(oltp_fallback=True)`; never edit/reorder existing migrations. Delta DDL: `IF NOT EXISTS`; `ADD COLUMN` (no `IF NOT EXISTS`); CHECK constraints separate; no `;` or `{catalog}`/`{schema}` inside string literals.
+- GREENFIELD schema (from scratch): do NOT write incremental migrations, mirror ceremony, or migration tests. Define new tables/columns directly in the baseline schema (Postgres baseline + Delta-fallback baseline) so a fresh deploy creates them. Still honour Delta DDL invariants (`IF NOT EXISTS`; `ADD COLUMN` w/o `IF NOT EXISTS`; CHECK constraints separate; no `;`/`{catalog}`/`{schema}` in string literals) so baseline creation succeeds. Dimensions/severity/name/description are TAGS in `user_metadata` (reserved label keys) — no tables.
 - Every user-facing string via `t("key")`; add keys to ALL 4 locales (en, pt-BR, it, es); en is source of truth.
 - Never edit generated `ui/lib/api.ts` / `routeTree.gen.ts`; run `make app-regen-api` after backend model/route changes.
 - No lint disables (`# noqa`/`# type: ignore`/`# pylint: disable`). Full type hints; Pydantic 2 models; DI via `Depends`; wrap sync SDK calls in `asyncio.to_thread`.
@@ -23,62 +23,61 @@
 
 ---
 
-## PHASE 1 — Taxonomies + Admin (dimensions & severities)
+## PHASE 1 — Taxonomies-as-tags + Admin (dimensions & severity as pre-built label keys)
 
-Reference patterns to mirror: `RunReviewStatusesSettings` (value+description+color-token+default) and
-`LabelDefinitionsSettings` in `ui/routes/_sidebar/config.tsx`; `app_settings_service.py` seed-on-startup;
-`migrations/postgres.py` + `migrations/__init__.py`.
+**Model (decided 2026-07-02):** dimensions & severity are **reserved label keys** (`dimension`, `severity`)
+in the EXISTING `label_definitions` admin catalog — NOT new tables. Stored in `user_metadata` like all tags.
+DQX `criticality` (warn/error) stays the separate execution field. Reference: `LabelDefinition` /
+`LabelDefinitionsSettings` and `getLabelDefinitions`/`saveLabelDefinitions` in
+`app_settings_service.py` + `routes/v1/config.py` + `ui/routes/_sidebar/config.tsx`; the reserved `weight`
+key (`RESERVED_WEIGHT_KEY`) as the pattern for a reserved key.
 
-### Task 1.1: Migrations for dimensions + severities
+### Task 1.1: Extend LabelDefinition model (per-value color + reserved flag)
 
-**Files:**
-- Modify: `app/src/databricks_labs_dqx_app/backend/migrations/postgres.py` (append `PgMigration` v4)
-- Modify: `app/src/databricks_labs_dqx_app/backend/migrations/__init__.py` (append `DeltaMigration` vN, `oltp_fallback=True`)
-- Test: `app/tests/test_pg_migration_runner.py`, `app/tests/test_migration_runner.py`
+**Files:** Modify `backend/config.py` (`LabelDefinition` model), `backend/services/app_settings_service.py`
+(defaults/validation), tests under `app/tests/`.
 
-**Produces:** tables `dq_dimensions(id,name,description,color,is_builtin,is_enabled,created_by/at,updated_by/at)`,
-`dq_dimension_examples(id,dimension_id,position,text)`, `dq_severities(id,name,description,color,rank,dqx_criticality,is_builtin,is_enabled,audit)`.
+**Produces:** `LabelDefinition` gains optional `value_colors: dict[str,str] | None` (value→hex) and
+`is_builtin: bool = False` (reserved keys can't be deleted/renamed; values can be edited/recolored). Backward
+compatible (both optional). Validate hex colors.
 
-- [ ] Step 1: Write failing test asserting the new migration version numbers exist and are monotonic in both runners.
-- [ ] Step 2: Run tests, verify fail.
-- [ ] Step 3: Append the Postgres migration (DDL with `{schema}` placeholder, CHECK on `dqx_criticality IN ('warn','error')`, UNIQUE on name/rank).
-- [ ] Step 4: Append mirrored Delta `oltp_fallback=True` migration (respect Delta DDL invariants).
-- [ ] Step 5: Run migration-runner tests, verify pass.
-- [ ] Step 6: Commit.
+- [ ] Write failing test for the extended model + validation → run (fail) → implement → run (pass) → commit.
 
-### Task 1.2: Seed data (idempotent, at startup)
+### Task 1.2: Seed reserved dimension + severity label keys (idempotent, at startup)
 
-**Files:** Create `app/src/databricks_labs_dqx_app/backend/services/taxonomy_seeds.py`; modify startup lifespan to call it (find where `MigrationRunner.run_all()` / settings seeding runs).
+**Files:** Modify `backend/services/app_settings_service.py` seed path (where `label_definitions` /
+`run_review_statuses_v1` are seeded at startup).
 
-**Produces:** `seed_taxonomies(executor)` — inserts 6 dimensions + 4 severities if absent (never overwrites existing names).
+**Produces:** on startup, ensure `label_definitions` contains reserved keys `dimension`
+(values Validity, Completeness, Accuracy, Consistency, Uniqueness, Timeliness; `allow_custom_values=true`) and
+`severity` (values Low, Medium, High, Critical), each `is_builtin=true` with per-value colors. Idempotent:
+never overwrite an admin-edited entry; only add if absent.
 
-- [ ] Test: seeding twice is idempotent; existing edited rows preserved. → implement → pass → commit.
+- [ ] Test: seeding twice idempotent; admin edits preserved; reserved keys present → implement → pass → commit.
 
-### Task 1.3: Backend models + services
+### Task 1.3: Guard reserved keys in save endpoint
 
-**Files:** Create `services/dimension_service.py`, `services/severity_service.py`; add Pydantic models to `models.py`; DI in `dependencies.py`.
+**Files:** Modify `backend/routes/v1/config.py` `saveLabelDefinitions` handler + `app_settings_service.py`.
 
-**Produces:** `DimensionService.list/create/update/delete`, `SeverityService.list/create/update/delete/reorder` (two-phase negative-rank swap for reorder; built-ins can't be renamed/deleted, can be recolored/disabled).
+**Produces:** saving label definitions cannot delete or rename a `is_builtin` reserved key (dimension/severity)
+or remove the key itself; values within may be added/edited/recolored. ADMIN only (unchanged).
 
-- [ ] TDD each method (service tests with in-memory/fake executor per existing test patterns) → commit.
+- [ ] TDD the guard (reject delete/rename of reserved key; allow value edits) → `make app-regen-api` if the
+  response model changed → commit.
 
-### Task 1.4: Routes
+### Task 1.4: UI — Label Definitions card handles colors + reserved keys; move Import into Settings
 
-**Files:** Create `routes/v1/dimensions.py`, `routes/v1/severities.py`; register in `routes/v1/__init__.py`.
+**Files:** Modify `ui/routes/_sidebar/config.tsx` (`LabelDefinitionsSettings`): render reserved keys as locked
+(no delete/rename, value editing + color swatch allowed); add optional per-value color swatch editor. Add an
+**Import rules** section/card to Config (relocate from the Create-Rules sidebar group — update
+`routes/_sidebar/route.tsx` nav). Add/adjust i18n keys in ALL 4 locales.
 
-**Produces:** `/dimensions` + `/severities` routers. Reads VIEWER+, mutations ADMIN. operation_ids: `listDimensions`, `createDimension`, `updateDimension`, `deleteDimension`, `listSeverities`, `createSeverity`, `updateSeverity`, `deleteSeverity`, `reorderSeverities`.
+**Produces:** admins manage dimension/severity values + colors inside the existing Label Definitions card;
+Import rules reachable from Config.
 
-- [ ] TDD routes (route tests mirror existing) → `make app-regen-api` → commit.
+- [ ] Build → `make app-check` → i18n parity test green → commit.
 
-### Task 1.5: UI — Config cards + move Import into Settings
-
-**Files:** Modify `ui/routes/_sidebar/config.tsx` (add `DimensionsSettings`, `SeveritySettings` cards + an Import card/section); create editor components under `ui/components/admin/`; add i18n keys to all 4 locales; add generated-hook usage.
-
-**Produces:** admin Dimensions card (name/desc/color/examples/enable-disable; built-ins locked) and Severity card (drag-reorder rank via dnd-kit, color, dqx_criticality select, enable-disable); Import rules relocated from the Create-Rules nav group into Config.
-
-- [ ] Build cards (mirror `RunReviewStatusesSettings`) → `make app-check` → i18n parity test → commit.
-
-### Task 1.6: Phase 1 verification + reviews
+### Task 1.5: Phase 1 verification + reviews
 
 - [ ] `make app-test` green; `make app-check` green.
 - [ ] DQ-steward reviewer subagent: can a non-expert admin understand dimensions vs severity and configure them?
@@ -88,8 +87,8 @@ Reference patterns to mirror: `RunReviewStatusesSettings` (value+description+col
 
 ## PHASE 2 — Registry core + 3 authoring types + seed 78
 
-- **2.1** Migrations: `dq_rules`, `dq_rule_versions` (+ indexes on status/fingerprint/steward). PG + Delta mirror.
-- **2.2** Rule domain model + fingerprint (reuse core `rule_fingerprint` ideas) + slot/param model; derive slot family/param types from `listCheckFunctions` + seed-map refinement.
+- **2.1** Baseline schema (greenfield, no migrations): define `dq_rules`, `dq_rule_versions` in the Postgres + Delta-fallback baseline table definitions (+ indexes on status/fingerprint/steward).
+- **2.2** Rule domain model + fingerprint (reuse core `rule_fingerprint` ideas) + slot/param model; derive slot family/param types from `listCheckFunctions` + seed-map refinement. Descriptive metadata (name, description, dimension, severity) lives in `user_metadata` as reserved TAG keys alongside arbitrary free-text tags — not columns.
 - **2.3** `RegistryService`: create/update(draft)/submit/approve/reject/publish(→version+snapshot)/deprecate/delete; fingerprint dedup warning; reuse existing status machine + roles.
 - **2.4** Seed all ~78 built-ins as `is_builtin` published rules (definition locked; slots+families+dimension+default severity from seed map). Idempotent.
 - **2.5** Routes `/registry-rules` (+ reuse import validation). orval regen.
@@ -98,7 +97,7 @@ Reference patterns to mirror: `RunReviewStatusesSettings` (value+description+col
 
 ## PHASE 3 — Monitored tables + apply/map + materialization
 
-- **3.1** Migrations: `dq_monitored_tables`, `dq_applied_rules`; add provenance cols to `dq_quality_rules` (PG + Delta mirror).
+- **3.1** Baseline schema (greenfield, no migrations): define `dq_monitored_tables`, `dq_applied_rules` + `dq_quality_rules` provenance cols in the Postgres + Delta-fallback baseline table definitions.
 - **3.2** `MonitoredTableService` (register/list/get/publish) + profiling read (reuse `dq_profiling_results`, profiler job).
 - **3.3** `ApplyRulesService` + **materializer**: render each applied rule × mapping group → `dq_quality_rules` row (substitute slots→columns, fill params, stamp dimension/severity/polarity/provenance into `user_metadata`); idempotent, keyed by `applied_rule_id`+mapping hash; per-table approval; auto-upgrade admin setting (Behaviour A/B) driving re-materialization + re-approval.
 - **3.4** Routes `/monitored-tables` (list/detail/apply/publish/profile). orval regen.

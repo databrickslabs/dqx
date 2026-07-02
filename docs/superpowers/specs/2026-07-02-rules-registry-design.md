@@ -25,7 +25,10 @@ persistence/versioning mechanism.
 - **Do NOT change how jobs run.** Execution stays `jobs.run_now` on the pre-provisioned serverless wheel
   task (`DQX_JOB_ID`); the task runner keeps consuming plain DQX check dicts.
 - **Keep DQX's persistence/versioning mechanism** (Lakebase Postgres OLTP + Delta fallback; integer
-  `version` + append-only history). New tables are additive.
+  `version` + append-only history).
+- **Greenfield schema (decided 2026-07-02):** this deploys from scratch — do NOT write incremental
+  migrations, append-only/mirror ceremony, or migration tests. Define any new tables directly in the
+  baseline schema so a fresh deploy creates them. (Phase 1 needs no tables at all — see §6.)
 - Stay native to DQX: tags via `user_metadata`, `negate`, `{{variable}}` substitution.
 - Core DQX library (`src/databricks/labs/dqx/`) is not regressed; app-side changes only, except additive
   seed metadata.
@@ -49,31 +52,38 @@ re-materialize, *pinned* tables stay frozen. The runner never learns the registr
 
 ### 3.1 Data model (new tables)
 
-All new OLTP tables get a Postgres migration **and** a mirrored Delta `oltp_fallback` migration (append-only,
-never edit existing entries). Column names indicative.
+**Dimensions & severity are pre-built TAGS, not tables** (most DQX-native — decided 2026-07-02). They are
+**reserved label keys** (`dimension`, `severity`) in the EXISTING `label_definitions` admin catalog (an
+`dq_app_settings` KV JSON blob), alongside arbitrary free-text tags and the existing reserved `weight` key.
+A rule's/check's dimension & severity are stored in **`user_metadata`** like any other tag. No dedicated
+dimension/severity tables; no FKs. The `LabelDefinition` model is extended lightly with optional per-value
+`color` and an `is_builtin`/reserved flag so pre-built keys are non-deletable and badges stay colored.
+DQX `criticality` (warn/error) remains the SEPARATE execution field reaching the runner; the `severity` tag
+is a reporting/prioritization layer (default author-time suggestion: High/Critical→error, Low/Medium→warn).
+
+All *other* new OLTP tables get a Postgres migration **and** a mirrored Delta `oltp_fallback` migration
+(append-only, never edit existing entries). Column names indicative.
 
 ```sql
-dq_dimensions(id PK, name UNIQUE, description, color, is_builtin, is_enabled, audit)
-dq_dimension_examples(id PK, dimension_id FK, position, text, UNIQUE(dimension_id, position))
-dq_severities(id PK, name UNIQUE, description, color, rank UNIQUE, dqx_criticality, is_builtin, is_enabled, audit)
-
 dq_rules(                                  -- registry template (LIVE)
-  rule_id uuid PK, name, description,
+  rule_id uuid PK,
   mode text,            -- 'dqx_native' | 'lowcode' | 'sql'
   status text,          -- 'draft' | 'pending_approval' | 'approved'(published) | 'rejected' | 'deprecated'
   version int,          -- 0 until first publish
-  dimension_id FK NULL, severity_id FK NULL,
   polarity text,        -- 'pass' | 'fail'  (meaningful for lowcode/sql only)
   author_kind text,     -- human | ai_generated | ai_assisted
   definition jsonb,     -- native: {function, arguments-with-{{slots}}}; lowcode: {lowcode_ast, predicate};
                         -- sql: {predicate}; slots+param types declared inline
-  user_metadata jsonb,  -- free-text tags (preserved, in ADDITION to dimension)
+  user_metadata jsonb,  -- ALL descriptive metadata AS TAGS: reserved keys 'name','description','dimension',
+                        -- 'severity' + arbitrary free-text tags. (name/description are tags, not columns.)
   fingerprint char(64), -- dedup over canonical definition + slots
   steward text, is_builtin bool, source text, audit)
+-- Listing/search/dedup read name from user_metadata['name']. Table created greenfield in baseline schema.
 
 dq_rule_versions(                          -- FROZEN snapshot on publish (pinnable artifact + audit)
-  id PK, rule_id FK, version int, definition jsonb, dimension_id, severity_id, polarity,
-  user_metadata jsonb, created_by, created_at, UNIQUE(rule_id, version))
+  id PK, rule_id FK, version int, definition jsonb, polarity,
+  user_metadata jsonb,           -- frozen tags incl. dimension & severity
+  created_by, created_at, UNIQUE(rule_id, version))
 
 dq_monitored_tables(                       -- thin binding; profiling reuses dq_profiling_results
   binding_id uuid PK, table_fqn text UNIQUE, steward, status text, -- draft | published
@@ -129,8 +139,11 @@ Cross-table logic is expressed as a subquery in the predicate (`sql_query`) or t
   disable/re-tag allowed). Column args → slots; other args → apply-time parameters. Each pre-assigned a
   dimension + default severity via a seed map (admin-editable). Full function list also available when
   authoring a new native rule.
-- Seed dimensions: Validity, Completeness, Accuracy, Consistency, Uniqueness, Timeliness.
-- Seed severities: Low, Medium, High, Critical (→ dqx_criticality warn/warn/error/error). Drop `jira_priority`.
+- Seed the reserved **`dimension`** label key (values: Validity, Completeness, Accuracy, Consistency, Uniqueness,
+  Timeliness) and reserved **`severity`** label key (values: Low, Medium, High, Critical) into `label_definitions`.
+  These are pre-built, non-deletable label keys with optional per-value colors; no separate tables. `jira_priority`
+  dropped. Author-time default severity→criticality suggestion: High/Critical→error, Low/Medium→warn (criticality
+  stays independently settable).
 
 ## 7. Monitored tables + apply/map + materialization
 
@@ -175,24 +188,26 @@ Run Rules           RUNNER (unchanged)
 Runs History        + run review status (unchanged)
 Insights            embedded dashboard (unchanged)
 ```
-Config (header/admin) gains **Dimensions**, **Severity**, and **Import rules** sections. Single-table +
+Config (header/admin): the **Label Definitions** card is extended to manage the pre-built `dimension` &
+`severity` reserved keys (+ per-value color), and gains an **Import rules** section. Single-table +
 cross-table tabs merge into the Registry; Discovery + Profile&Generate fold into Monitored Tables;
 Active Rules removed.
 
-## 11. Migrations plan
+## 11. Schema plan (GREENFIELD — no migrations)
 
-- New OLTP tables (`dq_dimensions`, `dq_dimension_examples`, `dq_severities`, `dq_rules`, `dq_rule_versions`,
-  `dq_monitored_tables`, `dq_applied_rules`) + `dq_quality_rules` provenance columns: one appended
-  `PgMigration` and one mirrored appended `DeltaMigration(oltp_fallback=True)` each. Analytical-only changes
-  Delta-only. Follow all DDL invariants (no `;`/placeholders in literals, `IF NOT EXISTS`, `ADD COLUMN` w/o
-  `IF NOT EXISTS` on Delta, CHECK constraints separate). Add `test_migration_runner` / `test_pg_migration_runner`
-  coverage.
-- Seed data applied idempotently at startup (existing rows never overwritten), mirroring dqwatch seeds.
+- Deploys from scratch: **do not write incremental migrations or migration tests.** Define new tables
+  (`dq_rules`, `dq_rule_versions`, `dq_monitored_tables`, `dq_applied_rules`) + `dq_quality_rules` provenance
+  columns **directly in the baseline schema** (existing baseline table definitions for both the Postgres and
+  Delta-fallback paths) so a fresh deploy creates them. Still honour Delta DDL invariants where relevant
+  (`IF NOT EXISTS`, no `;`/placeholders in literals) so baseline creation succeeds on both backends.
+- Dimensions/severity add NO tables — reserved label-definition tag keys in `dq_app_settings`.
+- Seed data (reserved label keys, built-in rules) applied idempotently at startup; existing rows never overwritten.
 
 ## 12. Phased decomposition (each phase: spec-ref → plan → TDD → review)
 
-1. **Taxonomies + admin** — dimensions & severities tables, seeds, CRUD endpoints, Config UI cards; move Import
-   into Settings.
+1. **Taxonomies-as-tags + admin** — extend `LabelDefinition` (per-value color, is_builtin/reserved), seed the
+   reserved `dimension` & `severity` label keys, surface them in the Label Definitions card; move Import into
+   Settings. (No new tables in this phase.)
 2. **Registry core + authoring** — `dq_rules` + `dq_rule_versions`, registry service (CRUD, publish→snapshot,
    deprecate, fingerprint dedup), seed all 78 built-ins, slot/param model, registry list + create modal (3
    types, polarity), two-tier approval at the registry.
