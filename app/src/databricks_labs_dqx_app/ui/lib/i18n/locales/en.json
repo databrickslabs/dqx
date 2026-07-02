@@ -91,7 +91,8 @@
   "home": {
     "subtitle": "Monitor, validate, and improve data quality across your Databricks Lakehouse — with automated rules, scheduling, and approval workflows.",
     "getStarted": "Get Started",
-    "viewRules": "View Rules",
+    "applyToTable": "Apply to a Table",
+    "howItWorks": "① Define reusable rules in the Rules Registry → ② Apply them to your Monitored Tables.",
     "highlights": {
       "uc": "Unity Catalog integration",
       "ai": "AI-powered rule generation",

@@ -7,6 +7,8 @@ import {
   ArrowRight,
   CheckCircle2,
   Layers,
+  BookMarked,
+  Boxes,
 } from "lucide-react";
 
 export const Route = createFileRoute("/_sidebar/home")({
@@ -36,14 +38,22 @@ function LandingPage() {
         </p>
         <div className="flex flex-wrap items-center justify-center gap-3">
           <Button asChild size="lg" className="gap-2">
-            <Link to="/rules/create">
+            <Link to="/registry-rules">
               {t("home.getStarted")}
               <ArrowRight className="h-4 w-4" />
             </Link>
           </Button>
-          <Button asChild variant="outline" size="lg">
-            <Link to="/rules">{t("home.viewRules")}</Link>
+          <Button asChild variant="outline" size="lg" className="gap-2">
+            <Link to="/monitored-tables">
+              <Boxes className="h-4 w-4" />
+              {t("home.applyToTable")}
+            </Link>
           </Button>
+        </div>
+
+        <div className="flex items-center justify-center gap-2 mt-6 text-sm text-muted-foreground max-w-2xl">
+          <BookMarked className="h-4 w-4 shrink-0" />
+          <p>{t("home.howItWorks")}</p>
         </div>
 
         <div className="flex flex-wrap items-center justify-center gap-3 mt-10">

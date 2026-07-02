@@ -91,7 +91,8 @@
   "home": {
     "subtitle": "Monitore, valide e melhore a qualidade dos dados em todo o seu Lakehouse Databricks — com regras automatizadas, agendamento e fluxos de aprovação.",
     "getStarted": "Começar",
-    "viewRules": "Ver Regras",
+    "applyToTable": "Aplicar a uma Tabela",
+    "howItWorks": "① Defina regras reutilizáveis no Registro de Regras → ② Aplique-as às suas Tabelas Monitoradas.",
     "highlights": {
       "uc": "Integração com Unity Catalog",
       "ai": "Geração de regras com IA",
