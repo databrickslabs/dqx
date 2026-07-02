@@ -497,6 +497,8 @@ export interface GenerateChecksIn {
   user_input: string;
   /** Optional fully qualified table name for schema context */
   table_fqn?: string | null;
+  /** Optional list of FQNs for multi-table / cross-table context */
+  table_fqns?: string[] | null;
 }
 
 export type GenerateChecksOutChecksItem = { [key: string]: unknown };
@@ -683,6 +685,26 @@ export interface ProfileRunSummaryOut {
   canceled_by?: string | null;
   updated_at?: string | null;
   created_at?: string | null;
+}
+
+export type PushToTableInChecksItem = { [key: string]: unknown };
+
+export interface PushToTableIn {
+  /** List of check metadata dictionaries to push */
+  checks: PushToTableInChecksItem[];
+  /** Fully qualified Delta table name to write checks into */
+  target_table: string;
+  /** Run config name used as partition key in the checks table */
+  run_config_name: string;
+  /** Write mode: append or overwrite */
+  mode?: string;
+}
+
+export interface PushToTableOut {
+  /** Result message */
+  message: string;
+  /** Number of checks pushed */
+  pushed_count: number;
 }
 
 export type QuarantineRecordOutRowData = { [key: string]: unknown } | null;
@@ -971,6 +993,10 @@ limit?: number;
 
 export type GetTablePreviewParams = {
 limit?: number;
+/**
+ * Natural-language filter applied via AI-generated SQL
+ */
+filter_query?: string | null;
 };
 
 export type ListRulesParams = {
@@ -5277,6 +5303,7 @@ export function useGetTableTagsSuspense<TData = Awaited<ReturnType<typeof getTab
 /**
  * Return up to *limit* sample rows from the table for UI preview.
  *
+ * When *filter_query* is provided the AI converts it to a SQL WHERE clause first.
  * Runs as the calling user (OBO) so Unity Catalog row filters and column masks apply.
  * @summary Get Table Preview
  */
@@ -6825,6 +6852,99 @@ export function useRejectRule<TData = Awaited<ReturnType<typeof rejectRule>>, TE
 
 
 /**
+ * Push a set of approved checks directly into a user-specified Delta table via Spark.
+ * @summary Push Rules To Table
+ */
+export const pushRulesToTable = (
+    pushToTableIn: PushToTableIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<PushToTableOut>> => {
+
+
+    return axios.post(
+      `/api/v1/rules/push-to-table`,
+      pushToTableIn,options
+    );
+  }
+
+
+
+
+export const getPushRulesToTableQueryKey = (pushToTableIn?: PushToTableIn,) => {
+    return [
+    'POST', `/api/v1/rules/push-to-table`, pushToTableIn
+    ] as const;
+    }
+
+
+export const getPushRulesToTableQueryOptions = <TData = Awaited<ReturnType<typeof pushRulesToTable>>, TError = AxiosError<HTTPValidationError>>(pushToTableIn: PushToTableIn, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof pushRulesToTable>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getPushRulesToTableQueryKey(pushToTableIn);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof pushRulesToTable>>> = ({ signal }) => pushRulesToTable(pushToTableIn, { signal, ...axiosOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof pushRulesToTable>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type PushRulesToTableQueryResult = NonNullable<Awaited<ReturnType<typeof pushRulesToTable>>>
+export type PushRulesToTableQueryError = AxiosError<HTTPValidationError>
+
+
+export function usePushRulesToTable<TData = Awaited<ReturnType<typeof pushRulesToTable>>, TError = AxiosError<HTTPValidationError>>(
+ pushToTableIn: PushToTableIn, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof pushRulesToTable>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof pushRulesToTable>>,
+          TError,
+          Awaited<ReturnType<typeof pushRulesToTable>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function usePushRulesToTable<TData = Awaited<ReturnType<typeof pushRulesToTable>>, TError = AxiosError<HTTPValidationError>>(
+ pushToTableIn: PushToTableIn, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof pushRulesToTable>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof pushRulesToTable>>,
+          TError,
+          Awaited<ReturnType<typeof pushRulesToTable>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function usePushRulesToTable<TData = Awaited<ReturnType<typeof pushRulesToTable>>, TError = AxiosError<HTTPValidationError>>(
+ pushToTableIn: PushToTableIn, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof pushRulesToTable>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Push Rules To Table
+ */
+
+export function usePushRulesToTable<TData = Awaited<ReturnType<typeof pushRulesToTable>>, TError = AxiosError<HTTPValidationError>>(
+ pushToTableIn: PushToTableIn, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof pushRulesToTable>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getPushRulesToTableQueryOptions(pushToTableIn,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+/**
  * Validate a list of check definitions without saving them.
  * @summary Validate Checks
  */
@@ -7506,6 +7626,10 @@ export function useRunDryRunOnPreview<TData = Awaited<ReturnType<typeof runDryRu
  * Unity Catalog permissions enforced), checks are applied synchronously, and
  * per-row results are returned immediately. Results are not recorded in the
  * validation history.
+ *
+ * For ``sql_query`` checks the SQL is executed directly and the returned rows
+ * are treated as violations (DQX convention: zero rows = pass). This avoids the
+ * ``condition`` column requirement that ``apply_checks_by_metadata`` imposes.
  * @summary Run Dry Run On Table
  */
 export const runDryRunOnTable = (

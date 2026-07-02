@@ -1,2 +1,24 @@
 command:
-  ["uvicorn", "databricks_labs_dqx_app.backend.app:app", "--workers", "2"]
+- uvicorn
+- databricks_labs_dqx_app.backend.app:app
+- --workers
+- 2
+env:
+- name: DATABRICKS_WAREHOUSE_ID
+  value: cd5e118a673141a1
+- name: DQX_CATALOG
+  value: uc_eid_sandbox_prod
+- name: DQX_SCHEMA
+  value: dqx_studio_app
+- name: DQX_JOB_ID
+  value: 1016271587084628
+- name: DQX_TMP_SCHEMA
+  value: dqx_studio_app_tmp
+- name: DQX_ADMIN_GROUP
+  value: admins
+- name: DQX_WHEELS_VOLUME
+  value: /Volumes/uc_eid_sandbox_prod/dqx_studio_app/wheels
+- name: DQX_LAKEBASE_INSTANCE_NAME
+  value: 
+- name: DQX_LAKEBASE_DATABASE_NAME
+  value: 
