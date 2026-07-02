@@ -4,7 +4,7 @@ import { ErrorBoundary } from "react-error-boundary";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
-import { AlertCircle, CheckCircle2, Circle, Clock, Globe, LayoutDashboard, Loader2, Lock, Search, Tags, Plus, Trash2, Upload, X, ExternalLink, RotateCcw, ShieldCheck } from "lucide-react";
+import { AlertCircle, CheckCircle2, Circle, Clock, Globe, LayoutDashboard, Loader2, Lock, Search, Tags, Plus, Trash2, Upload, X, ExternalLink, RotateCcw, ShieldCheck, Sparkles } from "lucide-react";
 import { FadeIn } from "@/components/anim/FadeIn";
 import { ShinyText } from "@/components/anim/ShinyText";
 import { RoleManagement } from "@/components/RoleManagement";
@@ -18,6 +18,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -50,6 +51,12 @@ import {
   type RetentionSettingsOut,
   type RunReviewStatusOption,
 } from "@/lib/api-custom";
+import {
+  useGetAiSettings,
+  useSaveAiSettings,
+  getGetAiSettingsQueryKey,
+  type AiSettingsIn,
+} from "@/lib/api";
 import type { AxiosError } from "axios";
 import { toast } from "sonner";
 import { useCurrentUserRoleSuspense } from "@/hooks/use-suspense-queries";
@@ -1563,6 +1570,214 @@ function RunReviewStatusesSettings() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// AI settings (Rules Registry Phase 4.5) — the kill-switch, endpoint, and
+// rate limit for AIGateway (Build-with-AI / per-field suggest), plus the
+// optional Vector Search settings that light up the rule-mapping suggester
+// on Monitored Tables. ADMIN only — every AI affordance elsewhere in the app
+// degrades to hidden/disabled while these are unset (see
+// hooks/use-ai-availability.ts).
+// ─────────────────────────────────────────────────────────────────────────────
+
+function AiSettingsCard() {
+  const { t } = useTranslation();
+  const { data: settingsResp, isLoading } = useGetAiSettings();
+  const data = settingsResp?.data;
+  const queryClient = useQueryClient();
+  const saveMutation = useSaveAiSettings();
+  const { data: role } = useCurrentUserRoleSuspense();
+  const isAdmin = role?.data?.role === "admin";
+
+  const [aiEnabled, setAiEnabled] = useState(false);
+  const [aiEndpoint, setAiEndpoint] = useState("");
+  const [rateLimit, setRateLimit] = useState("");
+  const [embeddingEndpoint, setEmbeddingEndpoint] = useState("");
+  const [vsEndpoint, setVsEndpoint] = useState("");
+  const [vsIndex, setVsIndex] = useState("");
+  const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
+    if (data && !hydrated) {
+      setAiEnabled(data.ai_enabled);
+      setAiEndpoint(data.ai_endpoint_name);
+      setRateLimit(String(data.ai_rate_limit_per_user_per_hour));
+      setEmbeddingEndpoint(data.embedding_endpoint_name ?? "");
+      setVsEndpoint(data.vs_endpoint_name ?? "");
+      setVsIndex(data.vs_index_name ?? "");
+      setHydrated(true);
+    }
+  }, [data, hydrated]);
+
+  const parsedRateLimit = Number(rateLimit);
+  const rateLimitValid = rateLimit.trim() !== "" && Number.isInteger(parsedRateLimit) && parsedRateLimit >= 0;
+
+  const isDirty = useMemo(() => {
+    if (!data) return false;
+    return (
+      aiEnabled !== data.ai_enabled ||
+      aiEndpoint.trim() !== data.ai_endpoint_name ||
+      String(parsedRateLimit) !== String(data.ai_rate_limit_per_user_per_hour) ||
+      embeddingEndpoint.trim() !== (data.embedding_endpoint_name ?? "") ||
+      vsEndpoint.trim() !== (data.vs_endpoint_name ?? "") ||
+      vsIndex.trim() !== (data.vs_index_name ?? "")
+    );
+  }, [data, aiEnabled, aiEndpoint, parsedRateLimit, embeddingEndpoint, vsEndpoint, vsIndex]);
+
+  const handleSave = () => {
+    if (!rateLimitValid) return;
+    const payload: AiSettingsIn = {
+      ai_enabled: aiEnabled,
+      ai_endpoint_name: aiEndpoint.trim(),
+      ai_rate_limit_per_user_per_hour: parsedRateLimit,
+      embedding_endpoint_name: embeddingEndpoint.trim(),
+      vs_endpoint_name: vsEndpoint.trim(),
+      vs_index_name: vsIndex.trim(),
+    };
+    saveMutation.mutate(
+      { data: payload },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getGetAiSettingsQueryKey() });
+          toast.success(t("config.aiSettingsSaved"));
+        },
+        onError: (err: unknown) => {
+          const axErr = err as AxiosError<{ detail?: string }>;
+          toast.error(axErr?.response?.data?.detail ?? t("config.aiSettingsSaveFailed"));
+        },
+      },
+    );
+  };
+
+  const handleReset = () => {
+    if (!data) return;
+    setAiEnabled(data.ai_enabled);
+    setAiEndpoint(data.ai_endpoint_name);
+    setRateLimit(String(data.ai_rate_limit_per_user_per_hour));
+    setEmbeddingEndpoint(data.embedding_endpoint_name ?? "");
+    setVsEndpoint(data.vs_endpoint_name ?? "");
+    setVsIndex(data.vs_index_name ?? "");
+  };
+
+  if (isLoading || !data) {
+    return <Skeleton className="h-40 w-full" />;
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Sparkles className="h-5 w-5" />
+          {t("config.aiSettingsTitle")}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-xs text-muted-foreground leading-relaxed">{t("config.aiSettingsDescription")}</p>
+
+        <div className="flex items-center justify-between rounded-md border p-3">
+          <div className="space-y-0.5 pr-4">
+            <Label htmlFor="ai-settings-enabled" className="text-sm">{t("config.aiSettingsEnabledLabel")}</Label>
+            <p className="text-[11px] text-muted-foreground">{t("config.aiSettingsEnabledHint")}</p>
+          </div>
+          <Switch
+            id="ai-settings-enabled"
+            checked={aiEnabled}
+            onCheckedChange={setAiEnabled}
+            disabled={!isAdmin || saveMutation.isPending}
+          />
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-1">
+            <Label className="text-[11px] text-muted-foreground">{t("config.aiSettingsEndpointLabel")}</Label>
+            <Input
+              value={aiEndpoint}
+              onChange={(e) => setAiEndpoint(e.target.value)}
+              placeholder={t("config.aiSettingsEndpointPlaceholder")}
+              disabled={!isAdmin || saveMutation.isPending}
+              className="h-8 text-xs font-mono"
+              autoComplete="off"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-[11px] text-muted-foreground">{t("config.aiSettingsRateLimitLabel")}</Label>
+            <Input
+              type="number"
+              min={0}
+              value={rateLimit}
+              onChange={(e) => setRateLimit(e.target.value)}
+              disabled={!isAdmin || saveMutation.isPending}
+              className="h-8 text-xs"
+            />
+          </div>
+        </div>
+        {!rateLimitValid && (
+          <p className="text-[11px] text-destructive flex items-center gap-1">
+            <AlertCircle className="h-3 w-3" />
+            {t("config.aiSettingsRateLimitHint")}
+          </p>
+        )}
+
+        <div className="rounded-md border p-3 space-y-3">
+          <div>
+            <p className="text-sm font-medium">{t("config.aiSettingsVectorSearchTitle")}</p>
+            <p className="text-[11px] text-muted-foreground">{t("config.aiSettingsVectorSearchDescription")}</p>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div className="space-y-1">
+              <Label className="text-[11px] text-muted-foreground">{t("config.aiSettingsEmbeddingEndpointLabel")}</Label>
+              <Input
+                value={embeddingEndpoint}
+                onChange={(e) => setEmbeddingEndpoint(e.target.value)}
+                disabled={!isAdmin || saveMutation.isPending}
+                className="h-8 text-xs font-mono"
+                autoComplete="off"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-[11px] text-muted-foreground">{t("config.aiSettingsVsEndpointLabel")}</Label>
+              <Input
+                value={vsEndpoint}
+                onChange={(e) => setVsEndpoint(e.target.value)}
+                disabled={!isAdmin || saveMutation.isPending}
+                className="h-8 text-xs font-mono"
+                autoComplete="off"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-[11px] text-muted-foreground">{t("config.aiSettingsVsIndexLabel")}</Label>
+              <Input
+                value={vsIndex}
+                onChange={(e) => setVsIndex(e.target.value)}
+                disabled={!isAdmin || saveMutation.isPending}
+                className="h-8 text-xs font-mono"
+                autoComplete="off"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 pt-2 border-t">
+          <Button
+            size="sm"
+            onClick={handleSave}
+            disabled={!isAdmin || !isDirty || !rateLimitValid || saveMutation.isPending}
+          >
+            {saveMutation.isPending && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}
+            {t("config.aiSettingsSaveButton")}
+          </Button>
+          {isDirty && (
+            <Button size="sm" variant="ghost" onClick={handleReset} disabled={!isAdmin || saveMutation.isPending} className="gap-1.5">
+              <RotateCcw className="h-3.5 w-3.5" />
+              {t("common.reset")}
+            </Button>
+          )}
+          {!isAdmin && <span className="text-xs text-muted-foreground">{t("config.aiSettingsAdminOnlyHint")}</span>}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Import rules — relocated here from the "Create Rules" sidebar group so bulk
 // import (DQX YAML or data-contract generation) reads as an admin/registry
 // operation rather than a per-rule authoring shortcut. The tabbed workspace
@@ -1644,6 +1859,13 @@ function ConfigPage() {
               <ErrorBoundary onReset={reset} fallbackRender={SectionError}>
                 <Suspense fallback={<Skeleton className="h-40 w-full" />}>
                   <RunReviewStatusesSettings />
+                </Suspense>
+              </ErrorBoundary>
+            </FadeIn>
+            <FadeIn delay={0.17}>
+              <ErrorBoundary onReset={reset} fallbackRender={SectionError}>
+                <Suspense fallback={<Skeleton className="h-40 w-full" />}>
+                  <AiSettingsCard />
                 </Suspense>
               </ErrorBoundary>
             </FadeIn>
