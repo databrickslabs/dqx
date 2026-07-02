@@ -130,3 +130,47 @@ class TestAiGatewaySettings:
         sql_executor_mock.query.return_value = [["not-a-number"]]
 
         assert svc.get_ai_rate_limit_per_user_per_hour() == 30
+
+
+class TestVectorSearchSettings:
+    """Vector Search / embeddings settings (Rules Registry Phase 4B/4C).
+
+    All three default to empty when unset, so the mapping suggester and
+    embedding population are no-ops on any deploy with no Vector Search
+    infra provisioned.
+    """
+
+    @pytest.mark.parametrize(
+        ("getter_name", "key"),
+        [
+            ("get_embedding_endpoint_name", "embedding_endpoint_name"),
+            ("get_vs_endpoint_name", "vs_endpoint_name"),
+            ("get_vs_index_name", "vs_index_name"),
+        ],
+    )
+    def test_defaults_to_empty(self, settings_service, getter_name, key):
+        svc, sql_executor_mock = settings_service
+        sql_executor_mock.query.return_value = []
+
+        assert getattr(svc, getter_name)() == ""
+
+    @pytest.mark.parametrize(
+        ("setter_name", "getter_name", "key"),
+        [
+            ("save_embedding_endpoint_name", "get_embedding_endpoint_name", "embedding_endpoint_name"),
+            ("save_vs_endpoint_name", "get_vs_endpoint_name", "vs_endpoint_name"),
+            ("save_vs_index_name", "get_vs_index_name", "vs_index_name"),
+        ],
+    )
+    def test_save_trims_whitespace_and_round_trips(self, settings_service, setter_name, getter_name, key):
+        svc, sql_executor_mock = settings_service
+
+        saved = getattr(svc, setter_name)("  my-value  ", user_email="admin@x")
+
+        assert saved == "my-value"
+        _, kwargs = sql_executor_mock.upsert.call_args
+        assert kwargs["key_cols"] == {"setting_key": key}
+        assert kwargs["value_cols"]["setting_value"] == "my-value"
+
+        sql_executor_mock.query.return_value = [["my-value"]]
+        assert getattr(svc, getter_name)() == "my-value"

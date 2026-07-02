@@ -706,6 +706,29 @@ _V7_ROLE_MAPPINGS_HISTORY = (
 )
 
 
+# Rule embeddings corpus (Rules Registry Phase 4B) — one row per published
+# registry rule, holding the normalized embed text and its embedding
+# vector. Entirely optional infrastructure: the table always exists, but
+# stays empty on any deploy with no ``embedding_endpoint_name`` configured
+# (see ``AppSettingsService`` Phase 4B/4C settings + ``services.rule_embeddings``).
+# ``embedding`` is a JSON-encoded array of floats in a plain STRING column
+# (not VARIANT) so the same read/write path is portable to the Postgres
+# mirror (v4 in ``backend.migrations.postgres``), which stores it as TEXT.
+# OLTP-shaped (single-key upsert) — marked ``oltp_fallback=True`` so this
+# only runs against Delta when Lakebase is disabled.
+_V8_RULE_EMBEDDINGS = (
+    f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_rule_embeddings ("
+    "  rule_id      STRING NOT NULL,"
+    "  rule_version INT,"
+    "  embed_text   STRING,"
+    "  embedding    STRING,"
+    "  model        STRING,"
+    "  updated_at   TIMESTAMP,"
+    "  CONSTRAINT pk_dq_rule_embeddings PRIMARY KEY (rule_id) RELY"
+    ") CLUSTER BY (rule_id)"
+)
+
+
 # OLTP fallback migration is identified by ``oltp_fallback=True`` so
 # the runner can skip it when Lakebase is enabled. Keeping the flag on
 # the migration itself (rather than e.g. a hard-coded version number)
@@ -764,6 +787,13 @@ MIGRATIONS: list[Migration] = [
         version=7,
         description="Role mappings audit history (dq_role_mappings_history) — used only when Lakebase is disabled",
         sql_template=_V7_ROLE_MAPPINGS_HISTORY,
+        oltp_fallback=True,
+    ),
+    DeltaMigration(
+        version=8,
+        description="Rule embeddings corpus (dq_rule_embeddings) — Rules Registry Phase 4B, "
+        "used only when Lakebase is disabled",
+        sql_template=_V8_RULE_EMBEDDINGS,
         oltp_fallback=True,
     ),
 ]

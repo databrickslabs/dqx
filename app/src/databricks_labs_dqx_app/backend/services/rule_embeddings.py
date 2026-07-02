@@ -1,0 +1,198 @@
+"""Rule embeddings — Rules Registry Phase 4B.
+
+Builds a normalized text representation of a published registry rule
+(:func:`build_rule_embed_text`) and, when an embedding serving endpoint is
+configured, embeds + stores it in the ``dq_rule_embeddings`` corpus table
+(:class:`RuleEmbeddingsService`).
+
+**Deploy-safe by construction**: every public method degrades gracefully
+when ``embedding_endpoint_name`` (see ``AppSettingsService``) is unset — the
+default on every fresh deploy. :meth:`RuleEmbeddingsService.embed_and_store`
+never raises; it is safe to call unconditionally from the registry-rule
+approve route on every publish. No Vector Search or embedding infrastructure
+is required for the app to build, deploy, or serve any other feature.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from typing import Any
+
+from databricks.sdk import WorkspaceClient
+
+from databricks_labs_dqx_app.backend.registry_models import (
+    RegistryRule,
+    get_rule_description,
+    get_rule_dimension,
+    get_rule_name,
+    get_rule_severity,
+)
+from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
+from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql
+
+logger = logging.getLogger(__name__)
+
+# Reserved ``user_metadata`` tag keys already surfaced explicitly by
+# :func:`build_rule_embed_text` — excluded from the generic "tags: ..." pass
+# so they aren't duplicated in the embedded text.
+_RESERVED_TAG_KEYS = {"name", "description", "dimension", "severity"}
+
+# Predicate/body text is truncated before embedding: it may be a full SQL
+# query or low-code AST, and this text can end up replicated into a shared
+# Vector Search index — keep it bounded (OWASP LLM04-style budget, applied
+# here defensively even though there is no LLM call in this module).
+_MAX_PREDICATE_CHARS = 500
+
+
+def build_rule_embed_text(rule: RegistryRule) -> str:
+    """Build the normalized text blob embedded for *rule*.
+
+    Combines name, description, dimension/severity tags, slot names, free-
+    text tags, and a truncated predicate/body summary so semantically
+    similar rules land close together in embedding space (e.g. "email
+    format" and "valid email regex").
+
+    Args:
+        rule: The registry rule to summarize. Any mode (``dqx_native`` /
+            ``lowcode`` / ``sql``) is supported — the predicate extraction
+            in :func:`_extract_predicate` handles each shape.
+
+    Returns:
+        A newline-joined text blob, never containing raw column data.
+    """
+    parts: list[str] = []
+    name = get_rule_name(rule.user_metadata)
+    if name:
+        parts.append(name)
+    description = get_rule_description(rule.user_metadata)
+    if description:
+        parts.append(description)
+    dimension = get_rule_dimension(rule.user_metadata)
+    if dimension:
+        parts.append(f"dimension: {dimension}")
+    severity = get_rule_severity(rule.user_metadata)
+    if severity:
+        parts.append(f"severity: {severity}")
+    if rule.definition.slots:
+        slot_names = ", ".join(slot.name for slot in rule.definition.slots)
+        parts.append(f"slots: {slot_names}")
+    tags = [
+        f"{key}: {value}"
+        for key, value in rule.user_metadata.items()
+        if key not in _RESERVED_TAG_KEYS and isinstance(value, str) and value
+    ]
+    if tags:
+        parts.append("tags: " + ", ".join(tags))
+    predicate = _extract_predicate(rule.definition.body)
+    if predicate:
+        parts.append(f"predicate: {predicate[:_MAX_PREDICATE_CHARS]}")
+    return "\n".join(parts).strip()
+
+
+def _extract_predicate(body: dict[str, Any]) -> str | None:
+    """Extract a short textual summary of a rule definition's mode-specific body."""
+    for key in ("predicate", "sql_query", "function"):
+        value = body.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    arguments = body.get("arguments")
+    if isinstance(arguments, dict) and arguments:
+        try:
+            return json.dumps(arguments, sort_keys=True)
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+class RuleEmbeddingsService:
+    """Builds + stores embeddings for published registry rules.
+
+    Owns the ``dq_rule_embeddings`` corpus table (rule_id, rule_version,
+    embed_text, embedding, model, updated_at) — the source-of-truth text
+    corpus a Databricks Vector Search index syncs from (see
+    ``services.rule_retriever.VectorSearchRetriever``).
+    """
+
+    def __init__(self, sql: OltpExecutorProtocol, sp_ws: WorkspaceClient, app_settings: AppSettingsService) -> None:
+        self._sql = sql
+        self._sp_ws = sp_ws
+        self._app_settings = app_settings
+        self._table = sql.fqn("dq_rule_embeddings")
+
+    def is_configured(self) -> bool:
+        """Return whether an embedding serving endpoint is configured."""
+        return bool(self._app_settings.get_embedding_endpoint_name())
+
+    def embed_text(self, text: str) -> list[float] | None:
+        """Call the configured embedding endpoint for *text*.
+
+        Returns ``None`` (never raises) when unconfigured. Propagates SDK
+        errors from an actual call failure — callers that want a
+        best-effort no-op should use :meth:`embed_and_store` instead, which
+        catches and logs them.
+        """
+        endpoint = self._app_settings.get_embedding_endpoint_name()
+        if not endpoint:
+            return None
+        response = self._sp_ws.serving_endpoints.query(name=endpoint, input=[text])
+        data = getattr(response, "data", None) or []
+        for item in data:
+            embedding = getattr(item, "embedding", None)
+            if embedding:
+                return list(embedding)
+        return None
+
+    def embed_and_store(self, rule: RegistryRule) -> bool:
+        """Embed *rule* and upsert it into ``dq_rule_embeddings``.
+
+        Best-effort and never raises: returns ``False`` when unconfigured
+        or on any failure (network error, malformed endpoint response,
+        etc.) so a Vector Search / embedding hiccup never fails a rule
+        publish. Safe to call unconditionally from the approve route.
+
+        Args:
+            rule: The just-published registry rule.
+
+        Returns:
+            ``True`` iff a row was written.
+        """
+        if not self.is_configured():
+            logger.debug("Embedding endpoint not configured; skipping embed for rule %s", rule.rule_id)
+            return False
+        try:
+            text = build_rule_embed_text(rule)
+            embedding = self.embed_text(text)
+            if embedding is None:
+                logger.warning("Embedding endpoint returned no vector for rule %s", rule.rule_id)
+                return False
+            self._upsert(rule.rule_id, rule.version, text, embedding)
+            return True
+        except Exception:
+            logger.warning("Failed to embed rule %s (non-fatal)", rule.rule_id, exc_info=True)
+            return False
+
+    def backfill(self, rules: list[RegistryRule]) -> int:
+        """Embed every rule in *rules* (e.g. all currently-published rules).
+
+        Args:
+            rules: Rules to (re-)embed, typically ``RegistryService.list_rules(status="approved")``.
+
+        Returns:
+            The count of rules successfully stored.
+        """
+        return sum(1 for rule in rules if self.embed_and_store(rule))
+
+    def _upsert(self, rule_id: str, rule_version: int, text: str, embedding: list[float]) -> None:
+        model = self._app_settings.get_embedding_endpoint_name()
+        self._sql.upsert(
+            self._table,
+            key_cols={"rule_id": rule_id},
+            value_cols={
+                "rule_version": rule_version,
+                "embed_text": text,
+                "embedding": json.dumps(embedding),
+                "model": model,
+                "updated_at": RawSql("current_timestamp()"),
+            },
+        )

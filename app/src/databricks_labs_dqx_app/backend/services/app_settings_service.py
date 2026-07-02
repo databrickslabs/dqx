@@ -570,6 +570,61 @@ class AppSettingsService:
         self.save_setting(self._AI_RATE_LIMIT_KEY, str(int(limit)), user_email=user_email)
         return int(limit)
 
+    # ------------------------------------------------------------------
+    # Vector Search / embeddings settings — Rules Registry Phase 4B/4C.
+    # Entirely config-driven and OFF-by-default: a deploy with no Vector
+    # Search infra provisioned behaves exactly like today. All three keys
+    # must be non-empty for the mapping suggester (``RuleSuggester`` /
+    # ``VectorSearchRetriever``) to attempt a call — see
+    # ``services/rule_retriever.py`` for the availability check.
+    #
+    #   * ``embedding_endpoint_name`` — Databricks serving endpoint that
+    #     turns rule/query text into an embedding vector
+    #     (``services/rule_embeddings.py``).
+    #   * ``vs_endpoint_name`` / ``vs_index_name`` — the Databricks Vector
+    #     Search endpoint + index that stores rule embeddings for
+    #     nearest-neighbour retrieval.
+    #
+    # None of these provision infrastructure — they only point the app at
+    # infra an admin has provisioned out-of-band (see the Phase 4B/4C task
+    # report for manual provisioning steps). No mandatory Vector Search
+    # resource is declared in ``app/databricks.yml``.
+    # ------------------------------------------------------------------
+
+    _EMBEDDING_ENDPOINT_NAME_KEY = "embedding_endpoint_name"
+    _VS_ENDPOINT_NAME_KEY = "vs_endpoint_name"
+    _VS_INDEX_NAME_KEY = "vs_index_name"
+
+    def get_embedding_endpoint_name(self) -> str:
+        """Return the configured embedding serving endpoint name, or ``""`` if unset."""
+        return (self.get_setting(self._EMBEDDING_ENDPOINT_NAME_KEY) or "").strip()
+
+    def save_embedding_endpoint_name(self, endpoint_name: str, *, user_email: str | None = None) -> str:
+        """Persist the embedding serving endpoint name. Returns the cleaned (trimmed) value."""
+        cleaned = (endpoint_name or "").strip()
+        self.save_setting(self._EMBEDDING_ENDPOINT_NAME_KEY, cleaned, user_email=user_email)
+        return cleaned
+
+    def get_vs_endpoint_name(self) -> str:
+        """Return the configured Vector Search endpoint name, or ``""`` if unset."""
+        return (self.get_setting(self._VS_ENDPOINT_NAME_KEY) or "").strip()
+
+    def save_vs_endpoint_name(self, endpoint_name: str, *, user_email: str | None = None) -> str:
+        """Persist the Vector Search endpoint name. Returns the cleaned (trimmed) value."""
+        cleaned = (endpoint_name or "").strip()
+        self.save_setting(self._VS_ENDPOINT_NAME_KEY, cleaned, user_email=user_email)
+        return cleaned
+
+    def get_vs_index_name(self) -> str:
+        """Return the configured Vector Search index name, or ``""`` if unset."""
+        return (self.get_setting(self._VS_INDEX_NAME_KEY) or "").strip()
+
+    def save_vs_index_name(self, index_name: str, *, user_email: str | None = None) -> str:
+        """Persist the Vector Search index name. Returns the cleaned (trimmed) value."""
+        cleaned = (index_name or "").strip()
+        self.save_setting(self._VS_INDEX_NAME_KEY, cleaned, user_email=user_email)
+        return cleaned
+
     @staticmethod
     def _normalise_status_entry(item: dict) -> dict:
         value = (item.get("value") or "").strip() if isinstance(item.get("value"), str) else ""

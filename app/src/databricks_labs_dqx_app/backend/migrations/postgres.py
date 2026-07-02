@@ -451,6 +451,41 @@ PG_MIGRATIONS: list[PgMigration] = [
             f"  ON {_S}.dq_role_mappings_history (changed_at DESC);"
         ),
     ),
+    PgMigration(
+        version=4,
+        description="Rule embeddings corpus (dq_rule_embeddings) — Rules Registry Phase 4B",
+        sql=(
+            # ----------------------------------------------------------
+            # dq_rule_embeddings — one row per published registry rule,
+            # holding the normalized text blob (see
+            # ``services.rule_embeddings.build_rule_embed_text``) and its
+            # embedding vector. Populated best-effort on rule publish
+            # (``routes.v1.registry_rules.approve_registry_rule``) and by
+            # the ``RuleEmbeddingsService.backfill`` helper. Entirely
+            # optional infrastructure: the table always exists, but stays
+            # empty on any deploy with no ``embedding_endpoint_name``
+            # configured (see ``AppSettingsService`` Phase 4B/4C settings).
+            #
+            # ``embedding`` is stored as a JSON-encoded array of floats in
+            # a portable TEXT column (not a native vector/array type) so
+            # the same DDL/read path works unchanged on the Delta OLTP
+            # fallback. The Databricks Vector Search index itself is the
+            # actual ANN store the mapping suggester queries at runtime
+            # (see ``services.rule_retriever.VectorSearchRetriever``) —
+            # this table is the source-of-truth corpus a Vector Search
+            # "Delta Sync" index would sync from, or that a backfill job
+            # can re-embed from without re-deriving ``embed_text``.
+            # ----------------------------------------------------------
+            f"CREATE TABLE IF NOT EXISTS {_S}.dq_rule_embeddings ("
+            "  rule_id      TEXT PRIMARY KEY,"
+            "  rule_version INTEGER,"
+            "  embed_text   TEXT,"
+            "  embedding    TEXT,"
+            "  model        TEXT,"
+            "  updated_at   TIMESTAMPTZ"
+            ");"
+        ),
+    ),
 ]
 
 
