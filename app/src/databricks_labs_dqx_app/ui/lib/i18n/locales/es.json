@@ -37,7 +37,8 @@
     "stayOnPage": "Permanecer en la página",
     "unsavedChanges": "Cambios sin guardar",
     "rowsPerPage": "Filas por página:",
-    "close": "Cerrar"
+    "close": "Cerrar",
+    "reset": "Restablecer"
   },
   "language": {
     "label": "Idioma",
@@ -181,7 +182,24 @@
     "failedSaveReviewStatuses": "Error al guardar los estados de revisión.",
     "importRulesTitle": "Importar reglas",
     "importRulesDescription": "Importa reglas en bloque desde un archivo YAML de DQX o genéralas a partir de un contrato de datos.",
-    "goToImportRules": "Ir a Importar reglas"
+    "goToImportRules": "Ir a Importar reglas",
+    "aiSettingsTitle": "Configuración de IA",
+    "aiSettingsDescription": "La creación de reglas asistida por IA y el sugeridor de reglas permanecen desactivados hasta que aquí se configure un endpoint de serving.",
+    "aiSettingsEnabledLabel": "Habilitar funciones de IA",
+    "aiSettingsEnabledHint": "Activa la creación con IA, las sugerencias por campo y el sugeridor de asignación de reglas en toda la aplicación.",
+    "aiSettingsEndpointLabel": "Endpoint de serving de IA",
+    "aiSettingsEndpointPlaceholder": "p. ej. databricks-meta-llama-3-70b-instruct",
+    "aiSettingsRateLimitLabel": "Límite de uso (solicitudes por usuario por hora)",
+    "aiSettingsRateLimitHint": "0 desactiva el límite.",
+    "aiSettingsVectorSearchTitle": "Sugeridor de asignación de reglas (opcional)",
+    "aiSettingsVectorSearchDescription": "Configura estos campos para habilitar las sugerencias de reglas por IA en las tablas monitoreadas. Déjalos en blanco para mantener el sugeridor desactivado.",
+    "aiSettingsEmbeddingEndpointLabel": "Endpoint de embeddings",
+    "aiSettingsVsEndpointLabel": "Endpoint de Vector Search",
+    "aiSettingsVsIndexLabel": "Índice de Vector Search",
+    "aiSettingsSaveButton": "Guardar configuración de IA",
+    "aiSettingsSaved": "Configuración de IA guardada.",
+    "aiSettingsSaveFailed": "No se pudo guardar la configuración de IA.",
+    "aiSettingsAdminOnlyHint": "Solo los administradores pueden cambiar esta configuración."
   },
   "discovery": {
     "breadcrumb": "Descubrimiento",
@@ -1537,7 +1555,27 @@
     "saveAndSubmit": "Guardar y enviar",
     "nameRequired": "El nombre es obligatorio.",
     "functionRequired": "Selecciona una función de verificación.",
-    "predicateRequired": "Ingresa un predicado SQL."
+    "predicateRequired": "Ingresa un predicado SQL.",
+    "aiBuildTitle": "Crear con IA",
+    "aiBuildDescription": "Describe el requisito de calidad de datos en lenguaje sencillo y revisa un borrador antes de aplicarlo.",
+    "aiBuildPlaceholder": "p. ej. el importe del pedido debe ser positivo y menor que 1.000.000 €",
+    "aiGenerateButton": "Generar",
+    "aiGenerating": "Generando…",
+    "aiProposalTitle": "Propuesta de la IA — revisa antes de aplicar",
+    "aiProposalModeLabel": "Modo",
+    "aiProposalUseButton": "Usar esta",
+    "aiProposalDiscardButton": "Descartar",
+    "aiProposalApplied": "Propuesta de la IA aplicada — revisa los campos a continuación antes de guardar.",
+    "aiGenerateFailed": "No se pudo generar una propuesta de regla.",
+    "aiRateLimited": "Se alcanzó el límite de uso de IA para esta hora. Inténtalo más tarde.",
+    "aiUnavailable": "La IA no está disponible en este momento.",
+    "aiSuggestButton": "Sugerir con IA",
+    "aiSuggestApplied": "Sugerencia de la IA aplicada.",
+    "aiSuggestFailed": "No se pudo obtener una sugerencia de la IA.",
+    "aiSuggestInvalidValue": "La IA sugirió un valor que no está entre las opciones configuradas. Elige uno manualmente.",
+    "aiSuggestNoContextYet": "Aún sin detalles — completa algunos campos primero.",
+    "authorKindAiGenerated": "Generado por IA",
+    "authorKindAiAssisted": "Asistido por IA"
   },
   "monitoredTables": {
     "breadcrumb": "Tablas monitorizadas",
@@ -1644,6 +1682,22 @@
     "resultsTableFqnHint": "Filtra o busca \"{{table}}\" en Historial de ejecuciones para ver sus resultados.",
     "viewRunsHistory": "Abrir Historial de ejecuciones",
     "notYetPublishedResultsHint": "Publica esta tabla para materializar sus reglas aplicadas en comprobaciones antes de que los resultados aparezcan aquí.",
-    "invalidFqnHint": "Selecciona una tabla en el navegador de catálogo."
+    "invalidFqnHint": "Selecciona una tabla en el navegador de catálogo.",
+    "suggestRulesButton": "Sugerir reglas",
+    "suggestRulesDialogTitle": "Reglas sugeridas",
+    "suggestRulesDialogDescription": "Reglas publicadas clasificadas por relevancia respecto al perfil de esta tabla. Revisa cada asignación antes de agregar.",
+    "suggestRulesLoading": "Buscando reglas relevantes…",
+    "suggestRulesUnavailableTitle": "Las sugerencias no están disponibles",
+    "suggestRulesEmptyTitle": "No se encontraron sugerencias",
+    "suggestRulesEmptyDescription": "Prueba a aplicar reglas manualmente desde el registro.",
+    "suggestRulesAddButton_one": "Agregar {{count}} regla",
+    "suggestRulesAddButton_other": "Agregar {{count}} reglas",
+    "suggestRulesAddedToast_one": "{{count}} regla agregada.",
+    "suggestRulesAddedToast_other": "{{count}} reglas agregadas.",
+    "suggestRulesAddFailed": "No se pudieron agregar algunas reglas sugeridas.",
+    "suggestRulesExplanationLabel": "Por qué esta regla",
+    "suggestRulesMappingLabel": "Asignación",
+    "suggestRulesFetchFailed": "No se pudieron obtener sugerencias.",
+    "suggestRulesNoneSelected": "Selecciona al menos una sugerencia para agregar."
   }
 }

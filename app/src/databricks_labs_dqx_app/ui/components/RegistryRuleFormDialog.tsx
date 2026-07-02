@@ -28,7 +28,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { AlertCircle, Check, ChevronDown, Loader2, Search, Sparkles } from "lucide-react";
+import { AlertCircle, Check, ChevronDown, Loader2, Search, Sparkles, Wand2 } from "lucide-react";
 import { LabelsEditor } from "@/components/Labels";
 import type { LabelDefinition } from "@/lib/api-custom";
 import {
@@ -36,6 +36,8 @@ import {
   useUpdateRegistryRule,
   useSubmitRegistryRule,
   useListCheckFunctions,
+  useAiGenerateRule,
+  useAiSuggestField,
   type RegistryRuleOut,
   type RuleDefinition,
   type RuleSlot,
@@ -44,7 +46,10 @@ import {
   type CheckFunctionDef as ApiCheckFunctionDef,
   type CreateRegistryRuleIn,
   type UpdateRegistryRuleIn,
+  type CreateRegistryRuleInAuthorKind,
+  type AiGenerateRuleOut,
 } from "@/lib/api";
+import { useAiAvailability, aiUnavailableReason } from "@/hooks/use-ai-availability";
 
 const RESERVED_NAME_KEY = "name";
 const RESERVED_DESCRIPTION_KEY = "description";
@@ -242,6 +247,35 @@ function FunctionCombobox({
   );
 }
 
+function SuggestButton({
+  field,
+  busy,
+  onClick,
+  label,
+}: {
+  field: string;
+  busy: boolean;
+  onClick: () => void;
+  label: string;
+}) {
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      className="h-5 gap-1 px-1.5 text-[10px] text-muted-foreground hover:text-foreground"
+      onClick={onClick}
+      disabled={busy}
+      aria-label={label}
+      title={label}
+      data-field={field}
+    >
+      {busy ? <Loader2 className="h-2.5 w-2.5 animate-spin" /> : <Sparkles className="h-2.5 w-2.5" />}
+      {label}
+    </Button>
+  );
+}
+
 interface RegistryRuleFormDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -299,6 +333,17 @@ export function RegistryRuleFormDialog({
   const [tags, setTags] = useState<Record<string, string>>({});
   const [steward, setSteward] = useState("");
   const [nameError, setNameError] = useState<string | null>(null);
+  const [authorKind, setAuthorKind] = useState<CreateRegistryRuleInAuthorKind | undefined>(undefined);
+  const [pendingNativeArgs, setPendingNativeArgs] = useState<Record<string, unknown> | null>(null);
+
+  // AI — Build-with-AI (full-form generate) + per-field suggest.
+  const aiAvailability = useAiAvailability();
+  const [aiDescription, setAiDescription] = useState("");
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiProposal, setAiProposal] = useState<AiGenerateRuleOut | null>(null);
+  const generateRuleMutation = useAiGenerateRule();
+  const suggestFieldMutation = useAiSuggestField();
+  const [suggestingField, setSuggestingField] = useState<string | null>(null);
 
   // (Re)hydrate the local draft whenever the dialog opens for a
   // different rule (or opens fresh for creation). Keyed on open + rule_id via
@@ -319,6 +364,10 @@ export function RegistryRuleFormDialog({
     setSeverity(asString(RESERVED_SEVERITY_KEY));
     setSteward(sourceRule?.steward ?? "");
     setNameError(null);
+    setAuthorKind(sourceRule?.author_kind ?? undefined);
+    setAiDescription("");
+    setAiProposal(null);
+    setPendingNativeArgs(null);
     const freeTags: Record<string, string> = {};
     for (const [k, v] of Object.entries(md)) {
       if (k === RESERVED_NAME_KEY || k === RESERVED_DESCRIPTION_KEY || k === RESERVED_DIMENSION_KEY || k === RESERVED_SEVERITY_KEY) continue;
@@ -362,6 +411,29 @@ export function RegistryRuleFormDialog({
     [selectedFn],
   );
 
+  // After applying an AI proposal for a dqx_native function, we need the
+  // function's real parameter list (derived above, once `checkFunctions`
+  // resolves) before we know which of the AI's raw `arguments` are
+  // non-slot parameters vs. column slots. Stash them here and flush once
+  // the function catalog has resolved.
+  useEffect(() => {
+    if (pendingNativeArgs === null) return;
+    if (checkFunctions.length === 0) return;
+    if (!selectedFn) {
+      setPendingNativeArgs(null);
+      return;
+    }
+    const raw: Record<string, string> = {};
+    for (const p of derivedParams) {
+      const v = pendingNativeArgs[p.name];
+      if (v !== undefined && v !== null) {
+        raw[p.name] = Array.isArray(v) ? v.join(", ") : String(v);
+      }
+    }
+    setParamRawValues(raw);
+    setPendingNativeArgs(null);
+  }, [pendingNativeArgs, checkFunctions, selectedFn, derivedParams]);
+
   const createMutation = useCreateRegistryRule();
   const updateMutation = useUpdateRegistryRule();
   const submitMutation = useSubmitRegistryRule();
@@ -391,6 +463,129 @@ export function RegistryRuleFormDialog({
     if (dimension) md[RESERVED_DIMENSION_KEY] = dimension;
     if (severity) md[RESERVED_SEVERITY_KEY] = severity;
     return md;
+  };
+
+  const matchAllowedValue = (candidate: string, allowed: string[]): string | null =>
+    allowed.find((v) => v.toLowerCase() === candidate.trim().toLowerCase()) ?? null;
+
+  const buildSuggestContext = (): string => {
+    const parts: string[] = [];
+    if (name.trim()) parts.push(`Name: ${name.trim()}`);
+    if (description.trim()) parts.push(`Description: ${description.trim()}`);
+    if (mode === "dqx_native" && functionName) parts.push(`Check function: ${functionName}`);
+    if (mode === "sql" && sqlPredicate.trim()) parts.push(`SQL predicate: ${sqlPredicate.trim()}`);
+    if (dimension) parts.push(`Dimension: ${dimension}`);
+    if (severity) parts.push(`Severity: ${severity}`);
+    return parts.join("\n");
+  };
+
+  const applyAiProposal = (proposal: AiGenerateRuleOut) => {
+    setMode(proposal.mode === "sql" ? "sql" : "dqx_native");
+    setName(proposal.name?.trim() ?? "");
+    setDescription(proposal.description?.trim() ?? "");
+    if (proposal.dimension) {
+      const match = matchAllowedValue(proposal.dimension, dimensionValues);
+      if (match) setDimension(match);
+    }
+    if (proposal.severity) {
+      const match = matchAllowedValue(proposal.severity, severityValues);
+      if (match) setSeverity(match);
+    }
+    const validAuthorKinds: CreateRegistryRuleInAuthorKind[] = ["human", "ai_generated", "ai_assisted"];
+    setAuthorKind(
+      validAuthorKinds.includes(proposal.author_kind as CreateRegistryRuleInAuthorKind)
+        ? (proposal.author_kind as CreateRegistryRuleInAuthorKind)
+        : "ai_generated",
+    );
+
+    const body = (proposal.definition ?? {}) as Record<string, unknown>;
+    if (proposal.mode === "sql") {
+      setSqlPredicate(typeof body.sql_query === "string" ? body.sql_query : "");
+      setPolarity(proposal.polarity === "fail" ? "fail" : "pass");
+      setFunctionName("");
+      setParamRawValues({});
+      setPendingNativeArgs(null);
+    } else {
+      const fn = typeof body.function === "string" ? body.function : "";
+      setFunctionName(fn);
+      setSqlPredicate("");
+      const args =
+        body.arguments && typeof body.arguments === "object"
+          ? (body.arguments as Record<string, unknown>)
+          : {};
+      setPendingNativeArgs(args);
+    }
+    setAiProposal(null);
+    setAiDescription("");
+    toast.success(t("rulesRegistry.aiProposalApplied"));
+  };
+
+  const handleAiGenerate = async () => {
+    if (!aiDescription.trim()) return;
+    setAiBusy(true);
+    try {
+      const resp = await generateRuleMutation.mutateAsync({ data: { description: aiDescription.trim() } });
+      setAiProposal(resp.data);
+    } catch (err) {
+      const reason = aiUnavailableReason(err);
+      if (reason) {
+        aiAvailability.reportUnavailable(reason);
+      } else {
+        const axErr = err as { response?: { status?: number } };
+        toast.error(
+          axErr?.response?.status === 429
+            ? t("rulesRegistry.aiRateLimited")
+            : extractApiError(err, t("rulesRegistry.aiGenerateFailed")),
+          { duration: 6000 },
+        );
+      }
+    } finally {
+      setAiBusy(false);
+    }
+  };
+
+  const handleAiSuggestField = async (field: "name" | "description" | "dimension" | "severity") => {
+    setSuggestingField(field);
+    try {
+      const resp = await suggestFieldMutation.mutateAsync({
+        data: { field, context: buildSuggestContext() },
+      });
+      const value = resp.data.value?.trim() ?? "";
+      if (!value) {
+        toast.error(t("rulesRegistry.aiSuggestFailed"));
+        return;
+      }
+      if (field === "name") {
+        setName(value);
+      } else if (field === "description") {
+        setDescription(value);
+      } else if (field === "dimension") {
+        const match = matchAllowedValue(value, dimensionValues);
+        if (!match) {
+          toast.error(t("rulesRegistry.aiSuggestInvalidValue"));
+          return;
+        }
+        setDimension(match);
+      } else if (field === "severity") {
+        const match = matchAllowedValue(value, severityValues);
+        if (!match) {
+          toast.error(t("rulesRegistry.aiSuggestInvalidValue"));
+          return;
+        }
+        setSeverity(match);
+      }
+      setAuthorKind((prev) => prev ?? "ai_assisted");
+      toast.success(t("rulesRegistry.aiSuggestApplied"));
+    } catch (err) {
+      const reason = aiUnavailableReason(err);
+      if (reason) {
+        aiAvailability.reportUnavailable(reason);
+      } else {
+        toast.error(extractApiError(err, t("rulesRegistry.aiSuggestFailed")), { duration: 6000 });
+      }
+    } finally {
+      setSuggestingField(null);
+    }
   };
 
   const validate = (): boolean => {
@@ -446,6 +641,7 @@ export function RegistryRuleFormDialog({
           polarity: mode === "sql" ? polarity : null,
           user_metadata: userMetadata,
           steward: steward.trim() || null,
+          author_kind: authorKind,
         };
         const resp = await createMutation.mutateAsync({ data: payload });
         ruleId = resp.data.rule.rule_id;
@@ -477,9 +673,95 @@ export function RegistryRuleFormDialog({
     <Dialog open={open} onOpenChange={(next) => !saving && onOpenChange(next)}>
       <DialogContent className="max-w-2xl w-[95vw] max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{dialogTitle}</DialogTitle>
+          <DialogTitle className="flex items-center gap-2">
+            {dialogTitle}
+            {authorKind === "ai_generated" && (
+              <Badge variant="secondary" className="gap-1 text-[10px] font-normal">
+                <Sparkles className="h-2.5 w-2.5" />
+                {t("rulesRegistry.authorKindAiGenerated")}
+              </Badge>
+            )}
+            {authorKind === "ai_assisted" && (
+              <Badge variant="secondary" className="gap-1 text-[10px] font-normal">
+                <Sparkles className="h-2.5 w-2.5" />
+                {t("rulesRegistry.authorKindAiAssisted")}
+              </Badge>
+            )}
+          </DialogTitle>
           <DialogDescription>{t("rulesRegistry.dialogDescription")}</DialogDescription>
         </DialogHeader>
+
+        {!readOnly && aiAvailability.available && (
+          <div className="rounded-lg border bg-gradient-to-br from-primary/5 via-background to-secondary/5 p-3 space-y-2.5">
+            <div className="flex items-center gap-2">
+              <div className="p-1.5 bg-primary/10 rounded-md">
+                <Sparkles className="h-3.5 w-3.5 text-primary" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-semibold">{t("rulesRegistry.aiBuildTitle")}</p>
+                <p className="text-[11px] text-muted-foreground">{t("rulesRegistry.aiBuildDescription")}</p>
+              </div>
+            </div>
+
+            {aiProposal ? (
+              <div className="rounded-md border bg-card/70 p-3 space-y-2">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  {t("rulesRegistry.aiProposalTitle")}
+                </p>
+                <div className="space-y-1 text-xs">
+                  <p><span className="text-muted-foreground">{t("rulesRegistry.nameLabel")}:</span> {aiProposal.name}</p>
+                  {aiProposal.description && (
+                    <p><span className="text-muted-foreground">{t("rulesRegistry.descriptionLabel")}:</span> {aiProposal.description}</p>
+                  )}
+                  <div className="flex flex-wrap gap-1 pt-1">
+                    <Badge variant="outline" className="text-[10px]">
+                      {t("rulesRegistry.aiProposalModeLabel")}: {aiProposal.mode}
+                    </Badge>
+                    {aiProposal.dimension && <Badge variant="outline" className="text-[10px]">{aiProposal.dimension}</Badge>}
+                    {aiProposal.severity && <Badge variant="outline" className="text-[10px]">{aiProposal.severity}</Badge>}
+                  </div>
+                  <pre className="mt-1 max-h-32 overflow-auto rounded bg-muted/50 p-2 text-[10px] font-mono whitespace-pre-wrap break-words">
+                    {JSON.stringify(aiProposal.definition, null, 2)}
+                  </pre>
+                </div>
+                <div className="flex items-center gap-2 pt-1">
+                  <Button size="sm" className="h-7 text-xs gap-1.5" onClick={() => applyAiProposal(aiProposal)}>
+                    <Wand2 className="h-3 w-3" />
+                    {t("rulesRegistry.aiProposalUseButton")}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 text-xs"
+                    onClick={() => setAiProposal(null)}
+                  >
+                    {t("rulesRegistry.aiProposalDiscardButton")}
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <Textarea
+                  value={aiDescription}
+                  onChange={(e) => setAiDescription(e.target.value)}
+                  placeholder={t("rulesRegistry.aiBuildPlaceholder")}
+                  className="min-h-[64px] text-xs bg-card/60"
+                  disabled={aiBusy}
+                  maxLength={4000}
+                />
+                <Button
+                  size="sm"
+                  className="h-7 text-xs gap-1.5"
+                  onClick={handleAiGenerate}
+                  disabled={aiBusy || !aiDescription.trim()}
+                >
+                  {aiBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+                  {aiBusy ? t("rulesRegistry.aiGenerating") : t("rulesRegistry.aiGenerateButton")}
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="space-y-4">
           <Tabs value={mode} onValueChange={(v) => !readOnly && setMode(v as RegistryMode)}>
@@ -603,7 +885,17 @@ export function RegistryRuleFormDialog({
           <div className="border-t pt-3 space-y-3">
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
-                <Label className="text-xs">{t("rulesRegistry.nameLabel")}</Label>
+                <div className="flex items-center justify-between gap-2">
+                  <Label className="text-xs">{t("rulesRegistry.nameLabel")}</Label>
+                  {!readOnly && aiAvailability.available && (
+                    <SuggestButton
+                      field="name"
+                      busy={suggestingField === "name"}
+                      onClick={() => handleAiSuggestField("name")}
+                      label={t("rulesRegistry.aiSuggestButton")}
+                    />
+                  )}
+                </div>
                 <Input
                   className={`h-8 text-xs ${nameError ? "border-red-400 focus-visible:ring-red-400" : ""}`}
                   value={name}
@@ -626,7 +918,17 @@ export function RegistryRuleFormDialog({
             </div>
 
             <div className="space-y-1.5">
-              <Label className="text-xs">{t("rulesRegistry.descriptionLabel")}</Label>
+              <div className="flex items-center justify-between gap-2">
+                <Label className="text-xs">{t("rulesRegistry.descriptionLabel")}</Label>
+                {!readOnly && aiAvailability.available && (
+                  <SuggestButton
+                    field="description"
+                    busy={suggestingField === "description"}
+                    onClick={() => handleAiSuggestField("description")}
+                    label={t("rulesRegistry.aiSuggestButton")}
+                  />
+                )}
+              </div>
               <Textarea
                 className="text-xs min-h-[60px]"
                 value={description}
@@ -638,7 +940,17 @@ export function RegistryRuleFormDialog({
 
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
-                <Label className="text-xs">{t("rulesRegistry.dimensionLabel")}</Label>
+                <div className="flex items-center justify-between gap-2">
+                  <Label className="text-xs">{t("rulesRegistry.dimensionLabel")}</Label>
+                  {!readOnly && aiAvailability.available && dimensionValues.length > 0 && (
+                    <SuggestButton
+                      field="dimension"
+                      busy={suggestingField === "dimension"}
+                      onClick={() => handleAiSuggestField("dimension")}
+                      label={t("rulesRegistry.aiSuggestButton")}
+                    />
+                  )}
+                </div>
                 <Select value={dimension || undefined} onValueChange={setDimension} disabled={readOnly}>
                   <SelectTrigger className="h-8 text-xs w-full">
                     <SelectValue placeholder={t("rulesRegistry.selectDimension")} />
@@ -651,7 +963,17 @@ export function RegistryRuleFormDialog({
                 </Select>
               </div>
               <div className="space-y-1.5">
-                <Label className="text-xs">{t("rulesRegistry.severityLabel")}</Label>
+                <div className="flex items-center justify-between gap-2">
+                  <Label className="text-xs">{t("rulesRegistry.severityLabel")}</Label>
+                  {!readOnly && aiAvailability.available && severityValues.length > 0 && (
+                    <SuggestButton
+                      field="severity"
+                      busy={suggestingField === "severity"}
+                      onClick={() => handleAiSuggestField("severity")}
+                      label={t("rulesRegistry.aiSuggestButton")}
+                    />
+                  )}
+                </div>
                 <Select value={severity || undefined} onValueChange={setSeverity} disabled={readOnly}>
                   <SelectTrigger className="h-8 text-xs w-full">
                     <SelectValue placeholder={t("rulesRegistry.selectSeverity")} />

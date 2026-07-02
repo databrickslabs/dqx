@@ -37,7 +37,8 @@
     "stayOnPage": "Stay on page",
     "unsavedChanges": "Unsaved changes",
     "rowsPerPage": "Rows per page:",
-    "close": "Close"
+    "close": "Close",
+    "reset": "Reset"
   },
   "language": {
     "label": "Language",
@@ -181,7 +182,24 @@
     "failedSaveReviewStatuses": "Failed to save review statuses.",
     "importRulesTitle": "Import rules",
     "importRulesDescription": "Bulk-import rules from a DQX YAML file or generate them from a data contract.",
-    "goToImportRules": "Go to Import rules"
+    "goToImportRules": "Go to Import rules",
+    "aiSettingsTitle": "AI settings",
+    "aiSettingsDescription": "AI-assisted rule authoring and the rule suggester stay off until a serving endpoint is configured here.",
+    "aiSettingsEnabledLabel": "Enable AI features",
+    "aiSettingsEnabledHint": "Turns on Build-with-AI, per-field suggestions, and the rule-mapping suggester app-wide.",
+    "aiSettingsEndpointLabel": "AI serving endpoint",
+    "aiSettingsEndpointPlaceholder": "e.g. databricks-meta-llama-3-70b-instruct",
+    "aiSettingsRateLimitLabel": "Rate limit (requests per user per hour)",
+    "aiSettingsRateLimitHint": "0 disables the limit.",
+    "aiSettingsVectorSearchTitle": "Rule-mapping suggester (optional)",
+    "aiSettingsVectorSearchDescription": "Configure these to enable AI rule suggestions on monitored tables. Leave blank to keep the suggester off.",
+    "aiSettingsEmbeddingEndpointLabel": "Embedding endpoint",
+    "aiSettingsVsEndpointLabel": "Vector Search endpoint",
+    "aiSettingsVsIndexLabel": "Vector Search index",
+    "aiSettingsSaveButton": "Save AI settings",
+    "aiSettingsSaved": "AI settings saved.",
+    "aiSettingsSaveFailed": "Failed to save AI settings.",
+    "aiSettingsAdminOnlyHint": "Only admins can change this setting."
   },
   "discovery": {
     "breadcrumb": "Discovery",
@@ -1537,7 +1555,27 @@
     "saveAndSubmit": "Save & submit",
     "nameRequired": "Name is required.",
     "functionRequired": "Select a check function.",
-    "predicateRequired": "Enter a SQL predicate."
+    "predicateRequired": "Enter a SQL predicate.",
+    "aiBuildTitle": "Build with AI",
+    "aiBuildDescription": "Describe the data quality requirement in plain language and review a draft before applying it.",
+    "aiBuildPlaceholder": "e.g. Order amount must be positive and less than $1,000,000",
+    "aiGenerateButton": "Generate",
+    "aiGenerating": "Generating…",
+    "aiProposalTitle": "AI proposal — review before applying",
+    "aiProposalModeLabel": "Mode",
+    "aiProposalUseButton": "Use this",
+    "aiProposalDiscardButton": "Discard",
+    "aiProposalApplied": "AI proposal applied — review the fields below before saving.",
+    "aiGenerateFailed": "Failed to generate a rule proposal.",
+    "aiRateLimited": "AI usage limit reached for this hour. Try again later.",
+    "aiUnavailable": "AI is currently unavailable.",
+    "aiSuggestButton": "Suggest with AI",
+    "aiSuggestApplied": "AI suggestion applied.",
+    "aiSuggestFailed": "Failed to get an AI suggestion.",
+    "aiSuggestInvalidValue": "AI suggested a value that isn't one of the configured options. Pick one manually.",
+    "aiSuggestNoContextYet": "No details yet — fill in a few fields first.",
+    "authorKindAiGenerated": "AI generated",
+    "authorKindAiAssisted": "AI assisted"
   },
   "monitoredTables": {
     "breadcrumb": "Monitored Tables",
@@ -1644,6 +1682,22 @@
     "resultsTableFqnHint": "Filter or search for \"{{table}}\" in Runs History to see its run results.",
     "viewRunsHistory": "Open Runs History",
     "notYetPublishedResultsHint": "Publish this table to materialize its applied rules into checks before results appear here.",
-    "invalidFqnHint": "Select a table from the catalog browser."
+    "invalidFqnHint": "Select a table from the catalog browser.",
+    "suggestRulesButton": "Suggest rules",
+    "suggestRulesDialogTitle": "Suggested rules",
+    "suggestRulesDialogDescription": "Published rules ranked by relevance to this table's profile. Review each mapping before adding.",
+    "suggestRulesLoading": "Looking for relevant rules…",
+    "suggestRulesUnavailableTitle": "Suggestions aren't available",
+    "suggestRulesEmptyTitle": "No suggestions found",
+    "suggestRulesEmptyDescription": "Try applying rules manually from the registry instead.",
+    "suggestRulesAddButton_one": "Add {{count}} rule",
+    "suggestRulesAddButton_other": "Add {{count}} rules",
+    "suggestRulesAddedToast_one": "Added {{count}} rule.",
+    "suggestRulesAddedToast_other": "Added {{count}} rules.",
+    "suggestRulesAddFailed": "Failed to add some suggested rules.",
+    "suggestRulesExplanationLabel": "Why this rule",
+    "suggestRulesMappingLabel": "Mapping",
+    "suggestRulesFetchFailed": "Failed to get suggestions.",
+    "suggestRulesNoneSelected": "Select at least one suggestion to add."
   }
 }

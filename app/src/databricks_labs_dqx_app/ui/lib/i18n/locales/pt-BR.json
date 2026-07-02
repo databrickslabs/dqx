@@ -37,7 +37,8 @@
     "stayOnPage": "Permanecer na página",
     "unsavedChanges": "Alterações não salvas",
     "rowsPerPage": "Linhas por página:",
-    "close": "Fechar"
+    "close": "Fechar",
+    "reset": "Redefinir"
   },
   "language": {
     "label": "Idioma",
@@ -181,7 +182,24 @@
     "failedSaveReviewStatuses": "Falha ao salvar os status de revisão.",
     "importRulesTitle": "Importar regras",
     "importRulesDescription": "Importe regras em massa de um arquivo YAML do DQX ou gere-as a partir de um contrato de dados.",
-    "goToImportRules": "Ir para Importar regras"
+    "goToImportRules": "Ir para Importar regras",
+    "aiSettingsTitle": "Configurações de IA",
+    "aiSettingsDescription": "A criação de regras assistida por IA e o sugeridor de regras ficam desativados até que um endpoint de serving seja configurado aqui.",
+    "aiSettingsEnabledLabel": "Ativar recursos de IA",
+    "aiSettingsEnabledHint": "Ativa a criação com IA, as sugestões por campo e o sugeridor de mapeamento de regras em todo o aplicativo.",
+    "aiSettingsEndpointLabel": "Endpoint de serving de IA",
+    "aiSettingsEndpointPlaceholder": "ex.: databricks-meta-llama-3-70b-instruct",
+    "aiSettingsRateLimitLabel": "Limite de uso (solicitações por usuário por hora)",
+    "aiSettingsRateLimitHint": "0 desativa o limite.",
+    "aiSettingsVectorSearchTitle": "Sugeridor de mapeamento de regras (opcional)",
+    "aiSettingsVectorSearchDescription": "Configure estes campos para ativar as sugestões de regras por IA nas tabelas monitoradas. Deixe em branco para manter o sugeridor desativado.",
+    "aiSettingsEmbeddingEndpointLabel": "Endpoint de embeddings",
+    "aiSettingsVsEndpointLabel": "Endpoint do Vector Search",
+    "aiSettingsVsIndexLabel": "Índice do Vector Search",
+    "aiSettingsSaveButton": "Salvar configurações de IA",
+    "aiSettingsSaved": "Configurações de IA salvas.",
+    "aiSettingsSaveFailed": "Falha ao salvar as configurações de IA.",
+    "aiSettingsAdminOnlyHint": "Somente administradores podem alterar esta configuração."
   },
   "discovery": {
     "breadcrumb": "Descoberta",
@@ -1537,7 +1555,27 @@
     "saveAndSubmit": "Salvar e enviar",
     "nameRequired": "O nome é obrigatório.",
     "functionRequired": "Selecione uma função de verificação.",
-    "predicateRequired": "Informe um predicado SQL."
+    "predicateRequired": "Informe um predicado SQL.",
+    "aiBuildTitle": "Criar com IA",
+    "aiBuildDescription": "Descreva o requisito de qualidade de dados em linguagem simples e revise um rascunho antes de aplicá-lo.",
+    "aiBuildPlaceholder": "ex.: o valor do pedido deve ser positivo e menor que R$ 1.000.000",
+    "aiGenerateButton": "Gerar",
+    "aiGenerating": "Gerando…",
+    "aiProposalTitle": "Proposta da IA — revise antes de aplicar",
+    "aiProposalModeLabel": "Modo",
+    "aiProposalUseButton": "Usar esta",
+    "aiProposalDiscardButton": "Descartar",
+    "aiProposalApplied": "Proposta da IA aplicada — revise os campos abaixo antes de salvar.",
+    "aiGenerateFailed": "Falha ao gerar uma proposta de regra.",
+    "aiRateLimited": "Limite de uso de IA atingido nesta hora. Tente novamente mais tarde.",
+    "aiUnavailable": "A IA não está disponível no momento.",
+    "aiSuggestButton": "Sugerir com IA",
+    "aiSuggestApplied": "Sugestão da IA aplicada.",
+    "aiSuggestFailed": "Falha ao obter uma sugestão da IA.",
+    "aiSuggestInvalidValue": "A IA sugeriu um valor que não está entre as opções configuradas. Escolha um manualmente.",
+    "aiSuggestNoContextYet": "Ainda sem detalhes — preencha alguns campos primeiro.",
+    "authorKindAiGenerated": "Gerado por IA",
+    "authorKindAiAssisted": "Assistido por IA"
   },
   "monitoredTables": {
     "breadcrumb": "Tabelas Monitoradas",
@@ -1644,6 +1682,22 @@
     "resultsTableFqnHint": "Filtre ou busque por \"{{table}}\" no Histórico de Execuções para ver seus resultados.",
     "viewRunsHistory": "Abrir Histórico de Execuções",
     "notYetPublishedResultsHint": "Publique esta tabela para materializar suas regras aplicadas em checagens antes que os resultados apareçam aqui.",
-    "invalidFqnHint": "Selecione uma tabela no navegador de catálogo."
+    "invalidFqnHint": "Selecione uma tabela no navegador de catálogo.",
+    "suggestRulesButton": "Sugerir regras",
+    "suggestRulesDialogTitle": "Regras sugeridas",
+    "suggestRulesDialogDescription": "Regras publicadas classificadas por relevância para o perfil desta tabela. Revise cada mapeamento antes de adicionar.",
+    "suggestRulesLoading": "Procurando regras relevantes…",
+    "suggestRulesUnavailableTitle": "Sugestões indisponíveis",
+    "suggestRulesEmptyTitle": "Nenhuma sugestão encontrada",
+    "suggestRulesEmptyDescription": "Tente aplicar regras manualmente a partir do registro.",
+    "suggestRulesAddButton_one": "Adicionar {{count}} regra",
+    "suggestRulesAddButton_other": "Adicionar {{count}} regras",
+    "suggestRulesAddedToast_one": "{{count}} regra adicionada.",
+    "suggestRulesAddedToast_other": "{{count}} regras adicionadas.",
+    "suggestRulesAddFailed": "Falha ao adicionar algumas regras sugeridas.",
+    "suggestRulesExplanationLabel": "Por que esta regra",
+    "suggestRulesMappingLabel": "Mapeamento",
+    "suggestRulesFetchFailed": "Falha ao obter sugestões.",
+    "suggestRulesNoneSelected": "Selecione pelo menos uma sugestão para adicionar."
   }
 }
