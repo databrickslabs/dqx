@@ -17,6 +17,8 @@ hand-roll ``user_metadata["dimension"]`` lookups.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import datetime
 from typing import Any, Literal
 
@@ -143,6 +145,97 @@ class RuleVersion(BaseModel):
     user_metadata: dict[str, Any] = Field(default_factory=dict)
     created_by: str | None = None
     created_at: datetime | None = None
+
+
+# ---------------------------------------------------------------------------
+# Monitored tables + applied rules (Layer 2, Phase 3A — §3.1/§7)
+# ---------------------------------------------------------------------------
+
+MonitoredTableStatus = Literal["draft", "published"]
+
+# One mapping GROUP is ``{slot_name: column_name}`` — the slot→column binding
+# for exactly one materialized check. ``column_mapping`` on an applied rule is
+# a list of such groups so a single rule can be applied to a table more than
+# once with different column bindings (e.g. the same range check on two
+# different numeric columns) under one ``dq_applied_rules`` row.
+ColumnMappingGroup = dict[str, str]
+
+
+class MonitoredTable(BaseModel):
+    """Domain model for a ``dq_monitored_tables`` row.
+
+    A thin binding recording that *table_fqn* is under active Rules Registry
+    governance. Profiling data itself lives in the existing
+    ``dq_profiling_results`` Delta table (reused, not duplicated here) —
+    ``last_profiled_at`` is just a pointer so the UI can show "profiled 3
+    days ago" without a join.
+    """
+
+    binding_id: str
+    table_fqn: str
+    steward: str | None = None
+    status: MonitoredTableStatus = "draft"
+    last_profiled_at: datetime | None = None
+    created_by: str | None = None
+    created_at: datetime | None = None
+    updated_by: str | None = None
+    updated_at: datetime | None = None
+
+
+class AppliedRule(BaseModel):
+    """Domain model for a ``dq_applied_rules`` row — the LIVE LINK between a
+    published registry rule and a monitored table's column mapping.
+
+    ``pinned_version`` ``None`` means "follow latest published" (the
+    materializer re-renders this application whenever the rule is
+    republished); a concrete version number freezes it to that
+    ``dq_rule_versions`` snapshot. ``severity_override`` overrides the rule's
+    tagged severity for this application only, without mutating the registry
+    rule. ``mapping_hash`` is populated via :func:`compute_mapping_hash` —
+    never hand-computed by callers — so uniqueness on
+    ``(binding_id, rule_id, mapping_hash)`` is enforced consistently.
+    """
+
+    id: str | None = Field(default=None, description="None until persisted")
+    binding_id: str
+    rule_id: str
+    pinned_version: int | None = Field(default=None, description="None = follow latest published")
+    severity_override: str | None = None
+    column_mapping: list[ColumnMappingGroup] = Field(
+        default_factory=list,
+        description="One entry per materialized check: a slot-name -> column-name mapping group",
+    )
+    user_metadata: dict[str, Any] = Field(default_factory=dict, description="Per-application free-text tags")
+    mapping_hash: str | None = Field(default=None, description="Computed via compute_mapping_hash; dedup key")
+    created_by: str | None = None
+    created_at: datetime | None = None
+
+
+def compute_mapping_hash(column_mapping: list[ColumnMappingGroup]) -> str:
+    """Compute a deterministic dedup hash for an applied rule's *column_mapping*.
+
+    Order-insensitive at two levels, so re-submitting a semantically
+    identical mapping never slips past the ``(binding_id, rule_id,
+    mapping_hash)`` uniqueness guard just because the caller listed things in
+    a different order:
+
+    - **Within a group**: ``{"column": "id"}`` and a group built by inserting
+      keys in a different order hash identically (dicts compare by sorted
+      items, not insertion order).
+    - **Across groups**: ``[{"column": "a"}, {"column": "b"}]`` and
+      ``[{"column": "b"}, {"column": "a"}]`` hash identically — each group
+      independently maps to one materialized check, so the list order carries
+      no semantic meaning.
+
+    Args:
+        column_mapping: List of slot-name -> column-name mapping groups.
+
+    Returns:
+        A hex-encoded SHA-256 hash string.
+    """
+    normalized_groups = sorted(tuple(sorted(group.items())) for group in column_mapping)
+    combined = json.dumps(normalized_groups, sort_keys=True)
+    return hashlib.sha256(combined.encode()).hexdigest()
 
 
 # ---------------------------------------------------------------------------
