@@ -192,23 +192,27 @@ mcp-test: ## Run MCP server pytest suite (K=<expr> filter)
 	cd mcp-server && uv run --with pytest pytest tests/ \
 	  $(if $(K),-k "$(K)")
 
-# One-command MCP server deploy (parity with app-deploy). Deploys the bundle (app + runner
-# job + setup job), runs the one-time setup job (UC grants + temp-schema ownership), then
-# deploys & starts the app via ``bundle run``. The catalog-name secret must already be set
-# (see the deploy guide) — the setup job and app read it from the secret scope.
+# One-command MCP server deploy (parity with app-deploy). Ensures the runner-wheel volume
+# exists, deploys the bundle (app + runner job + setup job), runs the one-time setup job (UC
+# grants + temp-schema ownership), then deploys & starts the app via ``bundle run``. Also set
+# the catalog-name secret (see the deploy guide) — the app reads the catalog from it at runtime.
 #
-# Usage: make mcp-deploy PROFILE=my-profile
-#        make mcp-deploy PROFILE=my-profile BUNDLE_VARS='--var catalog_name=main'
+# Usage: make mcp-deploy PROFILE=my-profile CATALOG=main
+# CATALOG is REQUIRED: workspace.artifact_path is the UC volume /Volumes/<CATALOG>/tmp/dqx_artifacts
+# that hosts the runner wheels; it is resolved at deploy time and must pre-exist. Pass the same
+# catalog you set in the secret scope.
 # TARGET defaults to the bundle's default target (dev); override with TARGET=<t>.
 # The bundle artifact build runs `uv build ../` from inside mcp-server/, so the global
 # relative UV_BUILD_CONSTRAINT (.build-constraints.txt) would resolve against the wrong
 # directory. Pin it to the absolute repo-root path so the wheel build finds it.
 mcp-deploy: export UV_BUILD_CONSTRAINT := $(CURDIR)/.build-constraints.txt
 mcp-deploy: ## Deploy the MCP server bundle, run setup, and (re)deploy + start the app
-	@test -n "$(PROFILE)" || (echo "Usage: make mcp-deploy PROFILE=<databricks-profile> [TARGET=<bundle-target>] [BUNDLE_VARS=...]"; exit 1)
-	cd mcp-server && databricks bundle deploy -p $(PROFILE) $(if $(TARGET),-t $(TARGET)) $(BUNDLE_VARS)
-	cd mcp-server && databricks bundle run dqx_setup -p $(PROFILE) $(if $(TARGET),-t $(TARGET)) $(BUNDLE_VARS)
-	cd mcp-server && databricks bundle run mcp-dqx -p $(PROFILE) $(if $(TARGET),-t $(TARGET)) $(BUNDLE_VARS)
+	@test -n "$(PROFILE)" || (echo "Usage: make mcp-deploy PROFILE=<databricks-profile> CATALOG=<catalog> [TARGET=<bundle-target>] [BUNDLE_VARS=...]"; exit 1)
+	@test -n "$(CATALOG)" || (echo "Usage: make mcp-deploy PROFILE=<databricks-profile> CATALOG=<catalog> [TARGET=<bundle-target>] [BUNDLE_VARS=...]"; exit 1)
+	cd mcp-server && DQX_MCP_CATALOG=$(CATALOG) DATABRICKS_PROFILE=$(PROFILE) ./scripts/ensure_artifacts_volume.sh
+	cd mcp-server && databricks bundle deploy -p $(PROFILE) $(if $(TARGET),-t $(TARGET)) --var catalog_name=$(CATALOG) $(BUNDLE_VARS)
+	cd mcp-server && databricks bundle run dqx_setup -p $(PROFILE) $(if $(TARGET),-t $(TARGET)) --var catalog_name=$(CATALOG) $(BUNDLE_VARS)
+	cd mcp-server && databricks bundle run mcp-dqx -p $(PROFILE) $(if $(TARGET),-t $(TARGET)) --var catalog_name=$(CATALOG) $(BUNDLE_VARS)
 
 ##@ App deploy (require PROFILE=<databricks-profile>; most also need TARGET=<bundle-target>)
 

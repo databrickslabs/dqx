@@ -43,6 +43,12 @@ databricks secrets put-secret "${CONFIG_SECRET_SCOPE}" catalog_name \
   --string-value "${DQX_MCP_TEST_CATALOG}" "${PROFILE_ARG[@]}"
 echo "::endgroup::"
 
+echo "::group::ensure artifacts volume (${DQX_MCP_TEST_CATALOG}.tmp.dqx_artifacts)"
+# workspace.artifact_path is a UC volume; it must exist before `bundle deploy` uploads the wheels.
+DQX_MCP_CATALOG="${DQX_MCP_TEST_CATALOG}" DATABRICKS_PROFILE="${DATABRICKS_PROFILE:-}" \
+  ./scripts/ensure_artifacts_volume.sh
+echo "::endgroup::"
+
 echo "::group::bundle deploy (${NAME_PREFIX}, target ${BUNDLE_TARGET})"
 # The bundle uses `engine: direct` (no Terraform), so this does not download a provider.
 databricks bundle deploy -t "${BUNDLE_TARGET}" "${VARS[@]}" "${PROFILE_ARG[@]}"

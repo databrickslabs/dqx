@@ -82,7 +82,7 @@ sequenceDiagram
     App-->>Client: status / result (read from the volume)
 ```
 
-**Async pattern:** Long-running tools (profiling, rule generation, validation, running/applying checks, save/load) submit a Databricks job and return a `run_id` immediately — this avoids HTTP timeouts in clients like Genie Code. The runner is a **`python_wheel_task`** (a proper, unit-testable package, mirroring the Studio task runner); the setup job grants the runner SP read access to the bundle artifact path so the serverless environment can install its wheel. It writes its JSON result to a **UC volume** (`<catalog>.tmp.mcp_results`) keyed by run id; the client then calls `get_run_result(run_id)`, and the app reads that file back via the Files API (no SQL warehouse needed). If the job is still running, `get_run_result` returns `{"status": "running"}`; if the `run_id` is invalid/expired it returns `{"status": "not_found"}`.
+**Async pattern:** Long-running tools (profiling, rule generation, validation, running/applying checks, save/load) submit a Databricks job and return a `run_id` immediately — this avoids HTTP timeouts in clients like Genie Code. The runner is a **`python_wheel_task`** (a proper, unit-testable package, mirroring the Studio task runner); its wheel is hosted in a UC volume (`<catalog>.tmp.dqx_artifacts`) and the setup job grants the runner SP `READ VOLUME` there so the serverless environment can install it. It writes its JSON result to a **UC volume** (`<catalog>.tmp.mcp_results`) keyed by run id; the client then calls `get_run_result(run_id)`, and the app reads that file back via the Files API (no SQL warehouse needed). If the job is still running, `get_run_result` returns `{"status": "running"}`; if the `run_id` is invalid/expired it returns `{"status": "not_found"}`.
 
 **Two service principals (why):** the app's auto-created SP is *app-scoped* and **cannot** be a job's `run_as` identity, so the runner job runs as a separate, least-privilege **workspace service principal** (`runner_service_principal_id`). The **app SP** runs the app process (submits the job, polls status, reads result files, sweeps stale views/files); the **runner SP** runs the job (reads through views, applies checks, writes outputs, drops its own view). The job never runs as the deploying human.
 
@@ -183,17 +183,20 @@ To change the catalog later, update the secret and restart the app.
 **One command** (parity with the Studio app's `make app-deploy`):
 
 ```bash
-make mcp-deploy PROFILE=<profile> \
+make mcp-deploy PROFILE=<profile> CATALOG=<catalog> \
   BUNDLE_VARS='--var runner_service_principal_id=<runner-sp-application-id>'
 ```
 
-This runs `bundle deploy`, the one-time setup job, and then deploys + starts the app. `runner_service_principal_id` is **required** (its placeholder default is not a real SP) — use the application id of the [runner SP](#runner-service-principal-one-time). Add `--var catalog_name=<catalog>` to override the catalog, or `TARGET=<target>` for a non-default bundle target.
+This ensures the runner-wheel volume exists, then runs `bundle deploy`, the one-time setup job, and finally deploys + starts the app. Both flags are **required**: `CATALOG` is the UC catalog that hosts the runner-wheel volume (`/Volumes/<catalog>/tmp/dqx_artifacts`) — pass the same catalog you set in the secret scope — and `runner_service_principal_id` (its placeholder default is not a real SP) — use the application id of the [runner SP](#runner-service-principal-one-time). Add `TARGET=<target>` for a non-default bundle target.
 
 **Or step by step** (what `make mcp-deploy` runs):
 
 ```bash
 cd mcp-server
-VARS='--var runner_service_principal_id=<runner-sp-application-id>'
+VARS='--var runner_service_principal_id=<runner-sp-application-id> --var catalog_name=<catalog>'
+
+# Ensure the runner-wheel volume exists BEFORE deploy uploads artifacts into it
+DQX_MCP_CATALOG=<catalog> DATABRICKS_PROFILE=<profile> ./scripts/ensure_artifacts_volume.sh
 
 # Deploy the bundle (app + runner job + setup job)
 databricks bundle deploy $VARS --profile <profile>
@@ -205,7 +208,7 @@ databricks bundle run dqx_setup $VARS --profile <profile>
 databricks bundle run mcp-dqx $VARS --profile <profile>
 ```
 
-The **setup job** reads the catalog name from the secret and:
+The **setup job**:
 - Creates the `<catalog>.tmp` schema (for temp views) and the `<catalog>.tmp.mcp_results` volume (for result files)
 - Keeps the **deploying principal** as the schema owner (so setup can create the volume and manage grants on every run)
 - Grants `USE CATALOG` to all users, the app SP, and the runner SP
@@ -213,7 +216,9 @@ The **setup job** reads the catalog name from the secret and:
 - Grants `USE SCHEMA` + `SELECT` + `MANAGE` on the tmp schema to the app SP and the runner SP (`MANAGE` lets them drop the OBO-created temp views without owning the schema)
 - Grants `READ VOLUME` + `WRITE VOLUME` on the results volume to both SPs
 - Grants the **app SP** `CAN_MANAGE_RUN` on the runner job (so the app can submit runs and poll results)
-- Grants the **runner SP** `CAN_READ` on the bundle artifact path (so the serverless env can install the runner wheel)
+- Grants the **runner SP** `READ VOLUME` on the `<catalog>.tmp.dqx_artifacts` volume (so the serverless env can install the runner wheel)
+
+The `dqx_artifacts` volume that hosts the runner wheels is created **before** `bundle deploy` (by `scripts/ensure_artifacts_volume.sh`, which `make mcp-deploy` runs for you) because `bundle deploy` uploads the wheels into it. This is why `CATALOG` must be passed at deploy time.
 
 ### 4. Find your MCP endpoint
 
@@ -245,7 +250,7 @@ databricks apps get mcp-dqx --profile <profile> -o json | jq -r .url
 |----------|-------------|---------|
 | `runner_service_principal_id` | **Required.** Application id of the workspace SP the runner job runs as (see [Runner service principal](#runner-service-principal-one-time)). The placeholder default is not a real SP. | `00000000-…` |
 | `name_prefix` | Prefix for all resource names (app + jobs). Override to deploy an isolated second copy. | `mcp-dqx` |
-| `catalog_name` | Catalog for temp views. Empty ⇒ read from the secret scope (the normal case). | `""` |
+| `catalog_name` | **Required at deploy time.** Catalog for temp views and the runner-wheel volume (`workspace.artifact_path` = `/Volumes/<catalog>/tmp/dqx_artifacts`, resolved during `bundle deploy`). Pass the same catalog you set in the secret scope. | `""` |
 | `config_secret_scope` | Secret scope holding `catalog_name`. | `dqx-config` |
 | `users_group` | Group granted `CAN_USE` on the app and access to the temp schema. | `account users` |
 

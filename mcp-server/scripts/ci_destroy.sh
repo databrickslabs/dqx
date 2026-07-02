@@ -20,3 +20,9 @@ echo "::endgroup::"
 
 # bundle destroy removes the app; drop the CI secret scope too (ignore if absent).
 databricks secrets delete-scope "${CONFIG_SECRET_SCOPE}" "${PROFILE_ARG[@]}" 2>/dev/null || true
+
+# The artifacts volume is created out-of-band (ensure_artifacts_volume.sh), so bundle destroy does
+# not remove it. Drop it best-effort (ignore if absent / catalog unset).
+if [ -n "${DQX_MCP_TEST_CATALOG:-}" ]; then
+  databricks volumes delete "${DQX_MCP_TEST_CATALOG}.tmp.dqx_artifacts" "${PROFILE_ARG[@]}" 2>/dev/null || true
+fi

@@ -22,6 +22,10 @@ Grants:
                        temp view at the end of each run). Only granted when provided.
   Volume level (catalog.tmp.mcp_results):
     - app SP, runner SP → READ VOLUME, WRITE VOLUME (result-file exchange)
+  Volume level (catalog.tmp.dqx_artifacts) — hosts the runner wheels (workspace.artifact_path):
+    - runner SP → READ VOLUME (so the serverless env can install the runner wheel). The volume is
+      created out-of-band before `bundle deploy` (scripts/ensure_artifacts_volume.sh); setup only
+      ensures it exists and applies the grant.
 
 Note: the runner SP needs write access wherever callers ask it to write outputs
 (apply_checks_and_save_to_table / save_checks) and read access to any contract/checks files —
@@ -87,14 +91,12 @@ dbutils.widgets.text("secret_scope", "dqx-config")
 dbutils.widgets.text("secret_key", "catalog_name")
 dbutils.widgets.text("runner_service_principal_id", "")
 dbutils.widgets.text("runner_job_id", "")
-dbutils.widgets.text("artifact_path", "")
 
 catalog_name = dbutils.widgets.get("catalog_name")
 app_name = dbutils.widgets.get("app_name")
 users_group = dbutils.widgets.get("users_group")
 runner_sp = dbutils.widgets.get("runner_service_principal_id").strip()
 runner_job_id = dbutils.widgets.get("runner_job_id").strip()
-artifact_path = dbutils.widgets.get("artifact_path").strip()
 
 # Read catalog name from secret if not provided directly
 if not catalog_name:
@@ -230,31 +232,29 @@ else:
 
 # COMMAND ----------
 
-# Grant the runner SP read access to the bundle artifact path so the serverless environment can
-# install the runner wheel. The wheel lives under the deployer's workspace bundle folder, which a
-# least-privilege run_as SP cannot read by default — without this the job fails at library install
-# with "library file does not exist or ... no permission". CAN_READ on the artifacts directory
-# propagates to the wheel underneath it.
-if runner_sp_configured and artifact_path:
-    from databricks.sdk.service.workspace import WorkspaceObjectAccessControlRequest, WorkspaceObjectPermissionLevel
+# Artifacts volume: the bundle's workspace.artifact_path points here, so `bundle deploy` uploads
+# the runner wheels into this volume. The serverless environment then installs them as the runner
+# SP, which needs READ VOLUME. A UC volume grant is explicit and volume-wide, so — unlike the old
+# workspace-folder approach — it doesn't depend on ACL inheritance from the deployer's home folder.
+# The volume is created before deploy (scripts/ensure_artifacts_volume.sh); CREATE ... IF NOT EXISTS
+# here is idempotent defense-in-depth (the deploy principal owns the schema, so it can create it).
+artifacts_volume = "dqx_artifacts"
+_validate_identifier(artifacts_volume, "artifacts_volume")
+artifacts_volume_fqn = f"`{catalog_name}`.`{schema_name}`.`{artifacts_volume}`"
+spark.sql(f"CREATE VOLUME IF NOT EXISTS {artifacts_volume_fqn}")
+logger.info(f"Artifacts volume {artifacts_volume_fqn} ready")
 
-    art = ws.workspace.get_status(artifact_path)
-    ws.workspace.update_permissions(
-        workspace_object_type="directories",
-        workspace_object_id=str(art.object_id),
-        access_control_list=[
-            WorkspaceObjectAccessControlRequest(
-                service_principal_name=runner_sp, permission_level=WorkspaceObjectPermissionLevel.CAN_READ
-            )
-        ],
-    )
-    logger.info(f"Granted runner SP {runner_sp} CAN_READ on artifact path {artifact_path}")
+if runner_sp_configured:
+    sql = f"GRANT READ VOLUME ON VOLUME {artifacts_volume_fqn} TO `{runner_sp}`"
+    logger.info(f"Executing: {sql}")
+    spark.sql(sql)
 else:
-    logger.warning("artifact_path or runner SP not provided — skipping runner-SP read grant on artifacts")
+    logger.warning("runner SP not provided — skipping runner-SP READ VOLUME grant on the artifacts volume")
 
 # COMMAND ----------
 
 logger.info(
     "Setup complete — schema owned by the deploy principal; app SP and runner SP granted MANAGE "
-    "(temp-view cleanup) and volume READ/WRITE; app SP granted CAN_MANAGE_RUN on the runner job."
+    "(temp-view cleanup) and results-volume READ/WRITE; runner SP granted READ VOLUME on the "
+    "artifacts volume; app SP granted CAN_MANAGE_RUN on the runner job."
 )
