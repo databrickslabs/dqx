@@ -150,6 +150,8 @@
     "reserved": "riservato",
     "keyHint": "Lettere, cifre, underscore. Deve iniziare con una lettera.",
     "weightHint": "Controlla il selettore di peso nelle pagine di creazione regole.",
+    "builtinKeyHint": "Chiave predefinita. Il nome è bloccato, ma i valori e i colori possono essere modificati.",
+    "builtinCannotDelete": "Le chiavi predefinite non possono essere eliminate.",
     "descriptionLabel": "Descrizione",
     "optional": "(opzionale)",
     "weightDescriptionPlaceholder": "Peso della regola (1 = informativo, 5 = critico)",
@@ -160,6 +162,9 @@
     "allowCustomValues": "Consenti valori personalizzati",
     "noValuesHint": "Nessun valore — gli autori alterneranno questa etichetta come tag booleano (true/false).",
     "removeValueAria": "Rimuovi valore {{value}}",
+    "valueColorTitle": "Colore per {{value}}",
+    "valueColorAria": "Scegli un colore per il valore {{value}}",
+    "valueColorPlaceholder": "#RRGGBB",
     "weightValuePlaceholder": "aggiungi valore peso (es. 1)",
     "addValuePlaceholder": "aggiungi valore… (premi Invio)",
     "keyPlaceholder": "es. team",
@@ -170,7 +175,10 @@
     "clearedDashboardOverride": "Override della dashboard rimosso.",
     "failedClearDashboardOverride": "Impossibile rimuovere l'override della dashboard.",
     "reviewStatusesSaved": "Stati di revisione salvati.",
-    "failedSaveReviewStatuses": "Impossibile salvare gli stati di revisione."
+    "failedSaveReviewStatuses": "Impossibile salvare gli stati di revisione.",
+    "importRulesTitle": "Importa regole",
+    "importRulesDescription": "Importa regole in blocco da un file YAML DQX oppure generarle a partire da un contratto dati.",
+    "goToImportRules": "Vai a Importa regole"
   },
   "discovery": {
     "breadcrumb": "Esplorazione",

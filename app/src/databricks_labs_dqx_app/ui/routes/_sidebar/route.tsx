@@ -7,7 +7,6 @@ import { usePermissions } from "@/hooks/use-permissions";
 import {
   Sparkles,
   Database,
-  Upload,
   BarChart3,
   PlayCircle,
   ShieldCheck,
@@ -38,15 +37,13 @@ function Layout() {
   const { canCreateRules, canRunRules } = usePermissions();
   const { t } = useTranslation();
 
-  // ``/rules/from-contract`` still resolves (it redirects into
-  // ``/rules/import?tab=contract``) so we leave it in the active-route
-  // detection — old bookmarks should still highlight the Create group
-  // in the sidebar during the brief redirect frame.
+  // Import rules (``/rules/import``, plus the legacy ``/rules/from-contract``
+  // redirect) moved to the Config/Settings page — it's reachable from the
+  // user menu, not this group — so it no longer drives the Create group's
+  // active state.
   const isCreateActive =
     location.pathname.startsWith("/rules/create") ||
     location.pathname.startsWith("/rules/single-table") ||
-    location.pathname.startsWith("/rules/import") ||
-    location.pathname.startsWith("/rules/from-contract") ||
     location.pathname.startsWith("/profiler");
 
   const [createOpen, setCreateOpen] = useState(isCreateActive);
@@ -74,17 +71,10 @@ function Layout() {
       icon: <BarChart3 size={14} />,
       match: (path: string) => path.startsWith("/profiler"),
     },
-    {
-      // ``/rules/import`` now hosts both DQX YAML *and* the data-contract
-      // generation flow as two tabs, so the standalone "From contract"
-      // entry was removed and the old route redirects here.
-      to: "/rules/import",
-      label: t("sidebar.importRules"),
-      icon: <Upload size={14} />,
-      match: (path: string) =>
-        path.startsWith("/rules/import") ||
-        path.startsWith("/rules/from-contract"),
-    },
+    // Import rules (``/rules/import``, DQX YAML + data-contract tabs, plus the
+    // legacy ``/rules/from-contract`` redirect) moved into the Config/Settings
+    // page — see ``ImportRulesSettings`` in config.tsx. The route itself is
+    // unchanged; only this sidebar shortcut was removed.
   ];
 
   return (

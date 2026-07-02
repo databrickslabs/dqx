@@ -1,10 +1,10 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { QueryErrorResetBoundary, useQueryClient } from "@tanstack/react-query";
 import { ErrorBoundary } from "react-error-boundary";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
-import { AlertCircle, CheckCircle2, Circle, Clock, Globe, LayoutDashboard, Loader2, Search, Tags, Plus, Trash2, X, ExternalLink, RotateCcw, ShieldCheck } from "lucide-react";
+import { AlertCircle, CheckCircle2, Circle, Clock, Globe, LayoutDashboard, Loader2, Lock, Search, Tags, Plus, Trash2, Upload, X, ExternalLink, RotateCcw, ShieldCheck } from "lucide-react";
 import { FadeIn } from "@/components/anim/FadeIn";
 import { ShinyText } from "@/components/anim/ShinyText";
 import { RoleManagement } from "@/components/RoleManagement";
@@ -245,6 +245,7 @@ function TimezoneSettings() {
 
 const LABEL_KEY_RE = /^[A-Za-z][A-Za-z0-9_]*$/;
 const RESERVED_WEIGHT_KEY = "weight";
+const HEX_COLOR_RE = /^#[0-9A-Fa-f]{6}$/;
 
 interface DraftDefinition extends LabelDefinition {
   draftId: string;
@@ -258,16 +259,26 @@ function defToDraft(d: LabelDefinition): DraftDefinition {
     description: d.description ?? "",
     values: [...d.values],
     allow_custom_values: !!d.allow_custom_values,
+    value_colors: d.value_colors ? { ...d.value_colors } : null,
+    is_builtin: !!d.is_builtin,
     newValueDraft: "",
   };
 }
 
 function draftToDef(d: DraftDefinition): LabelDefinition {
+  const values = d.values.map((v) => v.trim()).filter(Boolean);
+  const valueSet = new Set(values);
+  const colors: Record<string, string> = {};
+  for (const [value, color] of Object.entries(d.value_colors ?? {})) {
+    if (valueSet.has(value) && HEX_COLOR_RE.test(color)) colors[value] = color;
+  }
   return {
     key: d.key.trim(),
     description: (d.description ?? "").trim(),
-    values: d.values.map((v) => v.trim()).filter(Boolean),
+    values,
     allow_custom_values: d.allow_custom_values,
+    value_colors: Object.keys(colors).length > 0 ? colors : null,
+    is_builtin: !!d.is_builtin,
   };
 }
 
@@ -329,6 +340,8 @@ function LabelDefinitionsSettings() {
         description: "",
         values: [],
         allow_custom_values: false,
+        value_colors: null,
+        is_builtin: false,
         newValueDraft: "",
       },
     ]);
@@ -352,6 +365,18 @@ function LabelDefinitionsSettings() {
     const target = drafts.find((d) => d.draftId === draftId);
     if (!target) return;
     updateDraft(draftId, { values: target.values.filter((v) => v !== value) });
+  };
+
+  const setValueColor = (draftId: string, value: string, color: string | null) => {
+    const target = drafts.find((d) => d.draftId === draftId);
+    if (!target) return;
+    const nextColors = { ...(target.value_colors ?? {}) };
+    if (color) {
+      nextColors[value] = color;
+    } else {
+      delete nextColors[value];
+    }
+    updateDraft(draftId, { value_colors: Object.keys(nextColors).length > 0 ? nextColors : null });
   };
 
   const handleSave = () => {
@@ -412,6 +437,7 @@ function LabelDefinitionsSettings() {
             onRemove={() => removeDraft(d.draftId)}
             onAddValue={() => addValue(d.draftId)}
             onRemoveValue={(v) => removeValue(d.draftId, v)}
+            onSetValueColor={(v, color) => setValueColor(d.draftId, v, color)}
           />
         ))}
         <div className="flex flex-wrap items-center gap-2">
@@ -476,6 +502,65 @@ interface DefinitionEditorCardProps {
   onRemove: () => void;
   onAddValue: () => void;
   onRemoveValue: (value: string) => void;
+  onSetValueColor: (value: string, color: string | null) => void;
+}
+
+/** Small color swatch + hex text editor for one value's optional badge color. */
+function ValueColorEditor({
+  value,
+  color,
+  onSetColor,
+}: {
+  value: string;
+  color: string | undefined;
+  onSetColor: (color: string | null) => void;
+}) {
+  const { t } = useTranslation();
+  const [hexText, setHexText] = useState(color ?? "");
+
+  useEffect(() => {
+    setHexText(color ?? "");
+  }, [color]);
+
+  const commitHex = (raw: string) => {
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      onSetColor(null);
+      return;
+    }
+    const normalised = trimmed.startsWith("#") ? trimmed : `#${trimmed}`;
+    if (HEX_COLOR_RE.test(normalised)) {
+      onSetColor(normalised);
+    } else {
+      // Invalid input — revert the text box rather than persisting garbage.
+      setHexText(color ?? "");
+    }
+  };
+
+  return (
+    <span className="flex items-center gap-1" title={t("config.valueColorTitle", { value })}>
+      <input
+        type="color"
+        aria-label={t("config.valueColorAria", { value })}
+        value={color && HEX_COLOR_RE.test(color) ? color : "#94a3b8"}
+        onChange={(e) => onSetColor(e.target.value)}
+        className="h-5 w-5 cursor-pointer rounded border p-0"
+      />
+      <Input
+        value={hexText}
+        onChange={(e) => setHexText(e.target.value)}
+        onBlur={(e) => commitHex(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            commitHex(e.currentTarget.value);
+          }
+        }}
+        placeholder={t("config.valueColorPlaceholder")}
+        className="h-5 w-20 px-1 text-[10px] font-mono"
+      />
+    </span>
+  );
 }
 
 function DefinitionEditorCard({
@@ -484,12 +569,15 @@ function DefinitionEditorCard({
   onRemove,
   onAddValue,
   onRemoveValue,
+  onSetValueColor,
 }: DefinitionEditorCardProps) {
   const { t } = useTranslation();
   const keyValid = !draft.key || LABEL_KEY_RE.test(draft.key.trim());
   const isWeight = draft.key.trim() === RESERVED_WEIGHT_KEY;
+  const isBuiltin = !!draft.is_builtin;
+  const isLocked = isWeight || isBuiltin;
   return (
-    <div className={cn("rounded-md border p-3 space-y-3", isWeight ? "bg-blue-50/30 border-blue-200/60" : "bg-muted/20")}>
+    <div className={cn("rounded-md border p-3 space-y-3", isLocked ? "bg-blue-50/30 border-blue-200/60" : "bg-muted/20")}>
       <div className="flex items-start gap-3">
         <div className="grid grid-cols-[180px_1fr] gap-3 flex-1 items-start">
           <div className="space-y-1">
@@ -500,11 +588,18 @@ function DefinitionEditorCard({
                   {t("config.reserved")}
                 </Badge>
               )}
+              {isBuiltin && !isWeight && (
+                <Badge variant="secondary" className="h-4 gap-0.5 px-1 text-[10px] font-normal">
+                  <Lock className="h-2.5 w-2.5" />
+                  {t("config.reserved")}
+                </Badge>
+              )}
             </Label>
             <Input
               value={draft.key}
               onChange={(e) => onChange({ key: e.target.value })}
               placeholder={t("config.keyPlaceholder")}
+              disabled={isBuiltin}
               className={cn("h-8 text-xs font-mono", !keyValid && "border-destructive")}
             />
             {!keyValid && (
@@ -515,6 +610,11 @@ function DefinitionEditorCard({
             {isWeight && (
               <p className="text-[10px] text-blue-700">
                 {t("config.weightHint")}
+              </p>
+            )}
+            {isBuiltin && !isWeight && (
+              <p className="text-[10px] text-blue-700">
+                {t("config.builtinKeyHint")}
               </p>
             )}
           </div>
@@ -535,8 +635,10 @@ function DefinitionEditorCard({
           type="button"
           variant="ghost"
           size="icon"
-          className="h-8 w-8 shrink-0 text-destructive hover:text-destructive"
+          className="h-8 w-8 shrink-0 text-destructive hover:text-destructive disabled:opacity-30"
           onClick={onRemove}
+          disabled={isBuiltin}
+          title={isBuiltin ? t("config.builtinCannotDelete") : undefined}
           aria-label={t("config.removeDefinition")}
         >
           <Trash2 className="h-3.5 w-3.5" />
@@ -564,8 +666,13 @@ function DefinitionEditorCard({
               <Badge
                 key={v}
                 variant="secondary"
-                className="h-6 gap-1 pl-2 pr-1 text-xs font-normal"
+                className="h-6 gap-1.5 pl-2 pr-1 text-xs font-normal"
               >
+                <ValueColorEditor
+                  value={v}
+                  color={draft.value_colors?.[v]}
+                  onSetColor={(color) => onSetValueColor(v, color)}
+                />
                 <span className="font-mono">{v}</span>
                 <button
                   type="button"
@@ -1455,6 +1562,38 @@ function RunReviewStatusesSettings() {
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Import rules — relocated here from the "Create Rules" sidebar group so bulk
+// import (DQX YAML or data-contract generation) reads as an admin/registry
+// operation rather than a per-rule authoring shortcut. The tabbed workspace
+// itself keeps living at ``/rules/import`` — this card is just an entry point.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function ImportRulesSettings() {
+  const { t } = useTranslation();
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Upload className="h-5 w-5" />
+          {t("config.importRulesTitle")}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          {t("config.importRulesDescription")}
+        </p>
+        <Button asChild size="sm" className="gap-1.5">
+          <Link to="/rules/import">
+            <Upload className="h-3.5 w-3.5" />
+            {t("config.goToImportRules")}
+          </Link>
+        </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
 function ConfigPage() {
   const { t } = useTranslation();
   const { isAdmin } = usePermissions();
@@ -1506,6 +1645,11 @@ function ConfigPage() {
                 <Suspense fallback={<Skeleton className="h-40 w-full" />}>
                   <RunReviewStatusesSettings />
                 </Suspense>
+              </ErrorBoundary>
+            </FadeIn>
+            <FadeIn delay={0.18}>
+              <ErrorBoundary onReset={reset} fallbackRender={SectionError}>
+                <ImportRulesSettings />
               </ErrorBoundary>
             </FadeIn>
             <FadeIn delay={0.2}>

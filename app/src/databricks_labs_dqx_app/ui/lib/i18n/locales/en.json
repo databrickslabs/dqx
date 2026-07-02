@@ -150,6 +150,8 @@
     "reserved": "reserved",
     "keyHint": "Letters, digits, underscore. Must start with a letter.",
     "weightHint": "Drives the weight picker on rule authoring pages.",
+    "builtinKeyHint": "Built-in key. The name is locked, but its values and colors can be changed.",
+    "builtinCannotDelete": "Built-in keys can't be deleted.",
     "descriptionLabel": "Description",
     "optional": "(optional)",
     "weightDescriptionPlaceholder": "Rule weight (1 = informational, 5 = critical)",
@@ -160,6 +162,9 @@
     "allowCustomValues": "Allow custom values",
     "noValuesHint": "No values — authors will toggle this label as a boolean tag (true/false).",
     "removeValueAria": "Remove value {{value}}",
+    "valueColorTitle": "Color for {{value}}",
+    "valueColorAria": "Pick a color for value {{value}}",
+    "valueColorPlaceholder": "#RRGGBB",
     "weightValuePlaceholder": "add weight value (e.g. 1)",
     "addValuePlaceholder": "add value… (press Enter)",
     "keyPlaceholder": "e.g. team",
@@ -170,7 +175,10 @@
     "clearedDashboardOverride": "Cleared dashboard override.",
     "failedClearDashboardOverride": "Failed to clear dashboard override.",
     "reviewStatusesSaved": "Review statuses saved.",
-    "failedSaveReviewStatuses": "Failed to save review statuses."
+    "failedSaveReviewStatuses": "Failed to save review statuses.",
+    "importRulesTitle": "Import rules",
+    "importRulesDescription": "Bulk-import rules from a DQX YAML file or generate them from a data contract.",
+    "goToImportRules": "Go to Import rules"
   },
   "discovery": {
     "breadcrumb": "Discovery",

@@ -150,6 +150,8 @@
     "reserved": "reservado",
     "keyHint": "Letras, dígitos, guion bajo. Debe comenzar con una letra.",
     "weightHint": "Controla el selector de peso en las páginas de creación de reglas.",
+    "builtinKeyHint": "Clave integrada. El nombre está bloqueado, pero sus valores y colores se pueden cambiar.",
+    "builtinCannotDelete": "Las claves integradas no se pueden eliminar.",
     "descriptionLabel": "Descripción",
     "optional": "(opcional)",
     "weightDescriptionPlaceholder": "Peso de la regla (1 = informativo, 5 = crítico)",
@@ -160,6 +162,9 @@
     "allowCustomValues": "Permitir valores personalizados",
     "noValuesHint": "Sin valores — los autores alternarán esta etiqueta como una etiqueta booleana (true/false).",
     "removeValueAria": "Quitar valor {{value}}",
+    "valueColorTitle": "Color para {{value}}",
+    "valueColorAria": "Elegir un color para el valor {{value}}",
+    "valueColorPlaceholder": "#RRGGBB",
     "weightValuePlaceholder": "agregar valor de peso (ej. 1)",
     "addValuePlaceholder": "agregar valor… (presiona Enter)",
     "keyPlaceholder": "ej. equipo",
@@ -170,7 +175,10 @@
     "clearedDashboardOverride": "Anulación del panel eliminada.",
     "failedClearDashboardOverride": "Error al eliminar la anulación del panel.",
     "reviewStatusesSaved": "Estados de revisión guardados.",
-    "failedSaveReviewStatuses": "Error al guardar los estados de revisión."
+    "failedSaveReviewStatuses": "Error al guardar los estados de revisión.",
+    "importRulesTitle": "Importar reglas",
+    "importRulesDescription": "Importa reglas en bloque desde un archivo YAML de DQX o genéralas a partir de un contrato de datos.",
+    "goToImportRules": "Ir a Importar reglas"
   },
   "discovery": {
     "breadcrumb": "Descubrimiento",

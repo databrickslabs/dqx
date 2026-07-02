@@ -150,6 +150,8 @@
     "reserved": "reservado",
     "keyHint": "Letras, dígitos, sublinhado. Deve começar com uma letra.",
     "weightHint": "Controla o seletor de peso nas páginas de criação de regras.",
+    "builtinKeyHint": "Chave interna. O nome está bloqueado, mas os valores e as cores podem ser alterados.",
+    "builtinCannotDelete": "Chaves internas não podem ser excluídas.",
     "descriptionLabel": "Descrição",
     "optional": "(opcional)",
     "weightDescriptionPlaceholder": "Peso da regra (1 = informativo, 5 = crítico)",
@@ -160,6 +162,9 @@
     "allowCustomValues": "Permitir valores personalizados",
     "noValuesHint": "Sem valores — autores alternarão este rótulo como uma tag booleana (true/false).",
     "removeValueAria": "Remover valor {{value}}",
+    "valueColorTitle": "Cor para {{value}}",
+    "valueColorAria": "Escolher uma cor para o valor {{value}}",
+    "valueColorPlaceholder": "#RRGGBB",
     "weightValuePlaceholder": "adicionar valor de peso (ex: 1)",
     "addValuePlaceholder": "adicionar valor… (pressione Enter)",
     "keyPlaceholder": "ex: equipe",
@@ -170,7 +175,10 @@
     "clearedDashboardOverride": "Substituição do dashboard removida.",
     "failedClearDashboardOverride": "Falha ao remover a substituição do dashboard.",
     "reviewStatusesSaved": "Status de revisão salvos.",
-    "failedSaveReviewStatuses": "Falha ao salvar os status de revisão."
+    "failedSaveReviewStatuses": "Falha ao salvar os status de revisão.",
+    "importRulesTitle": "Importar regras",
+    "importRulesDescription": "Importe regras em massa de um arquivo YAML do DQX ou gere-as a partir de um contrato de dados.",
+    "goToImportRules": "Ir para Importar regras"
   },
   "discovery": {
     "breadcrumb": "Descoberta",
