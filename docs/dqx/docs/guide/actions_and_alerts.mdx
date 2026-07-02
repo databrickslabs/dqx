@@ -772,9 +772,9 @@ Loading actions yourself with `DQActionManager` and passing them to `DQEngine(ac
 <Admonition type="note" title="Per-run-config action behaviour">
 When a run config sets *actions_location*, its loaded actions are applied for that run config
 **instead of** any engine-level *actions* passed to the shared `DQEngine`; run configs without
-*actions_location* still use the engine-level actions. Action event history is keyed by action name,
-so if several run configs share one *action_events_location*, give their actions distinct names (or
-use a separate events table per run config) to keep alert suppression independent.
+*actions_location* still use the engine-level actions. Action events are scoped by run config name,
+so several run configs can safely share one *action_events_location* — each run config's alert
+suppression is seeded only from its own events.
 </Admonition>
 
 ### Recording action event history

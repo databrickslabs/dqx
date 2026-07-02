@@ -47,6 +47,10 @@ class AlertEvent:
         input_location: Source path/URI of the data being checked, or *None*.
         destinations: Names of the destinations that were targeted.
         delivery_errors: Error messages for any destinations that failed delivery.
+        run_config_name: Run configuration the event belongs to, for auditing. Populated from the
+            events table on load. On append the event store stamps its own run configuration (from its
+            storage config), so this field is informational and is not consulted on write; defaults to
+            *default* for engines that are not scoped to a run config.
     """
 
     action_name: str
@@ -59,6 +63,7 @@ class AlertEvent:
     input_location: str | None
     destinations: list[str]
     delivery_errors: list[str]
+    run_config_name: str = "default"
 
 
 # ---------------------------------------------------------------------------
@@ -125,8 +130,11 @@ class ActionStateStore:
         self._last_fired: dict[str, datetime] = {}
         # action_name -> last recorded ActionStatus
         self._last_status: dict[str, ActionStatus] = {}
-        # Guards the in-memory maps: one engine shares a single store across run configs
-        # evaluated on a thread pool, so should_fire/record/seed must be serialized.
+        # Guards the in-memory maps. In the multi-run-config runner each run config gets its own
+        # engine and its own state store, but a single store may still be driven concurrently (e.g. a
+        # streaming query's progress callback), so should_fire/record/seed must be serialized. The
+        # maps are keyed by action_name only; cross-run-config isolation comes from each store being
+        # scoped to one run config (its event store filters by run_config_name).
         self._lock = threading.RLock()
 
     def seed(self) -> None:

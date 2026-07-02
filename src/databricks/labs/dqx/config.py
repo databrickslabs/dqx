@@ -735,10 +735,15 @@ class ActionEventsConfig(BaseChecksStorageConfig):
 
     Args:
         location: Fully qualified UC table name (e.g. *catalog.schema.events*) where action events are written.
-        mode: Write mode for the table (*append* or *overwrite*, default *append*).
+        mode: Reserved for API symmetry with the other storage configs. Action events form an
+            append-only audit log, so the events table is always appended to regardless of this value.
+        run_config_name: Run configuration the events belong to. Events are stamped with, and loaded
+            filtered by, this value so a shared events table keeps per-run-config alert suppression
+            independent (default is *default*).
     """
 
     mode: str = "append"
+    run_config_name: str = "default"
 
     @model_validator(mode='before')
     @classmethod

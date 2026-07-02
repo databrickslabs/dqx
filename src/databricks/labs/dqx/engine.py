@@ -2037,7 +2037,7 @@ class DQEngine(DQEngineBase):
                 "action_events_location must be a Unity Catalog table (catalog.schema.table) or a Lakebase table; "
                 "file locations are not supported for action events."
             )
-        return ActionEventsConfig(location=location)
+        return ActionEventsConfig(location=location, run_config_name=run_config.name)
 
     @staticmethod
     def _wait_for_one_time_trigger_streaming_queries(

@@ -76,11 +76,58 @@ def test_run_config_auto_loads_fires_and_persists_action_events(ws, spark, make_
 
     engine.apply_checks_and_save_in_tables([run_config])
 
-    # The action fired and its event was persisted to the events table.
+    # The action fired and its event was persisted to the events table, scoped to the run config.
     events = spark.read.table(events_table)
     fired = [row for row in events.collect() if row["fired"]]
     assert len(fired) == 1, f"Expected exactly one fired action event, got {len(fired)}"
     assert fired[0]["action_name"] == "alert_on_errors"
+    assert fired[0]["run_config_name"] == run_config_name
+
+
+def test_shared_action_events_location_scopes_events_per_run_config(ws, spark, make_schema, make_random) -> None:
+    """Two run configs sharing one events table (same action name) keep events scoped by run config."""
+    catalog = TEST_CATALOG
+    schema = make_schema(catalog_name=catalog).name
+    base = f"{catalog}.{schema}"
+    input_table = f"{base}.{make_random(8).lower()}"
+    checks_table = f"{base}.{make_random(8).lower()}"
+    actions_table = f"{base}.{make_random(8).lower()}"
+    events_table = f"{base}.{make_random(8).lower()}"  # shared across both run configs
+
+    spark.createDataFrame([[1, "alice"], [None, "bob"]], "id: int, name: string").write.format("delta").mode(
+        "overwrite"
+    ).saveAsTable(input_table)
+
+    engine = DQEngine(ws, spark)
+    checks = [{"criticality": "error", "check": {"function": "is_not_null", "arguments": {"column": "id"}}}]
+    action = DQAction(
+        action=DQAlert(destinations=[LogDQAlertDestination(name="driver-log")]),
+        condition="error_row_count > 0",
+        name="alert_on_errors",  # same action name in both run configs
+    )
+    manager = DQActionManager(ws=ws, spark=spark)
+
+    run_configs = []
+    for name in ("rc_a", "rc_b"):
+        engine.save_checks(config=TableChecksStorageConfig(location=checks_table, run_config_name=name), checks=checks)
+        manager.save_actions([action], TableActionsStorageConfig(location=actions_table, run_config_name=name))
+        run_configs.append(
+            RunConfig(
+                name=name,
+                input_config=InputConfig(location=input_table),
+                output_config=OutputConfig(location=f"{base}.{make_random(8).lower()}", mode="overwrite"),
+                checks_location=checks_table,
+                actions_location=actions_table,
+                action_events_location=events_table,  # shared
+            )
+        )
+
+    engine.apply_checks_and_save_in_tables(run_configs)
+
+    # Each run config's fired event is stamped with its own run_config_name in the shared table.
+    fired = [row for row in spark.read.table(events_table).collect() if row["fired"]]
+    scoped = {row["run_config_name"] for row in fired}
+    assert scoped == {"rc_a", "rc_b"}, f"Expected events scoped to both run configs, got {scoped}"
 
 
 def test_run_config_without_actions_location_runs_without_actions(ws, spark, make_schema, make_random) -> None:

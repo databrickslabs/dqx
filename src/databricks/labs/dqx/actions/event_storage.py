@@ -47,7 +47,8 @@ logger = logging.getLogger(__name__)
 ACTION_EVENT_TABLE_SCHEMA = (
     "action_name STRING, condition STRING, fired BOOLEAN, status STRING, "
     "observed_metrics MAP<STRING,STRING>, run_id STRING, run_time TIMESTAMP, "
-    "input_location STRING, destinations ARRAY<STRING>, delivery_errors ARRAY<STRING>"
+    "input_location STRING, destinations ARRAY<STRING>, delivery_errors ARRAY<STRING>, "
+    "run_config_name STRING"
 )
 
 
@@ -60,15 +61,19 @@ class TableActionEventStore(ActionEventStore):
     """Persists *AlertEvent* records to a Unity Catalog Delta table via Spark.
 
     Events are appended to a Delta table with the schema defined in
-    *ACTION_EVENT_TABLE_SCHEMA*.  Loading the latest event per action uses a
-    window function partitioned by *action_name* and ordered by *run_time*
-    descending, selecting rank == 1.
+    *ACTION_EVENT_TABLE_SCHEMA*.  Every row is stamped with the store's
+    *run_config_name*, and loading the latest event per action first filters to
+    that *run_config_name* — so several run configs can share one events table
+    without their alert suppression interfering.  Loading uses a window function
+    partitioned by *action_name* and ordered by *run_time* descending, selecting
+    rank == 1.
 
     Args:
         spark: Active *SparkSession*.
         ws: Authenticated *WorkspaceClient* (reserved for future use such as
             table-existence checks).
-        config: *ActionEventsConfig* carrying the target table name and write mode.
+        config: *ActionEventsConfig* carrying the target table name and the *run_config_name* the
+            events are scoped to.
     """
 
     def __init__(self, spark: SparkSession, ws: WorkspaceClient, config: ActionEventsConfig) -> None:
@@ -100,12 +105,16 @@ class TableActionEventStore(ActionEventStore):
                 e.input_location,
                 e.destinations,
                 e.delivery_errors,
+                self._config.run_config_name,
             )
             for e in events
         ]
 
         df = self._spark.createDataFrame(rows, schema=ACTION_EVENT_TABLE_SCHEMA)
-        output_config = OutputConfig(location=self._config.location, mode=self._config.mode)
+        # Action events are an append-only audit log: record() appends one event at a time and several
+        # run configs may share one table, so the events table is always appended to (never overwritten,
+        # which would wipe prior history). This matches the Lakebase store, which always inserts.
+        output_config = OutputConfig(location=self._config.location, mode="append")
         save_dataframe_as_table(df, output_config)
         logger.info(f"Appended {len(events)} event(s) to '{self._config.location}'.")
 
@@ -121,7 +130,9 @@ class TableActionEventStore(ActionEventStore):
             logger.info(f"Table '{self._config.location}' does not exist; returning empty state.")
             return {}
 
-        df = self._spark.read.table(self._config.location)
+        df = self._spark.read.table(self._config.location).filter(
+            F.col("run_config_name") == self._config.run_config_name
+        )
 
         window_spec = Window.partitionBy("action_name").orderBy(F.desc("run_time"))
         ranked = df.withColumn("_rank", F.row_number().over(window_spec)).filter(F.col("_rank") == 1).drop("_rank")
@@ -139,6 +150,7 @@ class TableActionEventStore(ActionEventStore):
                 input_location=row["input_location"],
                 destinations=list(row["destinations"]) if row["destinations"] else [],
                 delivery_errors=list(row["delivery_errors"]) if row["delivery_errors"] else [],
+                run_config_name=row["run_config_name"],
             )
             result[row["action_name"]] = alert_event
 
@@ -206,6 +218,7 @@ class LakebaseActionEventStore(LakebaseConnectionMixin, ActionEventStore):
             Column("input_location", Text),
             Column("destinations", JSONB),
             Column("delivery_errors", JSONB),
+            Column("run_config_name", String(255)),
         )
 
     def _bootstrap(self, engine: Engine) -> None:
@@ -251,6 +264,7 @@ class LakebaseActionEventStore(LakebaseConnectionMixin, ActionEventStore):
                 "input_location": e.input_location,
                 "destinations": e.destinations,
                 "delivery_errors": e.delivery_errors,
+                "run_config_name": self._config.run_config_name,
             }
             for e in events
         ]
@@ -276,8 +290,12 @@ class LakebaseActionEventStore(LakebaseConnectionMixin, ActionEventStore):
         table = self._get_table_definition(self._config.schema_name, self._config.table_name)
 
         # Subquery: rank rows per action_name by run_time descending.
-        # Use a raw approach: load all and deduplicate in Python for portability.
-        stmt = select(table).order_by(table.c.run_time.desc())
+        # Use a raw approach: load all (scoped to this run config) and deduplicate in Python for portability.
+        stmt = (
+            select(table)
+            .where(table.c.run_config_name == self._config.run_config_name)
+            .order_by(table.c.run_time.desc())
+        )
 
         result: dict[str, AlertEvent] = {}
         with engine.connect() as conn:
@@ -299,6 +317,7 @@ class LakebaseActionEventStore(LakebaseConnectionMixin, ActionEventStore):
                 input_location=row["input_location"],
                 destinations=list(row["destinations"]) if row["destinations"] else [],
                 delivery_errors=list(row["delivery_errors"]) if row["delivery_errors"] else [],
+                run_config_name=row["run_config_name"],
             )
 
         logger.info(f"Loaded latest events for {len(result)} action(s) from Lakebase '{self._config.location}'.")

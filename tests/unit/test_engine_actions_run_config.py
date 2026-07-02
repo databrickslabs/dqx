@@ -93,6 +93,8 @@ def test_events_config_table_location() -> None:
     config = DQEngine._run_config_action_events_config(run_config)
     assert isinstance(config, ActionEventsConfig)
     assert config.location == "cat.sch.dqx_action_events"
+    # Events are scoped to the run config so a shared events table stays independent.
+    assert config.run_config_name == "rc"
 
 
 def test_events_config_rejects_file_location() -> None:
