@@ -58,12 +58,14 @@ __all__ = [
     "build_builtin_metadata",
     "humanize_function_name",
     "resolve_dimension",
+    "resolve_severity",
     "seed_builtin_rules_if_absent",
 ]
 
-# Author-time default severity for every seeded built-in — admins can retag
-# after seeding (§6); DQX ``criticality`` (warn/error) stays the separate
-# execution field this doesn't touch.
+# Fallback severity for every seeded built-in not covered by
+# ``_SEVERITY_SEED_MAP`` below — admins can retag after seeding (§6); DQX
+# ``criticality`` (warn/error) stays the separate execution field this
+# doesn't touch.
 DEFAULT_SEVERITY = "Medium"
 
 # Fallback dimension for any introspected function not covered by
@@ -119,6 +121,58 @@ _DIMENSION_SEED_MAP: dict[str, str] = {
     "sql_query": "Validity",
 }
 
+# Hand-curated function -> severity seed map (admin-editable after seeding
+# via the reserved ``severity`` tag). Anything not listed here defaults to
+# ``DEFAULT_SEVERITY`` ("Medium") — see the task brief's category examples:
+# completeness/most validity/format/freshness checks stay at the Medium
+# default, integrity/consistency/uniqueness checks are bumped to High, and
+# purely informational geo geometry-shape checks are lowered to Low.
+_SEVERITY_SEED_MAP: dict[str, str] = {
+    # --- High: integrity / consistency / uniqueness checks -----------------
+    "is_unique": "High",
+    "foreign_key": "High",
+    "compare_datasets": "High",
+    "sql_query": "High",
+    "has_valid_schema": "High",
+    "has_valid_json_schema": "High",
+    # --- Low: informational geo geometry-shape checks -----------------------
+    "has_dimension": "Low",
+    "has_x_coordinate_between": "Low",
+    "has_y_coordinate_between": "Low",
+    "is_area_equal_to": "Low",
+    "is_area_not_equal_to": "Low",
+    "is_area_not_greater_than": "Low",
+    "is_area_not_less_than": "Low",
+    "is_geo_contains": "Low",
+    "is_geo_covers": "Low",
+    "is_geo_intersects": "Low",
+    "is_geo_touches": "Low",
+    "is_geo_within": "Low",
+    "is_geography": "Low",
+    "is_geometry": "Low",
+    "is_geometrycollection": "Low",
+    "is_latitude": "Low",
+    "is_linestring": "Low",
+    "is_longitude": "Low",
+    "is_multilinestring": "Low",
+    "is_multipoint": "Low",
+    "is_multipolygon": "Low",
+    "is_non_empty_geometry": "Low",
+    "is_not_null_island": "Low",
+    "is_num_points_equal_to": "Low",
+    "is_num_points_not_equal_to": "Low",
+    "is_num_points_not_greater_than": "Low",
+    "is_num_points_not_less_than": "Low",
+    "is_ogc_valid": "Low",
+    "is_point": "Low",
+    "is_polygon": "Low",
+    "are_polygons_mutually_disjoint": "Low",
+    # Everything else (is_not_null, regex_match, is_valid_email, is_in_range,
+    # is_in_list, is_data_fresh, date/timestamp/json checks, ...) is
+    # genuinely Medium-severity and stays at the default — no entry needed
+    # here.
+}
+
 
 def humanize_function_name(name: str) -> str:
     """Turn a check-function name into a readable display name.
@@ -142,6 +196,17 @@ def resolve_dimension(function_name: str) -> str:
     having to enumerate every one individually.
     """
     return _DIMENSION_SEED_MAP.get(function_name, DEFAULT_DIMENSION)
+
+
+def resolve_severity(function_name: str) -> str:
+    """Resolve the seed severity tag for *function_name*.
+
+    Falls back to :data:`DEFAULT_SEVERITY` ("Medium") for any function not
+    covered by the seed map — this keeps the mapping exhaustive over the
+    full introspected function list (including geo/anomaly/PII checks)
+    without having to enumerate every one individually.
+    """
+    return _SEVERITY_SEED_MAP.get(function_name, DEFAULT_SEVERITY)
 
 
 def build_builtin_definition(check_function: CheckFunctionDef) -> RuleDefinition:
@@ -169,7 +234,7 @@ def build_builtin_metadata(check_function: CheckFunctionDef) -> dict[str, Any]:
     metadata = set_reserved_tag(metadata, RESERVED_NAME_KEY, humanize_function_name(check_function.name))
     metadata = set_reserved_tag(metadata, RESERVED_DESCRIPTION_KEY, check_function.doc or None)
     metadata = set_reserved_tag(metadata, RESERVED_DIMENSION_KEY, resolve_dimension(check_function.name))
-    metadata = set_reserved_tag(metadata, RESERVED_SEVERITY_KEY, DEFAULT_SEVERITY)
+    metadata = set_reserved_tag(metadata, RESERVED_SEVERITY_KEY, resolve_severity(check_function.name))
     return metadata
 
 

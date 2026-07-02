@@ -19,6 +19,7 @@ from databricks_labs_dqx_app.backend.builtin_rules_seed import (
     build_builtin_metadata,
     humanize_function_name,
     resolve_dimension,
+    resolve_severity,
     seed_builtin_rules_if_absent,
 )
 from databricks_labs_dqx_app.backend.registry_models import (
@@ -89,6 +90,30 @@ class TestResolveDimension:
 
 
 # ---------------------------------------------------------------------------
+# resolve_severity
+# ---------------------------------------------------------------------------
+
+
+class TestResolveSeverity:
+    def test_high_for_integrity_and_uniqueness_checks(self):
+        assert resolve_severity("is_unique") == "High"
+        assert resolve_severity("foreign_key") == "High"
+        assert resolve_severity("has_valid_schema") == "High"
+
+    def test_medium_default_for_completeness_and_validity_checks(self):
+        assert resolve_severity("is_not_null") == "Medium"
+        assert resolve_severity("regex_match") == "Medium"
+        assert resolve_severity("is_data_fresh") == "Medium"
+
+    def test_low_for_geo_geometry_shape_checks(self):
+        assert resolve_severity("is_point") == "Low"
+        assert resolve_severity("is_polygon") == "Low"
+
+    def test_unmapped_function_defaults_to_medium(self):
+        assert resolve_severity("some_totally_unknown_future_check") == "Medium"
+
+
+# ---------------------------------------------------------------------------
 # build_builtin_definition / build_builtin_metadata — real introspection
 # ---------------------------------------------------------------------------
 
@@ -125,6 +150,11 @@ class TestBuildBuiltinMetadata:
         assert get_rule_dimension(metadata) == "Completeness"
         assert get_rule_severity(metadata) == "Medium"
         assert get_rule_description(metadata)  # first docstring line, non-empty
+
+    def test_is_unique_high_severity_tag(self):
+        fn = _real_check_function("is_unique")
+        metadata = build_builtin_metadata(fn)
+        assert get_rule_severity(metadata) == "High"
 
     def test_reserved_keys_only(self):
         fn = _real_check_function("is_unique")
