@@ -1674,6 +1674,7 @@
     "addRuleDialogDescription": "Elige una regla publicada del registro y luego mapea sus slots de columna a esta tabla.",
     "stepSelectRule": "1. Seleccionar una regla",
     "stepMapColumns": "2. Mapear columnas",
+    "mapColumnsTooltip": "Mapea la columna de marcador de posición (slot) de la regla a una columna real de tu tabla.",
     "searchRulesPlaceholder": "Buscar reglas publicadas…",
     "noPublishedRules": "Ninguna regla publicada coincide con tu búsqueda.",
     "createNewRuleButton": "＋ Crear nueva regla",

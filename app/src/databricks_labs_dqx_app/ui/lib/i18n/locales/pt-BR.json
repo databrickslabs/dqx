@@ -1674,6 +1674,7 @@
     "addRuleDialogDescription": "Escolha uma regra publicada do registro e mapeie seus slots de coluna para esta tabela.",
     "stepSelectRule": "1. Selecionar uma regra",
     "stepMapColumns": "2. Mapear colunas",
+    "mapColumnsTooltip": "Mapeie a coluna de marcador de posição (slot) da regra para uma coluna real da sua tabela.",
     "searchRulesPlaceholder": "Buscar regras publicadas…",
     "noPublishedRules": "Nenhuma regra publicada corresponde à sua busca.",
     "createNewRuleButton": "＋ Criar nova regra",

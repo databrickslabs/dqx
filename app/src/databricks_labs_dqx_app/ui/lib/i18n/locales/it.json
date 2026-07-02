@@ -1674,6 +1674,7 @@
     "addRuleDialogDescription": "Scegli una regola pubblicata dal registro, quindi mappa i suoi slot colonna su questa tabella.",
     "stepSelectRule": "1. Seleziona una regola",
     "stepMapColumns": "2. Mappa le colonne",
+    "mapColumnsTooltip": "Mappa la colonna segnaposto (slot) della regola su una colonna reale della tua tabella.",
     "searchRulesPlaceholder": "Cerca regole pubblicate…",
     "noPublishedRules": "Nessuna regola pubblicata corrisponde alla tua ricerca.",
     "createNewRuleButton": "＋ Crea nuova regola",

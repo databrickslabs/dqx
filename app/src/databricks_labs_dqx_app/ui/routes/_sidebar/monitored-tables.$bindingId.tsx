@@ -83,6 +83,7 @@ import { usePermissions } from "@/hooks/use-permissions";
 import { formatDateShort } from "@/lib/format-utils";
 import { RegistryRuleFormDialog } from "@/components/RegistryRuleFormDialog";
 import { ApprovalStepsBanner } from "@/components/ApprovalStepsBanner";
+import { HelpTooltip } from "@/components/HelpTooltip";
 import { useAiAvailability, aiUnavailableReason } from "@/hooks/use-ai-availability";
 
 export const Route = createFileRoute("/_sidebar/monitored-tables/$bindingId")({
@@ -873,9 +874,12 @@ function AddRuleDialog({
             </div>
           ) : (
             <div className="space-y-3">
-              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                {t("monitoredTables.stepMapColumns")}
-              </p>
+              <div className="flex items-center gap-1.5">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  {t("monitoredTables.stepMapColumns")}
+                </p>
+                <HelpTooltip text={t("monitoredTables.mapColumnsTooltip")} />
+              </div>
               <p className="text-sm font-medium">{getTag(selectedRule, RESERVED_NAME_KEY) || selectedRule.rule_id}</p>
               <div className="space-y-3">
                 {slots.map((slot) => {

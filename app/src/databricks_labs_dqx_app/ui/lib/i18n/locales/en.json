@@ -1674,6 +1674,7 @@
     "addRuleDialogDescription": "Pick a published registry rule, then map its column slots to this table.",
     "stepSelectRule": "1. Select a rule",
     "stepMapColumns": "2. Map columns",
+    "mapColumnsTooltip": "Map the rule's placeholder column (slot) to a real column in your table.",
     "searchRulesPlaceholder": "Search published rules…",
     "noPublishedRules": "No published rules match your search.",
     "createNewRuleButton": "＋ Create new rule",
