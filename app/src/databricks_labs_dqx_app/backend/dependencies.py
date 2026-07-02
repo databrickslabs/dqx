@@ -20,6 +20,7 @@ from .config import AppConfig, conf, get_sql_warehouse_path
 from .logger import logger
 from .migrations import MigrationRunner
 from .runtime import rt
+from .services.ai_gateway import AIGateway
 from .services.ai_rules_service import AiRulesService
 from .services.app_settings_service import AppSettingsService
 from .services.contract_rules_service import ContractRulesService
@@ -224,16 +225,32 @@ async def get_role_service(
     return RoleService(sql=sql)
 
 
+async def get_ai_gateway(
+    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
+    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+) -> AIGateway:
+    """Create an AIGateway using the app's service-principal credentials.
+
+    The service principal has the Foundation Model serving scope that OBO tokens lack, so
+    every AIGateway call (kill-switch, rate limit, audit — see services/ai_gateway.py) runs
+    as the SP, gated by role checks (``require_role``) at the route layer instead of by UC
+    permissions on the serving endpoint itself.
+    """
+    return AIGateway(sp_ws=sp_ws, app_settings=app_settings)
+
+
 async def get_ai_rules_service(
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
     sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
+    gateway: Annotated[AIGateway, Depends(get_ai_gateway)],
 ) -> AiRulesService:
     """Create an AiRulesService with split authentication.
 
-    Schema lookups use the OBO client (user's UC permissions).
-    LLM calls use the SP client (service principal has the serving scope OBO tokens lack).
+    Schema lookups use the OBO client (user's UC permissions). The legacy ChatDatabricks leg
+    (contract importer) uses the SP client directly; the new AIGateway-backed purpose calls
+    (generate_rule/suggest_field/generate_checks_via_gateway) go through the injected gateway.
     """
-    return AiRulesService(obo_ws=obo_ws, sp_ws=sp_ws)
+    return AiRulesService(obo_ws=obo_ws, sp_ws=sp_ws, gateway=gateway)
 
 
 async def get_contract_rules_service(
@@ -531,6 +548,7 @@ __all__ = [
     "get_migration_runner",
     "get_app_settings_service",
     "get_role_service",
+    "get_ai_gateway",
     "get_ai_rules_service",
     "get_contract_rules_service",
     "get_rules_catalog_service",

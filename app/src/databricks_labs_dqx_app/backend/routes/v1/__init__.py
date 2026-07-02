@@ -6,6 +6,7 @@ from .config import router as config_router
 from .contract import router as contract_router
 from .discovery import router as discovery_router
 from .generate import router as generate_router
+from .ai import router as ai_router
 from .rules import router as rules_router
 from .registry_rules import router as registry_rules_router
 from .monitored_tables import router as monitored_tables_router
@@ -27,6 +28,7 @@ v1_router.include_router(schedules_router, prefix="/schedules", tags=["schedules
 v1_router.include_router(roles_router, prefix="/roles", tags=["roles"])
 v1_router.include_router(discovery_router, prefix="/discovery", tags=["discovery"])
 v1_router.include_router(generate_router, prefix="/ai", tags=["ai"])
+v1_router.include_router(ai_router, prefix="/ai", tags=["ai"])
 v1_router.include_router(contract_router, prefix="/contract", tags=["contract"])
 v1_router.include_router(rules_router, prefix="/rules", tags=["rules"])
 v1_router.include_router(registry_rules_router, prefix="/registry-rules", tags=["registry-rules"])

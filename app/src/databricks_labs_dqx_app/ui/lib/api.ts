@@ -42,6 +42,112 @@ export interface AddCommentIn {
   comment: string;
 }
 
+/**
+ * Optional fully qualified table name for schema context
+ */
+export type AiGenerateRuleInTableFqn = string | null;
+
+/**
+ * Optional candidate column names
+ */
+export type AiGenerateRuleInColumns = string[] | null;
+
+export type AiGenerateRuleInSampleRowsAnyOfItem = { [key: string]: unknown };
+
+/**
+ * Optional sample rows for context; only the first 5 are forwarded to the model
+ */
+export type AiGenerateRuleInSampleRows = AiGenerateRuleInSampleRowsAnyOfItem[] | null;
+
+/**
+ * Request body for AI-generating a full Rules Registry rule proposal.
+ */
+export interface AiGenerateRuleIn {
+  /**
+   * Natural language description of the data quality requirement
+   * @maxLength 4000
+   */
+  description: string;
+  /** Optional fully qualified table name for schema context */
+  table_fqn?: AiGenerateRuleInTableFqn;
+  /** Optional candidate column names */
+  columns?: AiGenerateRuleInColumns;
+  /** Optional sample rows for context; only the first 5 are forwarded to the model */
+  sample_rows?: AiGenerateRuleInSampleRows;
+}
+
+export type AiGenerateRuleOutDimension = string | null;
+
+export type AiGenerateRuleOutSeverity = string | null;
+
+export type AiGenerateRuleOutPolarity = string | null;
+
+/**
+ * Mode-specific body: {function, arguments} or {sql_query}
+ */
+export type AiGenerateRuleOutDefinition = { [key: string]: unknown };
+
+/**
+ * A validated, AI-generated Rules Registry rule proposal, ready to prefill the create form.
+ */
+export interface AiGenerateRuleOut {
+  name: string;
+  description: string;
+  /** dqx_native | sql */
+  mode: string;
+  dimension?: AiGenerateRuleOutDimension;
+  severity?: AiGenerateRuleOutSeverity;
+  polarity?: AiGenerateRuleOutPolarity;
+  /** Mode-specific body: {function, arguments} or {sql_query} */
+  definition: AiGenerateRuleOutDefinition;
+  author_kind?: string;
+}
+
+export type AiSettingsInAiEnabled = boolean | null;
+
+export type AiSettingsInAiEndpointName = string | null;
+
+export type AiSettingsInAiRateLimitPerUserPerHour = number | null;
+
+/**
+ * Update payload — omitted fields are left unchanged.
+ */
+export interface AiSettingsIn {
+  ai_enabled?: AiSettingsInAiEnabled;
+  ai_endpoint_name?: AiSettingsInAiEndpointName;
+  ai_rate_limit_per_user_per_hour?: AiSettingsInAiRateLimitPerUserPerHour;
+}
+
+/**
+ * Effective AI Gateway settings.
+ */
+export interface AiSettingsOut {
+  ai_enabled: boolean;
+  ai_endpoint_name: string;
+  ai_rate_limit_per_user_per_hour: number;
+  ai_rate_limit_default?: number;
+}
+
+/**
+ * Request body for an AI per-field suggestion (name/description/dimension/severity).
+ */
+export interface AiSuggestFieldIn {
+  /** Field being suggested, e.g. 'name', 'description', 'dimension', 'severity' */
+  field: string;
+  /**
+   * Rule context (description + any known fields) as free text
+   * @maxLength 4000
+   */
+  context: string;
+}
+
+/**
+ * A single suggested value for one rule field.
+ */
+export interface AiSuggestFieldOut {
+  value: string;
+}
+
 export type AnomalyConfigColumns = string[] | null;
 
 export type AnomalyConfigSegmentBy = string[] | null;
@@ -4422,6 +4528,216 @@ export const useSaveRunReviewStatuses = <TError = AxiosError<HTTPValidationError
     }
     
 /**
+ * Return the current AI Gateway settings (admin only).
+ * @summary Get Ai Settings
+ */
+export const getAiSettings = (
+     options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<AiSettingsOut>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/config/ai-settings`,options
+    );
+  }
+
+
+
+
+export const getGetAiSettingsQueryKey = () => {
+    return [
+    `/api/v1/config/ai-settings`
+    ] as const;
+    }
+
+    
+export const getGetAiSettingsQueryOptions = <TData = Awaited<ReturnType<typeof getAiSettings>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAiSettings>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAiSettingsQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAiSettings>>> = ({ signal }) => getAiSettings({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAiSettings>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetAiSettingsQueryResult = NonNullable<Awaited<ReturnType<typeof getAiSettings>>>
+export type GetAiSettingsQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetAiSettings<TData = Awaited<ReturnType<typeof getAiSettings>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAiSettings>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getAiSettings>>,
+          TError,
+          Awaited<ReturnType<typeof getAiSettings>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetAiSettings<TData = Awaited<ReturnType<typeof getAiSettings>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAiSettings>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getAiSettings>>,
+          TError,
+          Awaited<ReturnType<typeof getAiSettings>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetAiSettings<TData = Awaited<ReturnType<typeof getAiSettings>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAiSettings>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Ai Settings
+ */
+
+export function useGetAiSettings<TData = Awaited<ReturnType<typeof getAiSettings>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAiSettings>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetAiSettingsQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getGetAiSettingsSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getAiSettings>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getAiSettings>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAiSettingsQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAiSettings>>> = ({ signal }) => getAiSettings({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof getAiSettings>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetAiSettingsSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof getAiSettings>>>
+export type GetAiSettingsSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetAiSettingsSuspense<TData = Awaited<ReturnType<typeof getAiSettings>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getAiSettings>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetAiSettingsSuspense<TData = Awaited<ReturnType<typeof getAiSettings>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getAiSettings>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetAiSettingsSuspense<TData = Awaited<ReturnType<typeof getAiSettings>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getAiSettings>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Ai Settings
+ */
+
+export function useGetAiSettingsSuspense<TData = Awaited<ReturnType<typeof getAiSettings>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getAiSettings>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetAiSettingsSuspenseQueryOptions(options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Update one or more AI Gateway settings (admin only).
+ * @summary Save Ai Settings
+ */
+export const saveAiSettings = (
+    aiSettingsIn: AiSettingsIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<AiSettingsOut>> => {
+    
+    
+    return axios.default.put(
+      `/api/v1/config/ai-settings`,
+      aiSettingsIn,options
+    );
+  }
+
+
+
+export const getSaveAiSettingsMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveAiSettings>>, TError,{data: AiSettingsIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof saveAiSettings>>, TError,{data: AiSettingsIn}, TContext> => {
+
+const mutationKey = ['saveAiSettings'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof saveAiSettings>>, {data: AiSettingsIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  saveAiSettings(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SaveAiSettingsMutationResult = NonNullable<Awaited<ReturnType<typeof saveAiSettings>>>
+    export type SaveAiSettingsMutationBody = AiSettingsIn
+    export type SaveAiSettingsMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Save Ai Settings
+ */
+export const useSaveAiSettings = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveAiSettings>>, TError,{data: AiSettingsIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof saveAiSettings>>,
+        TError,
+        {data: AiSettingsIn},
+        TContext
+      > => {
+
+      const mutationOptions = getSaveAiSettingsMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
  * List all schedule configurations.
  * @summary List Schedules
  */
@@ -6899,6 +7215,11 @@ export const useFilterTablesByColumns = <TError = AxiosError<HTTPValidationError
     
 /**
  * Generate data quality checks from natural language using AI-assisted generation.
+
+Routed through :class:`~databricks_labs_dqx_app.backend.services.ai_gateway.AIGateway`
+(kill-switch, per-user rate limit, audit log — Rules Registry design spec §8) rather than
+calling the model directly. Degrades cleanly: AI disabled/unconfigured returns a 503, and
+an exhausted per-user quota returns a 429 — never a 500.
  * @summary Ai Generate Checks
  */
 export const aiAssistedChecksGeneration = (
@@ -6956,6 +7277,132 @@ export const useAiAssistedChecksGeneration = <TError = AxiosError<HTTPValidation
       > => {
 
       const mutationOptions = getAiAssistedChecksGenerationMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Generate a full, DQX-validated Rules Registry rule proposal from a description.
+ * @summary Ai Generate Rule
+ */
+export const aiGenerateRule = (
+    aiGenerateRuleIn: AiGenerateRuleIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<AiGenerateRuleOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/ai/generate-rule`,
+      aiGenerateRuleIn,options
+    );
+  }
+
+
+
+export const getAiGenerateRuleMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof aiGenerateRule>>, TError,{data: AiGenerateRuleIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof aiGenerateRule>>, TError,{data: AiGenerateRuleIn}, TContext> => {
+
+const mutationKey = ['aiGenerateRule'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof aiGenerateRule>>, {data: AiGenerateRuleIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  aiGenerateRule(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type AiGenerateRuleMutationResult = NonNullable<Awaited<ReturnType<typeof aiGenerateRule>>>
+    export type AiGenerateRuleMutationBody = AiGenerateRuleIn
+    export type AiGenerateRuleMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Ai Generate Rule
+ */
+export const useAiGenerateRule = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof aiGenerateRule>>, TError,{data: AiGenerateRuleIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof aiGenerateRule>>,
+        TError,
+        {data: AiGenerateRuleIn},
+        TContext
+      > => {
+
+      const mutationOptions = getAiGenerateRuleMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Suggest a value for a single rule field (name/description/dimension/severity).
+ * @summary Ai Suggest Field
+ */
+export const aiSuggestField = (
+    aiSuggestFieldIn: AiSuggestFieldIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<AiSuggestFieldOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/ai/suggest-field`,
+      aiSuggestFieldIn,options
+    );
+  }
+
+
+
+export const getAiSuggestFieldMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof aiSuggestField>>, TError,{data: AiSuggestFieldIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof aiSuggestField>>, TError,{data: AiSuggestFieldIn}, TContext> => {
+
+const mutationKey = ['aiSuggestField'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof aiSuggestField>>, {data: AiSuggestFieldIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  aiSuggestField(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type AiSuggestFieldMutationResult = NonNullable<Awaited<ReturnType<typeof aiSuggestField>>>
+    export type AiSuggestFieldMutationBody = AiSuggestFieldIn
+    export type AiSuggestFieldMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Ai Suggest Field
+ */
+export const useAiSuggestField = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof aiSuggestField>>, TError,{data: AiSuggestFieldIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof aiSuggestField>>,
+        TError,
+        {data: AiSuggestFieldIn},
+        TContext
+      > => {
+
+      const mutationOptions = getAiSuggestFieldMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }

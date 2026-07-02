@@ -73,6 +73,48 @@ class GenerateChecksOut(BaseModel):
     validation_errors: list[str] = Field(default_factory=list, description="Validation errors if any")
 
 
+class AiGenerateRuleIn(BaseModel):
+    """Request body for AI-generating a full Rules Registry rule proposal."""
+
+    description: str = Field(
+        max_length=4000,
+        description="Natural language description of the data quality requirement",
+    )
+    table_fqn: str | None = Field(default=None, description="Optional fully qualified table name for schema context")
+    columns: list[str] | None = Field(default=None, max_length=200, description="Optional candidate column names")
+    sample_rows: list[dict[str, Any]] | None = Field(
+        default=None,
+        max_length=20,
+        description="Optional sample rows for context; only the first 5 are forwarded to the model",
+    )
+
+
+class AiGenerateRuleOut(BaseModel):
+    """A validated, AI-generated Rules Registry rule proposal, ready to prefill the create form."""
+
+    name: str
+    description: str
+    mode: str = Field(description="dqx_native | sql")
+    dimension: str | None = None
+    severity: str | None = None
+    polarity: str | None = None
+    definition: dict[str, Any] = Field(description="Mode-specific body: {function, arguments} or {sql_query}")
+    author_kind: str = Field(default="ai_generated")
+
+
+class AiSuggestFieldIn(BaseModel):
+    """Request body for an AI per-field suggestion (name/description/dimension/severity)."""
+
+    field: str = Field(description="Field being suggested, e.g. 'name', 'description', 'dimension', 'severity'")
+    context: str = Field(max_length=4000, description="Rule context (description + any known fields) as free text")
+
+
+class AiSuggestFieldOut(BaseModel):
+    """A single suggested value for one rule field."""
+
+    value: str
+
+
 class GenerateRulesFromContractIn(BaseModel):
     """Request body for generating DQX rules from an ODCS v3.x contract."""
 
@@ -957,7 +999,7 @@ class CheckFunctionParam(BaseModel):
 
     name: str = Field(description="Parameter name as defined on the DQX function")
     kind: str = Field(
-        description=("UI input kind: 'column', 'columns', 'boolean', 'number', " "'list', or 'string'."),
+        description=("UI input kind: 'column', 'columns', 'boolean', 'number', 'list', or 'string'."),
     )
     required: bool = Field(description="True iff the parameter has no default")
     default: str | None = Field(
