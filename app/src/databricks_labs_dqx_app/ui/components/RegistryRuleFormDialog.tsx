@@ -30,6 +30,7 @@ import {
 } from "@/components/ui/popover";
 import { AlertCircle, Check, ChevronDown, Loader2, Search, Sparkles, Wand2 } from "lucide-react";
 import { LabelsEditor } from "@/components/Labels";
+import { HelpTooltip } from "@/components/HelpTooltip";
 import type { LabelDefinition } from "@/lib/api-custom";
 import {
   useCreateRegistryRule,
@@ -58,6 +59,10 @@ const RESERVED_SEVERITY_KEY = "severity";
 
 type RegistryMode = "dqx_native" | "lowcode" | "sql";
 type Polarity = "pass" | "fail";
+// The tab strip shows one extra pseudo-mode — "ai" — which isn't a
+// persisted RegistryMode. It's the guided Build-with-AI experience; once a
+// proposal is applied, the active tab switches to the real underlying mode.
+type AuthoringTab = RegistryMode | "ai";
 
 const COLUMN_KINDS = new Set(["column", "columns"]);
 const PARAM_KIND_TO_TYPE: Record<string, RuleParameterType> = {
@@ -302,7 +307,10 @@ export function RegistryRuleFormDialog({
 }: RegistryRuleFormDialogProps) {
   const { t } = useTranslation();
   const sourceRule = editingRule ?? viewingRule;
-  const readOnly = editingRule === null;
+  // Read-only only applies when explicitly viewing a rule (viewingRule set).
+  // Creating a new rule also has editingRule === null, so gating on that
+  // alone would incorrectly lock the create form.
+  const readOnly = viewingRule !== null;
   const isEditing = editingRule !== null;
 
   const { data: fnData } = useListCheckFunctions();
@@ -322,6 +330,7 @@ export function RegistryRuleFormDialog({
   );
 
   const [mode, setMode] = useState<RegistryMode>("dqx_native");
+  const [activeTab, setActiveTab] = useState<AuthoringTab>("dqx_native");
   const [functionName, setFunctionName] = useState("");
   const [paramRawValues, setParamRawValues] = useState<Record<string, string>>({});
   const [sqlPredicate, setSqlPredicate] = useState("");
@@ -377,6 +386,7 @@ export function RegistryRuleFormDialog({
 
     if (sourceRule) {
       setMode(sourceRule.mode);
+      setActiveTab(sourceRule.mode);
       setPolarity(sourceRule.polarity ?? "pass");
       if (sourceRule.mode === "dqx_native") {
         const fn = String((sourceRule.definition?.body ?? {}).function ?? "");
@@ -394,13 +404,19 @@ export function RegistryRuleFormDialog({
         setParamRawValues({});
       }
     } else {
+      // Creating a brand-new rule: lead with the guided Build-with-AI tab
+      // when AI is available, since Low-Code is disabled and DQX Native's
+      // function picker is the least approachable starting point for a
+      // non-technical steward. Falls back to DQX Native, as before, when
+      // AI isn't available.
       setMode("dqx_native");
+      setActiveTab(aiAvailability.available ? "ai" : "dqx_native");
       setFunctionName("");
       setParamRawValues({});
       setSqlPredicate("");
       setPolarity("pass");
     }
-  }, [open, sourceRule]);
+  }, [open, sourceRule, aiAvailability.available]);
 
   const selectedFn = useMemo(
     () => checkFunctions.find((f) => f.name === functionName),
@@ -480,7 +496,11 @@ export function RegistryRuleFormDialog({
   };
 
   const applyAiProposal = (proposal: AiGenerateRuleOut) => {
-    setMode(proposal.mode === "sql" ? "sql" : "dqx_native");
+    const appliedMode: RegistryMode = proposal.mode === "sql" ? "sql" : "dqx_native";
+    setMode(appliedMode);
+    // Switch off the "ai" tab onto the real authoring tab so the steward
+    // immediately sees (and can tweak) what the proposal filled in.
+    setActiveTab(appliedMode);
     setName(proposal.name?.trim() ?? "");
     setDescription(proposal.description?.trim() ?? "");
     if (proposal.dimension) {
@@ -673,6 +693,8 @@ export function RegistryRuleFormDialog({
       ? t("rulesRegistry.editTitle")
       : t("rulesRegistry.createTitle");
 
+  const showAiTab = !readOnly && aiAvailability.available;
+
   return (
     <Dialog open={open} onOpenChange={(next) => !saving && onOpenChange(next)}>
       <DialogContent className="max-w-2xl w-[95vw] max-h-[90vh] overflow-y-auto">
@@ -695,98 +717,113 @@ export function RegistryRuleFormDialog({
           <DialogDescription>{t("rulesRegistry.dialogDescription")}</DialogDescription>
         </DialogHeader>
 
-        {!readOnly && aiAvailability.available && (
-          <div className="rounded-lg border bg-gradient-to-br from-primary/5 via-background to-secondary/5 p-3 space-y-2.5">
-            <div className="flex items-center gap-2">
-              <div className="p-1.5 bg-primary/10 rounded-md">
-                <Sparkles className="h-3.5 w-3.5 text-primary" />
-              </div>
-              <div className="min-w-0">
-                <p className="text-sm font-semibold">{t("rulesRegistry.aiBuildTitle")}</p>
-                <p className="text-[11px] text-muted-foreground">{t("rulesRegistry.aiBuildDescription")}</p>
-              </div>
-            </div>
-
-            {aiProposal ? (
-              <div className="rounded-md border bg-card/70 p-3 space-y-2">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  {t("rulesRegistry.aiProposalTitle")}
-                </p>
-                <div className="space-y-1 text-xs">
-                  <p><span className="text-muted-foreground">{t("rulesRegistry.nameLabel")}:</span> {aiProposal.name}</p>
-                  {aiProposal.description && (
-                    <p><span className="text-muted-foreground">{t("rulesRegistry.descriptionLabel")}:</span> {aiProposal.description}</p>
-                  )}
-                  <div className="flex flex-wrap gap-1 pt-1">
-                    <Badge variant="outline" className="text-[10px]">
-                      {t("rulesRegistry.aiProposalModeLabel")}: {aiProposal.mode}
-                    </Badge>
-                    {aiProposal.dimension && <Badge variant="outline" className="text-[10px]">{aiProposal.dimension}</Badge>}
-                    {aiProposal.severity && <Badge variant="outline" className="text-[10px]">{aiProposal.severity}</Badge>}
-                  </div>
-                  <pre className="mt-1 max-h-32 overflow-auto rounded bg-muted/50 p-2 text-[10px] font-mono whitespace-pre-wrap break-words">
-                    {JSON.stringify(aiProposal.definition, null, 2)}
-                  </pre>
-                </div>
-                <div className="flex items-center gap-2 pt-1">
-                  <Button size="sm" className="h-7 text-xs gap-1.5" onClick={() => applyAiProposal(aiProposal)}>
-                    <Wand2 className="h-3 w-3" />
-                    {t("rulesRegistry.aiProposalUseButton")}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="h-7 text-xs"
-                    onClick={() => setAiProposal(null)}
-                  >
-                    {t("rulesRegistry.aiProposalDiscardButton")}
-                  </Button>
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                <Textarea
-                  value={aiDescription}
-                  onChange={(e) => setAiDescription(e.target.value)}
-                  placeholder={t("rulesRegistry.aiBuildPlaceholder")}
-                  className="min-h-[64px] text-xs bg-card/60"
-                  disabled={aiBusy}
-                  maxLength={4000}
-                />
-                <Button
-                  size="sm"
-                  className="h-7 text-xs gap-1.5"
-                  onClick={handleAiGenerate}
-                  disabled={aiBusy || !aiDescription.trim()}
-                >
-                  {aiBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
-                  {aiBusy ? t("rulesRegistry.aiGenerating") : t("rulesRegistry.aiGenerateButton")}
-                </Button>
-              </div>
-            )}
-          </div>
-        )}
-
         <div className="space-y-4">
-          <Tabs value={mode} onValueChange={(v) => !readOnly && setMode(v as RegistryMode)}>
-            <TabsList className="grid w-full grid-cols-3">
-              <TabsTrigger value="dqx_native" disabled={readOnly && mode !== "dqx_native"}>
-                {t("rulesRegistry.modeDqxNative")}
-              </TabsTrigger>
-              <TabsTrigger value="lowcode" disabled className="gap-1">
-                <Sparkles className="h-3 w-3" />
-                {t("rulesRegistry.modeLowcode")}
-              </TabsTrigger>
-              <TabsTrigger value="sql" disabled={readOnly && mode !== "sql"}>
-                {t("rulesRegistry.modeSql")}
-              </TabsTrigger>
-            </TabsList>
+          <Tabs
+            value={activeTab}
+            onValueChange={(v) => {
+              if (readOnly) return;
+              setActiveTab(v as AuthoringTab);
+              if (v !== "ai") setMode(v as RegistryMode);
+            }}
+          >
+                <TabsList className={`grid w-full ${showAiTab ? "grid-cols-4" : "grid-cols-3"}`}>
+                  {showAiTab && (
+                    <TabsTrigger value="ai" className="gap-1">
+                      <Sparkles className="h-3 w-3" />
+                      {t("rulesRegistry.aiBuildTitle")}
+                    </TabsTrigger>
+                  )}
+                  <TabsTrigger value="dqx_native" disabled={readOnly && mode !== "dqx_native"}>
+                    {t("rulesRegistry.modeDqxNative")}
+                  </TabsTrigger>
+                  <TabsTrigger value="lowcode" disabled className="gap-1">
+                    <Sparkles className="h-3 w-3" />
+                    {t("rulesRegistry.modeLowcode")}
+                  </TabsTrigger>
+                  <TabsTrigger value="sql" disabled={readOnly && mode !== "sql"}>
+                    {t("rulesRegistry.modeSql")}
+                  </TabsTrigger>
+                </TabsList>
 
-            <TabsContent value="lowcode" className="pt-2">
-              <p className="text-xs text-muted-foreground italic">{t("rulesRegistry.lowcodeComingSoon")}</p>
-            </TabsContent>
+                {showAiTab && (
+                  <TabsContent value="ai" className="pt-2">
+                    <div className="rounded-lg border bg-gradient-to-br from-primary/5 via-background to-secondary/5 p-3 space-y-2.5">
+                      <div className="flex items-center gap-2">
+                        <div className="p-1.5 bg-primary/10 rounded-md">
+                          <Sparkles className="h-3.5 w-3.5 text-primary" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold">{t("rulesRegistry.aiBuildTitle")}</p>
+                          <p className="text-[11px] text-muted-foreground">{t("rulesRegistry.aiBuildDescription")}</p>
+                        </div>
+                      </div>
 
-            <TabsContent value="dqx_native" className="pt-2 space-y-3">
+                      {aiProposal ? (
+                        <div className="rounded-md border bg-card/70 p-3 space-y-2">
+                          <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                            {t("rulesRegistry.aiProposalTitle")}
+                          </p>
+                          <div className="space-y-1 text-xs">
+                            <p><span className="text-muted-foreground">{t("rulesRegistry.nameLabel")}:</span> {aiProposal.name}</p>
+                            {aiProposal.description && (
+                              <p><span className="text-muted-foreground">{t("rulesRegistry.descriptionLabel")}:</span> {aiProposal.description}</p>
+                            )}
+                            <div className="flex flex-wrap gap-1 pt-1">
+                              <Badge variant="outline" className="text-[10px]">
+                                {t("rulesRegistry.aiProposalModeLabel")}: {aiProposal.mode}
+                              </Badge>
+                              {aiProposal.dimension && <Badge variant="outline" className="text-[10px]">{aiProposal.dimension}</Badge>}
+                              {aiProposal.severity && <Badge variant="outline" className="text-[10px]">{aiProposal.severity}</Badge>}
+                            </div>
+                            <pre className="mt-1 max-h-32 overflow-auto rounded bg-muted/50 p-2 text-[10px] font-mono whitespace-pre-wrap break-words">
+                              {JSON.stringify(aiProposal.definition, null, 2)}
+                            </pre>
+                          </div>
+                          <div className="flex items-center gap-2 pt-1">
+                            <Button size="sm" className="h-7 text-xs gap-1.5" onClick={() => applyAiProposal(aiProposal)}>
+                              <Wand2 className="h-3 w-3" />
+                              {t("rulesRegistry.aiProposalUseButton")}
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 text-xs"
+                              onClick={() => setAiProposal(null)}
+                            >
+                              {t("rulesRegistry.aiProposalDiscardButton")}
+                            </Button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          <Textarea
+                            value={aiDescription}
+                            onChange={(e) => setAiDescription(e.target.value)}
+                            placeholder={t("rulesRegistry.aiBuildPlaceholder")}
+                            className="min-h-[64px] text-xs bg-card/60"
+                            disabled={aiBusy}
+                            maxLength={4000}
+                          />
+                          <Button
+                            size="sm"
+                            className="h-7 text-xs gap-1.5"
+                            onClick={handleAiGenerate}
+                            disabled={aiBusy || !aiDescription.trim()}
+                          >
+                            {aiBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+                            {aiBusy ? t("rulesRegistry.aiGenerating") : t("rulesRegistry.aiGenerateButton")}
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  </TabsContent>
+                )}
+
+                <TabsContent value="lowcode" className="pt-2">
+                  <p className="text-xs text-muted-foreground italic">{t("rulesRegistry.lowcodeComingSoon")}</p>
+                </TabsContent>
+
+                <TabsContent value="dqx_native" className="pt-2 space-y-3">
               <div className="space-y-1.5">
                 <Label className="text-xs">{t("rulesRegistry.functionLabel")}</Label>
                 <FunctionCombobox
@@ -801,13 +838,18 @@ export function RegistryRuleFormDialog({
               </div>
               {slots.length > 0 && (
                 <div className="space-y-1.5">
-                  <Label className="text-xs">{t("rulesRegistry.slotsLabel")}</Label>
+                  <div className="flex items-center gap-1.5">
+                    <Label className="text-xs">{t("rulesRegistry.slotsLabel")}</Label>
+                    <HelpTooltip text={t("rulesRegistry.slotsTooltip")} />
+                  </div>
                   <p className="text-[10px] text-muted-foreground">{t("rulesRegistry.slotsHint")}</p>
                   <div className="flex flex-wrap gap-1.5">
                     {slots.map((s) => (
                       <Badge key={s.name} variant="secondary" className="font-mono text-[10px]">
                         {`{{${s.name}}}`}
-                        <span className="ml-1 opacity-60">({s.family})</span>
+                        <span className="ml-1 opacity-60" title={t("rulesRegistry.typeFamilyTooltip")}>
+                          ({s.family})
+                        </span>
                       </Badge>
                     ))}
                   </div>
@@ -882,6 +924,7 @@ export function RegistryRuleFormDialog({
                   {polarity === "fail" ? t("rulesRegistry.polarityFail") : t("rulesRegistry.polarityPass")}
                 </Label>
                 <span className="text-[10px] text-muted-foreground">{t("rulesRegistry.polarityHint")}</span>
+                <HelpTooltip text={t("rulesRegistry.polarityTooltip")} />
               </div>
             </TabsContent>
           </Tabs>
@@ -945,7 +988,10 @@ export function RegistryRuleFormDialog({
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between gap-2">
-                  <Label className="text-xs">{t("rulesRegistry.dimensionLabel")}</Label>
+                  <div className="flex items-center gap-1.5">
+                    <Label className="text-xs">{t("rulesRegistry.dimensionLabel")}</Label>
+                    <HelpTooltip text={t("rulesRegistry.dimensionTooltip")} />
+                  </div>
                   {!readOnly && aiAvailability.available && dimensionValues.length > 0 && (
                     <SuggestButton
                       field="dimension"
@@ -968,7 +1014,10 @@ export function RegistryRuleFormDialog({
               </div>
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between gap-2">
-                  <Label className="text-xs">{t("rulesRegistry.severityLabel")}</Label>
+                  <div className="flex items-center gap-1.5">
+                    <Label className="text-xs">{t("rulesRegistry.severityLabel")}</Label>
+                    <HelpTooltip text={t("rulesRegistry.severityTooltip")} />
+                  </div>
                   {!readOnly && aiAvailability.available && severityValues.length > 0 && (
                     <SuggestButton
                       field="severity"
