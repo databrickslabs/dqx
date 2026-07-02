@@ -28,8 +28,11 @@ class StreamingMetricsListener(listener.StreamingQueryListener):
             from this query will be processed (useful when multiple queries share the same observation).
         action_evaluator: Optional *ActionEvaluator* to invoke after each micro-batch. When provided, actions
             are evaluated per micro-batch using the observed metrics from that batch. *TerminalActionError*
-            (including *PipelineFailedError*) propagates out of *onQueryProgress* to abort the stream; all
-            other exceptions are logged and swallowed so a single bad alert cannot kill the stream.
+            (including *PipelineFailedError*) is re-raised out of *onQueryProgress* while all other exceptions
+            are logged and swallowed so a single bad alert cannot kill the stream. Note that this callback
+            runs on Spark's *StreamingQueryListener* thread, which generally isolates and logs listener
+            exceptions rather than stopping the query — so *FailPipeline*'s immediate-abort guarantee holds for
+            the batch path but is best-effort in streaming; use a downstream gate for a guaranteed stop.
     """
 
     metrics_config: OutputConfig | None

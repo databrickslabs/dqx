@@ -160,13 +160,24 @@ engine.apply_checks_and_save_in_table(
 )
 ```
 
-<Admonition type="note" title="Streaming delivery is synchronous per micro-batch">
-Action evaluation runs inside the streaming query's progress callback, so webhook delivery
-(including retries) blocks that micro-batch until it completes. For streaming destinations,
-keep the webhook *timeout* and retry budget small so a slow or unreachable endpoint cannot
-stall progress; `FailPipeline` itself is cheap and aborts the stream immediately. A
-non-terminal delivery failure is logged and never crashes the stream. (Fully asynchronous
-off-thread delivery is a planned enhancement.)
+<Admonition type="note" title="Streaming action evaluation runs on the listener thread">
+For streaming, action evaluation runs inside a Spark `StreamingQueryListener` progress callback —
+on Spark's listener thread, not the micro-batch data path. Synchronous webhook delivery (including
+retries) therefore blocks that *callback* rather than data processing directly; the practical risk
+is that a slow callback lets Spark's listener event queue back up and **drop progress events**,
+which would skip action evaluation for those batches. Keep the webhook *timeout* and retry budget
+small so this cannot happen. A non-terminal delivery failure is logged and never crashes the stream.
+
+`FailPipeline`'s immediate-abort guarantee applies to the **batch** path (where actions are evaluated
+synchronously in the save call). In **streaming**, `FailPipeline` is raised inside the listener
+callback, and Spark generally isolates and logs listener exceptions rather than stopping the query —
+so do not rely on `FailPipeline` to hard-stop a streaming query; use a downstream gate if you need a
+guaranteed stop.
+
+In practice, alerts are rate-limited (`HOURLY` / `DAILY`) and typically fire only when a condition
+crosses a threshold, so the callback rarely blocks and the synchronous path is sufficient. Fully
+asynchronous off-thread delivery is a possible future enhancement, mainly for high-throughput
+streaming that fires alerts frequently against slow endpoints.
 </Admonition>
 
 ### Manual evaluation with evaluate_actions
