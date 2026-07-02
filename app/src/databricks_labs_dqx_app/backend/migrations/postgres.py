@@ -288,6 +288,24 @@ PG_MIGRATIONS: list[PgMigration] = [
             "  CONSTRAINT uq_dq_rule_versions_rule_version UNIQUE (rule_id, version)"
             ");"
             f"CREATE INDEX IF NOT EXISTS idx_dq_rule_versions_rule_id ON {_S}.dq_rule_versions (rule_id);"
+            # ----------------------------------------------------------
+            # dq_rules_history — append-only audit trail for the
+            # registry rule lifecycle (create/update/status transitions/
+            # delete), mirroring ``dq_quality_rules_history``'s shape.
+            # ----------------------------------------------------------
+            f"CREATE TABLE IF NOT EXISTS {_S}.dq_rules_history ("
+            "  history_id    BIGSERIAL PRIMARY KEY,"
+            "  rule_id       TEXT,"
+            "  definition    JSONB,"
+            "  version       INTEGER,"
+            "  action        TEXT NOT NULL,"
+            "  prev_status   TEXT,"
+            "  new_status    TEXT,"
+            "  changed_by    TEXT,"
+            "  changed_at    TIMESTAMPTZ"
+            ");"
+            f"CREATE INDEX IF NOT EXISTS idx_dq_rules_history_rule_changed_at "
+            f"  ON {_S}.dq_rules_history (rule_id, changed_at DESC);"
         ),
     ),
     PgMigration(

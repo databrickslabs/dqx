@@ -543,7 +543,22 @@ _V2_OLTP_FALLBACK = (
     "  user_metadata VARIANT,"
     "  created_by STRING,"
     "  created_at TIMESTAMP"
-    ") CLUSTER BY (rule_id, version)"
+    ") CLUSTER BY (rule_id, version);"
+    #
+    # dq_rules_history — append-only audit trail for the registry rule
+    # lifecycle (create/update/status transitions/delete), mirroring
+    # ``dq_quality_rules_history``'s shape. No PK column on Delta,
+    # consistent with the other ``*_history`` tables in this baseline.
+    f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_rules_history ("
+    "  rule_id STRING,"
+    "  definition VARIANT,"
+    "  version INT,"
+    "  action STRING NOT NULL,"
+    "  prev_status STRING,"
+    "  new_status STRING,"
+    "  changed_by STRING,"
+    "  changed_at TIMESTAMP"
+    ") CLUSTER BY (rule_id, changed_at)"
 )
 
 
