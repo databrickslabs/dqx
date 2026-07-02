@@ -630,6 +630,10 @@ export function RegistryRuleFormDialog({
           polarity: mode === "sql" ? polarity : null,
           user_metadata: userMetadata,
           steward: steward.trim() || null,
+          // Persist AI provenance stamped during this edit-in-place session
+          // (e.g. accepting an AI-suggested field on an otherwise
+          // human-authored draft) rather than silently dropping it.
+          author_kind: authorKind,
         };
         const resp = await updateMutation.mutateAsync({ ruleId: editingRule.rule_id, data: payload });
         ruleId = resp.data.rule_id;

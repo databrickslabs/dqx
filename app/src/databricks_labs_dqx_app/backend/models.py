@@ -297,6 +297,13 @@ class UpdateRegistryRuleIn(BaseModel):
     polarity: RegistryPolarity | None = None
     user_metadata: dict[str, Any] | None = None
     steward: str | None = None
+    author_kind: RegistryAuthorKind | None = Field(
+        default=None,
+        description=(
+            "Re-stamp AI provenance during an edit-in-place session (e.g. a human accepts an "
+            "AI-suggested field on an otherwise human-authored draft). Omit to leave unchanged."
+        ),
+    )
 
 
 class RegistryRuleOut(BaseModel):

@@ -283,8 +283,15 @@ class RegistryService:
         polarity: Polarity | None = None,
         user_metadata: dict[str, Any] | None = None,
         steward: str | None = None,
+        author_kind: AuthorKind | None = None,
     ) -> RegistryRule:
-        """Update a draft registry rule in place. Only ``draft`` rules are editable."""
+        """Update a draft registry rule in place. Only ``draft`` rules are editable.
+
+        *author_kind* lets an edit-in-place session re-stamp AI provenance
+        (e.g. a human accepts an AI-suggested field on an otherwise
+        human-authored draft, or vice versa) — omit it to leave the rule's
+        existing provenance untouched.
+        """
         rule = self._get(rule_id)
         if rule is None:
             raise RuntimeError(f"Registry rule not found: {rule_id}")
@@ -303,6 +310,8 @@ class RegistryService:
             rule.user_metadata = dict(user_metadata)
         if steward is not None:
             rule.steward = steward
+        if author_kind is not None:
+            rule.author_kind = author_kind
         rule.fingerprint = compute_registry_rule_fingerprint(rule)
         rule.updated_by = user_email
         self._update(rule)
@@ -452,6 +461,7 @@ class RegistryService:
             f"  status = '{escape_sql_string(rule.status)}', "
             f"  version = {rule.version}, "
             f"  polarity = {self._opt_str(rule.polarity)}, "
+            f"  author_kind = {self._opt_str(rule.author_kind)}, "
             f"  definition = {definition_expr}, "
             f"  user_metadata = {metadata_expr}, "
             f"  fingerprint = {self._opt_str(rule.fingerprint)}, "

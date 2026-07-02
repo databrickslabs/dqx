@@ -1882,6 +1882,11 @@ export type UpdateRegistryRuleInUserMetadata = UpdateRegistryRuleInUserMetadataA
 export type UpdateRegistryRuleInSteward = string | null;
 
 /**
+ * Re-stamp AI provenance during an edit-in-place session (e.g. a human accepts an AI-suggested field on an otherwise human-authored draft). Omit to leave unchanged.
+ */
+export type UpdateRegistryRuleInAuthorKind = 'human' | 'ai_generated' | 'ai_assisted' | null;
+
+/**
  * Request body for updating a draft Rules Registry rule. Only draft rules are editable.
  */
 export interface UpdateRegistryRuleIn {
@@ -1890,6 +1895,8 @@ export interface UpdateRegistryRuleIn {
   polarity?: UpdateRegistryRuleInPolarity;
   user_metadata?: UpdateRegistryRuleInUserMetadata;
   steward?: UpdateRegistryRuleInSteward;
+  /** Re-stamp AI provenance during an edit-in-place session (e.g. a human accepts an AI-suggested field on an otherwise human-authored draft). Omit to leave unchanged. */
+  author_kind?: UpdateRegistryRuleInAuthorKind;
 }
 
 export type UserActive = boolean | null;
@@ -8973,6 +8980,12 @@ up the latest text/version. ``RuleEmbeddingsService.embed_and_store``
 is itself a documented no-op when no embedding endpoint is configured
 and swallows call failures internally, so in practice this can never
 turn a successful publish into a 500.
+
+Also re-materializes every FOLLOWING (unpinned) application of this
+rule (design spec §5) so their ``dq_quality_rules`` copies pick up the
+new version — see ``Materializer.rematerialize_for_rule``. PINNED
+applications are untouched by a publish; they only change via a
+direct edit.
  * @summary Approve Registry Rule
  */
 export const approveRegistryRule = (

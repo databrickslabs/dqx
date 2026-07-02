@@ -102,6 +102,20 @@ class TestCreateAndUpdate:
             update_registry_rule("r1", body=body, svc=svc, obo_ws=_mock_obo_ws())
         assert excinfo.value.status_code == 404
 
+    def test_update_passes_author_kind_through_to_service(self):
+        svc = MagicMock()
+        svc.update_draft.return_value = _rule(status="draft")
+        body = UpdateRegistryRuleIn(user_metadata={"name": "x"}, author_kind="ai_assisted")
+        update_registry_rule("r1", body=body, svc=svc, obo_ws=_mock_obo_ws())
+        assert svc.update_draft.call_args.kwargs["author_kind"] == "ai_assisted"
+
+    def test_update_without_author_kind_passes_none(self):
+        svc = MagicMock()
+        svc.update_draft.return_value = _rule(status="draft")
+        body = UpdateRegistryRuleIn(user_metadata={"name": "x"})
+        update_registry_rule("r1", body=body, svc=svc, obo_ws=_mock_obo_ws())
+        assert svc.update_draft.call_args.kwargs["author_kind"] is None
+
 
 class TestDelete:
     def test_delete_success(self):

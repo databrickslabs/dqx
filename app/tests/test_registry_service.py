@@ -157,6 +157,43 @@ class TestUpdateDraft:
         with pytest.raises(RuntimeError, match="not found"):
             svc.update_draft("missing", user_email="alice@x")
 
+    def test_author_kind_is_updated_and_persisted(self, svc, sql):
+        """AI provenance stamped during an edit-in-place session (e.g. a
+        human accepts an AI-suggested field on an otherwise human-authored
+        draft) must persist on update — both on the returned domain object
+        and in the ``UPDATE`` SQL sent to the store."""
+        from databricks_labs_dqx_app.backend.registry_models import RegistryRule
+
+        draft = RegistryRule(
+            rule_id="r1",
+            mode="dqx_native",
+            status="draft",
+            version=0,
+            author_kind="human",
+            definition=_native_definition(),
+        )
+        sql.query.return_value = [_row_for(draft)]
+        updated = svc.update_draft("r1", user_email="alice@x", author_kind="ai_assisted")
+
+        assert updated.author_kind == "ai_assisted"
+        update_sql = next(c.args[0] for c in sql.execute.call_args_list if c.args[0].startswith("UPDATE"))
+        assert "author_kind = 'ai_assisted'" in update_sql
+
+    def test_author_kind_untouched_when_not_provided(self, svc, sql):
+        from databricks_labs_dqx_app.backend.registry_models import RegistryRule
+
+        draft = RegistryRule(
+            rule_id="r1",
+            mode="dqx_native",
+            status="draft",
+            version=0,
+            author_kind="human",
+            definition=_native_definition(),
+        )
+        sql.query.return_value = [_row_for(draft)]
+        updated = svc.update_draft("r1", user_email="alice@x", user_metadata={"name": "x"})
+        assert updated.author_kind == "human"
+
 
 # ---------------------------------------------------------------------------
 # Lifecycle transitions

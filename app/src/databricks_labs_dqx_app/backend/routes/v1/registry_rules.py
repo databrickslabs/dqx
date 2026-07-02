@@ -161,6 +161,7 @@ def update_registry_rule(
             polarity=body.polarity,
             user_metadata=body.user_metadata,
             steward=body.steward,
+            author_kind=body.author_kind,
         )
         return RegistryRuleOut.from_domain(rule)
     except ValueError as e:
