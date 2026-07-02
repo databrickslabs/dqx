@@ -100,6 +100,10 @@
       "rbac": "Aprovação baseada em funções"
     }
   },
+  "approvalSteps": {
+    "stepOne": "① Uma regra precisa ser aprovada no Registro de Regras.",
+    "stepTwo": "② Aplicá-la a uma tabela e publicar é o que a ativa."
+  },
   "auth": {
     "loadingMessage": "Inicializando o DQX Studio...",
     "loadingDescription": "Configurando sua conexão com o workspace",

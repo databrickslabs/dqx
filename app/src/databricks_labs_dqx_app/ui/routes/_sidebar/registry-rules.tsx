@@ -69,6 +69,7 @@ import { usePermissions } from "@/hooks/use-permissions";
 import { formatDateShort } from "@/lib/format-utils";
 import { cn } from "@/lib/utils";
 import { RegistryRuleFormDialog } from "@/components/RegistryRuleFormDialog";
+import { ApprovalStepsBanner } from "@/components/ApprovalStepsBanner";
 
 const RESERVED_NAME_KEY = "name";
 const RESERVED_DESCRIPTION_KEY = "description";
@@ -387,6 +388,8 @@ function RegistryRulesPage() {
             </Button>
           )}
         </div>
+
+        <ApprovalStepsBanner />
 
         <Card>
           <CardHeader className="pb-3">

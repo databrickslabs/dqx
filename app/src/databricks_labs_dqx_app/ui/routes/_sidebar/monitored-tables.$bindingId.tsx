@@ -82,6 +82,7 @@ import { useLabelDefinitions, type LabelDefinition } from "@/lib/api-custom";
 import { usePermissions } from "@/hooks/use-permissions";
 import { formatDateShort } from "@/lib/format-utils";
 import { RegistryRuleFormDialog } from "@/components/RegistryRuleFormDialog";
+import { ApprovalStepsBanner } from "@/components/ApprovalStepsBanner";
 import { useAiAvailability, aiUnavailableReason } from "@/hooks/use-ai-availability";
 
 export const Route = createFileRoute("/_sidebar/monitored-tables/$bindingId")({
@@ -536,6 +537,8 @@ function ApplyRulesTab({
 
   return (
     <div className="space-y-4 pt-4">
+      <ApprovalStepsBanner />
+
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-1 border rounded-md p-0.5">
           {(

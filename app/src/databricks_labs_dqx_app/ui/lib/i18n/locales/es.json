@@ -100,6 +100,10 @@
       "rbac": "Aprobación basada en roles"
     }
   },
+  "approvalSteps": {
+    "stepOne": "① Una regla debe aprobarse en el Registro de Reglas.",
+    "stepTwo": "② Aplicarla a una tabla y publicarla es lo que la activa."
+  },
   "auth": {
     "loadingMessage": "Inicializando DQX Studio...",
     "loadingDescription": "Configurando tu conexión al workspace",
