@@ -319,6 +319,43 @@ def test_checks_validator_missing_function():
     assert any("'function' field is missing" in e for e in status.errors)
 
 
+@pytest.mark.parametrize(
+    ("check", "expected_field"),
+    [
+        ({"check": {"function": 123, "arguments": {"column": "a"}}}, "check -> function"),
+        ({"check": {"function": "is_not_null", "arguments": {"column": "a"}}, "name": 42}, "name"),
+        ({"check": {"function": "is_not_null", "arguments": {"column": "a"}}, "filter": 1}, "filter"),
+        ({"check": {"function": "is_not_null", "arguments": {"column": "a"}}, "message_expr": 1}, "message_expr"),
+        (
+            {"check": {"function": "is_not_null", "arguments": {"column": "a"}}, "user_metadata": {"confidence": 0.95}},
+            "user_metadata -> confidence",
+        ),
+    ],
+)
+def test_checks_validator_field_type_error_names_offending_field(check, expected_field):
+    """A wrong-typed field must be reported with its location, not a generic message on the whole dict.
+
+    Regression: the initial Pydantic-error translation dropped the field location, yielding
+    "Input should be a valid string: {check}" with no indication of which field was wrong.
+    """
+    status = ChecksValidator.validate_checks([check])
+    assert status.has_errors
+    assert any(f"Invalid value for '{expected_field}'" in e for e in status.errors), status.errors
+
+
+def test_checks_validator_criticality_wrong_type_reports_field():
+    """A wrong *type* for criticality (not a bad enum value) must name the field and not be malformed.
+
+    Regression: the criticality branch previously matched any error whose location contained
+    'criticality' and stripped a "Value error, " prefix that is absent from type errors, producing
+    the malformed "Input should be a valid string Check details: {check}".
+    """
+    check = {"check": {"function": "is_not_null", "arguments": {"column": "a"}}, "criticality": None}
+    status = ChecksValidator.validate_checks([check])
+    assert status.has_errors
+    assert any("Invalid value for 'criticality'" in e for e in status.errors), status.errors
+
+
 def test_checks_validator_missing_check_reports_missing_not_extra():
     """A check whose 'check' key is misspelled reports the missing 'check', tolerating the stray key.
 

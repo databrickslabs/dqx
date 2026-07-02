@@ -229,14 +229,20 @@ class ChecksValidator:
             return f"'check' field should be a dictionary: {check}"
         if error_type == "missing" and loc == "check -> function":
             return f"'function' field is missing in the 'check' block: {check}"
-        if "criticality" in loc:
-            # Strip Pydantic's "Value error, " prefix to match the existing message format.
+        if loc == "criticality" and error_type == "value_error":
+            # Bespoke enum-value message from the field validator; strip Pydantic's "Value error, "
+            # prefix to match the existing format. A wrong *type* for criticality (e.g. null) is
+            # not a value_error and falls through to the field-level fallback below.
             clean_msg = msg.replace("Value error, ", "")
             return f"{clean_msg} Check details: {check}"
-        if "for_each_column" in loc:
+        if loc == "check -> for_each_column":
             return ChecksValidator._translate_for_each_column_error(msg, check)
         if loc == "check -> arguments" and error_type == "dict_type":
             return f"'arguments' should be a dictionary in the 'check' block: {check}"
+        # Fallback: name the offending field so the message stays actionable, matching the
+        # field-level precision the DQRule model reports at apply time (e.g. "user_metadata -> k").
+        if loc:
+            return f"Invalid value for '{loc}': {msg}. Check details: {check}"
         return f"{msg}: {check}"
 
     @staticmethod
