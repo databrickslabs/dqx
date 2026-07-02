@@ -582,6 +582,10 @@ export interface LLMModelConfig {
 
 export type LabelDefinitionDescription = string | null;
 
+export type LabelDefinitionValueColorsAnyOf = {[key: string]: string};
+
+export type LabelDefinitionValueColors = LabelDefinitionValueColorsAnyOf | null;
+
 /**
  * An admin-managed label definition.
 
@@ -592,12 +596,21 @@ is true authors can type a value not in the list.
 The reserved key ``weight`` plays a special role: its values populate the
 weight selector in the labels editor on rule authoring pages. Weight is
 stored entirely in ``user_metadata`` (no separate native ``weight`` field).
+
+``value_colors`` optionally maps a subset (or all) of ``values`` to a
+``#RRGGBB`` hex color for badge rendering; unmapped values fall back to a
+UI default. ``is_builtin`` flags a reserved, pre-seeded key (e.g. the
+Rules Registry ``dimension``/``severity`` tags) — such keys cannot be
+deleted or renamed via :func:`save_label_definitions`, though their
+values may still be edited/recolored.
  */
 export interface LabelDefinition {
   key: string;
   description?: LabelDefinitionDescription;
   values?: string[];
   allow_custom_values?: boolean;
+  value_colors?: LabelDefinitionValueColors;
+  is_builtin?: boolean;
 }
 
 export interface LabelDefinitionsIn {
@@ -3059,6 +3072,14 @@ export function useGetLabelDefinitionsSuspense<TData = Awaited<ReturnType<typeof
 
 Validates each key against ``_LABEL_KEY_RE``, rejects duplicates, trims
 descriptions, and dedupes the value list per definition.
+
+Reserved keys (``is_builtin=True`` in the currently-persisted catalog —
+e.g. the Rules Registry ``dimension``/``severity`` tags) cannot be
+deleted or renamed: the incoming payload must still contain an entry
+with the same key. Their values, colors, and description may still be
+freely edited. ``is_builtin`` itself is authoritative from the stored
+state, not the client payload — a caller can't strip the flag off a
+reserved key by omitting/flipping it in the request.
  * @summary Save Label Definitions
  */
 export const saveLabelDefinitions = (

@@ -326,9 +326,20 @@ async def lifespan(app: FastAPI):
     # so the feature degrades gracefully until an admin saves the list.
     try:
         oltp_for_seed = pg_executor if pg_executor is not None else sp_sql
-        AppSettingsService(sql=oltp_for_seed).seed_run_review_statuses_if_absent()
+        settings_for_seed = AppSettingsService(sql=oltp_for_seed)
+        settings_for_seed.seed_run_review_statuses_if_absent()
     except Exception as seed_e:
         logger.warning("Could not seed default run_review_statuses: %s", seed_e, exc_info=True)
+
+    # Seed the reserved dimension/severity label-definition keys (Rules
+    # Registry Phase 1 — dimensions & severity are TAGS in the existing
+    # ``label_definitions`` catalog, not new tables). Idempotent and
+    # best-effort for the same reason as run-review-statuses above.
+    try:
+        oltp_for_label_seed = pg_executor if pg_executor is not None else sp_sql
+        AppSettingsService(sql=oltp_for_label_seed).seed_reserved_label_definitions_if_absent()
+    except Exception as seed_e:
+        logger.warning("Could not seed reserved label definitions: %s", seed_e, exc_info=True)
 
     try:
         tmp_cat = conf.catalog.replace("`", "")

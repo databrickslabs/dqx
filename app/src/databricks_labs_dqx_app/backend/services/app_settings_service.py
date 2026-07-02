@@ -420,6 +420,84 @@ class AppSettingsService:
         )
         logger.info("Saved %d run review status(es) (by=%s)", len(entries), user_email or "system")
 
+    # ------------------------------------------------------------------
+    # Reserved label definitions — Rules Registry Phase 1. Dimensions &
+    # severity are TAGS, not new tables: they are pre-built entries in the
+    # same ``label_definitions`` JSON blob (see ``routes.v1.config``),
+    # flagged ``is_builtin`` so the save endpoint can refuse to delete or
+    # rename them. Seeded once at startup (mirrors
+    # ``seed_run_review_statuses_if_absent`` above); the read path
+    # (``routes.v1.config.get_label_definitions``) stays side-effect free.
+    #
+    # Kept as raw dicts (not the ``LabelDefinition`` pydantic model) to
+    # avoid a services -> routes import — ``routes.v1.config`` already
+    # imports ``AppSettingsService``, so importing back would cycle.
+    # ------------------------------------------------------------------
+
+    _LABEL_DEFINITIONS_KEY = "label_definitions"
+
+    _RESERVED_LABEL_DEFINITION_SEEDS: list[dict] = [
+        {
+            "key": "dimension",
+            "description": "Data quality dimension the rule measures.",
+            "values": ["Validity", "Completeness", "Accuracy", "Consistency", "Uniqueness", "Timeliness"],
+            "allow_custom_values": True,
+            "is_builtin": True,
+            "value_colors": {
+                "Validity": "#2563EB",
+                "Completeness": "#16A34A",
+                "Accuracy": "#D97706",
+                "Consistency": "#7C3AED",
+                "Uniqueness": "#0891B2",
+                "Timeliness": "#DB2777",
+            },
+        },
+        {
+            "key": "severity",
+            "description": "Rule severity, independent of DQX criticality (warn/error).",
+            "values": ["Low", "Medium", "High", "Critical"],
+            "allow_custom_values": False,
+            "is_builtin": True,
+            "value_colors": {
+                "Low": "#16A34A",
+                "Medium": "#D97706",
+                "High": "#EA580C",
+                "Critical": "#DC2626",
+            },
+        },
+    ]
+
+    def seed_reserved_label_definitions_if_absent(self, *, user_email: str | None = None) -> bool:
+        """Ensure the reserved ``dimension``/``severity`` label keys exist.
+
+        Idempotent and non-destructive: reads the current
+        ``label_definitions`` list, adds only the reserved seed entries
+        whose ``key`` is not already present, and leaves every existing
+        entry (admin-edited or not) untouched. Returns ``True`` iff a
+        write happened.
+        """
+        raw = self.get_setting(self._LABEL_DEFINITIONS_KEY)
+        existing: list[dict] = []
+        if raw:
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, list):
+                    existing = [item for item in parsed if isinstance(item, dict)]
+                else:
+                    logger.warning("label_definitions setting is not a list; seeding onto an empty list")
+            except (TypeError, json.JSONDecodeError):
+                logger.warning("label_definitions setting is not valid JSON; seeding onto an empty list")
+
+        existing_keys = {item.get("key") for item in existing}
+        missing = [seed for seed in self._RESERVED_LABEL_DEFINITION_SEEDS if seed["key"] not in existing_keys]
+        if not missing:
+            return False
+
+        updated = existing + [json.loads(json.dumps(seed)) for seed in missing]
+        self.save_setting(self._LABEL_DEFINITIONS_KEY, json.dumps(updated), user_email=user_email)
+        logger.info("Seeded reserved label definition(s): %s", [s["key"] for s in missing])
+        return True
+
     @staticmethod
     def _normalise_status_entry(item: dict) -> dict:
         value = (item.get("value") or "").strip() if isinstance(item.get("value"), str) else ""

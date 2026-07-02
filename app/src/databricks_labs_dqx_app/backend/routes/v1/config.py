@@ -9,7 +9,7 @@ from databricks_labs_dqx_app.backend.common.authorization import UserRole, get_u
 from databricks_labs_dqx_app.backend.config import conf
 from databricks_labs_dqx_app.backend.dependencies import get_app_settings_service, require_role
 from databricks_labs_dqx_app.backend.logger import logger
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from databricks_labs_dqx_app.backend.models import (
     ConfigIn,
@@ -45,6 +45,9 @@ _LABEL_DEFS_SETTING_KEY = "label_definitions"
 # Keys must be safe for YAML round-tripping and stable as DataFrame columns:
 # letters, digits, underscore, leading with a letter.
 _LABEL_KEY_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
+# Per-value badge colors: strict 6-digit hex so the UI can trust the value
+# without re-validating (e.g. drop straight into a CSS custom property).
+_HEX_COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
 
 
 class TimezoneOut(BaseModel):
@@ -65,12 +68,33 @@ class LabelDefinition(BaseModel):
     The reserved key ``weight`` plays a special role: its values populate the
     weight selector in the labels editor on rule authoring pages. Weight is
     stored entirely in ``user_metadata`` (no separate native ``weight`` field).
+
+    ``value_colors`` optionally maps a subset (or all) of ``values`` to a
+    ``#RRGGBB`` hex color for badge rendering; unmapped values fall back to a
+    UI default. ``is_builtin`` flags a reserved, pre-seeded key (e.g. the
+    Rules Registry ``dimension``/``severity`` tags) — such keys cannot be
+    deleted or renamed via :func:`save_label_definitions`, though their
+    values may still be edited/recolored.
     """
 
     key: str
     description: str | None = ""
     values: list[str] = Field(default_factory=list)
     allow_custom_values: bool = False
+    value_colors: dict[str, str] | None = None
+    is_builtin: bool = False
+
+    @field_validator("value_colors")
+    @classmethod
+    def _validate_value_colors(cls, value: dict[str, str] | None) -> dict[str, str] | None:
+        if value is None:
+            return None
+        for label_value, color in value.items():
+            if not _HEX_COLOR_RE.match(color):
+                raise ValueError(
+                    f"Invalid color {color!r} for value {label_value!r}; expected '#RRGGBB' hex format."
+                )
+        return value
 
 
 class LabelDefinitionsOut(BaseModel):
@@ -413,7 +437,17 @@ def save_label_definitions(
 
     Validates each key against ``_LABEL_KEY_RE``, rejects duplicates, trims
     descriptions, and dedupes the value list per definition.
+
+    Reserved keys (``is_builtin=True`` in the currently-persisted catalog —
+    e.g. the Rules Registry ``dimension``/``severity`` tags) cannot be
+    deleted or renamed: the incoming payload must still contain an entry
+    with the same key. Their values, colors, and description may still be
+    freely edited. ``is_builtin`` itself is authoritative from the stored
+    state, not the client payload — a caller can't strip the flag off a
+    reserved key by omitting/flipping it in the request.
     """
+    existing_builtin_keys = {d.key for d in _load_label_definitions(svc) if d.is_builtin}
+
     seen_keys: set[str] = set()
     cleaned: list[LabelDefinition] = []
     for d in body.definitions:
@@ -440,13 +474,31 @@ def save_label_definitions(
                 continue
             seen_values.add(sv)
             cleaned_values.append(sv)
+
+        cleaned_colors = {v: c for v, c in (d.value_colors or {}).items() if v in seen_values} or None
+
         cleaned.append(
             LabelDefinition(
                 key=key,
                 description=(d.description or "").strip(),
                 values=cleaned_values,
                 allow_custom_values=bool(d.allow_custom_values),
+                value_colors=cleaned_colors,
+                # Authoritative from the previously-persisted state, never
+                # from the client payload — a caller cannot grant or strip
+                # ``is_builtin`` protection via the request body.
+                is_builtin=key in existing_builtin_keys,
             )
+        )
+
+    missing_reserved = existing_builtin_keys - seen_keys
+    if missing_reserved:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Cannot delete or rename reserved label key(s): "
+                f"{', '.join(sorted(missing_reserved))}."
+            ),
         )
 
     svc.save_setting(_LABEL_DEFS_SETTING_KEY, json.dumps([d.model_dump() for d in cleaned]), user_email=email)
