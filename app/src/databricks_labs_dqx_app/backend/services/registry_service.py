@@ -21,7 +21,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, cast, get_args
 from uuid import uuid4
 
 from databricks_labs_dqx_app.backend.registry_fingerprint import compute_registry_rule_fingerprint
@@ -46,6 +46,16 @@ class RegistryService:
     """Manages the Rules Registry (``dq_rules`` / ``dq_rule_versions``) in the OLTP store."""
 
     VALID_STATUSES = {"draft", "pending_approval", "approved", "rejected", "deprecated"}
+
+    # Allowed values for the row-parsing Literal fields, derived from the
+    # domain model's own Literal aliases (single source of truth) rather
+    # than duplicated string sets — used by ``_parse_mode`` et al. to
+    # validate raw OLTP row strings before narrowing them to the typed
+    # Literal, per AGENTS.md Critical Rule #6 (no `# type: ignore`).
+    _VALID_MODES: frozenset[str] = frozenset(get_args(RuleMode))
+    _VALID_STATUS_VALUES: frozenset[str] = frozenset(get_args(RuleStatus))
+    _VALID_POLARITIES: frozenset[str] = frozenset(get_args(Polarity))
+    _VALID_AUTHOR_KINDS: frozenset[str] = frozenset(get_args(AuthorKind))
 
     VALID_TRANSITIONS: dict[str, set[str]] = {
         "draft": {"pending_approval"},
@@ -497,15 +507,16 @@ class RegistryService:
     # ------------------------------------------------------------------
 
     def _row_to_rule(self, row: list[str]) -> RegistryRule:
+        rule_id = row[0]
         definition = self._parse_definition(row[6])
         user_metadata = self._parse_metadata(row[7])
         return RegistryRule(
-            rule_id=row[0],
-            mode=row[1],  # type: ignore[arg-type]
-            status=row[2],  # type: ignore[arg-type]
+            rule_id=rule_id,
+            mode=self._parse_mode(row[1], rule_id=rule_id),
+            status=self._parse_status(row[2], rule_id=rule_id),
             version=int(row[3]) if row[3] else 0,
-            polarity=row[4],  # type: ignore[arg-type]
-            author_kind=row[5],  # type: ignore[arg-type]
+            polarity=self._parse_polarity(row[4], rule_id=rule_id),
+            author_kind=self._parse_author_kind(row[5], rule_id=rule_id),
             definition=definition,
             user_metadata=user_metadata,
             fingerprint=row[8],
@@ -513,23 +524,92 @@ class RegistryService:
             is_builtin=str(row[10]).lower() == "true" if row[10] is not None else False,
             source=row[11],
             created_by=row[12],
-            created_at=row[13],  # type: ignore[arg-type]
+            created_at=self._parse_timestamp(row[13], rule_id=rule_id, field="created_at"),
             updated_by=row[14],
-            updated_at=row[15],  # type: ignore[arg-type]
+            updated_at=self._parse_timestamp(row[15], rule_id=rule_id, field="updated_at"),
         )
 
     def _row_to_version(self, row: list[str]) -> RuleVersion:
+        rule_id = row[0]
         definition = self._parse_definition(row[2])
         user_metadata = self._parse_metadata(row[4])
         return RuleVersion(
-            rule_id=row[0],
+            rule_id=rule_id,
             version=int(row[1]) if row[1] else 0,
             definition=definition,
-            polarity=row[3],  # type: ignore[arg-type]
+            polarity=self._parse_polarity(row[3], rule_id=rule_id),
             user_metadata=user_metadata,
             created_by=row[5],
-            created_at=row[6],  # type: ignore[arg-type]
+            created_at=self._parse_timestamp(row[6], rule_id=rule_id, field="created_at"),
         )
+
+    @classmethod
+    def _parse_mode(cls, value: str | None, *, rule_id: str) -> RuleMode:
+        """Validate *value* against :data:`RuleMode`'s allowed members and narrow it.
+
+        Registry rows come back from :meth:`OltpExecutorProtocol.query` as
+        plain strings, but ``RegistryRule.mode`` is a ``Literal`` type — a
+        raw ``str`` can't be assigned to it without either validating the
+        value (done here) or suppressing the type-checker. Real validation
+        also protects against a corrupted/unexpected row value: builtin
+        checks always insert a valid mode, but this is the read boundary
+        where any bad or manually-edited row would otherwise surface only
+        as a confusing Pydantic error deep inside ``RegistryRule(...)``.
+        """
+        if value not in cls._VALID_MODES:
+            raise ValueError(f"Registry rule {rule_id!r} has invalid mode {value!r}; expected one of {sorted(cls._VALID_MODES)}")
+        return cast(RuleMode, value)
+
+    @classmethod
+    def _parse_status(cls, value: str | None, *, rule_id: str) -> RuleStatus:
+        """Validate *value* against :data:`RuleStatus`'s allowed members and narrow it. See :meth:`_parse_mode`."""
+        if value not in cls._VALID_STATUS_VALUES:
+            raise ValueError(
+                f"Registry rule {rule_id!r} has invalid status {value!r}; expected one of {sorted(cls._VALID_STATUS_VALUES)}"
+            )
+        return cast(RuleStatus, value)
+
+    @classmethod
+    def _parse_polarity(cls, value: str | None, *, rule_id: str) -> Polarity | None:
+        """Validate *value* against :data:`Polarity`'s allowed members and narrow it. ``None`` passes through untouched."""
+        if value is None:
+            return None
+        if value not in cls._VALID_POLARITIES:
+            raise ValueError(
+                f"Registry rule {rule_id!r} has invalid polarity {value!r}; expected one of {sorted(cls._VALID_POLARITIES)}"
+            )
+        return cast(Polarity, value)
+
+    @classmethod
+    def _parse_author_kind(cls, value: str | None, *, rule_id: str) -> AuthorKind | None:
+        """Validate *value* against :data:`AuthorKind`'s allowed members and narrow it. ``None`` passes through untouched."""
+        if value is None:
+            return None
+        if value not in cls._VALID_AUTHOR_KINDS:
+            raise ValueError(
+                f"Registry rule {rule_id!r} has invalid author_kind {value!r}; "
+                f"expected one of {sorted(cls._VALID_AUTHOR_KINDS)}"
+            )
+        return cast(AuthorKind, value)
+
+    @staticmethod
+    def _parse_timestamp(value: str | None, *, rule_id: str, field: str) -> datetime | None:
+        """Parse an ISO-ish timestamp string (see :meth:`OltpExecutorProtocol.ts_text`) into a ``datetime``.
+
+        Unlike the Literal fields above, no cast is needed here:
+        ``datetime.fromisoformat`` genuinely returns a ``datetime``, so this
+        is real coercion rather than a type-checker narrowing trick. A
+        malformed value is logged and treated as ``None`` rather than
+        failing the whole row — timestamps are informational, not part of
+        rule identity or authorization decisions.
+        """
+        if not value:
+            return None
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError:
+            logger.warning("Registry rule %s has unparsable %s timestamp %r; treating as None", rule_id, field, value)
+            return None
 
     @staticmethod
     def _parse_definition(raw: str | None) -> RuleDefinition:
