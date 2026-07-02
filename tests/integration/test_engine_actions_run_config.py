@@ -12,9 +12,8 @@ Prerequisites:
 
 from __future__ import annotations
 
-from databricks.labs.dqx.actions.alert import DQAlert
 from databricks.labs.dqx.actions.dq_action import DQAction
-from databricks.labs.dqx.actions.destinations import LogDQAlertDestination
+from databricks.labs.dqx.actions.noop import NoOpAction
 from databricks.labs.dqx.actions.manager import DQActionManager
 from databricks.labs.dqx.config import (
     InputConfig,
@@ -54,11 +53,12 @@ def test_run_config_auto_loads_fires_and_persists_action_events(ws, spark, make_
         checks=checks,
     )
 
-    # Persist an alert action (serializable log destination) to a UC actions table.
+    # Persist a side-effect-free action to a UC actions table. NoOpAction lets this test assert the
+    # load -> fire -> event-persistence path without depending on the alert/delivery subsystem.
     action = DQAction(
-        action=DQAlert(destinations=[LogDQAlertDestination(name="driver-log")]),
+        action=NoOpAction(),
         condition="error_row_count > 0",
-        name="alert_on_errors",
+        name="record_on_errors",
     )
     DQActionManager(ws=ws, spark=spark).save_actions(
         [action],
@@ -80,7 +80,7 @@ def test_run_config_auto_loads_fires_and_persists_action_events(ws, spark, make_
     events = spark.read.table(events_table)
     fired = [row for row in events.collect() if row["fired"]]
     assert len(fired) == 1, f"Expected exactly one fired action event, got {len(fired)}"
-    assert fired[0]["action_name"] == "alert_on_errors"
+    assert fired[0]["action_name"] == "record_on_errors"
     assert fired[0]["run_config_name"] == run_config_name
 
 
@@ -101,9 +101,9 @@ def test_shared_action_events_location_scopes_events_per_run_config(ws, spark, m
     engine = DQEngine(ws, spark)
     checks = [{"criticality": "error", "check": {"function": "is_not_null", "arguments": {"column": "id"}}}]
     action = DQAction(
-        action=DQAlert(destinations=[LogDQAlertDestination(name="driver-log")]),
+        action=NoOpAction(),
         condition="error_row_count > 0",
-        name="alert_on_errors",  # same action name in both run configs
+        name="record_on_errors",  # same action name in both run configs
     )
     manager = DQActionManager(ws=ws, spark=spark)
 

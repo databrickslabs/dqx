@@ -1,14 +1,14 @@
 """The *DQAction* binding and the *AnyAction* discriminated union.
 
-This module binds a concrete *Action* (currently *DQAlert* or *FailPipeline*)
-to an optional gating condition and a logical name.
+This module binds a concrete *Action* (currently *DQAlert*, *FailPipeline*, or
+*NoOpAction*) to an optional gating condition and a logical name.
 
 *DQAction* lives in its own module — separate from *actions/base.py* — because
 its *action* field is typed as the discriminated union *AnyAction*, which must
 import the concrete action classes.  *base.py* is imported by those concrete
 actions, so declaring *DQAction* there would create an import cycle.  Keeping
 the binding here imports in a single direction
-(*dq_action* depends on *alert* and *fail_pipeline*, which depend on *base*).
+(*dq_action* depends on *alert*, *fail_pipeline*, and *noop*, which depend on *base*).
 """
 
 from __future__ import annotations
@@ -20,11 +20,12 @@ from pydantic import BaseModel, Field, ValidationError, field_validator, model_v
 from databricks.labs.dqx.actions.alert import DQAlert
 from databricks.labs.dqx.actions.conditions import ConditionEvaluator
 from databricks.labs.dqx.actions.fail_pipeline import FailPipeline
+from databricks.labs.dqx.actions.noop import NoOpAction
 from databricks.labs.dqx.errors import InvalidActionError
 
 # Discriminated union of all persistable concrete actions, keyed on the literal
 # *type* field each concrete action declares.
-AnyAction = Annotated[DQAlert | FailPipeline, Field(discriminator="type")]
+AnyAction = Annotated[DQAlert | FailPipeline | NoOpAction, Field(discriminator="type")]
 
 
 class DQAction(BaseModel):

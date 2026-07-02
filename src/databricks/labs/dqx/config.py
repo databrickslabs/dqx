@@ -654,15 +654,15 @@ class TableActionsStorageConfig(BaseChecksStorageConfig):
     run_config_name: str = "default"
     mode: str = "append"
 
-    @model_validator(mode='before')
+    @model_validator(mode="before")
     @classmethod
     def validate_location(cls, data: Any) -> Any:
         if cls is TableActionsStorageConfig and isinstance(data, dict) and not data.get("location"):
             raise InvalidConfigError("The table name ('location' field) must not be empty or None.")
         return data
 
-    @model_validator(mode='after')
-    def validate_mode(self) -> 'TableActionsStorageConfig':
+    @model_validator(mode="after")
+    def validate_mode(self) -> "TableActionsStorageConfig":
         if self.mode not in ("append", "overwrite"):
             raise InvalidConfigError(f"Invalid mode '{self.mode}'. Must be 'append' or 'overwrite'.")
         return self
@@ -688,15 +688,15 @@ class LakebaseActionsStorageConfig(BaseChecksStorageConfig):
     run_config_name: str = "default"
     mode: str = "append"
 
-    @model_validator(mode='before')
+    @model_validator(mode="before")
     @classmethod
     def validate_location_present(cls, data: Any) -> Any:
         if cls is LakebaseActionsStorageConfig and isinstance(data, dict) and not data.get("location"):
             raise InvalidParameterError("Location must not be empty or None.")
         return data
 
-    @model_validator(mode='after')
-    def validate_lakebase_config(self) -> 'LakebaseActionsStorageConfig':
+    @model_validator(mode="after")
+    def validate_lakebase_config(self) -> "LakebaseActionsStorageConfig":
         if not self.instance_name:
             raise InvalidParameterError("Instance name must not be empty or None.")
 
@@ -745,15 +745,15 @@ class ActionEventsConfig(BaseChecksStorageConfig):
     mode: str = "append"
     run_config_name: str = "default"
 
-    @model_validator(mode='before')
+    @model_validator(mode="before")
     @classmethod
     def validate_location(cls, data: Any) -> Any:
         if cls is ActionEventsConfig and isinstance(data, dict) and not data.get("location"):
             raise InvalidConfigError("The events table name ('location' field) must not be empty or None.")
         return data
 
-    @model_validator(mode='after')
-    def validate_mode(self) -> 'ActionEventsConfig':
+    @model_validator(mode="after")
+    def validate_mode(self) -> "ActionEventsConfig":
         if self.mode not in ("append", "overwrite"):
             raise InvalidConfigError(f"Invalid mode '{self.mode}'. Must be 'append' or 'overwrite'.")
         return self

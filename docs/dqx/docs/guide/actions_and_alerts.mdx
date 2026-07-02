@@ -559,6 +559,40 @@ fail_action_auto = DQAction(
   </TabItem>
 </Tabs>
 
+## NoOpAction (dry-run / audit)
+
+`NoOpAction` fires when its condition is met but performs **no side effect** — it neither notifies nor
+fails the run. Because action events are still recorded (see
+[Recording action event history](#recording-action-event-history)), it is useful as an observe-only /
+dry-run mode: capture *what would have fired* into the events table while validating conditions and
+thresholds before wiring up real alerts. It is fully serializable (`type: noop`), so it loads and
+persists like any other action.
+
+<Tabs>
+  <TabItem value="Python" label="Python (classes)" default>
+
+```python
+from databricks.labs.dqx.actions import DQAction, NoOpAction
+
+audit = DQAction(
+    condition="error_row_count > 0",
+    action=NoOpAction(name="record_on_errors"),
+)
+```
+
+  </TabItem>
+  <TabItem value="YAML" label="YAML (metadata)">
+
+```yaml
+- action:
+    type: noop
+    name: record_on_errors
+  condition: error_row_count > 0
+```
+
+  </TabItem>
+</Tabs>
+
 ## Alert frequency and notify_on
 
 Two knobs control when `DQAlert` actually sends a notification after its condition fires.
