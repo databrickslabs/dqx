@@ -201,11 +201,8 @@ class AIGateway:
         """Log one audit line per call. Never logs prompt content or row/user data (CWE-117 guard)."""
         user_hash = hashlib.sha256(user_email.encode()).hexdigest()[:12]
         logger.info(
-            "ai_gateway_call endpoint=%s purpose=%s user_hash=%s output_size=%d",
-            endpoint,
-            purpose,
-            user_hash,
-            output_size,
+            f"ai_gateway_call endpoint={endpoint} purpose={purpose} "
+            f"user_hash={user_hash} output_size={output_size}"
         )
 
     # ------------------------------------------------------------------

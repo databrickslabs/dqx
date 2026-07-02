@@ -64,8 +64,11 @@ async def ai_generate_rule(
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
+        # Never relay the raw exception to the client — it can echo back prompt,
+        # schema, or data-sample content, or internal identifiers/stack detail
+        # (OWASP LLM06). Log the detail server-side; return a generic message.
         logger.error(f"Failed to generate AI rule proposal: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to generate AI rule proposal: {e}")
+        raise HTTPException(status_code=500, detail="Failed to generate AI rule proposal.")
 
 
 @router.post(
@@ -90,5 +93,6 @@ async def ai_suggest_field(
     except AIResponseParseError as e:
         raise HTTPException(status_code=502, detail=str(e))
     except Exception as e:
+        # See ai_generate_rule above — same OWASP LLM06 rationale.
         logger.error(f"Failed to generate AI field suggestion: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to generate AI field suggestion: {e}")
+        raise HTTPException(status_code=500, detail="Failed to generate AI field suggestion.")

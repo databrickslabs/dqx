@@ -125,6 +125,21 @@ class TestAiGenerateRuleRoute:
         assert result.mode == "dqx_native"
         assert result.author_kind == "ai_generated"
 
+    async def test_unexpected_error_maps_to_generic_500_without_leaking_details(self):
+        # OWASP LLM06: don't relay raw internal error text (which could echo
+        # back prompt/schema/data-sample content, stack traces, or internal
+        # identifiers) to the client — log it server-side and return a
+        # generic message instead.
+        service = _service()
+        service.generate_rule = AsyncMock(side_effect=RuntimeError("secret-internal-detail: catalog.schema.table"))
+
+        with pytest.raises(HTTPException) as exc_info:
+            await ai_routes.ai_generate_rule(AiGenerateRuleIn(description="d"), service=service, user_email="a@x")
+
+        assert exc_info.value.status_code == 500
+        assert "secret-internal-detail" not in str(exc_info.value.detail)
+        assert "catalog.schema.table" not in str(exc_info.value.detail)
+
 
 class TestAiSuggestFieldRoute:
     async def test_unavailable_maps_to_503(self):
@@ -146,3 +161,15 @@ class TestAiSuggestFieldRoute:
         )
 
         assert result.value == "Completeness"
+
+    async def test_unexpected_error_maps_to_generic_500_without_leaking_details(self):
+        service = _service()
+        service.suggest_field = AsyncMock(side_effect=RuntimeError("secret-internal-detail"))
+
+        with pytest.raises(HTTPException) as exc_info:
+            await ai_routes.ai_suggest_field(
+                AiSuggestFieldIn(field="dimension", context="ctx"), service=service, user_email="a@x"
+            )
+
+        assert exc_info.value.status_code == 500
+        assert "secret-internal-detail" not in str(exc_info.value.detail)
