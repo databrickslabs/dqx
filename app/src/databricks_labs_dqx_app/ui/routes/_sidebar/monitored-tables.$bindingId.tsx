@@ -1,4 +1,4 @@
-import { createFileRoute, Link, useParams } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { Suspense, useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { QueryErrorResetBoundary, useQueryClient } from "@tanstack/react-query";
@@ -89,7 +89,13 @@ import {
 import { orderSeverityValuesForDisplay } from "@/components/RegistryRuleBadges";
 import { ProfileColumnList } from "@/components/bindings/ProfileColumnList";
 
+const DETAIL_TAB_KEYS = ["about", "profile", "apply-rules", "results"] as const;
+type DetailTab = (typeof DETAIL_TAB_KEYS)[number];
+
 export const Route = createFileRoute("/_sidebar/monitored-tables/$bindingId")({
+  validateSearch: (search: Record<string, unknown>): { tab?: string } => ({
+    tab: typeof search.tab === "string" ? search.tab : undefined,
+  }),
   component: () => (
     <QueryErrorResetBoundary>
       {({ reset }) => (
@@ -149,7 +155,24 @@ function MonitoredTableDetailPage() {
   const { t } = useTranslation();
   const perms = usePermissions();
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const { bindingId } = useParams({ from: "/_sidebar/monitored-tables/$bindingId" });
+  const { tab } = useSearch({ from: "/_sidebar/monitored-tables/$bindingId" });
+  // The URL is the source of truth for the active tab so browser back/forward
+  // moves between tabs — mirrors the Rules Registry detail page and dqlake's
+  // rule editor. Push (not replace) a history entry per switch.
+  const activeTab: DetailTab =
+    tab && (DETAIL_TAB_KEYS as readonly string[]).includes(tab) ? (tab as DetailTab) : "apply-rules";
+  const handleTabChange = useCallback(
+    (next: string) => {
+      navigate({
+        to: "/monitored-tables/$bindingId",
+        params: { bindingId },
+        search: (prev) => ({ ...prev, tab: next }),
+      });
+    },
+    [navigate, bindingId],
+  );
 
   const { data } = useGetMonitoredTableSuspense(bindingId);
   const detail = data.data;
@@ -218,7 +241,7 @@ function MonitoredTableDetailPage() {
           )}
         </div>
 
-        <Tabs defaultValue="apply-rules">
+        <Tabs value={activeTab} onValueChange={handleTabChange}>
           <TabsList>
             <TabsTrigger value="about" className="gap-1.5">
               <Info className="h-3.5 w-3.5" />
