@@ -42,7 +42,11 @@ const router = createRouter({
   // Since we're using React Query, we don't want loader calls to ever be stale
   // This will ensure that the loader is always called when the route is preloaded or visited
   defaultPreloadStaleTime: 0,
-  scrollRestoration: true,
+  // Restore scroll position on back/forward navigation everywhere except
+  // the Rules Registry, which is a filterable list — persisting scroll
+  // there means re-opening it (e.g. after approving/rejecting a rule)
+  // lands you mid-list instead of at the top, which reads as broken.
+  scrollRestoration: ({ location }) => !location.pathname.startsWith("/registry-rules"),
 });
 
 // Register things for typesafety
