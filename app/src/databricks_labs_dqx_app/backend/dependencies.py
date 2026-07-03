@@ -38,6 +38,7 @@ from .services.rules_catalog_service import RulesCatalogService
 from .services.comments_service import CommentsService
 from .services.review_status_service import ReviewStatusService
 from .services.schedule_config_service import ScheduleConfigService
+from .services.vector_store import VectorStoreProvisioner
 from .services.view_service import ViewService
 from .sql_executor import OltpExecutorProtocol, SqlExecutor
 
@@ -339,6 +340,15 @@ async def get_rule_retriever(
 ) -> RuleRetriever:
     """Create the production Vector Search-backed RuleRetriever (design spec §8 swappable seam)."""
     return VectorSearchRetriever(sp_ws=sp_ws, app_settings=app_settings, embeddings=embeddings)
+
+
+async def get_vector_store_provisioner(
+    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
+    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    embeddings: Annotated[RuleEmbeddingsService, Depends(get_rule_embeddings_service)],
+) -> VectorStoreProvisioner:
+    """Create the idempotent, best-effort Vector Search endpoint/index provisioner."""
+    return VectorStoreProvisioner(sp_ws=sp_ws, app_settings=app_settings, embeddings=embeddings)
 
 
 async def get_rule_suggester(

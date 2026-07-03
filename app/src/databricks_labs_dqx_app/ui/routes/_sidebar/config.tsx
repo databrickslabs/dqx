@@ -56,6 +56,7 @@ import {
   useSaveAiSettings,
   getGetAiSettingsQueryKey,
   useListServingEndpoints,
+  useEnsureVectorStore,
   type AiSettingsIn,
 } from "@/lib/api";
 import {
@@ -1737,6 +1738,7 @@ function AiSettingsCard() {
   const data = settingsResp?.data;
   const queryClient = useQueryClient();
   const saveMutation = useSaveAiSettings();
+  const ensureVectorStoreMutation = useEnsureVectorStore();
   const { data: role } = useCurrentUserRoleSuspense();
   const isAdmin = role?.data?.role === "admin";
   const { data: servingEndpointsResp } = useListServingEndpoints();
@@ -1790,9 +1792,18 @@ function AiSettingsCard() {
     saveMutation.mutate(
       { data: payload },
       {
-        onSuccess: () => {
+        onSuccess: (resp) => {
           queryClient.invalidateQueries({ queryKey: getGetAiSettingsQueryKey() });
           toast.success(t("config.aiSettingsSaved"));
+          // Fire-and-forget: kick off Vector Search endpoint/index creation
+          // if the admin just configured (or already had) all three
+          // Vector Search settings. Provisioning is async and can take
+          // minutes, so this call is never awaited by the UI — the
+          // suggester reports readiness separately once the index comes
+          // online. Silently ignore failures; this is best-effort.
+          if (resp.data.embedding_endpoint_name && resp.data.vs_endpoint_name && resp.data.vs_index_name) {
+            ensureVectorStoreMutation.mutate(undefined, { onError: () => {} });
+          }
         },
         onError: (err: unknown) => {
           const axErr = err as AxiosError<{ detail?: string }>;

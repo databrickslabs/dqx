@@ -27,7 +27,9 @@ from .migrations.postgres import PgMigrationRunner
 from .routes import api_router
 from .services.app_settings_service import AppSettingsService
 from .services.registry_service import RegistryService
+from .services.rule_embeddings import RuleEmbeddingsService
 from .services.scheduler_service import SchedulerService
+from .services.vector_store import VectorStoreProvisioner
 from .services.view_service import mark_tmp_schema_ready
 from .sql_executor import SqlExecutor
 from .utils import add_not_found_handler
@@ -435,6 +437,25 @@ async def lifespan(app: FastAPI):
             )
         except Exception as e:
             logger.warning("Could not start scheduler: %s", e, exc_info=True)
+
+    # Best-effort, non-blocking Vector Search auto-provisioning (Rules
+    # Registry Phase 7F). ``ensure_vector_store`` itself never raises, but
+    # it's additionally fired via ``create_task`` (not awaited) so a slow
+    # or unreachable Vector Search control plane can never delay startup —
+    # this only matters when an admin has already configured
+    # embedding/VS settings; it's a pure no-op otherwise. The suggester
+    # keeps reporting ``available=False`` until the index reports ONLINE.
+    # The task is stashed on ``app.state`` (not just a local variable) so
+    # it isn't garbage-collected mid-flight — same rationale as
+    # ``CacheFactory.set_fire_and_forget``.
+    try:
+        oltp_for_vs = pg_executor if pg_executor is not None else sp_sql
+        vs_app_settings = AppSettingsService(sql=oltp_for_vs)
+        vs_embeddings = RuleEmbeddingsService(sql=oltp_for_vs, sp_ws=sp_ws, app_settings=vs_app_settings)
+        vs_provisioner = VectorStoreProvisioner(sp_ws=sp_ws, app_settings=vs_app_settings, embeddings=vs_embeddings)
+        app.state.vector_store_startup_task = asyncio.create_task(vs_provisioner.ensure_vector_store())
+    except Exception as e:
+        logger.warning("Could not kick off Vector Search auto-provisioning: %s", e, exc_info=True)
 
     yield
 

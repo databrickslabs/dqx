@@ -5006,6 +5006,71 @@ export function useListServingEndpointsSuspense<TData = Awaited<ReturnType<typeo
 
 
 /**
+ * Best-effort kick off Vector Search endpoint/index creation (admin-triggered).
+
+No-op when embedding/Vector Search settings aren't fully configured.
+Never raises — see :meth:`VectorStoreProvisioner.ensure_vector_store`.
+ * @summary Ensure Vector Store Route
+ */
+export const ensureVectorStore = (
+     options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<void>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/config/ensure-vector-store`,undefined,options
+    );
+  }
+
+
+
+export const getEnsureVectorStoreMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof ensureVectorStore>>, TError,void, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof ensureVectorStore>>, TError,void, TContext> => {
+
+const mutationKey = ['ensureVectorStore'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof ensureVectorStore>>, void> = () => {
+          
+
+          return  ensureVectorStore(axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type EnsureVectorStoreMutationResult = NonNullable<Awaited<ReturnType<typeof ensureVectorStore>>>
+    
+    export type EnsureVectorStoreMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Ensure Vector Store Route
+ */
+export const useEnsureVectorStore = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof ensureVectorStore>>, TError,void, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof ensureVectorStore>>,
+        TError,
+        void,
+        TContext
+      > => {
+
+      const mutationOptions = getEnsureVectorStoreMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
  * List all schedule configurations.
  * @summary List Schedules
  */

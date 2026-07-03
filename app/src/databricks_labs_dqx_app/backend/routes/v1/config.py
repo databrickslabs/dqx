@@ -10,7 +10,12 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from databricks_labs_dqx_app.backend.common.authorization import UserRole, get_user_email
 from databricks_labs_dqx_app.backend.config import conf
-from databricks_labs_dqx_app.backend.dependencies import get_app_settings_service, get_sp_ws, require_role
+from databricks_labs_dqx_app.backend.dependencies import (
+    get_app_settings_service,
+    get_sp_ws,
+    get_vector_store_provisioner,
+    require_role,
+)
 from databricks_labs_dqx_app.backend.logger import logger
 from pydantic import BaseModel, Field, field_validator
 
@@ -21,6 +26,7 @@ from databricks_labs_dqx_app.backend.models import (
     RunConfigOut,
 )
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
+from databricks_labs_dqx_app.backend.services.vector_store import VectorStoreProvisioner
 
 # Everyone except VIEWER. Used to gate the embedded-dashboard GET: the
 # Lakeview iframe is published with ``embed_credentials: true``
@@ -1059,3 +1065,32 @@ async def list_serving_endpoints(
         return ServingEndpointsOut(names=[])
     names = sorted({endpoint.name for endpoint in endpoints if endpoint.name})
     return ServingEndpointsOut(names=names)
+
+
+# ----------------------------------------------------------------------
+# Vector Search auto-provisioning trigger — Rules Registry Phase 7F. A
+# dedicated endpoint (rather than folding this into ``save_ai_settings``)
+# so provisioning can be retried independently of a settings save, and so
+# the settings route's synchronous, dependency-light signature stays
+# unchanged for its existing tests. Always returns 204 — provisioning is
+# async on the Databricks side and ``ensure_vector_store`` never raises;
+# admins check actual readiness via the rule-mapping suggester's
+# ``available``/``reason`` fields, not this call's response.
+# ----------------------------------------------------------------------
+
+
+@router.post(
+    "/ensure-vector-store",
+    operation_id="ensureVectorStore",
+    status_code=204,
+    dependencies=[require_role(UserRole.ADMIN)],
+)
+async def ensure_vector_store_route(
+    provisioner: Annotated[VectorStoreProvisioner, Depends(get_vector_store_provisioner)],
+) -> None:
+    """Best-effort kick off Vector Search endpoint/index creation (admin-triggered).
+
+    No-op when embedding/Vector Search settings aren't fully configured.
+    Never raises — see :meth:`VectorStoreProvisioner.ensure_vector_store`.
+    """
+    await provisioner.ensure_vector_store()

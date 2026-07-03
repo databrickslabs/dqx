@@ -13,7 +13,8 @@ import pytest
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import DatabricksError
 
-from databricks_labs_dqx_app.backend.routes.v1.config import list_serving_endpoints
+from databricks_labs_dqx_app.backend.routes.v1.config import ensure_vector_store_route, list_serving_endpoints
+from databricks_labs_dqx_app.backend.services.vector_store import VectorStoreProvisioner
 
 
 @pytest.fixture
@@ -57,3 +58,14 @@ class TestListServingEndpoints:
         result = await list_serving_endpoints(sp_ws)
 
         assert result.names == []
+
+
+class TestEnsureVectorStoreRoute:
+    @pytest.mark.asyncio
+    async def test_delegates_to_provisioner(self):
+        provisioner = create_autospec(VectorStoreProvisioner, instance=True)
+
+        result = await ensure_vector_store_route(provisioner)
+
+        assert result is None
+        provisioner.ensure_vector_store.assert_called_once()
