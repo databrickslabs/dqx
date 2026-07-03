@@ -25,9 +25,12 @@ class TestGetAiSettings:
         assert result.ai_endpoint_name_default == "databricks-gpt-5-5"
         assert result.ai_rate_limit_per_user_per_hour == 30
         assert result.ai_rate_limit_default == 30
-        assert result.embedding_endpoint_name == ""
-        assert result.vs_endpoint_name == ""
-        assert result.vs_index_name == ""
+        # Auto-derived (Rules Registry Phase 8B) — no separate admin
+        # inputs for these; see ``AppSettingsService.EMBEDDING_ENDPOINT_NAME_DEFAULT``
+        # and ``_default_vs_endpoint_name``/``_default_vs_index_name``.
+        assert result.embedding_endpoint_name == "databricks-gte-large-en"
+        assert result.vs_endpoint_name == "dqx_studio_rule_suggester_dqx_test"
+        assert result.vs_index_name == "dqx_test.dqx_app_test.dq_rule_embeddings_index"
 
 
 class TestSaveAiSettings:

@@ -141,26 +141,27 @@ class TestAiGatewaySettings:
 
 
 class TestVectorSearchSettings:
-    """Vector Search / embeddings settings (Rules Registry Phase 4B/4C).
+    """Vector Search / embeddings settings (Rules Registry Phase 4B/4C, auto-derived since 8B).
 
-    All three default to empty when unset, so the mapping suggester and
-    embedding population are no-ops on any deploy with no Vector Search
-    infra provisioned.
+    All three auto-derive a sensible default when unset, so the
+    rule-mapping suggester's vector store is fully provisioned from just
+    the AI enable toggle + serving endpoint (no separate embedding/VS
+    fields in the admin UI).
     """
 
     @pytest.mark.parametrize(
-        ("getter_name", "key"),
+        ("getter_name", "key", "expected"),
         [
-            ("get_embedding_endpoint_name", "embedding_endpoint_name"),
-            ("get_vs_endpoint_name", "vs_endpoint_name"),
-            ("get_vs_index_name", "vs_index_name"),
+            ("get_embedding_endpoint_name", "embedding_endpoint_name", "databricks-gte-large-en"),
+            ("get_vs_endpoint_name", "vs_endpoint_name", "dqx_studio_rule_suggester_dqx_test"),
+            ("get_vs_index_name", "vs_index_name", "dqx_test.dqx_app_test.dq_rule_embeddings_index"),
         ],
     )
-    def test_defaults_to_empty(self, settings_service, getter_name, key):
+    def test_defaults_to_auto_derived_value(self, settings_service, getter_name, key, expected):
         svc, sql_executor_mock = settings_service
         sql_executor_mock.query.return_value = []
 
-        assert getattr(svc, getter_name)() == ""
+        assert getattr(svc, getter_name)() == expected
 
     @pytest.mark.parametrize(
         ("setter_name", "getter_name", "key"),

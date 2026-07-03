@@ -439,21 +439,27 @@ async def lifespan(app: FastAPI):
             logger.warning("Could not start scheduler: %s", e, exc_info=True)
 
     # Best-effort, non-blocking Vector Search auto-provisioning (Rules
-    # Registry Phase 7F). ``ensure_vector_store`` itself never raises, but
-    # it's additionally fired via ``create_task`` (not awaited) so a slow
-    # or unreachable Vector Search control plane can never delay startup —
-    # this only matters when an admin has already configured
-    # embedding/VS settings; it's a pure no-op otherwise. The suggester
-    # keeps reporting ``available=False`` until the index reports ONLINE.
-    # The task is stashed on ``app.state`` (not just a local variable) so
-    # it isn't garbage-collected mid-flight — same rationale as
+    # Registry Phase 7F; auto-derived settings since Phase 8B).
+    # ``ensure_vector_store`` itself never raises, but it's additionally
+    # fired via ``create_task`` (not awaited) so a slow or unreachable
+    # Vector Search control plane can never delay startup. Gated on the
+    # AI kill-switch (not just "settings configured", since embedding/VS
+    # names now always resolve to an auto-derived default) so a fresh
+    # deploy with AI left off never creates Vector Search infrastructure
+    # nobody asked for. The suggester keeps reporting ``available=False``
+    # until the index reports ONLINE. The task is stashed on
+    # ``app.state`` (not just a local variable) so it isn't
+    # garbage-collected mid-flight — same rationale as
     # ``CacheFactory.set_fire_and_forget``.
     try:
         oltp_for_vs = pg_executor if pg_executor is not None else sp_sql
         vs_app_settings = AppSettingsService(sql=oltp_for_vs)
-        vs_embeddings = RuleEmbeddingsService(sql=oltp_for_vs, sp_ws=sp_ws, app_settings=vs_app_settings)
-        vs_provisioner = VectorStoreProvisioner(sp_ws=sp_ws, app_settings=vs_app_settings, embeddings=vs_embeddings)
-        app.state.vector_store_startup_task = asyncio.create_task(vs_provisioner.ensure_vector_store())
+        if vs_app_settings.get_ai_enabled():
+            vs_embeddings = RuleEmbeddingsService(sql=oltp_for_vs, sp_ws=sp_ws, app_settings=vs_app_settings)
+            vs_provisioner = VectorStoreProvisioner(sp_ws=sp_ws, app_settings=vs_app_settings, embeddings=vs_embeddings)
+            app.state.vector_store_startup_task = asyncio.create_task(vs_provisioner.ensure_vector_store())
+        else:
+            logger.debug("AI features disabled; skipping Vector Search auto-provisioning at startup")
     except Exception as e:
         logger.warning("Could not kick off Vector Search auto-provisioning: %s", e, exc_info=True)
 
