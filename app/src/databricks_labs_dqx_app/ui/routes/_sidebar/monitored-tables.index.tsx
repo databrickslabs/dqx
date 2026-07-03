@@ -7,26 +7,14 @@ import { toast } from "sonner";
 import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
 import { FadeIn } from "@/components/anim/FadeIn";
 import { Pagination } from "@/components/Pagination";
-import { useTableScopePicker, TableScopePickerFields } from "@/components/monitored-tables/TableScopePicker";
 import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+  MonitoredTablesTable,
+  getMonitoredTablesSortValue,
+  type MonitoredTablesSortKey,
+} from "@/components/monitored-tables/MonitoredTablesTable";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import {
   Select,
   SelectContent,
@@ -34,14 +22,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -52,32 +32,18 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import {
-  AlertCircle,
-  Boxes,
-  ChevronDown,
-  ChevronUp,
-  FileEdit,
-  Loader2,
-  Plus,
-  RotateCcw,
-  Search,
-  ShieldCheck,
-  Trash2,
-} from "lucide-react";
+import { AlertCircle, Boxes, Plus, RotateCcw, Search, Trash2 } from "lucide-react";
 import {
   useListMonitoredTables,
   getListMonitoredTablesQueryKey,
   useDeleteMonitoredTable,
-  useBulkRegisterMonitoredTables,
   type MonitoredTableSummaryOut,
-  type BulkRegisterMonitoredTablesOut,
 } from "@/lib/api";
 import { usePermissions } from "@/hooks/use-permissions";
-import { formatDateShort } from "@/lib/format-utils";
 import { cn } from "@/lib/utils";
 
 const PAGE_SIZE = 25;
+const ALL = "all";
 
 export const Route = createFileRoute("/_sidebar/monitored-tables/")({
   component: () => (
@@ -121,166 +87,18 @@ function MonitoredTablesSkeleton() {
   );
 }
 
-function StatusBadge({ status }: { status: string }) {
-  const { t } = useTranslation();
-  if (status === "published") {
-    return (
-      <Badge variant="outline" className="gap-1 text-[10px] border-emerald-500 text-emerald-600">
-        <ShieldCheck className="h-2.5 w-2.5" />
-        {t("monitoredTables.statusPublished")}
-      </Badge>
-    );
-  }
-  return (
-    <Badge variant="secondary" className="gap-1 text-[10px]">
-      <FileEdit className="h-2.5 w-2.5" />
-      {t("monitoredTables.statusDraft")}
-    </Badge>
-  );
-}
-
 function extractApiError(err: unknown, fallback: string): string {
   const axErr = err as { response?: { data?: { detail?: string } } };
   return axErr?.response?.data?.detail ?? fallback;
 }
 
-const ALL = "all";
-
-function buildSummaryToast(
-  t: (key: string, opts?: Record<string, unknown>) => string,
-  summary: BulkRegisterMonitoredTablesOut,
-): string {
-  const registered = summary.registered?.length ?? 0;
-  const skipped = summary.skipped_existing?.length ?? 0;
-  const invalid = summary.invalid?.length ?? 0;
-  return t("monitoredTables.wizard.toastSummary", { registered, skipped, invalid });
-}
-
-function AddMonitoredTablesDialog({
-  open,
-  onOpenChange,
-  onRegistered,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onRegistered: () => void;
-}) {
-  const { t } = useTranslation();
-  const [steward, setSteward] = useState("");
-  const [pendingFqns, setPendingFqns] = useState<string[] | null>(null);
-
-  const bulkMutation = useBulkRegisterMonitoredTables();
-  const picker = useTableScopePicker(open);
-  const { effectiveFqns } = picker;
-
-  const { reset: resetPicker } = picker;
-  const resetState = useCallback(() => {
-    setSteward("");
-    resetPicker();
-    setPendingFqns(null);
-  }, [resetPicker]);
-
-  const handleClose = useCallback(
-    (next: boolean) => {
-      if (!next) resetState();
-      onOpenChange(next);
-    },
-    [onOpenChange, resetState],
-  );
-
-  const submitBulk = useCallback(
-    (fqns: string[]) => {
-      bulkMutation.mutate(
-        { data: { table_fqns: fqns, steward: steward.trim() || undefined } },
-        {
-          onSuccess: (resp) => {
-            toast.success(buildSummaryToast(t, resp.data));
-            onRegistered();
-            handleClose(false);
-          },
-          onError: (err) => {
-            toast.error(extractApiError(err, t("monitoredTables.toastRegisterFailed")), {
-              duration: 6000,
-            });
-          },
-        },
-      );
-    },
-    [bulkMutation, steward, t, onRegistered, handleClose],
-  );
-
-  const handleNext = () => {
-    if (effectiveFqns.length === 0) return;
-    if (effectiveFqns.length > 10) {
-      setPendingFqns(effectiveFqns);
-      return;
-    }
-    submitBulk(effectiveFqns);
-  };
-
-  return (
-    <>
-      <Dialog open={open} onOpenChange={handleClose}>
-        <DialogContent className="sm:max-w-xl">
-          <DialogHeader>
-            <DialogTitle>{t("monitoredTables.wizard.title")}</DialogTitle>
-            <DialogDescription>{t("monitoredTables.wizard.description")}</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <TableScopePickerFields state={picker} />
-            <div className="space-y-1.5">
-              <Label htmlFor="mt-steward">{t("monitoredTables.stewardLabel")}</Label>
-              <Input
-                id="mt-steward"
-                value={steward}
-                onChange={(e) => setSteward(e.target.value)}
-                placeholder={t("monitoredTables.stewardPlaceholder")}
-              />
-              <p className="text-xs text-muted-foreground">{t("monitoredTables.stewardOptionalHint")}</p>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => handleClose(false)}>
-              {t("common.cancel")}
-            </Button>
-            <Button
-              onClick={handleNext}
-              disabled={effectiveFqns.length === 0 || bulkMutation.isPending}
-              className="gap-2"
-            >
-              {bulkMutation.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-              {t("monitoredTables.wizard.nextButton")}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <AlertDialog open={pendingFqns !== null} onOpenChange={(next) => !next && setPendingFqns(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              {t("monitoredTables.wizard.confirmTitle", { count: pendingFqns?.length ?? 0 })}
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              {t("monitoredTables.wizard.confirmDescription", { count: pendingFqns?.length ?? 0 })}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => {
-                const fqns = pendingFqns ?? [];
-                setPendingFqns(null);
-                submitBulk(fqns);
-              }}
-            >
-              {t("monitoredTables.wizard.confirmAction")}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </>
-  );
+/** Splits a `catalog.schema.table` FQN into its parts for the cascading
+ *  catalog/schema filters below (options are derived from the loaded rows,
+ *  mirroring dqlake's `BindingsTable` rather than a separate catalog API
+ *  call). */
+function splitFqn(fqn: string): { catalog: string; schema: string } {
+  const parts = fqn.split(".");
+  return { catalog: parts[0] ?? "", schema: parts[1] ?? "" };
 }
 
 function MonitoredTablesPage() {
@@ -291,8 +109,9 @@ function MonitoredTablesPage() {
 
   const [statusFilter, setStatusFilter] = useState<string>(ALL);
   const [stewardFilter, setStewardFilter] = useState("");
+  const [catalogFilter, setCatalogFilter] = useState<string>(ALL);
+  const [schemaFilter, setSchemaFilter] = useState<string>(ALL);
   const [nameSearch, setNameSearch] = useState("");
-  const [registerOpen, setRegisterOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<MonitoredTableSummaryOut | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [page, setPage] = useState(1);
@@ -301,20 +120,35 @@ function MonitoredTablesPage() {
     () => ({
       status: statusFilter === ALL ? undefined : statusFilter,
       steward: stewardFilter.trim() || undefined,
+      catalog: catalogFilter === ALL ? undefined : catalogFilter,
+      schema: schemaFilter === ALL ? undefined : schemaFilter,
       name: nameSearch.trim() || undefined,
     }),
-    [statusFilter, stewardFilter, nameSearch],
+    [statusFilter, stewardFilter, catalogFilter, schemaFilter, nameSearch],
   );
 
   const { data } = useListMonitoredTables(queryParams);
   const tables = useMemo(() => data?.data ?? [], [data]);
 
-  type SortKey = "table" | "status" | "appliedRules" | "lastProfiled" | "steward";
-  const [sortKey, setSortKey] = useState<SortKey | null>(null);
+  // Cascading: schema options restricted to whatever catalog is selected —
+  // derived from the (server-filtered) row set rather than a separate
+  // catalog-browser API call, matching dqlake's BindingsTable approach.
+  const { data: unfilteredData } = useListMonitoredTables({});
+  const allTables = useMemo(() => unfilteredData?.data ?? [], [unfilteredData]);
+  const catalogOptions = useMemo(
+    () => Array.from(new Set(allTables.map((r) => splitFqn(r.table.table_fqn).catalog))).sort(),
+    [allTables],
+  );
+  const schemaOptions = useMemo(() => {
+    const rows = catalogFilter === ALL ? allTables : allTables.filter((r) => splitFqn(r.table.table_fqn).catalog === catalogFilter);
+    return Array.from(new Set(rows.map((r) => splitFqn(r.table.table_fqn).schema))).sort();
+  }, [allTables, catalogFilter]);
+
+  const [sortKey, setSortKey] = useState<MonitoredTablesSortKey | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
   const handleHeaderClick = useCallback(
-    (key: SortKey) => {
+    (key: MonitoredTablesSortKey) => {
       if (sortKey !== key) {
         setSortKey(key);
         setSortDir("asc");
@@ -329,56 +163,30 @@ function MonitoredTablesPage() {
     [sortKey, sortDir],
   );
 
-  const sortValue = useCallback((summary: MonitoredTableSummaryOut, key: SortKey): string | number => {
-    switch (key) {
-      case "table":
-        return summary.table.table_fqn.toLowerCase();
-      case "status":
-        return summary.table.status;
-      case "appliedRules":
-        return summary.applied_rule_count ?? 0;
-      case "lastProfiled":
-        return summary.table.last_profiled_at ?? "";
-      case "steward":
-        return (summary.table.steward ?? "").toLowerCase();
-    }
-  }, []);
-
   const sortedTables = useMemo(() => {
     if (!sortKey) return tables;
     const copy = [...tables];
     copy.sort((a, b) => {
-      const av = sortValue(a, sortKey);
-      const bv = sortValue(b, sortKey);
+      const av = getMonitoredTablesSortValue(sortKey, a);
+      const bv = getMonitoredTablesSortValue(sortKey, b);
       if (av < bv) return sortDir === "asc" ? -1 : 1;
       if (av > bv) return sortDir === "asc" ? 1 : -1;
       return 0;
     });
     return copy;
-  }, [tables, sortKey, sortDir, sortValue]);
+  }, [tables, sortKey, sortDir]);
 
   const pagedTables = useMemo(() => {
     const start = (page - 1) * PAGE_SIZE;
     return sortedTables.slice(start, start + PAGE_SIZE);
   }, [sortedTables, page]);
 
-  function SortableHead({ sortKeyName, className, children }: { sortKeyName: SortKey; className?: string; children: React.ReactNode }) {
-    const isSorted = sortKey === sortKeyName;
-    return (
-      <TableHead
-        className={cn("text-xs font-medium cursor-pointer select-none", className)}
-        onClick={() => handleHeaderClick(sortKeyName)}
-        aria-sort={isSorted ? (sortDir === "asc" ? "ascending" : "descending") : undefined}
-      >
-        <span className="inline-flex items-center gap-1">
-          {children}
-          {isSorted && (sortDir === "asc" ? <ChevronUp className="h-3 w-3" aria-hidden /> : <ChevronDown className="h-3 w-3" aria-hidden />)}
-        </span>
-      </TableHead>
-    );
-  }
-
-  const hasActiveFilters = statusFilter !== ALL || stewardFilter.trim() !== "" || nameSearch.trim() !== "";
+  const hasActiveFilters =
+    statusFilter !== ALL ||
+    stewardFilter.trim() !== "" ||
+    catalogFilter !== ALL ||
+    schemaFilter !== ALL ||
+    nameSearch.trim() !== "";
 
   const applyFilter = useCallback(
     <T,>(setter: (v: T) => void) =>
@@ -429,129 +237,108 @@ function MonitoredTablesPage() {
             <p className="text-sm text-muted-foreground mt-1">{t("monitoredTables.subtitle")}</p>
           </div>
           {perms.canCreateRules && (
-            <Button onClick={() => setRegisterOpen(true)} className="gap-2">
+            <Button onClick={() => navigate({ to: "/monitored-tables/new" })} className="gap-2">
               <Plus className="h-4 w-4" />
               {t("monitoredTables.monitorTable")}
             </Button>
           )}
         </div>
 
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm">{t("rulesRegistry.filtersTitle")}</CardTitle>
-          </CardHeader>
-          <CardContent className="flex flex-wrap gap-2">
-            <div className="relative w-56">
-              <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-              <Input
-                placeholder={t("monitoredTables.searchPlaceholder")}
-                value={nameSearch}
-                onChange={(e) => applyFilter(setNameSearch)(e.target.value)}
-                className="h-8 text-xs pl-7"
-              />
-            </div>
-            <Select value={statusFilter} onValueChange={applyFilter(setStatusFilter)}>
-              <SelectTrigger className="h-8 w-40 text-xs">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={ALL} className="text-xs">{t("monitoredTables.allStatuses")}</SelectItem>
-                <SelectItem value="draft" className="text-xs">{t("monitoredTables.statusDraft")}</SelectItem>
-                <SelectItem value="published" className="text-xs">{t("monitoredTables.statusPublished")}</SelectItem>
-              </SelectContent>
-            </Select>
+        {/* Bare filter row — no Card/heading wrapper, matching the Rules
+            Registry list treatment. */}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative w-56">
+            <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
             <Input
-              placeholder={t("monitoredTables.stewardPlaceholder")}
-              value={stewardFilter}
-              onChange={(e) => applyFilter(setStewardFilter)(e.target.value)}
-              className="h-8 w-40 text-xs"
+              placeholder={t("monitoredTables.searchTablesPlaceholder")}
+              value={nameSearch}
+              onChange={(e) => applyFilter(setNameSearch)(e.target.value)}
+              className="h-8 text-xs pl-7"
             />
-          </CardContent>
-        </Card>
+          </div>
+          <Select value={catalogFilter} onValueChange={applyFilter(setCatalogFilter)}>
+            <SelectTrigger className="h-8 w-40 text-xs" aria-label={t("monitoredTables.colCatalog")}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL} className="text-xs">{t("monitoredTables.allCatalogs")}</SelectItem>
+              {catalogOptions.map((c) => (
+                <SelectItem key={c} value={c} className="text-xs">{c}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={schemaFilter} onValueChange={applyFilter(setSchemaFilter)}>
+            <SelectTrigger className="h-8 w-40 text-xs" aria-label={t("monitoredTables.colSchema")}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL} className="text-xs">{t("monitoredTables.allSchemas")}</SelectItem>
+              {schemaOptions.map((s) => (
+                <SelectItem key={s} value={s} className="text-xs">{s}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={statusFilter} onValueChange={applyFilter(setStatusFilter)}>
+            <SelectTrigger className="h-8 w-40 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL} className="text-xs">{t("monitoredTables.allStatuses")}</SelectItem>
+              <SelectItem value="draft" className="text-xs">{t("monitoredTables.statusDraft")}</SelectItem>
+              <SelectItem value="published" className="text-xs">{t("monitoredTables.statusPublished")}</SelectItem>
+            </SelectContent>
+          </Select>
+          <Input
+            placeholder={t("monitoredTables.stewardPlaceholder")}
+            value={stewardFilter}
+            onChange={(e) => applyFilter(setStewardFilter)(e.target.value)}
+            className="h-8 w-40 text-xs"
+          />
+        </div>
 
-        <Card>
-          <CardContent className="p-0">
-            {tables.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-16 text-center">
-                <Boxes className="h-10 w-10 text-muted-foreground/30 mb-3" />
-                <p className="text-sm text-muted-foreground">
-                  {hasActiveFilters
-                    ? t("monitoredTables.emptyState")
-                    : perms.canCreateRules
-                      ? t("monitoredTables.emptyStateNoTablesCta")
-                      : t("monitoredTables.emptyStateNoTables")}
-                </p>
-              </div>
-            ) : (
-              <>
-                <Table>
-                  <TableHeader>
-                    <TableRow className="bg-muted/50 hover:bg-muted/50">
-                      <SortableHead sortKeyName="table">{t("monitoredTables.colTable")}</SortableHead>
-                      <SortableHead sortKeyName="status">{t("monitoredTables.colStatus")}</SortableHead>
-                      <SortableHead sortKeyName="appliedRules">{t("monitoredTables.colAppliedRules")}</SortableHead>
-                      <SortableHead sortKeyName="lastProfiled">{t("monitoredTables.colLastProfiled")}</SortableHead>
-                      <SortableHead sortKeyName="steward">{t("monitoredTables.colSteward")}</SortableHead>
-                      <TableHead className="text-xs font-medium text-right">{t("monitoredTables.colActions")}</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {pagedTables.map((summary) => {
-                      const bindingId = summary.table.binding_id;
-                      const busy = pendingId === bindingId;
-                      return (
-                        <TableRow
-                          key={bindingId}
-                          className="cursor-pointer"
-                          onClick={() => navigate({ to: "/monitored-tables/$bindingId", params: { bindingId } })}
-                        >
-                          <TableCell className="min-w-[10rem] max-w-[20rem]">
-                            <code className="text-sm font-mono truncate block">{summary.table.table_fqn}</code>
-                          </TableCell>
-                          <TableCell><StatusBadge status={summary.table.status} /></TableCell>
-                          <TableCell className="text-xs text-muted-foreground tabular-nums">
-                            {t("monitoredTables.appliedRuleCount", { count: summary.applied_rule_count })}
-                          </TableCell>
-                          <TableCell className="text-xs text-muted-foreground">
-                            {summary.table.last_profiled_at
-                              ? formatDateShort(summary.table.last_profiled_at)
-                              : t("monitoredTables.neverProfiled")}
-                          </TableCell>
-                          <TableCell className="text-xs text-muted-foreground truncate max-w-[10rem]">
-                            {summary.table.steward || "—"}
-                          </TableCell>
-                          <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
-                            {busy ? (
-                              <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground inline-block" />
-                            ) : (
-                              perms.canCreateRules && (
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  className="h-7 w-7 p-0 text-destructive"
-                                  title={t("monitoredTables.actionDelete")}
-                                  onClick={() => setDeleteTarget(summary)}
-                                >
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                </Button>
-                              )
-                            )}
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
-                <div className="p-3">
-                  <Pagination page={page} totalItems={tables.length} pageSize={PAGE_SIZE} onPageChange={setPage} />
-                </div>
-              </>
-            )}
-          </CardContent>
-        </Card>
+        {/* Bare table — no Card wrapper, matching the Rules Registry list. */}
+        <MonitoredTablesTable
+          rows={pagedTables}
+          sortKey={sortKey}
+          sortDir={sortDir}
+          onHeaderClick={handleHeaderClick}
+          onRowClick={(summary) =>
+            navigate({ to: "/monitored-tables/$bindingId", params: { bindingId: summary.table.binding_id } })
+          }
+          pendingBindingId={pendingId}
+          renderActions={
+            perms.canCreateRules
+              ? (summary) => (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 w-7 p-0 text-destructive"
+                    title={t("monitoredTables.actionDelete")}
+                    onClick={() => setDeleteTarget(summary)}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                )
+              : undefined
+          }
+          emptyState={
+            <div className="flex flex-col items-center justify-center text-center">
+              <Boxes className="h-10 w-10 text-muted-foreground/30 mb-3" />
+              <p className="text-sm text-muted-foreground">
+                {hasActiveFilters
+                  ? t("monitoredTables.emptyState")
+                  : perms.canCreateRules
+                    ? t("monitoredTables.emptyStateNoTablesCta")
+                    : t("monitoredTables.emptyStateNoTables")}
+              </p>
+            </div>
+          }
+        />
+
+        {tables.length > 0 && (
+          <Pagination page={page} totalItems={tables.length} pageSize={PAGE_SIZE} onPageChange={setPage} />
+        )}
       </div>
-
-      <AddMonitoredTablesDialog open={registerOpen} onOpenChange={setRegisterOpen} onRegistered={invalidate} />
 
       <AlertDialog open={deleteTarget !== null} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <AlertDialogContent>
