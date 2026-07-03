@@ -270,6 +270,7 @@ function TimezoneSettings() {
 const LABEL_KEY_RE = /^[A-Za-z][A-Za-z0-9_]*$/;
 const RESERVED_WEIGHT_KEY = "weight";
 const HEX_COLOR_RE = /^#[0-9A-Fa-f]{6}$/;
+const RESERVED_SEVERITY_KEY = "severity";
 
 /** Red asterisk marking a required field — pair with a label, no annotation needed for optional fields. */
 function RequiredAsterisk() {
@@ -633,6 +634,17 @@ function AllowedValuesEditor({
   const colors = draft.value_colors ?? {};
   const descriptions = draft.value_descriptions ?? {};
 
+  // Severity values are stored/seeded lowest-first (Low..Critical) so they
+  // read as an ascending scale when authored, but every display surface
+  // wants highest-first — see `orderSeverityValuesForDisplay` in
+  // RegistryRuleBadges.tsx, which this mirrors for the admin editor. Only
+  // the *display* order flips; `patchValue`/`removeAt` below still index
+  // into the underlying `values` array by its stored position.
+  const isSeverity = draft.key.trim() === RESERVED_SEVERITY_KEY;
+  const displayIndices = isSeverity
+    ? values.map((_, i) => i).reverse()
+    : values.map((_, i) => i);
+
   const patchValue = (i: number, patch: { name?: string; color?: string | null; description?: string }) => {
     const current = values[i];
     if (current === undefined) return;
@@ -698,7 +710,8 @@ function AllowedValuesEditor({
       {values.length === 0 && (
         <p className="text-[11px] italic text-muted-foreground py-1">{t("config.noValuesHint")}</p>
       )}
-      {values.map((v, i) => {
+      {displayIndices.map((i) => {
+        const v = values[i];
         const isOpen = expanded === i;
         const color = colors[v];
         const description = descriptions[v] ?? "";
