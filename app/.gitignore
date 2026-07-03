@@ -32,3 +32,7 @@ node_modules/
 
 # DABs 
 .databricks
+
+# Local, untracked deploy targets (real profile / catalog / SP ids). Keep the
+# tracked template target.dev.yml.example; never commit the filled-in copy.
+target.*.yml

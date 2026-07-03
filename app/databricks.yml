@@ -1,6 +1,11 @@
 bundle:
   name: "dqx-studio"
 
+# Per-workspace deploy targets (profile, catalog, service-principal id) live in an
+# untracked ``target.*.yml`` so those values are never committed. Copy
+# ``target.dev.yml.example`` → ``target.dev.yml`` and fill it in.
+include:
+  - "target.*.yml"
 
 variables:
   catalog_name:
@@ -84,6 +89,7 @@ variables:
       command:
         - "uv"
         - "run"
+        - "--no-dev"
         - "uvicorn"
         - "databricks_labs_dqx_app.backend.app:app"
         - "--workers"
@@ -119,15 +125,15 @@ sync:
 
 artifacts:
   default:
+    # build_app.py assembles the app as a SOURCE tree under .build/ (pyproject +
+    # uv.lock + src + requirements.txt=``uv``) — no app wheel, no local dqx wheel
+    # (the app pins databricks-labs-dqx from the registry). We still build the
+    # task-runner wheel for the job (it's not published); its dqx dep resolves
+    # from the registry at job-environment install time.
     build: >
       uv run python scripts/build_app.py &&
-      rm -f .build/databricks_labs_dqx-*.whl &&
       rm -rf .build/tasks &&
-      uv build ../ --wheel --out-dir .build/ &&
-      uv build tasks/ --wheel --out-dir .build/tasks/ &&
-      dqx_whl=$(ls -1t .build/databricks_labs_dqx-*.whl | head -1 | xargs basename) &&
-      echo "$dqx_whl" | cat - .build/requirements.txt > .build/requirements.txt.tmp &&
-      mv .build/requirements.txt.tmp .build/requirements.txt
+      uv build tasks/ --wheel --out-dir .build/tasks/
 
 resources:
   apps:
@@ -145,8 +151,7 @@ resources:
         - serving.serving-endpoints
 
       resources:
-        # Binding the bundle-managed warehouse to the app grants the app SP
-        # CAN_USE on it automatically (no post-deploy grant needed).
+        # Binding the bundle-managed warehouse to the app grants the app SP CAN_USE.
         - name: "dqx-sql-warehouse"
           description: "SQL Warehouse for DQX Studio queries"
           sql_warehouse:
@@ -157,21 +162,18 @@ resources:
           job:
             id: ${resources.jobs.dqx_task_runner.id}
             permission: "CAN_MANAGE"
-        # No ``database:`` binding: the Lakebase *projects* endpoint path contains
-        # an opaque auto-generated id that can't be predicted at bundle-authoring
-        # time, so we bypass the app database resource and pass the endpoint via
-        # DQX_LAKEBASE_ENDPOINT instead. Connect + create-schema rights come from
-        # the app SP's Postgres role below (postgres_roles.app_sp).
+        # No ``database:`` binding — the app connects via DQX_LAKEBASE_ENDPOINT and
+        # gets connect/create rights from postgres_roles.app_sp (below).
 
+      # Workspace-scoped ACL: use the workspace-local ``users`` group (the
+      # account-level ``account users`` group isn't resolvable by the app
+      # permissions API in workspaces where it isn't synced).
       permissions:
-        - group_name: "account users"
+        - group_name: "users"
           level: "CAN_USE"
 
-  # Bundle-managed SQL warehouse (Mode A). The app queries through it (as the app SP
-  # via the binding above) and end-user dry-run/preview queries run through it via
-  # OBO tokens, so ``account users`` needs CAN_USE. Owning the warehouse in the
-  # bundle is what lets these grants be native ``permissions`` instead of a
-  # post-deploy script.
+  # Bundle-managed SQL warehouse. The app queries it (app SP via the binding above)
+  # and end-user OBO dry-run/preview queries run through it, so ``users`` needs CAN_USE.
   sql_warehouses:
     dqx_sql_warehouse:
       name: ${var.sql_warehouse_name}
@@ -180,26 +182,21 @@ resources:
       auto_stop_mins: 30
       enable_serverless_compute: true
       warehouse_type: PRO
-      # The app SP must be listed explicitly (not just via the app's warehouse
-      # binding): when a warehouse has ``permissions`` set, the app binding would
-      # otherwise override them and drop the SP's access. ``account users`` covers
-      # end-user OBO dry-run/preview queries.
+      # List the app SP explicitly: with ``permissions`` set, the app's warehouse
+      # binding would otherwise override them and drop its access. Use workspace
+      # ``users`` — the warehouse permissions API can't resolve account-level
+      # ``account users`` (UC ``grants`` below can).
       permissions:
         - level: CAN_USE
           service_principal_name: ${resources.apps.dqx-studio.service_principal_client_id}
         - level: CAN_USE
-          group_name: "account users"
+          group_name: "users"
 
-  # Stateful storage (schemas, volume). ``lifecycle.prevent_destroy: true`` makes
-  # ``bundle destroy`` (or any deploy that would replace the resource) fail fast
-  # instead of dropping data. To intentionally tear one down: remove the flag,
-  # ``databricks bundle deployment unbind <key>``, then destroy.
-  #
-  # ``grants`` are native and reference the app SP (via the app resource) and the
-  # task-runner SP (via variable) directly, so no post-deploy GRANT script is
-  # needed. NOTE: USE CATALOG on the (pre-existing, user-selected) catalog cannot
-  # be granted here because the bundle does not manage the catalog — grant it once
-  # per catalog as a documented prerequisite (see DEPLOYMENT.md).
+  # Stateful storage. ``lifecycle.prevent_destroy: true`` makes ``bundle destroy``
+  # (or a replacing deploy) fail fast instead of dropping data; to tear down, drop
+  # the flag, ``bundle deployment unbind <key>``, then destroy.
+  # Grants are native. USE CATALOG on the pre-existing catalog can't be granted here
+  # (the bundle doesn't manage the catalog) — grant it once per catalog (see DEPLOYMENT.md).
   schemas:
     main_schema:
       catalog_name: ${var.catalog_name}
@@ -309,9 +306,11 @@ resources:
       dataset_catalog: ${var.catalog_name}
       dataset_schema: ${var.schema_name}
       embed_credentials: true
+      # Workspace-scoped ACL — see the app/warehouse permissions note; use the
+      # workspace-local ``users`` group, not account-level ``account users``.
       permissions:
         - level: CAN_READ
-          group_name: "account users"
+          group_name: "users"
 
   jobs:
     dqx_task_runner:
@@ -347,8 +346,10 @@ resources:
           spec:
             client: "5"
             dependencies:
+              # Local task-runner wheel (not published) + the library pinned
+              # from the registry — same version as the app, no local dqx build.
               - ./.build/tasks/databricks_labs_dqx_task_runner-*.whl
-              - ./.build/databricks_labs_dqx-*.whl
+              - databricks-labs-dqx==0.15.0
       parameters:
         - name: "task_type"
           default: "profile"
@@ -365,28 +366,5 @@ resources:
         - name: "requesting_user"
           default: "unknown"
 
-# Deployment is a single step — ``make app-deploy PROFILE=<p> TARGET=<t>`` builds,
-# runs ``databricks bundle deploy`` (which creates the warehouse, schemas, volume,
-# Lakebase project + endpoint + app SP Postgres role, and applies all UC grants
-# natively), then ``bundle run`` to start the app. No post-deploy grant script and
-# no one-time bind step.
-#
-# ONE documented prerequisite: grant USE CATALOG on the chosen catalog to the app
-# SP, the task-runner SP, and ``account users`` — the bundle does not manage the
-# (pre-existing) catalog, so it cannot grant catalog-level access. See DEPLOYMENT.md.
-#
-# Requires Databricks CLI >= 1.4.0 for the postgres_projects / postgres_roles
-# resources. To disable Lakebase (Delta-only OLTP), remove the postgres_projects
-# and postgres_roles blocks and set ``lakebase_endpoint: "-"``.
-targets:
-  # The single canonical target for this workspace. Marked default so a bare
-  # ``bundle deploy`` (no ``-t``) resolves to it.
-  dev:
-    default: true
-    workspace:
-      profile: <your-profile>
-    variables:
-      catalog_name: <your-catalog>
-      dqx_service_principal_application_id: <your-service-principal-application-id>
-    presets:
-      trigger_pause_status: PAUSED
+# Deploy targets are defined in the untracked ``target.dev.yml`` (see the
+# ``include`` above and ``target.dev.yml.example``).
