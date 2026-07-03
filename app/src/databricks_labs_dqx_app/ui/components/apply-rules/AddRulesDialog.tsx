@@ -31,7 +31,8 @@ import {
 import type { LabelDefinition } from "@/lib/api-custom";
 import { RegistryRuleFormDialog } from "@/components/RegistryRuleFormDialog";
 import { HelpTooltip } from "@/components/HelpTooltip";
-import { MultiColumnPicker, SingleColumnPicker } from "./ColumnPicker";
+import { columnsForSlot, MultiColumnPicker, SingleColumnPicker } from "./ColumnPicker";
+import type { ColumnRef } from "./RulesByColumn";
 import { RESERVED_DIMENSION_KEY, RESERVED_NAME_KEY, RESERVED_SEVERITY_KEY, TagBadge, colorFor, extractApiError, getTag } from "./shared";
 
 interface AddRulesDialogProps {
@@ -42,6 +43,13 @@ interface AddRulesDialogProps {
   publishedRules: RegistryRuleOut[];
   labelDefinitions: LabelDefinition[];
   onApplied: () => void;
+  /**
+   * When opened from the by-column lens's per-column "+ Add rule" CTA, this
+   * carries the clicked column's name/family so it can be preselected for
+   * every slot whose family matches once a rule is picked — this is the
+   * fix for the by-column "Add rule" flow not doing anything useful.
+   */
+  initialColumn?: ColumnRef | null;
 }
 
 export function AddRulesDialog({
@@ -52,6 +60,7 @@ export function AddRulesDialog({
   publishedRules,
   labelDefinitions,
   onApplied,
+  initialColumn = null,
 }: AddRulesDialogProps) {
   const { t } = useTranslation();
   const [search, setSearch] = useState("");
@@ -81,6 +90,25 @@ export function AddRulesDialog({
     setSelectedRule(null);
     setMapping({});
     setSearch("");
+  };
+
+  const selectRule = (rule: RegistryRuleOut) => {
+    setSelectedRule(rule);
+    if (!initialColumn) {
+      setMapping({});
+      return;
+    }
+    // Preselect every slot whose family matches the column that the
+    // by-column "+ Add rule" CTA was clicked from, so the picker opens
+    // already pointed at that column instead of forcing the user to
+    // re-find it.
+    const initial: Record<string, string | string[]> = {};
+    for (const slot of rule.definition.slots ?? []) {
+      const matches = columnsForSlot(columns, slot).some((c) => c.name === initialColumn.name);
+      if (!matches) continue;
+      initial[slot.name] = slot.cardinality === "many" ? [initialColumn.name] : initialColumn.name;
+    }
+    setMapping(initial);
   };
 
   const handleClose = (next: boolean) => {
@@ -138,6 +166,11 @@ export function AddRulesDialog({
               <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 {t("monitoredTables.stepSelectRule")}
               </p>
+              {initialColumn && (
+                <p className="text-xs text-muted-foreground">
+                  {t("monitoredTables.addRuleForColumnHint", { column: initialColumn.name })}
+                </p>
+              )}
               <div className="relative">
                 <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
                 <Input
@@ -161,7 +194,7 @@ export function AddRulesDialog({
                       <button
                         key={rule.rule_id}
                         type="button"
-                        onClick={() => setSelectedRule(rule)}
+                        onClick={() => selectRule(rule)}
                         className="w-full text-left p-3 hover:bg-muted/40 transition-colors"
                       >
                         <p className="text-sm font-medium">{name}</p>

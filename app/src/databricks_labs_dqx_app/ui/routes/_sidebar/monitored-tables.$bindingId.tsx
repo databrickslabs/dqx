@@ -78,7 +78,7 @@ import { AI_BANNER_BORDER, AI_BUTTON_BG, AI_ICON_COLOR, AI_TEXT_GRADIENT } from 
 import { AddRulesDialog } from "@/components/apply-rules/AddRulesDialog";
 import { MappingChips } from "@/components/apply-rules/MappingChips";
 import { RuleConfigCard } from "@/components/apply-rules/RuleConfigCard";
-import { RulesByColumn } from "@/components/apply-rules/RulesByColumn";
+import { RulesByColumn, type ColumnRef } from "@/components/apply-rules/RulesByColumn";
 import {
   RESERVED_DIMENSION_KEY,
   RESERVED_SEVERITY_KEY,
@@ -558,6 +558,7 @@ function ApplyRulesTab({
   const { t } = useTranslation();
   const [lens, setLens] = useState<"by-rule" | "by-column">("by-rule");
   const [addOpen, setAddOpen] = useState(false);
+  const [addColumnContext, setAddColumnContext] = useState<ColumnRef | null>(null);
   const [suggestOpen, setSuggestOpen] = useState(false);
   const [removeTarget, setRemoveTarget] = useState<AppliedRuleOut | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
@@ -581,6 +582,11 @@ function ApplyRulesTab({
   const removeMutation = useRemoveAppliedRule();
   const pinMutation = useSetAppliedRulePin();
   const overrideMutation = useSetAppliedRuleSeverityOverride();
+
+  const openAddDialog = (column?: ColumnRef) => {
+    setAddColumnContext(column ?? null);
+    setAddOpen(true);
+  };
 
   const confirmRemove = () => {
     if (!removeTarget?.id) return;
@@ -669,7 +675,7 @@ function ApplyRulesTab({
                 {t("monitoredTables.suggestRulesButton")}
               </Button>
             )}
-            <Button size="sm" className="gap-2" onClick={() => setAddOpen(true)}>
+            <Button size="sm" className="gap-2" onClick={() => openAddDialog()}>
               <Plus className="h-3.5 w-3.5" />
               {t("monitoredTables.addRulesButton")}
             </Button>
@@ -677,14 +683,14 @@ function ApplyRulesTab({
         )}
       </div>
 
-      {appliedRules.length === 0 ? (
+      {appliedRules.length === 0 && lens === "by-rule" ? (
         <div className="flex flex-col items-center justify-center py-16 text-center border border-dashed rounded-lg">
           <Columns3 className="h-10 w-10 text-muted-foreground/30 mb-3" />
           <p className="text-sm text-muted-foreground mb-3 max-w-sm">
             {canEdit ? t("monitoredTables.emptyAppliedRulesCta") : t("monitoredTables.emptyAppliedRules")}
           </p>
           {canEdit && (
-            <Button size="sm" className="gap-2" onClick={() => setAddOpen(true)}>
+            <Button size="sm" className="gap-2" onClick={() => openAddDialog()}>
               <Plus className="h-3.5 w-3.5" />
               {t("monitoredTables.addRulesButton")}
             </Button>
@@ -710,19 +716,24 @@ function ApplyRulesTab({
       ) : (
         <RulesByColumn
           appliedRules={appliedRules}
+          tableFqn={tableFqn}
           canEdit={canEdit}
-          onAddRule={() => setAddOpen(true)}
+          onAddRule={(column) => openAddDialog(column)}
         />
       )}
 
       <AddRulesDialog
         open={addOpen}
-        onOpenChange={setAddOpen}
+        onOpenChange={(next) => {
+          setAddOpen(next);
+          if (!next) setAddColumnContext(null);
+        }}
         bindingId={bindingId}
         tableFqn={tableFqn}
         publishedRules={publishedRules}
         labelDefinitions={labelDefinitions}
         onApplied={onMutated}
+        initialColumn={addColumnContext}
       />
 
       <SuggestRulesDialog
