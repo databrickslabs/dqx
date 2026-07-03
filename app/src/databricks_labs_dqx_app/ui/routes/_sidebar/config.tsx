@@ -1,10 +1,10 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { QueryErrorResetBoundary, useQueryClient } from "@tanstack/react-query";
 import { ErrorBoundary } from "react-error-boundary";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
-import { AlertCircle, CheckCircle2, Circle, Clock, Globe, LayoutDashboard, Loader2, Lock, Search, Tags, Plus, Trash2, Upload, X, ExternalLink, RotateCcw, ShieldCheck, Sparkles } from "lucide-react";
+import { AlertCircle, CheckCircle2, Circle, Clock, Globe, LayoutDashboard, Loader2, Lock, Search, Tags, Plus, Trash2, X, ExternalLink, RotateCcw, ShieldCheck, Sparkles } from "lucide-react";
 import { FadeIn } from "@/components/anim/FadeIn";
 import { ShinyText } from "@/components/anim/ShinyText";
 import { RoleManagement } from "@/components/RoleManagement";
@@ -1856,38 +1856,6 @@ function AiSettingsCard() {
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Import rules — relocated here from the "Create Rules" sidebar group so bulk
-// import (DQX YAML or data-contract generation) reads as an admin/registry
-// operation rather than a per-rule authoring shortcut. The tabbed workspace
-// itself keeps living at ``/rules/import`` — this card is just an entry point.
-// ─────────────────────────────────────────────────────────────────────────────
-
-function ImportRulesSettings() {
-  const { t } = useTranslation();
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Upload className="h-5 w-5" />
-          {t("config.importRulesTitle")}
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <p className="text-xs text-muted-foreground leading-relaxed">
-          {t("config.importRulesDescription")}
-        </p>
-        <Button asChild size="sm" className="gap-1.5">
-          <Link to="/rules/import">
-            <Upload className="h-3.5 w-3.5" />
-            {t("config.goToImportRules")}
-          </Link>
-        </Button>
-      </CardContent>
-    </Card>
-  );
-}
-
 function ConfigPage() {
   const { t } = useTranslation();
   const { isAdmin } = usePermissions();
@@ -1946,11 +1914,6 @@ function ConfigPage() {
                 <Suspense fallback={<Skeleton className="h-40 w-full" />}>
                   <AiSettingsCard />
                 </Suspense>
-              </ErrorBoundary>
-            </FadeIn>
-            <FadeIn delay={0.18}>
-              <ErrorBoundary onReset={reset} fallbackRender={SectionError}>
-                <ImportRulesSettings />
               </ErrorBoundary>
             </FadeIn>
             <FadeIn delay={0.2}>

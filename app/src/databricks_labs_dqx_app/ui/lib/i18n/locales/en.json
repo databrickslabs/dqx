@@ -60,7 +60,8 @@
     "documentation": "Documentation",
     "documentationTitle": "Open the DQX Studio user guide on databrickslabs.github.io (opens in a new tab)",
     "rulesRegistry": "Rules Registry",
-    "monitoredTables": "Monitored Tables"
+    "monitoredTables": "Monitored Tables",
+    "importRules": "Import rules"
   },
   "userMenu": {
     "profile": "Profile",
@@ -183,9 +184,6 @@
     "failedClearDashboardOverride": "Failed to clear dashboard override.",
     "reviewStatusesSaved": "Review statuses saved.",
     "failedSaveReviewStatuses": "Failed to save review statuses.",
-    "importRulesTitle": "Import rules",
-    "importRulesDescription": "Bulk-import rules from a DQX YAML file or generate them from a data contract.",
-    "goToImportRules": "Go to Import rules",
     "aiSettingsTitle": "AI settings",
     "aiSettingsDescription": "AI-assisted rule authoring and the rule suggester stay off until a serving endpoint is configured here.",
     "aiSettingsEnabledLabel": "Enable AI features",

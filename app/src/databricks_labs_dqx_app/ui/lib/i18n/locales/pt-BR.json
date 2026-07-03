@@ -60,7 +60,8 @@
     "documentation": "Documentação",
     "documentationTitle": "Abrir o guia do usuário do DQX Studio em databrickslabs.github.io (abre em nova aba)",
     "rulesRegistry": "Registro de Regras",
-    "monitoredTables": "Tabelas Monitoradas"
+    "monitoredTables": "Tabelas Monitoradas",
+    "importRules": "Importar regras"
   },
   "userMenu": {
     "profile": "Perfil",
@@ -183,9 +184,6 @@
     "failedClearDashboardOverride": "Falha ao remover a substituição do dashboard.",
     "reviewStatusesSaved": "Status de revisão salvos.",
     "failedSaveReviewStatuses": "Falha ao salvar os status de revisão.",
-    "importRulesTitle": "Importar regras",
-    "importRulesDescription": "Importe regras em massa de um arquivo YAML do DQX ou gere-as a partir de um contrato de dados.",
-    "goToImportRules": "Ir para Importar regras",
     "aiSettingsTitle": "Configurações de IA",
     "aiSettingsDescription": "A criação de regras assistida por IA e o sugeridor de regras ficam desativados até que um endpoint de serving seja configurado aqui.",
     "aiSettingsEnabledLabel": "Ativar recursos de IA",

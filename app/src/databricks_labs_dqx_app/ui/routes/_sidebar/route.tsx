@@ -12,6 +12,7 @@ import {
   ExternalLink,
   Library,
   Boxes,
+  Upload,
 } from "lucide-react";
 import {
   SidebarGroup,
@@ -38,8 +39,9 @@ function Layout() {
   // don't 404; see ``rules.single-table.tsx``, ``rules.create-sql.tsx``,
   // ``rules.active.tsx``, and ``discovery.tsx``. Import rules
   // (``/rules/import``, plus the legacy ``/rules/from-contract``
-  // redirect) lives in the Config/Settings page, reachable from the
-  // header menu.
+  // redirect) lives directly in the sidebar, next to Rules Registry —
+  // it's a bulk-registry operation, not a per-table authoring shortcut,
+  // so it no longer needs a Config-page detour.
 
   return (
     <SidebarLayout>
@@ -63,6 +65,26 @@ function Layout() {
               >
                 <Library size={16} />
                 <span>{t("sidebar.rulesRegistry")}</span>
+              </Link>
+            </SidebarMenuItem>
+
+            {/* Import rules — bulk DQX YAML import or data-contract-driven
+                generation. ``/rules/from-contract`` still resolves (it
+                redirects into ``/rules/import?tab=contract``), so it's
+                included in the active-route check. */}
+            <SidebarMenuItem>
+              <Link
+                to="/rules/import"
+                className={cn(
+                  "flex items-center gap-2 p-2 rounded-lg",
+                  location.pathname.startsWith("/rules/import") ||
+                    location.pathname.startsWith("/rules/from-contract")
+                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                    : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                )}
+              >
+                <Upload size={16} />
+                <span>{t("sidebar.importRules")}</span>
               </Link>
             </SidebarMenuItem>
 
