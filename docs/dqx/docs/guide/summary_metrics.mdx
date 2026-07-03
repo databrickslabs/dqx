@@ -376,6 +376,8 @@ This needs a timestamp column to window on (an event or ingestion time) and a wa
 metrics_df = engine.compute_summary_metrics(spark.read.table("catalog.schema.silver"), checks=checks)
 metrics_df.write.mode("append").saveAsTable("catalog.schema.dq_metrics")
 ```
+
+**Multiple tables or pipelines:** a materialized view is defined by a single query in a single pipeline, so it cannot be shared. To centralize metrics from several checked tables in one pipeline, `unionByName` the `compute_summary_metrics` results inside one materialized view. To centralize across pipelines, use the companion-job pattern above to append into a plain Delta table (which accepts concurrent appends from multiple jobs); set a distinct observer `name` (and `input_config`) per source so rows stay filterable.
 </Admonition>
 
 **Why not the observer directly?** The observer (`observe()`) and the streaming metrics listener do not work inside a declarative pipeline: the pipeline runtime — not your code — triggers the write action, so the Spark Observation is never populated (`observation.get` stalls) and the streaming listener receives no events. DQX detects the pipeline runtime and automatically skips wiring `observe()` there, so `apply_checks*` returns the checked DataFrame unchanged (no attached observation). `compute_summary_metrics` computes the same metrics as an aggregation instead, and returns a lazy DataFrame with the same schema as the observer path — so pass the same `checks` to get the full per-check breakdown (including checks with zero violations), and the metrics can be centralized alongside batch and streaming workloads.
