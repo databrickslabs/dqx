@@ -48,8 +48,13 @@ function SidebarLayout({ children }: SidebarLayoutProps) {
         </div>
       </header>
 
-      {/* Sidebar + main content below the banner */}
-      <SidebarProvider>
+      {/* Sidebar + main content below the banner. `min-h-0` overrides the
+          shadcn default `min-h-svh` on SidebarProvider — that default
+          assumes SidebarProvider is the full-viewport root, but here it
+          sits below our fixed header, so `min-h-svh` was forcing the total
+          layout past 100vh and causing a second (body-level) scrollbar in
+          addition to the intended inner one. */}
+      <SidebarProvider className="flex-1 min-h-0">
         <Sidebar className="top-12 h-[calc(100vh-3rem)]">
           <SidebarContent className="flex flex-col justify-between">
             {children}
@@ -60,7 +65,7 @@ function SidebarLayout({ children }: SidebarLayoutProps) {
           <div className="flex items-center h-10 px-4 shrink-0">
             <SidebarTrigger className="-ml-1 cursor-pointer" />
           </div>
-          <div className="flex-1 overflow-auto">
+          <div className="flex-1 min-h-0 overflow-y-auto">
             <div className={cn("flex flex-col gap-4 p-6 pt-0 max-w-7xl mx-auto", onInsights && "hidden")}>
               <Outlet />
             </div>
