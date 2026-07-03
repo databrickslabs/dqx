@@ -214,3 +214,37 @@ class TestSeedBuiltinRulesIfAbsent:
         seed_builtin_rules_if_absent(registry_mock)
         registry_mock.seed_builtin_rule.assert_not_called()
         registry_mock.update_draft.assert_not_called()
+
+    def test_every_seeded_builtin_rule_is_dqx_native(self, sql_executor_mock):
+        """Regression guard: OOTB built-in rules must never be seeded as
+        low-code (or SQL) rules.
+
+        Drives ``seed_builtin_rules_if_absent`` against a *real*
+        ``RegistryService`` (spec-bound mock ``SqlExecutor``, per
+        ``test_registry_service.py`` conventions) so this asserts the actual
+        persisted ``mode`` column for every introspected check function —
+        not just an in-memory ``RegistryRule`` — locking in "Don't
+        auto-create OOTB DQX low-code rules."
+        """
+        sql_executor_mock.dialect = "delta"
+        sql_executor_mock.fqn.side_effect = lambda t: f"dqx_test.dqx_app_test.{t}"
+        sql_executor_mock.q.side_effect = lambda i: f"`{i}`"
+        sql_executor_mock.json_literal_expr.side_effect = lambda j: f"parse_json('{j}')"
+        sql_executor_mock.select_json_text.side_effect = lambda c: f"to_json({c})"
+        sql_executor_mock.ts_text.side_effect = lambda c: f"CAST({c} AS STRING)"
+        sql_executor_mock.query.return_value = []  # no rule pre-exists by fingerprint
+
+        registry = RegistryService(sql=sql_executor_mock)
+        expected = len(list(_introspect_check_functions()))
+        assert expected > 0  # sanity: introspection actually found functions
+
+        created = seed_builtin_rules_if_absent(registry)
+        assert created == expected
+
+        executed_sql = [c.args[0] for c in sql_executor_mock.execute.call_args_list]
+        insert_calls = [sql for sql in executed_sql if "INSERT INTO" in sql and "dq_rules " in sql]
+        assert len(insert_calls) == expected
+        for sql in insert_calls:
+            assert "'dqx_native'" in sql
+            assert "'lowcode'" not in sql
+            assert "'sql'" not in sql

@@ -366,6 +366,10 @@ class TestSeedBuiltinRule:
         assert rule.is_builtin is True
         assert rule.source == "builtin"
         assert rule.fingerprint
+        # Regression guard: seeded built-in (OOTB) rules must always be
+        # dqx_native — never lowcode/sql — per "Don't auto-create OOTB DQX
+        # low-code rules."
+        assert rule.mode == "dqx_native"
         calls = [c.args[0] for c in sql.execute.call_args_list]
         assert any("INSERT INTO dqx_test.dqx_app_test.dq_rules " in c for c in calls)
         assert any("dq_rule_versions" in c for c in calls)
