@@ -41,8 +41,10 @@ import {
   ClipboardList,
   Columns3,
   Info,
+  KeyRound,
   Loader2,
   Plus,
+  RefreshCw,
   RotateCcw,
   ShieldCheck,
   Sparkles,
@@ -53,6 +55,9 @@ import {
   useGetMonitoredTableSuspense,
   getGetMonitoredTableQueryKey,
   useGetMonitoredTableProfile,
+  getGetMonitoredTableProfileQueryKey,
+  useSubmitProfileRun,
+  getProfileRunStatus,
   usePublishMonitoredTable,
   useRemoveAppliedRule,
   useSetAppliedRulePin,
@@ -66,7 +71,9 @@ import {
 } from "@/lib/api";
 import { useLabelDefinitions } from "@/lib/api-custom";
 import { usePermissions } from "@/hooks/use-permissions";
+import { useJobPolling } from "@/hooks/use-job-polling";
 import { formatDateShort } from "@/lib/format-utils";
+import { cn } from "@/lib/utils";
 import { ApprovalStepsBanner } from "@/components/ApprovalStepsBanner";
 import { useAiAvailability } from "@/hooks/use-ai-availability";
 import { AI_BUTTON_BG } from "@/lib/ai-style";
@@ -76,6 +83,7 @@ import { RuleConfigCard, computeStatus } from "@/components/apply-rules/RuleConf
 import { RulesByColumn, type ColumnRef } from "@/components/apply-rules/RulesByColumn";
 import { RESERVED_SEVERITY_KEY, extractApiError } from "@/components/apply-rules/shared";
 import { orderSeverityValuesForDisplay } from "@/components/RegistryRuleBadges";
+import { ProfileColumnList } from "@/components/bindings/ProfileColumnList";
 
 export const Route = createFileRoute("/_sidebar/monitored-tables/$bindingId")({
   component: () => (
@@ -104,6 +112,15 @@ function DetailError({ resetErrorBoundary }: { resetErrorBoundary: () => void })
       </Button>
     </div>
   );
+}
+
+/**
+ * Subtle vertical rule grouping the binding-detail tab strip: About/Profile
+ * (read-only exploration) vs Apply Rules/Results (rule authoring + outcomes).
+ * Uses the theme `border` token so it stays visible in both light and dark.
+ */
+function TabGroupDivider() {
+  return <div aria-hidden="true" className="mx-1 self-stretch w-px my-1.5 bg-border" />;
 }
 
 function DetailSkeleton() {
@@ -226,6 +243,7 @@ function MonitoredTableDetailPage() {
               <BarChart3 className="h-3.5 w-3.5" />
               {t("monitoredTables.tabProfile")}
             </TabsTrigger>
+            <TabGroupDivider />
             <TabsTrigger value="apply-rules" className="gap-1.5">
               <Columns3 className="h-3.5 w-3.5" />
               {t("monitoredTables.tabApplyRules")}
@@ -241,7 +259,7 @@ function MonitoredTableDetailPage() {
           </TabsContent>
 
           <TabsContent value="profile">
-            <ProfileTab bindingId={bindingId} />
+            <ProfileTab bindingId={bindingId} tableFqn={table.table_fqn} />
           </TabsContent>
 
           <TabsContent value="apply-rules">
@@ -414,114 +432,163 @@ function AboutTab({ table }: { table: MonitoredTableOut }) {
 // Profile tab
 // ---------------------------------------------------------------------------
 
-function ProfileTab({ bindingId }: { bindingId: string }) {
-  const { t } = useTranslation();
-  const { data, isLoading, error } = useGetMonitoredTableProfile(bindingId);
-  const profile = data?.data;
+const LLM_PK_SUMMARY_KEY = "llm_primary_key_detection";
 
-  if (isLoading) {
+interface LlmPrimaryKeyInfo {
+  detected_columns?: string[];
+  confidence?: string;
+}
+
+function ProfileTab({ bindingId, tableFqn }: { bindingId: string; tableFqn: string }) {
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  const profileQuery = useGetMonitoredTableProfile(bindingId);
+  const profile = profileQuery.data?.data;
+
+  const parts = tableFqn.split(".");
+  const [catalog, schema, tableName] = parts;
+  const columnsQuery = useGetTableColumns(catalog ?? "", schema ?? "", tableName ?? "", {
+    query: { enabled: parts.length === 3 },
+  });
+  const columnTypes = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const c of columnsQuery.data?.data ?? []) map[c.name] = c.type_name;
+    return map;
+  }, [columnsQuery.data]);
+
+  const [runId, setRunId] = useState<string | null>(null);
+  const [jobRunId, setJobRunId] = useState<number | null>(null);
+
+  const submitMutation = useSubmitProfileRun();
+
+  const fetchStatus = useCallback(async () => {
+    if (!runId) throw new Error("No active profile run");
+    const resp = await getProfileRunStatus(runId);
+    return resp.data;
+  }, [runId]);
+
+  useJobPolling({
+    fetchStatus,
+    enabled: jobRunId !== null && runId !== null,
+    interval: 3000,
+    onComplete: async (status) => {
+      if (status.result_state === "SUCCESS") {
+        toast.success(t("monitoredTables.profileToastSucceeded"));
+        await queryClient.invalidateQueries({ queryKey: getGetMonitoredTableProfileQueryKey(bindingId) });
+      } else {
+        toast.error(t("monitoredTables.profileToastFailed"));
+      }
+      setJobRunId(null);
+      setRunId(null);
+    },
+    onError: () => {
+      toast.error(t("monitoredTables.profileToastFailed"));
+      setJobRunId(null);
+      setRunId(null);
+    },
+  });
+
+  const running = submitMutation.isPending || jobRunId !== null;
+
+  const handleRunProfile = useCallback(() => {
+    submitMutation.mutate(
+      { data: { table_fqn: tableFqn } },
+      {
+        onSuccess: (resp) => {
+          setRunId(resp.data.run_id);
+          setJobRunId(resp.data.job_run_id);
+          toast.success(t("monitoredTables.profileToastStarted"));
+        },
+        onError: (err) => {
+          toast.error(extractApiError(err, t("monitoredTables.profileToastFailed")), { duration: 6000 });
+        },
+      },
+    );
+  }, [submitMutation, tableFqn, t]);
+
+  const summary = (profile?.summary ?? {}) as Record<string, unknown>;
+  const columnStats = useMemo(() => {
+    const entries = Object.entries(summary).filter(
+      (e): e is [string, Record<string, unknown>] =>
+        e[0] !== LLM_PK_SUMMARY_KEY && typeof e[1] === "object" && e[1] !== null && !Array.isArray(e[1]),
+    );
+    return Object.fromEntries(entries);
+  }, [summary]);
+
+  if (profileQuery.isLoading) {
     return (
       <div className="space-y-2 pt-4">
-        <Skeleton className="h-24 w-full" />
+        <Skeleton className="h-16 w-full" />
         <Skeleton className="h-64 w-full" />
       </div>
     );
   }
 
-  if (error) {
-    return (
-      <div className="flex flex-col items-center justify-center py-16 text-center">
-        <BarChart3 className="h-10 w-10 text-muted-foreground/30 mb-3" />
-        <p className="text-sm font-medium text-muted-foreground">{t("monitoredTables.noProfileTitle")}</p>
-        <p className="text-muted-foreground/70 text-xs mt-1 max-w-md">{t("monitoredTables.noProfileHint")}</p>
-      </div>
-    );
-  }
-
-  if (!profile) return null;
-
-  const summary = (profile.summary ?? {}) as Record<string, unknown>;
-  const rows = Object.entries(summary).filter(
-    (e): e is [string, Record<string, unknown>] =>
-      typeof e[1] === "object" && e[1] !== null && !Array.isArray(e[1]),
-  );
+  const hasProfile = !profileQuery.error && profile != null;
+  const pkInfo = summary[LLM_PK_SUMMARY_KEY] as LlmPrimaryKeyInfo | undefined;
+  const pkColumns = pkInfo?.detected_columns ?? [];
+  const hasColumns = Object.keys(columnStats).length > 0;
 
   return (
     <div className="space-y-4 pt-4">
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <Card>
-          <CardContent className="py-3">
-            <p className="text-xs text-muted-foreground">{t("monitoredTables.rowsProfiled")}</p>
-            <p className="text-lg font-semibold tabular-nums">{profile.rows_profiled ?? "—"}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="py-3">
-            <p className="text-xs text-muted-foreground">{t("monitoredTables.columnsProfiled")}</p>
-            <p className="text-lg font-semibold tabular-nums">{profile.columns_profiled ?? "—"}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="py-3">
-            <p className="text-xs text-muted-foreground">{t("monitoredTables.durationSeconds")}</p>
-            <p className="text-lg font-semibold tabular-nums">
-              {profile.duration_seconds != null
-                ? t("monitoredTables.durationSecondsValue", { seconds: profile.duration_seconds })
-                : "—"}
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="py-3">
-            <p className="text-xs text-muted-foreground">{t("monitoredTables.profiledAt", { date: "" }).replace(/\s*$/, "")}</p>
-            <p className="text-sm font-medium">
-              {profile.profiled_at ? formatDateShort(profile.profiled_at) : "—"}
-            </p>
-          </CardContent>
-        </Card>
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="text-xs text-muted-foreground space-y-1">
+          <div>
+            <span className="uppercase tracking-wide">{t("monitoredTables.profileHeaderLastProfile")}</span>{" "}
+            <span className="font-mono">
+              {profile?.profiled_at ? formatDateShort(profile.profiled_at) : "—"}
+            </span>
+          </div>
+          <div>
+            <span className="uppercase tracking-wide">{t("monitoredTables.profileHeaderRows")}</span>{" "}
+            <span className="font-mono">
+              {profile?.rows_profiled != null ? profile.rows_profiled.toLocaleString() : "—"}
+            </span>
+          </div>
+          {pkColumns.length > 0 && (
+            <div className="flex items-center gap-1.5 pt-0.5">
+              <KeyRound className="h-3 w-3 text-emerald-500" />
+              <Badge variant="secondary" className="font-mono text-[10px]">
+                {t("monitoredTables.profilePrimaryKeyBadge", { columns: pkColumns.join(", ") })}
+              </Badge>
+              {pkInfo?.confidence && (
+                <span className="text-[10px] text-muted-foreground">({pkInfo.confidence})</span>
+              )}
+            </div>
+          )}
+        </div>
+        <Button variant="outline" size="sm" onClick={handleRunProfile} disabled={running}>
+          <RefreshCw className={cn("h-3.5 w-3.5 mr-1.5", running && "animate-spin")} />
+          {running ? t("monitoredTables.profileRunningButton") : t("monitoredTables.profileRefreshButton")}
+        </Button>
       </div>
 
-      {rows.length > 0 && (
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm">{t("monitoredTables.columnStatsTitle", { count: rows.length })}</CardTitle>
-          </CardHeader>
-          <CardContent className="p-0">
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b bg-muted/30">
-                    <th className="text-left p-2 font-medium">{t("monitoredTables.colColumn")}</th>
-                    <th className="text-left p-2 font-medium">{t("monitoredTables.colNullPct")}</th>
-                    <th className="text-left p-2 font-medium">{t("monitoredTables.colCount")}</th>
-                    <th className="text-left p-2 font-medium">{t("monitoredTables.colMin")}</th>
-                    <th className="text-left p-2 font-medium">{t("monitoredTables.colMax")}</th>
-                    <th className="text-left p-2 font-medium">{t("monitoredTables.colMean")}</th>
-                    <th className="text-left p-2 font-medium">{t("monitoredTables.colStddev")}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map(([column, stats]) => {
-                    const count = Number(stats.count ?? 0);
-                    const countNull = Number(stats.count_null ?? 0);
-                    const nullPct = count > 0 ? ((countNull / count) * 100).toFixed(1) : "—";
-                    return (
-                      <tr key={column} className="border-b last:border-b-0">
-                        <td className="p-2 font-mono font-medium">{column}</td>
-                        <td className="p-2 tabular-nums">{nullPct === "—" ? nullPct : `${nullPct}%`}</td>
-                        <td className="p-2 tabular-nums">{String(stats.count ?? "—")}</td>
-                        <td className="p-2">{String(stats.min ?? "—")}</td>
-                        <td className="p-2">{String(stats.max ?? "—")}</td>
-                        <td className="p-2 tabular-nums">{String(stats.mean ?? "—")}</td>
-                        <td className="p-2 tabular-nums">{String(stats.stddev ?? "—")}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </CardContent>
-        </Card>
+      {!hasProfile ? (
+        <div className="flex flex-col items-center justify-center py-16 text-center border border-dashed rounded-lg">
+          {running ? (
+            <Loader2 className="h-10 w-10 text-muted-foreground/40 mb-3 animate-spin" />
+          ) : (
+            <BarChart3 className="h-10 w-10 text-muted-foreground/30 mb-3" />
+          )}
+          <p className="text-sm font-medium text-muted-foreground mb-1">
+            {running ? t("monitoredTables.profileRunningButton") : t("monitoredTables.profileEmptyTitle")}
+          </p>
+          <p className="text-muted-foreground/70 text-xs mt-1 max-w-md mb-4">
+            {t("monitoredTables.profileEmptyHint")}
+          </p>
+          {!running && (
+            <Button size="sm" className="gap-2" onClick={handleRunProfile}>
+              <RefreshCw className="h-3.5 w-3.5" />
+              {t("monitoredTables.profileRunButton")}
+            </Button>
+          )}
+        </div>
+      ) : hasColumns ? (
+        <ProfileColumnList columnStats={columnStats} columnTypes={columnTypes} rowCount={profile?.rows_profiled} />
+      ) : (
+        <div className="py-8 text-center text-xs text-muted-foreground border border-dashed rounded-md">
+          {t("monitoredTables.profileNoColumnsMatch")}
+        </div>
       )}
     </div>
   );
