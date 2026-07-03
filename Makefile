@@ -68,6 +68,12 @@ perf: ## Run performance benchmarks (long timeout)
 anomaly: ## Run anomaly integration tests (long timeout, with reruns)
 	$(UV_RUN) pytest tests/integration_anomaly/ -v -n 10 --timeout 1200 --durations 20 --reruns 2 --reruns-delay 5
 
+# The integration test's deploy (ci_deploy.sh -> bundle deploy) builds the artifact wheels with
+# `uv build ../` from inside mcp-server/, so the global *relative* UV_BUILD_CONSTRAINT
+# (.build-constraints.txt) would resolve against the wrong directory and fail with
+# "File not found: .build-constraints.txt". Pin it to the absolute repo-root path (same fix as
+# mcp-deploy). CI doesn't hit this — it runs via the acceptance harness, not make.
+mcp-integration: export UV_BUILD_CONSTRAINT := $(CURDIR)/.build-constraints.txt
 mcp-integration: ## Run MCP server integration tests (deploys an isolated app; requires workspace auth + Databricks CLI)
 	$(UV_RUN) pytest tests/integration_mcp/ -v --timeout 1800 --durations 10
 
@@ -191,6 +197,14 @@ app-test: ## Run app backend pytest suite (K=<expr> filter, COV=1 for coverage)
 mcp-test: ## Run MCP server pytest suite (K=<expr> filter)
 	cd mcp-server && uv run --with pytest pytest tests/ \
 	  $(if $(K),-k "$(K)")
+
+# Static type-check the MCP server (parity with app-check). basedpyright is not in mcp-server's
+# pyproject/uv.lock (like pytest), so inject it ephemerally with ``uv run --with basedpyright`` over
+# the synced runtime env. Scoped to ``server`` (the app package): the runner sub-project's
+# pyspark/dqx deps aren't in this env — it type-checks separately as its own wheel. ``standard`` mode
+# + ``--level error`` config lives in mcp-server/pyproject.toml [tool.basedpyright].
+mcp-check: ## Type-check the MCP server with basedpyright (standard mode, errors only)
+	cd mcp-server && uv run --with basedpyright basedpyright --level error server
 
 # One-command MCP server deploy (parity with app-deploy). Ensures the runner-wheel volume
 # exists, deploys the bundle (app + runner job + setup job), runs the one-time setup job (UC

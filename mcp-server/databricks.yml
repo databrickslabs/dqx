@@ -20,9 +20,6 @@ variables:
   # bundle syntactically valid but every real deploy must override it.
   catalog_name:
     default: ""
-  # Secret scope holding the catalog name (and any other config). Override per deployment.
-  config_secret_scope:
-    default: "dqx-config"
   # Application ID of the **dedicated workspace service principal** the runner job runs as.
   # This is NOT the app's auto-created SP — an app-scoped SP cannot be a job run_as identity,
   # so a separate workspace SP is required (see README "Runner identity"). The placeholder
@@ -113,7 +110,6 @@ resources:
             base_parameters:
               app_name: "${var.name_prefix}"
               catalog_name: "${var.catalog_name}"
-              secret_scope: "${var.config_secret_scope}"
               users_group: ${var.users_group}
               # The runner job's run_as SP — setup grants it the tmp-schema access it needs.
               runner_service_principal_id: "${var.runner_service_principal_id}"
@@ -141,16 +137,29 @@ resources:
         # read/write pre-checks for workspace-file backends fail with 403 "Invalid scope".
         - workspace.workspace
 
+      # App runtime config lives here (not a static app.yaml) so bundle variables interpolate into
+      # it at deploy time — mirrors the DQX Studio bundle. This replaces app.yaml (which cannot
+      # reference ${var.*}).
+      config:
+        command: ["python", "server/main.py"]
+        env:
+          # DQX_CATALOG is a plain (non-secret) value: a Unity Catalog *name* is not sensitive —
+          # access is governed by UC grants, not by hiding the name — so it does not belong in a
+          # secret scope. It is set at deploy time from the catalog_name bundle var (the same value
+          # used for the artifacts-volume path), so there is nothing to configure out-of-band.
+          - name: DQX_CATALOG
+            value: "${var.catalog_name}"
+          - name: DQX_TMP_SCHEMA
+            value: "tmp"
+          # Resource-backed: the runner job id comes from the app→job binding below.
+          - name: DQX_RUNNER_JOB_ID
+            value_from: "dqx-runner-job"
+
       resources:
         - name: dqx-runner-job
           job:
             id: ${resources.jobs.dqx_runner.id}
             permission: "CAN_MANAGE_RUN"
-        - name: dqx-catalog-secret
-          secret:
-            scope: ${var.config_secret_scope}
-            key: catalog_name
-            permission: "READ"
 
       permissions:
         - level: CAN_USE

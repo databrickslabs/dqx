@@ -182,33 +182,38 @@ def test_mcp_server_end_to_end(workspace_auth, app_auth):
         assert run["valid_rows"] == EXPECTED_TOTAL_ROWS - EXPECTED_INVALID_ROWS
         assert run["error_sample"] and run["rule_summary"]
 
-        # 9. save_checks -> load_checks round-trip (writes/reads as the app SP).
+        # 9. save_checks -> load_checks round-trip. Outputs go to the caller's private per-user
+        #    schema (dqx_mcp_<user>); we load them back by the FQN save_checks reports.
         saved = client.call(
-            "save_checks", {"checks": EXPLICIT_CHECKS, "location": data["checks_table"], "mode": "overwrite"}
+            "save_checks", {"checks": EXPLICIT_CHECKS, "output_name": "customers_checks", "mode": "overwrite"}
         )
         assert saved["saved"] is True and saved["count"] == len(EXPLICIT_CHECKS)
-        # grant-on-write: the calling user is granted access to the table backend it created
+        # grant-on-write: the calling user is granted access to the table the runner created
         assert saved.get("access_granted_to"), "save_checks should grant the caller access to the checks table"
-        loaded = client.call("load_checks", {"location": data["checks_table"]})
+        saved_location = saved["location"]
+        assert ".dqx_mcp_" in saved_location and saved_location.endswith(".customers_checks"), saved_location
+        loaded = client.call("load_checks", {"location": saved_location})
         assert loaded["count"] == len(EXPLICIT_CHECKS)
         assert {c["check"]["function"] for c in loaded["checks"]} == {c["check"]["function"] for c in EXPLICIT_CHECKS}
 
-        # 10. apply_checks_and_save_to_table — clean / quarantine split persisted.
+        # 10. apply_checks_and_save_to_table — clean / quarantine split in the caller's per-user schema.
         applied = client.call(
             "apply_checks_and_save_to_table",
             {
                 "table_name": table,
                 "checks": EXPLICIT_CHECKS,
-                "output_table": data["clean_table"],
-                "quarantine_table": data["quarantine_table"],
+                "output_name": "customers_clean",
+                "quarantine_name": "customers_quarantine",
                 "mode": "overwrite",
             },
         )
         assert applied["quarantine_rows"] == EXPECTED_INVALID_ROWS
         assert applied["output_rows"] == EXPECTED_TOTAL_ROWS - EXPECTED_INVALID_ROWS
-        # grant-on-write: the calling user is granted access to both output tables it created
+        # grant-on-write: the calling user is granted access to both output tables the runner created
         assert applied.get("access_granted_to"), "apply should grant the caller access to the outputs"
-        assert set(applied.get("granted_tables") or []) == {data["clean_table"], data["quarantine_table"]}
+        assert applied.get("output_schema", "").rsplit(".", 1)[-1].startswith("dqx_mcp_"), applied.get("output_schema")
+        assert applied["output_table"].endswith(".customers_clean"), applied["output_table"]
+        assert len(applied.get("granted_tables") or []) == 2, applied.get("granted_tables")
 
         # 11. Agent-in-the-loop — a real model must discover + invoke a tool (skip if unreachable).
         if _endpoint_reachable(host, get_token):

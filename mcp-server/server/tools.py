@@ -130,7 +130,8 @@ def load_tools(mcp_server):
 
     @mcp_server.tool
     def generate_rules_from_contract(
-        contract_file: str,
+        contract_file: str | None = None,
+        contract_content: str | None = None,
         contract_format: str = "odcs",
         default_criticality: str = "error",
     ):
@@ -138,6 +139,14 @@ def load_tools(mcp_server):
 
         Derives checks deterministically from the contract's schema and quality expectations —
         a deterministic alternative to profiling when a data contract already exists.
+
+        Provide the contract in ONE of two ways:
+          - contract_content: the inline contract text (recommended — no file access needed), or
+          - contract_file: a path to the contract (UC volume '/Volumes/...' or workspace '/...').
+
+        Either way, the app reads the contract as YOU (for a file, your UC/workspace permissions are
+        enforced) and stages a copy to a UC volume the runner can read — so a contract in your
+        Workspace files works even though the runner service principal has no access to them.
 
         Note: free-text expectations in the contract (DQX's LLM "text rules" path) are NOT
         processed by this MCP server — that path needs the DQX [llm] extra (dspy) plus an LLM
@@ -148,7 +157,9 @@ def load_tools(mcp_server):
         Call get_run_result with the run_id to check status and retrieve results.
 
         Args:
-            contract_file: Path to the contract file (workspace, UC volume, or local).
+            contract_file: Path to the contract file (UC volume or workspace). Mutually exclusive
+                with contract_content.
+            contract_content: Inline contract text. Mutually exclusive with contract_file.
             contract_format: Contract format (default 'odcs').
             default_criticality: Default criticality for generated rules: 'error' or 'warn'.
 
@@ -156,19 +167,30 @@ def load_tools(mcp_server):
             - 'status': 'submitted'
             - 'run_id': job run ID to pass to get_run_result
         """
-        logger.info(f"Generating rules from contract: {utils.sanitize_for_log(contract_file)}")
-        # Governance: the runner reads the contract file as the SP, so first confirm the *caller*
-        # can read it (via their OBO client). Tables aren't a contract source, so this covers the
-        # UC-volume / workspace-file paths the tool actually accepts.
-        utils.verify_obo_read_access(utils.get_obo_client(), contract_file)
+        if contract_file and contract_content:
+            raise ValueError("Provide only one of contract_file or contract_content, not both.")
 
-        # DQX reads the contract via a local open(); a workspace path must use the cluster's FUSE
-        # mount prefix (/Workspace/...). The pre-check above used the Workspace API form, so map
-        # the path the runner opens to its on-cluster form.
+        if contract_content is not None:
+            logger.info(f"Generating rules from inline contract ({len(contract_content)} chars)")
+            # Inline text — no file access needed. Stage it where the runner SP can read it.
+            staged_path = utils.stage_bytes_to_results_volume(contract_content.encode("utf-8"), suffix=".yaml")
+        elif contract_file is not None:
+            logger.info(f"Generating rules from contract: {utils.sanitize_for_log(contract_file)}")
+            # Governance: enforce the *caller's* read permission, then read the file AS the caller and
+            # stage a copy the runner SP can read. This closes the gap where the runner SP (which does
+            # the actual read) has no access to the caller's Workspace/Volume files.
+            obo_ws = utils.get_obo_client()
+            utils.verify_obo_read_access(obo_ws, contract_file)
+            content = utils.read_file_via_obo(obo_ws, contract_file)
+            _, ext = os.path.splitext(contract_file)
+            staged_path = utils.stage_bytes_to_results_volume(content, suffix=(ext or ".yaml"))
+        else:
+            raise ValueError("Provide either contract_file (a path) or contract_content (the inline contract text).")
+
         run_id = utils.submit_job_async(
             "generate_rules_from_contract",
             {
-                "contract_file": utils.to_local_fuse_path(contract_file),
+                "contract_file": staged_path,
                 "contract_format": contract_format,
                 "default_criticality": default_criticality,
                 # process_text_rules is intentionally not exposed/sent: deterministic-only. The
@@ -231,46 +253,46 @@ def load_tools(mcp_server):
     @mcp_server.tool
     def save_checks(
         checks: list[dict],
-        location: str,
+        output_name: str,
         run_config_name: str = "default",
         mode: str = "append",
     ):
-        """Save DQX checks to a storage backend for later reuse.
+        """Save DQX checks to your private MCP output schema (a Delta table you can reuse).
 
-        The backend is inferred from the location: a 'catalog.schema.table' name is a
-        Delta table, a '/Volumes/...' path is a UC volume file, any other '/...' path is
-        a workspace file. The write is performed by the runner service principal, but only after
-        verifying — via your own Unity Catalog permissions — that you may write to the
-        destination; the call is rejected if you could not write there yourself.
+        The checks are written to a Delta table named ``output_name`` inside your own private,
+        per-user MCP schema (``dqx_mcp_<you>``) — you supply only the table name, not a
+        catalog/schema. The runner service principal creates the schema/table and grants YOU
+        access, so you can reuse the saved rule set from your own pipelines. Other users cannot
+        see your schema, and names can't collide across users.
 
         This tool submits a job and returns a run_id immediately.
         Call get_run_result with the run_id to check status and retrieve results.
 
         Args:
             checks: List of DQX check definitions (metadata format) to save.
-            location: Table name or file path to save the checks to.
-            run_config_name: Run configuration name to tag the checks with (table backends only).
-            mode: Write mode for table backends, 'append' or 'overwrite' (ignored for files).
+            output_name: Bare table name for the saved rule set (letters, digits, underscores).
+            run_config_name: Run configuration name to tag the checks with.
+            mode: Write mode, 'append' or 'overwrite' (default 'append').
 
         Returns a dict with:
             - 'status': 'submitted'
             - 'run_id': job run ID to pass to get_run_result
         """
-        logger.info(f"Saving {len(checks)} checks to: {utils.sanitize_for_log(location)}")
-        # Governance: the runner writes as the SP, so confirm the *caller* may write to the
-        # destination before submitting (closes the "SP writes where the user can't" gap).
-        obo_ws = utils.get_obo_client()
-        utils.verify_obo_write_access(obo_ws, location, utils.get_warehouse_id(obo_ws))
+        logger.info(f"Saving {len(checks)} checks as: {utils.sanitize_for_log(output_name)}")
+        catalog, _schema = _get_tmp_view_config()
+        output_name = utils.validate_output_name(output_name)
+        mode = utils.validate_write_mode(mode)
 
         run_id = utils.submit_job_async(
             "save_checks",
             {
                 "checks": checks,
-                "location": location,
+                "output_name": output_name,
                 "run_config_name": run_config_name,
                 "mode": mode,
-                # Grant the calling user access to the table this creates (table backends only),
-                # so they can use it outside the MCP. The runner does this best-effort as the SP.
+                # The runner writes to (and grants the caller on) the caller's own per-user schema
+                # in this catalog — no caller-supplied destination, so no write pre-check needed.
+                "catalog": catalog,
                 "grant_to": utils.get_user_email(),
             },
         )
@@ -343,19 +365,19 @@ def load_tools(mcp_server):
     def apply_checks_and_save_to_table(
         table_name: str,
         checks: list[dict],
-        output_table: str,
-        quarantine_table: str | None = None,
+        output_name: str,
+        quarantine_name: str | None = None,
         mode: str = "append",
     ):
-        """Apply DQX checks to a table and persist the results to output table(s).
+        """Apply DQX checks to a table and persist the results to your private MCP output schema.
 
-        Unlike run_checks (which returns a sample), this operationalizes the checks:
-        results are written to Delta tables. If quarantine_table is given, valid rows go
-        to output_table and invalid rows to quarantine_table; otherwise all rows (with
-        _errors/_warnings columns) go to output_table. The write is performed by the runner
-        service principal, but only after verifying — via your own Unity Catalog permissions —
-        that you may write to output_table (and quarantine_table); the call is rejected if you
-        could not write there yourself.
+        Unlike run_checks (which returns a sample), this operationalizes the checks: results are
+        written to Delta tables in your own private, per-user MCP schema (``dqx_mcp_<you>``). You
+        supply only the output table name(s), not a catalog/schema. If ``quarantine_name`` is given,
+        valid rows go to the output table and invalid rows to the quarantine table; otherwise all
+        rows (with _errors/_warnings columns) go to the output table. The runner service principal
+        creates the tables and grants YOU access, so you can use them from your own pipelines; other
+        users cannot see your schema.
 
         This tool submits a job and returns a run_id immediately.
         Call get_run_result with the run_id to check status and retrieve results.
@@ -363,8 +385,8 @@ def load_tools(mcp_server):
         Args:
             table_name: Fully qualified source table name (e.g. 'catalog.schema.table').
             checks: List of DQX check definitions (metadata format).
-            output_table: Fully qualified table to write results to.
-            quarantine_table: Optional fully qualified table for invalid rows.
+            output_name: Bare table name for the results (letters, digits, underscores).
+            quarantine_name: Optional bare table name for invalid rows.
             mode: Write mode, 'append' or 'overwrite' (default 'append').
 
         Returns a dict with:
@@ -373,20 +395,19 @@ def load_tools(mcp_server):
         """
         logger.info(
             f"Applying {len(checks)} checks on {utils.sanitize_for_log(table_name)} "
-            f"-> {utils.sanitize_for_log(output_table)}"
+            f"-> {utils.sanitize_for_log(output_name)}"
         )
         obo_ws = utils.get_obo_client()
         warehouse_id = utils.get_warehouse_id(obo_ws)
         catalog, schema = _get_tmp_view_config()
+        output_name = utils.validate_output_name(output_name)
+        quarantine_name = utils.validate_output_name(quarantine_name) if quarantine_name else None
+        mode = utils.validate_write_mode(mode)
 
+        # The source read is governed by the caller's OBO definer's-rights view. The outputs go to
+        # the caller's own SP-owned per-user schema (created + granted by the runner), so there is
+        # no caller-supplied write destination and no write pre-check to get wrong.
         view_fqn = utils.create_temp_view(obo_ws, table_name, catalog, schema, warehouse_id)
-
-        # Governance: the runner writes the output/quarantine tables as the SP, so confirm the
-        # *caller* may write to each destination before submitting (the source read is already
-        # governed by the definer's-rights view above).
-        utils.verify_obo_write_access(obo_ws, output_table, warehouse_id)
-        if quarantine_table:
-            utils.verify_obo_write_access(obo_ws, quarantine_table, warehouse_id)
 
         run_id = utils.submit_job_async(
             "apply_checks_and_save_to_table",
@@ -394,11 +415,10 @@ def load_tools(mcp_server):
                 "view_name": view_fqn,
                 "table_name": table_name,
                 "checks": checks,
-                "output_table": output_table,
-                "quarantine_table": quarantine_table,
+                "output_name": output_name,
+                "quarantine_name": quarantine_name,
                 "mode": mode,
-                # Grant the calling user access to the output/quarantine tables this creates,
-                # so they can use them outside the MCP. The runner does this best-effort as the SP.
+                "catalog": catalog,
                 "grant_to": utils.get_user_email(),
             },
         )
@@ -432,21 +452,25 @@ def load_tools(mcp_server):
         return utils.get_run_status(run_id)
 
     @mcp_server.tool
-    def list_available_checks():
-        """List all built-in DQX check functions available for use in rules.
+    def list_available_checks(filter: str | None = None):
+        """List built-in DQX check functions available for use in rules.
 
         This tool submits a job and returns a run_id immediately.
         Call get_run_result with the run_id to check status and retrieve results.
+
+        Args:
+            filter: Optional case-insensitive substring to narrow the list by function name or
+                description (e.g. 'regex', 'null', 'range') — search instead of scanning them all.
 
         Returns a dict with:
             - 'status': 'submitted'
             - 'run_id': job run ID to pass to get_run_result
         """
-        logger.info("Listing available check functions")
+        logger.info(f"Listing available check functions (filter={utils.sanitize_for_log(filter) if filter else '-'})")
 
         run_id = utils.submit_job_async(
             "list_available_checks",
-            {},
+            {"filter": filter} if filter else {},
         )
 
         return {
@@ -528,8 +552,8 @@ def load_tools(mcp_server):
                 {
                     "tool": "save_checks",
                     "purpose": (
-                        "Persist a validated rule set to a table, UC volume, or workspace file so DQX "
-                        "pipelines (or a later session) can reuse it."
+                        "Persist a validated rule set to a table in your private per-user MCP schema "
+                        "(dqx_mcp_<you>) so DQX pipelines (or a later session) can reuse it."
                     ),
                     "async": True,
                 },
@@ -542,7 +566,7 @@ def load_tools(mcp_server):
                     "tool": "apply_checks_and_save_to_table",
                     "purpose": (
                         "Operationalized alternative to run_checks (step 5): write valid/quarantine rows "
-                        "to Delta tables instead of returning a sample."
+                        "to Delta tables in your private per-user MCP schema instead of returning a sample."
                     ),
                     "async": True,
                 },

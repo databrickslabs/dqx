@@ -6,10 +6,10 @@ MCP's results UC volume, keyed by the job run id. The MCP server (app) submits t
 
 Why a wheel task (not a notebook): the job runs as a dedicated, least-privilege workspace service
 principal (``run_as``), and the runner is a proper, unit-testable package rather than a notebook
-full of ``dbutils`` — mirroring the DQX Studio task runner. Either task type needs the run_as SP
-to read its code from the deployer's workspace bundle folder: a notebook_task needs CAN_READ on
-the notebook *object*, and this wheel task needs read on the wheel in the bundle artifact path.
-The setup job grants the runner SP that artifact-path read (see notebooks/setup.py).
+full of ``dbutils`` — mirroring the DQX Studio task runner. The wheel is hosted in a UC volume
+(``{catalog}.tmp.dqx_artifacts``, the bundle's ``workspace.artifact_path``); the setup job grants
+the run_as SP ``READ VOLUME`` there so the serverless environment can install it (see
+notebooks/setup.py).
 
 Result passing: notebook ``dbutils.notebook.exit`` is unavailable to wheel tasks, so results go to
 ``{catalog}.{schema}.mcp_results`` (a UC volume) as ``<run_id>.json``. The app reads them via the
@@ -29,6 +29,14 @@ from typing import Any
 
 from databricks.sdk import WorkspaceClient
 from pyspark.sql import SparkSession
+
+from dqx_mcp_runner.naming import (
+    IDENTIFIER_RE,
+    PRINCIPAL_RE,
+    output_schema_for_user,
+    qualify_output,
+    validate_identifier,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("dqx-mcp-runner")
@@ -71,28 +79,50 @@ def profile_table(spark: SparkSession, ws: WorkspaceClient, params: dict) -> dic
     }
 
 
+def _to_dq_profile(p: dict):
+    """Build a ``DQProfile`` from a caller-supplied profile dict, requiring ``name`` + ``column``.
+
+    Raises a clear ``InvalidParameterError`` (not an opaque ``KeyError`` deep in the runner) when a
+    required key is missing, so a malformed profile from the client produces an actionable message.
+    """
+    from databricks.labs.dqx.errors import InvalidParameterError
+    from databricks.labs.dqx.profiler.profiler import DQProfile
+
+    for key in ("name", "column"):
+        if not p.get(key):
+            raise InvalidParameterError(f"Profile is missing required key '{key}' (got keys: {sorted(p)}).")
+    return DQProfile(
+        name=p["name"],
+        column=p["column"],
+        description=p.get("description"),
+        parameters=p.get("parameters"),
+        filter=p.get("filter"),
+    )
+
+
 def generate_rules(spark: SparkSession, ws: WorkspaceClient, params: dict) -> dict:
     """Generate DQX rules from profiling output."""
     from databricks.labs.dqx.profiler.generator import DQGenerator
-    from databricks.labs.dqx.profiler.profiler import DQProfile
 
     profiles = params["profiles"]
     criticality = params.get("criticality", "error")
 
-    dq_profiles = [
-        DQProfile(
-            name=p["name"],
-            column=p["column"],
-            description=p.get("description"),
-            parameters=p.get("parameters"),
-            filter=p.get("filter"),
-        )
-        for p in profiles
-    ]
+    dq_profiles = [_to_dq_profile(p) for p in profiles]
 
     generator = DQGenerator(workspace_client=ws, spark=spark)
     rules = generator.generate_dq_rules(dq_profiles, criticality=criticality)
-    return {"rules": _make_json_safe(rules), "count": len(rules)}
+    return {
+        "rules": _make_json_safe(rules),
+        "count": len(rules),
+        # Bounds/allowed-values in these rules come straight from the profiled data, so outliers or
+        # dirty values (e.g. a negative age) become the rule's limits. Surface this so the caller
+        # reviews them instead of enshrining bad data as the expectation.
+        "note": (
+            "Generated bounds (min/max) and allowed values are derived from the profiled data, "
+            "including any outliers or dirty values. Review them against business expectations "
+            "(or a data contract) before using these rules in production."
+        ),
+    }
 
 
 def load_checks(spark: SparkSession, ws: WorkspaceClient, params: dict) -> dict:
@@ -110,40 +140,75 @@ def load_checks(spark: SparkSession, ws: WorkspaceClient, params: dict) -> dict:
 
 
 def save_checks(spark: SparkSession, ws: WorkspaceClient, params: dict) -> dict:
-    """Save DQX checks to a storage backend (table, UC volume, or workspace file)."""
+    """Save DQX checks to the caller's private, per-user MCP output schema (a Delta table).
+
+    Outputs are namespaced per caller (``dqx_mcp_<user>``, owned by the runner SP and granted only
+    to that caller) instead of a caller-supplied destination — so the SP always writes where it is
+    guaranteed to have permission, and there is no cross-user leak or name collision.
+    """
     from databricks.labs.dqx.checks_storage import ChecksStorageHandlerFactory
     from databricks.labs.dqx.engine import DQEngine
+    from databricks.labs.dqx.errors import InvalidParameterError
 
     checks = params["checks"]
-    location = params["location"]
+    output_name = params["output_name"]
     run_config_name = params.get("run_config_name", "default")
     mode = params.get("mode", "append")
+    catalog = params["catalog"]
+    grant_to = params.get("grant_to")
+    if not grant_to:
+        raise InvalidParameterError("A caller identity is required to create your private output schema.")
+
+    user_schema = output_schema_for_user(grant_to)
+    _ensure_output_schema(spark, catalog, user_schema, grant_to)
+    location = qualify_output(catalog, user_schema, output_name)
 
     engine = DQEngine(workspace_client=ws, spark=spark)
     _handler, config = ChecksStorageHandlerFactory(ws, spark).create_for_location(location, run_config_name)
-    if hasattr(config, "mode"):
-        config.mode = mode
+    # Apply the write mode through the config's validator via replace() — NOT attribute assignment,
+    # which bypasses validation and silently no-ops on a config with no `mode`. The per-user output
+    # is always a table backend, which declares `mode`; fail clearly if that ever isn't the case.
+    if "mode" in type(config).model_fields:
+        config = config.replace(mode=mode)
+    else:
+        raise InvalidParameterError(f"The checks backend for '{location}' does not support a write mode.")
     engine.save_checks(checks, config)
 
-    grant_to = params.get("grant_to")
-    granted_to = None
-    if grant_to and "/" not in location and location.count(".") == 2:
-        if _grant_table_access(spark, location, grant_to):
-            granted_to = grant_to
-
-    return {"saved": True, "count": len(checks), "location": location, "access_granted_to": granted_to}
+    granted_to = grant_to if _grant_table_access(spark, location, grant_to) else None
+    return {
+        "saved": True,
+        "count": len(checks),
+        "location": location,
+        "output_schema": f"{catalog}.{user_schema}",
+        "access_granted_to": granted_to,
+    }
 
 
 def apply_checks_and_save_to_table(spark: SparkSession, ws: WorkspaceClient, params: dict) -> dict:
-    """Apply checks to a view and persist results to output (and optional quarantine) tables."""
+    """Apply checks to a view and persist results to the caller's private, per-user output schema.
+
+    The output (and optional quarantine) tables are created in ``dqx_mcp_<user>`` — an SP-owned
+    schema granted only to the calling user — instead of a caller-supplied FQN, so the SP writes
+    only where it is guaranteed to have permission and users are isolated from each other.
+    """
     from databricks.labs.dqx.config import InputConfig, OutputConfig
     from databricks.labs.dqx.engine import DQEngine
+    from databricks.labs.dqx.errors import InvalidParameterError
 
     view_name = params["view_name"]
     checks = params["checks"]
-    output_table = params["output_table"]
-    quarantine_table = params.get("quarantine_table")
+    output_name = params["output_name"]
+    quarantine_name = params.get("quarantine_name")
     mode = params.get("mode", "append")
+    catalog = params["catalog"]
+    grant_to = params.get("grant_to")
+    if not grant_to:
+        raise InvalidParameterError("A caller identity is required to create your private output schema.")
+
+    user_schema = output_schema_for_user(grant_to)
+    _ensure_output_schema(spark, catalog, user_schema, grant_to)
+    output_table = qualify_output(catalog, user_schema, output_name)
+    quarantine_table = qualify_output(catalog, user_schema, quarantine_name) if quarantine_name else None
 
     engine = DQEngine(workspace_client=ws, spark=spark)
     engine.apply_checks_by_metadata_and_save_in_table(
@@ -153,17 +218,15 @@ def apply_checks_and_save_to_table(spark: SparkSession, ws: WorkspaceClient, par
         quarantine_config=OutputConfig(location=quarantine_table, mode=mode) if quarantine_table else None,
     )
 
-    grant_to = params.get("grant_to")
-    granted_tables = []
-    if grant_to:
-        for tbl in (output_table, quarantine_table):
-            if tbl and _grant_table_access(spark, tbl, grant_to):
-                granted_tables.append(tbl)
+    granted_tables = [
+        tbl for tbl in (output_table, quarantine_table) if tbl and _grant_table_access(spark, tbl, grant_to)
+    ]
 
     result = {"output_table": output_table, "output_rows": spark.table(output_table).count()}
     if quarantine_table:
         result["quarantine_table"] = quarantine_table
         result["quarantine_rows"] = spark.table(quarantine_table).count()
+    result["output_schema"] = f"{catalog}.{user_schema}"
     result["access_granted_to"] = grant_to if granted_tables else None
     result["granted_tables"] = granted_tables
     return result
@@ -229,16 +292,24 @@ def validate_checks(spark: SparkSession, ws: WorkspaceClient, params: dict) -> d
 
 
 def list_available_checks(spark: SparkSession, ws: WorkspaceClient, params: dict) -> dict:
-    """List all built-in DQX check functions with signatures and descriptions."""
+    """List built-in DQX check functions with signatures and descriptions.
+
+    An optional ``filter`` (case-insensitive substring) narrows the list by function name or
+    description, so a caller can search (e.g. ``filter='regex'``) instead of scanning every entry.
+    """
     import inspect
 
     from databricks.labs.dqx.checks_resolver import resolve_check_function
     from databricks.labs.dqx.rule import CHECK_FUNC_REGISTRY
 
+    name_filter = (params.get("filter") or "").strip().lower()
+
     checks = []
     for name, func_type in sorted(CHECK_FUNC_REGISTRY.items()):
         func = resolve_check_function(name, fail_on_missing=False)
         if func is None:
+            continue
+        if name_filter and name_filter not in name.lower() and name_filter not in (inspect.getdoc(func) or "").lower():
             continue
         sig = inspect.signature(func)
         func_params = [
@@ -274,17 +345,31 @@ def _compute_rule_summary(invalid_df) -> list:
     return [{"rule_name": name, **counts} for name, counts in summary.items()]
 
 
+def _ensure_output_schema(spark: SparkSession, catalog: str, user_schema: str, grant_to: str) -> None:
+    """Create the caller's SP-owned per-user output schema (idempotent) and grant them USE SCHEMA.
+
+    The runner SP has CREATE SCHEMA on the catalog (see notebooks/setup.py), so it owns the schema
+    it creates and can freely write the caller's outputs — no write pre-check needed. The caller is
+    granted USE SCHEMA on ONLY their own schema, so users are isolated from each other's outputs.
+    """
+    validate_identifier(catalog, "catalog")
+    validate_identifier(user_schema, "schema")
+    schema_fqn = f"`{catalog}`.`{user_schema}`"
+    spark.sql(f"CREATE SCHEMA IF NOT EXISTS {schema_fqn}")
+    if grant_to and PRINCIPAL_RE.match(str(grant_to)):
+        spark.sql(f"GRANT USE SCHEMA ON SCHEMA {schema_fqn} TO `{grant_to}`")
+    logger.info(f"Ensured per-user output schema {catalog}.{user_schema}")
+
+
 def _grant_table_access(spark: SparkSession, table_name: str, principal: str) -> bool:
     """Best-effort grant of ALL PRIVILEGES + MANAGE on a table to the calling user. Returns success."""
-    import re
-
     if not principal or not table_name:
         return False
-    if not re.match(r"^[A-Za-z0-9._%+\-@]+$", str(principal)):
+    if not PRINCIPAL_RE.match(str(principal)):
         logger.warning(f"Skipping grant: unexpected principal format {principal!r}")
         return False
     parts = str(table_name).split(".")
-    if len(parts) != 3 or not all(re.match(r"^[A-Za-z0-9_]+$", p) for p in parts):
+    if len(parts) != 3 or not all(IDENTIFIER_RE.match(p) for p in parts):
         logger.warning(f"Skipping grant: not a 3-part table name: {table_name!r}")
         return False
     fqn = ".".join(f"`{p}`" for p in parts)
@@ -299,12 +384,10 @@ def _grant_table_access(spark: SparkSession, table_name: str, principal: str) ->
 
 def _drop_view_safe(spark: SparkSession, view_name) -> None:
     """Drop the OBO-created temp view for this run. Best-effort: logs, never raises."""
-    import re
-
     if not view_name:
         return
     parts = str(view_name).split(".")
-    if len(parts) != 3 or not all(re.match(r"^[A-Za-z0-9_]+$", p) for p in parts):
+    if len(parts) != 3 or not all(IDENTIFIER_RE.match(p) for p in parts):
         logger.warning(f"Skipping drop of invalid view name: {view_name!r}")
         return
     safe_fqn = ".".join(f"`{p}`" for p in parts)

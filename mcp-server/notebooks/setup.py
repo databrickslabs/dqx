@@ -12,6 +12,9 @@ Grants:
   Catalog level:
     - users          → USE CATALOG
     - app SP         → USE CATALOG
+    - runner SP      → USE CATALOG, CREATE SCHEMA (creates each caller's private per-user output
+                       schema dqx_mcp_<user> on demand for save_checks / apply_checks_and_save_to_table).
+                       Only granted when provided.
   Schema level (catalog.tmp) — the deploy principal OWNS the schema (so setup can create the
   results volume + manage grants on every run); the SPs get MANAGE, which is enough to DROP
   temp views in UC (owner / parent-schema owner / MANAGE can DROP):
@@ -27,16 +30,16 @@ Grants:
       created out-of-band before `bundle deploy` (scripts/ensure_artifacts_volume.sh); setup only
       ensures it exists and applies the grant.
 
-Note: the runner SP needs write access wherever callers ask it to write outputs
-(apply_checks_and_save_to_table / save_checks) and read access to any contract/checks files —
-grant those per deployment, or keep outputs/files in locations the runner SP can reach.
+Note: outputs (apply_checks_and_save_to_table / save_checks) go to the caller's own SP-owned
+per-user schema (dqx_mcp_<user>), created on demand via the runner SP's CREATE SCHEMA grant — no
+per-deployment write grants are needed. The runner SP still needs read access to any contract/checks
+files callers load; keep those in locations the runner SP can reach.
 
 Parameters:
-  - catalog_name: UC catalog for temp views (optional — reads from secret if not provided)
+  - catalog_name: UC catalog for temp views + per-user output schemas (required; passed as a
+                  bundle var at deploy time — the catalog name is not sensitive, so no secret scope)
   - app_name: Databricks App name (e.g. 'mcp-dqx') — used to look up the app SP
   - users_group: Group name for all users (default: 'account users')
-  - secret_scope: Secret scope for catalog name (default: 'dqx-config')
-  - secret_key: Secret key for catalog name (default: 'catalog_name')
   - runner_service_principal_id: application id of the runner job's run_as SP (optional)
 """
 
@@ -87,8 +90,6 @@ def _validate_principal(value, label):
 dbutils.widgets.text("catalog_name", "")
 dbutils.widgets.text("app_name", "mcp-dqx")
 dbutils.widgets.text("users_group", "account users")
-dbutils.widgets.text("secret_scope", "dqx-config")
-dbutils.widgets.text("secret_key", "catalog_name")
 dbutils.widgets.text("runner_service_principal_id", "")
 dbutils.widgets.text("runner_job_id", "")
 
@@ -98,14 +99,10 @@ users_group = dbutils.widgets.get("users_group")
 runner_sp = dbutils.widgets.get("runner_service_principal_id").strip()
 runner_job_id = dbutils.widgets.get("runner_job_id").strip()
 
-# Read catalog name from secret if not provided directly
+# catalog_name is passed as a bundle var at deploy time (required — it also builds the artifacts
+# volume path). No secret scope is involved: the catalog name is not sensitive.
 if not catalog_name:
-    secret_scope = dbutils.widgets.get("secret_scope")
-    secret_key = dbutils.widgets.get("secret_key")
-    catalog_name = dbutils.secrets.get(scope=secret_scope, key=secret_key)
-
-if not catalog_name:
-    raise ValueError("catalog_name must be provided as a parameter or stored in the secret scope")
+    raise ValueError("catalog_name must be provided (pass --var catalog_name=<catalog> at deploy time)")
 
 _validate_identifier(catalog_name, "catalog_name")
 # users_group is interpolated into the GRANT statements below, so it must be validated too
@@ -182,6 +179,10 @@ if runner_sp_configured:
     # run (MANAGE — a non-owner with MANAGE can drop, same as the app SP / schema owner).
     grants += [
         f"GRANT USE CATALOG ON CATALOG `{catalog_name}` TO `{runner_sp}`",
+        # save_checks / apply_checks_and_save_to_table write each caller's outputs to their own
+        # private per-user schema (dqx_mcp_<user>), which the runner creates on demand and owns —
+        # so the runner SP needs CREATE SCHEMA on the catalog.
+        f"GRANT CREATE SCHEMA ON CATALOG `{catalog_name}` TO `{runner_sp}`",
         f"GRANT USE SCHEMA ON SCHEMA `{catalog_name}`.`{schema_name}` TO `{runner_sp}`",
         f"GRANT SELECT ON SCHEMA `{catalog_name}`.`{schema_name}` TO `{runner_sp}`",
         f"GRANT MANAGE ON SCHEMA `{catalog_name}`.`{schema_name}` TO `{runner_sp}`",
@@ -255,6 +256,7 @@ else:
 
 logger.info(
     "Setup complete — schema owned by the deploy principal; app SP and runner SP granted MANAGE "
-    "(temp-view cleanup) and results-volume READ/WRITE; runner SP granted READ VOLUME on the "
-    "artifacts volume; app SP granted CAN_MANAGE_RUN on the runner job."
+    "(temp-view cleanup) and results-volume READ/WRITE; runner SP granted CREATE SCHEMA on the "
+    "catalog (per-user output schemas) and READ VOLUME on the artifacts volume; app SP granted "
+    "CAN_MANAGE_RUN on the runner job."
 )

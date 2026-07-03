@@ -602,6 +602,118 @@ Database migrations run automatically on app startup and preserve existing rules
 `prevent_destroy` is what stops a `databricks bundle destroy` (or a forced replace from a deploy) from wiping your rules, schedules, role mappings, and comments. The multi-step uninstall above is by design — silent data loss is the bigger risk to protect against.
 </Admonition>
 
+## DQX MCP Server installation
+
+The [DQX MCP Server](/docs/guide/dqx_mcp_server) exposes DQX as Model Context Protocol (MCP) tools for AI agents (Genie Code, Cursor, Claude Code). This section covers the prerequisites and deployment; see the [guide](/docs/guide/dqx_mcp_server) for architecture, the available tools, configuration, and usage.
+
+### Prerequisites {#mcp-prerequisites}
+
+Tooling:
+
+- [Databricks CLI](https://docs.databricks.com/dev-tools/cli/install.html) **0.279.0+** (the bundle uses the [direct deployment engine](https://docs.databricks.com/aws/en/dev-tools/bundles/direct), which needs this version). Check with `databricks --version`.
+
+Workspace features (ask a workspace admin to enable any that are missing):
+
+| Feature | Why it's needed |
+|---|---|
+| **Databricks Apps** | The MCP server runs as a Databricks App. |
+| **Serverless compute** | The app and the runner/setup jobs run on serverless. |
+| **Unity Catalog** | All data access and grants are UC-governed (OBO). |
+
+Permissions for the **deploying** user (typical names; exact entitlements vary by workspace — if a step is rejected, this table tells you which grant is missing):
+
+| Permission | On | Used by | Symptom if missing |
+|---|---|---|---|
+| Allow to **create/manage Apps** | workspace | `bundle deploy` (the app) | app creation rejected |
+| **Allow cluster create** / serverless entitlement | workspace | runner + setup jobs | job creation rejected |
+| **USE CATALOG** + **CREATE SCHEMA** | the target catalog | setup job (creates `<catalog>.tmp` + results volume) | `User does not have CREATE SCHEMA` |
+| **MANAGE** (or owner) on the catalog | the target catalog | setup job's `GRANT` / `ALTER SCHEMA OWNER` | grant rejected |
+| **Service Principal: User** role on the runner SP | the runner SP (below) | `bundle deploy` sets the job's `run_as` | `User is not authorized to use this service principal` |
+
+An existing Unity Catalog **catalog** must already exist (the setup job creates a schema inside it, not the catalog itself).
+
+### Runner service principal (one-time) {#runner-service-principal-one-time}
+
+The runner job runs as a dedicated, least-privilege **workspace service principal** — *not* the app's auto-created SP (which is app-scoped and cannot be a job's `run_as`) and *not* the deploying user. Create it once, then pass its application id as `runner_service_principal_id` at deploy:
+
+1. Create a workspace service principal (UI: **Settings → Identity and access → Service principals → Add**, or the SCIM API). Note its **Application ID**.
+2. Grant your deploying identity the **User** role on it (Settings → that SP → **Permissions**), or `bundle deploy` fails with *"User is not authorized to use this service principal"*. (Workspace admins usually have this implicitly, but confirm.)
+3. Give the SP the **workspace-access** entitlement so it can run serverless jobs.
+4. The setup job grants the SP the UC privileges it needs automatically — temp schema, results volume, and **`CREATE SCHEMA` on the catalog** so `save_checks` / `apply_checks_and_save_to_table` can create each caller's private per-user output schema (`dqx_mcp_<user>`) on demand. No per-target write grants are needed (see [Write access](/docs/guide/dqx_mcp_server#write-access)).
+
+### Deploy the MCP server {#mcp-deploy}
+
+#### What gets deployed
+
+Deploying the bundle creates three things in your workspace (all prefixed by `name_prefix`, default `mcp-dqx`):
+
+| Resource | Name | Purpose |
+|---|---|---|
+| Databricks App | `mcp-dqx` | The MCP server (serves `/mcp`); runs as its own app service principal. |
+| Job | `mcp-dqx-runner` | Serverless **wheel-task** job with `databricks-labs-dqx` installed; **runs as the runner SP**. Tools submit work to it. |
+| Job | `mcp-dqx-setup` | One-time setup: temp schema, results volume, UC grants, and the app-SP job grant. |
+
+The catalog is passed as the `CATALOG` deploy flag (below) and injected into the app as a plain
+`DQX_CATALOG` config value — **no secret scope** (a catalog name isn't sensitive; UC grants govern
+access). The runner and setup jobs are idempotent and safe to re-run. Nothing here is destroy-protected, so `databricks bundle destroy` removes it all — see [Upgrade and uninstall](/docs/guide/dqx_mcp_server#upgrade-and-uninstall). (The dedicated runner SP is created out-of-band and is **not** managed or removed by the bundle.)
+
+#### 1. Authenticate
+
+```bash
+databricks auth login --host https://<your-workspace-url> --profile <profile>
+```
+
+#### 2. Deploy
+
+**One command** (parity with the Studio app's `make app-deploy`):
+
+```bash
+make mcp-deploy PROFILE=<profile> CATALOG=<catalog> \
+  BUNDLE_VARS='--var runner_service_principal_id=<runner-sp-application-id>'
+```
+
+This ensures the runner-wheel volume exists, then runs `bundle deploy`, the one-time setup job, and finally deploys + starts the app. Both flags are **required**: `CATALOG` is the UC catalog that holds the temp views, per-user output schemas, and the runner-wheel volume (`/Volumes/<catalog>/tmp/dqx_artifacts`) — it's injected into the app as `DQX_CATALOG` — and `runner_service_principal_id` (its placeholder default is not a real SP) — use the application id of the [runner SP](#runner-service-principal-one-time). Add `TARGET=<target>` for a non-default bundle target.
+
+**Or step by step** (what `make mcp-deploy` runs):
+
+```bash
+cd mcp-server
+VARS='--var runner_service_principal_id=<runner-sp-application-id> --var catalog_name=<catalog>'
+
+# Ensure the runner-wheel volume exists BEFORE deploy uploads artifacts into it
+DQX_MCP_CATALOG=<catalog> DATABRICKS_PROFILE=<profile> ./scripts/ensure_artifacts_volume.sh
+
+# Deploy the bundle (app + runner job + setup job)
+databricks bundle deploy $VARS --profile <profile>
+
+# Run the one-time setup job (idempotent)
+databricks bundle run dqx_setup $VARS --profile <profile>
+
+# Deploy and start the app
+databricks bundle run mcp-dqx $VARS --profile <profile>
+```
+
+The **setup job**:
+- Creates the `<catalog>.tmp` schema (for temp views) and the `<catalog>.tmp.mcp_results` volume (for result files)
+- Keeps the **deploying principal** as the schema owner (so setup can create the volume and manage grants on every run)
+- Grants `USE CATALOG` to all users, the app SP, and the runner SP
+- Grants `USE SCHEMA` + `CREATE TABLE` on the tmp schema to all users (so their OBO token can create views)
+- Grants `USE SCHEMA` + `SELECT` + `MANAGE` on the tmp schema to the app SP and the runner SP (`MANAGE` lets them drop the OBO-created temp views without owning the schema)
+- Grants the **runner SP** `CREATE SCHEMA` on the catalog (so `save_checks` / `apply_checks_and_save_to_table` can create each caller's private per-user output schema `dqx_mcp_<user>`)
+- Grants `READ VOLUME` + `WRITE VOLUME` on the results volume to both SPs
+- Grants the **app SP** `CAN_MANAGE_RUN` on the runner job (so the app can submit runs and poll results)
+- Grants the **runner SP** `READ VOLUME` on the `<catalog>.tmp.dqx_artifacts` volume (so the serverless env can install the runner wheel)
+
+The `dqx_artifacts` volume that hosts the runner wheels is created **before** `bundle deploy` (by `scripts/ensure_artifacts_volume.sh`, which `make mcp-deploy` runs for you) because `bundle deploy` uploads the wheels into it. This is why `CATALOG` must be passed at deploy time.
+
+#### 3. Find your MCP endpoint
+
+The MCP endpoint is `https://<app-url>/mcp`. Find `<app-url>` in the Databricks UI under **Compute → Apps → mcp-dqx** (the **App URL**), or via the CLI:
+
+```bash
+databricks apps get mcp-dqx --profile <profile> -o json | jq -r .url
+```
+
 ## Installing Dashboard
 
 DQX data quality dashboard can be used to monitor data quality across all tables monitored by DQX.

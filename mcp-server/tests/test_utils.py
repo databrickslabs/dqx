@@ -143,10 +143,39 @@ class TestExecuteSql:
         mock_col_b.name = "data_type"
         mock_result.manifest.schema.columns = [mock_col_a, mock_col_b]
         mock_result.result.data_array = [["id", "INT"], ["name", "STRING"]]
+        mock_result.result.next_chunk_index = None  # single chunk
         ws.statement_execution.execute_statement.return_value = mock_result
 
         rows = execute_sql(ws, "DESCRIBE TABLE catalog.schema.table", warehouse_id="wh123")
         assert rows == [{"col_name": "id", "data_type": "INT"}, {"col_name": "name", "data_type": "STRING"}]
+        # A single-chunk result must not fetch further chunks.
+        ws.statement_execution.get_statement_result_chunk_n.assert_not_called()
+
+    def test_paginates_across_chunks(self):
+        """A multi-chunk result set is fully read by following next_chunk_index (not truncated)."""
+        from server.utils import execute_sql
+
+        ws = create_autospec(WorkspaceClient)
+        mock_result = MagicMock()
+        mock_result.status.state = "SUCCEEDED"
+        mock_result.statement_id = "stmt-1"
+        col = MagicMock()
+        col.name = "viewName"
+        mock_result.manifest.schema.columns = [col]
+        # First chunk (inline in execute_statement) points at chunk 1.
+        mock_result.result.data_array = [["v_1"], ["v_2"]]
+        mock_result.result.next_chunk_index = 1
+        ws.statement_execution.execute_statement.return_value = mock_result
+
+        # Second (final) chunk fetched via get_statement_result_chunk_n; no further chunk.
+        chunk1 = MagicMock()
+        chunk1.data_array = [["v_3"]]
+        chunk1.next_chunk_index = None
+        ws.statement_execution.get_statement_result_chunk_n.return_value = chunk1
+
+        rows = execute_sql(ws, "SHOW VIEWS IN c.s", warehouse_id="wh123")
+        assert rows == [{"viewName": "v_1"}, {"viewName": "v_2"}, {"viewName": "v_3"}]
+        ws.statement_execution.get_statement_result_chunk_n.assert_called_once_with("stmt-1", 1)
 
     def test_raises_on_failed_query(self):
         from server.utils import execute_sql
@@ -695,100 +724,79 @@ class TestVerifyOboReadAccess:
             verify_obo_read_access(ws, "/Volumes/c/s/v/f.yml")
 
 
-class TestVerifyOboWriteAccessTable:
-    def test_owner_match_allows(self):
-        from server.utils import verify_obo_write_access, _user_email_var
+class TestValidateOutputName:
+    """Outputs go to the caller's per-user schema, so the tool takes a bare name — not an FQN."""
+
+    @pytest.mark.parametrize("name", ["my_checks", "orders_out", "T1", "a_b_c123"])
+    def test_accepts_bare_identifiers(self, name: str):
+        from server.utils import validate_output_name
+
+        assert validate_output_name(name) == name
+
+    @pytest.mark.parametrize(
+        "name",
+        ["catalog.schema.table", "/Volumes/c/s/v/x.yml", "has space", "drop`table", "", "a-b"],
+    )
+    def test_rejects_non_identifiers(self, name: str):
+        from server.utils import validate_output_name
+
+        with pytest.raises(ValueError, match="Invalid output name"):
+            validate_output_name(name)
+
+
+class TestValidateWriteMode:
+    @pytest.mark.parametrize("mode", ["append", "overwrite"])
+    def test_accepts_supported_modes(self, mode: str):
+        from server.utils import validate_write_mode
+
+        assert validate_write_mode(mode) == mode
+
+    @pytest.mark.parametrize("mode", ["upsert", "merge", "APPEND", ""])
+    def test_rejects_unsupported_modes(self, mode: str):
+        from server.utils import validate_write_mode
+
+        with pytest.raises(ValueError, match="Invalid mode"):
+            validate_write_mode(mode)
+
+
+class TestReadFileViaObo:
+    def test_volume_uses_files_download(self):
+        from server.utils import read_file_via_obo
 
         ws = create_autospec(WorkspaceClient)
-        with patch("server.utils.execute_sql", return_value=[{"col_name": "Owner", "data_type": "me@x.com"}]):
-            tok = _user_email_var.set("me@x.com")
-            try:
-                verify_obo_write_access(ws, "c.s.t", "wh")  # must not raise
-            finally:
-                _user_email_var.reset(tok)
+        ws.files.download.return_value.contents.read.return_value = b"data"
+        assert read_file_via_obo(ws, "/Volumes/c/s/v/f.yml") == b"data"
+        ws.files.download.assert_called_once_with("/Volumes/c/s/v/f.yml")
 
-    def test_owner_mismatch_raises(self):
-        from server.utils import verify_obo_write_access, _user_email_var
+    def test_workspace_uses_export_and_b64decode(self):
+        import base64
 
-        ws = create_autospec(WorkspaceClient)
-        with patch("server.utils.execute_sql", return_value=[{"col_name": "Owner", "data_type": "someone@x.com"}]):
-            tok = _user_email_var.set("me@x.com")
-            try:
-                with pytest.raises(PermissionError, match="owned by"):
-                    verify_obo_write_access(ws, "c.s.t", "wh")
-            finally:
-                _user_email_var.reset(tok)
-
-    def test_nonexistent_table_create_probe_success_allows(self):
-        from server.utils import verify_obo_write_access
+        from server.utils import read_file_via_obo
 
         ws = create_autospec(WorkspaceClient)
-        queries: list[str] = []
+        ws.workspace.export.return_value.content = base64.b64encode(b"hi there").decode()
+        assert read_file_via_obo(ws, "/Workspace/Users/me/f.yml") == b"hi there"
 
-        def fake_sql(_ws, query, warehouse_id):  # noqa: ANN001, ANN202
-            queries.append(query)
-            if query.startswith("DESCRIBE"):
-                raise RuntimeError("TABLE_OR_VIEW_NOT_FOUND")
-            return []
-
-        with patch("server.utils.execute_sql", side_effect=fake_sql):
-            verify_obo_write_access(ws, "c.s.newt", "wh")  # must not raise
-
-        assert any(q.startswith("CREATE TABLE") for q in queries)
-        assert any(q.startswith("DROP TABLE IF EXISTS") for q in queries)
-
-    def test_existing_table_no_access_denied(self):
-        from server.utils import verify_obo_write_access, _user_email_var
+    def test_table_is_rejected(self):
+        from server.utils import read_file_via_obo
 
         ws = create_autospec(WorkspaceClient)
-        # DESCRIBE as the caller fails with a permission error → table exists, caller can't touch it.
-        perm_err = "UNAUTHORIZED_ACCESS PERMISSION_DENIED: User does not have SELECT on Table foo. SQLSTATE: 42501"
-        with patch("server.utils.execute_sql", side_effect=RuntimeError(perm_err)):
-            tok = _user_email_var.set("me@x.com")
-            try:
-                with pytest.raises(PermissionError, match="do not have access"):
-                    verify_obo_write_access(ws, "c.s.foreign", "wh")
-            finally:
-                _user_email_var.reset(tok)
-
-    def test_create_probe_failure_raises(self):
-        from server.utils import verify_obo_write_access
-
-        ws = create_autospec(WorkspaceClient)
-
-        def fake_sql(_ws, query, warehouse_id):  # noqa: ANN001, ANN202
-            if query.startswith("DESCRIBE"):
-                raise RuntimeError("TABLE_OR_VIEW_NOT_FOUND")
-            if query.startswith("CREATE TABLE"):
-                raise RuntimeError("permission denied")
-            return []
-
-        with patch("server.utils.execute_sql", side_effect=fake_sql):
-            with pytest.raises(PermissionError, match="CREATE TABLE"):
-                verify_obo_write_access(ws, "c.s.newt", "wh")
+        with pytest.raises(ValueError, match="table name"):
+            read_file_via_obo(ws, "c.s.t")
 
 
-class TestVerifyOboWriteAccessFile:
-    def test_volume_write_probe_uploads_and_deletes(self):
-        from server.utils import verify_obo_write_access
+class TestStageBytesToResultsVolume:
+    def test_uploads_via_sp_and_returns_volume_path(self):
+        from server.utils import stage_bytes_to_results_volume
 
-        ws = create_autospec(WorkspaceClient)
-        verify_obo_write_access(ws, "/Volumes/c/s/v/checks.yml", "wh")
-        assert ws.files.upload.called
-        assert ws.files.delete.called
+        sp = create_autospec(WorkspaceClient)
+        with (
+            patch("server.utils._get_results_volume", return_value="/Volumes/c/tmp/mcp_results"),
+            patch("server.utils._get_sp_client", return_value=sp),
+        ):
+            path = stage_bytes_to_results_volume(b"payload", suffix=".yaml")
 
-    def test_volume_write_probe_denied_raises(self):
-        from server.utils import verify_obo_write_access
-
-        ws = create_autospec(WorkspaceClient)
-        ws.files.upload.side_effect = Exception("denied")
-        with pytest.raises(PermissionError):
-            verify_obo_write_access(ws, "/Volumes/c/s/v/checks.yml", "wh")
-
-    def test_workspace_write_probe_uploads_and_deletes(self):
-        from server.utils import verify_obo_write_access
-
-        ws = create_autospec(WorkspaceClient)
-        verify_obo_write_access(ws, "/Workspace/Users/me/checks.yml", "wh")
-        assert ws.workspace.upload.called
-        assert ws.workspace.delete.called
+        assert path.startswith("/Volumes/c/tmp/mcp_results/staged_")
+        assert path.endswith(".yaml")
+        # Uploaded (as the app SP) to exactly the returned path.
+        assert sp.files.upload.call_args[0][0] == path

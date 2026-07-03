@@ -197,47 +197,79 @@ class TestJobOnlyTools:
         assert result["status"] == "submitted"
         assert result["run_id"] == 9
 
+    def test_list_available_checks_forwards_filter(self):
+        tools = _register_tools()
+
+        with patch("server.tools.utils.submit_job_async", return_value=9) as mock_submit:
+            tools["list_available_checks"](filter="regex")
+
+        # A filter is forwarded to the runner so it can narrow the (large) registry server-side.
+        mock_submit.assert_called_once_with("list_available_checks", {"filter": "regex"})
+
     def test_get_workflow_returns_steps(self):
         tools = _register_tools()
         result = tools["get_workflow"]()
         assert "steps" in result
         assert len(result["steps"]) == 5
 
-    def test_generate_rules_from_contract(self):
+    def test_generate_rules_from_contract_file_is_staged(self):
         tools = _register_tools()
 
         with (
             patch("server.tools.utils.get_obo_client"),
             patch("server.tools.utils.verify_obo_read_access") as mock_verify,
+            patch("server.tools.utils.read_file_via_obo", return_value=b"contract-bytes") as mock_read,
+            patch(
+                "server.tools.utils.stage_bytes_to_results_volume",
+                return_value="/Volumes/c/tmp/mcp_results/staged_x.yml",
+            ) as mock_stage,
             patch("server.tools.utils.submit_job_async", return_value=21) as mock_submit,
         ):
-            result = tools["generate_rules_from_contract"]("/Volumes/c/s/v/contract.yml")
+            result = tools["generate_rules_from_contract"](contract_file="/Volumes/c/s/v/contract.yml")
 
-        # The caller's read access to the contract file is enforced before submitting.
+        # The caller's read access is enforced, the file is read AS the caller, and a copy is staged
+        # to a runner-readable volume — the staged path (not the caller's path) goes to the runner.
         assert mock_verify.call_args[0][1] == "/Volumes/c/s/v/contract.yml"
+        assert mock_read.call_args[0][1] == "/Volumes/c/s/v/contract.yml"
+        assert mock_stage.call_args[0][0] == b"contract-bytes"
         # Deterministic-only: process_text_rules is not exposed and not sent to the runner.
         mock_submit.assert_called_once_with(
             "generate_rules_from_contract",
             {
-                "contract_file": "/Volumes/c/s/v/contract.yml",
+                "contract_file": "/Volumes/c/tmp/mcp_results/staged_x.yml",
                 "contract_format": "odcs",
                 "default_criticality": "error",
             },
         )
         assert result["run_id"] == 21
 
-    def test_generate_rules_from_contract_workspace_path_normalized(self):
+    def test_generate_rules_from_contract_inline_content(self):
         tools = _register_tools()
 
         with (
-            patch("server.tools.utils.get_obo_client"),
-            patch("server.tools.utils.verify_obo_read_access"),
-            patch("server.tools.utils.submit_job_async", return_value=21) as mock_submit,
+            patch("server.tools.utils.get_obo_client") as mock_obo,
+            patch(
+                "server.tools.utils.stage_bytes_to_results_volume",
+                return_value="/Volumes/c/tmp/mcp_results/staged_y.yaml",
+            ) as mock_stage,
+            patch("server.tools.utils.submit_job_async", return_value=22) as mock_submit,
         ):
-            tools["generate_rules_from_contract"]("/Users/me/dqx_demo/customers_contract.yaml")
+            result = tools["generate_rules_from_contract"](contract_content="kind: DataContract")
 
-        # Workspace path is mapped to the cluster FUSE form for DQX's local open().
-        assert mock_submit.call_args[0][1]["contract_file"] == "/Workspace/Users/me/dqx_demo/customers_contract.yaml"
+        # Inline content needs no file access at all — no OBO client, just stage + submit.
+        mock_obo.assert_not_called()
+        assert mock_stage.call_args[0][0] == b"kind: DataContract"
+        assert mock_submit.call_args[0][1]["contract_file"] == "/Volumes/c/tmp/mcp_results/staged_y.yaml"
+        assert result["run_id"] == 22
+
+    def test_generate_rules_from_contract_requires_exactly_one_source(self):
+        import pytest
+
+        tools = _register_tools()
+        with pytest.raises(ValueError, match="Provide either"):
+            tools["generate_rules_from_contract"]()
+        with pytest.raises(ValueError, match="only one"):
+            tools["generate_rules_from_contract"](contract_file="/Volumes/x", contract_content="y")
 
     def test_generate_rules_from_contract_has_no_text_rules_param(self):
         """The deterministic-only tool must not expose a process_text_rules knob."""
@@ -294,27 +326,43 @@ class TestJobOnlyTools:
         tools = _register_tools()
 
         with (
-            patch("server.tools.utils.get_obo_client"),
-            patch("server.tools.utils.get_warehouse_id", return_value="wh123"),
-            patch("server.tools.utils.verify_obo_write_access") as mock_verify,
             patch("server.tools.utils.submit_job_async", return_value=23) as mock_submit,
             patch("server.tools.utils.get_user_email", return_value="user@example.com"),
+            patch.dict("os.environ", _ENV),
         ):
-            result = tools["save_checks"]([{"check": "foo"}], "/Workspace/checks.yml", mode="overwrite")
+            result = tools["save_checks"]([{"check": "foo"}], "my_checks", mode="overwrite")
 
-        # The caller's write access to the destination is enforced before submitting.
-        assert mock_verify.call_args[0][1] == "/Workspace/checks.yml"
+        # Outputs go to the caller's per-user schema in the configured catalog — no write pre-check,
+        # only the bare output name + catalog + caller travel to the runner.
         mock_submit.assert_called_once_with(
             "save_checks",
             {
                 "checks": [{"check": "foo"}],
-                "location": "/Workspace/checks.yml",
+                "output_name": "my_checks",
                 "run_config_name": "default",
                 "mode": "overwrite",
-                "grant_to": "user@example.com",  # the calling user, for the runner's grant-on-write
+                "catalog": "dqx_mcp",
+                "grant_to": "user@example.com",
             },
         )
         assert result["run_id"] == 23
+
+    def test_save_checks_rejects_fqn_output_name(self):
+        """A dotted / path-like output name is rejected — outputs are bare names in the user schema."""
+        import pytest
+
+        tools = _register_tools()
+        with patch.dict("os.environ", _ENV):
+            with pytest.raises(ValueError, match="Invalid output name"):
+                tools["save_checks"]([{"check": "foo"}], "catalog.schema.table")
+
+    def test_save_checks_rejects_bad_mode(self):
+        import pytest
+
+        tools = _register_tools()
+        with patch.dict("os.environ", _ENV):
+            with pytest.raises(ValueError, match="Invalid mode"):
+                tools["save_checks"]([{"check": "foo"}], "my_checks", mode="upsert")
 
 
 class TestApplyChecksAndSaveToTable:
@@ -327,7 +375,6 @@ class TestApplyChecksAndSaveToTable:
             patch("server.tools.utils.get_obo_client"),
             patch("server.tools.utils.get_warehouse_id", return_value="wh123"),
             patch("server.tools.utils.create_temp_view", return_value="dqx_mcp.tmp.v_abc") as mock_create,
-            patch("server.tools.utils.verify_obo_write_access") as mock_verify,
             patch("server.tools.utils.submit_job_async", return_value=24) as mock_submit,
             patch("server.tools.utils.get_user_email", return_value="user@example.com"),
             patch.dict("os.environ", _ENV),
@@ -335,20 +382,20 @@ class TestApplyChecksAndSaveToTable:
             result = tools["apply_checks_and_save_to_table"](
                 "catalog.schema.orders",
                 [{"check": "foo"}],
-                "catalog.schema.orders_out",
-                quarantine_table="catalog.schema.orders_quarantine",
+                "orders_out",
+                quarantine_name="orders_quarantine",
             )
 
         mock_create.assert_called_once()
-        # Write access enforced for both output and quarantine destinations before submit.
-        verified = {call.args[1] for call in mock_verify.call_args_list}
-        assert verified == {"catalog.schema.orders_out", "catalog.schema.orders_quarantine"}
         assert mock_submit.call_args[0][0] == "apply_checks_and_save_to_table"
         job_params = mock_submit.call_args[0][1]
         assert job_params["view_name"] == "dqx_mcp.tmp.v_abc"
         assert job_params["checks"] == [{"check": "foo"}]
-        assert job_params["output_table"] == "catalog.schema.orders_out"
-        assert job_params["quarantine_table"] == "catalog.schema.orders_quarantine"
+        # Bare output names + the configured catalog travel to the runner, which resolves them to
+        # the caller's per-user schema. No caller-supplied FQN, no write pre-check.
+        assert job_params["output_name"] == "orders_out"
+        assert job_params["quarantine_name"] == "orders_quarantine"
+        assert job_params["catalog"] == "dqx_mcp"
         assert job_params["mode"] == "append"
         # table_name travels in params; the runner drops the temp view itself (no server metadata).
         assert job_params["table_name"] == "catalog.schema.orders"
@@ -356,3 +403,17 @@ class TestApplyChecksAndSaveToTable:
         assert job_params["grant_to"] == "user@example.com"
         assert "metadata" not in mock_submit.call_args.kwargs
         assert result["run_id"] == 24
+
+    def test_rejects_fqn_output_name(self):
+        import pytest
+
+        tools = _register_tools()
+        with (
+            patch("server.tools.utils.get_obo_client"),
+            patch("server.tools.utils.get_warehouse_id", return_value="wh123"),
+            patch.dict("os.environ", _ENV),
+        ):
+            with pytest.raises(ValueError, match="Invalid output name"):
+                tools["apply_checks_and_save_to_table"](
+                    "catalog.schema.orders", [{"check": "foo"}], "catalog.schema.orders_out"
+                )

@@ -173,5 +173,8 @@ jobs:
       - name: Setup environment
         uses: ./.github/actions/setup-env
 
+      - name: Type-check MCP server
+        run: make mcp-check
+
       - name: Run MCP server tests
         run: make mcp-test

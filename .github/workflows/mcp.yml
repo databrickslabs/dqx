@@ -60,7 +60,9 @@ jobs:
         run: |
           cat > tests/integration_mcp/.coveragerc << EOF
           [run]
-          source = ../../src
+          source =
+              ../../mcp-server/server
+              ../../mcp-server/runner/src/dqx_mcp_runner
           relative_files = true
           parallel = true
           EOF

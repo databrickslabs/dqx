@@ -26,17 +26,15 @@ For code-level integration into pipelines or notebooks, see the [Programmatic ap
 
 There are two reading paths:
 
-- **Platform admins** set up and operate the server: [Prerequisites](#prerequisites) → [Deploy](#deploy) → [Configuration](#configuration) → [Troubleshooting](#troubleshooting) → [Upgrade and uninstall](#upgrade-and-uninstall).
+- **Platform admins** set up and operate the server: [Install and deploy](#install-and-deploy) → [Configuration](#configuration) → [Troubleshooting](#troubleshooting) → [Upgrade and uninstall](#upgrade-and-uninstall).
 - **Users** — Genie Code users, data engineers, power users — consume it once it's deployed: [Connect an MCP client](#connect-an-mcp-client) → [Usage](#usage) → [Example prompts](#example-prompts). In **Genie Code** you just need the app shared with you and then enable it in settings; other clients (Cursor, Claude Code) use the server's `/mcp` URL — ask your admin.
 
 ### Quickstart
 
-**Admins** — set the catalog, deploy, and share the URL (full steps under [Deploy](#deploy)):
+**Admins** — set the catalog, deploy, and share the URL (full steps under [Install and deploy](/docs/installation#dqx-mcp-server-installation)):
 
 ```bash
-databricks secrets create-scope dqx-config --profile <profile>
-databricks secrets put-secret dqx-config catalog_name --string-value "<your_catalog>" --profile <profile>
-make mcp-deploy PROFILE=<profile>
+make mcp-deploy PROFILE=<profile> CATALOG=<your_catalog> BUNDLE_VARS='--var runner_service_principal_id=<runner-sp-application-id>'
 databricks apps get mcp-dqx --profile <profile> -o json | jq -r .url   # users in users_group discover it in Genie Code; share <url>/mcp for other clients
 ```
 
@@ -100,133 +98,18 @@ sequenceDiagram
 | `list_available_checks` | List the built-in check functions | Runner job | `run_id` |
 | `validate_checks` | Validate check definitions for correctness | Runner job | `run_id` |
 | `run_checks` | Execute checks and return a sample of results | OBO view + runner job | `run_id` |
-| `save_checks` | Persist checks to a table, UC volume, or workspace file&nbsp;† | OBO write pre-check + runner job | `run_id` |
+| `save_checks` | Persist checks to a table in your private per-user schema&nbsp;† | Runner job | `run_id` |
 | `load_checks` | Load previously saved checks (table read via OBO view; file read pre-checked) | OBO + runner job | `run_id` |
-| `apply_checks_and_save_to_table` | Apply checks and write valid / quarantine rows to Delta&nbsp;† | OBO view + write pre-check + runner job | `run_id` |
+| `apply_checks_and_save_to_table` | Apply checks and write valid / quarantine rows to Delta&nbsp;† | OBO view + runner job | `run_id` |
 | `get_run_result` | Fetch the result (or `running`/`failed`/`not_found` status) of a submitted run | Reads the result file from the UC volume | Result or status |
 
-† These tools **write** via the runner service principal, but only after an OBO pre-check confirms *you* may write to the destination — see [Write access for the persisting tools](#write-access).
+† These tools **write** to your own private, per-user MCP schema (`dqx_mcp_<you>`) — you pass a bare output table *name*, not a destination — and the runner grants you access to what it creates. See [Write access for the persisting tools](#write-access).
 
-## Prerequisites
+## Install and deploy
 
-Tooling:
+Deploying the MCP server (prerequisites, the one-time **runner service principal**, and the `make mcp-deploy` steps) lives on the installation page: **[DQX MCP Server installation](/docs/installation#dqx-mcp-server-installation)**.
 
-- [Databricks CLI](https://docs.databricks.com/dev-tools/cli/install.html) **0.279.0+** (the bundle uses the [direct deployment engine](https://docs.databricks.com/aws/en/dev-tools/bundles/direct), which needs this version). Check with `databricks --version`.
-
-Workspace features (ask a workspace admin to enable any that are missing):
-
-| Feature | Why it's needed |
-|---|---|
-| **Databricks Apps** | The MCP server runs as a Databricks App. |
-| **Serverless compute** | The app and the runner/setup jobs run on serverless. |
-| **Unity Catalog** | All data access and grants are UC-governed (OBO). |
-
-Permissions for the **deploying** user (typical names; exact entitlements vary by workspace — if a step is rejected, this table tells you which grant is missing):
-
-| Permission | On | Used by | Symptom if missing |
-|---|---|---|---|
-| Allow to **create/manage Apps** | workspace | `bundle deploy` (the app) | app creation rejected |
-| **Allow cluster create** / serverless entitlement | workspace | runner + setup jobs | job creation rejected |
-| **Manage** a secret scope (or an existing one) | workspace | the `catalog_name` secret | `secrets put-secret` rejected |
-| **USE CATALOG** + **CREATE SCHEMA** | the target catalog | setup job (creates `<catalog>.tmp` + results volume) | `User does not have CREATE SCHEMA` |
-| **MANAGE** (or owner) on the catalog | the target catalog | setup job's `GRANT` / `ALTER SCHEMA OWNER` | grant rejected |
-| **Service Principal: User** role on the runner SP | the runner SP (below) | `bundle deploy` sets the job's `run_as` | `User is not authorized to use this service principal` |
-
-An existing Unity Catalog **catalog** must already exist (the setup job creates a schema inside it, not the catalog itself).
-
-### Runner service principal (one-time)
-
-The runner job runs as a dedicated, least-privilege **workspace service principal** — *not* the app's auto-created SP (which is app-scoped and cannot be a job's `run_as`) and *not* the deploying user. Create it once, then pass its application id as `runner_service_principal_id` at deploy:
-
-1. Create a workspace service principal (UI: **Settings → Identity and access → Service principals → Add**, or the SCIM API). Note its **Application ID**.
-2. Grant your deploying identity the **User** role on it (Settings → that SP → **Permissions**), or `bundle deploy` fails with *"User is not authorized to use this service principal"*. (Workspace admins usually have this implicitly, but confirm.)
-3. Give the SP the **workspace-access** entitlement so it can run serverless jobs.
-4. The setup job grants the SP the UC privileges it needs on the temp schema + results volume automatically. For `save_checks` / `apply_checks_and_save_to_table`, the SP also needs **write access wherever you point outputs** — keep outputs in a schema the SP can write, or grant it there (see [Write access](#write-access)).
-
-## Deploy
-
-### What gets deployed
-
-Deploying the bundle creates four things in your workspace (all prefixed by `name_prefix`, default `mcp-dqx`):
-
-| Resource | Name | Purpose |
-|---|---|---|
-| Databricks App | `mcp-dqx` | The MCP server (serves `/mcp`); runs as its own app service principal. |
-| Job | `mcp-dqx-runner` | Serverless **wheel-task** job with `databricks-labs-dqx` installed; **runs as the runner SP**. Tools submit work to it. |
-| Job | `mcp-dqx-setup` | One-time setup: temp schema, results volume, UC grants, and the app-SP job grant. |
-| Secret | `dqx-config/catalog_name` | The catalog the app/runner use for temp views + results (you set this). |
-
-The runner and setup jobs are idempotent and safe to re-run. Nothing here is destroy-protected, so `databricks bundle destroy` removes it all — see [Upgrade and uninstall](#upgrade-and-uninstall). (The dedicated runner SP is created out-of-band and is **not** managed or removed by the bundle.)
-
-### 1. Authenticate
-
-```bash
-databricks auth login --host https://<your-workspace-url> --profile <profile>
-```
-
-### 2. Configure the catalog name (one-time)
-
-The catalog name is stored as a Databricks secret. Both the app and the setup job read from it.
-
-```bash
-# Create the secret scope (one-time)
-databricks secrets create-scope dqx-config --profile <profile>
-
-# Set the catalog name
-databricks secrets put-secret dqx-config catalog_name --string-value "<your_catalog>" --profile <profile>
-```
-
-To change the catalog later, update the secret and restart the app.
-
-### 3. Deploy
-
-**One command** (parity with the Studio app's `make app-deploy`):
-
-```bash
-make mcp-deploy PROFILE=<profile> CATALOG=<catalog> \
-  BUNDLE_VARS='--var runner_service_principal_id=<runner-sp-application-id>'
-```
-
-This ensures the runner-wheel volume exists, then runs `bundle deploy`, the one-time setup job, and finally deploys + starts the app. Both flags are **required**: `CATALOG` is the UC catalog that hosts the runner-wheel volume (`/Volumes/<catalog>/tmp/dqx_artifacts`) — pass the same catalog you set in the secret scope — and `runner_service_principal_id` (its placeholder default is not a real SP) — use the application id of the [runner SP](#runner-service-principal-one-time). Add `TARGET=<target>` for a non-default bundle target.
-
-**Or step by step** (what `make mcp-deploy` runs):
-
-```bash
-cd mcp-server
-VARS='--var runner_service_principal_id=<runner-sp-application-id> --var catalog_name=<catalog>'
-
-# Ensure the runner-wheel volume exists BEFORE deploy uploads artifacts into it
-DQX_MCP_CATALOG=<catalog> DATABRICKS_PROFILE=<profile> ./scripts/ensure_artifacts_volume.sh
-
-# Deploy the bundle (app + runner job + setup job)
-databricks bundle deploy $VARS --profile <profile>
-
-# Run the one-time setup job (idempotent)
-databricks bundle run dqx_setup $VARS --profile <profile>
-
-# Deploy and start the app
-databricks bundle run mcp-dqx $VARS --profile <profile>
-```
-
-The **setup job**:
-- Creates the `<catalog>.tmp` schema (for temp views) and the `<catalog>.tmp.mcp_results` volume (for result files)
-- Keeps the **deploying principal** as the schema owner (so setup can create the volume and manage grants on every run)
-- Grants `USE CATALOG` to all users, the app SP, and the runner SP
-- Grants `USE SCHEMA` + `CREATE TABLE` on the tmp schema to all users (so their OBO token can create views)
-- Grants `USE SCHEMA` + `SELECT` + `MANAGE` on the tmp schema to the app SP and the runner SP (`MANAGE` lets them drop the OBO-created temp views without owning the schema)
-- Grants `READ VOLUME` + `WRITE VOLUME` on the results volume to both SPs
-- Grants the **app SP** `CAN_MANAGE_RUN` on the runner job (so the app can submit runs and poll results)
-- Grants the **runner SP** `READ VOLUME` on the `<catalog>.tmp.dqx_artifacts` volume (so the serverless env can install the runner wheel)
-
-The `dqx_artifacts` volume that hosts the runner wheels is created **before** `bundle deploy` (by `scripts/ensure_artifacts_volume.sh`, which `make mcp-deploy` runs for you) because `bundle deploy` uploads the wheels into it. This is why `CATALOG` must be passed at deploy time.
-
-### 4. Find your MCP endpoint
-
-The MCP endpoint is `https://<app-url>/mcp`. Find `<app-url>` in the Databricks UI under **Compute → Apps → mcp-dqx** (the **App URL**), or via the CLI:
-
-```bash
-databricks apps get mcp-dqx --profile <profile> -o json | jq -r .url
-```
+Once it's deployed, the rest of this guide covers configuration, connecting a client, and usage.
 
 ## Configuration
 
@@ -234,24 +117,17 @@ databricks apps get mcp-dqx --profile <profile> -o json | jq -r .url
 
 - **Reads run as the calling user.** `get_table_schema`, and the temporary views behind `profile_table` / `run_checks` / `apply_checks_and_save_to_table`, use the user's OBO token — Unity Catalog is enforced, so a user only ever sees data they are already granted.
 - **The job runs as a least-privilege runner SP, never a human.** The app SP submits the job; the job itself runs as the dedicated `runner_service_principal_id`. Source reads still execute *as the caller* through the definer's-rights views.
-- **Writes and file reads are gated by an OBO pre-check.** Before submitting, the app verifies — using *your* UC permissions — that you can read the checks/contract file and write the destination (you own an existing table, or can create in the target schema). The runner SP performs the I/O only after that check passes, so it can never touch something you couldn't. Tables the write tools create are auto-granted to you (`ALL PRIVILEGES` + `MANAGE`).
+- **File reads are gated by an OBO pre-check; writes go to your own private schema.** Before submitting, the app verifies — using *your* UC permissions — that you can read any checks/contract file. The persisting tools (`save_checks` / `apply_checks_and_save_to_table`) don't take a caller-supplied destination at all: outputs land in your own private, per-user MCP schema (`dqx_mcp_<you>`), which the runner SP owns and grants only to you (`ALL PRIVILEGES` + `MANAGE` on the tables, `USE SCHEMA` on the schema). This removes cross-user data leaks and name collisions, and the SP only ever writes where it is guaranteed to have permission.
 - **CORS is scoped to your workspace.** The app only reflects credentialed browser origins from `DATABRICKS_HOST` (plus any `DQX_MCP_EXTRA_CORS_ORIGINS`) — not the whole multi-tenant `*.databricksapps.com` domain.
 - **App access is gated.** Only members of `users_group` (default `account users`) receive `CAN_USE` on the app, and the Databricks Apps front-door requires an OAuth login (PATs are rejected).
-
-### Secrets
-
-| Secret Scope | Key | Description |
-|-------------|-----|-------------|
-| `dqx-config` | `catalog_name` | UC catalog for temp views |
 
 ### Bundle variables
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `runner_service_principal_id` | **Required.** Application id of the workspace SP the runner job runs as (see [Runner service principal](#runner-service-principal-one-time)). The placeholder default is not a real SP. | `00000000-…` |
+| `runner_service_principal_id` | **Required.** Application id of the workspace SP the runner job runs as (see [Runner service principal](/docs/installation#runner-service-principal-one-time)). The placeholder default is not a real SP. | `00000000-…` |
 | `name_prefix` | Prefix for all resource names (app + jobs). Override to deploy an isolated second copy. | `mcp-dqx` |
-| `catalog_name` | **Required at deploy time.** Catalog for temp views and the runner-wheel volume (`workspace.artifact_path` = `/Volumes/<catalog>/tmp/dqx_artifacts`, resolved during `bundle deploy`). Pass the same catalog you set in the secret scope. | `""` |
-| `config_secret_scope` | Secret scope holding `catalog_name`. | `dqx-config` |
+| `catalog_name` | **Required at deploy time.** Catalog for temp views, per-user output schemas, and the runner-wheel volume (`workspace.artifact_path` = `/Volumes/<catalog>/tmp/dqx_artifacts`). Passed straight into the app config as `DQX_CATALOG` — no secret scope (a catalog name isn't sensitive; UC grants govern access). | `""` |
 | `users_group` | Group granted `CAN_USE` on the app and access to the temp schema. | `account users` |
 
 Override at deploy time (or via `BUNDLE_VARS=` with `make mcp-deploy`):
@@ -274,28 +150,25 @@ The runner job's per-operation runs are visible under **Workflows → Jobs → m
 
 ### How it works
 
-1. **Catalog name:** Read from Databricks secret (`dqx-config/catalog_name`) by both the app and the setup job. Update the secret and restart the app to change it.
+1. **Catalog name:** Passed as the `catalog_name` bundle var at deploy time and injected into the app as the `DQX_CATALOG` config env value (and into the setup job). It is **not** stored in a secret — a UC catalog name isn't sensitive, and access is governed by Unity Catalog grants, not by hiding the name. To change it, redeploy with a new `CATALOG=`.
 2. **Async job execution:** Tools trigger the pre-deployed `mcp-dqx-runner` job via `run_now()`, which uses a serverless environment with `databricks-labs-dqx` pre-installed. Jobs support up to 10 concurrent runs.
 3. **SQL warehouse:** Auto-discovered at runtime from the user's available warehouses. No configuration needed.
-4. **SP permissions:** the setup job grants the app SP and runner SP their temp-schema/volume access and grants the app SP `CAN_MANAGE_RUN` on the runner job.
+4. **SP permissions:** the setup job grants the app SP and runner SP their temp-schema/volume access, grants the runner SP `CREATE SCHEMA` on the catalog (for per-user output schemas), and grants the app SP `CAN_MANAGE_RUN` on the runner job.
 
 ### Write access for the persisting tools {#write-access}
 
-<Admonition type="warning" title="save_checks and apply_checks_and_save_to_table write via the runner service principal">
-Most tools read through the calling user's OBO token, but the two tools that **persist** data — `save_checks` and `apply_checks_and_save_to_table` — are written by the **runner service principal** after an OBO pre-check confirms *you* may write there. Two conditions must both hold: (1) **you** can write the destination (you own an existing table, or can create in the target schema — enforced by the pre-check), and (2) the **runner SP** can write there too (it performs the actual write). The setup job only grants the runner SP access on the temp schema, so writes to your own catalogs/schemas fail until you grant the runner SP write access to the target:
+<Admonition type="info" title="save_checks and apply_checks_and_save_to_table write to your private per-user schema">
+The two tools that **persist** data — `save_checks` and `apply_checks_and_save_to_table` — do **not** take a caller-supplied destination. You pass a bare table *name* (e.g. `customers_clean`), and the runner service principal writes it into your own private, per-user MCP schema:
 
-```sql
--- Replace <runner_sp_application_id> with the runner SP's application id (runner_service_principal_id),
--- and <catalog>.<schema> with your target.
-GRANT USE CATALOG ON CATALOG `<catalog>` TO `<runner_sp_application_id>`;
-GRANT USE SCHEMA, CREATE TABLE, MODIFY ON SCHEMA `<catalog>`.`<schema>` TO `<runner_sp_application_id>`;
+```
+<catalog>.dqx_mcp_<you>.<name>
 ```
 
-For a UC **volume** or **workspace file** target, grant the runner SP the equivalent write permission on that volume/folder instead. If you only ever use the read/analyze tools (profile, generate, validate, run), no extra grant is needed.
+`<catalog>` is the configured MCP catalog (the `catalog_name` deploy var), and `dqx_mcp_<you>` is a schema unique to your identity that the runner **creates on demand and owns**. Because the SP owns the schema it writes to, no per-target grants are needed — the setup job's `CREATE SCHEMA` grant on the catalog is the only prerequisite (applied automatically).
 
-Tables these tools create are **owned by the runner service principal**, but the **calling user is automatically granted `ALL PRIVILEGES` + `MANAGE`** on them — so you can read, modify, **and drop/alter** the outputs outside the MCP. Ownership deliberately stays with the SP (so repeat overwrite runs keep working and don't depend on a grant you could revoke); if you also want to *own* the tables, point the tools at a schema you own.
+The runner grants **you** `USE SCHEMA` on your schema and `ALL PRIVILEGES` + `MANAGE` on the tables it creates, so you can read, modify, and drop/alter the outputs from your own pipelines outside the MCP. **Isolation:** each caller is granted access only to *their own* schema, so users can't see or collide with each other's outputs. Ownership stays with the SP so repeat `overwrite` runs keep working and don't depend on a grant you could revoke.
 
-Note: writing to a **pre-existing** table requires you to **own** it — the pre-check conservatively rejects writes to tables owned by someone else (even if you have `MODIFY`), since the SP must not overwrite data you couldn't.
+If you only ever use the read/analyze tools (profile, generate, validate, run), nothing is persisted and no schema is created.
 </Admonition>
 
 ## Connect an MCP client
@@ -366,9 +239,9 @@ These are natural-language prompts you can give any connected agent. Replace `<c
 | `generate_rules_from_contract` | "Generate DQX checks from the data contract at `/Volumes/<catalog>/<schema>/<volume>/contract.yaml`." |
 | `validate_checks` | "Validate these checks before I run them." |
 | `run_checks` | "Run those checks against `<catalog>.<schema>.<table>` and show which rows fail and why." |
-| `save_checks` | "Save those checks to `<catalog>.<schema>.<table>_checks` so the team can reuse them." |
-| `load_checks` | "Load the data quality rules we saved earlier from `<catalog>.<schema>.<table>_checks` and run them on today's data." |
-| `apply_checks_and_save_to_table` | "Apply the checks to `<catalog>.<schema>.<table>`, writing valid rows to `<catalog>.<schema>.<table>_clean` and invalid rows to `<catalog>.<schema>.<table>_quarantine`." |
+| `save_checks` | "Save those checks as `customers_checks` so I can reuse them later." |
+| `load_checks` | "Load the data quality rules we saved earlier from `<catalog>.dqx_mcp_<you>.customers_checks` and run them on today's data." |
+| `apply_checks_and_save_to_table` | "Apply the checks to `<catalog>.<schema>.<table>`, writing valid rows to `customers_clean` and invalid rows to `customers_quarantine`." |
 | `get_run_result` | "Get the result for run_id `<id>`." |
 
 <Admonition type="note" title="Profiling samples by default">
@@ -389,16 +262,16 @@ its data quality before the team starts using it — I'm fairly new to DQX. Can 
   this table at /Volumes/<catalog>/<schema>/<volume>/customers_contract.yaml, so use that
   too if it helps;
 - run the rules and show me which records fail and why;
-- once the rules look right, save them somewhere the team can reuse them;
+- once the rules look right, save them so I can reuse them later;
 - then, the way our nightly pipeline would, load those saved rules back and use them to
   produce a clean table and a separate quarantine table of the rejected rows;
 - and finally, summarise in plain English how bad the data is and what I should fix first.
 ```
 
-This reuse framing is also the point of `load_checks`: the MCP server is stateless, so saved checks live only in whatever durable location you write them to. A fresh session (or a scheduled pipeline) starts with no checks in context — `load_checks` pulls a previously-saved set back so `run_checks` / `apply_checks_and_save_to_table` can use it without re-profiling.
+This reuse framing is also the point of `load_checks`: the MCP server is stateless, so saved checks live only where you persisted them — your private `<catalog>.dqx_mcp_<you>` schema. A fresh session (or a scheduled pipeline) starts with no checks in context — `load_checks` pulls a previously-saved set back (by its fully-qualified name) so `run_checks` / `apply_checks_and_save_to_table` can use it without re-profiling. The `save_checks` result reports the fully-qualified location to load from.
 
-<Admonition type="info" title="The save and apply steps write data">
-Saving the rules and producing the clean/quarantine tables run as the app service principal. If they fail with a permission error, grant the SP write access on the target schema — see [Write access for the persisting tools](#write-access).
+<Admonition type="info" title="Where the save and apply steps write">
+`save_checks` and `apply_checks_and_save_to_table` write to your own private per-user schema (`<catalog>.dqx_mcp_<you>`), which the runner creates and grants to you — no target grants needed. See [Write access for the persisting tools](#write-access).
 </Admonition>
 
 ### Try it with sample data
@@ -433,14 +306,14 @@ Optionally, to try `generate_rules_from_contract`, save an [ODCS data contract](
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | `bundle deploy`: `databricks: command not found` | CLI missing / too old | Install Databricks CLI 0.279.0+ (`databricks --version`). |
-| Deploy fails creating the app | Apps not enabled, or you lack app-create permission | Ask an admin to enable Apps / grant app-create (see [Prerequisites](#prerequisites)). |
+| Deploy fails creating the app | Apps not enabled, or you lack app-create permission | Ask an admin to enable Apps / grant app-create (see [Prerequisites](/docs/installation#mcp-prerequisites)). |
 | Setup job: `CREATE SCHEMA` or `GRANT` denied | Missing catalog permissions | Grant the deploying user `USE CATALOG` + `CREATE SCHEMA` + `MANAGE` on the catalog. |
-| `bundle deploy`: *"User is not authorized to use this service principal"* | Deployer lacks the **User** role on the runner SP | Grant yourself User on `runner_service_principal_id` (see [Runner service principal](#runner-service-principal-one-time)). |
+| `bundle deploy`: *"User is not authorized to use this service principal"* | Deployer lacks the **User** role on the runner SP | Grant yourself User on `runner_service_principal_id` (see [Runner service principal](/docs/installation#runner-service-principal-one-time)). |
 | MCP client gets **401** on `/mcp` | Using a PAT, or not authenticated | Connect with **OAuth** — Genie Code does this automatically; external clients run the Databricks OAuth login. PATs are rejected by the OBO front-door. |
 | A file read fails with *"Invalid scope, required scopes: workspace"* | OBO token predates a scope change, or the app lacks `workspace.workspace` | Reconnect the MCP server (re-authorize) to mint a fresh token; confirm the app declares the `workspace.workspace` scope. |
 | A read tool fails "cannot read table" | Your UC grants don't allow it (OBO is enforced) | Grant yourself `SELECT` on the source table. |
-| `save_checks` / `apply_checks_and_save_to_table` rejected *before* running ("not you / owned by …") | OBO write pre-check: you can't create/own the destination | Point at a schema you can create in, or a table you own — see [Write access](#write-access). |
-| `save_checks` / `apply_checks_and_save_to_table` `run_id` returns `failed` with a permission error | The **runner SP** can't write to the target | Grant the runner SP write access — see [Write access](#write-access). |
+| `save_checks` / `apply_checks_and_save_to_table` rejected with *"Invalid output name"* | You passed a dotted/path destination instead of a bare table name | Pass a bare name (e.g. `customers_clean`) — outputs go to your private per-user schema, not a catalog.schema.table you choose (see [Write access](#write-access)). |
+| `save_checks` / `apply_checks_and_save_to_table` `run_id` returns `failed` with a `CREATE SCHEMA` permission error | The **runner SP** lacks `CREATE SCHEMA` on the catalog (setup job not run, or run without the runner SP) | Re-run the setup job with `runner_service_principal_id` set — it grants the runner SP `CREATE SCHEMA` (see [Write access](#write-access)). |
 | `get_run_result` returns `not_found` | The `run_id` is invalid, expired, or from another job | Re-check the `run_id` returned by the original submit call. |
 | A tool's `run_id` returns `failed` | The runner job errored | Read the `error` field (the failed task's message is surfaced), or open **Workflows → Jobs → mcp-dqx-runner**. |
 | `get_run_result` keeps returning `running` | Job still executing (serverless cold start ≈ 1 min) | Poll again after a short pause. |
@@ -477,7 +350,7 @@ cd mcp-server
 databricks bundle destroy --profile <profile>     # removes the app + both jobs
 ```
 
-The `<catalog>.tmp` schema and the `dqx-config` secret scope are **not** part of the bundle — remove them manually if desired (`databricks secrets delete-scope dqx-config` and `DROP SCHEMA <catalog>.tmp`).
+The `<catalog>.tmp` schema (temp views + results/artifacts volumes) and any `dqx_mcp_<user>` output schemas are **not** part of the bundle — remove them manually if desired (`DROP SCHEMA <catalog>.tmp CASCADE`, and any `<catalog>.dqx_mcp_*`).
 
 ## Getting help
 

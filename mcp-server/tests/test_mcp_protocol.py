@@ -92,22 +92,21 @@ class TestToolInvocation:
     @pytest.mark.anyio
     async def test_save_checks_submits_job(self):
         with (
-            patch("server.tools.utils.get_obo_client"),
-            patch("server.tools.utils.get_warehouse_id", return_value="wh123"),
-            patch("server.tools.utils.verify_obo_write_access"),
             patch("server.tools.utils.submit_job_async", return_value=23) as mock_submit,
+            patch.dict("os.environ", _ENV),
         ):
             async with Client(mcp_server) as client:
                 res = await client.call_tool(
-                    "save_checks", {"checks": [{"check": "foo"}], "location": "c.s.checks", "mode": "overwrite"}
+                    "save_checks", {"checks": [{"check": "foo"}], "output_name": "my_checks", "mode": "overwrite"}
                 )
         mock_submit.assert_called_once_with(
             "save_checks",
             {
                 "checks": [{"check": "foo"}],
-                "location": "c.s.checks",
+                "output_name": "my_checks",
                 "run_config_name": "default",
                 "mode": "overwrite",
+                "catalog": "dqx_mcp",
                 # no OBO user context in the in-memory client, so there is nobody to grant to
                 "grant_to": None,
             },

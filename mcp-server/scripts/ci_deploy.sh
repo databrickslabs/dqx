@@ -3,8 +3,9 @@
 # integration testing, and print the deployed app URL. Idempotent / safe to re-run.
 #
 # Auth comes from the standard Databricks CLI env (DATABRICKS_HOST + DATABRICKS_TOKEN, or a
-# configured profile). Override the bundle's name/catalog/secret-scope via the env vars below
-# so this never collides with a real deployment.
+# configured profile). Override the bundle's name/catalog via the env vars below so this never
+# collides with a real deployment. The catalog is passed as a bundle var (no secret scope — the
+# catalog name is not sensitive, and the app reads it from a plain config env value).
 #
 # Env:
 #   NAME_PREFIX                          resource name prefix (default: mcp-dqx-ci)
@@ -12,7 +13,6 @@
 #   DQX_MCP_RUNNER_SERVICE_PRINCIPAL_ID  application id of the workspace SP the runner job runs as
 #                                        (required — the runner job's run_as; the deploying identity
 #                                        needs the "User" role on it)
-#   CONFIG_SECRET_SCOPE                  secret scope holding catalog_name (default: dqx-config-ci)
 #   BUNDLE_TARGET                        bundle target (default: dev)
 #   DATABRICKS_PROFILE                   optional CLI profile (else relies on DATABRICKS_HOST/TOKEN)
 #
@@ -20,7 +20,6 @@
 set -euo pipefail
 
 NAME_PREFIX="${NAME_PREFIX:-mcp-dqx-ci}"
-CONFIG_SECRET_SCOPE="${CONFIG_SECRET_SCOPE:-dqx-config-ci}"
 BUNDLE_TARGET="${BUNDLE_TARGET:-dev}"
 # Required config (CI: provided by the acceptance harness env + the deploy fixture).
 : "${DATABRICKS_HOST:?DATABRICKS_HOST is not set (workspace URL)}"
@@ -32,16 +31,9 @@ PROFILE_ARG=()
 
 VARS=(--var "name_prefix=${NAME_PREFIX}"
       --var "catalog_name=${DQX_MCP_TEST_CATALOG}"
-      --var "config_secret_scope=${CONFIG_SECRET_SCOPE}"
       --var "runner_service_principal_id=${DQX_MCP_RUNNER_SERVICE_PRINCIPAL_ID}")
 
 cd "$(dirname "$0")/.."  # mcp-server/
-
-echo "::group::Configure catalog secret (${CONFIG_SECRET_SCOPE})"
-databricks secrets create-scope "${CONFIG_SECRET_SCOPE}" "${PROFILE_ARG[@]}" 2>/dev/null || true
-databricks secrets put-secret "${CONFIG_SECRET_SCOPE}" catalog_name \
-  --string-value "${DQX_MCP_TEST_CATALOG}" "${PROFILE_ARG[@]}"
-echo "::endgroup::"
 
 echo "::group::ensure artifacts volume (${DQX_MCP_TEST_CATALOG}.tmp.dqx_artifacts)"
 # workspace.artifact_path is a UC volume; it must exist before `bundle deploy` uploads the wheels.

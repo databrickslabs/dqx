@@ -342,16 +342,20 @@ def _resolve_warehouse_id(client: WorkspaceClient) -> str:
 def seed_demo_data(app_sp: str) -> Iterator[dict[str, str]]:
     """Seed the dirty 'customers' table + an ODCS contract, then drop everything on exit.
 
-    Creates a throwaway schema under ``CATALOG``, the sample table, and a UC-volume contract;
-    grants the app service principal write access on the schema (so ``save_checks`` /
-    ``apply_checks_and_save_to_table``, which run as the SP, can write) and read on the contract
-    volume. Yields the fully-qualified names the test uses.
+    Creates a throwaway schema under ``CATALOG``, the sample table, and a UC-volume contract.
+    The **source table** is read through the caller's OBO definer's-rights view (the caller owns
+    this schema, so no SP grant is needed). The **contract** is read by the runner job *as the
+    runner SP* (``generate_rules_from_contract`` opens it locally), so the runner SP is granted
+    READ VOLUME on the contract volume. Persisting tools (``save_checks`` /
+    ``apply_checks_and_save_to_table``) write to the *caller's own per-user schema*
+    (``dqx_mcp_<user>``, created + owned by the runner SP) — no grants on this seed schema needed.
 
     Builds its own ambient ``WorkspaceClient`` (rather than a static-token one) so its SDK calls —
     including the teardown that runs after the long test — refresh the bearer and don't expire.
     """
     client = WorkspaceClient()
     warehouse_id = _resolve_warehouse_id(client)
+    runner_sp = os.environ.get("DQX_MCP_RUNNER_SERVICE_PRINCIPAL_ID", "").strip()
     schema = f"dqx_mcp_it_{uuid4().hex[:8]}"
     fq_schema = f"{CATALOG}.{schema}"
     table = f"{fq_schema}.customers"
@@ -371,16 +375,14 @@ def seed_demo_data(app_sp: str) -> Iterator[dict[str, str]]:
         f"country STRING, signup_date DATE, amount DOUBLE)"
     )
     run_sql(f"INSERT INTO {table} VALUES {_CUSTOMERS_ROWS.strip()}")
-    if app_sp:
-        # The runner job writes as the app SP, so it needs write access on this schema for
-        # save_checks / apply_checks_and_save_to_table (see the docs' "Write access" note).
-        run_sql(f"GRANT USE SCHEMA, CREATE TABLE, MODIFY, SELECT ON SCHEMA {fq_schema} TO `{app_sp}`")
 
-    # The contract is read by the runner job (as the app SP), so it must live somewhere the SP
-    # can read — a UC volume in the same schema, with READ VOLUME granted to the SP.
+    # The contract is read by the runner job as the runner SP, so it must live somewhere the runner
+    # SP can read — a UC volume in the seed schema. Reading a volume file via FUSE open() needs
+    # USE SCHEMA on the parent schema *and* READ VOLUME on the volume (USE CATALOG comes from setup).
     run_sql(f"CREATE VOLUME IF NOT EXISTS {fq_schema}.contracts")
-    if app_sp:
-        run_sql(f"GRANT READ VOLUME ON VOLUME {fq_schema}.contracts TO `{app_sp}`")
+    if runner_sp:
+        run_sql(f"GRANT USE SCHEMA ON SCHEMA {fq_schema} TO `{runner_sp}`")
+        run_sql(f"GRANT READ VOLUME ON VOLUME {fq_schema}.contracts TO `{runner_sp}`")
     contract_path = f"/Volumes/{CATALOG}/{schema}/contracts/customers_contract.yaml"
     client.files.upload(contract_path, io.BytesIO(_CONTRACT_YAML.encode()), overwrite=True)
 
@@ -389,9 +391,6 @@ def seed_demo_data(app_sp: str) -> Iterator[dict[str, str]]:
             "table": table,
             "schema": fq_schema,
             "contract": contract_path,
-            "checks_table": f"{fq_schema}.customers_checks",
-            "clean_table": f"{fq_schema}.customers_clean",
-            "quarantine_table": f"{fq_schema}.customers_quarantine",
             "service_principal": app_sp,
         }
     finally:
