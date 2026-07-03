@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useParams } from "@tanstack/react-router";
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { QueryErrorResetBoundary, useQueryClient } from "@tanstack/react-query";
 import { ErrorBoundary } from "react-error-boundary";
@@ -16,7 +16,6 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   AlertDialog,
@@ -28,15 +27,13 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   AlertCircle,
   ArrowLeft,
@@ -50,42 +47,34 @@ import {
   ShieldCheck,
   Sparkles,
   UploadCloud,
+  X,
 } from "lucide-react";
 import {
   useGetMonitoredTableSuspense,
   getGetMonitoredTableQueryKey,
   useGetMonitoredTableProfile,
   usePublishMonitoredTable,
-  useApplyRuleToTable,
   useRemoveAppliedRule,
   useSetAppliedRulePin,
   useSetAppliedRuleSeverityOverride,
   useListRegistryRules,
-  useSuggestRulesForTable,
   useGetTableColumns,
   type AppliedRuleOut,
   type ColumnOut,
   type MonitoredTableOut,
   type RegistryRuleOut,
-  type SuggestedRuleMappingOut,
 } from "@/lib/api";
-import { useLabelDefinitions, type LabelDefinition } from "@/lib/api-custom";
+import { useLabelDefinitions } from "@/lib/api-custom";
 import { usePermissions } from "@/hooks/use-permissions";
 import { formatDateShort } from "@/lib/format-utils";
 import { ApprovalStepsBanner } from "@/components/ApprovalStepsBanner";
-import { useAiAvailability, aiUnavailableReason } from "@/hooks/use-ai-availability";
-import { AI_BANNER_BORDER, AI_BUTTON_BG, AI_ICON_COLOR, AI_TEXT_GRADIENT } from "@/lib/ai-style";
+import { useAiAvailability } from "@/hooks/use-ai-availability";
+import { AI_BUTTON_BG } from "@/lib/ai-style";
 import { AddRulesDialog } from "@/components/apply-rules/AddRulesDialog";
-import { MappingChips } from "@/components/apply-rules/MappingChips";
-import { RuleConfigCard } from "@/components/apply-rules/RuleConfigCard";
+import { AiSuggestionDialog } from "@/components/apply-rules/AiSuggestionDialog";
+import { RuleConfigCard, computeStatus } from "@/components/apply-rules/RuleConfigCard";
 import { RulesByColumn, type ColumnRef } from "@/components/apply-rules/RulesByColumn";
-import {
-  RESERVED_DIMENSION_KEY,
-  RESERVED_SEVERITY_KEY,
-  TagBadge,
-  colorFor,
-  extractApiError,
-} from "@/components/apply-rules/shared";
+import { RESERVED_SEVERITY_KEY, extractApiError } from "@/components/apply-rules/shared";
 import { orderSeverityValuesForDisplay } from "@/components/RegistryRuleBadges";
 
 export const Route = createFileRoute("/_sidebar/monitored-tables/$bindingId")({
@@ -562,6 +551,8 @@ function ApplyRulesTab({
   const [suggestOpen, setSuggestOpen] = useState(false);
   const [removeTarget, setRemoveTarget] = useState<AppliedRuleOut | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState<"all" | "needs-attention">("all");
   const aiAvailability = useAiAvailability();
 
   const { data: labelDefsData } = useLabelDefinitions();
@@ -578,6 +569,46 @@ function ApplyRulesTab({
     for (const r of publishedRules) m.set(r.rule_id, r);
     return m;
   }, [publishedRules]);
+
+  // Completeness status per applied rule — drives the "needs attention"
+  // filter and the by-rule/by-column incomplete-mapping indicators.
+  const statuses = useMemo(
+    () => appliedRules.map((rule) => computeStatus(rule, ruleById.get(rule.rule_id)?.definition.slots ?? [])),
+    [appliedRules, ruleById],
+  );
+  const incompleteCount = statuses.filter((s) => s.kind === "incomplete").length;
+
+  // Total checks: aggregate rules (0 slots) count as 1 check each;
+  // column-mapped rules count as the number of non-empty mapping groups.
+  const totalChecks = useMemo(() => {
+    return appliedRules.reduce((sum, rule) => {
+      const slots = ruleById.get(rule.rule_id)?.definition.slots ?? [];
+      if (slots.length === 0) return sum + 1;
+      const groups = rule.column_mapping ?? [];
+      return sum + groups.filter((entry) => slots.some((s) => Boolean(entry[s.name]))).length;
+    }, 0);
+  }, [appliedRules, ruleById]);
+
+  const visibleAppliedRules = useMemo(() => {
+    let filtered = appliedRules;
+    if (filter === "needs-attention") {
+      filtered = appliedRules.filter((_, i) => statuses[i].kind === "incomplete");
+    }
+    const q = search.trim().toLowerCase();
+    if (q) {
+      filtered = filtered.filter((rule) => {
+        if ((rule.rule_name ?? "").toLowerCase().includes(q)) return true;
+        if (rule.rule_id.toLowerCase().includes(q)) return true;
+        for (const group of rule.column_mapping ?? []) {
+          for (const col of Object.values(group)) {
+            if (col && col.toLowerCase().includes(q)) return true;
+          }
+        }
+        return false;
+      });
+    }
+    return filtered;
+  }, [appliedRules, statuses, filter, search]);
 
   const removeMutation = useRemoveAppliedRule();
   const pinMutation = useSetAppliedRulePin();
@@ -647,40 +678,106 @@ function ApplyRulesTab({
     <div className="space-y-4 pt-4">
       <ApprovalStepsBanner />
 
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div className="flex items-center gap-1 border rounded-md p-0.5">
-          {(
-            [
-              { key: "by-rule", label: t("monitoredTables.lensByRule") },
-              { key: "by-column", label: t("monitoredTables.lensByColumn") },
-            ] as const
-          ).map((mode) => (
+      <div className="flex items-center gap-3 flex-wrap">
+        {appliedRules.length > 0 && (
+          <TooltipProvider delayDuration={200}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="text-sm font-semibold cursor-help">
+                  {t("monitoredTables.checksCount", { count: totalChecks })}{" "}
+                  {t("monitoredTables.viaRulesCount", { count: appliedRules.length })}
+                </span>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="max-w-xs text-center">
+                {t("monitoredTables.checksViaRulesTooltip")}
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        )}
+
+        {incompleteCount > 0 && (
+          <div className="flex gap-1">
             <button
-              key={mode.key}
               type="button"
-              onClick={() => setLens(mode.key)}
-              className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-                lens === mode.key ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"
+              onClick={() => setFilter("all")}
+              className={`h-8 px-3 rounded text-xs border transition-colors ${
+                filter === "all"
+                  ? "bg-primary text-primary-foreground border-primary"
+                  : "border-input bg-background text-foreground hover:bg-accent"
               }`}
             >
-              {mode.label}
+              {t("monitoredTables.filterAll")}
             </button>
-          ))}
-        </div>
-        {canEdit && (
-          <div className="flex items-center gap-2">
-            {aiAvailability.available && (
-              <Button size="sm" className={`gap-2 ${AI_BUTTON_BG}`} onClick={() => setSuggestOpen(true)}>
-                <Sparkles className="h-3.5 w-3.5" />
-                {t("monitoredTables.suggestRulesButton")}
-              </Button>
-            )}
-            <Button size="sm" className="gap-2" onClick={() => openAddDialog()}>
-              <Plus className="h-3.5 w-3.5" />
-              {t("monitoredTables.addRulesButton")}
-            </Button>
+            <button
+              type="button"
+              onClick={() => setFilter("needs-attention")}
+              className={`h-8 px-3 rounded text-xs border transition-colors ${
+                filter === "needs-attention"
+                  ? "bg-yellow-500/20 text-yellow-700 dark:text-yellow-300 border-yellow-500/50"
+                  : "border-yellow-500/30 bg-background text-yellow-600 dark:text-yellow-400 hover:bg-yellow-500/10"
+              }`}
+            >
+              {t("monitoredTables.filterNeedsAttention")}
+            </button>
           </div>
         )}
+
+        {appliedRules.length > 0 && (
+          <div className="relative w-60">
+            <Input
+              placeholder={t("monitoredTables.searchRulesAndColumnsPlaceholder")}
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="h-8 text-xs pr-7"
+            />
+            {search && (
+              <button
+                type="button"
+                aria-label={t("monitoredTables.clearSearchLabel")}
+                onClick={() => setSearch("")}
+                className="absolute right-1 top-1/2 -translate-y-1/2 inline-flex items-center justify-center h-5 w-5 text-muted-foreground hover:text-foreground rounded"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            )}
+          </div>
+        )}
+
+        <div className="ml-auto flex items-center gap-2">
+          <div className="flex items-center gap-1 border rounded-md p-0.5">
+            {(
+              [
+                { key: "by-rule", label: t("monitoredTables.lensByRule") },
+                { key: "by-column", label: t("monitoredTables.lensByColumn") },
+              ] as const
+            ).map((mode) => (
+              <button
+                key={mode.key}
+                type="button"
+                onClick={() => setLens(mode.key)}
+                className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
+                  lens === mode.key ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"
+                }`}
+              >
+                {mode.label}
+              </button>
+            ))}
+          </div>
+          {canEdit && (
+            <>
+              {aiAvailability.available && (
+                <Button size="sm" className={`gap-2 ${AI_BUTTON_BG}`} onClick={() => setSuggestOpen(true)}>
+                  <Sparkles className="h-3.5 w-3.5" />
+                  {t("monitoredTables.suggestRulesButton")}
+                </Button>
+              )}
+              <Button size="sm" className="gap-2" onClick={() => openAddDialog()}>
+                <Plus className="h-3.5 w-3.5" />
+                {t("monitoredTables.addRulesButton")}
+              </Button>
+            </>
+          )}
+        </div>
       </div>
 
       {appliedRules.length === 0 && lens === "by-rule" ? (
@@ -698,27 +795,54 @@ function ApplyRulesTab({
         </div>
       ) : lens === "by-rule" ? (
         <div className="space-y-3">
-          {appliedRules.map((rule) => (
-            <RuleConfigCard
-              key={rule.id ?? rule.rule_id}
-              rule={rule}
-              registryRule={ruleById.get(rule.rule_id)}
-              labelDefinitions={labelDefinitions}
-              severityValues={severityValues}
-              canEdit={canEdit}
-              busy={pendingId === rule.id}
-              onPinChange={(v) => handlePinChange(rule, v)}
-              onSeverityChange={(v) => handleSeverityChange(rule, v)}
-              onRemove={() => setRemoveTarget(rule)}
-            />
-          ))}
+          {visibleAppliedRules.length === 0 ? (
+            <div className="rounded-lg border border-dashed p-10 text-center text-sm text-muted-foreground">
+              {search.trim()
+                ? t("monitoredTables.noRulesMatchFilter")
+                : filter === "needs-attention"
+                  ? t("monitoredTables.noRulesNeedAttention")
+                  : t("monitoredTables.emptyAppliedRules")}
+            </div>
+          ) : (
+            visibleAppliedRules.map((rule) => (
+              <RuleConfigCard
+                key={rule.id ?? rule.rule_id}
+                rule={rule}
+                registryRule={ruleById.get(rule.rule_id)}
+                labelDefinitions={labelDefinitions}
+                severityValues={severityValues}
+                canEdit={canEdit}
+                busy={pendingId === rule.id}
+                onPinChange={(v) => handlePinChange(rule, v)}
+                onSeverityChange={(v) => handleSeverityChange(rule, v)}
+                onRemove={() => setRemoveTarget(rule)}
+                onJumpToColumn={(colName) => {
+                  setFilter("all");
+                  setSearch("");
+                  setLens("by-column");
+                  setTimeout(() => {
+                    document.getElementById(`column-card-${colName}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+                  }, 50);
+                }}
+              />
+            ))
+          )}
         </div>
       ) : (
         <RulesByColumn
           appliedRules={appliedRules}
           tableFqn={tableFqn}
           canEdit={canEdit}
+          search={search}
           onAddRule={(column) => openAddDialog(column)}
+          onJumpToRule={(ruleId) => {
+            setFilter("all");
+            setSearch("");
+            setLens("by-rule");
+            setTimeout(() => {
+              document.getElementById(`rule-card-${ruleId}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+            }, 50);
+          }}
         />
       )}
 
@@ -736,7 +860,7 @@ function ApplyRulesTab({
         initialColumn={addColumnContext}
       />
 
-      <SuggestRulesDialog
+      <AiSuggestionDialog
         open={suggestOpen}
         onOpenChange={setSuggestOpen}
         bindingId={bindingId}
@@ -764,193 +888,6 @@ function ApplyRulesTab({
         </AlertDialogContent>
       </AlertDialog>
     </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Suggest Rules dialog (Phase 4D — AI mapping suggester)
-// ---------------------------------------------------------------------------
-
-interface SuggestRulesState {
-  available: boolean;
-  reason?: string;
-  suggestions: SuggestedRuleMappingOut[];
-}
-
-function SuggestRulesDialog({
-  open,
-  onOpenChange,
-  bindingId,
-  labelDefinitions,
-  onApplied,
-  onAiUnavailable,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  bindingId: string;
-  labelDefinitions: LabelDefinition[];
-  onApplied: () => void;
-  onAiUnavailable: (reason: string) => void;
-}) {
-  const { t } = useTranslation();
-  const suggestMutation = useSuggestRulesForTable();
-  const applyMutation = useApplyRuleToTable();
-  const [state, setState] = useState<SuggestRulesState | null>(null);
-  const [selected, setSelected] = useState<Set<number>>(new Set());
-  const [applying, setApplying] = useState(false);
-  const fetchedForRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    if (!open) {
-      setState(null);
-      setSelected(new Set());
-      fetchedForRef.current = null;
-      return;
-    }
-    if (fetchedForRef.current === bindingId) return;
-    fetchedForRef.current = bindingId;
-    suggestMutation.mutate(
-      { bindingId },
-      {
-        onSuccess: (resp) => {
-          const suggestions = resp.data.suggestions ?? [];
-          setState({ available: resp.data.available, reason: resp.data.reason, suggestions });
-          setSelected(new Set(suggestions.map((_, i) => i)));
-        },
-        onError: (err) => {
-          const reason = aiUnavailableReason(err);
-          if (reason) onAiUnavailable(reason);
-          toast.error(t("monitoredTables.suggestRulesFetchFailed"));
-          setState({ available: false, reason: reason ?? undefined, suggestions: [] });
-        },
-      },
-    );
-  }, [open, bindingId, suggestMutation, onAiUnavailable, t]);
-
-  const toggle = (idx: number) => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(idx)) next.delete(idx);
-      else next.add(idx);
-      return next;
-    });
-  };
-
-  const handleAdd = async () => {
-    if (!state) return;
-    const chosen = state.suggestions.filter((_, i) => selected.has(i));
-    if (chosen.length === 0) {
-      toast.error(t("monitoredTables.suggestRulesNoneSelected"));
-      return;
-    }
-    setApplying(true);
-    let failures = 0;
-    for (const suggestion of chosen) {
-      try {
-        await applyMutation.mutateAsync({
-          bindingId,
-          data: { rule_id: suggestion.rule_id, column_mapping: [suggestion.column_mapping] },
-        });
-      } catch {
-        failures += 1;
-      }
-    }
-    setApplying(false);
-    const addedCount = chosen.length - failures;
-    if (addedCount > 0) {
-      toast.success(t("monitoredTables.suggestRulesAddedToast", { count: addedCount }));
-      onApplied();
-    }
-    if (failures > 0) {
-      toast.error(t("monitoredTables.suggestRulesAddFailed"));
-    }
-    if (failures === 0) {
-      onOpenChange(false);
-    }
-  };
-
-  const loading = suggestMutation.isPending && state === null;
-
-  return (
-    <Dialog open={open} onOpenChange={(next) => !applying && onOpenChange(next)}>
-      <DialogContent className="sm:max-w-2xl">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Sparkles className={`h-4 w-4 ${AI_ICON_COLOR}`} />
-            <span className={AI_TEXT_GRADIENT}>{t("monitoredTables.suggestRulesDialogTitle")}</span>
-          </DialogTitle>
-          <DialogDescription>{t("monitoredTables.suggestRulesDialogDescription")}</DialogDescription>
-        </DialogHeader>
-
-        {loading ? (
-          <div className="flex flex-col items-center justify-center py-10 gap-2 text-center">
-            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-            <p className="text-sm text-muted-foreground">{t("monitoredTables.suggestRulesLoading")}</p>
-          </div>
-        ) : state && !state.available ? (
-          <div className="flex flex-col items-center justify-center py-10 gap-2 text-center">
-            <Sparkles className="h-8 w-8 text-muted-foreground/30" />
-            <p className="text-sm font-medium text-muted-foreground">
-              {t("monitoredTables.suggestRulesUnavailableTitle")}
-            </p>
-            {state.reason && <p className="text-xs text-muted-foreground/70 max-w-sm">{state.reason}</p>}
-          </div>
-        ) : state && state.suggestions.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-10 gap-2 text-center">
-            <Sparkles className="h-8 w-8 text-muted-foreground/30" />
-            <p className="text-sm font-medium text-muted-foreground">
-              {t("monitoredTables.suggestRulesEmptyTitle")}
-            </p>
-            <p className="text-xs text-muted-foreground/70 max-w-sm">
-              {t("monitoredTables.suggestRulesEmptyDescription")}
-            </p>
-          </div>
-        ) : state ? (
-          <div className="max-h-96 overflow-y-auto space-y-2">
-            {state.suggestions.map((s, idx) => {
-              const checked = selected.has(idx);
-              return (
-                <label
-                  key={`${s.rule_id}-${idx}`}
-                  className={`flex items-start gap-3 rounded-md border p-3 cursor-pointer transition-colors ${
-                    checked ? AI_BANNER_BORDER : "hover:bg-muted/40"
-                  }`}
-                >
-                  <Checkbox checked={checked} onCheckedChange={() => toggle(idx)} className="mt-0.5" />
-                  <div className="min-w-0 flex-1 space-y-1.5">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <p className="text-sm font-medium">{s.rule_name || s.rule_id}</p>
-                      {s.dimension && (
-                        <TagBadge label={s.dimension} color={colorFor(labelDefinitions, RESERVED_DIMENSION_KEY, s.dimension)} />
-                      )}
-                      {s.severity && (
-                        <TagBadge label={s.severity} color={colorFor(labelDefinitions, RESERVED_SEVERITY_KEY, s.severity)} />
-                      )}
-                    </div>
-                    {s.explanation && (
-                      <p className="text-xs text-muted-foreground">{s.explanation}</p>
-                    )}
-                    <MappingChips columnMapping={s.column_mapping ? [s.column_mapping] : []} />
-                  </div>
-                </label>
-              );
-            })}
-          </div>
-        ) : null}
-
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={applying}>
-            {t("common.cancel")}
-          </Button>
-          {state && state.available && state.suggestions.length > 0 && (
-            <Button onClick={handleAdd} disabled={applying || selected.size === 0} className={`gap-2 ${AI_BUTTON_BG}`}>
-              {applying && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-              {t("monitoredTables.suggestRulesAddButton", { count: selected.size })}
-            </Button>
-          )}
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   );
 }
 
