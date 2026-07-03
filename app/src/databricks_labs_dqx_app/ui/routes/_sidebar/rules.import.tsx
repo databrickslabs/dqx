@@ -43,12 +43,14 @@ import {
 } from "@/components/ui/tooltip";
 import {
   type SaveRulesIn,
+  type DryRunIn,
   type DryRunResultsOut,
   saveRules,
+  submitDryRun,
   submitRuleForApproval,
-  useSubmitDryRun,
   useGetDryRunResults,
 } from "@/lib/api";
+import { useMutation } from "@tanstack/react-query";
 import { useValidateChecks, getDryRunStatusCustom, cancelDryRun } from "@/lib/api-custom";
 import { useJobPolling } from "@/hooks/use-job-polling";
 import { CatalogBrowser } from "@/components/CatalogBrowser";
@@ -130,7 +132,9 @@ function YamlImportCard({ onDone }: { onDone: () => void }) {
   const [dryRunJobRunId, setDryRunJobRunId] = useState<number | null>(null);
   const [dryRunViewFqn, setDryRunViewFqn] = useState<string | null>(null);
 
-  const submitDryRunMutation = useSubmitDryRun();
+  const submitDryRunMutation = useMutation({
+    mutationFn: (data: DryRunIn) => submitDryRun(data),
+  });
   const dryRunResultsQuery = useGetDryRunResults(dryRunRunId ?? "", {
     query: { enabled: false },
   });
@@ -195,13 +199,11 @@ function YamlImportCard({ onDone }: { onDone: () => void }) {
     try {
       setDryRunResult(null);
       const resp = await submitDryRunMutation.mutateAsync({
-        data: {
-          table_fqn: targetTable,
-          checks: dryRunnableChecks,
-          sample_size: dryRunSampleSize,
-          skip_history: true,
-        },
-      });
+        table_fqn: targetTable,
+        checks: dryRunnableChecks,
+        sample_size: dryRunSampleSize,
+        skip_history: true,
+      } as DryRunIn);
       setDryRunRunId(resp.data.run_id);
       setDryRunJobRunId(resp.data.job_run_id);
       setDryRunViewFqn(resp.data.view_fqn ?? null);

@@ -327,7 +327,6 @@ function CreateSqlCheckPage() {
       const hasOnlyEmptyDefault = checks.length === 1 && !checks[0].name && !checks[0].query;
       setChecks(hasOnlyEmptyDefault ? drafts : [...checks, ...drafts]);
       toast.success(t("rulesCreateSql.sqlCheckGenerated", { count: drafts.length }));
-      setAiPrompt("");
     } catch (err) {
       toast.error(t("rulesCreateSql.aiGenerationFailed", { detail: extractApiError(err, t) }));
     } finally {
@@ -591,7 +590,7 @@ function CreateSqlCheckPage() {
                 value={aiPrompt}
                 onChange={(e) => setAiPrompt(e.target.value)}
                 placeholder={t("rulesCreateSql.generateWithAiPlaceholder")}
-                className="min-h-[52px] resize-none text-sm"
+                className="min-h-[52px] text-sm"
                 disabled={aiGenerating}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {

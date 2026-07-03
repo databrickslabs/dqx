@@ -6,7 +6,8 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import type { UseMutationOptions, UseMutationResult, UseQueryOptions, UseQueryResult } from "@tanstack/react-query";
 import * as axios from "axios";
 import type { AxiosError, AxiosRequestConfig, AxiosResponse } from "axios";
-import type { RuleCatalogEntryOut, RunStatusOut } from "./api";
+import type { RuleCatalogEntryOut, RunStatusOut, ProfileRunIn, BatchProfileRunIn } from "./api";
+import { submitProfileRun, submitBatchProfileRun } from "./api";
 
 export interface BatchSaveRulesIn {
   table_fqns: string[];
@@ -1065,6 +1066,64 @@ export const useSaveRetentionSettings = <
   const { mutation: mutationOptions, axios: axiosOptions } = options ?? {};
   return useMutation({
     mutationFn: ({ data }: { data: RetentionSettingsIn }) => saveRetentionSettings(data, axiosOptions),
+    ...mutationOptions,
+  });
+};
+
+// ---------------------------------------------------------------------------
+// Profiler run mutations (orval generates these as useQuery; wrap as useMutation)
+// ---------------------------------------------------------------------------
+
+export const useSubmitProfileRunMutation = <
+  TError = AxiosError<unknown>,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof submitProfileRun>>,
+      TError,
+      { data: ProfileRunIn },
+      TContext
+    >;
+    axios?: AxiosRequestConfig;
+  },
+): UseMutationResult<
+  Awaited<ReturnType<typeof submitProfileRun>>,
+  TError,
+  { data: ProfileRunIn },
+  TContext
+> => {
+  const { mutation: mutationOptions, axios: axiosOptions } = options ?? {};
+  return useMutation({
+    mutationFn: ({ data }: { data: ProfileRunIn }) => submitProfileRun(data, axiosOptions),
+    mutationKey: ["submitProfileRun"],
+    ...mutationOptions,
+  });
+};
+
+export const useSubmitBatchProfileRunMutation = <
+  TError = AxiosError<unknown>,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof submitBatchProfileRun>>,
+      TError,
+      { data: BatchProfileRunIn },
+      TContext
+    >;
+    axios?: AxiosRequestConfig;
+  },
+): UseMutationResult<
+  Awaited<ReturnType<typeof submitBatchProfileRun>>,
+  TError,
+  { data: BatchProfileRunIn },
+  TContext
+> => {
+  const { mutation: mutationOptions, axios: axiosOptions } = options ?? {};
+  return useMutation({
+    mutationFn: ({ data }: { data: BatchProfileRunIn }) => submitBatchProfileRun(data, axiosOptions),
+    mutationKey: ["submitBatchProfileRun"],
     ...mutationOptions,
   });
 };

@@ -57,20 +57,20 @@ import { isAxiosError } from "axios";
 import { CatalogBrowser } from "@/components/CatalogBrowser";
 import { useJobPolling } from "@/hooks/use-job-polling";
 import {
-  useSubmitProfileRun,
-  useSubmitBatchProfileRun,
   useListProfileRuns,
   useGetProfileRunResults,
-  useSaveRules,
+  saveRules,
   useGetTableColumns,
   useGetRules,
   getProfileRunStatus,
+  type SaveRulesIn,
   type ProfileResultsOut,
   type ProfileRunSummaryOut,
   type RunStatusOut,
   type User as UserType,
 } from "@/lib/api";
-import { cancelProfileRun } from "@/lib/api-custom";
+import { useMutation } from "@tanstack/react-query";
+import { cancelProfileRun, useSubmitProfileRunMutation, useSubmitBatchProfileRunMutation } from "@/lib/api-custom";
 import { useCurrentUserSuspense } from "@/hooks/use-suspense-queries";
 import selector from "@/lib/selector";
 
@@ -333,8 +333,8 @@ function ProfilerPage() {
   const [hSchemaFilter, setHSchemaFilter] = useState("all");
   const [hTableFilter, setHTableFilter] = useState("all");
 
-  const submitMutation = useSubmitProfileRun();
-  const batchSubmitMutation = useSubmitBatchProfileRun();
+  const submitMutation = useSubmitProfileRunMutation();
+  const batchSubmitMutation = useSubmitBatchProfileRunMutation();
   const { data: runsResp, isLoading: runsLoading, refetch: refetchRuns } = useListProfileRuns();
   const allRuns: ProfileRunSummaryOut[] = runsResp?.data ?? [];
 
@@ -1518,7 +1518,9 @@ function ProfileResults({
   tableFqn: string;
 }) {
   const { t } = useTranslation();
-  const saveRules = useSaveRules();
+  const saveRulesMutation = useMutation({
+    mutationFn: (data: SaveRulesIn) => saveRules(data),
+  });
   const [added, setAdded] = useState(false);
   const [selectedRules, setSelectedRules] = useState<Set<number>>(new Set());
   const [criticalityFilter, setCriticalityFilter] = useState<"all" | "error" | "warn">("all");
@@ -1611,7 +1613,7 @@ function ProfileResults({
       return out;
     });
     try {
-      await saveRules.mutateAsync({ data: { table_fqn: tableFqn, checks: normalizedRules } });
+      await saveRulesMutation.mutateAsync({ table_fqn: tableFqn, checks: normalizedRules } as SaveRulesIn);
       setAdded(true);
       toast.success(t("profiler.savedAsDrafts", { count: normalizedRules.length, table: tableFqn }));
     } catch {
@@ -1667,9 +1669,9 @@ function ProfileResults({
                 variant={added ? "outline" : "default"}
                 className="gap-1.5"
                 onClick={handleAddToRules}
-                disabled={saveRules.isPending || added || selectedCount === 0}
+                disabled={saveRulesMutation.isPending || added || selectedCount === 0}
               >
-                {saveRules.isPending ? (
+                {saveRulesMutation.isPending ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 ) : added ? (
                   <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />

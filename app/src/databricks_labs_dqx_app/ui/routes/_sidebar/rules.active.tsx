@@ -64,6 +64,12 @@ import { Label } from "@/components/ui/label";
 const SQL_CHECK_PREFIX = "__sql_check__/";
 const CROSS_TABLE_CATALOG = "Cross-table rules";
 
+function isCrossTableRule(rule: { table_fqn: string; checks: unknown[] }): boolean {
+  if (rule.table_fqn.startsWith(SQL_CHECK_PREFIX)) return true;
+  const check = rule.checks[0] as Record<string, unknown> | undefined;
+  return (check?.check as Record<string, unknown>)?.function === "sql_query";
+}
+
 export const Route = createFileRoute("/_sidebar/rules/active")({
   component: () => (
     <Suspense fallback={<ActiveRulesSkeleton />}>
@@ -164,7 +170,7 @@ function ActiveRulesPage() {
     const schemaMap = new Map<string, Set<string>>();
     const sourceSet = new Set<string>();
     for (const rule of allRules) {
-      if (rule.table_fqn.startsWith(SQL_CHECK_PREFIX)) {
+      if (isCrossTableRule(rule)) {
         catalogSet.add(CROSS_TABLE_CATALOG);
       } else {
         const { catalog, schema } = parseFqn(rule.table_fqn);
@@ -187,7 +193,7 @@ function ActiveRulesPage() {
 
   const filteredRules = useMemo(() => {
     return allRules.filter((rule) => {
-      const isSqlCheck = rule.table_fqn.startsWith(SQL_CHECK_PREFIX);
+      const isSqlCheck = isCrossTableRule(rule);
       if (catalogFilter !== "all") {
         if (catalogFilter === CROSS_TABLE_CATALOG) {
           if (!isSqlCheck) return false;
@@ -495,7 +501,7 @@ function ActiveRulesPage() {
                   expandedTables={expandedTables}
                   onToggle={toggleTable}
                   onNavigate={(fqn) =>
-                    fqn.startsWith(SQL_CHECK_PREFIX)
+                    groupedByTable.find((g) => g.fqn === fqn)?.rules.some(isCrossTableRule)
                       ? navigate({ to: "/rules/create-sql", search: { edit: fqn, from: "active" } })
                       : navigate({ to: "/rules/single-table", search: { table: fqn, from: "active" } })
                   }

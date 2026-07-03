@@ -775,7 +775,6 @@ function UnifiedRulesPage() {
       const hasOnlyEmptyDefault = checks.length === 1 && checks[0].fn === "";
       setChecks(hasOnlyEmptyDefault ? drafts : [...checks, ...drafts]);
       toast.success(t("rulesSingleTable.toastAiGenerated", { count: drafts.length }));
-      setAiPrompt("");
     } catch {
       toast.error(t("rulesSingleTable.toastAiFailed"));
     } finally {
@@ -1358,7 +1357,7 @@ function UnifiedRulesPage() {
                     value={aiPrompt}
                     onChange={(e) => setAiPrompt(e.target.value)}
                     placeholder={t("rulesSingleTable.aiPromptPlaceholder")}
-                    className="min-h-[52px] resize-none text-sm"
+                    className="min-h-[52px] text-sm"
                     disabled={aiGenerating}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" && !e.shiftKey) {
