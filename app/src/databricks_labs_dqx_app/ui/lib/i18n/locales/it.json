@@ -1700,6 +1700,8 @@
     "aboutLoadFailedHint": "La tabella potrebbe essere stata eliminata oppure potresti non avervi accesso in Unity Catalog.",
     "statusBadgeDraft": "Bozza — non ancora pubblicata",
     "statusBadgePublished": "Pubblicato",
+    "saveAsDraftButton": "Salva come bozza",
+    "saveAsDraftTooltip": "Le modifiche alle regole applicate vengono salvate automaticamente — non c'è nulla in sospeso da salvare.",
     "publishButton": "Pubblica",
     "publishing": "Pubblicazione in corso…",
     "toastPublished": "Tabella monitorata pubblicata.",

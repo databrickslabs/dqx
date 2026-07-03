@@ -1700,6 +1700,8 @@
     "aboutLoadFailedHint": "The table may have been dropped or you may not have access to it in Unity Catalog.",
     "statusBadgeDraft": "Draft — not yet published",
     "statusBadgePublished": "Published",
+    "saveAsDraftButton": "Save as draft",
+    "saveAsDraftTooltip": "Changes to applied rules save automatically — there's nothing pending to save.",
     "publishButton": "Publish",
     "publishing": "Publishing…",
     "toastPublished": "Monitored table published.",

@@ -580,12 +580,106 @@ interface RegistryRuleFormDialogProps {
   /** Controlled top-level page tab (e.g. synced to a `?tab=` URL param). Falls back to internal state when omitted. */
   activeTab?: PageTab;
   onActiveTabChange?: (tab: PageTab) => void;
+  /**
+   * Notified whenever the dirty (unsaved-changes) state changes, so the
+   * routed page can drive an unsaved-changes navigation guard. Always
+   * `true` while creating a new rule (nothing to diff against) and `false`
+   * once saved/submitted.
+   */
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
 function extractApiError(err: unknown, fallback: string): string {
   const axErr = err as { response?: { data?: { detail?: string } } };
   return axErr?.response?.data?.detail ?? fallback;
 }
+
+/**
+ * Deterministic JSON serialization (object keys sorted recursively) so two
+ * snapshots built from the same logical values compare equal regardless of
+ * insertion order — tags/parameters can be re-keyed as the steward edits
+ * them without spuriously flipping `isDirty`.
+ */
+function stableStringify(value: unknown): string {
+  const sort = (val: unknown): unknown => {
+    if (Array.isArray(val)) return val.map(sort);
+    if (val && typeof val === "object") {
+      const obj = val as Record<string, unknown>;
+      const sorted: Record<string, unknown> = {};
+      for (const k of Object.keys(obj).sort()) sorted[k] = sort(obj[k]);
+      return sorted;
+    }
+    return val;
+  };
+  return JSON.stringify(sort(value));
+}
+
+/** Snapshot of every editable field, used to detect unsaved changes against the last-persisted rule. */
+interface RuleEditSnapshot {
+  name: string;
+  description: string;
+  dimension: string;
+  severity: string;
+  steward: string;
+  tags: Record<string, string>;
+  mode: RegistryMode;
+  polarity: Polarity;
+  errorMessage: string;
+  functionName: string;
+  paramRawValues: Record<string, string>;
+  sqlPredicate: string;
+  sqlSlots: RuleSlot[];
+  authorKind: CreateRegistryRuleInAuthorKind | undefined;
+}
+
+function snapshotFromRule(rule: RegistryRuleOut): RuleEditSnapshot {
+  const md = (rule.user_metadata ?? {}) as Record<string, unknown>;
+  const asString = (k: string) => (typeof md[k] === "string" ? (md[k] as string) : "");
+  const tags: Record<string, string> = {};
+  for (const [k, v] of Object.entries(md)) {
+    if (k === RESERVED_NAME_KEY || k === RESERVED_DESCRIPTION_KEY || k === RESERVED_DIMENSION_KEY || k === RESERVED_SEVERITY_KEY) continue;
+    if (typeof v === "string") tags[k] = v;
+  }
+  const isNative = rule.mode === "dqx_native";
+  const paramRawValues: Record<string, string> = {};
+  if (isNative) {
+    for (const p of rule.definition?.parameters ?? []) paramRawValues[p.name] = paramValueToRaw(p.value);
+  }
+  return {
+    name: asString(RESERVED_NAME_KEY),
+    description: asString(RESERVED_DESCRIPTION_KEY),
+    dimension: asString(RESERVED_DIMENSION_KEY),
+    severity: asString(RESERVED_SEVERITY_KEY),
+    steward: rule.steward ?? "",
+    tags,
+    mode: rule.mode,
+    polarity: rule.polarity ?? "pass",
+    errorMessage: rule.definition?.error_message ?? "",
+    functionName: isNative ? String((rule.definition?.body ?? {}).function ?? "") : "",
+    paramRawValues,
+    sqlPredicate: isNative ? "" : String((rule.definition?.body ?? {}).predicate ?? ""),
+    sqlSlots: isNative ? [] : (rule.definition?.slots ?? []),
+    authorKind: rule.author_kind ?? undefined,
+  };
+}
+
+/** Pristine defaults the "create new rule" hydration branch resets the form to — mirrors {@link snapshotFromRule}'s shape so an untouched new-rule form reads as clean (not dirty). */
+const PRISTINE_NEW_SNAPSHOT: RuleEditSnapshot = {
+  name: "",
+  description: "",
+  dimension: "",
+  severity: "",
+  steward: "",
+  tags: {},
+  mode: "dqx_native",
+  polarity: "pass",
+  errorMessage: "",
+  functionName: "",
+  paramRawValues: {},
+  sqlPredicate: "",
+  sqlSlots: [],
+  authorKind: "human",
+};
 
 export function RegistryRuleFormDialog({
   open,
@@ -597,6 +691,7 @@ export function RegistryRuleFormDialog({
   variant = "dialog",
   activeTab: controlledActiveTab,
   onActiveTabChange,
+  onDirtyChange,
 }: RegistryRuleFormDialogProps) {
   const { t } = useTranslation();
   const sourceRule = editingRule ?? viewingRule;
@@ -766,6 +861,37 @@ export function RegistryRuleFormDialog({
   const updateMutation = useUpdateRegistryRule();
   const submitMutation = useSubmitRegistryRule();
   const [saving, setSaving] = useState(false);
+
+  // -- Dirty (unsaved-changes) tracking -------------------------------------
+  // Editing an existing rule diffs against the last-persisted rule (mirrors
+  // dqlake's `useEditRuleState.isDirty`). Creating a new rule diffs against
+  // the pristine "just opened the form" defaults instead of always being
+  // `true`, so a blank, untouched create form doesn't spuriously trip the
+  // unsaved-changes navigation guard.
+  const currentSnapshot: RuleEditSnapshot = {
+    name,
+    description,
+    dimension,
+    severity,
+    steward,
+    tags,
+    mode,
+    polarity,
+    errorMessage,
+    functionName,
+    paramRawValues,
+    sqlPredicate,
+    sqlSlots,
+    authorKind,
+  };
+  const isDirty =
+    stableStringify(currentSnapshot) !==
+    stableStringify(editingRule ? snapshotFromRule(editingRule) : PRISTINE_NEW_SNAPSHOT);
+
+  useEffect(() => {
+    if (!open) return;
+    onDirtyChange?.(readOnly ? false : isDirty);
+  }, [open, readOnly, isDirty, onDirtyChange]);
 
   const sqlError = mode === "sql" ? validateSqlPredicate(sqlPredicate, t) : null;
 
@@ -1002,6 +1128,24 @@ export function RegistryRuleFormDialog({
         toast.success(t("rulesRegistry.toastSubmitted"));
       }
       onSaved(ruleId);
+      closeAndReset();
+    } catch (err) {
+      toast.error(extractApiError(err, t("rulesRegistry.saveFailed")), { duration: 6000 });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Submits an already-saved, unmodified draft for approval without a
+  // redundant PATCH — mirrors dqlake's plain "Publish" button, shown in
+  // place of "Save and Submit" once the draft has no pending edits.
+  const handleSubmitOnly = async () => {
+    if (readOnly || !editingRule) return;
+    setSaving(true);
+    try {
+      await submitMutation.mutateAsync({ ruleId: editingRule.rule_id });
+      toast.success(t("rulesRegistry.toastSubmitted"));
+      onSaved(editingRule.rule_id);
       closeAndReset();
     } catch (err) {
       toast.error(extractApiError(err, t("rulesRegistry.saveFailed")), { duration: 6000 });
@@ -1509,14 +1653,32 @@ export function RegistryRuleFormDialog({
       </Button>
       {!readOnly && (
         <>
-          <Button variant="secondary" onClick={() => handleSave(false)} disabled={saving} className="gap-2">
+          {/* Grey out once there's nothing to save — either a blank,
+              untouched create form or an already-persisted draft with no
+              pending edits (re-saving it would just churn the audit log
+              with no real change), matching dqlake's steward editor. */}
+          <Button
+            variant="secondary"
+            onClick={() => handleSave(false)}
+            disabled={saving || !isDirty}
+            className="gap-2"
+          >
             {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
             {t("rulesRegistry.saveDraft")}
           </Button>
-          <Button onClick={() => handleSave(true)} disabled={saving} className="gap-2">
-            {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-            {t("rulesRegistry.saveAndSubmit")}
-          </Button>
+          {isEditing && !isDirty ? (
+            // The draft is already persisted and unchanged — submit it
+            // for approval directly rather than issuing a redundant save.
+            <Button onClick={handleSubmitOnly} disabled={saving} className="gap-2">
+              {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              {t("rulesRegistry.actionSubmit")}
+            </Button>
+          ) : (
+            <Button onClick={() => handleSave(true)} disabled={saving || !isDirty} className="gap-2">
+              {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              {t("rulesRegistry.saveAndSubmit")}
+            </Button>
+          )}
         </>
       )}
     </>

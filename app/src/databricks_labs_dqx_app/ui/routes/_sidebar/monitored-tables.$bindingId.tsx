@@ -230,14 +230,33 @@ function MonitoredTableDetailPage() {
             )}
           </div>
           {perms.canCreateRules && (
-            <Button onClick={handlePublish} disabled={publishMutation.isPending} className="gap-2">
-              {publishMutation.isPending ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <UploadCloud className="h-4 w-4" />
-              )}
-              {publishMutation.isPending ? t("monitoredTables.publishing") : t("monitoredTables.publishButton")}
-            </Button>
+            <div className="flex items-center gap-2">
+              <TooltipProvider delayDuration={200}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    {/* Every action on this page (apply/remove/pin/override a
+                        rule) already writes straight to the binding's draft
+                        state — there's no local edit buffer to flush, so
+                        this stays permanently disabled for visual parity
+                        with the rule editor's Save-as-draft/Publish pair. */}
+                    <span tabIndex={0}>
+                      <Button variant="outline" disabled className="gap-2">
+                        {t("monitoredTables.saveAsDraftButton")}
+                      </Button>
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">{t("monitoredTables.saveAsDraftTooltip")}</TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+              <Button onClick={handlePublish} disabled={publishMutation.isPending} className="gap-2">
+                {publishMutation.isPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <UploadCloud className="h-4 w-4" />
+                )}
+                {publishMutation.isPending ? t("monitoredTables.publishing") : t("monitoredTables.publishButton")}
+              </Button>
+            </div>
           )}
         </div>
 

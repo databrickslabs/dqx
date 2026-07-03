@@ -1700,6 +1700,8 @@
     "aboutLoadFailedHint": "Es posible que la tabla se haya eliminado o que no tenga acceso a ella en Unity Catalog.",
     "statusBadgeDraft": "Borrador — aún no publicado",
     "statusBadgePublished": "Publicado",
+    "saveAsDraftButton": "Guardar como borrador",
+    "saveAsDraftTooltip": "Los cambios en las reglas aplicadas se guardan automáticamente — no hay nada pendiente por guardar.",
     "publishButton": "Publicar",
     "publishing": "Publicando…",
     "toastPublished": "Tabla monitorizada publicada.",
