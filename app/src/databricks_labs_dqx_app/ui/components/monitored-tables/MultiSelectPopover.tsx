@@ -48,13 +48,18 @@ export function MultiSelectPopover({
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
 
+  const selectedSet = useMemo(() => new Set(selected), [selected]);
+
+  // Selected options float to the top of the list (in their existing
+  // relative order), then the rest — so a user scrolling back into an
+  // already-large selection doesn't have to hunt for what they picked.
   const filteredOptions = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return options;
-    return options.filter((o) => o.label.toLowerCase().includes(q));
-  }, [options, search]);
-
-  const selectedSet = useMemo(() => new Set(selected), [selected]);
+    const base = q ? options.filter((o) => o.label.toLowerCase().includes(q)) : options;
+    const selectedOnes = base.filter((o) => selectedSet.has(o.value));
+    const restOnes = base.filter((o) => !selectedSet.has(o.value));
+    return [...selectedOnes, ...restOnes];
+  }, [options, search, selectedSet]);
 
   const toggle = (value: string) => {
     if (selectedSet.has(value)) {
@@ -64,12 +69,28 @@ export function MultiSelectPopover({
     }
   };
 
-  const selectAllFiltered = () => {
-    const merged = new Set([...selected, ...filteredOptions.map((o) => o.value)]);
-    onChange([...merged]);
-  };
+  // Tri-state "select all" driven off the currently filtered/visible set:
+  // unchecked when none are selected, checked when every visible option is
+  // selected, indeterminate otherwise. Clicking it toggles between
+  // "select every visible option" and "clear every visible option".
+  const allFilteredSelected =
+    filteredOptions.length > 0 && filteredOptions.every((o) => selectedSet.has(o.value));
+  const someFilteredSelected = filteredOptions.some((o) => selectedSet.has(o.value));
+  const selectAllState: boolean | "indeterminate" = allFilteredSelected
+    ? true
+    : someFilteredSelected
+      ? "indeterminate"
+      : false;
 
-  const clearAll = () => onChange([]);
+  const toggleSelectAll = () => {
+    if (allFilteredSelected) {
+      const filteredValues = new Set(filteredOptions.map((o) => o.value));
+      onChange(selected.filter((v) => !filteredValues.has(v)));
+    } else {
+      const merged = new Set([...selected, ...filteredOptions.map((o) => o.value)]);
+      onChange([...merged]);
+    }
+  };
 
   return (
     <div className="grid gap-1.5">
@@ -98,37 +119,28 @@ export function MultiSelectPopover({
           </Button>
         </PopoverTrigger>
         <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
-          <div className="flex items-center border-b px-2">
+          {/* Search box + "select all" row share one uniform muted fill so the
+              header reads as a single bar instead of two visually distinct
+              greys. */}
+          <div className="flex items-center gap-2 border-b bg-muted/50 px-2">
             <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
             <Input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder={searchPlaceholder}
-              className="h-9 border-0 shadow-none focus-visible:ring-0 text-sm"
+              className="h-9 flex-1 border-0 bg-transparent shadow-none focus-visible:ring-0 text-sm"
             />
           </div>
-          <div className="flex items-center justify-between gap-2 px-2 py-1.5 border-b">
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-6 px-1.5 text-[11px]"
-              onClick={selectAllFiltered}
+          <label className="flex items-center gap-2 border-b bg-muted/50 px-3 py-1.5 cursor-pointer">
+            <Checkbox
+              checked={selectAllState}
+              onCheckedChange={toggleSelectAll}
               disabled={filteredOptions.length === 0}
-            >
+            />
+            <span className="text-xs text-muted-foreground">
               {t("monitoredTables.wizard.selectAllVisible")}
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-6 px-1.5 text-[11px]"
-              onClick={clearAll}
-              disabled={selected.length === 0}
-            >
-              {t("monitoredTables.wizard.clearSelection")}
-            </Button>
-          </div>
+            </span>
+          </label>
           <div className="max-h-56 overflow-y-auto p-1">
             {isLoading ? (
               <div className="flex items-center justify-center py-6">
@@ -148,7 +160,7 @@ export function MultiSelectPopover({
                     )}
                   >
                     <Checkbox checked={isSelected} onCheckedChange={() => toggle(o.value)} />
-                    <span className="truncate font-mono text-xs" title={o.label}>
+                    <span className="truncate text-sm" title={o.label}>
                       {o.label}
                     </span>
                   </label>
