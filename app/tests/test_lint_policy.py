@@ -127,9 +127,9 @@ class TestBleNoqaPolicy:
         comment and the code aligned.
         """
         text = PYPROJECT.read_text(encoding="utf-8")
-        assert "[tool.ruff.lint]" in text, (
-            "pyproject.toml must declare a ``[tool.ruff.lint]`` block to anchor the documented BLE001 policy."
-        )
+        assert (
+            "[tool.ruff.lint]" in text
+        ), "pyproject.toml must declare a ``[tool.ruff.lint]`` block to anchor the documented BLE001 policy."
         assert "BLE001" in text, (
             "pyproject.toml must document the project's BLE001 policy "
             "(it's the single source of truth that replaces the "
