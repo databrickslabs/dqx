@@ -14,7 +14,6 @@ agent-in-the-loop check runs last (skipped if the serving endpoint is unreachabl
 import json
 from collections.abc import Callable
 
-import pytest
 import requests
 
 from tests.integration_mcp.conftest import (

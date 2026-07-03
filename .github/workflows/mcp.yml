@@ -82,6 +82,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          # The runner job's run_as identity: a workspace SP with workspace + consumer access to the
+          # CI workspace. ci_deploy.sh requires this (bundle run_as); without it the deploy aborts.
+          DQX_MCP_RUNNER_SERVICE_PRINCIPAL_ID: ${{ secrets.TOOLS_CLIENT_ID }}
           COVERAGE_FILE: ${{ github.workspace }}/.coverage  # make sure the coverage report is preserved
 
       - name: Merge coverage reports and convert them to XML
