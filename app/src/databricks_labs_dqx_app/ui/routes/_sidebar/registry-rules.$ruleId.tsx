@@ -24,7 +24,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { AlertCircle, MoreVertical, RotateCcw, Trash2 } from "lucide-react";
+import { AlertCircle, MoreVertical, RotateCcw, Table2, Trash2 } from "lucide-react";
 import {
   useGetRegistryRuleSuspense,
   getGetRegistryRuleQueryKey,
@@ -36,6 +36,7 @@ import {
   RegistryRuleFormDialog,
   type PageTab,
 } from "@/components/RegistryRuleFormDialog";
+import { ApplyRuleModal } from "@/components/registry-rules/ApplyRuleModal";
 import { StatusBadge, ModeBadge, AuthorKindBadge, getTag, RESERVED_NAME_KEY } from "@/components/RegistryRuleBadges";
 import { cn } from "@/lib/utils";
 
@@ -103,6 +104,7 @@ function RegistryRuleDetailPage() {
   const labelDefinitions = useMemo(() => labelDefsData?.definitions ?? [], [labelDefsData]);
 
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [applyModalOpen, setApplyModalOpen] = useState(false);
 
   const invalidateDetail = useCallback(
     () => queryClient.invalidateQueries({ queryKey: getGetRegistryRuleQueryKey(ruleId) }),
@@ -154,6 +156,10 @@ function RegistryRuleDetailPage() {
   // published rules) is a heavier action than the list page's draft-only
   // delete, which stays scoped to canCreateRules.
   const canDelete = perms.canApproveRules;
+  // Apply requires a published rule — the backend rejects a non-approved
+  // rule with 409 (RuleNotPublishedError) — plus create-rule permission.
+  const canApply = perms.canCreateRules && rule.status === "approved";
+  const showActionsMenu = canDelete || canApply;
 
   return (
     <FadeIn>
@@ -165,7 +171,7 @@ function RegistryRuleDetailPage() {
           <StatusBadge status={rule.status} />
           <ModeBadge mode={rule.mode} />
           <AuthorKindBadge authorKind={rule.author_kind ?? undefined} />
-          {canDelete && (
+          {showActionsMenu && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
@@ -178,13 +184,21 @@ function RegistryRuleDetailPage() {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <DropdownMenuItem
-                  onClick={() => setDeleteConfirmOpen(true)}
-                  className={cn("gap-2 text-destructive focus:text-destructive")}
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                  {t("rulesRegistry.actionDelete")}
-                </DropdownMenuItem>
+                {canApply && (
+                  <DropdownMenuItem onClick={() => setApplyModalOpen(true)} className="gap-2">
+                    <Table2 className="h-3.5 w-3.5" />
+                    {t("rulesRegistry.actionApplyToTables")}
+                  </DropdownMenuItem>
+                )}
+                {canDelete && (
+                  <DropdownMenuItem
+                    onClick={() => setDeleteConfirmOpen(true)}
+                    className={cn("gap-2 text-destructive focus:text-destructive")}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    {t("rulesRegistry.actionDelete")}
+                  </DropdownMenuItem>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
           )}
@@ -204,6 +218,15 @@ function RegistryRuleDetailPage() {
           onActiveTabChange={handleActiveTabChange}
         />
       </div>
+
+      {canApply && (
+        <ApplyRuleModal
+          open={applyModalOpen}
+          onOpenChange={setApplyModalOpen}
+          rule={rule}
+          onApplied={invalidateDetail}
+        />
+      )}
 
       <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
         <AlertDialogContent>
