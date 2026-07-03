@@ -56,7 +56,12 @@ from databricks.labs.dqx.metrics_listener import StreamingMetricsListener
 from databricks.labs.dqx.io import read_input_data, save_dataframe_as_table, get_reference_dataframes
 from databricks.labs.dqx.telemetry import telemetry_logger, log_telemetry, log_dataframe_telemetry
 from databricks.sdk import WorkspaceClient
-from databricks.labs.dqx.errors import InvalidCheckError, InvalidConfigError, InvalidParameterError
+from databricks.labs.dqx.errors import (
+    InvalidCheckError,
+    InvalidConfigError,
+    InvalidParameterError,
+    TerminalActionError,
+)
 from databricks.labs.dqx.utils import list_tables, safe_strip_file_from_path, resolve_variables, VariableValue
 from databricks.labs.dqx.io import is_one_time_trigger
 from databricks.labs.dqx.actions.base import ActionContext, ActionResult, ActionServices
@@ -68,6 +73,7 @@ from databricks.labs.dqx.actions.state import ActionStateStore
 from databricks.labs.dqx.actions.event_storage import ActionEventStoreFactory
 from databricks.labs.dqx.actions.secrets import SecretResolver
 from databricks.labs.dqx.actions.delivery import WebhookClient
+from databricks.labs.dqx.actions.log_sanitize import sanitize_for_log
 from databricks.labs.dqx.checks_semantic_validator import ChecksSemanticValidator, ChecksSemanticValidationMode
 
 logger = logging.getLogger(__name__)
@@ -1845,9 +1851,58 @@ class DQEngine(DQEngineBase):
             rule_set_fingerprint=rule_set_fingerprint,
             user_metadata=self._engine.engine_user_metadata,
         )
+        evaluator = self._get_action_evaluator()
+        action_callback = self._build_streaming_action_callback(evaluator) if evaluator is not None else None
         return StreamingMetricsListener(
-            metrics_config, metrics_observation, self.spark, target_query_id, self._get_action_evaluator()
+            metrics_config, metrics_observation, self.spark, target_query_id, action_callback
         )
+
+    def _build_streaming_action_callback(
+        self, evaluator: ActionEvaluator
+    ) -> Callable[[DQMetricsObservation, datetime], None]:
+        """Build the action callback passed to the streaming listener.
+
+        Defined here, not on the listener, so *metrics_listener* never imports the actions
+        subsystem: databricks-connect reconstructs the listener by unpickling it in a separate
+        worker process, re-importing the listener's module and its top-level imports — and the
+        actions chain (which imports *pyspark.sql*) fails to re-import there mid-init, raising an
+        *ImportError* for *SparkSession*. The observer-only path passes no callback, so nothing from
+        actions reaches the worker.
+
+        The closure re-raises a *TerminalActionError* (e.g. *FailPipeline*) so the stream can stop,
+        and logs-and-swallows any other error so a failed alert cannot kill the query.
+
+        Args:
+            evaluator: The *ActionEvaluator* to invoke with each micro-batch's *ActionContext*.
+
+        Returns:
+            A callback accepting the per-batch *DQMetricsObservation* and the resolved run time.
+        """
+
+        def callback(observation: DQMetricsObservation, run_time: datetime) -> None:
+            context = ActionContext(
+                metrics=observation.observed_metrics or {},
+                run_id=observation.run_id,
+                run_time=run_time,
+                input_location=observation.input_location,
+                output_location=observation.output_location,
+                quarantine_location=observation.quarantine_location,
+                checks_location=observation.checks_location,
+                rule_set_fingerprint=observation.rule_set_fingerprint,
+                user_metadata=observation.user_metadata,
+            )
+            try:
+                evaluator.evaluate(context)
+            except TerminalActionError:
+                raise
+            except Exception as exc:
+                # Sanitize both the run id and the exception text: an evaluator error may embed
+                # user-supplied values (column/rule names) containing control characters (CWE-117).
+                safe_run_id = sanitize_for_log(observation.run_id)
+                safe_exc = sanitize_for_log(str(exc))
+                logger.warning(f"Action evaluation failed for streaming micro-batch (run_id={safe_run_id}): {safe_exc}")
+
+        return callback
 
     @telemetry_logger("engine", "apply_checks_for_run_config")
     def _apply_checks_for_run_config(self, run_config: RunConfig) -> None:

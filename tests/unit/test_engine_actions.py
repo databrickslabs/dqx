@@ -7,7 +7,9 @@ Tests cover:
 - PipelineFailedError raised by the evaluator propagates out of evaluate_actions.
 """
 
+import logging
 import threading
+from datetime import datetime, timezone
 from unittest.mock import create_autospec, patch
 
 import pytest
@@ -22,7 +24,7 @@ from databricks.labs.dqx.actions.state import ActionEventStore
 from databricks.labs.dqx.config import ActionEventsConfig
 from databricks.labs.dqx.engine import DQEngine, DQEngineCore
 from databricks.labs.dqx.errors import InvalidParameterError, PipelineFailedError
-from databricks.labs.dqx.metrics_observer import DQMetricsObserver
+from databricks.labs.dqx.metrics_observer import DQMetricsObservation, DQMetricsObserver
 
 
 # ---------------------------------------------------------------------------
@@ -32,6 +34,33 @@ from databricks.labs.dqx.metrics_observer import DQMetricsObserver
 
 def _make_observer() -> DQMetricsObserver:
     return DQMetricsObserver()
+
+
+def _make_streaming_observation(metrics: dict[str, object]) -> DQMetricsObservation:
+    return DQMetricsObservation(
+        run_id="run-1",
+        run_name="dqx",
+        observed_metrics=metrics,
+        error_column_name="_errors",
+        warning_column_name="_warnings",
+        input_location="catalog.schema.input",
+        output_location="catalog.schema.output",
+        quarantine_location="catalog.schema.quarantine",
+        checks_location="/mnt/checks.yml",
+        rule_set_fingerprint="fp-1",
+    )
+
+
+def _engine_with_evaluator(mock_workspace_client, evaluator: ActionEvaluator) -> DQEngine:
+    spark = create_autospec(SparkSession)
+    action = create_autospec(DQAction, instance=True)
+    return DQEngine(
+        mock_workspace_client,
+        spark=spark,
+        observer=_make_observer(),
+        actions=[action],
+        action_evaluator_factory=lambda _: evaluator,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -270,3 +299,59 @@ def test_action_events_config_seeds_state_from_event_store(mock_workspace_client
     assert results == []  # condition false -> nothing fired
     create_mock.assert_called_once()  # event store built from the config
     fake_event_store.load_latest_per_action.assert_called_once()  # seed() ran
+
+
+# ---------------------------------------------------------------------------
+# Test: streaming action callback builds context and delegates to the evaluator
+# ---------------------------------------------------------------------------
+
+
+def test_streaming_action_callback_builds_context_and_evaluates(mock_workspace_client) -> None:
+    """The engine-built streaming callback constructs an ActionContext from the per-batch
+    observation and delegates to the evaluator. The listener stays decoupled from the actions
+    subsystem — this callback owns ActionContext construction."""
+    fake_evaluator = create_autospec(ActionEvaluator)
+    fake_evaluator.evaluate.return_value = []
+    engine = _engine_with_evaluator(mock_workspace_client, fake_evaluator)
+
+    callback = engine._build_streaming_action_callback(fake_evaluator)
+    run_time = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    callback(_make_streaming_observation({"error_row_count": 7}), run_time)
+
+    fake_evaluator.evaluate.assert_called_once()
+    context: ActionContext = fake_evaluator.evaluate.call_args.args[0]
+    assert context.metrics == {"error_row_count": 7}
+    assert context.run_id == "run-1"
+    assert context.run_time == run_time
+    assert context.input_location == "catalog.schema.input"
+    assert context.output_location == "catalog.schema.output"
+    assert context.quarantine_location == "catalog.schema.quarantine"
+    assert context.checks_location == "/mnt/checks.yml"
+    assert context.rule_set_fingerprint == "fp-1"
+
+
+def test_streaming_action_callback_reraises_terminal_error(mock_workspace_client) -> None:
+    """A terminal error (PipelineFailedError) raised by the evaluator propagates out of the
+    callback so the stream can be stopped."""
+    fake_evaluator = create_autospec(ActionEvaluator)
+    fake_evaluator.evaluate.side_effect = PipelineFailedError("pipeline aborted")
+    engine = _engine_with_evaluator(mock_workspace_client, fake_evaluator)
+
+    callback = engine._build_streaming_action_callback(fake_evaluator)
+    with pytest.raises(PipelineFailedError, match="pipeline aborted"):
+        callback(_make_streaming_observation({"error_row_count": 10}), datetime(2024, 1, 1, tzinfo=timezone.utc))
+
+
+def test_streaming_action_callback_swallows_generic_exception(mock_workspace_client, caplog) -> None:
+    """A non-terminal Exception raised by the evaluator is logged and swallowed so a single failed
+    alert delivery cannot kill the stream."""
+    fake_evaluator = create_autospec(ActionEvaluator)
+    fake_evaluator.evaluate.side_effect = RuntimeError("transient network error")
+    engine = _engine_with_evaluator(mock_workspace_client, fake_evaluator)
+
+    callback = engine._build_streaming_action_callback(fake_evaluator)
+    with caplog.at_level(logging.WARNING, logger="databricks.labs.dqx.engine"):
+        # Must NOT raise
+        callback(_make_streaming_observation({"error_row_count": 0}), datetime(2024, 1, 1, tzinfo=timezone.utc))
+
+    assert any("Action evaluation failed" in record.message for record in caplog.records)

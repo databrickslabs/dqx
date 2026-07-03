@@ -1,14 +1,11 @@
 import logging
+from collections.abc import Callable
 from datetime import datetime
 from pyspark.sql import SparkSession
 from pyspark.sql.streaming import listener
 from databricks.labs.dqx.config import OutputConfig
 from databricks.labs.dqx.metrics_observer import DQMetricsObservation, DQMetricsObserver
 from databricks.labs.dqx.io import save_dataframe_as_table
-from databricks.labs.dqx.actions.base import ActionContext
-from databricks.labs.dqx.actions.evaluator import ActionEvaluator
-from databricks.labs.dqx.actions.log_sanitize import sanitize_for_log
-from databricks.labs.dqx.errors import TerminalActionError
 
 
 logger = logging.getLogger(__name__)
@@ -26,20 +23,19 @@ class StreamingMetricsListener(listener.StreamingQueryListener):
         spark: `SparkSession` for writing summary metrics
         target_query_id: Optional query ID of the specific streaming query to monitor. If provided, only events
             from this query will be processed (useful when multiple queries share the same observation).
-        action_evaluator: Optional *ActionEvaluator* to invoke after each micro-batch. When provided, actions
-            are evaluated per micro-batch using the observed metrics from that batch. *TerminalActionError*
-            (including *PipelineFailedError*) is re-raised out of *onQueryProgress* while all other exceptions
-            are logged and swallowed so a single bad alert cannot kill the stream. Note that this callback
-            runs on Spark's *StreamingQueryListener* thread, which generally isolates and logs listener
-            exceptions rather than stopping the query — so *FailPipeline*'s immediate-abort guarantee holds for
-            the batch path but is best-effort in streaming; use a downstream gate for a guaranteed stop.
+        action_callback: Optional callback the engine uses to evaluate actions, invoked per micro-batch
+            with the per-batch *DQMetricsObservation* and run time. Optional because actions are optional:
+            a metrics-only stream passes none. Kept a plain callable so this module never imports the
+            actions subsystem, which databricks-connect would fail to re-import in its listener worker
+            process. Exceptions propagate out of *onQueryProgress*; the callback decides what to swallow
+            or re-raise.
     """
 
     metrics_config: OutputConfig | None
     metrics_observation: DQMetricsObservation
     spark: SparkSession
     target_query_id: str | None
-    action_evaluator: ActionEvaluator | None
+    action_callback: Callable[[DQMetricsObservation, datetime], None] | None
 
     def __init__(
         self,
@@ -47,13 +43,13 @@ class StreamingMetricsListener(listener.StreamingQueryListener):
         metrics_observation: DQMetricsObservation,
         spark: SparkSession,
         target_query_id: str | None = None,
-        action_evaluator: ActionEvaluator | None = None,
+        action_callback: Callable[[DQMetricsObservation, datetime], None] | None = None,
     ) -> None:
         self.metrics_config = metrics_config
         self.metrics_observation = metrics_observation
         self.spark = spark
         self.target_query_id = target_query_id
-        self.action_evaluator = action_evaluator
+        self.action_callback = action_callback
 
     def onQueryStarted(self, event: listener.QueryStartedEvent) -> None:
         """
@@ -98,35 +94,15 @@ class StreamingMetricsListener(listener.StreamingQueryListener):
             rule_set_fingerprint=self.metrics_observation.rule_set_fingerprint,
             user_metadata=self.metrics_observation.user_metadata,
         )
-        # Persist metrics only when a destination is configured. The listener may also be
-        # registered solely to evaluate actions (no metrics_config), in which case the write
-        # is skipped but per-micro-batch action evaluation still runs below.
+        # Write metrics only when a destination is configured; the listener may run purely to drive
+        # the action callback (no metrics_config), in which case the write is skipped.
         if self.metrics_config is not None:
             metrics_df = DQMetricsObserver.build_metrics_df(self.spark, metrics_observation)
             save_dataframe_as_table(metrics_df, self.metrics_config)
 
-        if self.action_evaluator is not None:
-            context = ActionContext(
-                metrics=metrics_observation.observed_metrics or {},
-                run_id=self.metrics_observation.run_id,
-                run_time=run_time_overwrite,
-                input_location=self.metrics_observation.input_location,
-                output_location=self.metrics_observation.output_location,
-                quarantine_location=self.metrics_observation.quarantine_location,
-                checks_location=self.metrics_observation.checks_location,
-                rule_set_fingerprint=self.metrics_observation.rule_set_fingerprint,
-                user_metadata=self.metrics_observation.user_metadata,
-            )
-            try:
-                self.action_evaluator.evaluate(context)
-            except TerminalActionError:
-                raise
-            except Exception as exc:
-                # Sanitize both the run id and the exception text: an evaluator error may embed
-                # user-supplied values (column/rule names) containing control characters (CWE-117).
-                safe_run_id = sanitize_for_log(self.metrics_observation.run_id)
-                safe_exc = sanitize_for_log(str(exc))
-                logger.warning(f"Action evaluation failed for streaming micro-batch (run_id={safe_run_id}): {safe_exc}")
+        # The callback owns the swallow-vs-re-raise policy, keeping this listener decoupled from actions.
+        if self.action_callback is not None:
+            self.action_callback(metrics_observation, run_time_overwrite)
 
     def onQueryIdle(self, event: listener.QueryIdleEvent) -> None:
         """

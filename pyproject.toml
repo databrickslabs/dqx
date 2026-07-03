@@ -886,6 +886,7 @@ redefining-builtins-modules = ["six.moves", "past.builtins", "future.builtins", 
 "src/databricks/labs/dqx/anomaly/anomaly_workflow.py" = "import-outside-toplevel"
 "src/databricks/labs/dqx/check_funcs.py" = "protected-access"
 "tests/unit/test_engine.py" = "protected-access"
+"tests/unit/test_engine_actions.py" = "protected-access"
 "tests/unit/test_engine_actions_run_config.py" = "protected-access"
 "tests/unit/test_anomaly_llm_explainer.py" = "protected-access"
 "tests/unit/test_anomaly_check_funcs_validation.py" = "protected-access"
