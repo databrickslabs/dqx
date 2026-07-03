@@ -236,7 +236,7 @@ class ChecksValidator:
             clean_msg = msg.replace("Value error, ", "")
             return f"{clean_msg} Check details: {check}"
         if loc == "check -> for_each_column":
-            return ChecksValidator._translate_for_each_column_error(msg, check)
+            return ChecksValidator._translate_for_each_column_error(error_type, check)
         if loc == "check -> arguments" and error_type == "dict_type":
             return f"'arguments' should be a dictionary in the 'check' block: {check}"
         # Fallback: name the offending field so the message stays actionable, matching the
@@ -246,18 +246,21 @@ class ChecksValidator:
         return f"{msg}: {check}"
 
     @staticmethod
-    def _translate_for_each_column_error(pydantic_msg: str, check: dict) -> str:
+    def _translate_for_each_column_error(error_type: str, check: dict) -> str:
         """Translate a Pydantic for_each_column validation error into the expected message.
 
+        Matches on the stable Pydantic error *type* rather than the (version-dependent) message
+        text: the *_non_empty_for_each_column* field validator raises ``ValueError`` -> type
+        ``value_error`` for an empty list, while a non-list input yields ``list_type``.
+
         Args:
-            pydantic_msg: The raw Pydantic error message string.
+            error_type: The Pydantic error type (e.g. ``value_error``, ``list_type``).
             check: The original check dict, included in messages for context.
 
         Returns:
             The human-readable error string in the expected format.
         """
-        clean = pydantic_msg.replace("Value error, ", "")
-        if "non-empty" in clean or "must not be empty" in clean:
+        if error_type == "value_error":
             return f"'for_each_column' should not be empty in the 'check' block: {check}"
         return f"'for_each_column' should be a list in the 'check' block: {check}"
 
@@ -360,7 +363,7 @@ class ChecksValidator:
                     expected_type_args = get_args(expected_type)
                     errors.extend(ChecksValidator._validate_func_list_args(arg, func, check, expected_type_args, value))
                 elif not ChecksValidator._check_type(value, expected_type):
-                    expected_type_name = getattr(expected_type, '__name__', str(expected_type))
+                    expected_type_name = getattr(expected_type, "__name__", str(expected_type))
                     errors.append(
                         f"Argument '{arg}' should be of type '{expected_type_name}' for function '{func.__name__}' "
                         f"in the 'arguments' block: {check}"
@@ -479,7 +482,7 @@ class ChecksValidator:
         errors: list[str] = []
         for i, item in enumerate(value):
             if not isinstance(item, expected_type_args):
-                expected_type_name = '|'.join(getattr(arg, '__name__', str(arg)) for arg in expected_type_args)
+                expected_type_name = "|".join(getattr(arg, "__name__", str(arg)) for arg in expected_type_args)
                 errors.append(
                     f"Item {i} in argument '{arguments}' should be of type '{expected_type_name}' "
                     f"for function '{func.__name__}' in the 'arguments' block: {check}"

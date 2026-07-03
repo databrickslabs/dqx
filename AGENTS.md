@@ -66,7 +66,7 @@ src/databricks/labs/dqx/
   ├── manager.py           # DQRuleManager — build/manage rule collections
   ├── config.py            # WorkspaceConfig, RunConfig, AnomalyParams, LLMModelConfig, ExtraParams
   ├── checks_storage.py    # WorkspaceFileChecksStorageHandler, VolumeFileChecksStorageHandler
-  ├── checks_serializer.py / checks_resolver.py / checks_validator.py / checks_formats.py
+  ├── checks_serializer.py / checks_resolver.py / checks_validator.py
   ├── config_serializer.py # ConfigSerializer — use instead of dataclasses.asdict()
   ├── cli.py               # Databricks Labs CLI commands (@dqx.command)
   ├── errors.py            # For example: MissingParameterError, InvalidParameterError, UnsafeSqlQueryError — use instead of built-in exceptions

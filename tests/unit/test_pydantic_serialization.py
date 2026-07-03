@@ -7,10 +7,8 @@ Covers:
 - ChecksDeserializer dispatch to DQRowRule, DQDatasetRule, and for_each_column.
 - validate_custom_check_functions=False tolerance for unknown functions.
 - DataFrameConverter row<->dict round-trip.
-- checks_formats consolidation: FILE_SERIALIZERS/FILE_DESERIALIZERS are derived from SerializerFactory.
 """
 
-import json
 from decimal import Decimal
 from io import StringIO
 from unittest.mock import create_autospec
@@ -20,7 +18,6 @@ from pydantic import ValidationError
 from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.check_funcs import is_not_null
-from databricks.labs.dqx.checks_formats import FILE_DESERIALIZERS, FILE_SERIALIZERS
 from databricks.labs.dqx.checks_serializer import (
     ChecksDeserializer,
     ChecksNormalizer,
@@ -376,7 +373,7 @@ def test_checks_validator_tolerates_storage_columns_on_valid_check():
     Checks loaded from a Delta or Lakebase table arrive with storage-only columns
     (run_config_name, created_at, rule_fingerprint, rule_set_fingerprint). The load -> apply
     round-trip re-validates them; extra="ignore" must let them through so applying stored checks
-    keeps working. See LakebaseChecksStorageHandler._project_row_to_check.
+    keeps working. See checks_serializer.project_to_check_schema.
     """
     stored_check = {
         "name": "id_is_not_null",
@@ -613,35 +610,3 @@ def test_to_dataframe_rule_set_fingerprint_deterministic():
     DataFrameConverter.to_dataframe(spark, [_SIMPLE_CHECK])
     fp2 = spark.createDataFrame.call_args.args[0][0][8]
     assert fp1 == fp2
-
-
-# ---------------------------------------------------------------------------
-# checks_formats consolidation: FILE_SERIALIZERS/FILE_DESERIALIZERS derived from SerializerFactory
-# ---------------------------------------------------------------------------
-
-
-def test_file_serializers_keys_match_serializer_factory():
-    """FILE_SERIALIZERS must cover exactly the same extensions as SerializerFactory."""
-    assert set(FILE_SERIALIZERS.keys()) == set(SerializerFactory.get_supported_extensions())
-
-
-def test_file_deserializers_keys_match_serializer_factory():
-    """FILE_DESERIALIZERS must cover exactly the same extensions as SerializerFactory."""
-    assert set(FILE_DESERIALIZERS.keys()) == set(SerializerFactory.get_supported_extensions())
-
-
-def test_file_serializers_json_output_matches_serializer_factory():
-    """FILE_SERIALIZERS['.json'] and SerializerFactory JSON serialize must produce identical output."""
-    checks = [{"criticality": "error", "check": {"function": "is_not_null", "arguments": {"column": "a"}}}]
-    via_map = FILE_SERIALIZERS[".json"](checks)
-    via_factory = SerializerFactory.create_serializer(".json").serialize(checks)
-    assert via_map == via_factory
-
-
-def test_file_deserializers_json_output_matches_serializer_factory():
-    """FILE_DESERIALIZERS['.json'] must produce the same result as SerializerFactory JSON deserialize."""
-    checks = [{"criticality": "error", "check": {"function": "is_not_null", "arguments": {"column": "a"}}}]
-    serialized = json.dumps(checks)
-    via_map = FILE_DESERIALIZERS[".json"](StringIO(serialized))
-    via_factory = SerializerFactory.create_serializer(".json").deserialize(StringIO(serialized))
-    assert via_map == via_factory
