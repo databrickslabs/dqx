@@ -56,21 +56,28 @@ export function useTableScopePicker(enabled: boolean): TableScopePickerState {
     [catalogsResp],
   );
 
-  const schemaQueries = useQueries({
+  // `combine` gives React Query's own structural-sharing memoization of the
+  // derived result, so `schemaOptions`/`schemasLoading` only get new
+  // references when the underlying query data actually changes — without
+  // it, `useQueries` returns a fresh array on every render, which cascades
+  // into the child useEffects below re-firing forever (infinite update loop).
+  const { data: schemaOptions, isLoading: schemasLoading } = useQueries({
     queries: selectedCatalogs.map((catalog) =>
       getListSchemasQueryOptions(catalog, { query: { enabled } }),
     ),
-  });
-  const schemasLoading = schemaQueries.some((q) => q.isLoading);
-  const schemaOptions = useMemo(() => {
-    const opts: { value: string; label: string }[] = [];
-    selectedCatalogs.forEach((catalog, i) => {
-      (schemaQueries[i]?.data?.data ?? []).forEach((s) => {
-        opts.push({ value: `${catalog}.${s.name}`, label: `${catalog}.${s.name}` });
+    combine: (results) => {
+      const opts: { value: string; label: string }[] = [];
+      selectedCatalogs.forEach((catalog, i) => {
+        (results[i]?.data?.data ?? []).forEach((s) => {
+          opts.push({ value: `${catalog}.${s.name}`, label: `${catalog}.${s.name}` });
+        });
       });
-    });
-    return opts;
-  }, [selectedCatalogs, schemaQueries]);
+      return {
+        data: opts,
+        isLoading: results.some((r) => r.isLoading),
+      };
+    },
+  });
 
   // Resolved schema scope: user-picked schemas if any, otherwise every schema
   // under the selected catalogs (so picking only catalogs scopes to everything
@@ -80,22 +87,25 @@ export function useTableScopePicker(enabled: boolean): TableScopePickerState {
     [selectedSchemas, schemaOptions],
   );
 
-  const tableQueries = useQueries({
+  // Same `combine` memoization rationale as the schema queries above.
+  const { data: tableOptions, isLoading: tablesLoading } = useQueries({
     queries: resolvedSchemaScopes.map((scope) => {
       const [catalog, schema] = splitScope(scope);
       return getListTablesQueryOptions(catalog, schema, { query: { enabled } });
     }),
-  });
-  const tablesLoading = tableQueries.some((q) => q.isLoading);
-  const tableOptions = useMemo(() => {
-    const opts: { value: string; label: string }[] = [];
-    resolvedSchemaScopes.forEach((scope, i) => {
-      (tableQueries[i]?.data?.data ?? []).forEach((tbl) => {
-        opts.push({ value: `${scope}.${tbl.name}`, label: `${scope}.${tbl.name}` });
+    combine: (results) => {
+      const opts: { value: string; label: string }[] = [];
+      resolvedSchemaScopes.forEach((scope, i) => {
+        (results[i]?.data?.data ?? []).forEach((tbl) => {
+          opts.push({ value: `${scope}.${tbl.name}`, label: `${scope}.${tbl.name}` });
+        });
       });
-    });
-    return opts;
-  }, [resolvedSchemaScopes, tableQueries]);
+      return {
+        data: opts,
+        isLoading: results.some((r) => r.isLoading),
+      };
+    },
+  });
 
   const effectiveFqns = selectedTables.length > 0 ? selectedTables : tableOptions.map((o) => o.value);
 
