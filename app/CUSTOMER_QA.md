@@ -41,7 +41,7 @@ One Databricks Asset Bundle (`databricks.yml`) provisions everything in one `mak
 
 - **Databricks App** (FastAPI + React, single process, served by the Apps runtime)
 - **Serverless Job** for Spark work — the *task runner* — invoked for profiler, dry-run, and scheduled runs
-- **Lakebase Postgres instance** (`database_instances.lakebase`) for OLTP state
+- **Lakebase Postgres project** (`postgres_projects.dqx_studio` + `postgres_roles.app_sp`) for OLTP state
 - **Two UC schemas** (`dqx_studio`, `dqx_studio_tmp`) under a customer-supplied catalog
 - **UC volume** (`wheels`) the app uses to ship DQX wheels into the job
 - **SQL warehouse** — managed by the bundle, or BYO (bring-your-own) if you already have one
@@ -162,7 +162,7 @@ Scoped tight:
 It is **not** a workspace admin and **not** a metastore admin. If you remove the app, those grants are the only blast radius.
 
 ### 4.4 What's the deployer's permission burden?
-Documented as a table in `DEPLOYMENT.md` — about 10 line items, the bulk of which collapse if the deployer is added to a UC-admin group. The single most common failure on first deploy is missing `MANAGE` on the target catalog (the `post_deploy_grants.sh` script needs it to GRANT to the app SP). We surface that error explicitly with a fix.
+Documented as a table in `DEPLOYMENT.md` — about 10 line items, the bulk of which collapse if the deployer is added to a UC-admin group. The single most common failure on first deploy is missing `MANAGE`/`USE CATALOG` on the target catalog. `bundle deploy` applies schema/volume grants natively, but the one manual prerequisite is granting `USE CATALOG` on the (pre-existing, bundle-unmanaged) catalog to the app SP, task-runner SP, and `account users`. We surface that error explicitly with a fix.
 
 ### 4.5 Is everything audited?
 Yes, but the auditing is **distributed** across the platform rather than in one DQX log:
@@ -186,7 +186,7 @@ We didn't invent a parallel audit store because UC + Jobs already audit everythi
 You re-run the same command. If you forgot to update a variable, the bundle complains; it doesn't silently mutate state.
 
 ### 5.2 What happens if `bundle destroy` runs accidentally?
-The three stateful resource keys — `schemas.main_schema`, `volumes.wheels`, `database_instances.lakebase` — carry `lifecycle.prevent_destroy: true`. The CLI refuses to drop them. To intentionally tear those down you have to edit `databricks.yml`, `unbind` the resource, and destroy it manually — a three-step opt-in.
+The stateful resource keys — `schemas.main_schema`, `schemas.tmp_schema`, `volumes.wheels`, `postgres_projects.dqx_studio` — carry `lifecycle.prevent_destroy: true`. The CLI refuses to drop them. To intentionally tear those down you have to edit `databricks.yml`, `unbind` the resource, and destroy it manually — a three-step opt-in.
 
 ### 5.3 What about backup?
 Three layers, all leveraging native Databricks:
@@ -285,7 +285,7 @@ Pre-empt these — we've heard them:
 - **"Can we run this in our own VPC?"** — Yes, automatically. It's a Databricks App in your workspace.
 - **"Does it work with Unity Catalog Federation?"** — UC Federation tables (foreign tables to Snowflake/BigQuery/Postgres) show up in the catalog tree and can be authored against. Performance depends on the federation source, not on DQX.
 - **"Can rules be promoted across environments (dev → prod)?"** — Today: export YAML from one deployment, commit, import to another. We don't have an automated promotion pipeline in the UI yet.
-- **"What if Lakebase isn't enabled in our workspace?"** — Set `lakebase_enabled: false` (or leave `lakebase_instance_name` empty). Migrations fall back to Delta automatically. The app still works.
+- **"What if Lakebase isn't enabled in our workspace?"** — Remove the `postgres_projects`/`postgres_roles` blocks and set `lakebase_endpoint: "-"`. Migrations fall back to Delta automatically. The app still works.
 - **"Why a service principal instead of just our personal token?"** — Scheduled runs at 3 AM can't carry a user token. We need a stable identity. The OBO model still ensures *interactive* requests use the user.
 
 ---
