@@ -295,6 +295,23 @@ def test_checks_validator_bad_criticality_produces_correct_message():
     assert any("Expected 'warn' or 'error'" in e for e in status.errors)
 
 
+def test_checks_validator_reports_criticality_and_argument_errors_together():
+    """A bad criticality must not suppress signature errors — both surface in one pass.
+
+    Regression: the pre-migration validator reported the criticality error alongside the
+    missing-argument error. Structural validation must only short-circuit on a malformed
+    'check' block, not on sibling-field errors like 'criticality'.
+    """
+    check = {
+        "criticality": "bogus",
+        "check": {"function": "is_not_null", "arguments": {}},  # missing required 'column'
+    }
+    status = ChecksValidator.validate_checks([check])
+    assert status.has_errors
+    assert any("Invalid 'criticality' value: 'bogus'" in e for e in status.errors)
+    assert any("No arguments provided for function 'is_not_null'" in e for e in status.errors)
+
+
 def test_checks_validator_missing_check_field():
     """ChecksValidator must report missing 'check' field."""
     status = ChecksValidator.validate_checks([{"criticality": "error"}])

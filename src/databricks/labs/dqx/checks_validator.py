@@ -167,6 +167,12 @@ class ChecksValidator:
         not a list / empty).  Then runs signature-based argument validation against the resolved
         check function.
 
+        A malformed 'check' block (missing / not-a-dict / missing function / bad for_each_column or
+        arguments shape) makes signature validation impossible — there is no function to resolve —
+        so those errors short-circuit.  Errors on sibling top-level fields (e.g. 'criticality') do
+        not, so they are reported *alongside* signature errors in a single pass, matching the
+        pre-migration validator which surfaced criticality and argument errors together.
+
         Args:
             check: The check dict to validate.
             custom_check_functions: Optional mapping of custom function names to callables.
@@ -176,37 +182,52 @@ class ChecksValidator:
             A list of error messages (empty on success).
         """
         # --- Structural validation via Pydantic ---
-        structural_errors = ChecksValidator._pydantic_validate_structure(check)
-        if structural_errors:
-            return structural_errors
+        blocking_errors, sibling_errors = ChecksValidator._pydantic_validate_structure(check)
+        if blocking_errors:
+            # Cannot resolve the function; return all structural errors without signature validation.
+            return sibling_errors + blocking_errors
 
-        # Structure is valid; now run signature-based argument validation.
-        return ChecksValidator._validate_check_block(check, custom_check_functions, validate_custom_check_functions)
+        # The 'check' block is well-formed; run signature validation and merge sibling-field errors.
+        return sibling_errors + ChecksValidator._validate_check_block(
+            check, custom_check_functions, validate_custom_check_functions
+        )
 
     @staticmethod
-    def _pydantic_validate_structure(check: dict) -> list[str]:
-        """Run *CheckSpec.model_validate* on a single check dict and collect errors.
+    def _pydantic_validate_structure(check: dict) -> tuple[list[str], list[str]]:
+        """Run *CheckSpec.model_validate* on a single check dict and partition the errors.
 
         Translates Pydantic *ValidationError* into human-readable strings that match the
         existing error format expected by callers and tests.  The original *check* dict is
         included in error messages for context, as the hand-rolled validator did before.
 
+        Errors are split by whether they block signature validation.  Errors on the 'check' block
+        (``loc`` starting with ``check``) are *blocking*: without a well-formed check block there is
+        no function to validate arguments against.  Errors on sibling top-level fields such as
+        'criticality' are *non-blocking*: they are surfaced together with signature errors, so a
+        single pass reports as many problems as the pre-migration validator did.
+
         Args:
             check: The raw check dict to validate structurally.
 
         Returns:
-            A list of error message strings (empty when the check passes structural validation).
+            A ``(blocking_errors, sibling_errors)`` tuple; both empty when validation passes.
         """
         try:
             CheckSpec.model_validate(check)
-            return []
+            return [], []
         except ValidationError as exc:
-            return [
-                msg
-                for pydantic_error in exc.errors()
-                for msg in (ChecksValidator._translate_pydantic_error(pydantic_error, check),)
-                if msg
-            ]
+            blocking_errors: list[str] = []
+            sibling_errors: list[str] = []
+            for pydantic_error in exc.errors():
+                msg = ChecksValidator._translate_pydantic_error(pydantic_error, check)
+                if not msg:
+                    continue
+                loc = pydantic_error["loc"]
+                if loc and loc[0] == "check":
+                    blocking_errors.append(msg)
+                else:
+                    sibling_errors.append(msg)
+            return blocking_errors, sibling_errors
 
     @staticmethod
     def _translate_pydantic_error(error: ErrorDetails, check: dict) -> str | None:
