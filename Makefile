@@ -107,13 +107,8 @@ docs-clean: ## Remove docs build, .docusaurus, and generated API reference
 app-install: ## Install app frontend dependencies (yarn --frozen-lockfile)
 	yarn --cwd app install --frozen-lockfile
 
-app-build: ## Build app: openapi → orval → vite → wheels (CI parity)
-	cd app && \
-	  UV_BUILD_CONSTRAINT=.build-constraints.txt \
-	  UV_REQUIRE_HASHES=1 \
-	  $(UV_RUN) python scripts/build_app.py && \
-	  uv build ../ --wheel --out-dir .build/ && \
-	  uv build tasks/ --wheel --out-dir .build/tasks/
+app-build: ## Build app: openapi → orval → vite (CI parity)
+	cd app && $(UV_RUN) python scripts/build_app.py
 
 # Start the local dev loop (foreground). ``scripts/dev.py`` spawns
 # uvicorn (FastAPI, port 9002) and vite (port 9001) and wires vite's
