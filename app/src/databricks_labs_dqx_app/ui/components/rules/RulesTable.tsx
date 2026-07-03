@@ -405,7 +405,7 @@ export function RulesTable({
             ))}
           </colgroup>
           <TableHeader>
-            <TableRow className="bg-muted/50 hover:bg-muted/50">
+            <TableRow>
               {visibleKeys.map((k) => {
                 const def = COLUMNS[k];
                 const width = colWidths[k] ?? def.defaultWidth;
@@ -416,7 +416,7 @@ export function RulesTable({
                   <TableHead
                     key={k}
                     className={cn(
-                      "relative text-xs font-medium",
+                      "relative",
                       def.headClassName,
                       def.sortable && "cursor-pointer select-none",
                     )}
