@@ -348,6 +348,10 @@ Inside a Spark Declarative Pipeline (SDP / Lakeflow / DLT), do the following ins
 
 This works whether the checked table is populated by a batch or a streaming pipeline — the metrics materialized view is recomputed (as batch) on each pipeline update. Note that `compute_summary_metrics` is a whole-table aggregation, not an append-mode streaming query; use it as a materialized view inside a pipeline (or in a batch job), not directly on a `writeStream` (a streaming aggregation without a watermark is not supported in append mode). See the [Lakeflow pipeline demo](https://github.com/databrickslabs/dqx/blob/v0.15.0/demos/dqx_dlt_demo.py) for a complete example, or the [quarantine variant](https://github.com/databrickslabs/dqx/blob/v0.15.0/demos/dqx_dlt_demo_quarantine.py) that splits valid and invalid records into separate tables.
 
+<Admonition type="warning" title="Incremental materialized views">
+`compute_summary_metrics` stamps each metrics row with a `run_id` and `run_time`. Without static values these are non-deterministic across pipeline runs — `run_time` defaults to `current_timestamp()` and `run_id` to a random UUID — so Lakeflow treats every update as new and cannot incrementally refresh the metrics materialized view (it fully recomputes each run). Set *run_time_overwrite* and *run_id_overwrite* as **static values** in `ExtraParams` when creating the `DQEngine` to enable incremental updates, the same as for [DQX result materialized views](/docs/guide/quality_checks_apply).
+</Admonition>
+
 <Admonition type="info" title="Summary Metrics: Snapshot vs. history">
 The approach above stores summary metrics as a **materialized view** over the checked table. A materialized view is recomputed on each pipeline update, so it holds a **current snapshot** of the metrics over all rows in the table. And because it aggregates the whole table, `input_row_count` is the cumulative total, not a per-run count.
 

@@ -3214,3 +3214,22 @@ def test_compute_summary_metrics_with_dotted_custom_metric_name(ws, spark):
 
     # The dotted alias flows through as the metric name with its aggregated value (count over 4 rows).
     assert metrics["a.b"] == "4"
+
+
+def test_compute_summary_metrics_current_timestamp_and_user_metadata(ws, spark):
+    """Without run_time_overwrite the run_time falls back to current_timestamp(); user_metadata is emitted as a map."""
+    user_metadata = {"team": "data-quality", "env": "test"}
+    observer = DQMetricsObserver(name=TEST_OBSERVER_NAME)
+    # No run_time_overwrite, so build_metrics_df_from_aggregation stamps run_time with current_timestamp().
+    extra_params = ExtraParams(user_metadata=user_metadata)
+    dq_engine = DQEngine(workspace_client=ws, spark=spark, observer=observer, extra_params=extra_params)
+
+    checked_df, _ = dq_engine.apply_checks_by_metadata(_standard_test_df(spark), TEST_CHECKS)
+
+    rows = dq_engine.compute_summary_metrics(checked_df, checks=TEST_CHECKS).collect()
+
+    assert rows  # metrics were produced
+    # run_time falls back to current_timestamp() (non-null) when no run_time_overwrite is configured.
+    assert all(row["run_time"] is not None for row in rows)
+    # user_metadata is emitted as a map on every metric row.
+    assert all(row["user_metadata"] == user_metadata for row in rows)
