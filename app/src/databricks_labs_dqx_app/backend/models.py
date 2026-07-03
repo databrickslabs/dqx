@@ -377,6 +377,60 @@ class CommentOut(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Alert channel models
+# ---------------------------------------------------------------------------
+
+
+class AlertChannelIn(BaseModel):
+    name: str = Field(description="Display name for this notification channel")
+    webhook_url: str = Field(description="Microsoft Teams incoming webhook URL")
+    trigger: str = Field(
+        default="all_runs",
+        description="When to notify: all_runs | manual_only | scheduled_only",
+    )
+    enabled: bool = Field(default=True, description="Whether this channel is active")
+    notify_dry_runs: bool = Field(default=False, description="Also send dry run results to this channel")
+
+
+class AlertChannelOut(BaseModel):
+    channel_id: str = Field(description="Unique channel identifier")
+    name: str
+    webhook_url: str
+    trigger: str
+    enabled: bool
+    notify_dry_runs: bool = False
+
+
+class NotifyResultIn(BaseModel):
+    source_table_fqn: str = Field(description="Fully qualified table name that was dry-run")
+    total_rows: int | None = None
+    valid_rows: int | None = None
+    error_rows: int | None = None
+    warning_rows: int | None = None
+    status: str = Field(default="success")
+
+
+class TestWebhookIn(BaseModel):
+    webhook_url: str = Field(description="Teams webhook URL to test")
+
+
+class TestWebhookOut(BaseModel):
+    success: bool
+    message: str
+
+
+class NotifyRunsIn(BaseModel):
+    run_ids: list[str] = Field(description="Run IDs to include in the notification")
+    trigger: str = Field(default="manual", description="Trigger type: manual | scheduled")
+
+
+class NotifyRunsOut(BaseModel):
+    notified: int = Field(description="Number of channels notified")
+    skipped: int = Field(default=0, description="Channels skipped (disabled or trigger mismatch)")
+    errors: list[str] = Field(default_factory=list)
+
+
 class QuarantineRecordOut(BaseModel):
     quarantine_id: str
     run_id: str

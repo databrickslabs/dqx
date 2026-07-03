@@ -1101,6 +1101,108 @@ export const useSubmitProfileRunMutation = <
   });
 };
 
+// ---------------------------------------------------------------------------
+// Alerts — notification channel management
+// ---------------------------------------------------------------------------
+
+export interface AlertChannelIn {
+  name: string;
+  webhook_url: string;
+  trigger: "all_runs" | "manual_only" | "scheduled_only";
+  enabled: boolean;
+  notify_dry_runs: boolean;
+}
+
+export interface AlertChannelOut {
+  channel_id: string;
+  name: string;
+  webhook_url: string;
+  trigger: string;
+  enabled: boolean;
+  notify_dry_runs: boolean;
+}
+
+export interface DryRunNotifyPayload {
+  source_table_fqn: string;
+  total_rows?: number | null;
+  valid_rows?: number | null;
+  error_rows?: number | null;
+  warning_rows?: number | null;
+  status?: string;
+}
+
+export interface NotifyRunsIn {
+  run_ids: string[];
+  trigger?: string;
+}
+
+export interface NotifyRunsOut {
+  notified: number;
+  skipped: number;
+  errors: string[];
+}
+
+export const listAlertChannels = (
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<AlertChannelOut[]>> => {
+  return axios.default.get(`/api/v1/alerts/channels`, options);
+};
+
+export const getAlertChannelsQueryKey = () => ["alerts", "channels"] as const;
+
+export const useListAlertChannels = <TError = AxiosError<unknown>>(
+  options?: UseQueryOptions<AlertChannelOut[], TError>,
+): UseQueryResult<AlertChannelOut[], TError> => {
+  return useQuery({
+    queryKey: getAlertChannelsQueryKey(),
+    queryFn: () => listAlertChannels().then((r) => r.data),
+    ...options,
+  });
+};
+
+export const createAlertChannel = (
+  body: AlertChannelIn,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<AlertChannelOut>> => {
+  return axios.default.post(`/api/v1/alerts/channels`, body, options);
+};
+
+export const updateAlertChannel = (
+  channelId: string,
+  body: AlertChannelIn,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<AlertChannelOut>> => {
+  return axios.default.put(`/api/v1/alerts/channels/${channelId}`, body, options);
+};
+
+export const deleteAlertChannel = (
+  channelId: string,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<void>> => {
+  return axios.default.delete(`/api/v1/alerts/channels/${channelId}`, options);
+};
+
+export const testAlertWebhook = (
+  webhookUrl: string,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<{ success: boolean; message: string }>> => {
+  return axios.default.post(`/api/v1/alerts/test`, { webhook_url: webhookUrl }, options);
+};
+
+export const notifyDryRunResult = (
+  payload: DryRunNotifyPayload,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<NotifyRunsOut>> => {
+  return axios.default.post(`/api/v1/alerts/notify-result`, payload, options);
+};
+
+export const notifyRuns = (
+  body: NotifyRunsIn,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<NotifyRunsOut>> => {
+  return axios.default.post(`/api/v1/alerts/notify`, body, options);
+};
+
 export const useSubmitBatchProfileRunMutation = <
   TError = AxiosError<unknown>,
   TContext = unknown,

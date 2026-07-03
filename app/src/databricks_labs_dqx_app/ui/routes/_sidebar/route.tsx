@@ -15,6 +15,7 @@ import {
   ChevronDown,
   PenLine,
   History,
+  Bell,
 } from "lucide-react";
 import {
   SidebarGroup,
@@ -187,6 +188,24 @@ function Layout() {
               >
                 <History size={16} />
                 <span>{t("sidebar.runsHistory")}</span>
+              </Link>
+            </SidebarMenuItem>
+
+            <hr className="my-2 border-sidebar-border" />
+
+            {/* Configure Alerts — admin only */}
+            <SidebarMenuItem>
+              <Link
+                to="/alerts"
+                className={cn(
+                  "flex items-center gap-2 p-2 rounded-lg",
+                  location.pathname.startsWith("/alerts")
+                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                    : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                )}
+              >
+                <Bell size={16} />
+                <span>{t("sidebar.configureAlerts")}</span>
               </Link>
             </SidebarMenuItem>
           </SidebarMenu>

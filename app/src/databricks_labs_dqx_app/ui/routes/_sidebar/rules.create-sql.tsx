@@ -47,7 +47,7 @@ import {
   useGetDryRunResults,
   type DryRunResultsOut,
 } from "@/lib/api";
-import { checkDuplicates, type CheckDuplicatesIn, cancelDryRun, getDryRunStatusCustom, useLabelDefinitions, runDryRunOnTable, type PreviewDryRunOut } from "@/lib/api-custom";
+import { checkDuplicates, type CheckDuplicatesIn, cancelDryRun, getDryRunStatusCustom, useLabelDefinitions, runDryRunOnTable, type PreviewDryRunOut, notifyDryRunResult } from "@/lib/api-custom";
 import { PreviewDryRunResultPanel } from "@/components/PreviewDryRunResultPanel";
 import { LabelsEditor } from "@/components/Labels";
 import { getUserMetadata } from "@/lib/format-utils";
@@ -373,6 +373,14 @@ function CreateSqlCheckPage() {
           if (resp.data?.data) {
             setDryRunResult(resp.data.data);
             toast.success(t("rulesCreateSql.dryRunComplete"));
+            notifyDryRunResult({
+              source_table_fqn: resp.data.data.source_table_fqn,
+              total_rows: resp.data.data.total_rows,
+              valid_rows: resp.data.data.valid_rows,
+              error_rows: resp.data.data.error_rows,
+              warning_rows: resp.data.data.warning_rows,
+              status: "success",
+            }).catch(() => {});
           }
         } catch {
           setDryRunError(t("rulesCreateSql.fetchResultsFailed"));

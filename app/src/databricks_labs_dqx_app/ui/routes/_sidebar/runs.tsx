@@ -15,6 +15,7 @@ import axios, { isAxiosError } from "axios";
 import {
   useBatchRunFromCatalog,
   getListValidationRunsQueryKey,
+  notifyRuns,
 } from "@/lib/api-custom";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -1326,6 +1327,7 @@ function ExecuteTab({ onGoToHistory }: { onGoToHistory: () => void }) {
               onRunComplete={(runId) => {
                 removeRun(runId);
                 queryClient.invalidateQueries({ queryKey: getListValidationRunsQueryKey() });
+                notifyRuns({ run_ids: [runId], trigger: "manual" }).catch(() => {});
               }}
               onDismissAll={() => {
                 clearActiveRuns();

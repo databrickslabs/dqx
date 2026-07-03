@@ -19,6 +19,7 @@ import { Route as SidebarProfileRouteImport } from './../routes/_sidebar/profile
 import { Route as SidebarHomeRouteImport } from './../routes/_sidebar/home'
 import { Route as SidebarDiscoveryRouteImport } from './../routes/_sidebar/discovery'
 import { Route as SidebarConfigRouteImport } from './../routes/_sidebar/config'
+import { Route as SidebarAlertsRouteImport } from './../routes/_sidebar/alerts'
 import { Route as SidebarRunsIndexRouteImport } from './../routes/_sidebar/runs.index'
 import { Route as SidebarRulesIndexRouteImport } from './../routes/_sidebar/rules.index'
 import { Route as SidebarRunsRunNameRouteImport } from './../routes/_sidebar/runs.$runName'
@@ -79,6 +80,11 @@ const SidebarConfigRoute = SidebarConfigRouteImport.update({
   path: '/config',
   getParentRoute: () => SidebarRouteRoute,
 } as any)
+const SidebarAlertsRoute = SidebarAlertsRouteImport.update({
+  id: '/alerts',
+  path: '/alerts',
+  getParentRoute: () => SidebarRouteRoute,
+} as any)
 const SidebarRunsIndexRoute = SidebarRunsIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -133,6 +139,7 @@ const SidebarRulesActiveRoute = SidebarRulesActiveRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/alerts': typeof SidebarAlertsRoute
   '/config': typeof SidebarConfigRoute
   '/discovery': typeof SidebarDiscoveryRoute
   '/home': typeof SidebarHomeRoute
@@ -154,6 +161,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/alerts': typeof SidebarAlertsRoute
   '/config': typeof SidebarConfigRoute
   '/discovery': typeof SidebarDiscoveryRoute
   '/home': typeof SidebarHomeRoute
@@ -175,6 +183,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/_sidebar': typeof SidebarRouteRouteWithChildren
+  '/_sidebar/alerts': typeof SidebarAlertsRoute
   '/_sidebar/config': typeof SidebarConfigRoute
   '/_sidebar/discovery': typeof SidebarDiscoveryRoute
   '/_sidebar/home': typeof SidebarHomeRoute
@@ -198,6 +207,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/alerts'
     | '/config'
     | '/discovery'
     | '/home'
@@ -219,6 +229,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/alerts'
     | '/config'
     | '/discovery'
     | '/home'
@@ -239,6 +250,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/_sidebar'
+    | '/_sidebar/alerts'
     | '/_sidebar/config'
     | '/_sidebar/discovery'
     | '/_sidebar/home'
@@ -334,6 +346,13 @@ declare module '@tanstack/react-router' {
       path: '/config'
       fullPath: '/config'
       preLoaderRoute: typeof SidebarConfigRouteImport
+      parentRoute: typeof SidebarRouteRoute
+    }
+    '/_sidebar/alerts': {
+      id: '/_sidebar/alerts'
+      path: '/alerts'
+      fullPath: '/alerts'
+      preLoaderRoute: typeof SidebarAlertsRouteImport
       parentRoute: typeof SidebarRouteRoute
     }
     '/_sidebar/runs/': {
@@ -450,6 +469,7 @@ const SidebarRunsRouteWithChildren = SidebarRunsRoute._addFileChildren(
 )
 
 interface SidebarRouteRouteChildren {
+  SidebarAlertsRoute: typeof SidebarAlertsRoute
   SidebarConfigRoute: typeof SidebarConfigRoute
   SidebarDiscoveryRoute: typeof SidebarDiscoveryRoute
   SidebarHomeRoute: typeof SidebarHomeRoute
@@ -461,6 +481,7 @@ interface SidebarRouteRouteChildren {
 }
 
 const SidebarRouteRouteChildren: SidebarRouteRouteChildren = {
+  SidebarAlertsRoute: SidebarAlertsRoute,
   SidebarConfigRoute: SidebarConfigRoute,
   SidebarDiscoveryRoute: SidebarDiscoveryRoute,
   SidebarHomeRoute: SidebarHomeRoute,

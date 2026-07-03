@@ -190,6 +190,33 @@ class AppSettingsService:
         self.save_setting(self._QUARANTINE_RETENTION_KEY, str(int(days)), user_email=user_email)
         return int(days)
 
+    # ------------------------------------------------------------------
+    # Alert channels — list of Teams webhook channel configs.
+    # Stored as a JSON array under ``alert_channels_v1``.
+    # Each entry: {channel_id, name, webhook_url, trigger, enabled}
+    # ------------------------------------------------------------------
+
+    _ALERT_CHANNELS_KEY = "alert_channels_v1"
+
+    def get_alert_channels(self) -> list[dict]:
+        """Return the configured alert channels, or [] if unset."""
+        raw = self.get_setting(self._ALERT_CHANNELS_KEY)
+        if not raw:
+            return []
+        try:
+            parsed = json.loads(raw)
+        except (TypeError, json.JSONDecodeError):
+            logger.warning("alert_channels_v1 setting is not valid JSON; ignoring")
+            return []
+        if not isinstance(parsed, list):
+            return []
+        return parsed
+
+    def save_alert_channels(self, channels: list[dict], *, user_email: str | None = None) -> list[dict]:
+        """Persist the alert channel list. Returns the saved list."""
+        self.save_setting(self._ALERT_CHANNELS_KEY, json.dumps(channels), user_email=user_email)
+        return channels
+
     def _get_int_setting(self, key: str) -> int | None:
         raw = self.get_setting(key)
         if raw is None or raw == "":

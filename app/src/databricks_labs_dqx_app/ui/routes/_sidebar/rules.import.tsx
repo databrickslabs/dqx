@@ -51,7 +51,7 @@ import {
   useGetDryRunResults,
 } from "@/lib/api";
 import { useMutation } from "@tanstack/react-query";
-import { useValidateChecks, getDryRunStatusCustom, cancelDryRun } from "@/lib/api-custom";
+import { useValidateChecks, getDryRunStatusCustom, cancelDryRun, notifyDryRunResult } from "@/lib/api-custom";
 import { useJobPolling } from "@/hooks/use-job-polling";
 import { CatalogBrowser } from "@/components/CatalogBrowser";
 import { LabelsBadges } from "@/components/Labels";
@@ -159,6 +159,14 @@ function YamlImportCard({ onDone }: { onDone: () => void }) {
           if (resp.data?.data) {
             setDryRunResult(resp.data.data);
             toast.success(t("rulesImport.dryRunComplete"));
+            notifyDryRunResult({
+              source_table_fqn: resp.data.data.source_table_fqn,
+              total_rows: resp.data.data.total_rows,
+              valid_rows: resp.data.data.valid_rows,
+              error_rows: resp.data.data.error_rows,
+              warning_rows: resp.data.data.warning_rows,
+              status: "success",
+            }).catch(() => {});
           }
         } catch {
           toast.error(t("rulesImport.failedFetchDryRun"));
