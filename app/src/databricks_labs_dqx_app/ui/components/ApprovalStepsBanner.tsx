@@ -5,9 +5,10 @@ import { Card, CardContent } from "@/components/ui/card";
 /**
  * Persistent, plain-language explainer of the two-step rule lifecycle:
  * a rule is approved in the Rules Registry, then applying it to a table
- * and publishing is what actually activates it. Shown on both the
- * Rules Registry list and a monitored table's Apply Rules area, since
- * those are the two moments a non-expert steward needs the reminder.
+ * and publishing is what actually activates it. Shown on a monitored
+ * table's Apply Rules area, where a non-expert steward most needs the
+ * reminder. (No longer shown on the Rules Registry list itself — that
+ * page now mirrors dqlake's bare-table layout with no explainer banner.)
  */
 export function ApprovalStepsBanner() {
   const { t } = useTranslation();
