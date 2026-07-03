@@ -30,19 +30,22 @@ DQX automatically captures the following built-in metrics for every data quality
 
 When checks are applied, DQX automatically includes a `check_metrics` metric that provides a per-check breakdown of error and warning counts. This makes it possible to identify which specific checks are failing without querying the row-level `_errors` and `_warnings` columns.
 
-The `check_metrics` value is a JSON-serialized array of structs, with one entry per check:
+`check_metrics` contains an entry for **every applied check**, not only the ones that failed. Checks that never triggered still appear with `error_count` and `warning_count` set to `0`. This differs from the row-level `_errors` / `_warnings` columns, which list only the checks that failed for a given row. As a result, the breakdown is derived from the applied checks (their names), so it cannot be reconstructed from the data alone — a check with zero violations leaves no trace in `_errors` / `_warnings`.
+
+The `check_metrics` value is a JSON-serialized array of structs, with one entry per applied check (here `passenger_incorrect_count` was applied but never triggered):
 
 ```json
 [
   {"check_name": "id_is_not_null", "error_count": 5, "warning_count": 0},
-  {"check_name": "name_is_not_null_and_not_empty", "error_count": 0, "warning_count": 3}
+  {"check_name": "name_is_not_null_and_not_empty", "error_count": 0, "warning_count": 3},
+  {"check_name": "passenger_incorrect_count", "error_count": 0, "warning_count": 0}
 ]
 ```
 
 Each entry contains:
 - `check_name` — the name of the check (either explicitly set via `name` in the rule definition, or auto-derived from the check function and arguments)
-- `error_count` — number of rows where this check triggered an error
-- `warning_count` — number of rows where this check triggered a warning
+- `error_count` — number of rows where this check triggered an error (`0` if it never did)
+- `warning_count` — number of rows where this check triggered a warning (`0` if it never did)
 
 When persisted to the metrics table, `check_metrics` is stored as a single row with `metric_name = 'check_metrics'` and `metric_value` containing the JSON string. You can parse it with Spark's `from_json` or `json_tuple` functions for analysis:
 
@@ -306,6 +309,79 @@ Metrics-only streaming writes are not supported because DQX needs an output or q
   </TabItem>
 </Tabs>
 
+#### Summary Metrics in Spark Declarative Pipelines (Lakeflow / DLT)
+
+Inside a Spark Declarative Pipeline (SDP / Lakeflow / DLT), do the following instead of using an observer:
+
+1. Persist the checked data as a table (so the result columns are available downstream).
+2. Add a materialized view that calls `compute_summary_metrics` on that table, passing the same `checks` you applied.
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    import dlt
+    from databricks.labs.dqx.engine import DQEngine
+    from databricks.labs.dqx.metrics_observer import DQMetricsObserver
+    from databricks.sdk import WorkspaceClient
+
+    # compute_summary_metrics requires an observer on the engine; it reads any custom_metrics from it.
+    engine = DQEngine(WorkspaceClient(), observer=DQMetricsObserver())
+
+    @dlt.view
+    def bronze():
+      return spark.readStream.table("catalog.schema.input")
+
+    # 1. Apply checks and persist the checked data as a table.
+    @dlt.table
+    def silver():
+      df = dlt.read_stream("bronze")
+      return engine.apply_checks_by_metadata(df, checks)
+
+    # 2. Compute summary metrics as a materialized view over the checked table.
+    @dlt.table
+    def dq_summary_metrics():
+      df = dlt.read("silver")
+      return engine.compute_summary_metrics(df, checks=checks)
+    ```
+  </TabItem>
+</Tabs>
+
+This works whether the checked table is populated by a batch or a streaming pipeline — the metrics materialized view is recomputed (as batch) on each pipeline update. Note that `compute_summary_metrics` is a whole-table aggregation, not an append-mode streaming query; use it as a materialized view inside a pipeline (or in a batch job), not directly on a `writeStream` (a streaming aggregation without a watermark is not supported in append mode). See the [Lakeflow pipeline demo](https://github.com/databrickslabs/dqx/blob/v0.15.0/demos/dqx_dlt_demo.py) for a complete example, or the [quarantine variant](https://github.com/databrickslabs/dqx/blob/v0.15.0/demos/dqx_dlt_demo_quarantine.py) that splits valid and invalid records into separate tables.
+
+<Admonition type="info" title="Summary Metrics: Snapshot vs. history">
+The approach above stores summary metrics as a **materialized view** over the checked table. A materialized view is recomputed on each pipeline update, so it holds a **current snapshot** of the metrics over all rows in the table. And because it aggregates the whole table, `input_row_count` is the cumulative total, not a per-run count.
+
+To instead keep a **history** of metrics over time (appended as the pipeline runs, so you can track quality trends), you need an append target rather than a materialized view. Choose based on the pipeline type:
+
+**Streaming pipelines (recommended):** append per-window metrics from a windowed streaming table. Add a watermark on a timestamp column and aggregate the observer's metric expressions per time window, so each window's metrics are appended as it completes:
+
+```python
+import pyspark.sql.functions as F
+from databricks.labs.dqx.metrics_observer import DQMetricsObserver
+
+observer = DQMetricsObserver()  # pass check names to get_metrics(check_names) to also include the per-check breakdown
+
+@dlt.table
+def dq_summary_metrics():
+    df = dlt.read_stream("silver").withWatermark("event_time", "10 minutes")
+    metric_exprs = [F.expr(m) for m in observer.get_metrics()]
+    return df.groupBy(F.window("event_time", "1 hour")).agg(*metric_exprs)
+```
+
+This needs a timestamp column to window on (an event or ingestion time) and a watermark; each window's metrics are emitted only once the watermark passes it, and very late rows are dropped. The output carries a `window` column plus the metric columns (it is not the long `OBSERVATION_TABLE_SCHEMA` shape) — so it is **not** schema-compatible with the companion-job output below, and the two cannot be appended into the same metrics table. Pick one history strategy per table.
+
+**Batch pipelines (or a simpler option):** compute the metrics in a companion job or scheduled task and **append** `compute_summary_metrics` output — one row-set per run, stamped with a distinct `run_id` and `run_time`:
+
+```python
+metrics_df = engine.compute_summary_metrics(spark.read.table("catalog.schema.silver"), checks=checks)
+metrics_df.write.mode("append").saveAsTable("catalog.schema.dq_metrics")
+```
+</Admonition>
+
+**Why not the observer directly?** The observer (`observe()`) and the streaming metrics listener do not work inside a declarative pipeline: the pipeline runtime — not your code — triggers the write action, so the Spark Observation is never populated (`observation.get` stalls) and the streaming listener receives no events. DQX detects the pipeline runtime and automatically skips wiring `observe()` there, so `apply_checks*` returns the checked DataFrame unchanged (no attached observation). `compute_summary_metrics` computes the same metrics as an aggregation instead, and returns a lazy DataFrame with the same schema as the observer path — so pass the same `checks` to get the full per-check breakdown (including checks with zero violations), and the metrics can be centralized alongside batch and streaming workloads.
+
+`compute_summary_metrics` still uses the engine's `DQMetricsObserver`, so **an observer must be configured** on the engine (`DQEngine(WorkspaceClient(), observer=DQMetricsObserver())`) — calling it without one raises `InvalidParameterError`. To include **custom metrics** in the pipeline, configure the observer with them (`DQMetricsObserver(custom_metrics=[...])`); `compute_summary_metrics` reads its `custom_metrics` and includes them in the output. Each custom metric expression must return a **scalar** value — a non-scalar result (e.g. an array or struct) is stringified opaquely into `metric_value`. See [Configuring Custom Metrics](#configuring-custom-metrics).
+
 #### Saving Results and Metrics to a Table
 
 Summary metrics can also be written to a table when calling `save_results_in_table`. After applying checks, pass the Spark Observation and output DataFrame(s) with the appropriate output configuration. For batch results, you can pass only the Spark Observation and `metrics_config` to write summary metrics without writing row-level output.
@@ -384,6 +460,8 @@ This is supported for both batch and streaming.
 
 Custom metrics are collected in addition to the built-in metrics.
 Pass custom metrics as Spark SQL expressions when creating the `DQMetricsObserver`. Custom metrics should be defined as Spark SQL expressions with column aliases and will be accessible by their alias.
+
+Each custom metric expression must return a **scalar** aggregate value. `metric_value` is a string column, so a non-scalar result (e.g. an array or struct) is stringified opaquely and is hard to consume downstream — aggregate to a single scalar per metric.
 
 <Tabs>
   <TabItem value="Python" label="Python" default>

@@ -50,7 +50,7 @@ from databricks.labs.dqx.schema import dq_result_schema
 from databricks.labs.dqx.metrics_observer import DQMetricsObservation, DQMetricsObserver
 from databricks.labs.dqx.metrics_listener import StreamingMetricsListener
 from databricks.labs.dqx.io import read_input_data, save_dataframe_as_table, get_reference_dataframes
-from databricks.labs.dqx.telemetry import telemetry_logger, log_telemetry, log_dataframe_telemetry
+from databricks.labs.dqx.telemetry import telemetry_logger, log_telemetry, log_dataframe_telemetry, is_dlt_pipeline
 from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.errors import InvalidCheckError, InvalidConfigError, InvalidParameterError
 from databricks.labs.dqx.utils import list_tables, safe_strip_file_from_path, resolve_variables, VariableValue
@@ -290,7 +290,10 @@ class DQEngineCore(DQEngineCoreBase):
 
         good_df, bad_df, *observations = self.apply_checks_and_split(df, dq_rule_checks, ref_dfs)
 
-        if self.observer:
+        # An observation is only returned when observe() was actually wired (an observer is set and we
+        # are not inside a Spark Declarative Pipeline, where it is skipped). Key off the returned shape
+        # rather than self.observer so the SDP path (observer set, observe() skipped) does not raise.
+        if observations:
             return good_df, bad_df, observations[0]
 
         return good_df, bad_df
@@ -627,6 +630,19 @@ class DQEngineCore(DQEngineCoreBase):
             The unmodified DataFrame with observed metrics and the corresponding Spark Observation
         """
         if not self.observer:
+            return df
+
+        # Inside a Spark Declarative Pipeline (SDP / Lakeflow / DLT) the runtime — not the caller —
+        # triggers the write, so an attached observe() never has an accessible result (observation.get
+        # stalls, the streaming listener receives no events). Skip wiring observe() there: apply_checks*
+        # returns the DataFrame unchanged (no tuple, no wasted/inaccessible observation), and metrics are
+        # instead computed by DQEngine.compute_summary_metrics over the checked table. The engine's
+        # observer (incl. its custom_metrics) is still used by that method.
+        if is_dlt_pipeline(self.spark):
+            logger.info(
+                "Spark Declarative Pipeline detected: observe()-based summary metrics are disabled. "
+                "Compute metrics with DQEngine.compute_summary_metrics(...) in a materialized view instead."
+            )
             return df
 
         metric_exprs = [F.expr(m) for m in self.observer.get_metrics(check_names)]
@@ -1515,6 +1531,116 @@ class DQEngine(DQEngineBase):
         handler = self._checks_handler_factory.create(config)
         handler.save(resolved_checks, config)
 
+    def _build_metrics_observation(
+        self,
+        observed_metrics: dict[str, Any] | None = None,
+        input_config: InputConfig | None = None,
+        output_config: OutputConfig | None = None,
+        quarantine_config: OutputConfig | None = None,
+        checks_location: str | None = None,
+        rule_set_fingerprint: str | None = None,
+    ) -> DQMetricsObservation:
+        """Build a *DQMetricsObservation* from the engine's run state and the given configs/metadata.
+
+        Args:
+            observed_metrics: Collected summary metrics, when already available (the observe / streaming path).
+            input_config: Optional input configuration recorded for traceability.
+            output_config: Optional output configuration recorded for traceability.
+            quarantine_config: Optional quarantine configuration recorded for traceability.
+            checks_location: Optional checks location recorded for traceability.
+            rule_set_fingerprint: Optional SHA-256 fingerprint of the rule set used for this run.
+
+        Returns:
+            A *DQMetricsObservation* populated from the engine's run id, run time, result column names, and metadata.
+        """
+        return DQMetricsObservation(
+            run_id=self._engine.run_id,
+            run_name=self._engine.observer.name if self._engine.observer else DQMetricsObserver().name,
+            run_time_overwrite=self._engine.run_time_overwrite,
+            observed_metrics=observed_metrics,
+            error_column_name=self._engine.result_column_names[ColumnArguments.ERRORS],
+            warning_column_name=self._engine.result_column_names[ColumnArguments.WARNINGS],
+            input_location=input_config.location if input_config else None,
+            output_location=output_config.location if output_config else None,
+            quarantine_location=quarantine_config.location if quarantine_config else None,
+            checks_location=checks_location,
+            rule_set_fingerprint=rule_set_fingerprint,
+            user_metadata=self._engine.engine_user_metadata,
+        )
+
+    @telemetry_logger("engine", "compute_summary_metrics")
+    def compute_summary_metrics(
+        self,
+        checked_df: DataFrame,
+        checks: list[dict] | None = None,
+        custom_check_functions: dict[str, Callable] | None = None,
+        input_config: InputConfig | None = None,
+        output_config: OutputConfig | None = None,
+        quarantine_config: OutputConfig | None = None,
+        checks_location: str | None = None,
+    ) -> DataFrame:
+        """Compute data quality summary metrics from a checked DataFrame by aggregation.
+
+        Unlike the observer/listener path (which relies on Spark *observe()* and a caller-triggered
+        action), this computes the same metrics as a plain aggregation over the result columns and
+        returns a lazy DataFrame. This makes it usable inside Spark Declarative Pipelines (SDP /
+        Lakeflow / DLT), where the pipeline runtime — not the caller — owns the write action: define a
+        downstream materialized view over the checked table that returns the result of this method.
+
+        Args:
+            checked_df: DataFrame produced by *apply_checks* / *apply_checks_by_metadata* (must still
+                contain the DQX result columns, i.e. before *get_valid* / *get_invalid* drop them).
+            checks: Optional metadata checks that were applied (the same list of dicts passed to
+                *apply_checks_by_metadata*). When provided, a per-check breakdown (*check_metrics*) is
+                included covering every applied check, including checks with zero violations. The breakdown
+                is derived from the check names and cannot be reconstructed from data alone, so pass the
+                same checks used when applying. When omitted, only dataset-level metrics (row counts and
+                any observer custom metrics) are produced.
+            custom_check_functions: Optional custom check functions used to resolve metadata checks. Pass the
+                *same* functions that were used when the checks were applied — if the applied checks referenced a
+                custom function and it is not supplied here, deserialization fails or resolves a different check
+                name, so the *check_metrics* breakdown and *rule_set_fingerprint* would not match the applied run.
+            input_config: Optional input configuration recorded in the metrics for traceability.
+            output_config: Optional output configuration recorded in the metrics for traceability.
+            quarantine_config: Optional quarantine configuration recorded in the metrics for traceability.
+            checks_location: Optional checks location recorded in the metrics for traceability.
+
+        Note:
+            A *DQMetricsObserver* must be configured on this engine (*DQEngine(..., observer=...)*); its
+            *custom_metrics* (if any) are included alongside the built-in dataset-level metrics and the
+            per-check breakdown (when *checks* is provided).
+
+        Returns:
+            A lazy DataFrame matching *OBSERVATION_TABLE_SCHEMA* with one row per metric.
+
+        Raises:
+            InvalidParameterError: If no *DQMetricsObserver* is configured on the engine.
+        """
+        observer = self._engine.observer
+        if observer is None:
+            raise InvalidParameterError(
+                "Summary metrics cannot be computed for an engine with no observer. "
+                "Configure a DQMetricsObserver on the engine, e.g. DQEngine(workspace_client, observer=DQMetricsObserver(...))."
+            )
+
+        check_names: list[str] | None = None
+        rule_set_fingerprint: str | None = None
+        if checks:
+            rules = deserialize_checks(checks, custom_check_functions)
+            # Duplicate check names are preserved so check_metrics reports each occurrence separately.
+            check_names = [rule.name for rule in rules]
+            rule_set_fingerprint = compute_rule_set_fingerprint(rules)
+
+        aggregated_df = checked_df.selectExpr(*observer.get_metrics(check_names))
+        observation = self._build_metrics_observation(
+            input_config=input_config,
+            output_config=output_config,
+            quarantine_config=quarantine_config,
+            checks_location=checks_location,
+            rule_set_fingerprint=rule_set_fingerprint,
+        )
+        return DQMetricsObserver.build_metrics_df_from_aggregation(aggregated_df, observation)
+
     @telemetry_logger("engine", "save_summary_metrics")
     def save_summary_metrics(
         self,
@@ -1548,20 +1674,13 @@ class DQEngine(DQEngineBase):
             This method is only supported by spark batch. Spark query listener must be used for streaming:
             For streaming use spark.streams.addListener(get_streaming_metrics_listener(..))
         """
-        run_name = self._engine.observer.name if self._engine.observer else DQMetricsObserver().name
-        metrics_observation = DQMetricsObservation(
-            run_id=self._engine.run_id,
-            run_name=run_name,
-            run_time_overwrite=self._engine.run_time_overwrite,
+        metrics_observation = self._build_metrics_observation(
             observed_metrics=observed_metrics,
-            error_column_name=self._engine.result_column_names[ColumnArguments.ERRORS],
-            warning_column_name=self._engine.result_column_names[ColumnArguments.WARNINGS],
-            input_location=input_config.location if input_config else None,
-            output_location=output_config.location if output_config else None,
-            quarantine_location=quarantine_config.location if quarantine_config else None,
+            input_config=input_config,
+            output_config=output_config,
+            quarantine_config=quarantine_config,
             checks_location=checks_location,
             rule_set_fingerprint=rule_set_fingerprint,
-            user_metadata=self._engine.engine_user_metadata,
         )
 
         metrics_df = DQMetricsObserver.build_metrics_df(self.spark, metrics_observation)
@@ -1605,18 +1724,12 @@ class DQEngine(DQEngineBase):
         self._validate_metrics_observer(metrics_config)
         assert self._engine.observer is not None  # guaranteed by _validate_metrics_observer above (required by mypy)
 
-        metrics_observation = DQMetricsObservation(
-            run_id=self._engine.run_id,
-            run_name=self._engine.observer.name,
-            run_time_overwrite=self._engine.run_time_overwrite,
-            error_column_name=self._engine.result_column_names[ColumnArguments.ERRORS],
-            warning_column_name=self._engine.result_column_names[ColumnArguments.WARNINGS],
-            input_location=input_config.location if input_config else None,
-            output_location=output_config.location if output_config else None,
-            quarantine_location=quarantine_config.location if quarantine_config else None,
+        metrics_observation = self._build_metrics_observation(
+            input_config=input_config,
+            output_config=output_config,
+            quarantine_config=quarantine_config,
             checks_location=checks_location,
             rule_set_fingerprint=rule_set_fingerprint,
-            user_metadata=self._engine.engine_user_metadata,
         )
         return StreamingMetricsListener(metrics_config, metrics_observation, self.spark, target_query_id)
 

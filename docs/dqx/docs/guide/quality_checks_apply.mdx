@@ -1019,6 +1019,53 @@ To enable summary metrics programmatically, create and pass a `DQMetricsObserver
   </TabItem>
 </Tabs>
 
+### Enabling summary metrics in Lakeflow Pipelines
+
+Inside a Lakeflow Pipeline (Spark Declarative Pipeline / DLT), do the following:
+
+1. Persist the checked data as a table (so the result columns are available downstream).
+2. Add a materialized view that calls `compute_summary_metrics` on that table, passing the same `checks` you applied.
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    import dlt
+    from databricks.labs.dqx.engine import DQEngine
+    from databricks.labs.dqx.metrics_observer import DQMetricsObserver
+    from databricks.sdk import WorkspaceClient
+
+    # compute_summary_metrics requires an observer on the engine; it reads any custom_metrics from it.
+    dq_engine = DQEngine(WorkspaceClient(), observer=DQMetricsObserver())
+
+    @dlt.view
+    def bronze():
+      return spark.readStream.table("catalog.schema.input")
+
+    # 1. Apply checks and persist the checked data as a table.
+    @dlt.table
+    def silver():
+      df = dlt.read_stream("bronze")
+      return dq_engine.apply_checks_by_metadata(df, checks)
+
+    # 2. Compute summary metrics as a materialized view over the checked table.
+    @dlt.table
+    def dq_summary_metrics():
+      df = dlt.read("silver")
+      return dq_engine.compute_summary_metrics(df, checks=checks)
+    ```
+  </TabItem>
+</Tabs>
+
+This works for both batch and streaming pipelines. See the [Lakeflow pipeline demo](https://github.com/databrickslabs/dqx/blob/v0.15.0/demos/dqx_dlt_demo.py) for a complete example, or the [quarantine variant](https://github.com/databrickslabs/dqx/blob/v0.15.0/demos/dqx_dlt_demo_quarantine.py) that splits valid and invalid records into separate tables.
+
+<Admonition type="info" title="Summary Metrics: Snapshot vs. history">
+The example is using a materialized view to compute the summary metrics. The view is recomputed on each pipeline update, so it holds a **current snapshot** of the metrics over all rows in the checked table. Because it aggregates the whole table, `input_row_count` is the cumulative total, not a per-run count.
+
+To keep a **history** of metrics over time you need an append target: for **streaming** pipelines append per-window metrics from a windowed streaming table (recommended), and for **batch** pipelines append `compute_summary_metrics` output from a companion job. See the [Summary Metrics guide](/docs/guide/summary_metrics) for examples.
+</Admonition>
+
+**Why not the observer directly?** The observer (`observe()`) and the streaming metrics listener do not work inside a declarative pipeline: the pipeline runtime — not your code — triggers the write action, so the Spark Observation is never populated (`observation.get` stalls) and the streaming listener receives no events. DQX detects the pipeline runtime and automatically skips wiring `observe()` there. `compute_summary_metrics` computes the same metrics as an aggregation instead, but still reads from the engine's observer — so **an observer must be configured** on the engine (calling it without one raises `InvalidParameterError`), and if you need **custom metrics**, configure it with them (`DQMetricsObserver(custom_metrics=[...])`). See the [Summary Metrics guide](/docs/guide/summary_metrics) for details.
+
 ### Enabling summary metrics in DQX workflows
 
 Summary metrics can also be enabled in DQX workflows. Metrics are configured:
