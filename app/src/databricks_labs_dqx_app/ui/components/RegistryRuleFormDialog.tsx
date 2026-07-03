@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import {
@@ -62,7 +62,7 @@ type Polarity = "pass" | "fail";
 // The tab strip shows one extra pseudo-mode — "ai" — which isn't a
 // persisted RegistryMode. It's the guided Build-with-AI experience; once a
 // proposal is applied, the active tab switches to the real underlying mode.
-type AuthoringTab = RegistryMode | "ai";
+export type AuthoringTab = RegistryMode | "ai";
 
 const COLUMN_KINDS = new Set(["column", "columns"]);
 const PARAM_KIND_TO_TYPE: Record<string, RuleParameterType> = {
@@ -290,6 +290,15 @@ interface RegistryRuleFormDialogProps {
   viewingRule: RegistryRuleOut | null;
   labelDefinitions: LabelDefinition[];
   onSaved: () => void;
+  /**
+   * "dialog" (default) renders the classic modal used for creating a new
+   * rule. "page" renders the same fields inline (no Dialog/overlay chrome)
+   * for embedding on a routed detail page — see registry-rules.$ruleId.tsx.
+   */
+  variant?: "dialog" | "page";
+  /** Controlled authoring tab (e.g. synced to a `?tab=` URL param). Falls back to internal state when omitted. */
+  activeTab?: AuthoringTab;
+  onActiveTabChange?: (tab: AuthoringTab) => void;
 }
 
 function extractApiError(err: unknown, fallback: string): string {
@@ -304,6 +313,9 @@ export function RegistryRuleFormDialog({
   viewingRule,
   labelDefinitions,
   onSaved,
+  variant = "dialog",
+  activeTab: controlledActiveTab,
+  onActiveTabChange,
 }: RegistryRuleFormDialogProps) {
   const { t } = useTranslation();
   const sourceRule = editingRule ?? viewingRule;
@@ -330,7 +342,15 @@ export function RegistryRuleFormDialog({
   );
 
   const [mode, setMode] = useState<RegistryMode>("dqx_native");
-  const [activeTab, setActiveTab] = useState<AuthoringTab>("dqx_native");
+  const [internalActiveTab, setInternalActiveTab] = useState<AuthoringTab>("dqx_native");
+  const activeTab = controlledActiveTab ?? internalActiveTab;
+  const setActiveTab = useCallback(
+    (tab: AuthoringTab) => {
+      setInternalActiveTab(tab);
+      onActiveTabChange?.(tab);
+    },
+    [onActiveTabChange],
+  );
   const [functionName, setFunctionName] = useState("");
   const [paramRawValues, setParamRawValues] = useState<Record<string, string>>({});
   const [sqlPredicate, setSqlPredicate] = useState("");
@@ -695,29 +715,25 @@ export function RegistryRuleFormDialog({
 
   const showAiTab = !readOnly && aiAvailability.available;
 
-  return (
-    <Dialog open={open} onOpenChange={(next) => !saving && onOpenChange(next)}>
-      <DialogContent className="max-w-2xl w-[95vw] max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            {dialogTitle}
-            {authorKind === "ai_generated" && (
-              <Badge variant="secondary" className="gap-1 text-[10px] font-normal">
-                <Sparkles className="h-2.5 w-2.5" />
-                {t("rulesRegistry.authorKindAiGenerated")}
-              </Badge>
-            )}
-            {authorKind === "ai_assisted" && (
-              <Badge variant="secondary" className="gap-1 text-[10px] font-normal">
-                <Sparkles className="h-2.5 w-2.5" />
-                {t("rulesRegistry.authorKindAiAssisted")}
-              </Badge>
-            )}
-          </DialogTitle>
-          <DialogDescription>{t("rulesRegistry.dialogDescription")}</DialogDescription>
-        </DialogHeader>
+  const authorKindBadges = (
+    <>
+      {authorKind === "ai_generated" && (
+        <Badge variant="secondary" className="gap-1 text-[10px] font-normal">
+          <Sparkles className="h-2.5 w-2.5" />
+          {t("rulesRegistry.authorKindAiGenerated")}
+        </Badge>
+      )}
+      {authorKind === "ai_assisted" && (
+        <Badge variant="secondary" className="gap-1 text-[10px] font-normal">
+          <Sparkles className="h-2.5 w-2.5" />
+          {t("rulesRegistry.authorKindAiAssisted")}
+        </Badge>
+      )}
+    </>
+  );
 
-        <div className="space-y-4">
+  const formBody = (
+    <div className="space-y-4">
           <Tabs
             value={activeTab}
             onValueChange={(v) => {
@@ -1050,24 +1066,55 @@ export function RegistryRuleFormDialog({
             />
           </div>
         </div>
+  );
 
-        <DialogFooter>
-          <Button variant="outline" onClick={closeAndReset} disabled={saving}>
-            {readOnly ? t("common.close") : t("common.cancel")}
+  const footerButtons = (
+    <>
+      <Button variant="outline" onClick={closeAndReset} disabled={saving}>
+        {readOnly ? t("common.close") : t("common.cancel")}
+      </Button>
+      {!readOnly && (
+        <>
+          <Button variant="secondary" onClick={() => handleSave(false)} disabled={saving} className="gap-2">
+            {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+            {t("rulesRegistry.saveDraft")}
           </Button>
-          {!readOnly && (
-            <>
-              <Button variant="secondary" onClick={() => handleSave(false)} disabled={saving} className="gap-2">
-                {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                {t("rulesRegistry.saveDraft")}
-              </Button>
-              <Button onClick={() => handleSave(true)} disabled={saving} className="gap-2">
-                {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                {t("rulesRegistry.saveAndSubmit")}
-              </Button>
-            </>
-          )}
-        </DialogFooter>
+          <Button onClick={() => handleSave(true)} disabled={saving} className="gap-2">
+            {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+            {t("rulesRegistry.saveAndSubmit")}
+          </Button>
+        </>
+      )}
+    </>
+  );
+
+  if (variant === "page") {
+    // The routed detail page already renders its own name/status/mode/
+    // author-kind header above this component, so skip the dialog-style
+    // title here (which would duplicate it) and keep just the helper text.
+    return (
+      <div className="space-y-6">
+        <p className="text-sm text-muted-foreground">{t("rulesRegistry.dialogDescription")}</p>
+        {formBody}
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end sm:gap-2 pt-4 border-t">
+          {footerButtons}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(next) => !saving && onOpenChange(next)}>
+      <DialogContent className="max-w-2xl w-[95vw] max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            {dialogTitle}
+            {authorKindBadges}
+          </DialogTitle>
+          <DialogDescription>{t("rulesRegistry.dialogDescription")}</DialogDescription>
+        </DialogHeader>
+        {formBody}
+        <DialogFooter>{footerButtons}</DialogFooter>
       </DialogContent>
     </Dialog>
   );
