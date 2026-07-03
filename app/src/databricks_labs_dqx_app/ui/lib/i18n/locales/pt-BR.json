@@ -762,6 +762,7 @@
     "argHintDateFormat": "ex.: yyyy-MM-dd",
     "argHintTimestampFormat": "ex.: yyyy-MM-dd HH:mm:ss",
     "argHintExpression": "expressão SQL, ex.: col > 0",
+    "argHintQuery": "Consulta SELECT retornando linhas que VIOLAM a verificação (zero linhas = verificação aprovada)",
     "argHintMsg": "Mensagem de erro",
     "argHintCidrBlock": "ex.: 192.168.1.0/24",
     "argHintValue": "valor para comparação",

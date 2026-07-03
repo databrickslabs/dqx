@@ -32,8 +32,12 @@ Rule format:
 Guidelines:
 - Use double quotes for all JSON keys and string values.
 - For string literal values inside check arguments wrap them in single quotes.
-- In SQL filter expressions use single quotes for string literals and capitalise SQL keywords.
+- In SQL filter expressions and sql_expression arguments use single quotes for string literals and capitalise SQL keywords.
+- Use the SQL equality operator = (NOT the Python operator ==). String comparisons: col = 'value', NOT col == value or col == 'value'.
 - Use "filter" only when the rule applies to a subset of rows.
+
+Example of a correct sql_expression check:
+  {{"function": "sql_expression", "arguments": {{"expression": "status = 'active' AND region != 'unknown'", "msg": "Status must be active in a known region", "columns": ["status", "region"]}}}}
 
 Available check functions:
 {available_functions}"""
@@ -142,13 +146,51 @@ class AiRulesService:
             try:
                 parsed = json.loads(text)
                 if isinstance(parsed, dict) and "quality_rules" in parsed:
-                    return parsed["quality_rules"]
+                    return self._fix_expression_syntax(parsed["quality_rules"])
                 if isinstance(parsed, list):
-                    return parsed
+                    return self._fix_expression_syntax(parsed)
             except json.JSONDecodeError:
                 continue
         logger.warning("Could not parse LLM response as JSON: %.500s", content)
         return []
+
+    @staticmethod
+    def _fix_expression_syntax(checks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Fix common AI-generated SQL syntax errors in sql_expression checks.
+
+        Two repairs applied to the ``expression`` argument:
+        1. Replace Python ``==`` with SQL ``=``.
+        2. Add single quotes around multi-word string literals after comparison
+           operators (e.g. ``!= Needs Review`` → ``!= 'Needs Review'``).
+           Multi-word tokens can never be bare SQL identifiers so this is safe.
+        """
+        for check in checks:
+            fn = (check.get("check") or {}).get("function")
+            args = (check.get("check") or {}).get("arguments") or {}
+            expr = args.get("expression")
+            if fn != "sql_expression" or not isinstance(expr, str):
+                continue
+
+            # Fix Python == to SQL = (skip !=, <=, >=)
+            expr = re.sub(r"(?<![!<>=])==(?!=)", "=", expr)
+
+            # Quote multi-word unquoted string literals after comparison operators.
+            # Matches: (op)(whitespace)(WORD WORD+) before AND/OR/)/end
+            def _quote(m: re.Match) -> str:  # type: ignore[type-arg]
+                op, val = m.group(1), m.group(2).strip()
+                return f"{op}'{val}'"
+
+            expr = re.sub(
+                r"((?:!=|<>|=|<=|>=|<|>)\s+)"
+                r"([A-Za-z][A-Za-z0-9]+(?: [A-Za-z][A-Za-z0-9]+)+)"
+                r"(?=\s*(?:\bAND\b|\bOR\b|\)|\bTHEN\b|$|,))",
+                _quote,
+                expr,
+                flags=re.IGNORECASE,
+            )
+
+            args["expression"] = expr
+        return checks
 
     @staticmethod
     def _extract_json_candidates(content: str) -> list[str]:

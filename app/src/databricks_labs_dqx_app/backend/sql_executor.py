@@ -354,7 +354,26 @@ class SqlExecutor:
         returned expression is safe to inline into a larger statement
         as it already includes the proper escaping.
         """
-        return f"parse_json('{escape_sql_string(json_str)}')"
+        # Databricks SQL (Spark SQL) interprets backslash escape sequences
+        # inside single-quoted string literals.  Two problems to solve:
+        #
+        # 1. Single quotes: the SQL '' (doubled-quote) escape causes Databricks
+        #    VARIANT to strip the quotes during the parse_json() -> to_json()
+        #    round-trip.  Encode them as the JSON Unicode escape ' instead
+        #    so no raw single quotes appear in the SQL literal.  parse_json()
+        #    decodes ' -> ' and stores the character correctly.
+        #
+        # 2. Backslash sequences: \n, \t, \\ etc. inside the SQL literal are
+        #    interpreted by Databricks before parse_json() sees the string.
+        #    Doubling every backslash ensures \n (2-char JSON escape) becomes
+        #    \\n in the SQL -> Databricks evaluates to \n -> parse_json() sees a
+        #    valid JSON escape sequence.
+        #
+        # Order matters: replace ' with ' first (introduces backslashes),
+        # then double all backslashes (including those from step 1).
+        safe = json_str.replace("'", "\\u0027")
+        safe = safe.replace("\\", "\\\\")
+        return f"parse_json('{safe}')"
 
     def ts_text(self, col: str) -> str:
         """Project a timestamp column as an ISO-formatted string.

@@ -129,8 +129,8 @@ variables:
           value: "${var.catalog_name}"
         - name: "DQX_SCHEMA"
           value: "${var.schema_name}"
-        - value_from: "DQX_JOB_ID"
-          value: "dqx-task-runner-job"
+        - name: "DQX_JOB_ID"
+          value_from: "dqx-task-runner-job"
         - name: "DQX_TMP_SCHEMA"
           value: "${var.tmp_schema_name}"
         - name: "DQX_ADMIN_GROUP"
@@ -388,7 +388,7 @@ targets:
       catalog_name: uc_cjp_qa
       dqx_service_principal_application_id: "818ab164-e764-4bd0-bf5d-2e7726a92fe5"
       sql_warehouse_id: "13df5a7f4c61072a"   # just the ID
-      task_runner_job_id: "239838879800390"
+      task_runner_job_id: "942769312384991"
       schema_name: "dqx_app"
       tmp_schema_name: "dqx_app_tmp"
       app_name: "dqx-app"

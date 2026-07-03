@@ -5,20 +5,20 @@ command:
 - 2
 env:
 - name: DATABRICKS_WAREHOUSE_ID
-  value: cd5e118a673141a1
+  value: 13df5a7f4c61072a
 - name: DQX_CATALOG
-  value: uc_eid_sandbox_prod
+  value: uc_cjp_qa
 - name: DQX_SCHEMA
-  value: dqx_studio_app
+  value: dqx_app
 - name: DQX_JOB_ID
-  value: 1016271587084628
+  value: 239838879800390
 - name: DQX_TMP_SCHEMA
-  value: dqx_studio_app_tmp
+  value: dqx_app_tmp
 - name: DQX_ADMIN_GROUP
   value: admins
 - name: DQX_WHEELS_VOLUME
-  value: /Volumes/uc_eid_sandbox_prod/dqx_studio_app/wheels
+  value: /Volumes/uc_cjp_qa/dqx_app/wheels
 - name: DQX_LAKEBASE_INSTANCE_NAME
-  value: 
+  value:
 - name: DQX_LAKEBASE_DATABASE_NAME
-  value: 
+  value:

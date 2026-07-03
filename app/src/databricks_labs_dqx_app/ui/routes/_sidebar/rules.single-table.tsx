@@ -129,6 +129,10 @@ interface CheckFunctionArg {
   hint?: string;
   /** Helper text rendered under the input (small, muted). */
   help?: string;
+  /** True when the engine expects a ``columns`` list rather than a scalar
+   *  ``column``. Drives serialization in ``checkToDict`` for functions like
+   *  ``sql_expression`` that take ``columns: list[str]``. */
+  isMultiColumn?: boolean;
 }
 
 interface CheckFunctionDef {
@@ -283,6 +287,7 @@ function apiParamToArg(
     type,
     required: param.required,
   };
+  if (param.kind === "columns") arg.isMultiColumn = true;
   const hint = ov.hint ?? defaultHint;
   if (hint) arg.hint = hint;
   const help = ov.help;
@@ -390,14 +395,17 @@ function checkToDict(c: CheckDraft): Record<string, unknown> {
     // Drop UI-only ``col_name`` for known functions that don't take it.
     if (k === "col_name" && isKnownFn && !argDefByName.has("col_name")) continue;
 
-    // ``is_unique`` is special: the UI captures one or more columns under
-    // ``col_name`` (CSV) but DQX expects a ``columns`` list.
-    if (c.fn === "is_unique" && k === "col_name") {
-      args["columns"] = v.split(",").map((s) => s.trim()).filter(Boolean);
+    const argDef = argDefByName.get(k);
+
+    // Some functions (is_unique, sql_expression, …) take a ``columns`` list
+    // rather than a scalar ``column``. The API marks these with kind="columns"
+    // which sets isMultiColumn on the arg def. Serialize as a list so DQX
+    // validation doesn't reject with "Unexpected argument 'column'".
+    if (k === "col_name" && (argDef?.isMultiColumn || c.fn === "is_unique")) {
+      const cols = v.split(",").map((s) => s.trim()).filter(Boolean);
+      if (cols.length > 0) args["columns"] = cols;
       continue;
     }
-
-    const argDef = argDefByName.get(k);
     const engineKey = UI_TO_ENGINE_ARG_MAP[k] ?? k;
 
     if (argDef) {
@@ -755,8 +763,7 @@ function UnifiedRulesPage() {
       const generated = resp.data.checks ?? [];
       const drafts = generated
         .map((c) => aiCheckToDraft(c as Record<string, unknown>))
-        .filter((d): d is CheckDraft => d !== null)
-        .filter((d) => d.fn !== "sql_query");
+        .filter((d): d is CheckDraft => d !== null);
       for (const d of drafts) {
         d.description = aiPrompt.trim();
         if (effectiveTable) d.targetTables = [effectiveTable];
@@ -2019,6 +2026,7 @@ function CheckCard({ check, index, onUpdate, onRemove, canRemove, disabled, isDu
                 const validationErr = validateArg(argDef.name, val, check.fn, t);
                 const hasError = !!validationErr;
                 const showRequiredHint = argDef.required && isEmpty;
+                const isQueryArg = argDef.name === "query";
 
                 if (argDef.type === "boolean") {
                   // Boolean inputs render as a yes/no select. We always
@@ -2054,7 +2062,7 @@ function CheckCard({ check, index, onUpdate, onRemove, canRemove, disabled, isDu
                 }
 
                 return (
-                  <div key={argDef.name} className="space-y-1">
+                  <div key={argDef.name} className={`space-y-1 ${isQueryArg ? "col-span-full" : ""}`}>
                     <Label
                       className={`text-[11px] ${
                         hasError
@@ -2070,21 +2078,39 @@ function CheckCard({ check, index, onUpdate, onRemove, canRemove, disabled, isDu
                         <span className="ml-1 text-muted-foreground/60">{t("rulesSingleTable.optional")}</span>
                       )}
                     </Label>
-                    <Input
-                      className={`h-7 text-xs ${
-                        hasError
-                          ? "border-red-400 focus-visible:ring-red-400"
-                          : showRequiredHint
-                            ? "border-amber-400 focus-visible:ring-amber-400"
-                            : ""
-                      }`}
-                      placeholder={argDef.hint || argHint(argDef.name, check.fn, t)}
-                      value={val}
-                      onChange={(e) =>
-                        onUpdate(check.id, { args: { ...check.args, [argDef.name]: e.target.value } })
-                      }
-                      disabled={disabled}
-                    />
+                    {isQueryArg ? (
+                      <Textarea
+                        className={`min-h-[100px] text-xs font-mono resize-y ${
+                          hasError
+                            ? "border-red-400 focus-visible:ring-red-400"
+                            : showRequiredHint
+                              ? "border-amber-400 focus-visible:ring-amber-400"
+                              : ""
+                        }`}
+                        placeholder={argDef.hint || t("rulesSingleTable.argHintQuery")}
+                        value={val}
+                        onChange={(e) =>
+                          onUpdate(check.id, { args: { ...check.args, [argDef.name]: e.target.value } })
+                        }
+                        disabled={disabled}
+                      />
+                    ) : (
+                      <Input
+                        className={`h-7 text-xs ${
+                          hasError
+                            ? "border-red-400 focus-visible:ring-red-400"
+                            : showRequiredHint
+                              ? "border-amber-400 focus-visible:ring-amber-400"
+                              : ""
+                        }`}
+                        placeholder={argDef.hint || argHint(argDef.name, check.fn, t)}
+                        value={val}
+                        onChange={(e) =>
+                          onUpdate(check.id, { args: { ...check.args, [argDef.name]: e.target.value } })
+                        }
+                        disabled={disabled}
+                      />
+                    )}
                     {hasError && (
                       <p className="text-[10px] text-red-500 flex items-center gap-1">
                         <AlertCircle className="h-2.5 w-2.5 shrink-0" />

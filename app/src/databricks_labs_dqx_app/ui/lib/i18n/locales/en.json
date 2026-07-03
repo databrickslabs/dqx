@@ -762,6 +762,7 @@
     "argHintDateFormat": "e.g. yyyy-MM-dd",
     "argHintTimestampFormat": "e.g. yyyy-MM-dd HH:mm:ss",
     "argHintExpression": "SQL expression, e.g. col > 0",
+    "argHintQuery": "SELECT query returning rows that VIOLATE the check (zero rows = check passes)",
     "argHintMsg": "Error message",
     "argHintCidrBlock": "e.g. 192.168.1.0/24",
     "argHintValue": "comparison value",
