@@ -30,6 +30,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Separator } from "@/components/ui/separator";
 import {
   AlertCircle,
   Check,
@@ -40,6 +41,7 @@ import {
   Loader2,
   Search,
   Sparkles,
+  Users,
   Wand2,
   Wrench,
   X,
@@ -71,7 +73,7 @@ import {
 } from "@/lib/api";
 import { useAiAvailability, aiUnavailableReason } from "@/hooks/use-ai-availability";
 import { AI_BUTTON_BG, AI_ICON_COLOR, AI_BANNER_BG, AI_BANNER_BORDER } from "@/lib/ai-style";
-import { orderSeverityValuesForDisplay } from "@/components/RegistryRuleBadges";
+import { orderSeverityValuesForDisplay, colorFor, ColorDot, type LabelColorDefinition } from "@/components/RegistryRuleBadges";
 
 const RESERVED_NAME_KEY = "name";
 const RESERVED_DESCRIPTION_KEY = "description";
@@ -89,7 +91,7 @@ export type AuthoringTab = RegistryMode | "ai";
 // Top-level page tabs. Persisted to the URL (`?tab=`) by the routed detail
 // page so browser back/forward moves between them, mirroring the old dqx
 // editor's page-based structure.
-export type PageTab = "about" | "implementation" | "test" | "history";
+export type PageTab = "about" | "sharing" | "implementation" | "test" | "history";
 
 const COLUMN_KINDS = new Set(["column", "columns"]);
 const PARAM_KIND_TO_TYPE: Record<string, RuleParameterType> = {
@@ -1179,40 +1181,36 @@ export function RegistryRuleFormDialog({
     </>
   );
 
+  // Field order mirrors dqlake's AboutTab: Name, Description, a divider,
+  // then Default Severity before Dimension — each picker shows the same
+  // colored dot dqlake renders next to the selected value (sourced from the
+  // label definition's configured value_colors, same data DQX already uses
+  // for badges elsewhere). Steward now lives on its own Sharing tab (see
+  // sharingTabContent below), matching dqlake's About/Sharing split.
   const aboutTabContent = (
-    <div className="space-y-3 pt-2">
-      <div className="grid gap-3 sm:grid-cols-2">
-        <div className="space-y-1.5">
-          <div className="flex items-center justify-between gap-2">
-            <Label className="text-xs">{t("rulesRegistry.nameLabel")}</Label>
-            {!readOnly && aiAvailability.available && (
-              <SuggestButton
-                field="name"
-                busy={suggestingField === "name"}
-                onClick={() => handleAiSuggestField("name")}
-                label={t("rulesRegistry.aiSuggestButton")}
-              />
-            )}
-          </div>
-          <Input
-            className={`h-8 text-xs ${nameError ? "border-red-400 focus-visible:ring-red-400" : ""}`}
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            disabled={readOnly}
-            placeholder={t("rulesRegistry.namePlaceholder")}
-          />
-          {nameError && <p className="text-[10px] text-red-500">{nameError}</p>}
+    <div className="space-y-4 pt-2">
+      <div className="space-y-1.5">
+        <div className="flex items-center justify-between gap-2">
+          <Label className="text-xs">
+            {t("rulesRegistry.nameLabel")} <span className="text-destructive">*</span>
+          </Label>
+          {!readOnly && aiAvailability.available && (
+            <SuggestButton
+              field="name"
+              busy={suggestingField === "name"}
+              onClick={() => handleAiSuggestField("name")}
+              label={t("rulesRegistry.aiSuggestButton")}
+            />
+          )}
         </div>
-        <div className="space-y-1.5">
-          <Label className="text-xs">{t("rulesRegistry.stewardLabel")}</Label>
-          <Input
-            className="h-8 text-xs"
-            value={steward}
-            onChange={(e) => setSteward(e.target.value)}
-            disabled={readOnly}
-            placeholder={t("rulesRegistry.stewardPlaceholder")}
-          />
-        </div>
+        <Input
+          className={`h-8 text-xs ${nameError ? "border-red-400 focus-visible:ring-red-400" : ""}`}
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          disabled={readOnly}
+          placeholder={t("rulesRegistry.namePlaceholder")}
+        />
+        {nameError && <p className="text-[10px] text-red-500">{nameError}</p>}
       </div>
 
       <div className="space-y-1.5">
@@ -1236,59 +1234,74 @@ export function RegistryRuleFormDialog({
         />
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2">
-        <div className="space-y-1.5">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-1.5">
-              <Label className="text-xs">{t("rulesRegistry.dimensionLabel")}</Label>
-              <HelpTooltip text={t("rulesRegistry.dimensionTooltip")} />
-            </div>
-            {!readOnly && aiAvailability.available && dimensionValues.length > 0 && (
-              <SuggestButton
-                field="dimension"
-                busy={suggestingField === "dimension"}
-                onClick={() => handleAiSuggestField("dimension")}
-                label={t("rulesRegistry.aiSuggestButton")}
-              />
-            )}
+      <Separator />
+
+      <div className="space-y-1.5">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5">
+            <Label className="text-xs">
+              {t("rulesRegistry.severityLabel")} <span className="text-destructive">*</span>
+            </Label>
+            <HelpTooltip text={t("rulesRegistry.severityTooltip")} />
           </div>
-          <Select value={dimension || undefined} onValueChange={setDimension} disabled={readOnly}>
-            <SelectTrigger className="h-8 text-xs w-full">
-              <SelectValue placeholder={t("rulesRegistry.selectDimension")} />
-            </SelectTrigger>
-            <SelectContent>
-              {dimensionValues.map((v) => (
-                <SelectItem key={v} value={v} className="text-xs">{v}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          {!readOnly && aiAvailability.available && severityValues.length > 0 && (
+            <SuggestButton
+              field="severity"
+              busy={suggestingField === "severity"}
+              onClick={() => handleAiSuggestField("severity")}
+              label={t("rulesRegistry.aiSuggestButton")}
+            />
+          )}
         </div>
-        <div className="space-y-1.5">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-1.5">
-              <Label className="text-xs">{t("rulesRegistry.severityLabel")}</Label>
-              <HelpTooltip text={t("rulesRegistry.severityTooltip")} />
-            </div>
-            {!readOnly && aiAvailability.available && severityValues.length > 0 && (
-              <SuggestButton
-                field="severity"
-                busy={suggestingField === "severity"}
-                onClick={() => handleAiSuggestField("severity")}
-                label={t("rulesRegistry.aiSuggestButton")}
-              />
-            )}
+        <Select value={severity || undefined} onValueChange={setSeverity} disabled={readOnly}>
+          <SelectTrigger className="h-8 w-full max-w-xs text-xs">
+            <SelectValue placeholder={t("rulesRegistry.selectSeverity")} />
+          </SelectTrigger>
+          <SelectContent>
+            {severityValues.map((v) => (
+              <SelectItem key={v} value={v} className="text-xs">
+                <span className="flex items-center gap-1.5">
+                  <ColorDot color={colorFor(labelDefinitions as LabelColorDefinition[], RESERVED_SEVERITY_KEY, v)} />
+                  {v}
+                </span>
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div className="space-y-1.5">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5">
+            <Label className="text-xs">
+              {t("rulesRegistry.dimensionLabel")} <span className="text-destructive">*</span>
+            </Label>
+            <HelpTooltip text={t("rulesRegistry.dimensionTooltip")} />
           </div>
-          <Select value={severity || undefined} onValueChange={setSeverity} disabled={readOnly}>
-            <SelectTrigger className="h-8 text-xs w-full">
-              <SelectValue placeholder={t("rulesRegistry.selectSeverity")} />
-            </SelectTrigger>
-            <SelectContent>
-              {severityValues.map((v) => (
-                <SelectItem key={v} value={v} className="text-xs">{v}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          {!readOnly && aiAvailability.available && dimensionValues.length > 0 && (
+            <SuggestButton
+              field="dimension"
+              busy={suggestingField === "dimension"}
+              onClick={() => handleAiSuggestField("dimension")}
+              label={t("rulesRegistry.aiSuggestButton")}
+            />
+          )}
         </div>
+        <Select value={dimension || undefined} onValueChange={setDimension} disabled={readOnly}>
+          <SelectTrigger className="h-8 w-full max-w-xs text-xs">
+            <SelectValue placeholder={t("rulesRegistry.selectDimension")} />
+          </SelectTrigger>
+          <SelectContent>
+            {dimensionValues.map((v) => (
+              <SelectItem key={v} value={v} className="text-xs">
+                <span className="flex items-center gap-1.5">
+                  <ColorDot color={colorFor(labelDefinitions as LabelColorDefinition[], RESERVED_DIMENSION_KEY, v)} />
+                  {v}
+                </span>
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
       <LabelsEditor
@@ -1299,6 +1312,29 @@ export function RegistryRuleFormDialog({
         defaultOpen={Object.keys(tags).length > 0}
         definitions={tagDefinitions}
       />
+    </div>
+  );
+
+  // Sharing tab — mirrors dqlake's About/Sharing split by moving Steward out
+  // of About onto its own tab. dqlake's Sharing tab also has a "Shared with"
+  // audience picker backed by a principal-search API and a visibility model
+  // DQX's registry schema doesn't have (rules aren't scoped to specific
+  // users/groups here) — that half is intentionally not fabricated.
+  const sharingTabContent = (
+    <div className="space-y-4 pt-2">
+      <div className="space-y-1.5">
+        <div className="flex items-center gap-1.5">
+          <Label className="text-xs">{t("rulesRegistry.stewardLabel")}</Label>
+          <HelpTooltip text={t("rulesRegistry.sharingStewardHelp")} />
+        </div>
+        <Input
+          className="h-8 w-full max-w-xs text-xs"
+          value={steward}
+          onChange={(e) => setSteward(e.target.value)}
+          disabled={readOnly}
+          placeholder={t("rulesRegistry.stewardPlaceholder")}
+        />
+      </div>
     </div>
   );
 
@@ -1617,31 +1653,44 @@ export function RegistryRuleFormDialog({
     </div>
   );
 
+  // Two-group tab strip, matching dqlake's RuleTabs: editing tabs (About /
+  // Sharing / Implementation) on the left, review tabs (Test / History) on
+  // the right, sharing one Tabs root so either side drives the same
+  // TabsContent panels.
   const formBody = (
     <div className="space-y-4">
       <Tabs value={pageTab} onValueChange={(v) => setPageTab(v as PageTab)}>
-        <TabsList className="grid w-full grid-cols-4">
-          <TabsTrigger value="about" className="gap-1.5">
-            <Info className="h-3.5 w-3.5" />
-            {t("rulesRegistry.tabAbout")}
-          </TabsTrigger>
-          <TabsTrigger value="implementation" className="gap-1.5">
-            <Wrench className="h-3.5 w-3.5" />
-            {t("rulesRegistry.tabImplementation")}
-          </TabsTrigger>
-          <TabsTrigger value="test" className="gap-1.5">
-            <FlaskConical className="h-3.5 w-3.5" />
-            {t("rulesRegistry.tabTest")}
-          </TabsTrigger>
-          <TabsTrigger value="history" className="gap-1.5" disabled={!sourceRule}>
-            <HistoryIcon className="h-3.5 w-3.5" />
-            {t("rulesRegistry.tabHistory")}
-          </TabsTrigger>
-        </TabsList>
-        <TabsContent value="about">{aboutTabContent}</TabsContent>
-        <TabsContent value="implementation">{implementationTabContent}</TabsContent>
-        <TabsContent value="test">{testTabContent}</TabsContent>
-        <TabsContent value="history">{historyTabContent}</TabsContent>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <TabsList>
+            <TabsTrigger value="about" className="gap-1.5">
+              <Info className="h-3.5 w-3.5" />
+              {t("rulesRegistry.tabAbout")}
+            </TabsTrigger>
+            <TabsTrigger value="sharing" className="gap-1.5">
+              <Users className="h-3.5 w-3.5" />
+              {t("rulesRegistry.tabSharing")}
+            </TabsTrigger>
+            <TabsTrigger value="implementation" className="gap-1.5">
+              <Wrench className="h-3.5 w-3.5" />
+              {t("rulesRegistry.tabImplementation")}
+            </TabsTrigger>
+          </TabsList>
+          <TabsList>
+            <TabsTrigger value="test" className="gap-1.5">
+              <FlaskConical className="h-3.5 w-3.5" />
+              {t("rulesRegistry.tabTest")}
+            </TabsTrigger>
+            <TabsTrigger value="history" className="gap-1.5" disabled={!sourceRule}>
+              <HistoryIcon className="h-3.5 w-3.5" />
+              {t("rulesRegistry.tabHistory")}
+            </TabsTrigger>
+          </TabsList>
+        </div>
+        <TabsContent value="about" className="pt-4">{aboutTabContent}</TabsContent>
+        <TabsContent value="sharing" className="pt-4">{sharingTabContent}</TabsContent>
+        <TabsContent value="implementation" className="pt-4">{implementationTabContent}</TabsContent>
+        <TabsContent value="test" className="pt-4">{testTabContent}</TabsContent>
+        <TabsContent value="history" className="pt-4">{historyTabContent}</TabsContent>
       </Tabs>
     </div>
   );
