@@ -102,10 +102,6 @@
       "rbac": "Role-based approval workflow"
     }
   },
-  "approvalSteps": {
-    "stepOne": "① A rule must be approved in the Rules Registry.",
-    "stepTwo": "② Applying it to a table and publishing activates it."
-  },
   "auth": {
     "loadingMessage": "Initializing DQX Studio...",
     "loadingDescription": "Setting up your workspace connection",
@@ -1704,9 +1700,6 @@
     "aboutLoadFailedHint": "The table may have been dropped or you may not have access to it in Unity Catalog.",
     "statusBadgeDraft": "Draft — not yet published",
     "statusBadgePublished": "Published",
-    "unpublishedChangesTitle": "Unpublished changes",
-    "unpublishedChangesDescription": "Applied rule changes are staged and won't run until you publish.",
-    "neverPublishedDescription": "This table has never been published. Publish to materialize its applied rules into active checks.",
     "publishButton": "Publish",
     "publishing": "Publishing…",
     "toastPublished": "Monitored table published.",

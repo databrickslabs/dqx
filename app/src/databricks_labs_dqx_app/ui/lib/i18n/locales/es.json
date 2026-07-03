@@ -102,10 +102,6 @@
       "rbac": "Aprobación basada en roles"
     }
   },
-  "approvalSteps": {
-    "stepOne": "① Una regla debe aprobarse en el Registro de Reglas.",
-    "stepTwo": "② Aplicarla a una tabla y publicarla es lo que la activa."
-  },
   "auth": {
     "loadingMessage": "Inicializando DQX Studio...",
     "loadingDescription": "Configurando tu conexión al workspace",
@@ -1704,9 +1700,6 @@
     "aboutLoadFailedHint": "Es posible que la tabla se haya eliminado o que no tenga acceso a ella en Unity Catalog.",
     "statusBadgeDraft": "Borrador — aún no publicado",
     "statusBadgePublished": "Publicado",
-    "unpublishedChangesTitle": "Cambios sin publicar",
-    "unpublishedChangesDescription": "Los cambios en las reglas aplicadas están pendientes y no se ejecutarán hasta que publiques.",
-    "neverPublishedDescription": "Esta tabla nunca se ha publicado. Publica para materializar sus reglas aplicadas en comprobaciones activas.",
     "publishButton": "Publicar",
     "publishing": "Publicando…",
     "toastPublished": "Tabla monitorizada publicada.",

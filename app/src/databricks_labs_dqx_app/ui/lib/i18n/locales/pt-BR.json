@@ -102,10 +102,6 @@
       "rbac": "Aprovação baseada em funções"
     }
   },
-  "approvalSteps": {
-    "stepOne": "① Uma regra precisa ser aprovada no Registro de Regras.",
-    "stepTwo": "② Aplicá-la a uma tabela e publicar é o que a ativa."
-  },
   "auth": {
     "loadingMessage": "Inicializando o DQX Studio...",
     "loadingDescription": "Configurando sua conexão com o workspace",
@@ -1704,9 +1700,6 @@
     "aboutLoadFailedHint": "A tabela pode ter sido removida ou você pode não ter acesso a ela no Unity Catalog.",
     "statusBadgeDraft": "Rascunho — ainda não publicado",
     "statusBadgePublished": "Publicado",
-    "unpublishedChangesTitle": "Alterações não publicadas",
-    "unpublishedChangesDescription": "As mudanças nas regras aplicadas estão pendentes e não serão executadas até você publicar.",
-    "neverPublishedDescription": "Esta tabela nunca foi publicada. Publique para materializar suas regras aplicadas em checagens ativas.",
     "publishButton": "Publicar",
     "publishing": "Publicando…",
     "toastPublished": "Tabela monitorada publicada.",

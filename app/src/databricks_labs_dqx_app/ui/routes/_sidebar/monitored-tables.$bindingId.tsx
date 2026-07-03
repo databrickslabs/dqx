@@ -74,7 +74,6 @@ import { usePermissions } from "@/hooks/use-permissions";
 import { useJobPolling } from "@/hooks/use-job-polling";
 import { formatDateShort } from "@/lib/format-utils";
 import { cn } from "@/lib/utils";
-import { ApprovalStepsBanner } from "@/components/ApprovalStepsBanner";
 import { useAiAvailability } from "@/hooks/use-ai-availability";
 import { AI_BUTTON_BG } from "@/lib/ai-style";
 import { AddRulesDialog } from "@/components/apply-rules/AddRulesDialog";
@@ -151,8 +150,6 @@ function MonitoredTableDetailPage() {
   const table = detail.table;
   const appliedRules = useMemo(() => detail.applied_rules ?? [], [detail.applied_rules]);
 
-  const [dirty, setDirty] = useState(false);
-
   const invalidateDetail = useCallback(
     () => queryClient.invalidateQueries({ queryKey: getGetMonitoredTableQueryKey(bindingId) }),
     [queryClient, bindingId],
@@ -160,8 +157,7 @@ function MonitoredTableDetailPage() {
 
   const onMutated = useCallback(() => {
     invalidateDetail();
-    if (table.status === "published") setDirty(true);
-  }, [invalidateDetail, table.status]);
+  }, [invalidateDetail]);
 
   const publishMutation = usePublishMonitoredTable();
   const handlePublish = () => {
@@ -170,7 +166,6 @@ function MonitoredTableDetailPage() {
       {
         onSuccess: () => {
           toast.success(t("monitoredTables.toastPublished"));
-          setDirty(false);
           invalidateDetail();
         },
         onError: (err) => {
@@ -216,27 +211,6 @@ function MonitoredTableDetailPage() {
             </Button>
           )}
         </div>
-
-        {table.status !== "published" && (
-          <Card className="border-amber-500/50 bg-amber-500/5">
-            <CardContent className="py-3 text-sm text-amber-700 dark:text-amber-400">
-              {t("monitoredTables.neverPublishedDescription")}
-            </CardContent>
-          </Card>
-        )}
-
-        {table.status === "published" && dirty && (
-          <Card className="border-amber-500/50 bg-amber-500/5">
-            <CardHeader className="py-3 pb-0">
-              <CardTitle className="text-sm text-amber-700 dark:text-amber-400">
-                {t("monitoredTables.unpublishedChangesTitle")}
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="py-3 text-sm text-amber-700 dark:text-amber-400">
-              {t("monitoredTables.unpublishedChangesDescription")}
-            </CardContent>
-          </Card>
-        )}
 
         <Tabs defaultValue="apply-rules">
           <TabsList>
@@ -798,8 +772,6 @@ function ApplyRulesTab({
 
   return (
     <div className="space-y-4 pt-4">
-      <ApprovalStepsBanner />
-
       <div className="flex items-center gap-3 flex-wrap">
         {appliedRules.length > 0 && (
           <TooltipProvider delayDuration={200}>
