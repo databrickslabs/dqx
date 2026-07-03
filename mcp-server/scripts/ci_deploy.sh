@@ -50,22 +50,12 @@ echo "::group::run setup job (UC grants + temp-schema ownership)"
 databricks bundle run dqx_setup -t "${BUNDLE_TARGET}" "${VARS[@]}" "${PROFILE_ARG[@]}"
 echo "::endgroup::"
 
-echo "::group::start + deploy app code"
-databricks apps start "${NAME_PREFIX}" "${PROFILE_ARG[@]}" || true
-# `apps deploy` requires the app COMPUTE to be ACTIVE. A brand-new app's app_status stays
-# "UNAVAILABLE" until code is deployed, so we wait on compute_status (which `start` brings up),
-# not app_status.
-for _ in $(seq 1 60); do
-  state="$(databricks apps get "${NAME_PREFIX}" "${PROFILE_ARG[@]}" -o json \
-    | python3 -c 'import sys,json; print(json.load(sys.stdin).get("compute_status",{}).get("state",""))')"
-  [ "${state}" = "ACTIVE" ] && break
-  echo "waiting for app compute to become ACTIVE (state=${state:-unknown})..."
-  sleep 10
-done
-# The app deploys from the bundle's synced files dir (workspace.file_path).
-FILE_PATH="$(databricks bundle summary -t "${BUNDLE_TARGET}" "${VARS[@]}" "${PROFILE_ARG[@]}" -o json \
-  | python3 -c 'import sys,json; print(json.load(sys.stdin)["workspace"]["file_path"])')"
-databricks apps deploy "${NAME_PREFIX}" --source-code-path "${FILE_PATH}" "${PROFILE_ARG[@]}"
+echo "::group::deploy + start app"
+# Use `bundle run` (not raw `apps deploy --source-code-path`) so the app's runtime config —
+# command + env, incl. DQX_CATALOG — comes from the bundle's inline `config:` block (there is no
+# app.yaml). This matches `make mcp-deploy`; raw `apps deploy` reads app.yaml from the source and
+# would fail with "No command to run" now that the config lives in databricks.yml.
+databricks bundle run mcp-dqx -t "${BUNDLE_TARGET}" "${VARS[@]}" "${PROFILE_ARG[@]}"
 echo "::endgroup::"
 
 # Emit the app URL and the app's service principal (application id). The SP is the identity

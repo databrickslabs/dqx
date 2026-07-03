@@ -228,6 +228,18 @@ mcp-deploy: ## Deploy the MCP server bundle, run setup, and (re)deploy + start t
 	cd mcp-server && databricks bundle run dqx_setup -p $(PROFILE) $(if $(TARGET),-t $(TARGET)) --var catalog_name=$(CATALOG) $(BUNDLE_VARS)
 	cd mcp-server && databricks bundle run mcp-dqx -p $(PROFILE) $(if $(TARGET),-t $(TARGET)) --var catalog_name=$(CATALOG) $(BUNDLE_VARS)
 
+# One-command teardown (nothing in the MCP bundle is destroy-protected, so — unlike the Studio's
+# multi-step unbind-then-destroy uninstall — this is a single command). Removes the app + runner/
+# setup jobs, then drops the out-of-band runner-wheel volume. Leaves the <catalog>.tmp schema and any
+# dqx_mcp_<user> output schemas intact (they may hold user data) — drop those manually if you want a
+# fully clean wipe. runner_service_principal_id isn't needed to destroy, so its placeholder is fine.
+mcp-destroy: ## Tear down the MCP server (app + jobs + runner-wheel volume). Requires PROFILE + CATALOG
+	@test -n "$(PROFILE)" || (echo "Usage: make mcp-destroy PROFILE=<databricks-profile> CATALOG=<catalog> [TARGET=<bundle-target>]"; exit 1)
+	@test -n "$(CATALOG)" || (echo "Usage: make mcp-destroy PROFILE=<databricks-profile> CATALOG=<catalog> [TARGET=<bundle-target>]"; exit 1)
+	cd mcp-server && databricks bundle destroy -p $(PROFILE) $(if $(TARGET),-t $(TARGET)) --auto-approve --var catalog_name=$(CATALOG) $(BUNDLE_VARS)
+	cd mcp-server && databricks volumes delete $(CATALOG).tmp.dqx_artifacts -p $(PROFILE) 2>/dev/null || true
+	@echo "Destroyed the MCP app + jobs and the dqx_artifacts volume. The $(CATALOG).tmp schema and any $(CATALOG).dqx_mcp_<user> output schemas are left intact — drop them manually if you want a full wipe."
+
 ##@ App deploy (require PROFILE=<databricks-profile>; most also need TARGET=<bundle-target>)
 
 # Minimum Databricks CLI version required to deploy. The ``postgres_roles``

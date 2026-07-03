@@ -120,6 +120,26 @@ class TestProfileTable:
         assert result["status"] == "submitted"
         assert result["run_id"] == 999
 
+    def test_drops_temp_view_if_submit_fails(self):
+        """If submission throws after the OBO view is created, the view is dropped (no leak)."""
+        import pytest
+
+        tools = _register_tools()
+        with (
+            patch("server.tools.utils.get_obo_client"),
+            patch("server.tools.utils.get_warehouse_id", return_value="wh123"),
+            patch("server.tools.utils.create_temp_view", return_value="dqx_mcp.tmp.v_leak"),
+            patch("server.tools.utils.submit_job_async", side_effect=RuntimeError("submit boom")),
+            patch("server.tools.utils.drop_view") as mock_drop,
+            patch.dict("os.environ", _ENV),
+        ):
+            with pytest.raises(RuntimeError, match="submit boom"):
+                tools["profile_table"]("catalog.schema.table")
+
+        # The exact view that was created is dropped (as the OBO client) on the submit failure.
+        mock_drop.assert_called_once()
+        assert mock_drop.call_args[0][1] == "dqx_mcp.tmp.v_leak"
+
 
 class TestRunChecks:
     """Test that run_checks creates a view and submits a job, returning a run_id."""

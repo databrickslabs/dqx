@@ -6,6 +6,7 @@ import pytest
 
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.jobs import (
+    JobParameter,
     Run,
     RunOutput,
     RunState,
@@ -28,6 +29,8 @@ def _make_terminated_run(result_state: RunResultState, run_id: int = 123) -> Mag
     task_run = MagicMock()
     task_run.run_id = 456
     run.tasks = [task_run]
+    # No requesting_user recorded → submitter "" matches an unset caller (no OBO context) in tests.
+    run.job_parameters = []
     return run
 
 
@@ -335,6 +338,25 @@ class TestSubmitJobAsync:
         assert job_parameters["operation"] == "profile_table"
         assert json.loads(job_parameters["params"]) == {"view_name": "c.s.v_abc", "columns": ["a"]}
         assert job_parameters["results_volume"] == "/Volumes/cat/tmp/mcp_results"
+        # requesting_user is recorded on the run so get_run_status can authorize the reader (IDOR guard).
+        assert "requesting_user" in job_parameters
+
+    def test_stamps_requesting_user_from_obo_email(self):
+        from server.utils import submit_job_async, _user_email_var
+
+        ws = create_autospec(WorkspaceClient)
+        ws.jobs.run_now.return_value = MagicMock(run_id=123)
+        tok = _user_email_var.set("alice@example.com")
+        try:
+            with (
+                patch("server.utils._get_sp_client", return_value=ws),
+                patch("server.utils._maybe_sweep_stale_views"),
+                patch.dict("os.environ", _JOB_ID_ENV),
+            ):
+                submit_job_async("profile_table", {"view_name": "c.s.v"})
+        finally:
+            _user_email_var.reset(tok)
+        assert ws.jobs.run_now.call_args.kwargs["job_parameters"]["requesting_user"] == "alice@example.com"
 
     def test_raises_when_no_job_id(self):
         from server.utils import submit_job_async
@@ -468,6 +490,52 @@ class TestGetRunStatus:
 
         assert result["status"] == "completed"
 
+    def test_denies_run_submitted_by_another_user(self):
+        """IDOR guard: a caller may not read a run someone else submitted (not_found, no disclosure)."""
+        from server.utils import get_run_status, _user_email_var
+
+        ws = create_autospec(WorkspaceClient)
+        run = _make_terminated_run(RunResultState.SUCCESS)
+        run.job_id = 42
+        run.job_parameters = [JobParameter(name="requesting_user", value="alice@example.com")]
+        ws.jobs.get_run.return_value = run
+
+        tok = _user_email_var.set("bob@example.com")  # a different caller
+        try:
+            with (
+                patch("server.utils._get_sp_client", return_value=ws),
+                patch.dict("os.environ", _JOB_ID_ENV),
+            ):
+                result = get_run_status(123)
+        finally:
+            _user_email_var.reset(tok)
+
+        assert result["status"] == "not_found"
+        # The result file is never even read for a run the caller doesn't own.
+        ws.files.download.assert_not_called()
+
+    def test_allows_run_submitted_by_same_user(self):
+        from server.utils import get_run_status, _user_email_var
+
+        ws = create_autospec(WorkspaceClient)
+        run = _make_terminated_run(RunResultState.SUCCESS)
+        run.job_id = 42
+        run.job_parameters = [JobParameter(name="requesting_user", value="alice@example.com")]
+        ws.jobs.get_run.return_value = run
+        ws.files.download.return_value.contents.read.return_value = json.dumps({"ok": True}).encode()
+
+        tok = _user_email_var.set("Alice@example.com")  # same user (case-insensitive)
+        try:
+            with (
+                patch("server.utils._get_sp_client", return_value=ws),
+                patch.dict("os.environ", _JOB_ID_ENV),
+            ):
+                result = get_run_status(123)
+        finally:
+            _user_email_var.reset(tok)
+
+        assert result["status"] == "completed"
+
 
 class TestSweepStaleViews:
     def test_drops_only_views_older_than_ttl(self):
@@ -511,6 +579,7 @@ class TestSweepStaleViews:
         run = MagicMock(spec=Run)
         run.state = MagicMock(spec=RunState)
         run.state.life_cycle_state = RunLifeCycleState.RUNNING
+        run.job_parameters = []
         ws.jobs.get_run.return_value = run
 
         with patch("server.utils._get_sp_client", return_value=ws):

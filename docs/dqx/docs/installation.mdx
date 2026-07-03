@@ -665,33 +665,40 @@ databricks auth login --host https://<your-workspace-url> --profile <profile>
 
 #### 2. Deploy
 
-**One command** (parity with the Studio app's `make app-deploy`):
+Both parameters are **required**: `<catalog>` is the UC catalog that holds the temp views, per-user
+output schemas, and the runner-wheel volume (`/Volumes/<catalog>/tmp/dqx_artifacts`) — it's injected
+into the app as `DQX_CATALOG` — and `<runner-sp-application-id>` is the [runner SP](#runner-service-principal-one-time)
+(its placeholder default is not a real SP).
+
+**Any platform (Databricks CLI only — Windows, macOS, Linux; no `make` needed).** Run these from the
+`mcp-server/` directory, substituting your values. On Windows use PowerShell or `cmd` (the commands
+are identical — only the `<...>` placeholders change):
+
+```bash
+# 1. Create the UC volume that hosts the runner wheels. It must exist BEFORE 'bundle deploy'
+#    uploads the wheels into it. (Already exists on re-deploy — the "already exists" error is safe.)
+databricks schemas create tmp <catalog> --profile <profile>
+databricks volumes create <catalog> tmp dqx_artifacts MANAGED --profile <profile>
+
+# 2. Deploy the bundle (app + runner job + setup job)
+databricks bundle deploy --var catalog_name=<catalog> --var runner_service_principal_id=<runner-sp-application-id> --profile <profile>
+
+# 3. Run the one-time setup job (UC grants; idempotent)
+databricks bundle run dqx_setup --var catalog_name=<catalog> --var runner_service_principal_id=<runner-sp-application-id> --profile <profile>
+
+# 4. Deploy and start the app (uses the bundle's inline app config — command + DQX_CATALOG)
+databricks bundle run mcp-dqx --var catalog_name=<catalog> --var runner_service_principal_id=<runner-sp-application-id> --profile <profile>
+```
+
+**macOS / Linux shortcut.** If you have `make`, the same four steps are wrapped in one command
+(step 1 via `scripts/ensure_artifacts_volume.sh`):
 
 ```bash
 make mcp-deploy PROFILE=<profile> CATALOG=<catalog> \
   BUNDLE_VARS='--var runner_service_principal_id=<runner-sp-application-id>'
 ```
 
-This ensures the runner-wheel volume exists, then runs `bundle deploy`, the one-time setup job, and finally deploys + starts the app. Both flags are **required**: `CATALOG` is the UC catalog that holds the temp views, per-user output schemas, and the runner-wheel volume (`/Volumes/<catalog>/tmp/dqx_artifacts`) — it's injected into the app as `DQX_CATALOG` — and `runner_service_principal_id` (its placeholder default is not a real SP) — use the application id of the [runner SP](#runner-service-principal-one-time). Add `TARGET=<target>` for a non-default bundle target.
-
-**Or step by step** (what `make mcp-deploy` runs):
-
-```bash
-cd mcp-server
-VARS='--var runner_service_principal_id=<runner-sp-application-id> --var catalog_name=<catalog>'
-
-# Ensure the runner-wheel volume exists BEFORE deploy uploads artifacts into it
-DQX_MCP_CATALOG=<catalog> DATABRICKS_PROFILE=<profile> ./scripts/ensure_artifacts_volume.sh
-
-# Deploy the bundle (app + runner job + setup job)
-databricks bundle deploy $VARS --profile <profile>
-
-# Run the one-time setup job (idempotent)
-databricks bundle run dqx_setup $VARS --profile <profile>
-
-# Deploy and start the app
-databricks bundle run mcp-dqx $VARS --profile <profile>
-```
+Add `-t <target>` (CLI) or `TARGET=<target>` (make) for a non-default bundle target.
 
 The **setup job**:
 - Creates the `<catalog>.tmp` schema (for temp views) and the `<catalog>.tmp.mcp_results` volume (for result files)
@@ -704,7 +711,7 @@ The **setup job**:
 - Grants the **app SP** `CAN_MANAGE_RUN` on the runner job (so the app can submit runs and poll results)
 - Grants the **runner SP** `READ VOLUME` on the `<catalog>.tmp.dqx_artifacts` volume (so the serverless env can install the runner wheel)
 
-The `dqx_artifacts` volume that hosts the runner wheels is created **before** `bundle deploy` (by `scripts/ensure_artifacts_volume.sh`, which `make mcp-deploy` runs for you) because `bundle deploy` uploads the wheels into it. This is why `CATALOG` must be passed at deploy time.
+The `dqx_artifacts` volume that hosts the runner wheels must exist **before** `bundle deploy` (step 1 above) because `bundle deploy` uploads the wheels into it — that's why the catalog is required at deploy time. On macOS/Linux `make mcp-deploy` runs step 1 for you via `scripts/ensure_artifacts_volume.sh`; on any platform the two `databricks schemas create` / `databricks volumes create` commands do the same thing.
 
 #### 3. Find your MCP endpoint
 

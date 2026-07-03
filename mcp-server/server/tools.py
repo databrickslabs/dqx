@@ -15,6 +15,21 @@ def _get_tmp_view_config() -> tuple[str, str]:
     return catalog, schema
 
 
+def _submit_or_drop_view(operation: str, params: dict, obo_ws, view_fqn: str, warehouse_id: str) -> int:
+    """Submit the runner job; if submission fails after the OBO temp view was created, drop the view.
+
+    The runner drops its own view in a ``finally``, but only if it actually starts. A submission that
+    throws *after* ``create_temp_view`` (e.g. ``DQX_RUNNER_JOB_ID`` unset, a ``run_now`` RPC error, or
+    the throttled stale-view sweep raising) would otherwise leak the view in the shared ``tmp`` schema
+    until the TTL sweeper reaps it. Drop it here (as the caller/OBO client that created it) on failure.
+    """
+    try:
+        return utils.submit_job_async(operation, params)
+    except Exception:
+        utils.drop_view(obo_ws, view_fqn, warehouse_id)
+        raise
+
+
 def load_tools(mcp_server):
     """Register all DQX MCP tools with the server.
 
@@ -89,9 +104,12 @@ def load_tools(mcp_server):
 
         view_fqn = utils.create_temp_view(obo_ws, table_name, catalog, schema, warehouse_id)
 
-        run_id = utils.submit_job_async(
+        run_id = _submit_or_drop_view(
             "profile_table",
             {"view_name": view_fqn, "table_name": table_name, "columns": columns, "options": options},
+            obo_ws,
+            view_fqn,
+            warehouse_id,
         )
 
         return {
@@ -238,11 +256,11 @@ def load_tools(mcp_server):
             # Read through the view; let the runner drop it in its finally (stateless cleanup).
             job_params["location"] = view_fqn
             job_params["view_name"] = view_fqn
+            run_id = _submit_or_drop_view("load_checks", job_params, obo_ws, view_fqn, warehouse_id)
         else:
             utils.verify_obo_read_access(obo_ws, location)
             job_params["location"] = location
-
-        run_id = utils.submit_job_async("load_checks", job_params)
+            run_id = utils.submit_job_async("load_checks", job_params)
 
         return {
             "status": "submitted",
@@ -350,9 +368,12 @@ def load_tools(mcp_server):
 
         view_fqn = utils.create_temp_view(obo_ws, table_name, catalog, schema, warehouse_id)
 
-        run_id = utils.submit_job_async(
+        run_id = _submit_or_drop_view(
             "run_checks",
             {"view_name": view_fqn, "table_name": table_name, "checks": checks, "sample_size": sample_size},
+            obo_ws,
+            view_fqn,
+            warehouse_id,
         )
 
         return {
@@ -409,7 +430,7 @@ def load_tools(mcp_server):
         # no caller-supplied write destination and no write pre-check to get wrong.
         view_fqn = utils.create_temp_view(obo_ws, table_name, catalog, schema, warehouse_id)
 
-        run_id = utils.submit_job_async(
+        run_id = _submit_or_drop_view(
             "apply_checks_and_save_to_table",
             {
                 "view_name": view_fqn,
@@ -421,6 +442,9 @@ def load_tools(mcp_server):
                 "catalog": catalog,
                 "grant_to": utils.get_user_email(),
             },
+            obo_ws,
+            view_fqn,
+            warehouse_id,
         )
 
         return {

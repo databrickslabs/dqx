@@ -13,16 +13,18 @@ variables:
   # isolated copy alongside an existing deployment — used by the CI integration workflow.
   name_prefix:
     default: "mcp-dqx"
-  # Catalog for temp views AND the UC volume that hosts the runner wheels. REQUIRED at deploy
-  # time: workspace.artifact_path (below) is built from it and is resolved during `bundle deploy`,
-  # so an empty value produces an invalid `/Volumes//tmp/...` path. Pass the SAME catalog you set
-  # in the secret scope, e.g. --var catalog_name=<catalog>. The placeholder default keeps the
-  # bundle syntactically valid but every real deploy must override it.
+  # Catalog for temp views + per-user output schemas AND the UC volume that hosts the runner wheels.
+  # REQUIRED at deploy time: workspace.artifact_path (below) is built from it and is resolved during
+  # `bundle deploy`, so an empty value produces an invalid `/Volumes//tmp/...` path. It is injected
+  # into the app as the DQX_CATALOG config env value (no secret scope — a catalog name isn't
+  # sensitive). Pass e.g. --var catalog_name=<catalog> (or CATALOG=<catalog> via make mcp-deploy).
+  # The placeholder default keeps the bundle syntactically valid but every real deploy must override it.
   catalog_name:
     default: ""
   # Application ID of the **dedicated workspace service principal** the runner job runs as.
   # This is NOT the app's auto-created SP — an app-scoped SP cannot be a job run_as identity,
-  # so a separate workspace SP is required (see README "Runner identity"). The placeholder
+  # so a separate workspace SP is required (see the "Runner service principal" section of the DQX
+  # MCP Server installation docs). The placeholder
   # default keeps the bundle syntactically valid; every real deploy MUST override it, e.g.
   #   databricks bundle deploy --var runner_service_principal_id=<app-id-of-the-runner-sp>
   # The deploying identity needs the "Service Principal: User" role on this SP (admins have it
@@ -97,6 +99,11 @@ resources:
         # Full UC-volume path for result files, e.g. /Volumes/<catalog>/tmp/mcp_results. The app
         # sets this per-submit from its catalog config; the runner writes <run_id>.json there.
         - name: results_volume
+          default: ""
+        # Email of the user who submitted this run (from the OBO X-Forwarded-Email header). Not read
+        # by the runner — it's recorded on the run so get_run_result can authorize the reader: only
+        # the submitter may fetch a run's result (results can contain their governed source data).
+        - name: requesting_user
           default: ""
 
     # One-time setup job — grants USE CATALOG to users and app SP.

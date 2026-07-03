@@ -340,17 +340,25 @@ Once the run completes, these steps collapse into a single summary badge with th
 
 ```bash
 git pull
-make mcp-deploy PROFILE=<profile>
+make mcp-deploy PROFILE=<profile> CATALOG=<catalog> \
+  BUNDLE_VARS='--var runner_service_principal_id=<runner-sp-application-id>'
 ```
 
-**Uninstall** — none of the resources are destroy-protected:
+**Uninstall** — none of the resources are destroy-protected, so teardown is a single command:
 
 ```bash
+# macOS / Linux (make)
+make mcp-destroy PROFILE=<profile> CATALOG=<catalog>
+
+# Any platform (Databricks CLI only)
 cd mcp-server
-databricks bundle destroy --profile <profile>     # removes the app + both jobs
+databricks bundle destroy --auto-approve --var catalog_name=<catalog> --profile <profile>   # removes the app + both jobs
+databricks volumes delete <catalog>.tmp.dqx_artifacts --profile <profile>                    # drop the runner-wheel volume
 ```
 
-The `<catalog>.tmp` schema (temp views + results/artifacts volumes) and any `dqx_mcp_<user>` output schemas are **not** part of the bundle — remove them manually if desired (`DROP SCHEMA <catalog>.tmp CASCADE`, and any `<catalog>.dqx_mcp_*`).
+`bundle destroy` only removes resources **this** bundle deployment tracks — if the workspace also has an `mcp-dqx` app or `mcp-dqx-runner`/`-setup` jobs from a *separate* deploy (e.g. a colleague's, or an isolated `name_prefix` copy), remove those separately.
+
+The `<catalog>.tmp` schema (temp views + results volume) and any `dqx_mcp_<user>` output schemas are **not** part of the bundle — remove them manually if desired (`DROP SCHEMA <catalog>.tmp CASCADE`, and any `<catalog>.dqx_mcp_*`).
 
 ## Getting help
 

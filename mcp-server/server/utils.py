@@ -258,6 +258,20 @@ def get_warehouse_id(ws: Any) -> str:
     return wh.id
 
 
+# A statement still PENDING/RUNNING after the execute wait window is polled to completion rather
+# than treated as a failure (a cold-start warehouse or a very wide/partitioned table can exceed it).
+_SQL_POLL_TIMEOUT_SECONDS = 120
+_SQL_POLL_INTERVAL_SECONDS = 2.0
+
+
+def _statement_state(result: Any) -> str:
+    """Normalized statement lifecycle state string (e.g. 'SUCCEEDED', 'RUNNING', 'FAILED')."""
+    state = result.status.state if result.status else None
+    if state is None:
+        return "UNKNOWN"
+    return str(getattr(state, "value", state))
+
+
 def execute_sql(ws: Any, query: str, warehouse_id: str) -> list[dict[str, Any]]:
     """Execute a SQL query using the Databricks SQL Statement API.
 
@@ -278,7 +292,16 @@ def execute_sql(ws: Any, query: str, warehouse_id: str) -> list[dict[str, Any]]:
         wait_timeout="30s",
     )
 
-    state = str(result.status.state.value if hasattr(result.status.state, "value") else result.status.state)
+    # on_wait_timeout defaults to CONTINUE, so a slow statement can still be PENDING/RUNNING when the
+    # 30s wait elapses. Poll to completion instead of misreporting a healthy-but-slow query as failed.
+    deadline = time.monotonic() + _SQL_POLL_TIMEOUT_SECONDS
+    while _statement_state(result) in ("PENDING", "RUNNING") and result.statement_id:
+        if time.monotonic() > deadline:
+            raise RuntimeError(f"SQL query did not complete within {_SQL_POLL_TIMEOUT_SECONDS}s")
+        time.sleep(_SQL_POLL_INTERVAL_SECONDS)
+        result = ws.statement_execution.get_statement(result.statement_id)
+
+    state = _statement_state(result)
     if state != "SUCCEEDED":
         error_msg = getattr(result.status.error, "message", str(result.status.error)) if result.status.error else state
         raise RuntimeError(f"SQL query failed: {error_msg}")
@@ -719,12 +742,15 @@ def submit_job_async(operation: str, params: dict[str, Any]) -> int:
 
     # job_parameters (not notebook_params): the runner is a python_wheel_task. results_volume tells
     # the runner where to write <run_id>.json; the app reads it back in get_run_status.
+    # requesting_user records the submitting caller on the run so get_run_status can authorize the
+    # reader (only the submitter may fetch the result — see the IDOR guard there).
     wait = ws.jobs.run_now(
         job_id=job_id,
         job_parameters={
             "operation": operation,
             "params": json.dumps(params),
             "results_volume": _get_results_volume(),
+            "requesting_user": get_user_email() or "",
         },
     )
 
@@ -786,6 +812,17 @@ def get_run_status(run_id: int) -> dict[str, Any]:
             return _run_not_found(run_id)
     except RuntimeError:
         pass
+
+    # Authorize the read: a run's result can contain the submitter's governed data (e.g. sampled
+    # rows from their source table), so only the user who submitted the run may read it. run_id is a
+    # guessable sequential integer and every user has CAN_MANAGE_RUN on the shared runner job, so we
+    # bind the run to its submitter via the requesting_user parameter recorded at submit time and
+    # reject a mismatch as not_found — without disclosing the result OR the run's existence/status.
+    submitter = next((p.value for p in (run.job_parameters or []) if p.name == "requesting_user"), "") or ""
+    caller = get_user_email() or ""
+    if submitter.strip().lower() != caller.strip().lower():
+        logger.warning(f"Denying run {run_id}: submitter/caller mismatch")
+        return _run_not_found(run_id)
 
     life_cycle = run.state.life_cycle_state.value if run.state and run.state.life_cycle_state else "UNKNOWN"
     if life_cycle in ("PENDING", "RUNNING", "QUEUED", "BLOCKED"):
