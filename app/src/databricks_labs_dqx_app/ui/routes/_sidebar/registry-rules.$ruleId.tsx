@@ -148,8 +148,11 @@ function RegistryRuleDetailPage() {
   const canEdit = rule.status === "draft" && perms.canCreateRules;
   const name = getTag(rule, RESERVED_NAME_KEY) || rule.rule_id;
 
-  // Delete is restricted to approver/admin here, matching the backend
-  // deleteRegistryRule role gate.
+  // The backend deleteRegistryRule route allows admin/approver/author
+  // (create_rules). This menu deliberately restricts delete further to
+  // approver/admin — deleting from the detail page (any status, including
+  // published rules) is a heavier action than the list page's draft-only
+  // delete, which stays scoped to canCreateRules.
   const canDelete = perms.canApproveRules;
 
   return (
