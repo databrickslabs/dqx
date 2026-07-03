@@ -152,6 +152,56 @@ class TestRenderCheckMatchesHandAuthoredShape:
             assert check["criticality"] == expected
 
 
+class TestRenderCheckMessageExpr:
+    """Phase 7C-a: optional custom failure message (mirrors ``DQRule.message_expr``)."""
+
+    def test_message_expr_present_when_error_message_set(self):
+        definition = _is_not_null_definition()
+        definition.error_message = "'Column ' || {{column}} || ' failed'"
+        version = RuleVersion(rule_id="r1", version=1, definition=definition, user_metadata={})
+        check, _ = render_check(
+            mode="dqx_native",
+            version=version,
+            group={"column": "customer_id"},
+            effective_severity="Medium",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+        )
+        assert check["message_expr"] == "'Column ' || {{column}} || ' failed'"
+
+    def test_message_expr_absent_when_error_message_none(self):
+        version = RuleVersion(rule_id="r1", version=1, definition=_is_not_null_definition(), user_metadata={})
+        check, _ = render_check(
+            mode="dqx_native",
+            version=version,
+            group={"column": "customer_id"},
+            effective_severity="Medium",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+        )
+        assert "message_expr" not in check
+
+    def test_message_expr_absent_when_error_message_empty_string(self):
+        definition = _is_not_null_definition()
+        definition.error_message = ""
+        version = RuleVersion(rule_id="r1", version=1, definition=definition, user_metadata={})
+        check, _ = render_check(
+            mode="dqx_native",
+            version=version,
+            group={"column": "customer_id"},
+            effective_severity="Medium",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+        )
+        assert "message_expr" not in check
+
+
 class TestRenderCheckSqlMode:
     def _sql_definition(self, body: dict, slot_name: str = "column") -> RuleDefinition:
         return RuleDefinition.model_validate(
@@ -628,6 +678,64 @@ class TestRematerializeForRule:
 
         update_sql = next(c.args[0] for c in sql.execute.call_args_list if c.args[0].startswith("UPDATE"))
         assert "status = 'pending_approval'" in update_sql
+
+
+class TestRenderCheckNativeCrossTable:
+    """Phase 7C-a: confirm DQX Native cross-table rules materialize correctly.
+
+    ``foreign_key`` is a dataset-level check with reference-table arguments
+    (``ref_table``/``ref_columns``) that are NOT column slots on the
+    monitored table — they are frozen ``RuleParameter`` values on the
+    registry rule's definition (see ``registry_seed_map.py``:
+    ``ref_table``/``ref_columns`` kinds map to the ``ref_table``/``ref_column``
+    ``ParamType``s). This asserts a ``dqx_native`` ``foreign_key`` rule
+    materializes with those ref-table args intact, alongside its own
+    column slot substitution — no materializer change was needed for this;
+    ``render_check``'s existing ``dqx_native`` branch already fills in both
+    slots and non-``None`` parameters generically regardless of function
+    name (see ``_substitute_arguments``).
+    """
+
+    def test_foreign_key_native_rule_materializes_with_ref_table_args(self):
+        definition = RuleDefinition.model_validate(
+            {
+                "body": {
+                    "function": "foreign_key",
+                    "arguments": {"columns": "{{columns}}"},
+                },
+                "slots": [{"name": "columns", "family": "any", "position": 0, "cardinality": "many"}],
+                "parameters": [
+                    {"name": "ref_columns", "type": "ref_column", "value": ["id"]},
+                    {"name": "ref_table", "type": "ref_table", "value": "catalog.schema.customers"},
+                ],
+            }
+        )
+        version = RuleVersion(
+            rule_id="r1",
+            version=1,
+            definition=definition,
+            user_metadata={"name": "Orders FK", "severity": "High"},
+        )
+        check, is_tableless = render_check(
+            mode="dqx_native",
+            version=version,
+            group={"columns": "customer_id"},
+            effective_severity="High",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+        )
+
+        # foreign_key is per-table (it validates the monitored table's own
+        # rows against a reference table), not the tableless __sql_check__
+        # convention reserved for genuinely table-less cross-table SQL.
+        assert is_tableless is False
+        assert check["check"]["function"] == "foreign_key"
+        assert check["check"]["arguments"]["columns"] == ["customer_id"]
+        assert check["check"]["arguments"]["ref_columns"] == ["id"]
+        assert check["check"]["arguments"]["ref_table"] == "catalog.schema.customers"
+        assert check["criticality"] == "error"
 
 
 def _extract_json_literal(sql_text: str) -> dict:

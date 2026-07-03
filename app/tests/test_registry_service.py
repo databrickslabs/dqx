@@ -84,6 +84,19 @@ class TestCreateRule:
         inserted_sql = sql.execute.call_args_list[0].args[0]
         assert "INSERT INTO dqx_test.dqx_app_test.dq_rules" in inserted_sql
 
+    def test_error_message_persists_through_create(self, svc, sql):
+        """Phase 7C-a: optional custom failure message threads through create
+        as part of the ``definition`` jsonb blob (no separate column)."""
+        definition = _native_definition()
+        definition.error_message = "Column {{column}} must not be null"
+        rule, _ = svc.create_rule(mode="dqx_native", definition=definition, user_email="alice@x")
+        assert rule.definition.error_message == "Column {{column}} must not be null"
+        inserted_sql = sql.execute.call_args_list[0].args[0]
+        start = inserted_sql.index("parse_json('") + len("parse_json('")
+        end = inserted_sql.index("')", start)
+        stored_definition = json.loads(inserted_sql[start:end])
+        assert stored_definition["error_message"] == "Column {{column}} must not be null"
+
     def test_records_history_on_create(self, svc, sql):
         svc.create_rule(mode="dqx_native", definition=_native_definition(), user_email="alice@x")
         # execute called twice: once for dq_rules insert, once for history

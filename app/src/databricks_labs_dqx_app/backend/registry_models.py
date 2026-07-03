@@ -93,6 +93,16 @@ class RuleDefinition(BaseModel):
     body: dict[str, Any] = Field(default_factory=dict)
     slots: list[RuleSlot] = Field(default_factory=list)
     parameters: list[RuleParameter] = Field(default_factory=list)
+    error_message: str | None = Field(
+        default=None,
+        description=(
+            "Optional custom failure message (a Spark SQL expression string), mirroring "
+            "DQRule.message_expr. Threaded through create/update and frozen into each "
+            "dq_rule_versions snapshot as part of the definition. Materialized as a "
+            "top-level 'message_expr' key on the rendered dq_quality_rules check when set; "
+            "omitted entirely when None or empty."
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------

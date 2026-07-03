@@ -1483,6 +1483,11 @@ export interface RuleCatalogEntryOut {
 export type RuleDefinitionBody = { [key: string]: unknown };
 
 /**
+ * Optional custom failure message (a Spark SQL expression string), mirroring DQRule.message_expr. Threaded through create/update and frozen into each dq_rule_versions snapshot as part of the definition. Materialized as a top-level 'message_expr' key on the rendered dq_quality_rules check when set; omitted entirely when None or empty.
+ */
+export type RuleDefinitionErrorMessage = string | null;
+
+/**
  * Mode-specific rule body plus its typed slots/params.
 
 ``body`` holds the mode-specific payload (native: ``{function,
@@ -1497,6 +1502,8 @@ export interface RuleDefinition {
   body?: RuleDefinitionBody;
   slots?: RuleSlot[];
   parameters?: RuleParameter[];
+  /** Optional custom failure message (a Spark SQL expression string), mirroring DQRule.message_expr. Threaded through create/update and frozen into each dq_rule_versions snapshot as part of the definition. Materialized as a top-level 'message_expr' key on the rendered dq_quality_rules check when set; omitted entirely when None or empty. */
+  error_message?: RuleDefinitionErrorMessage;
 }
 
 /**

@@ -213,6 +213,9 @@ def render_check(
     name = get_rule_name(version.user_metadata)
     if name:
         check_dict["name"] = name
+    error_message = definition.error_message
+    if error_message:
+        check_dict["message_expr"] = error_message
     return check_dict, is_tableless
 
 

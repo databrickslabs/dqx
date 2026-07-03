@@ -118,6 +118,21 @@ class TestRuleDefinition:
         assert definition.slots == []
         assert definition.parameters == []
 
+    def test_error_message_defaults_to_none(self, module):
+        definition = module.RuleDefinition(body={"predicate": "1=1"})
+        assert definition.error_message is None
+
+    def test_error_message_round_trips(self, module):
+        definition = module.RuleDefinition(
+            body={"function": "is_not_null", "arguments": {"column": "{{column}}"}},
+            error_message="Column {{column}} must not be null",
+        )
+        assert definition.error_message == "Column {{column}} must not be null"
+        dumped = definition.model_dump(mode="json")
+        assert dumped["error_message"] == "Column {{column}} must not be null"
+        restored = module.RuleDefinition.model_validate(dumped)
+        assert restored.error_message == "Column {{column}} must not be null"
+
 
 # ---------------------------------------------------------------------------
 # RegistryRule
