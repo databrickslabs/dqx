@@ -208,13 +208,13 @@ mcp-check: ## Type-check the MCP server with basedpyright (standard mode, errors
 
 # One-command MCP server deploy (parity with app-deploy). Ensures the runner-wheel volume
 # exists, deploys the bundle (app + runner job + setup job), runs the one-time setup job (UC
-# grants + temp-schema ownership), then deploys & starts the app via ``bundle run``. Also set
-# the catalog-name secret (see the deploy guide) — the app reads the catalog from it at runtime.
+# grants + temp-schema ownership), then deploys & starts the app via ``bundle run``. The catalog
+# is passed as CATALOG below and injected into the app as the DQX_CATALOG config value (no secret).
 #
 # Usage: make mcp-deploy PROFILE=my-profile CATALOG=main
 # CATALOG is REQUIRED: workspace.artifact_path is the UC volume /Volumes/<CATALOG>/tmp/dqx_artifacts
-# that hosts the runner wheels; it is resolved at deploy time and must pre-exist. Pass the same
-# catalog you set in the secret scope.
+# that hosts the runner wheels; it is resolved at deploy time and must pre-exist. It is also the
+# catalog the app + runner use for temp views and per-user output schemas.
 # TARGET defaults to the bundle's default target (dev); override with TARGET=<t>.
 # The bundle artifact build runs `uv build ../` from inside mcp-server/, so the global
 # relative UV_BUILD_CONSTRAINT (.build-constraints.txt) would resolve against the wrong

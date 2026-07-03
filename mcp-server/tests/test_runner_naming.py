@@ -53,8 +53,12 @@ class TestQualifyOutput:
     def test_returns_unquoted_fqn(self):
         assert qualify_output("cat", "dqx_mcp_alice_abcd1234", "orders_out") == "cat.dqx_mcp_alice_abcd1234.orders_out"
 
-    @pytest.mark.parametrize("name", ["catalog.schema.table", "/Volumes/x", "has space", "drop`table", ""])
+    @pytest.mark.parametrize(
+        "name", ["catalog.schema.table", "/Volumes/x", "has space", "drop`table", "", "2024_out", "9x"]
+    )
     def test_rejects_non_identifier_name(self, name):
+        # Leading-digit names are rejected too — the FQN is interpolated unquoted, where a
+        # digit-leading identifier part is a SQL parse error.
         with pytest.raises(ValueError, match="Invalid output name"):
             qualify_output("cat", "sch", name)
 
@@ -63,6 +67,7 @@ class TestValidateIdentifier:
     def test_accepts_and_returns(self):
         assert validate_identifier("abc_123", "thing") == "abc_123"
 
-    def test_rejects(self):
+    @pytest.mark.parametrize("bad", ["a.b", "1abc", "9", "has space"])
+    def test_rejects(self, bad):
         with pytest.raises(ValueError, match="Invalid thing"):
-            validate_identifier("a.b", "thing")
+            validate_identifier(bad, "thing")

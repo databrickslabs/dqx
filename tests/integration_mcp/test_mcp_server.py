@@ -14,6 +14,7 @@ agent-in-the-loop check runs last (skipped if the serving endpoint is unreachabl
 import json
 from collections.abc import Callable
 
+import pytest
 import requests
 
 from tests.integration_mcp.conftest import (
@@ -159,11 +160,22 @@ def _assert_persisting_tools(client: McpClient, table: str) -> None:
     )
     assert applied["quarantine_rows"] == EXPECTED_INVALID_ROWS
     assert applied["output_rows"] == EXPECTED_TOTAL_ROWS - EXPECTED_INVALID_ROWS
-    # grant-on-write: the calling user is granted access to both output tables the runner created
+    # grant-on-write: the calling user is granted access to both output tables the runner created.
+    # access_granted_to is set only because BOTH created tables were granted (partial grants report null).
     assert applied.get("access_granted_to"), "apply should grant the caller access to the outputs"
     assert applied.get("output_schema", "").rsplit(".", 1)[-1].startswith("dqx_mcp_"), applied.get("output_schema")
     assert applied["output_table"].endswith(".customers_clean"), applied["output_table"]
     assert len(applied.get("granted_tables") or []) == 2, applied.get("granted_tables")
+
+    # A caller-supplied output name that is a dotted FQN or starts with a digit is rejected up front
+    # (it would otherwise be interpolated unquoted into the FQN). Tolerate either surfacing: the MCP
+    # error may raise in the client, or come back as a non-successful payload — but it must NOT save.
+    for bad_name in ("catalog.schema.table", "2024_bad"):
+        try:
+            res = client.call("save_checks", {"checks": EXPLICIT_CHECKS, "output_name": bad_name})
+        except Exception:
+            continue  # rejected via raised MCP error — expected
+        assert not res.get("saved") and res.get("status") != "completed", f"bad output_name accepted: {res}"
 
 
 def test_mcp_server_end_to_end(workspace_auth, app_auth):
@@ -223,6 +235,11 @@ def test_mcp_server_end_to_end(workspace_auth, app_auth):
         # 9-10. Persisting tools (save_checks -> load_checks round-trip, then
         #       apply_checks_and_save_to_table) — both write to the caller's private per-user schema.
         _assert_persisting_tools(client, table)
+
+        # get_run_result for an unknown run_id returns a structured not_found (also confirms the
+        # ownership/IDOR guard handles a missing run cleanly rather than erroring).
+        unknown = client.call("get_run_result", {"run_id": 999999999999999})
+        assert unknown["status"] == "not_found", unknown
 
         # 11. Agent-in-the-loop — a real model must discover + invoke a tool (skip if unreachable).
         if _endpoint_reachable(host, get_token):

@@ -25,10 +25,13 @@ import io
 import json
 import logging
 from decimal import Decimal
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from databricks.sdk import WorkspaceClient
 from pyspark.sql import SparkSession
+
+if TYPE_CHECKING:
+    from databricks.labs.dqx.profiler.profiler import DQProfile
 
 from dqx_mcp_runner.naming import (
     IDENTIFIER_RE,
@@ -79,7 +82,7 @@ def profile_table(spark: SparkSession, ws: WorkspaceClient, params: dict) -> dic
     }
 
 
-def _to_dq_profile(p: dict):
+def _to_dq_profile(p: dict[str, Any]) -> "DQProfile":
     """Build a ``DQProfile`` from a caller-supplied profile dict, requiring ``name`` + ``column``.
 
     Raises a clear ``InvalidParameterError`` (not an opaque ``KeyError`` deep in the runner) when a
@@ -218,16 +221,17 @@ def apply_checks_and_save_to_table(spark: SparkSession, ws: WorkspaceClient, par
         quarantine_config=OutputConfig(location=quarantine_table, mode=mode) if quarantine_table else None,
     )
 
-    granted_tables = [
-        tbl for tbl in (output_table, quarantine_table) if tbl and _grant_table_access(spark, tbl, grant_to)
-    ]
+    created_tables = [tbl for tbl in (output_table, quarantine_table) if tbl]
+    granted_tables = [tbl for tbl in created_tables if _grant_table_access(spark, tbl, grant_to)]
 
     result = {"output_table": output_table, "output_rows": spark.table(output_table).count()}
     if quarantine_table:
         result["quarantine_table"] = quarantine_table
         result["quarantine_rows"] = spark.table(quarantine_table).count()
     result["output_schema"] = f"{catalog}.{user_schema}"
-    result["access_granted_to"] = grant_to if granted_tables else None
+    # Only claim access was granted if EVERY created table was granted — a partial grant (e.g. output
+    # succeeded, quarantine failed) must not report full access on a table the caller can't read.
+    result["access_granted_to"] = grant_to if granted_tables == created_tables else None
     result["granted_tables"] = granted_tables
     return result
 
@@ -358,6 +362,10 @@ def _ensure_output_schema(spark: SparkSession, catalog: str, user_schema: str, g
     spark.sql(f"CREATE SCHEMA IF NOT EXISTS {schema_fqn}")
     if grant_to and PRINCIPAL_RE.match(str(grant_to)):
         spark.sql(f"GRANT USE SCHEMA ON SCHEMA {schema_fqn} TO `{grant_to}`")
+    elif grant_to:
+        # The schema is created but we can't grant the caller — surface it (the result's
+        # access_granted_to will be null) so a locked-out caller isn't left with a silent no-op.
+        logger.warning(f"Not granting USE SCHEMA on {catalog}.{user_schema}: unexpected principal {grant_to!r}")
     logger.info(f"Ensured per-user output schema {catalog}.{user_schema}")
 
 

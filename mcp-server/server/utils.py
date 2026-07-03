@@ -303,7 +303,10 @@ def execute_sql(ws: Any, query: str, warehouse_id: str) -> list[dict[str, Any]]:
 
     state = _statement_state(result)
     if state != "SUCCEEDED":
-        error_msg = getattr(result.status.error, "message", str(result.status.error)) if result.status.error else state
+        # status can be None for some error/edge states (_statement_state handles that → "UNKNOWN"),
+        # so guard it here too rather than dereferencing .error and raising an opaque AttributeError.
+        err = result.status.error if result.status else None
+        error_msg = (getattr(err, "message", None) or str(err)) if err else state
         raise RuntimeError(f"SQL query failed: {error_msg}")
 
     columns = [col.name for col in result.manifest.schema.columns]
@@ -352,14 +355,18 @@ def validate_output_name(name: str) -> str:
     Outputs (save_checks / apply_checks_and_save_to_table) are written to the caller's private,
     per-user MCP schema, so the caller supplies only the table *name* — never a catalog/schema.
     Reject anything that isn't a plain identifier (blocks FQNs, file paths, and SQL injection).
+    The name is interpolated UNQUOTED into the output FQN (OutputConfig.location, spark.table), so it
+    must also not start with a digit — an unquoted digit-leading identifier is a SQL parse error.
 
     Raises:
-        ValueError: If *name* is empty or contains characters outside ``[A-Za-z0-9_]``.
+        ValueError: If *name* is empty, starts with a digit, or contains characters outside
+            ``[A-Za-z0-9_]``.
     """
-    if not name or not _SAFE_IDENTIFIER_RE.match(name):
+    if not name or not _SAFE_IDENTIFIER_RE.match(name) or name[0].isdigit():
         raise ValueError(
-            f"Invalid output name '{name}'. Provide a bare table name (letters, digits, and underscores) — "
-            f"outputs are written to your private MCP schema, not an arbitrary catalog.schema.table."
+            f"Invalid output name '{name}'. Provide a bare table name that starts with a letter or "
+            f"underscore (letters, digits, underscores) — outputs are written to your private MCP "
+            f"schema, not an arbitrary catalog.schema.table."
         )
     return name
 
@@ -504,22 +511,6 @@ def classify_location(location: str) -> str:
     if location.startswith("/"):
         return "workspace"
     return "table"
-
-
-def to_local_fuse_path(location: str) -> str:
-    """Map a file location to the path the runner's cluster filesystem sees.
-
-    DQX reads a data contract via a local ``open()``, so a workspace path must use the FUSE
-    mount prefix (``/Workspace/...``). The Workspace API form (``/Users/...``) does not exist
-    on the cluster filesystem. UC-volume paths (``/Volumes/...``) are already FUSE-mounted as-is.
-
-    - ``/Volumes/...``  -> unchanged (mounted at the same path on the cluster)
-    - ``/Workspace/...`` -> unchanged (already the FUSE form)
-    - any other ``/...`` workspace path (e.g. ``/Users/...``) -> prefixed with ``/Workspace``
-    """
-    if classify_location(location) == "workspace" and not location.startswith("/Workspace/"):
-        return "/Workspace" + location
-    return location
 
 
 def verify_obo_read_access(ws: Any, location: str) -> None:
@@ -818,10 +809,12 @@ def get_run_status(run_id: int) -> dict[str, Any]:
     # guessable sequential integer and every user has CAN_MANAGE_RUN on the shared runner job, so we
     # bind the run to its submitter via the requesting_user parameter recorded at submit time and
     # reject a mismatch as not_found — without disclosing the result OR the run's existence/status.
-    submitter = next((p.value for p in (run.job_parameters or []) if p.name == "requesting_user"), "") or ""
-    caller = get_user_email() or ""
-    if submitter.strip().lower() != caller.strip().lower():
-        logger.warning(f"Denying run {run_id}: submitter/caller mismatch")
+    submitter = (next((p.value for p in (run.job_parameters or []) if p.name == "requesting_user"), "") or "").strip()
+    caller = (get_user_email() or "").strip()
+    # Deny when either side is empty (an unowned run, or a caller with no identity) — never let an
+    # empty submitter match an empty caller, which would expose runs to an unauthenticated reader.
+    if not submitter or not caller or submitter.lower() != caller.lower():
+        logger.warning(f"Denying run {run_id}: submitter/caller mismatch or missing identity")
         return _run_not_found(run_id)
 
     life_cycle = run.state.life_cycle_state.value if run.state and run.state.life_cycle_state else "UNKNOWN"

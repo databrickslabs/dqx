@@ -1,5 +1,8 @@
 import logging
 import os
+from typing import Any
+
+from databricks.sdk import WorkspaceClient
 
 from server import utils
 
@@ -15,7 +18,9 @@ def _get_tmp_view_config() -> tuple[str, str]:
     return catalog, schema
 
 
-def _submit_or_drop_view(operation: str, params: dict, obo_ws, view_fqn: str, warehouse_id: str) -> int:
+def _submit_or_drop_view(
+    operation: str, params: dict[str, Any], obo_ws: WorkspaceClient, view_fqn: str, warehouse_id: str
+) -> int:
     """Submit the runner job; if submission fails after the OBO temp view was created, drop the view.
 
     The runner drops its own view in a ``finally``, but only if it actually starts. A submission that

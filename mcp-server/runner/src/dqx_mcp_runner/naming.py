@@ -12,7 +12,10 @@ import hashlib
 import re
 
 # A bare SQL identifier (catalog/schema/table name part) and a UC principal (email / SP id / group).
-IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9_]+$")
+# Must start with a letter or underscore: these parts are interpolated UNQUOTED into FQNs
+# (OutputConfig.location, spark.table(...)), and an unquoted identifier that starts with a digit is
+# a SQL parse error — so a leading-digit name is rejected up front rather than failing mid-write.
+IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 PRINCIPAL_RE = re.compile(r"^[A-Za-z0-9._%+\-@]+$")
 
 # Per-user output schemas are named dqx_mcp_<sanitized-local-part>_<sha8>. Cap the local part so a

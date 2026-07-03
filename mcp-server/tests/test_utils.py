@@ -29,8 +29,8 @@ def _make_terminated_run(result_state: RunResultState, run_id: int = 123) -> Mag
     task_run = MagicMock()
     task_run.run_id = 456
     run.tasks = [task_run]
-    # No requesting_user recorded → submitter "" matches an unset caller (no OBO context) in tests.
-    run.job_parameters = []
+    # Recorded submitter matches the caller the TestGetRunStatus autouse fixture sets.
+    run.job_parameters = [JobParameter(name="requesting_user", value="user@example.com")]
     return run
 
 
@@ -206,6 +206,19 @@ class TestExecuteSql:
         rows = execute_sql(ws, "DROP VIEW IF EXISTS foo", warehouse_id="wh123")
         assert rows == []
 
+    def test_none_status_raises_clean_error_not_attributeerror(self):
+        """A result with status=None must raise a clean RuntimeError, not AttributeError on .error."""
+        from server.utils import execute_sql
+
+        ws = create_autospec(WorkspaceClient)
+        mock_result = MagicMock()
+        mock_result.status = None  # some error/edge states return no status
+        mock_result.statement_id = "s1"
+        ws.statement_execution.execute_statement.return_value = mock_result
+
+        with pytest.raises(RuntimeError, match="SQL query failed: UNKNOWN"):
+            execute_sql(ws, "SELECT 1", warehouse_id="wh123")
+
 
 class TestTempViews:
     def test_create_temp_view_returns_fqn(self):
@@ -374,6 +387,16 @@ class TestSubmitJobAsync:
 
 
 class TestGetRunStatus:
+    @pytest.fixture(autouse=True)
+    def _caller(self):
+        """Default caller identity for these tests — matches _make_terminated_run's requesting_user
+        so the IDOR ownership guard passes on the happy paths."""
+        from server.utils import _user_email_var
+
+        tok = _user_email_var.set("user@example.com")
+        yield
+        _user_email_var.reset(tok)
+
     def test_completed_reads_result_file_from_volume(self):
         from server.utils import get_run_status
 
@@ -536,6 +559,48 @@ class TestGetRunStatus:
 
         assert result["status"] == "completed"
 
+    def test_denies_when_caller_has_no_identity(self):
+        """A caller with no OBO identity must not read a run, even one with a recorded submitter."""
+        from server.utils import get_run_status, _user_email_var
+
+        ws = create_autospec(WorkspaceClient)
+        run = _make_terminated_run(RunResultState.SUCCESS)  # requesting_user=user@example.com
+        run.job_id = 42
+        ws.jobs.get_run.return_value = run
+
+        tok = _user_email_var.set(None)  # no caller identity
+        try:
+            with (
+                patch("server.utils._get_sp_client", return_value=ws),
+                patch.dict("os.environ", _JOB_ID_ENV),
+            ):
+                result = get_run_status(123)
+        finally:
+            _user_email_var.reset(tok)
+
+        assert result["status"] == "not_found"
+        ws.files.download.assert_not_called()
+
+    def test_denies_when_run_has_no_submitter(self):
+        """A run with no recorded submitter is unowned and must not be readable by any caller."""
+        from server.utils import get_run_status
+
+        ws = create_autospec(WorkspaceClient)
+        run = _make_terminated_run(RunResultState.SUCCESS)
+        run.job_id = 42
+        run.job_parameters = []  # no requesting_user recorded (older run / non-OBO submit)
+        ws.jobs.get_run.return_value = run
+
+        # autouse caller is user@example.com, but the empty submitter must still be denied
+        with (
+            patch("server.utils._get_sp_client", return_value=ws),
+            patch.dict("os.environ", _JOB_ID_ENV),
+        ):
+            result = get_run_status(123)
+
+        assert result["status"] == "not_found"
+        ws.files.download.assert_not_called()
+
 
 class TestSweepStaleViews:
     def test_drops_only_views_older_than_ttl(self):
@@ -573,17 +638,21 @@ class TestSweepStaleViews:
         mock_drop.assert_not_called()
 
     def test_still_running_returns_running(self):
-        from server.utils import get_run_status
+        from server.utils import get_run_status, _user_email_var
 
         ws = create_autospec(WorkspaceClient)
         run = MagicMock(spec=Run)
         run.state = MagicMock(spec=RunState)
         run.state.life_cycle_state = RunLifeCycleState.RUNNING
-        run.job_parameters = []
+        run.job_parameters = [JobParameter(name="requesting_user", value="user@example.com")]
         ws.jobs.get_run.return_value = run
 
-        with patch("server.utils._get_sp_client", return_value=ws):
-            result = get_run_status(123)
+        tok = _user_email_var.set("user@example.com")  # caller owns the run (IDOR guard passes)
+        try:
+            with patch("server.utils._get_sp_client", return_value=ws):
+                result = get_run_status(123)
+        finally:
+            _user_email_var.reset(tok)
 
         assert result["status"] == "running"
         assert result["run_id"] == 123
@@ -738,29 +807,6 @@ class TestClassifyLocation:
         assert classify_location("/Workspace/Users/me/checks.yml") == "workspace"
 
 
-class TestToLocalFusePath:
-    def test_volume_unchanged(self):
-        from server.utils import to_local_fuse_path
-
-        assert to_local_fuse_path("/Volumes/c/s/v/contract.yml") == "/Volumes/c/s/v/contract.yml"
-
-    def test_already_workspace_prefixed_unchanged(self):
-        from server.utils import to_local_fuse_path
-
-        assert to_local_fuse_path("/Workspace/Users/me/contract.yml") == "/Workspace/Users/me/contract.yml"
-
-    def test_workspace_path_gets_prefix(self):
-        from server.utils import to_local_fuse_path
-
-        assert to_local_fuse_path("/Users/me/contract.yml") == "/Workspace/Users/me/contract.yml"
-
-    def test_table_unchanged(self):
-        from server.utils import to_local_fuse_path
-
-        # Not a file path; classify_location -> table, so it is returned as-is.
-        assert to_local_fuse_path("c.s.t") == "c.s.t"
-
-
 class TestVerifyOboReadAccess:
     def test_volume_calls_files_get_metadata(self):
         from server.utils import verify_obo_read_access
@@ -804,11 +850,13 @@ class TestValidateOutputName:
 
     @pytest.mark.parametrize(
         "name",
-        ["catalog.schema.table", "/Volumes/c/s/v/x.yml", "has space", "drop`table", "", "a-b"],
+        ["catalog.schema.table", "/Volumes/c/s/v/x.yml", "has space", "drop`table", "", "a-b", "2024_results", "1t"],
     )
     def test_rejects_non_identifiers(self, name: str):
         from server.utils import validate_output_name
 
+        # Includes leading-digit names: the FQN is used UNQUOTED, so a digit-leading table part is a
+        # SQL parse error — must be rejected up front.
         with pytest.raises(ValueError, match="Invalid output name"):
             validate_output_name(name)
 
