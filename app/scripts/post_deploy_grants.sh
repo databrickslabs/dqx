@@ -251,7 +251,11 @@ echo "==> Granting UC permissions to Job SP ($JOB_SP)..."
 run_sql "GRANT USE CATALOG ON CATALOG \`$CATALOG\` TO \`$JOB_SP\`"
 run_sql "GRANT ALL PRIVILEGES ON SCHEMA \`$CATALOG\`.\`$SCHEMA\` TO \`$JOB_SP\`"
 run_sql "GRANT ALL PRIVILEGES ON SCHEMA \`$CATALOG\`.\`$TMP_SCHEMA\` TO \`$JOB_SP\`"
-run_sql "GRANT ALL PRIVILEGES ON VOLUME \`$CATALOG\`.\`$SCHEMA\`.\`$VOLUME\` TO \`$JOB_SP\`"
+# READ VOLUME only: the task runner (tasks/src/dqx_task_runner/runner.py) never
+# writes to the wheels volume — it only installs wheels the App SP already
+# uploaded there via the job cluster's library spec. WRITE VOLUME would be an
+# unused privilege on this SP (least-privilege review — see task-p11sec-report.md).
+run_sql "GRANT READ VOLUME ON VOLUME \`$CATALOG\`.\`$SCHEMA\`.\`$VOLUME\` TO \`$JOB_SP\`"
 
 # Only run the warehouse-permissions PATCH when ``sql_warehouse_id``
 # resolved to a *literal* warehouse ID (Mode B). In Mode A the variable
