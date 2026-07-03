@@ -759,7 +759,7 @@ function AllowedValuesEditor({
                         value={description}
                         onChange={(e) => patchValue(i, { description: e.target.value })}
                         placeholder={t("config.valueDescriptionPlaceholder")}
-                        className="max-w-xs text-xs min-h-[28px] py-1"
+                        className="max-w-xs text-xs min-h-[28px] py-1 resize-none"
                         rows={1}
                       />
                     </div>
@@ -786,40 +786,43 @@ function DefinitionEditorCard({ draft, onChange, onRemove }: DefinitionEditorCar
   const isLocked = isWeight || isBuiltin;
   return (
     <div className="rounded-md border bg-muted/30 p-3 space-y-3">
-      <div className="flex items-start gap-3">
-        <div className="grid grid-cols-[180px_1fr] gap-3 flex-1 items-start">
-          <div className="space-y-1">
-            <Label className="text-xs flex items-center gap-1.5">
-              {t("config.key")}
-              {!isLocked && <RequiredAsterisk />}
-              {isLocked && (
-                <LockedFieldHint text={isWeight ? t("config.weightHint") : t("config.builtinKeyLockedTooltip")} />
-              )}
-            </Label>
-            <Input
-              value={draft.key}
-              onChange={(e) => onChange({ key: e.target.value })}
-              placeholder={t("config.keyPlaceholder")}
-              disabled={isBuiltin}
-              className={cn("h-8 w-40 text-xs font-mono", !keyValid && "border-destructive")}
-            />
-            {!keyValid && (
-              <p className="text-[10px] text-destructive">
-                {t("config.keyHint")}
-              </p>
+      {/* Key + description + delete sit in one 3-column grid (rather than a
+          nested grid plus a flex sibling) so `items-end` aligns the delete
+          button with the bottom of the input/textarea row instead of the
+          top of the labels above them — keeps the bin icon inline with the
+          row it acts on instead of floating above it. */}
+      <div className="grid grid-cols-[180px_1fr_auto] gap-3 items-end">
+        <div className="space-y-1">
+          <Label className="text-xs flex items-center gap-1.5">
+            {t("config.key")}
+            {!isLocked && <RequiredAsterisk />}
+            {isLocked && (
+              <LockedFieldHint text={isWeight ? t("config.weightHint") : t("config.builtinKeyLockedTooltip")} />
             )}
-          </div>
-          <div className="space-y-1">
-            <Label className="text-xs">{t("config.descriptionLabel")}</Label>
-            <Textarea
-              value={draft.description ?? ""}
-              onChange={(e) => onChange({ description: e.target.value })}
-              placeholder={isWeight ? t("config.weightDescriptionPlaceholder") : t("config.descriptionPlaceholder")}
-              disabled={isLocked}
-              className="max-w-xs text-xs min-h-[32px] py-1.5"
-              rows={1}
-            />
-          </div>
+          </Label>
+          <Input
+            value={draft.key}
+            onChange={(e) => onChange({ key: e.target.value })}
+            placeholder={t("config.keyPlaceholder")}
+            disabled={isBuiltin}
+            className={cn("h-8 w-40 text-xs font-mono", !keyValid && "border-destructive")}
+          />
+          {!keyValid && (
+            <p className="text-[10px] text-destructive">
+              {t("config.keyHint")}
+            </p>
+          )}
+        </div>
+        <div className="space-y-1">
+          <Label className="text-xs">{t("config.descriptionLabel")}</Label>
+          <Textarea
+            value={draft.description ?? ""}
+            onChange={(e) => onChange({ description: e.target.value })}
+            placeholder={isWeight ? t("config.weightDescriptionPlaceholder") : t("config.descriptionPlaceholder")}
+            disabled={isLocked}
+            className="max-w-xs text-xs min-h-[32px] py-1.5 resize-none"
+            rows={1}
+          />
         </div>
         <Button
           type="button"
@@ -837,15 +840,24 @@ function DefinitionEditorCard({ draft, onChange, onRemove }: DefinitionEditorCar
       <div className="space-y-1.5">
         <div className="flex items-center justify-between">
           <Label className="text-xs">{t("config.allowedValues")}</Label>
-          {!isBuiltin && (
-            <label className="flex items-center gap-1.5 text-xs cursor-pointer">
-              <Checkbox
-                checked={draft.allow_custom_values}
-                onCheckedChange={(c) => onChange({ allow_custom_values: c === true })}
-              />
-              <span>{t("config.allowCustomValues")}</span>
-            </label>
-          )}
+          {/* Reserved keys (dimension/severity) always disallow custom
+              values server-side (see `_NO_CUSTOM_VALUE_BUILTIN_KEYS` in
+              routes.v1.config) — the checkbox stays visible so that's
+              legible at a glance, just disabled/unchecked rather than
+              hidden entirely. */}
+          <label
+            className={cn(
+              "flex items-center gap-1.5 text-xs",
+              isBuiltin ? "text-muted-foreground" : "cursor-pointer",
+            )}
+          >
+            <Checkbox
+              checked={isBuiltin ? false : draft.allow_custom_values}
+              onCheckedChange={(c) => onChange({ allow_custom_values: c === true })}
+              disabled={isBuiltin}
+            />
+            <span>{t("config.allowCustomValues")}</span>
+          </label>
         </div>
         <AllowedValuesEditor draft={draft} onChange={onChange} />
       </div>
