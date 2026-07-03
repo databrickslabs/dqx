@@ -892,6 +892,10 @@ export type LabelDefinitionValueColorsAnyOf = {[key: string]: string};
 
 export type LabelDefinitionValueColors = LabelDefinitionValueColorsAnyOf | null;
 
+export type LabelDefinitionValueDescriptionsAnyOf = {[key: string]: string};
+
+export type LabelDefinitionValueDescriptions = LabelDefinitionValueDescriptionsAnyOf | null;
+
 /**
  * An admin-managed label definition.
 
@@ -905,10 +909,18 @@ stored entirely in ``user_metadata`` (no separate native ``weight`` field).
 
 ``value_colors`` optionally maps a subset (or all) of ``values`` to a
 ``#RRGGBB`` hex color for badge rendering; unmapped values fall back to a
-UI default. ``is_builtin`` flags a reserved, pre-seeded key (e.g. the
-Rules Registry ``dimension``/``severity`` tags) — such keys cannot be
-deleted or renamed via :func:`save_label_definitions`, though their
-values may still be edited/recolored.
+UI default. ``value_descriptions`` optionally maps a subset (or all) of
+``values`` to a short human-readable explanation, shown as help text next
+to each value in the admin editor and as a tooltip wherever the value is
+picked (e.g. the ``dimension`` key's per-dimension descriptions). Both
+maps are pruned to keys present in ``values`` on save.
+
+``is_builtin`` flags a reserved, pre-seeded key (e.g. the Rules Registry
+``dimension``/``severity`` tags) — such keys cannot be deleted or renamed
+via :func:`save_label_definitions`, though their values, colors, and
+descriptions may still be edited. The ``dimension``/``severity`` keys
+additionally can never have ``allow_custom_values=True``: their value set
+is fixed and admin-curated, not something rule authors extend inline.
  */
 export interface LabelDefinition {
   key: string;
@@ -916,6 +928,7 @@ export interface LabelDefinition {
   values?: string[];
   allow_custom_values?: boolean;
   value_colors?: LabelDefinitionValueColors;
+  value_descriptions?: LabelDefinitionValueDescriptions;
   is_builtin?: boolean;
 }
 
@@ -3836,7 +3849,10 @@ deleted or renamed: the incoming payload must still contain an entry
 with the same key. Their values, colors, and description may still be
 freely edited. ``is_builtin`` itself is authoritative from the stored
 state, not the client payload — a caller can't strip the flag off a
-reserved key by omitting/flipping it in the request.
+reserved key by omitting/flipping it in the request. ``dimension`` and
+``severity`` additionally always save with ``allow_custom_values=False``
+regardless of what the client sends — their value set is fixed/admin-
+curated, never author-extensible.
  * @summary Save Label Definitions
  */
 export const saveLabelDefinitions = (
@@ -8881,8 +8897,9 @@ export const useUpdateRegistryRule = <TError = AxiosError<HTTPValidationError>,
 /**
  * Delete a registry rule.
 
-TODO(Phase 3): block (409) deletion of a rule currently applied to any
-monitored table once ``dq_applied_rules`` exists.
+Blocked (409) when the rule is currently applied to one or more
+monitored tables — remove every application first via the Apply Rules
+flow, then delete.
  * @summary Delete Registry Rule
  */
 export const deleteRegistryRule = (

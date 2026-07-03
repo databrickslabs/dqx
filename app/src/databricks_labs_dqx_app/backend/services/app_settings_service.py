@@ -469,7 +469,11 @@ class AppSettingsService:
             "key": "dimension",
             "description": "Data quality dimension the rule measures.",
             "values": ["Validity", "Completeness", "Accuracy", "Consistency", "Uniqueness", "Timeliness"],
-            "allow_custom_values": True,
+            # Fixed, admin-curated catalog — rule authors pick from this list,
+            # they don't extend it inline. Enforced server-side regardless of
+            # this seed value; see ``_NO_CUSTOM_VALUE_BUILTIN_KEYS`` in
+            # ``routes.v1.config``.
+            "allow_custom_values": False,
             "is_builtin": True,
             "value_colors": {
                 "Validity": "#2563EB",
@@ -478,6 +482,17 @@ class AppSettingsService:
                 "Consistency": "#7C3AED",
                 "Uniqueness": "#0891B2",
                 "Timeliness": "#DB2777",
+            },
+            # One-line explanations lifted from the DQ dimension glossary so
+            # authors get the same definitions wherever the value is shown
+            # (admin editor, label picker tooltip).
+            "value_descriptions": {
+                "Validity": "Whether values match the expected format or rules.",
+                "Completeness": "Whether all required values are present (no missing data).",
+                "Accuracy": "Whether values reflect the real-world truth they represent.",
+                "Consistency": "Whether values agree across systems, tables, or time.",
+                "Uniqueness": "Whether records that should be unique actually are.",
+                "Timeliness": "Whether data is available within the expected time window.",
             },
         },
         {

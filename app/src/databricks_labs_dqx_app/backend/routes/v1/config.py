@@ -49,6 +49,13 @@ _LABEL_KEY_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 # without re-validating (e.g. drop straight into a CSS custom property).
 _HEX_COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
 
+# Reserved keys whose value set is fixed and admin-curated rather than
+# author-extensible: rule authors can never add a value the admin hasn't
+# already defined. Enforced server-side (independent of client payload)
+# so an old client — or a stale/tampered request — can't smuggle
+# ``allow_custom_values: true`` back onto these two keys.
+_NO_CUSTOM_VALUE_BUILTIN_KEYS = frozenset({"dimension", "severity"})
+
 
 class TimezoneOut(BaseModel):
     timezone: str
@@ -71,10 +78,18 @@ class LabelDefinition(BaseModel):
 
     ``value_colors`` optionally maps a subset (or all) of ``values`` to a
     ``#RRGGBB`` hex color for badge rendering; unmapped values fall back to a
-    UI default. ``is_builtin`` flags a reserved, pre-seeded key (e.g. the
-    Rules Registry ``dimension``/``severity`` tags) — such keys cannot be
-    deleted or renamed via :func:`save_label_definitions`, though their
-    values may still be edited/recolored.
+    UI default. ``value_descriptions`` optionally maps a subset (or all) of
+    ``values`` to a short human-readable explanation, shown as help text next
+    to each value in the admin editor and as a tooltip wherever the value is
+    picked (e.g. the ``dimension`` key's per-dimension descriptions). Both
+    maps are pruned to keys present in ``values`` on save.
+
+    ``is_builtin`` flags a reserved, pre-seeded key (e.g. the Rules Registry
+    ``dimension``/``severity`` tags) — such keys cannot be deleted or renamed
+    via :func:`save_label_definitions`, though their values, colors, and
+    descriptions may still be edited. The ``dimension``/``severity`` keys
+    additionally can never have ``allow_custom_values=True``: their value set
+    is fixed and admin-curated, not something rule authors extend inline.
     """
 
     key: str
@@ -82,6 +97,7 @@ class LabelDefinition(BaseModel):
     values: list[str] = Field(default_factory=list)
     allow_custom_values: bool = False
     value_colors: dict[str, str] | None = None
+    value_descriptions: dict[str, str] | None = None
     is_builtin: bool = False
 
     @field_validator("value_colors")
@@ -387,7 +403,13 @@ def _load_label_definitions(svc: AppSettingsService) -> list[LabelDefinition]:
         if not isinstance(item, dict):
             continue
         try:
-            out.append(LabelDefinition.model_validate(item))
+            definition = LabelDefinition.model_validate(item)
+            if definition.key in _NO_CUSTOM_VALUE_BUILTIN_KEYS and definition.allow_custom_values:
+                # Defense-in-depth: coerce even rows persisted before this
+                # invariant existed (or written directly to the settings
+                # table) rather than trusting every historical write path.
+                definition = definition.model_copy(update={"allow_custom_values": False})
+            out.append(definition)
         except Exception as e:
             # Per-item resilience: settings stored before the v1 label-
             # definition schema may carry legacy keys or extra fields
@@ -442,7 +464,10 @@ def save_label_definitions(
     with the same key. Their values, colors, and description may still be
     freely edited. ``is_builtin`` itself is authoritative from the stored
     state, not the client payload — a caller can't strip the flag off a
-    reserved key by omitting/flipping it in the request.
+    reserved key by omitting/flipping it in the request. ``dimension`` and
+    ``severity`` additionally always save with ``allow_custom_values=False``
+    regardless of what the client sends — their value set is fixed/admin-
+    curated, never author-extensible.
     """
     existing_builtin_keys = {d.key for d in _load_label_definitions(svc) if d.is_builtin}
 
@@ -474,14 +499,18 @@ def save_label_definitions(
             cleaned_values.append(sv)
 
         cleaned_colors = {v: c for v, c in (d.value_colors or {}).items() if v in seen_values} or None
+        cleaned_descriptions = {
+            v: desc.strip() for v, desc in (d.value_descriptions or {}).items() if v in seen_values and (desc or "").strip()
+        } or None
 
         cleaned.append(
             LabelDefinition(
                 key=key,
                 description=(d.description or "").strip(),
                 values=cleaned_values,
-                allow_custom_values=bool(d.allow_custom_values),
+                allow_custom_values=False if key in _NO_CUSTOM_VALUE_BUILTIN_KEYS else bool(d.allow_custom_values),
                 value_colors=cleaned_colors,
+                value_descriptions=cleaned_descriptions,
                 # Authoritative from the previously-persisted state, never
                 # from the client payload — a caller cannot grant or strip
                 # ``is_builtin`` protection via the request body.

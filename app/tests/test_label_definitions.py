@@ -90,8 +90,10 @@ class TestSeedReservedLabelDefinitions:
             "Uniqueness",
             "Timeliness",
         }
-        assert keys["dimension"]["allow_custom_values"] is True
+        # Fixed, admin-curated catalog — never author-extensible.
+        assert keys["dimension"]["allow_custom_values"] is False
         assert set(keys["severity"]["values"]) == {"Low", "Medium", "High", "Critical"}
+        assert keys["dimension"]["value_descriptions"]["Validity"] == "Whether values match the expected format or rules."
 
     def test_noop_when_both_present(self, svc):
         s, sql = svc
@@ -212,6 +214,7 @@ class TestSaveLabelDefinitionsReservedGuard:
                     allow_custom_values=True,
                     is_builtin=True,
                     value_colors={"Validity": "#000000", "Accuracy": "#FFFFFF"},
+                    value_descriptions={"Validity": "Custom validity blurb"},
                 ),
                 LabelDefinition(key="severity", values=["Low", "High"], is_builtin=True),
             ]
@@ -220,7 +223,26 @@ class TestSaveLabelDefinitionsReservedGuard:
         dims = next(d for d in result.definitions if d.key == "dimension")
         assert dims.values == ["Validity", "Completeness", "Accuracy"]
         assert dims.value_colors == {"Validity": "#000000", "Accuracy": "#FFFFFF"}
+        assert dims.value_descriptions == {"Validity": "Custom validity blurb"}
         assert dims.is_builtin is True
+
+    def test_dimension_and_severity_always_save_with_custom_values_disallowed(self, route_ctx):
+        # Even if a (stale/tampered) client sends allow_custom_values=True for
+        # a reserved key, the server forces it back to False on save.
+        save_label_definitions, LabelDefinition, LabelDefinitionsIn, svc, sql = route_ctx
+        body = LabelDefinitionsIn(
+            definitions=[
+                LabelDefinition(key="dimension", values=["Validity"], allow_custom_values=True, is_builtin=True),
+                LabelDefinition(key="severity", values=["Low"], allow_custom_values=True, is_builtin=True),
+                LabelDefinition(key="team", values=["data-eng"], allow_custom_values=True),
+            ]
+        )
+        result = save_label_definitions(body, svc, "admin@example.com")
+        by_key = {d.key: d for d in result.definitions}
+        assert by_key["dimension"].allow_custom_values is False
+        assert by_key["severity"].allow_custom_values is False
+        # Non-reserved keys keep their existing (author-controlled) behavior.
+        assert by_key["team"].allow_custom_values is True
 
     def test_client_cannot_unset_is_builtin_on_reserved_key(self, route_ctx):
         save_label_definitions, LabelDefinition, LabelDefinitionsIn, svc, sql = route_ctx

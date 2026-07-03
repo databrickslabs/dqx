@@ -858,6 +858,8 @@ export interface LabelDefinition {
   allow_custom_values: boolean;
   /** Optional value → "#RRGGBB" color map for badge rendering. */
   value_colors?: Record<string, string> | null;
+  /** Optional value → short description map (e.g. per-dimension explanations). */
+  value_descriptions?: Record<string, string> | null;
   /**
    * True for reserved, pre-seeded keys (e.g. the Rules Registry
    * ``dimension``/``severity`` tags). Such keys cannot be deleted or
