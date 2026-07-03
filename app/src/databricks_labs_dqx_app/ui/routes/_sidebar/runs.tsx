@@ -1035,12 +1035,18 @@ function ExecuteTab({ onGoToHistory }: { onGoToHistory: () => void }) {
       const result = resp.data;
       if (result.submitted.length > 0) {
         const now = Date.now();
+        // Use the backend-reported `table_fqn` for each submitted run
+        // rather than the request's positional index — `submitted` omits
+        // any table that failed validation (see `errors`), so a partial
+        // failure would otherwise shift every later entry's index out of
+        // alignment with `tableFqns` and attach the wrong table (and
+        // therefore what looks like a duplicate/incorrect id) to a run.
         addRuns(
-          result.submitted.map((s, i) => ({
+          result.submitted.map((s) => ({
             run_id: s.run_id,
             job_run_id: s.job_run_id,
             view_fqn: s.view_fqn,
-            table_fqn: tableFqns[i] ?? "unknown",
+            table_fqn: s.table_fqn ?? "unknown",
             submitted_at: now,
           })),
         );

@@ -285,7 +285,9 @@ def batch_run_from_catalog(
                     run_id=run_id,
                     requesting_user=requesting_user,
                 )
-                submitted.append(DryRunSubmitOut(run_id=run_id, job_run_id=job_run_id, view_fqn=view_fqn))
+                submitted.append(
+                    DryRunSubmitOut(run_id=run_id, job_run_id=job_run_id, view_fqn=view_fqn, table_fqn=table_fqn)
+                )
 
                 job_svc.record_dryrun_started(
                     table=runs_table,

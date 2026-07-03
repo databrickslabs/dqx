@@ -654,6 +654,14 @@ class DryRunSubmitOut(BaseModel):
     run_id: str
     job_run_id: int
     view_fqn: str = Field(description="Temporary view FQN for cleanup tracking")
+    # Optional because the single-table submit endpoint's caller already
+    # knows which table it asked for. The batch endpoint always populates
+    # this so callers can associate each submitted run with its source
+    # table by value instead of by list position — batch submission skips
+    # tables that fail validation, which shifts `submitted` out of index
+    # alignment with the request's `table_fqns` (see runs.tsx regression
+    # this field fixes).
+    table_fqn: str | None = Field(default=None, description="Source table FQN this run was submitted for")
 
 
 class DryRunOut(BaseModel):

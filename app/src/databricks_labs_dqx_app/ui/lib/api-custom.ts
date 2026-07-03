@@ -66,6 +66,11 @@ export interface DryRunSubmitOutCustom {
   run_id: string;
   job_run_id: number;
   view_fqn: string;
+  /** Source table FQN this run was submitted for — added so callers can
+   *  associate each submitted run with its table by value instead of by
+   *  request-array position (batch submission skips tables that fail
+   *  validation, which shifts index-based lookups out of alignment). */
+  table_fqn?: string | null;
 }
 
 export interface BatchRunFromCatalogOut {

@@ -700,11 +700,18 @@ export interface DryRunResultsOut {
   sample_invalid?: DryRunResultsOutSampleInvalidItem[];
 }
 
+/**
+ * Source table FQN this run was submitted for
+ */
+export type DryRunSubmitOutTableFqn = string | null;
+
 export interface DryRunSubmitOut {
   run_id: string;
   job_run_id: number;
   /** Temporary view FQN for cleanup tracking */
   view_fqn: string;
+  /** Source table FQN this run was submitted for */
+  table_fqn?: DryRunSubmitOutTableFqn;
 }
 
 export type EmbeddedDashboardInTitle = string | null;
