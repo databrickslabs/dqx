@@ -149,32 +149,38 @@ function VersionPinDropdown({
 
   if (readonly) {
     return (
-      <Badge variant="outline" className="font-mono text-[10px] shrink-0">
-        v{currentVersion} &middot; {label}
-      </Badge>
+      // Fixed min-width (matches dqlake's badge sizing) so the pin badge
+      // doesn't reflow the card header when its label length changes.
+      <div className="inline-flex items-center justify-end min-w-[140px] shrink-0">
+        <Badge variant="outline" className="font-mono text-[10px]">
+          v{currentVersion} &middot; {label}
+        </Badge>
+      </div>
     );
   }
 
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button type="button" onClick={(e) => e.stopPropagation()} className="focus:outline-none">
-          <Badge variant="outline" className="font-mono text-[10px] shrink-0 cursor-pointer hover:bg-muted/60">
-            v{currentVersion} &middot; {label} &#x25BE;
-          </Badge>
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
-        <DropdownMenuItem onClick={() => onPinChange("latest")} className="gap-2">
-          {!pinned ? <Check className="h-3.5 w-3.5" /> : <span className="inline-block w-3.5" />}
-          <span>{t("monitoredTables.pinFollowLatest")}</span>
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => onPinChange("pinned")} className="gap-2">
-          {pinned ? <Check className="h-3.5 w-3.5" /> : <span className="inline-block w-3.5" />}
-          <span className="font-mono">{t("monitoredTables.pinVersion", { version: currentVersion })}</span>
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <div className="inline-flex items-center justify-end min-w-[140px] shrink-0">
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button type="button" onClick={(e) => e.stopPropagation()} className="focus:outline-none">
+            <Badge variant="outline" className="font-mono text-[10px] cursor-pointer hover:bg-muted/60">
+              v{currentVersion} &middot; {label} &#x25BE;
+            </Badge>
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+          <DropdownMenuItem onClick={() => onPinChange("latest")} className="gap-2">
+            {!pinned ? <Check className="h-3.5 w-3.5" /> : <span className="inline-block w-3.5" />}
+            <span>{t("monitoredTables.pinFollowLatest")}</span>
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => onPinChange("pinned")} className="gap-2">
+            {pinned ? <Check className="h-3.5 w-3.5" /> : <span className="inline-block w-3.5" />}
+            <span className="font-mono">{t("monitoredTables.pinVersion", { version: currentVersion })}</span>
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
   );
 }
 
@@ -212,41 +218,47 @@ function SeverityDropdown({
 
   if (readonly) {
     return (
-      <Badge variant="outline" className="text-[10px] shrink-0 gap-1.5">
-        {dot}
-        {label}
-        {isOverridden && <span className="text-muted-foreground ml-0.5">*</span>}
-      </Badge>
+      // Same fixed-width treatment as the version-pin badge — keeps both
+      // badges aligned regardless of severity label length or override state.
+      <div className="inline-flex items-center justify-end min-w-[110px] shrink-0">
+        <Badge variant="outline" className="text-[10px] gap-1.5">
+          {dot}
+          {label}
+          {isOverridden && <span className="text-muted-foreground ml-0.5">*</span>}
+        </Badge>
+      </div>
     );
   }
 
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button type="button" onClick={(e) => e.stopPropagation()} className="focus:outline-none">
-          <Badge variant="outline" className="text-[10px] shrink-0 cursor-pointer hover:bg-muted/60 gap-1.5">
-            {dot}
-            {label}
-            {isOverridden && <span className="text-muted-foreground ml-0.5">*</span>} &#x25BE;
-          </Badge>
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
-        {severityValues.map((v) => (
-          <DropdownMenuItem key={v} onClick={() => onSeverityChange(v)} className="gap-2 py-1.5">
-            {severity === v ? <Check className="h-3.5 w-3.5" /> : <span className="inline-block w-3.5" />}
-            <span
-              className="inline-block w-2 h-2 rounded-full shrink-0"
-              style={{ background: colorFor(labelDefinitions, RESERVED_SEVERITY_KEY, v) ?? "#888" }}
-            />
-            <span>{v}</span>
-            {v === ruleSeverity && (
-              <span className="text-muted-foreground text-xs">{t("monitoredTables.defaultLabel")}</span>
-            )}
-          </DropdownMenuItem>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <div className="inline-flex items-center justify-end min-w-[110px] shrink-0">
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button type="button" onClick={(e) => e.stopPropagation()} className="focus:outline-none">
+            <Badge variant="outline" className="text-[10px] cursor-pointer hover:bg-muted/60 gap-1.5">
+              {dot}
+              {label}
+              {isOverridden && <span className="text-muted-foreground ml-0.5">*</span>} &#x25BE;
+            </Badge>
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+          {severityValues.map((v) => (
+            <DropdownMenuItem key={v} onClick={() => onSeverityChange(v)} className="gap-2 py-1.5">
+              {severity === v ? <Check className="h-3.5 w-3.5" /> : <span className="inline-block w-3.5" />}
+              <span
+                className="inline-block w-2 h-2 rounded-full shrink-0"
+                style={{ background: colorFor(labelDefinitions, RESERVED_SEVERITY_KEY, v) ?? "#888" }}
+              />
+              <span>{v}</span>
+              {v === ruleSeverity && (
+                <span className="text-muted-foreground text-xs">{t("monitoredTables.defaultLabel")}</span>
+              )}
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
   );
 }
 
