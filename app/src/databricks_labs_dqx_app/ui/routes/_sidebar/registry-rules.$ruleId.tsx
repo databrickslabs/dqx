@@ -1,16 +1,34 @@
 import { createFileRoute, useNavigate, useParams, useSearch } from "@tanstack/react-router";
-import { Suspense, useCallback, useMemo } from "react";
+import { Suspense, useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { QueryErrorResetBoundary, useQueryClient } from "@tanstack/react-query";
 import { ErrorBoundary } from "react-error-boundary";
+import { toast } from "sonner";
 import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
 import { FadeIn } from "@/components/anim/FadeIn";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { AlertCircle, RotateCcw } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { AlertCircle, MoreVertical, RotateCcw, Trash2 } from "lucide-react";
 import {
   useGetRegistryRuleSuspense,
   getGetRegistryRuleQueryKey,
+  useDeleteRegistryRule,
 } from "@/lib/api";
 import { useLabelDefinitions } from "@/lib/api-custom";
 import { usePermissions } from "@/hooks/use-permissions";
@@ -19,6 +37,12 @@ import {
   type PageTab,
 } from "@/components/RegistryRuleFormDialog";
 import { StatusBadge, ModeBadge, AuthorKindBadge, getTag, RESERVED_NAME_KEY } from "@/components/RegistryRuleBadges";
+import { cn } from "@/lib/utils";
+
+function extractApiError(err: unknown, fallback: string): string {
+  const axErr = err as { response?: { data?: { detail?: string } } };
+  return axErr?.response?.data?.detail ?? fallback;
+}
 
 export const Route = createFileRoute("/_sidebar/registry-rules/$ruleId")({
   validateSearch: (search: Record<string, unknown>): { tab?: string } => ({
@@ -78,6 +102,8 @@ function RegistryRuleDetailPage() {
   const { data: labelDefsData } = useLabelDefinitions();
   const labelDefinitions = useMemo(() => labelDefsData?.definitions ?? [], [labelDefsData]);
 
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+
   const invalidateDetail = useCallback(
     () => queryClient.invalidateQueries({ queryKey: getGetRegistryRuleQueryKey(ruleId) }),
     [queryClient, ruleId],
@@ -87,6 +113,23 @@ function RegistryRuleDetailPage() {
     () => navigate({ to: "/registry-rules" }),
     [navigate],
   );
+
+  const deleteMutation = useDeleteRegistryRule();
+  const handleConfirmDelete = useCallback(() => {
+    setDeleteConfirmOpen(false);
+    deleteMutation.mutate(
+      { ruleId },
+      {
+        onSuccess: () => {
+          toast.success(t("rulesRegistry.toastDeleted"));
+          backToList();
+        },
+        onError: (err) => {
+          toast.error(extractApiError(err, t("rulesRegistry.toastDeleteFailed")), { duration: 6000 });
+        },
+      },
+    );
+  }, [deleteMutation, ruleId, t, backToList]);
 
   const handleActiveTabChange = useCallback(
     (nextTab: PageTab) => {
@@ -105,6 +148,10 @@ function RegistryRuleDetailPage() {
   const canEdit = rule.status === "draft" && perms.canCreateRules;
   const name = getTag(rule, RESERVED_NAME_KEY) || rule.rule_id;
 
+  // Delete is restricted to approver/admin here, matching the backend
+  // deleteRegistryRule role gate.
+  const canDelete = perms.canApproveRules;
+
   return (
     <FadeIn>
       <div className="space-y-6">
@@ -115,6 +162,29 @@ function RegistryRuleDetailPage() {
           <StatusBadge status={rule.status} />
           <ModeBadge mode={rule.mode} />
           <AuthorKindBadge authorKind={rule.author_kind ?? undefined} />
+          {canDelete && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="ml-auto h-8 w-8 p-0"
+                  aria-label={t("rulesRegistry.actionsMenuLabel")}
+                >
+                  <MoreVertical className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem
+                  onClick={() => setDeleteConfirmOpen(true)}
+                  className={cn("gap-2 text-destructive focus:text-destructive")}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  {t("rulesRegistry.actionDelete")}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
         </div>
 
         <RegistryRuleFormDialog
@@ -131,6 +201,26 @@ function RegistryRuleDetailPage() {
           onActiveTabChange={handleActiveTabChange}
         />
       </div>
+
+      <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("rulesRegistry.deleteConfirmTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("rulesRegistry.deleteConfirmDescription", { name })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              className={cn("bg-destructive text-white hover:bg-destructive/90")}
+              onClick={handleConfirmDelete}
+            >
+              {t("rulesRegistry.actionDelete")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </FadeIn>
   );
 }

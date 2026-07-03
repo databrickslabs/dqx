@@ -1528,6 +1528,7 @@
     "actionEdit": "Editar",
     "actionSubmit": "Enviar para aprovação",
     "actionDelete": "Excluir",
+    "actionsMenuLabel": "Ações",
     "actionApprove": "Aprovar",
     "actionReject": "Rejeitar",
     "actionDeprecate": "Descontinuar",
