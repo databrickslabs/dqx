@@ -21,7 +21,8 @@ class TestGetAiSettings:
         result = get_ai_settings(svc)
 
         assert result.ai_enabled is False
-        assert result.ai_endpoint_name == ""
+        assert result.ai_endpoint_name == "databricks-gpt-5-5"
+        assert result.ai_endpoint_name_default == "databricks-gpt-5-5"
         assert result.ai_rate_limit_per_user_per_hour == 30
         assert result.ai_rate_limit_default == 30
         assert result.embedding_endpoint_name == ""

@@ -555,6 +555,15 @@ class AppSettingsService:
 
     AI_RATE_LIMIT_DEFAULT = 30
 
+    # Seeded default AI serving endpoint — a reasonable out-of-the-box
+    # selection for the admin dropdown (Rules Registry Phase 7F). AI stays
+    # OFF by default regardless (``ai_enabled`` defaults to ``False``); this
+    # only changes what shows up pre-selected once an admin turns it on. An
+    # admin who explicitly saves an empty value gets that empty value back
+    # (see the ``raw is None`` check below) rather than being forced back to
+    # the default on every read.
+    AI_ENDPOINT_NAME_DEFAULT = "databricks-gpt-5-5"
+
     def get_ai_enabled(self) -> bool:
         """Return whether the AI kill-switch is on; defaults to ``False`` (off) when unset."""
         raw = self.get_setting(self._AI_ENABLED_KEY)
@@ -566,8 +575,17 @@ class AppSettingsService:
         return enabled
 
     def get_ai_endpoint_name(self) -> str:
-        """Return the configured AI serving endpoint name, or ``""`` if unset."""
-        return (self.get_setting(self._AI_ENDPOINT_NAME_KEY) or "").strip()
+        """Return the configured AI serving endpoint name.
+
+        Defaults to :data:`AI_ENDPOINT_NAME_DEFAULT` when the setting has
+        never been saved (no row). An admin who explicitly saves an empty
+        value gets ``""`` back, not the default — the row exists, it's just
+        empty.
+        """
+        raw = self.get_setting(self._AI_ENDPOINT_NAME_KEY)
+        if raw is None:
+            return self.AI_ENDPOINT_NAME_DEFAULT
+        return raw.strip()
 
     def save_ai_endpoint_name(self, endpoint_name: str, *, user_email: str | None = None) -> str:
         """Persist the AI serving endpoint name. Returns the cleaned (trimmed) value."""

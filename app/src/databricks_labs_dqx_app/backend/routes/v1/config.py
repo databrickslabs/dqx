@@ -1,13 +1,16 @@
+import asyncio
 import json
 import os
 import re
 from typing import Annotated
 
+from databricks.sdk import WorkspaceClient
+from databricks.sdk.errors import DatabricksError
 from fastapi import APIRouter, Depends, HTTPException
 
 from databricks_labs_dqx_app.backend.common.authorization import UserRole, get_user_email
 from databricks_labs_dqx_app.backend.config import conf
-from databricks_labs_dqx_app.backend.dependencies import get_app_settings_service, require_role
+from databricks_labs_dqx_app.backend.dependencies import get_app_settings_service, get_sp_ws, require_role
 from databricks_labs_dqx_app.backend.logger import logger
 from pydantic import BaseModel, Field, field_validator
 
@@ -940,6 +943,7 @@ class AiSettingsOut(BaseModel):
 
     ai_enabled: bool
     ai_endpoint_name: str
+    ai_endpoint_name_default: str = AppSettingsService.AI_ENDPOINT_NAME_DEFAULT
     ai_rate_limit_per_user_per_hour: int
     ai_rate_limit_default: int = AppSettingsService.AI_RATE_LIMIT_DEFAULT
     embedding_endpoint_name: str = ""
@@ -1022,3 +1026,36 @@ def save_ai_settings(
 
     logger.info("Saved AI Gateway / Vector Search settings (by=%s)", email)
     return _ai_settings_out(svc)
+
+
+# ----------------------------------------------------------------------
+# Serving endpoints — Rules Registry Phase 7F. Backs the AI settings
+# dropdown so admins pick ``ai_endpoint_name``/``embedding_endpoint_name``
+# from the workspace's actual serving endpoints instead of typing a raw
+# string. Read-only, best-effort: any SDK failure (permissions, transient
+# outage) degrades to an empty list rather than a 500 so the settings page
+# still renders and free-text fallback remains possible.
+# ----------------------------------------------------------------------
+
+
+class ServingEndpointsOut(BaseModel):
+    names: list[str]
+
+
+@router.get(
+    "/serving-endpoints",
+    response_model=ServingEndpointsOut,
+    operation_id="listServingEndpoints",
+    dependencies=[require_role(UserRole.ADMIN)],
+)
+async def list_serving_endpoints(
+    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
+) -> ServingEndpointsOut:
+    """Return the workspace's serving endpoint names, or ``[]`` on any SDK failure."""
+    try:
+        endpoints = await asyncio.to_thread(lambda: list(sp_ws.serving_endpoints.list()))
+    except DatabricksError:
+        logger.warning("Failed to list serving endpoints", exc_info=True)
+        return ServingEndpointsOut(names=[])
+    names = sorted({endpoint.name for endpoint in endpoints if endpoint.name})
+    return ServingEndpointsOut(names=names)

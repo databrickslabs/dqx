@@ -92,9 +92,17 @@ class TestAiGatewaySettings:
         sql_executor_mock.query.return_value = [["true"]]
         assert svc.get_ai_enabled() is True
 
-    def test_ai_endpoint_name_defaults_to_empty(self, settings_service):
+    def test_ai_endpoint_name_defaults_to_databricks_gpt_5_5(self, settings_service):
         svc, sql_executor_mock = settings_service
         sql_executor_mock.query.return_value = []
+
+        assert svc.get_ai_endpoint_name() == "databricks-gpt-5-5"
+        assert svc.AI_ENDPOINT_NAME_DEFAULT == "databricks-gpt-5-5"
+
+    def test_ai_endpoint_name_respects_explicit_empty_value(self, settings_service):
+        """An admin who explicitly clears the endpoint gets '', not the default."""
+        svc, sql_executor_mock = settings_service
+        sql_executor_mock.query.return_value = [[""]]
 
         assert svc.get_ai_endpoint_name() == ""
 
