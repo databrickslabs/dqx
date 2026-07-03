@@ -59,6 +59,7 @@ import {
   User,
   Undo2,
   Loader2,
+  ShieldCheck,
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { FadeIn } from "@/components/anim/FadeIn";
@@ -76,7 +77,12 @@ import {
 import {
   useListRules,
   getListRulesQueryKey,
+  useListRegistryRules,
+  getListRegistryRulesQueryKey,
+  useApproveRegistryRule,
+  useRejectRegistryRule,
   type RuleCatalogEntryOut,
+  type RegistryRuleOut,
   type User as UserType,
 } from "@/lib/api";
 import {
@@ -245,6 +251,248 @@ function SortableHeader({
       {label}
       <Icon className={`h-3 w-3 ${active ? "text-foreground" : "text-muted-foreground/50"}`} />
     </button>
+  );
+}
+
+/**
+ * Registry rules awaiting approval — a second approval queue alongside the
+ * legacy per-table drafts below. Registry rules (dq_rules) go through their
+ * own `draft -> pending_approval -> approved` gate before they can ever be
+ * applied to a table; this section is what makes Drafts & Review the single
+ * place approvers check, instead of having to also visit Rules Registry.
+ * See docs/superpowers/specs/2026-07-02-rules-registry-design.md §5.
+ */
+function RegistryApprovalsSection({
+  canApproveRules,
+  currentUserEmail,
+}: {
+  canApproveRules: boolean;
+  currentUserEmail: string;
+}) {
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
+
+  const { data, isLoading, error } = useListRegistryRules({ status: "pending_approval" });
+  const rules: RegistryRuleOut[] = useMemo(() => data?.data ?? [], [data]);
+
+  const invalidate = useCallback(
+    () => queryClient.invalidateQueries({ queryKey: getListRegistryRulesQueryKey() }),
+    [queryClient],
+  );
+
+  const approveMutation = useApproveRegistryRule();
+  const rejectMutation = useRejectRegistryRule();
+  const [pendingRuleId, setPendingRuleId] = useState<string | null>(null);
+  const [approveTarget, setApproveTarget] = useState<RegistryRuleOut | null>(null);
+  const [rejectTarget, setRejectTarget] = useState<RegistryRuleOut | null>(null);
+
+  const runAction = useCallback(
+    (ruleId: string, mutate: () => Promise<unknown>, successMsg: string, errorMsg: string) => {
+      if (pendingRuleId) return;
+      setPendingRuleId(ruleId);
+      mutate()
+        .then(() => {
+          toast.success(successMsg);
+          invalidate();
+        })
+        .catch((err: unknown) => {
+          const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+          toast.error(detail || errorMsg, { duration: 6000 });
+        })
+        .finally(() => setPendingRuleId(null));
+    },
+    [pendingRuleId, invalidate],
+  );
+
+  const confirmApprove = (rule: RegistryRuleOut) =>
+    runAction(
+      rule.rule_id,
+      () => approveMutation.mutateAsync({ ruleId: rule.rule_id }),
+      t("rulesDrafts.registryToastApproved"),
+      t("rulesDrafts.registryToastFailedApprove"),
+    );
+  const confirmReject = (rule: RegistryRuleOut) =>
+    runAction(
+      rule.rule_id,
+      () => rejectMutation.mutateAsync({ ruleId: rule.rule_id }),
+      t("rulesDrafts.registryToastRejected"),
+      t("rulesDrafts.registryToastFailedReject"),
+    );
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <ShieldCheck className="h-5 w-5" />
+          {t("rulesDrafts.registrySectionTitle")}
+        </CardTitle>
+        <CardDescription>{t("rulesDrafts.registrySectionDescription")}</CardDescription>
+      </CardHeader>
+      <CardContent>
+        {isLoading && (
+          <div className="space-y-2">
+            {[1, 2].map((i) => <Skeleton key={i} className="h-14 w-full" />)}
+          </div>
+        )}
+
+        {error && (
+          <p className="text-destructive text-sm">
+            {t("rulesDrafts.registryFailedLoad", { error: (error as Error).message })}
+          </p>
+        )}
+
+        {!isLoading && !error && rules.length === 0 && (
+          <div className="flex flex-col items-center justify-center py-10 text-center">
+            <div className="w-14 h-14 rounded-full bg-muted flex items-center justify-center mb-4">
+              <ShieldCheck className="h-7 w-7 text-muted-foreground" />
+            </div>
+            <p className="text-muted-foreground text-sm">{t("rulesDrafts.registryEmptyState")}</p>
+          </div>
+        )}
+
+        {!isLoading && !error && rules.length > 0 && (
+          <FadeIn duration={0.3}>
+            <div className="border rounded-lg overflow-x-auto">
+              <table className="w-full text-sm" style={{ minWidth: "900px" }}>
+                <thead>
+                  <tr className="border-b bg-muted/50">
+                    <th className="text-left p-3 font-medium whitespace-nowrap">{t("rulesDrafts.headerName")}</th>
+                    <th className="text-left p-3 font-medium whitespace-nowrap">{t("rulesDrafts.headerDimension")}</th>
+                    <th className="text-left p-3 font-medium whitespace-nowrap">{t("rulesDrafts.headerSeverity")}</th>
+                    <th className="text-left p-3 font-medium whitespace-nowrap">{t("rulesDrafts.headerSteward")}</th>
+                    <th className="text-left p-3 font-medium whitespace-nowrap">{t("rulesDrafts.headerVersion")}</th>
+                    <th className="text-left p-3 font-medium whitespace-nowrap">{t("rulesDrafts.headerModified")}</th>
+                    <th className="text-right p-3 font-medium whitespace-nowrap">{t("rulesDrafts.headerActions")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rules.map((rule) => {
+                    const md = getUserMetadata(rule as unknown as Record<string, unknown>);
+                    const name = md.name || rule.rule_id;
+                    const dimension = md.dimension;
+                    const severity = md.severity;
+                    const author = rule.updated_by ?? rule.created_by ?? rule.steward ?? "";
+                    const busy = pendingRuleId === rule.rule_id;
+                    const isAuthor = !!currentUserEmail && author.toLowerCase() === currentUserEmail.toLowerCase();
+                    return (
+                      <tr key={rule.rule_id} className="border-b last:border-b-0 hover:bg-muted/30 transition-colors">
+                        <td className="p-3 font-mono text-xs">{name}</td>
+                        <td className="p-3">
+                          {dimension ? (
+                            <Badge variant="outline" className="text-[10px] font-normal">{dimension}</Badge>
+                          ) : (
+                            <span className="text-muted-foreground/50 text-xs">—</span>
+                          )}
+                        </td>
+                        <td className="p-3">
+                          {severity ? (
+                            <Badge variant="outline" className="text-[10px] font-normal">{severity}</Badge>
+                          ) : (
+                            <span className="text-muted-foreground/50 text-xs">—</span>
+                          )}
+                        </td>
+                        <td className="p-3 text-xs text-muted-foreground whitespace-nowrap" title={author}>
+                          {author || "—"}
+                        </td>
+                        <td className="p-3 text-xs text-muted-foreground font-mono">v{rule.version}</td>
+                        <td className="p-3 text-muted-foreground text-xs whitespace-nowrap" title={rule.updated_at ?? ""}>
+                          {formatDate(rule.updated_at)}
+                        </td>
+                        <td className="p-3 text-right">
+                          {canApproveRules ? (
+                            <div className="flex items-center justify-end gap-1">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={busy}
+                                onClick={() => setApproveTarget(rule)}
+                                className="gap-1 h-7 text-xs text-green-600"
+                              >
+                                <CheckCircle2 className="h-3 w-3" />
+                                {busy ? t("rulesDrafts.ellipsis") : t("rulesDrafts.approveAction")}
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={busy}
+                                onClick={() => setRejectTarget(rule)}
+                                className="gap-1 h-7 text-xs text-red-600"
+                              >
+                                <XCircle className="h-3 w-3" />
+                                {busy ? t("rulesDrafts.ellipsis") : t("rulesDrafts.rejectAction")}
+                              </Button>
+                            </div>
+                          ) : (
+                            <span className="text-[11px] text-muted-foreground italic">
+                              {isAuthor ? t("rulesDrafts.registryYourSubmission") : t("rulesDrafts.registryReadOnly")}
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </FadeIn>
+        )}
+      </CardContent>
+
+      <AlertDialog open={!!approveTarget} onOpenChange={(open) => !open && setApproveTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("rulesDrafts.registryApproveTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("rulesDrafts.registryApproveBody", {
+                name: approveTarget
+                  ? getUserMetadata(approveTarget as unknown as Record<string, unknown>).name || approveTarget.rule_id
+                  : "",
+              })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                const target = approveTarget;
+                setApproveTarget(null);
+                if (target) confirmApprove(target);
+              }}
+            >
+              {t("rulesDrafts.approveAction")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={!!rejectTarget} onOpenChange={(open) => !open && setRejectTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("rulesDrafts.registryRejectTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("rulesDrafts.registryRejectBody", {
+                name: rejectTarget
+                  ? getUserMetadata(rejectTarget as unknown as Record<string, unknown>).name || rejectTarget.rule_id
+                  : "",
+              })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                const target = rejectTarget;
+                setRejectTarget(null);
+                if (target) confirmReject(target);
+              }}
+              className="bg-destructive text-white hover:bg-destructive/90"
+            >
+              {t("rulesDrafts.rejectAction")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </Card>
   );
 }
 
@@ -742,6 +990,15 @@ function DraftsPage() {
             </Button>
           )}
         </div>
+      </div>
+
+      <RegistryApprovalsSection canApproveRules={canApproveRules} currentUserEmail={currentUserEmail} />
+
+      <div className="flex items-center gap-2 pt-2">
+        <ClipboardCheck className="h-4 w-4 text-muted-foreground" />
+        <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+          {t("rulesDrafts.perTableSectionTitle")}
+        </h2>
       </div>
 
       <Card>
