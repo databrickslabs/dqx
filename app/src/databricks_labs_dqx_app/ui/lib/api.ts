@@ -352,6 +352,33 @@ export interface BatchSaveRulesOut {
   failed?: BatchSaveRulesOutFailedItem[];
 }
 
+/**
+ * Owning steward's email/username applied to all
+ */
+export type BulkRegisterMonitoredTablesInSteward = string | null;
+
+/**
+ * Request body for bulk-registering many tables under Rules Registry governance.
+ */
+export interface BulkRegisterMonitoredTablesIn {
+  /** Fully qualified table names (catalog.schema.table) to register */
+  table_fqns: string[];
+  /** Owning steward's email/username applied to all */
+  steward?: BulkRegisterMonitoredTablesInSteward;
+}
+
+/**
+ * Response for ``bulkRegisterMonitoredTables`` — a partitioned summary of the batch.
+ */
+export interface BulkRegisterMonitoredTablesOut {
+  /** Newly registered table FQNs */
+  registered?: string[];
+  /** Table FQNs already monitored — left untouched */
+  skipped_existing?: string[];
+  /** Table FQNs that failed FQN validation */
+  invalid?: string[];
+}
+
 export type CatalogOutComment = string | null;
 
 export interface CatalogOut {
@@ -9725,6 +9752,73 @@ export const useDeleteMonitoredTable = <TError = AxiosError<HTTPValidationError>
       > => {
 
       const mutationOptions = getDeleteMonitoredTableMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Register many tables under Rules Registry governance in one call.
+
+Already-monitored tables and syntactically invalid FQNs are reported
+back in the summary rather than failing the whole batch — see
+:meth:`MonitoredTableService.bulk_register`.
+ * @summary Bulk Register Monitored Tables
+ */
+export const bulkRegisterMonitoredTables = (
+    bulkRegisterMonitoredTablesIn: BulkRegisterMonitoredTablesIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<BulkRegisterMonitoredTablesOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/monitored-tables/bulk`,
+      bulkRegisterMonitoredTablesIn,options
+    );
+  }
+
+
+
+export const getBulkRegisterMonitoredTablesMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof bulkRegisterMonitoredTables>>, TError,{data: BulkRegisterMonitoredTablesIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof bulkRegisterMonitoredTables>>, TError,{data: BulkRegisterMonitoredTablesIn}, TContext> => {
+
+const mutationKey = ['bulkRegisterMonitoredTables'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof bulkRegisterMonitoredTables>>, {data: BulkRegisterMonitoredTablesIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  bulkRegisterMonitoredTables(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type BulkRegisterMonitoredTablesMutationResult = NonNullable<Awaited<ReturnType<typeof bulkRegisterMonitoredTables>>>
+    export type BulkRegisterMonitoredTablesMutationBody = BulkRegisterMonitoredTablesIn
+    export type BulkRegisterMonitoredTablesMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Bulk Register Monitored Tables
+ */
+export const useBulkRegisterMonitoredTables = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof bulkRegisterMonitoredTables>>, TError,{data: BulkRegisterMonitoredTablesIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof bulkRegisterMonitoredTables>>,
+        TError,
+        {data: BulkRegisterMonitoredTablesIn},
+        TContext
+      > => {
+
+      const mutationOptions = getBulkRegisterMonitoredTablesMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }

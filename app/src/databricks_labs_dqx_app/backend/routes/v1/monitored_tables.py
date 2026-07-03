@@ -25,6 +25,8 @@ from databricks_labs_dqx_app.backend.logger import logger
 from databricks_labs_dqx_app.backend.models import (
     AppliedRuleOut,
     ApplyRuleIn,
+    BulkRegisterMonitoredTablesIn,
+    BulkRegisterMonitoredTablesOut,
     MonitoredTableDetailOut,
     MonitoredTableOut,
     MonitoredTableProfileOut,
@@ -140,6 +142,32 @@ def register_monitored_table(
     except Exception as e:
         logger.error(f"Failed to register monitored table: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to register monitored table: {e}")
+
+
+@router.post(
+    "/bulk",
+    response_model=BulkRegisterMonitoredTablesOut,
+    operation_id="bulkRegisterMonitoredTables",
+    dependencies=[require_role(*_AUTHORS_AND_ABOVE)],
+)
+def bulk_register_monitored_tables(
+    body: BulkRegisterMonitoredTablesIn,
+    svc: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+) -> BulkRegisterMonitoredTablesOut:
+    """Register many tables under Rules Registry governance in one call.
+
+    Already-monitored tables and syntactically invalid FQNs are reported
+    back in the summary rather than failing the whole batch — see
+    :meth:`MonitoredTableService.bulk_register`.
+    """
+    try:
+        user_email = _current_user_email(obo_ws)
+        result = svc.bulk_register(body.table_fqns, user_email, steward=body.steward)
+        return BulkRegisterMonitoredTablesOut.from_domain(result)
+    except Exception as e:
+        logger.error(f"Failed to bulk-register monitored tables: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to bulk-register monitored tables: {e}")
 
 
 @router.delete(

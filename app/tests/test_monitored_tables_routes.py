@@ -16,6 +16,7 @@ from fastapi import HTTPException
 
 from databricks_labs_dqx_app.backend.models import (
     ApplyRuleIn,
+    BulkRegisterMonitoredTablesIn,
     RegisterMonitoredTableIn,
     SetAppliedRulePinIn,
     SetAppliedRuleSeverityOverrideIn,
@@ -23,6 +24,7 @@ from databricks_labs_dqx_app.backend.models import (
 from databricks_labs_dqx_app.backend.registry_models import AppliedRule, MonitoredTable
 from databricks_labs_dqx_app.backend.routes.v1.monitored_tables import (
     apply_rule_to_table,
+    bulk_register_monitored_tables,
     delete_monitored_table,
     get_monitored_table,
     get_monitored_table_profile,
@@ -42,6 +44,7 @@ from databricks_labs_dqx_app.backend.services.materializer import Materializatio
 from databricks_labs_dqx_app.backend.services.rule_suggester import RuleSuggestion, SuggestRulesResult
 from databricks_labs_dqx_app.backend.services.monitored_table_service import (
     AppliedRuleSummary,
+    BulkRegisterResult,
     DuplicateMonitoredTableError,
     LatestProfile,
     MonitoredTableDetail,
@@ -118,6 +121,44 @@ class TestRegister:
         with pytest.raises(HTTPException) as excinfo:
             register_monitored_table(body=body, svc=svc, obo_ws=_mock_obo_ws())
         assert excinfo.value.status_code == 400
+
+
+class TestBulkRegister:
+    def test_bulk_register_success(self):
+        svc = MagicMock()
+        svc.bulk_register.return_value = BulkRegisterResult(
+            registered=["cat.schema.a", "cat.schema.b"],
+            skipped_existing=["cat.schema.existing"],
+            invalid=["bad-fqn"],
+        )
+        body = BulkRegisterMonitoredTablesIn(
+            table_fqns=["cat.schema.a", "cat.schema.b", "cat.schema.existing", "bad-fqn"],
+            steward="bob@x",
+        )
+        result = bulk_register_monitored_tables(body=body, svc=svc, obo_ws=_mock_obo_ws())
+        assert result.registered == ["cat.schema.a", "cat.schema.b"]
+        assert result.skipped_existing == ["cat.schema.existing"]
+        assert result.invalid == ["bad-fqn"]
+        svc.bulk_register.assert_called_once_with(
+            ["cat.schema.a", "cat.schema.b", "cat.schema.existing", "bad-fqn"], "alice@x", steward="bob@x"
+        )
+
+    def test_bulk_register_empty_list(self):
+        svc = MagicMock()
+        svc.bulk_register.return_value = BulkRegisterResult()
+        body = BulkRegisterMonitoredTablesIn(table_fqns=[])
+        result = bulk_register_monitored_tables(body=body, svc=svc, obo_ws=_mock_obo_ws())
+        assert result.registered == []
+        assert result.skipped_existing == []
+        assert result.invalid == []
+
+    def test_bulk_register_propagates_unexpected_errors_as_500(self):
+        svc = MagicMock()
+        svc.bulk_register.side_effect = RuntimeError("boom")
+        body = BulkRegisterMonitoredTablesIn(table_fqns=["cat.schema.a"])
+        with pytest.raises(HTTPException) as excinfo:
+            bulk_register_monitored_tables(body=body, svc=svc, obo_ws=_mock_obo_ws())
+        assert excinfo.value.status_code == 500
 
 
 class TestDelete:

@@ -17,6 +17,7 @@ from .registry_models import MonitoredTable as MonitoredTableDomain
 from .registry_models import MonitoredTableStatus as MonitoredTableStatusDomain
 from .services.monitored_table_service import (
     AppliedRuleSummary,
+    BulkRegisterResult,
     LatestProfile,
     MonitoredTableDetail,
     MonitoredTableSummary,
@@ -393,6 +394,27 @@ class RegisterMonitoredTableIn(BaseModel):
 
     table_fqn: str = Field(description="Fully qualified table name (catalog.schema.table)")
     steward: str | None = Field(default=None, description="Owning steward's email/username")
+
+
+class BulkRegisterMonitoredTablesIn(BaseModel):
+    """Request body for bulk-registering many tables under Rules Registry governance."""
+
+    table_fqns: list[str] = Field(description="Fully qualified table names (catalog.schema.table) to register")
+    steward: str | None = Field(default=None, description="Owning steward's email/username applied to all")
+
+
+class BulkRegisterMonitoredTablesOut(BaseModel):
+    """Response for ``bulkRegisterMonitoredTables`` — a partitioned summary of the batch."""
+
+    registered: list[str] = Field(default_factory=list, description="Newly registered table FQNs")
+    skipped_existing: list[str] = Field(
+        default_factory=list, description="Table FQNs already monitored — left untouched"
+    )
+    invalid: list[str] = Field(default_factory=list, description="Table FQNs that failed FQN validation")
+
+    @classmethod
+    def from_domain(cls, result: BulkRegisterResult) -> "BulkRegisterMonitoredTablesOut":
+        return cls(registered=result.registered, skipped_existing=result.skipped_existing, invalid=result.invalid)
 
 
 class AppliedRuleOut(BaseModel):
