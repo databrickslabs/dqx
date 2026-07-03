@@ -518,11 +518,12 @@ def test_run_dqx_row_anomaly_detection_demo(ws, make_notebook, make_schema, make
     job = make_job(tasks=[Task(task_key="dqx_row_anomaly_detection_demo", notebook_task=notebook_task)])
 
     # This demo trains two IsolationForest models and scores with contributions + AI explanations
-    # (on by default), so it runs past run_now_and_wait's 20-minute SDK default
-    waiter = ws.jobs.run_now_and_wait(job.job_id, timeout=timedelta(minutes=30))
+    # (on by default), so it is the slowest e2e demo and can exceed 30 minutes on a cold serverless
+    # start. Use a 45-minute wait (still well within the e2e CI job's 2h wrapper).
+    waiter = ws.jobs.run_now_and_wait(job.job_id, timeout=timedelta(minutes=45))
     run = ws.jobs.wait_get_run_job_terminated_or_skipped(
         run_id=waiter.run_id,
-        timeout=timedelta(minutes=30),
+        timeout=timedelta(minutes=45),
         callback=lambda r: validate_run_status(r, ws),
     )
     logging.info(f"Job run {run.run_id} completed successfully for dqx_row_anomaly_detection_demo")
