@@ -136,6 +136,16 @@
   * {
     @apply border-border outline-ring/50;
   }
+  html,
+  body {
+    /* Belt-and-braces against page-level horizontal scroll: wide content
+       (data tables, filter rows) must scroll inside its own
+       `overflow-x-auto` container — see SidebarLayout.tsx — but a flex
+       child without `min-w-0` can still force the whole page to shift
+       sideways. This guarantees the body itself never becomes the
+       horizontal scroll surface even if a descendant regresses. */
+    overflow-x: hidden;
+  }
   body {
     @apply bg-background text-foreground;
   }

@@ -33,7 +33,7 @@ function SidebarLayout({ children }: SidebarLayoutProps) {
   const onInsights = location.pathname.startsWith("/insights");
 
   return (
-    <div className="flex flex-col h-screen">
+    <div className="flex flex-col h-screen overflow-x-hidden">
       {/* Fixed top banner — independent of sidebar, never shifts */}
       <header className="sticky top-0 z-50 bg-background border-b shrink-0">
         <div className="flex h-12 items-center justify-between px-4">
@@ -61,12 +61,12 @@ function SidebarLayout({ children }: SidebarLayoutProps) {
           </SidebarContent>
           <SidebarRail />
         </Sidebar>
-        <SidebarInset className="flex flex-col min-h-0">
+        <SidebarInset className="flex flex-col min-h-0 min-w-0">
           <div className="flex items-center h-10 px-4 shrink-0">
             <SidebarTrigger className="-ml-1 cursor-pointer" />
           </div>
-          <div className="flex-1 min-h-0 overflow-y-auto">
-            <div className={cn("flex flex-col gap-4 p-6 pt-0 max-w-7xl mx-auto", onInsights && "hidden")}>
+          <div className="flex-1 min-h-0 min-w-0 overflow-y-auto overflow-x-hidden">
+            <div className={cn("flex flex-col gap-4 p-6 pt-0 max-w-7xl mx-auto min-w-0", onInsights && "hidden")}>
               <Outlet />
             </div>
             <InsightsDashboardHost />

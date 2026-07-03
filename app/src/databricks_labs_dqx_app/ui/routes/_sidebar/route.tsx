@@ -37,11 +37,12 @@ function Layout() {
   // Monitored Tables. The underlying route files still exist (some as
   // redirects, some as still-reachable-by-URL pages) so old bookmarks
   // don't 404; see ``rules.single-table.tsx``, ``rules.create-sql.tsx``,
-  // ``rules.active.tsx``, and ``discovery.tsx``. Import rules
+  // ``rules.active.tsx``, and ``discovery.tsx``. Import Rules
   // (``/rules/import``, plus the legacy ``/rules/from-contract``
-  // redirect) lives directly in the sidebar, next to Rules Registry —
-  // it's a bulk-registry operation, not a per-table authoring shortcut,
-  // so it no longer needs a Config-page detour.
+  // redirect) lives directly in the sidebar, immediately above Drafts
+  // & Review — it's a bulk-registry operation that feeds drafts
+  // awaiting approval, not a per-table authoring shortcut, so it no
+  // longer needs a Config-page detour.
 
   return (
     <SidebarLayout>
@@ -50,9 +51,9 @@ function Layout() {
           <SidebarMenu>
             {/* Rules Registry — reusable, versioned, governed rule
                 definitions (Phase 2). Target sidebar per the design
-                spec (§10): Rules Registry · Monitored Tables · Drafts
-                & Review — separator — Run Rules · Runs History ·
-                Insights. */}
+                spec (§10): Rules Registry · Monitored Tables · Import
+                Rules · Drafts & Review — separator — Run Rules · Runs
+                History · Insights. */}
             <SidebarMenuItem>
               <Link
                 to="/registry-rules"
@@ -65,26 +66,6 @@ function Layout() {
               >
                 <Library size={16} />
                 <span>{t("sidebar.rulesRegistry")}</span>
-              </Link>
-            </SidebarMenuItem>
-
-            {/* Import rules — bulk DQX YAML import or data-contract-driven
-                generation. ``/rules/from-contract`` still resolves (it
-                redirects into ``/rules/import?tab=contract``), so it's
-                included in the active-route check. */}
-            <SidebarMenuItem>
-              <Link
-                to="/rules/import"
-                className={cn(
-                  "flex items-center gap-2 p-2 rounded-lg",
-                  location.pathname.startsWith("/rules/import") ||
-                    location.pathname.startsWith("/rules/from-contract")
-                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                    : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
-                )}
-              >
-                <Upload size={16} />
-                <span>{t("sidebar.importRules")}</span>
               </Link>
             </SidebarMenuItem>
 
@@ -104,6 +85,28 @@ function Layout() {
               >
                 <Boxes size={16} />
                 <span>{t("sidebar.monitoredTables")}</span>
+              </Link>
+            </SidebarMenuItem>
+
+            {/* Import Rules — bulk DQX YAML import or data-contract-driven
+                generation. ``/rules/from-contract`` still resolves (it
+                redirects into ``/rules/import?tab=contract``), so it's
+                included in the active-route check. Placed immediately
+                above Drafts & Review since it's the thing that feeds
+                drafts into that queue. */}
+            <SidebarMenuItem>
+              <Link
+                to="/rules/import"
+                className={cn(
+                  "flex items-center gap-2 p-2 rounded-lg",
+                  location.pathname.startsWith("/rules/import") ||
+                    location.pathname.startsWith("/rules/from-contract")
+                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                    : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                )}
+              >
+                <Upload size={16} />
+                <span>{t("sidebar.importRules")}</span>
               </Link>
             </SidebarMenuItem>
 
