@@ -14,7 +14,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -49,6 +48,7 @@ import {
 import { LabelsEditor } from "@/components/Labels";
 import { HelpTooltip } from "@/components/HelpTooltip";
 import { CatalogBrowser } from "@/components/CatalogBrowser";
+import { PredicatePolaritySwitch } from "@/components/rules/PredicatePolaritySwitch";
 import { cn } from "@/lib/utils";
 import type { LabelDefinition } from "@/lib/api-custom";
 import {
@@ -82,11 +82,6 @@ const RESERVED_SEVERITY_KEY = "severity";
 
 type RegistryMode = "dqx_native" | "lowcode" | "sql";
 type Polarity = "pass" | "fail";
-// The mode-tab strip (inside the "Implementation" page tab) shows one extra
-// pseudo-mode — "ai" — which isn't a persisted RegistryMode. It's the guided
-// Build-with-AI experience; once a proposal is applied, the active
-// mode-tab switches to the real underlying mode.
-export type AuthoringTab = RegistryMode | "ai";
 
 // Top-level page tabs. Persisted to the URL (`?tab=`) by the routed detail
 // page so browser back/forward moves between them, mirroring the old dqx
@@ -562,6 +557,58 @@ function SlotsPanel({
   );
 }
 
+const MODE_SEGMENTS: RegistryMode[] = ["dqx_native", "lowcode", "sql"];
+
+/**
+ * Segmented pill control selecting the authoring mode (DQX Native /
+ * Low-Code / SQL), ported from dqlake's Low-code/SQL sliding switch in
+ * `ImplementationTab`. dqlake only has two segments (it has no DQX-native
+ * concept); this extends the same sliding-indicator pattern to three.
+ */
+function ModeSegmentedSwitch({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: RegistryMode;
+  onChange: (next: RegistryMode) => void;
+  disabled?: boolean;
+}) {
+  const { t } = useTranslation();
+  const labels: Record<RegistryMode, string> = {
+    dqx_native: t("rulesRegistry.modeDqxNative"),
+    lowcode: t("rulesRegistry.modeLowcode"),
+    sql: t("rulesRegistry.modeSql"),
+  };
+  const activeIndex = MODE_SEGMENTS.indexOf(value);
+  return (
+    <div className="relative inline-grid grid-cols-3 rounded-md border p-0.5 bg-background h-9 items-stretch">
+      <span
+        aria-hidden
+        className="absolute top-0.5 bottom-0.5 left-0.5 w-[calc(33.333%-2.67px)] rounded bg-primary shadow-sm transition-transform duration-200 ease-out"
+        style={{ transform: `translateX(${activeIndex * 100}%)` }}
+      />
+      {MODE_SEGMENTS.map((m) => (
+        <button
+          key={m}
+          type="button"
+          onClick={() => {
+            if (!disabled) onChange(m);
+          }}
+          disabled={disabled}
+          className={cn(
+            "relative z-10 rounded px-3 text-xs font-medium leading-none transition-colors duration-200 ease-out",
+            value === m ? "text-primary-foreground" : "text-muted-foreground hover:text-foreground",
+            disabled && "cursor-not-allowed opacity-60",
+          )}
+        >
+          {labels[m]}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 interface RegistryRuleFormDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -729,7 +776,6 @@ export function RegistryRuleFormDialog({
     },
     [onActiveTabChange],
   );
-  const [authoringTab, setAuthoringTab] = useState<AuthoringTab>("dqx_native");
   const [functionName, setFunctionName] = useState("");
   const [paramRawValues, setParamRawValues] = useState<Record<string, string>>({});
   const [sqlPredicate, setSqlPredicate] = useState("");
@@ -788,7 +834,6 @@ export function RegistryRuleFormDialog({
     if (sourceRule) {
       setAuthorKind(sourceRule.author_kind ?? undefined);
       setMode(sourceRule.mode);
-      setAuthoringTab(sourceRule.mode);
       setPageTab("about");
       setPolarity(sourceRule.polarity ?? "pass");
       if (sourceRule.mode === "dqx_native") {
@@ -810,14 +855,11 @@ export function RegistryRuleFormDialog({
       }
     } else {
       // Creating a brand-new rule: default to "human" authorship until an
-      // AI affordance is used, land on the About tab first, and lead the
-      // Implementation tab with the guided Build-with-AI mode when AI is
-      // available, since Low-Code is disabled and DQX Native's function
-      // picker is the least approachable starting point for a
-      // non-technical steward.
+      // AI affordance is used, and land on the About tab first. The
+      // Build-with-AI banner (rendered above the tab strip, see formBody)
+      // remains available regardless of which authoring mode is selected.
       setAuthorKind("human");
       setMode("dqx_native");
-      setAuthoringTab(aiAvailability.available ? "ai" : "dqx_native");
       setPageTab("about");
       setFunctionName("");
       setParamRawValues({});
@@ -825,7 +867,7 @@ export function RegistryRuleFormDialog({
       setSqlSlots([]);
       setPolarity("pass");
     }
-  }, [open, sourceRule, aiAvailability.available, setPageTab]);
+  }, [open, sourceRule, setPageTab]);
 
   const selectedFn = useMemo(
     () => checkFunctions.find((f) => f.name === functionName),
@@ -944,10 +986,9 @@ export function RegistryRuleFormDialog({
 
   const applyAiProposal = (proposal: AiGenerateRuleOut) => {
     const appliedMode: RegistryMode = proposal.mode === "sql" ? "sql" : "dqx_native";
-    setMode(appliedMode);
-    // Switch off the "ai" mode-tab onto the real authoring mode so the
+    // Switch the mode segmented control onto the real authoring mode so the
     // steward immediately sees (and can tweak) what the proposal filled in.
-    setAuthoringTab(appliedMode);
+    setMode(appliedMode);
     setName(proposal.name?.trim() ?? "");
     setDescription(proposal.description?.trim() ?? "");
     if (proposal.dimension) {
@@ -984,6 +1025,10 @@ export function RegistryRuleFormDialog({
     }
     setAiProposal(null);
     setAiDescription("");
+    // Jump to Implementation so the steward immediately sees what the
+    // proposal filled in, regardless of which page tab they were on when
+    // they used the (now always-visible) Build-with-AI banner.
+    setPageTab("implementation");
     toast.success(t("rulesRegistry.aiProposalApplied"));
   };
 
@@ -1162,7 +1207,9 @@ export function RegistryRuleFormDialog({
       ? t("rulesRegistry.editTitle")
       : t("rulesRegistry.createTitle");
 
-  const showAiTab = !readOnly && aiAvailability.available;
+  // Gates the always-visible Build-with-AI banner rendered above the page
+  // tab strip (formBody), matching dqlake's `header` slot placement.
+  const showAiBanner = !readOnly && aiAvailability.available;
 
   const authorKindBadges = (
     <>
@@ -1338,114 +1385,30 @@ export function RegistryRuleFormDialog({
     </div>
   );
 
+  // "Columns used" (SlotsPanel) only applies to SQL / Low-Code, where the
+  // author writes the predicate by hand and must declare which `{{slot}}`
+  // placeholders it references. DQX Native derives its slots automatically
+  // from the selected function's signature, rendered as read-only badges
+  // below the function picker instead.
+  const showColumnsUsedPanel = mode === "sql" || mode === "lowcode";
+
   const implementationTabContent = (
     <div className="space-y-4 pt-2">
-      <Tabs
-        value={authoringTab}
-        onValueChange={(v) => {
-          if (readOnly) return;
-          setAuthoringTab(v as AuthoringTab);
-          if (v !== "ai") setMode(v as RegistryMode);
-        }}
-      >
-        <TabsList className={`grid w-full ${showAiTab ? "grid-cols-4" : "grid-cols-3"}`}>
-          {showAiTab && (
-            <TabsTrigger value="ai" className={cn("gap-1 data-[state=active]:text-white", `data-[state=active]:${AI_BUTTON_BG}`)}>
-              <Sparkles className="h-3 w-3" />
-              {t("rulesRegistry.aiBuildTitle")}
-            </TabsTrigger>
-          )}
-          <TabsTrigger value="dqx_native" disabled={readOnly && mode !== "dqx_native"}>
-            {t("rulesRegistry.modeDqxNative")}
-          </TabsTrigger>
-          <TabsTrigger value="lowcode" disabled className="gap-1">
-            <Sparkles className="h-3 w-3" />
-            {t("rulesRegistry.modeLowcode")}
-          </TabsTrigger>
-          <TabsTrigger value="sql" disabled={readOnly && mode !== "sql"}>
-            {t("rulesRegistry.modeSql")}
-          </TabsTrigger>
-        </TabsList>
+      {/* "Columns used" leads the Implementation area, matching dqlake's
+          ImplementationTab order (ColumnsUsedPanel first, mode switch +
+          predicate editor below it). */}
+      {showColumnsUsedPanel && <SlotsPanel value={sqlSlots} onChange={setSqlSlots} disabled={readOnly} />}
 
-        {showAiTab && (
-          <TabsContent value="ai" className="pt-2">
-            <div className={cn("rounded-lg p-3 space-y-2.5", AI_BANNER_BG, AI_BANNER_BORDER)}>
-              <div className="flex items-center gap-2">
-                <div className="p-1.5 bg-primary/10 rounded-md">
-                  <Sparkles className={cn("h-3.5 w-3.5", AI_ICON_COLOR)} />
-                </div>
-                <div className="min-w-0">
-                  <p className="text-sm font-semibold">{t("rulesRegistry.aiBuildTitle")}</p>
-                  <p className="text-[11px] text-muted-foreground">{t("rulesRegistry.aiBuildDescription")}</p>
-                </div>
-              </div>
+      <div className="flex items-center gap-3 flex-wrap">
+        <ModeSegmentedSwitch value={mode} onChange={setMode} disabled={readOnly} />
+      </div>
 
-              {aiProposal ? (
-                <div className="rounded-md border bg-card/70 p-3 space-y-2">
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                    {t("rulesRegistry.aiProposalTitle")}
-                  </p>
-                  <div className="space-y-1 text-xs">
-                    <p><span className="text-muted-foreground">{t("rulesRegistry.nameLabel")}:</span> {aiProposal.name}</p>
-                    {aiProposal.description && (
-                      <p><span className="text-muted-foreground">{t("rulesRegistry.descriptionLabel")}:</span> {aiProposal.description}</p>
-                    )}
-                    <div className="flex flex-wrap gap-1 pt-1">
-                      <Badge variant="outline" className="text-[10px]">
-                        {t("rulesRegistry.aiProposalModeLabel")}: {aiProposal.mode}
-                      </Badge>
-                      {aiProposal.dimension && <Badge variant="outline" className="text-[10px]">{aiProposal.dimension}</Badge>}
-                      {aiProposal.severity && <Badge variant="outline" className="text-[10px]">{aiProposal.severity}</Badge>}
-                    </div>
-                    <pre className="mt-1 max-h-32 overflow-auto rounded bg-muted/50 p-2 text-[10px] font-mono whitespace-pre-wrap break-words">
-                      {JSON.stringify(aiProposal.definition, null, 2)}
-                    </pre>
-                  </div>
-                  <div className="flex items-center gap-2 pt-1">
-                    <Button size="sm" className={cn("h-7 text-xs gap-1.5", AI_BUTTON_BG)} onClick={() => applyAiProposal(aiProposal)}>
-                      <Wand2 className="h-3 w-3" />
-                      {t("rulesRegistry.aiProposalUseButton")}
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-7 text-xs"
-                      onClick={() => setAiProposal(null)}
-                    >
-                      {t("rulesRegistry.aiProposalDiscardButton")}
-                    </Button>
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  <Textarea
-                    value={aiDescription}
-                    onChange={(e) => setAiDescription(e.target.value)}
-                    placeholder={t("rulesRegistry.aiBuildPlaceholder")}
-                    className="min-h-[64px] text-xs bg-card/60"
-                    disabled={aiBusy}
-                    maxLength={4000}
-                  />
-                  <Button
-                    size="sm"
-                    className={cn("h-7 text-xs gap-1.5", AI_BUTTON_BG)}
-                    onClick={handleAiGenerate}
-                    disabled={aiBusy || !aiDescription.trim()}
-                  >
-                    {aiBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
-                    {aiBusy ? t("rulesRegistry.aiGenerating") : t("rulesRegistry.aiGenerateButton")}
-                  </Button>
-                </div>
-              )}
-            </div>
-          </TabsContent>
-        )}
+      {mode === "lowcode" && (
+        <p className="text-xs text-muted-foreground italic">{t("rulesRegistry.lowcodeComingSoon")}</p>
+      )}
 
-        <TabsContent value="lowcode" className="pt-2">
-          <p className="text-xs text-muted-foreground italic">{t("rulesRegistry.lowcodeComingSoon")}</p>
-        </TabsContent>
-
-        <TabsContent value="dqx_native" className="pt-2 space-y-3">
+      {mode === "dqx_native" && (
+        <div className="space-y-3">
           <div className="space-y-1.5">
             <Label className="text-xs">{t("rulesRegistry.functionLabel")}</Label>
             <FunctionCombobox
@@ -1549,9 +1512,11 @@ export function RegistryRuleFormDialog({
           {functionName === "" && (
             <p className="text-[11px] text-muted-foreground italic">{t("rulesRegistry.nativeHint")}</p>
           )}
-        </TabsContent>
+        </div>
+      )}
 
-        <TabsContent value="sql" className="pt-2 space-y-3">
+      {mode === "sql" && (
+        <div className="space-y-3">
           <div className="space-y-1.5">
             <Label className="text-xs">{t("rulesRegistry.sqlPredicateLabel")}</Label>
             <Textarea
@@ -1568,24 +1533,19 @@ export function RegistryRuleFormDialog({
               </p>
             )}
           </div>
-          <div className="flex items-center gap-2">
-            <Switch
-              checked={polarity === "fail"}
-              onCheckedChange={(checked) => setPolarity(checked ? "fail" : "pass")}
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+              {t("rulesRegistry.thenTheRow")}
+            </span>
+            <PredicatePolaritySwitch
+              value={polarity}
+              onChange={setPolarity}
               disabled={readOnly}
-              id="registry-rule-polarity"
             />
-            <Label htmlFor="registry-rule-polarity" className="text-xs cursor-pointer">
-              {polarity === "fail" ? t("rulesRegistry.polarityFail") : t("rulesRegistry.polarityPass")}
-            </Label>
-            <span className="text-[10px] text-muted-foreground">{t("rulesRegistry.polarityHint")}</span>
             <HelpTooltip text={t("rulesRegistry.polarityTooltip")} />
           </div>
-          <SlotsPanel value={sqlSlots} onChange={setSqlSlots} disabled={readOnly} />
-        </TabsContent>
-      </Tabs>
-
-      {mode === "lowcode" && <SlotsPanel value={sqlSlots} onChange={setSqlSlots} disabled={readOnly} />}
+        </div>
+      )}
 
       <div className="border-t pt-3 space-y-1.5">
         <Label className="text-xs">{t("rulesRegistry.errorMessageLabel")}</Label>
@@ -1657,8 +1617,87 @@ export function RegistryRuleFormDialog({
   // Sharing / Implementation) on the left, review tabs (Test / History) on
   // the right, sharing one Tabs root so either side drives the same
   // TabsContent panels.
+  // Build-with-AI banner, ported from dqlake's `BuildWithAiBanner` — always
+  // visible above the tab strip (not a sub-tab), gated on AI availability.
+  const buildWithAiBanner = showAiBanner && (
+    <div className={cn("rounded-lg p-3 space-y-2.5", AI_BANNER_BG, AI_BANNER_BORDER)}>
+      <div className="flex items-center gap-2">
+        <div className="p-1.5 bg-primary/10 rounded-md">
+          <Sparkles className={cn("h-3.5 w-3.5", AI_ICON_COLOR)} />
+        </div>
+        <div className="min-w-0">
+          <p className="text-sm font-semibold">{t("rulesRegistry.aiBuildTitle")}</p>
+          <p className="text-[11px] text-muted-foreground">{t("rulesRegistry.aiBuildDescription")}</p>
+        </div>
+      </div>
+
+      {aiProposal ? (
+        <div className="rounded-md border bg-card/70 p-3 space-y-2">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+            {t("rulesRegistry.aiProposalTitle")}
+          </p>
+          <div className="space-y-1 text-xs">
+            <p><span className="text-muted-foreground">{t("rulesRegistry.nameLabel")}:</span> {aiProposal.name}</p>
+            {aiProposal.description && (
+              <p><span className="text-muted-foreground">{t("rulesRegistry.descriptionLabel")}:</span> {aiProposal.description}</p>
+            )}
+            <div className="flex flex-wrap gap-1 pt-1">
+              <Badge variant="outline" className="text-[10px]">
+                {t("rulesRegistry.aiProposalModeLabel")}: {aiProposal.mode}
+              </Badge>
+              {aiProposal.dimension && <Badge variant="outline" className="text-[10px]">{aiProposal.dimension}</Badge>}
+              {aiProposal.severity && <Badge variant="outline" className="text-[10px]">{aiProposal.severity}</Badge>}
+            </div>
+            <pre className="mt-1 max-h-32 overflow-auto rounded bg-muted/50 p-2 text-[10px] font-mono whitespace-pre-wrap break-words">
+              {JSON.stringify(aiProposal.definition, null, 2)}
+            </pre>
+          </div>
+          <div className="flex items-center gap-2 pt-1">
+            <Button size="sm" className={cn("h-7 text-xs gap-1.5", AI_BUTTON_BG)} onClick={() => applyAiProposal(aiProposal)}>
+              <Wand2 className="h-3 w-3" />
+              {t("rulesRegistry.aiProposalUseButton")}
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 text-xs"
+              onClick={() => setAiProposal(null)}
+            >
+              {t("rulesRegistry.aiProposalDiscardButton")}
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          <Textarea
+            value={aiDescription}
+            onChange={(e) => setAiDescription(e.target.value)}
+            placeholder={t("rulesRegistry.aiBuildPlaceholder")}
+            className="min-h-[64px] text-xs bg-card/60"
+            disabled={aiBusy}
+            maxLength={4000}
+          />
+          <Button
+            size="sm"
+            className={cn("h-7 text-xs gap-1.5", AI_BUTTON_BG)}
+            onClick={handleAiGenerate}
+            disabled={aiBusy || !aiDescription.trim()}
+          >
+            {aiBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+            {aiBusy ? t("rulesRegistry.aiGenerating") : t("rulesRegistry.aiGenerateButton")}
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+
+  // Two-group tab strip, matching dqlake's RuleTabs: editing tabs (About /
+  // Sharing / Implementation) on the left, review tabs (Test / History) on
+  // the right, sharing one Tabs root so either side drives the same
+  // TabsContent panels.
   const formBody = (
     <div className="space-y-4">
+      {buildWithAiBanner}
       <Tabs value={pageTab} onValueChange={(v) => setPageTab(v as PageTab)}>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <TabsList>
