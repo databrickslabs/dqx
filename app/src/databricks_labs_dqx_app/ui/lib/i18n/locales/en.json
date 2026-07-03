@@ -1500,6 +1500,7 @@
     "allStatuses": "All statuses",
     "allDimensions": "All dimensions",
     "allSeverities": "All severities",
+    "allStewards": "All stewards",
     "stewardPlaceholder": "Steward",
     "tagPlaceholder": "Tag",
     "statusDraft": "Draft",
@@ -1511,6 +1512,7 @@
     "modeLowcode": "Low-Code",
     "modeSql": "SQL",
     "colName": "Name",
+    "colAuthor": "Author",
     "colDimension": "Dimension",
     "colSeverity": "Severity",
     "colStatus": "Status",
@@ -1606,7 +1608,8 @@
     "aiSuggestInvalidValue": "AI suggested a value that isn't one of the configured options. Pick one manually.",
     "aiSuggestNoContextYet": "No details yet — fill in a few fields first.",
     "authorKindAiGenerated": "AI generated",
-    "authorKindAiAssisted": "AI assisted"
+    "authorKindAiAssisted": "AI assisted",
+    "authorKindHuman": "Human"
   },
   "monitoredTables": {
     "breadcrumb": "Monitored Tables",

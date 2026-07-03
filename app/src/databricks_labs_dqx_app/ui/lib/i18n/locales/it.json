@@ -1500,6 +1500,7 @@
     "allStatuses": "Tutti gli stati",
     "allDimensions": "Tutte le dimensioni",
     "allSeverities": "Tutte le gravità",
+    "allStewards": "Tutti i responsabili",
     "stewardPlaceholder": "Responsabile",
     "tagPlaceholder": "Tag",
     "statusDraft": "Bozza",
@@ -1511,6 +1512,7 @@
     "modeLowcode": "Low-Code",
     "modeSql": "SQL",
     "colName": "Nome",
+    "colAuthor": "Autore",
     "colDimension": "Dimensione",
     "colSeverity": "Gravità",
     "colStatus": "Stato",
@@ -1606,7 +1608,8 @@
     "aiSuggestInvalidValue": "L'IA ha suggerito un valore che non è tra le opzioni configurate. Scegline uno manualmente.",
     "aiSuggestNoContextYet": "Ancora nessun dettaglio — compila prima alcuni campi.",
     "authorKindAiGenerated": "Generato dall'IA",
-    "authorKindAiAssisted": "Assistito dall'IA"
+    "authorKindAiAssisted": "Assistito dall'IA",
+    "authorKindHuman": "Umano"
   },
   "monitoredTables": {
     "breadcrumb": "Tabelle monitorate",

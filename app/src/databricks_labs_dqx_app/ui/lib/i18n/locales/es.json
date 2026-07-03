@@ -1500,6 +1500,7 @@
     "allStatuses": "Todos los estados",
     "allDimensions": "Todas las dimensiones",
     "allSeverities": "Todas las severidades",
+    "allStewards": "Todos los responsables",
     "stewardPlaceholder": "Responsable",
     "tagPlaceholder": "Etiqueta",
     "statusDraft": "Borrador",
@@ -1511,6 +1512,7 @@
     "modeLowcode": "Low-Code",
     "modeSql": "SQL",
     "colName": "Nombre",
+    "colAuthor": "Autor",
     "colDimension": "Dimensión",
     "colSeverity": "Severidad",
     "colStatus": "Estado",
@@ -1606,7 +1608,8 @@
     "aiSuggestInvalidValue": "La IA sugirió un valor que no está entre las opciones configuradas. Elige uno manualmente.",
     "aiSuggestNoContextYet": "Aún sin detalles — completa algunos campos primero.",
     "authorKindAiGenerated": "Generado por IA",
-    "authorKindAiAssisted": "Asistido por IA"
+    "authorKindAiAssisted": "Asistido por IA",
+    "authorKindHuman": "Humano"
   },
   "monitoredTables": {
     "breadcrumb": "Tablas monitorizadas",
