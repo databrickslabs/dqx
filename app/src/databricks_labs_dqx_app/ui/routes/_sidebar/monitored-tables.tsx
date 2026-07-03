@@ -1,13 +1,13 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useState, Suspense } from "react";
+import { useCallback, useMemo, useState, Suspense } from "react";
 import { useTranslation } from "react-i18next";
-import { QueryErrorResetBoundary, useQueries, useQueryClient } from "@tanstack/react-query";
+import { QueryErrorResetBoundary, useQueryClient } from "@tanstack/react-query";
 import { ErrorBoundary } from "react-error-boundary";
 import { toast } from "sonner";
 import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
 import { FadeIn } from "@/components/anim/FadeIn";
 import { Pagination } from "@/components/Pagination";
-import { MultiSelectPopover } from "@/components/monitored-tables/MultiSelectPopover";
+import { useTableScopePicker, TableScopePickerFields } from "@/components/monitored-tables/TableScopePicker";
 import {
   Card,
   CardContent,
@@ -59,9 +59,6 @@ import {
   useListMonitoredTables,
   getListMonitoredTablesQueryKey,
   useDeleteMonitoredTable,
-  useListCatalogs,
-  getListSchemasQueryOptions,
-  getListTablesQueryOptions,
   useBulkRegisterMonitoredTables,
   type MonitoredTableSummaryOut,
   type BulkRegisterMonitoredTablesOut,
@@ -139,12 +136,6 @@ function extractApiError(err: unknown, fallback: string): string {
 
 const ALL = "all";
 
-/** Splits a "catalog.schema" scope key back into its two parts. */
-function splitScope(scope: string): [string, string] {
-  const dotIndex = scope.indexOf(".");
-  return [scope.slice(0, dotIndex), scope.slice(dotIndex + 1)];
-}
-
 function buildSummaryToast(
   t: (key: string, opts?: Record<string, unknown>) => string,
   summary: BulkRegisterMonitoredTablesOut,
@@ -166,71 +157,18 @@ function AddMonitoredTablesDialog({
 }) {
   const { t } = useTranslation();
   const [steward, setSteward] = useState("");
-  const [selectedCatalogs, setSelectedCatalogs] = useState<string[]>([]);
-  const [selectedSchemas, setSelectedSchemas] = useState<string[]>([]);
-  const [selectedTables, setSelectedTables] = useState<string[]>([]);
   const [pendingFqns, setPendingFqns] = useState<string[] | null>(null);
 
   const bulkMutation = useBulkRegisterMonitoredTables();
+  const picker = useTableScopePicker(open);
+  const { effectiveFqns } = picker;
 
-  const { data: catalogsResp, isLoading: catalogsLoading } = useListCatalogs({
-    query: { enabled: open },
-  });
-  const catalogOptions = useMemo(
-    () => (catalogsResp?.data ?? []).map((c) => ({ value: c.name, label: c.name })),
-    [catalogsResp],
-  );
-
-  const schemaQueries = useQueries({
-    queries: selectedCatalogs.map((catalog) =>
-      getListSchemasQueryOptions(catalog, { query: { enabled: open } }),
-    ),
-  });
-  const schemasLoading = schemaQueries.some((q) => q.isLoading);
-  const schemaOptions = useMemo(() => {
-    const opts: { value: string; label: string }[] = [];
-    selectedCatalogs.forEach((catalog, i) => {
-      (schemaQueries[i]?.data?.data ?? []).forEach((s) => {
-        opts.push({ value: `${catalog}.${s.name}`, label: `${catalog}.${s.name}` });
-      });
-    });
-    return opts;
-  }, [selectedCatalogs, schemaQueries]);
-
-  // Resolved schema scope: user-picked schemas if any, otherwise every schema
-  // under the selected catalogs (so "Next" with only catalogs picked imports
-  // everything beneath them).
-  const resolvedSchemaScopes = useMemo(
-    () => (selectedSchemas.length > 0 ? selectedSchemas : schemaOptions.map((o) => o.value)),
-    [selectedSchemas, schemaOptions],
-  );
-
-  const tableQueries = useQueries({
-    queries: resolvedSchemaScopes.map((scope) => {
-      const [catalog, schema] = splitScope(scope);
-      return getListTablesQueryOptions(catalog, schema, { query: { enabled: open } });
-    }),
-  });
-  const tablesLoading = tableQueries.some((q) => q.isLoading);
-  const tableOptions = useMemo(() => {
-    const opts: { value: string; label: string }[] = [];
-    resolvedSchemaScopes.forEach((scope, i) => {
-      (tableQueries[i]?.data?.data ?? []).forEach((tbl) => {
-        opts.push({ value: `${scope}.${tbl.name}`, label: `${scope}.${tbl.name}` });
-      });
-    });
-    return opts;
-  }, [resolvedSchemaScopes, tableQueries]);
-
-  const effectiveFqns = selectedTables.length > 0 ? selectedTables : tableOptions.map((o) => o.value);
-
+  const { reset: resetPicker } = picker;
   const resetState = useCallback(() => {
     setSteward("");
-    setSelectedCatalogs([]);
-    setSelectedSchemas([]);
-    setSelectedTables([]);
+    resetPicker();
     setPendingFqns(null);
-  }, []);
+  }, [resetPicker]);
 
   const handleClose = useCallback(
     (next: boolean) => {
@@ -270,18 +208,6 @@ function AddMonitoredTablesDialog({
     submitBulk(effectiveFqns);
   };
 
-  // Clear child selections when their parent scope narrows so state never
-  // references catalogs/schemas that are no longer selected.
-  useEffect(() => {
-    const catalogSet = new Set(selectedCatalogs);
-    setSelectedSchemas((prev) => prev.filter((s) => catalogSet.has(splitScope(s)[0])));
-  }, [selectedCatalogs]);
-
-  useEffect(() => {
-    const scopeSet = new Set(resolvedSchemaScopes);
-    setSelectedTables((prev) => prev.filter((fqn) => scopeSet.has(fqn.slice(0, fqn.lastIndexOf(".")))));
-  }, [resolvedSchemaScopes]);
-
   return (
     <>
       <Dialog open={open} onOpenChange={handleClose}>
@@ -291,45 +217,7 @@ function AddMonitoredTablesDialog({
             <DialogDescription>{t("monitoredTables.wizard.description")}</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
-            <MultiSelectPopover
-              label={t("monitoredTables.wizard.catalogsLabel")}
-              placeholder={t("monitoredTables.wizard.catalogsPlaceholder")}
-              searchPlaceholder={t("monitoredTables.wizard.searchCatalogs")}
-              options={catalogOptions}
-              selected={selectedCatalogs}
-              onChange={setSelectedCatalogs}
-              isLoading={catalogsLoading}
-              emptyText={t("monitoredTables.wizard.emptyCatalogs")}
-            />
-            <MultiSelectPopover
-              label={t("monitoredTables.wizard.schemasLabel")}
-              placeholder={t("monitoredTables.wizard.schemasPlaceholder")}
-              searchPlaceholder={t("monitoredTables.wizard.searchSchemas")}
-              options={schemaOptions}
-              selected={selectedSchemas}
-              onChange={setSelectedSchemas}
-              isLoading={schemasLoading}
-              disabled={selectedCatalogs.length === 0}
-              disabledHint={t("monitoredTables.wizard.selectCatalogFirst")}
-              emptyText={t("monitoredTables.wizard.emptySchemas")}
-            />
-            <MultiSelectPopover
-              label={t("monitoredTables.wizard.tablesLabel")}
-              placeholder={t("monitoredTables.wizard.tablesPlaceholder")}
-              searchPlaceholder={t("monitoredTables.wizard.searchTables")}
-              options={tableOptions}
-              selected={selectedTables}
-              onChange={setSelectedTables}
-              isLoading={tablesLoading}
-              disabled={selectedCatalogs.length === 0}
-              disabledHint={t("monitoredTables.wizard.selectCatalogFirst")}
-              emptyText={t("monitoredTables.wizard.emptyTables")}
-            />
-            <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-              {selectedCatalogs.length === 0
-                ? t("monitoredTables.wizard.scopeHintEmpty")
-                : t("monitoredTables.wizard.scopeSummary", { count: effectiveFqns.length })}
-            </div>
+            <TableScopePickerFields state={picker} />
             <div className="space-y-1.5">
               <Label htmlFor="mt-steward">{t("monitoredTables.stewardLabel")}</Label>
               <Input
