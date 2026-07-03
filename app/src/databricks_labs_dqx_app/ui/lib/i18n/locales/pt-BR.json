@@ -38,7 +38,8 @@
     "unsavedChanges": "Alterações não salvas",
     "rowsPerPage": "Linhas por página:",
     "close": "Fechar",
-    "reset": "Redefinir"
+    "reset": "Redefinir",
+    "editColumns": "Editar colunas"
   },
   "language": {
     "label": "Idioma",
@@ -1818,7 +1819,23 @@
       "confirmDescription_one": "Isso iniciará o monitoramento de {{count}} tabela. Continuar?",
       "confirmDescription_other": "Isso iniciará o monitoramento de {{count}} tabelas. Continuar?",
       "confirmAction": "Continuar",
-      "toastSummary": "{{registered}} registrada(s), {{skipped}} já monitorada(s), {{invalid}} inválida(s)."
-    }
+      "toastSummary": "{{registered}} registrada(s), {{skipped}} já monitorada(s), {{invalid}} inválida(s).",
+      "untitledMonitor": "Novo monitor de tabela",
+      "lockedTabHint": "Disponível depois de salvar este monitor."
+    },
+    "colCatalog": "Catálogo",
+    "colSchema": "Esquema",
+    "colTableName": "Tabela",
+    "colDescription": "Descrição",
+    "colChecksCount": "N.º de verificações",
+    "colRulesCount": "N.º de regras",
+    "colDqScore": "Pontuação de qualidade",
+    "colLastRun": "Última execução",
+    "colOwner": "Proprietário",
+    "neverRun": "Nunca executado",
+    "emptyTable": "Nenhuma tabela está sendo monitorada ainda. Clique em \"Monitorar uma tabela\" para começar.",
+    "searchTablesPlaceholder": "Buscar tabelas…",
+    "allCatalogs": "Todos os catálogos",
+    "allSchemas": "Todos os esquemas"
   }
 }

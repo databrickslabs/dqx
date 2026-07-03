@@ -38,7 +38,8 @@
     "unsavedChanges": "Unsaved changes",
     "rowsPerPage": "Rows per page:",
     "close": "Close",
-    "reset": "Reset"
+    "reset": "Reset",
+    "editColumns": "Edit Columns"
   },
   "language": {
     "label": "Language",
@@ -1818,7 +1819,23 @@
       "confirmDescription_one": "This will start monitoring {{count}} table. Continue?",
       "confirmDescription_other": "This will start monitoring {{count}} tables. Continue?",
       "confirmAction": "Continue",
-      "toastSummary": "{{registered}} registered, {{skipped}} already monitored, {{invalid}} invalid."
-    }
+      "toastSummary": "{{registered}} registered, {{skipped}} already monitored, {{invalid}} invalid.",
+      "untitledMonitor": "New table monitor",
+      "lockedTabHint": "Available after you save this monitor."
+    },
+    "colCatalog": "Catalog",
+    "colSchema": "Schema",
+    "colTableName": "Table",
+    "colDescription": "Description",
+    "colChecksCount": "# Checks",
+    "colRulesCount": "# Rules",
+    "colDqScore": "DQ Score",
+    "colLastRun": "Last Run",
+    "colOwner": "Owner",
+    "neverRun": "Never run",
+    "emptyTable": "No tables are being monitored yet. Click \"Monitor a table\" to get started.",
+    "searchTablesPlaceholder": "Search tables…",
+    "allCatalogs": "All catalogs",
+    "allSchemas": "All schemas"
   }
 }

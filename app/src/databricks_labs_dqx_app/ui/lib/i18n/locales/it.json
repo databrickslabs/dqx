@@ -38,7 +38,8 @@
     "unsavedChanges": "Modifiche non salvate",
     "rowsPerPage": "Righe per pagina:",
     "close": "Chiudi",
-    "reset": "Reimposta"
+    "reset": "Reimposta",
+    "editColumns": "Modifica colonne"
   },
   "language": {
     "label": "Lingua",
@@ -1818,7 +1819,23 @@
       "confirmDescription_one": "Verrà avviato il monitoraggio di {{count}} tabella. Continuare?",
       "confirmDescription_other": "Verrà avviato il monitoraggio di {{count}} tabelle. Continuare?",
       "confirmAction": "Continua",
-      "toastSummary": "{{registered}} registrate, {{skipped}} già monitorate, {{invalid}} non valide."
-    }
+      "toastSummary": "{{registered}} registrate, {{skipped}} già monitorate, {{invalid}} non valide.",
+      "untitledMonitor": "Nuovo monitoraggio tabella",
+      "lockedTabHint": "Disponibile dopo aver salvato questo monitoraggio."
+    },
+    "colCatalog": "Catalogo",
+    "colSchema": "Schema",
+    "colTableName": "Tabella",
+    "colDescription": "Descrizione",
+    "colChecksCount": "N. controlli",
+    "colRulesCount": "N. regole",
+    "colDqScore": "Punteggio qualità",
+    "colLastRun": "Ultima esecuzione",
+    "colOwner": "Proprietario",
+    "neverRun": "Mai eseguito",
+    "emptyTable": "Nessuna tabella è ancora monitorata. Fai clic su \"Monitora una tabella\" per iniziare.",
+    "searchTablesPlaceholder": "Cerca tabelle…",
+    "allCatalogs": "Tutti i cataloghi",
+    "allSchemas": "Tutti gli schemi"
   }
 }
