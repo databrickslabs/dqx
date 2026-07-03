@@ -11,6 +11,7 @@
 // navigation stays available.
 
 import { useTranslation } from "react-i18next";
+import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { AppliedRuleOutColumnMappingItem, RuleSlot } from "@/lib/api";
 
@@ -47,6 +48,7 @@ function ReadonlyChip({
   onJump,
   onRemove,
   removeTitle,
+  busy,
 }: {
   colorClass: string;
   label: string;
@@ -56,6 +58,9 @@ function ReadonlyChip({
    *  every slot row, shares the same group index). */
   onRemove?: () => void;
   removeTitle?: string;
+  /** Removal request for this group is in flight — disables the "x" and
+   *  shows a spinner instead. */
+  busy?: boolean;
 }) {
   return (
     <span className={cn("inline-flex items-center gap-1 rounded border px-2 py-0.5 text-xs font-mono", colorClass)}>
@@ -73,15 +78,16 @@ function ReadonlyChip({
       {onRemove && (
         <button
           type="button"
+          disabled={busy}
           onClick={(e) => {
             e.stopPropagation();
             onRemove();
           }}
           title={removeTitle}
           aria-label={removeTitle}
-          className="ml-0.5 opacity-60 hover:opacity-100 focus:outline-none leading-none"
+          className="ml-0.5 opacity-60 hover:opacity-100 focus:outline-none leading-none disabled:opacity-40"
         >
-          ×
+          {busy ? <Loader2 className="h-2.5 w-2.5 animate-spin inline-block" aria-hidden /> : "×"}
         </button>
       )}
     </span>
@@ -101,6 +107,10 @@ interface MappingChipsProps {
    *  across every slot row). Omit to render fully read-only chips with no
    *  remove affordance. */
   onRemoveGroup?: (groupIdx: number) => void;
+  /** Mapping-group index currently being removed — its remove ("x")
+   *  affordance shows a spinner and is disabled while the request is
+   *  in flight. */
+  busyGroupIdx?: number | null;
   /** Opens the "apply this rule to another column" flow, which stages a new
    *  mapping group (and therefore a new applied-check entry) for this rule.
    *  Rendered as a dashed "+ Apply to another column" button below the last
@@ -114,6 +124,7 @@ export function MappingChips({
   slots,
   onJumpToColumn,
   onRemoveGroup,
+  busyGroupIdx = null,
   onAddGroup,
   className,
 }: MappingChipsProps) {
@@ -180,6 +191,7 @@ export function MappingChips({
                       onJump={onJumpToColumn ? () => onJumpToColumn(colName) : undefined}
                       onRemove={onRemoveGroup ? () => onRemoveGroup(groupIdx) : undefined}
                       removeTitle={t("monitoredTables.removeMappingGroupTitle", { count: groupIdx + 1 })}
+                      busy={busyGroupIdx === groupIdx}
                     />
                   ))
                 )}

@@ -275,6 +275,8 @@ interface RuleConfigCardProps {
   /** Removes the mapping group (and its owning applied-rule row) at this
    *  combined-mapping index. */
   onRemoveMapping?: (groupIdx: number) => void;
+  /** Combined-mapping index of the group currently being removed, if any. */
+  busyMappingGroupIdx?: number | null;
   /** Opens the "apply this rule to another column" flow — stages a new
    *  mapping group as its own applied-check entry. */
   onAddMapping?: () => void;
@@ -296,6 +298,7 @@ export function RuleConfigCard({
   onRemove,
   onJumpToColumn,
   onRemoveMapping,
+  busyMappingGroupIdx = null,
   onAddMapping,
   forceOpen,
 }: RuleConfigCardProps) {
@@ -431,6 +434,7 @@ export function RuleConfigCard({
               slots={slots}
               onJumpToColumn={onJumpToColumn}
               onRemoveGroup={canEdit ? onRemoveMapping : undefined}
+              busyGroupIdx={busyMappingGroupIdx}
               onAddGroup={canEdit ? onAddMapping : undefined}
             />
           </div>

@@ -923,7 +923,10 @@ function ApplyRulesTab({
                   : t("monitoredTables.emptyAppliedRules")}
             </div>
           ) : (
-            visibleMergedRules.map((rule) => (
+            visibleMergedRules.map((rule) => {
+              const rows = rowsByRuleId.get(rule.rule_id) ?? [];
+              const busyMappingGroupIdx = pendingId ? rows.findIndex((r) => r.id === pendingId) : -1;
+              return (
               <RuleConfigCard
                 key={rule.rule_id}
                 rule={rule}
@@ -936,6 +939,7 @@ function ApplyRulesTab({
                 onSeverityChange={(v) => handleSeverityChange(rule, v)}
                 onRemove={() => setRemoveTarget(rule)}
                 onRemoveMapping={(groupIdx) => handleRemoveMappingGroup(rule.rule_id, groupIdx)}
+                busyMappingGroupIdx={busyMappingGroupIdx >= 0 ? busyMappingGroupIdx : null}
                 onAddMapping={() => {
                   setAddColumnContext(null);
                   setMappingRuleId(rule.rule_id);
@@ -950,7 +954,8 @@ function ApplyRulesTab({
                   }, 50);
                 }}
               />
-            ))
+              );
+            })
           )}
         </div>
       ) : (
