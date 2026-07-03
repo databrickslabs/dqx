@@ -131,7 +131,12 @@ target-version = "py311"
 # which uses the proper ``--group test`` env, so excluding them from the
 # static check here removes the false positives without losing real
 # coverage.
-exclude = ["tests", "**/.venv", "**/__pycache__", "src/databricks_labs_dqx_app/__dist__"]
+# ``.build`` is a generated source copy produced by ``make app-build``
+# (which CI runs before ``app-check``). Without excluding it, basedpyright
+# analyzes both ``src/...`` and ``.build/src/...`` and sees every class
+# twice under distinct import paths, yielding spurious "X is not assignable
+# to X" errors.
+exclude = ["tests", "**/.venv", "**/__pycache__", "src/databricks_labs_dqx_app/__dist__", ".build"]
 
 # basedpyright defaults to ``recommended`` mode, which enables ~10
 # strict-only rules (reportAny, reportExplicitAny,
