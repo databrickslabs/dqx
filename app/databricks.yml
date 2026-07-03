@@ -159,14 +159,14 @@ resources:
       catalog_name: ${var.catalog_name}
       name: ${var.schema_name}
       comment: "DQX Studio main schema (rules, run history, profiling, metrics, quarantine, OLTP fallback)"
-      lifecycle:
-        prevent_destroy: true
+      #lifecycle:
+      #  prevent_destroy: true
     tmp_schema:
       catalog_name: ${var.catalog_name}
       name: ${var.tmp_schema_name}
       comment: "DQX Studio temp schema for per-user dry-run views"
-      lifecycle:
-        prevent_destroy: true
+      #lifecycle:
+      #  prevent_destroy: true
 
   volumes:
     wheels:
@@ -175,8 +175,8 @@ resources:
       name: ${var.wheels_volume_name}
       volume_type: MANAGED
       comment: "DQX Studio wheel storage for the task runner"
-      lifecycle:
-        prevent_destroy: true
+      #lifecycle:
+      #  prevent_destroy: true
 
   # Lakebase Postgres instance backing the app's OLTP state. Name/capacity read
   # from variables so a target can resize or rename it. The ``dqx-lakebase`` app
@@ -187,8 +187,8 @@ resources:
     lakebase:
       name: ${var.lakebase_instance_name}
       capacity: ${var.lakebase_capacity}
-      lifecycle:
-        prevent_destroy: true
+      #lifecycle:
+      #  prevent_destroy: true
 
   dashboards:
     dqx_quality_overview:

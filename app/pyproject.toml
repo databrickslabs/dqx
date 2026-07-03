@@ -3,13 +3,13 @@ name = "databricks-labs-dqx-app"
 dynamic = ["version"]
 description = "DQX Studio for Data Quality eXtended (DQX), a Python library for data quality monitoring"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "fastapi~=0.119",
     "pydantic-settings~=2.11",
     "uvicorn~=0.37",
     "databricks-labs-dqx[llm,datacontract]",
-    "databricks-sdk~=0.73",
+    "databricks-sdk~=0.120",
     "databricks-sql-connector[pyarrow]==4.2.5",
     "openpyxl>=3.1",
     # Lakebase (Postgres) backend for OLTP state. ``binary`` ships a
