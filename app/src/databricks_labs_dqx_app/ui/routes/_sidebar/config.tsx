@@ -256,7 +256,6 @@ const HEX_COLOR_RE = /^#[0-9A-Fa-f]{6}$/;
 
 interface DraftDefinition extends LabelDefinition {
   draftId: string;
-  newValueDraft: string;
 }
 
 function defToDraft(d: LabelDefinition): DraftDefinition {
@@ -267,8 +266,8 @@ function defToDraft(d: LabelDefinition): DraftDefinition {
     values: [...d.values],
     allow_custom_values: !!d.allow_custom_values,
     value_colors: d.value_colors ? { ...d.value_colors } : null,
+    value_descriptions: d.value_descriptions ? { ...d.value_descriptions } : null,
     is_builtin: !!d.is_builtin,
-    newValueDraft: "",
   };
 }
 
@@ -279,12 +278,17 @@ function draftToDef(d: DraftDefinition): LabelDefinition {
   for (const [value, color] of Object.entries(d.value_colors ?? {})) {
     if (valueSet.has(value) && HEX_COLOR_RE.test(color)) colors[value] = color;
   }
+  const descriptions: Record<string, string> = {};
+  for (const [value, desc] of Object.entries(d.value_descriptions ?? {})) {
+    if (valueSet.has(value) && desc.trim()) descriptions[value] = desc;
+  }
   return {
     key: d.key.trim(),
     description: (d.description ?? "").trim(),
     values,
     allow_custom_values: d.allow_custom_values,
     value_colors: Object.keys(colors).length > 0 ? colors : null,
+    value_descriptions: Object.keys(descriptions).length > 0 ? descriptions : null,
     is_builtin: !!d.is_builtin,
   };
 }
@@ -338,53 +342,20 @@ function LabelDefinitionsSettings() {
   const removeDraft = (draftId: string) =>
     setDrafts((prev) => prev.filter((d) => d.draftId !== draftId));
 
-  const addDraft = (initialKey?: string) =>
+  const addDraft = () =>
     setDrafts((prev) => [
       ...prev,
       {
         draftId: crypto.randomUUID(),
-        key: initialKey ?? "",
+        key: "",
         description: "",
         values: [],
         allow_custom_values: false,
         value_colors: null,
+        value_descriptions: null,
         is_builtin: false,
-        newValueDraft: "",
       },
     ]);
-
-  const addValue = (draftId: string) => {
-    const target = drafts.find((d) => d.draftId === draftId);
-    if (!target) return;
-    const v = target.newValueDraft.trim();
-    if (!v) return;
-    if (target.values.includes(v)) {
-      updateDraft(draftId, { newValueDraft: "" });
-      return;
-    }
-    updateDraft(draftId, {
-      values: [...target.values, v],
-      newValueDraft: "",
-    });
-  };
-
-  const removeValue = (draftId: string, value: string) => {
-    const target = drafts.find((d) => d.draftId === draftId);
-    if (!target) return;
-    updateDraft(draftId, { values: target.values.filter((v) => v !== value) });
-  };
-
-  const setValueColor = (draftId: string, value: string, color: string | null) => {
-    const target = drafts.find((d) => d.draftId === draftId);
-    if (!target) return;
-    const nextColors = { ...(target.value_colors ?? {}) };
-    if (color) {
-      nextColors[value] = color;
-    } else {
-      delete nextColors[value];
-    }
-    updateDraft(draftId, { value_colors: Object.keys(nextColors).length > 0 ? nextColors : null });
-  };
 
   const handleSave = () => {
     if (validation.length > 0) {
@@ -416,8 +387,6 @@ function LabelDefinitionsSettings() {
     setDrafts((data?.definitions ?? []).map(defToDraft));
   };
 
-  const hasWeightKey = drafts.some((d) => d.key.trim() === RESERVED_WEIGHT_KEY);
-
   if (isLoading) {
     return <Skeleton className="h-40 w-full" />;
   }
@@ -442,9 +411,6 @@ function LabelDefinitionsSettings() {
             draft={d}
             onChange={(patch) => updateDraft(d.draftId, patch)}
             onRemove={() => removeDraft(d.draftId)}
-            onAddValue={() => addValue(d.draftId)}
-            onRemoveValue={(v) => removeValue(d.draftId, v)}
-            onSetValueColor={(v, color) => setValueColor(d.draftId, v, color)}
           />
         ))}
         <div className="flex flex-wrap items-center gap-2">
@@ -452,18 +418,6 @@ function LabelDefinitionsSettings() {
             <Plus className="h-3.5 w-3.5" />
             {t("config.addLabelDefinition")}
           </Button>
-          {!hasWeightKey && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => addDraft(RESERVED_WEIGHT_KEY)}
-              className="gap-1.5 text-xs text-muted-foreground"
-              title={t("config.addWeightTooltip")}
-            >
-              <Plus className="h-3.5 w-3.5" />
-              {t("config.addWeightDefinition")}
-            </Button>
-          )}
         </div>
         {validation.length > 0 && (
           <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 space-y-1">
@@ -507,9 +461,6 @@ interface DefinitionEditorCardProps {
   draft: DraftDefinition;
   onChange: (patch: Partial<DraftDefinition>) => void;
   onRemove: () => void;
-  onAddValue: () => void;
-  onRemoveValue: (value: string) => void;
-  onSetValueColor: (value: string, color: string | null) => void;
 }
 
 /** Small color swatch + hex text editor for one value's optional badge color. */
@@ -570,33 +521,213 @@ function ValueColorEditor({
   );
 }
 
-function DefinitionEditorCard({
+function nextAutoValueName(existing: string[]): string {
+  const taken = new Set(existing);
+  let i = 1;
+  while (taken.has(`value_${i}`)) i++;
+  return `value_${i}`;
+}
+
+/**
+ * Row-based allowed-values editor, modeled on dqlake's ColumnsUsedPanel:
+ * each value is a collapsed row (color dot + name + optional description
+ * preview) that expands on click into name/color/description inputs.
+ * Replaces the old "type a value + press Enter" text box.
+ */
+function AllowedValuesEditor({
   draft,
   onChange,
-  onRemove,
-  onAddValue,
-  onRemoveValue,
-  onSetValueColor,
-}: DefinitionEditorCardProps) {
+}: {
+  draft: DraftDefinition;
+  onChange: (patch: Partial<DraftDefinition>) => void;
+}) {
+  const { t } = useTranslation();
+  const [expanded, setExpanded] = useState<number | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (expanded === null) return;
+    const handler = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+      if (rootRef.current?.contains(target)) return;
+      if (target.closest("[data-radix-popper-content-wrapper]")) return;
+      setExpanded(null);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [expanded]);
+
+  const values = draft.values;
+  const colors = draft.value_colors ?? {};
+  const descriptions = draft.value_descriptions ?? {};
+
+  const patchValue = (i: number, patch: { name?: string; color?: string | null; description?: string }) => {
+    const current = values[i];
+    if (current === undefined) return;
+    let nextValues = values;
+    let nextColors = colors;
+    let nextDescriptions = descriptions;
+
+    if (patch.name !== undefined && patch.name !== current) {
+      nextValues = values.map((v, idx) => (idx === i ? patch.name! : v));
+      if (colors[current] !== undefined) {
+        nextColors = { ...colors };
+        nextColors[patch.name] = nextColors[current];
+        delete nextColors[current];
+      }
+      if (descriptions[current] !== undefined) {
+        nextDescriptions = { ...descriptions };
+        nextDescriptions[patch.name] = nextDescriptions[current];
+        delete nextDescriptions[current];
+      }
+    }
+    const targetKey = patch.name ?? current;
+
+    if (patch.color !== undefined) {
+      nextColors = { ...nextColors };
+      if (patch.color) nextColors[targetKey] = patch.color;
+      else delete nextColors[targetKey];
+    }
+    if (patch.description !== undefined) {
+      nextDescriptions = { ...nextDescriptions };
+      if (patch.description.trim()) nextDescriptions[targetKey] = patch.description;
+      else delete nextDescriptions[targetKey];
+    }
+
+    onChange({
+      values: nextValues,
+      value_colors: Object.keys(nextColors).length > 0 ? nextColors : null,
+      value_descriptions: Object.keys(nextDescriptions).length > 0 ? nextDescriptions : null,
+    });
+  };
+
+  const removeAt = (i: number) => {
+    const current = values[i];
+    const nextColors = { ...colors };
+    delete nextColors[current];
+    const nextDescriptions = { ...descriptions };
+    delete nextDescriptions[current];
+    onChange({
+      values: values.filter((_, idx) => idx !== i),
+      value_colors: Object.keys(nextColors).length > 0 ? nextColors : null,
+      value_descriptions: Object.keys(nextDescriptions).length > 0 ? nextDescriptions : null,
+    });
+    if (expanded === i) setExpanded(null);
+  };
+
+  const addValue = () => {
+    const name = nextAutoValueName(values);
+    onChange({ values: [...values, name] });
+    setExpanded(values.length);
+  };
+
+  return (
+    <div ref={rootRef} className="space-y-1.5">
+      {values.length === 0 && (
+        <p className="text-[11px] italic text-muted-foreground py-1">{t("config.noValuesHint")}</p>
+      )}
+      {values.map((v, i) => {
+        const isOpen = expanded === i;
+        const color = colors[v];
+        const description = descriptions[v] ?? "";
+        return (
+          <div
+            key={i}
+            className={cn(
+              "rounded-md border bg-muted/30 cursor-pointer transition-colors",
+              isOpen && "bg-background border-primary/40",
+            )}
+            onClick={() => setExpanded(isOpen ? null : i)}
+          >
+            <div className="grid grid-cols-[auto_1fr_auto] items-center gap-2 px-2.5 py-1.5">
+              <span
+                className="h-3 w-3 shrink-0 rounded-full border"
+                style={{ backgroundColor: color && HEX_COLOR_RE.test(color) ? color : "transparent" }}
+                aria-hidden
+              />
+              <span className="flex items-baseline gap-2 min-w-0">
+                <span className="font-mono text-xs shrink-0">{v}</span>
+                {description && !isOpen && (
+                  <span className="truncate text-[11px] text-muted-foreground">{description}</span>
+                )}
+              </span>
+              <button
+                type="button"
+                aria-label={t("config.removeValueAria", { value: v })}
+                className="text-muted-foreground hover:text-destructive transition-colors"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  removeAt(i);
+                }}
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+            {isOpen && (
+              <div className="space-y-2 border-t px-2.5 pb-2.5 pt-2" onClick={(e) => e.stopPropagation()}>
+                <div className="grid grid-cols-[1fr_auto] gap-2 items-end">
+                  <div className="space-y-1">
+                    <Label className="text-[10px] text-muted-foreground">{t("config.valueLabel")}</Label>
+                    <Input
+                      value={v}
+                      onChange={(e) => patchValue(i, { name: e.target.value })}
+                      className="h-7 text-xs font-mono"
+                    />
+                  </div>
+                  <ValueColorEditor value={v} color={color} onSetColor={(c) => patchValue(i, { color: c })} />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-[10px] text-muted-foreground">
+                    {t("config.descriptionLabel")} <span>{t("config.optional")}</span>
+                  </Label>
+                  <Textarea
+                    value={description}
+                    onChange={(e) => patchValue(i, { description: e.target.value })}
+                    placeholder={t("config.valueDescriptionPlaceholder")}
+                    className="text-xs min-h-[28px] py-1"
+                    rows={1}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+      <Button type="button" variant="outline" size="sm" onClick={addValue} className="h-7 gap-1.5 text-xs">
+        <Plus className="h-3.5 w-3.5" />
+        {t("config.addValue")}
+      </Button>
+    </div>
+  );
+}
+
+function DefinitionEditorCard({ draft, onChange, onRemove }: DefinitionEditorCardProps) {
   const { t } = useTranslation();
   const keyValid = !draft.key || LABEL_KEY_RE.test(draft.key.trim());
   const isWeight = draft.key.trim() === RESERVED_WEIGHT_KEY;
   const isBuiltin = !!draft.is_builtin;
   const isLocked = isWeight || isBuiltin;
   return (
-    <div className={cn("rounded-md border p-3 space-y-3", isLocked ? "bg-blue-50/30 border-blue-200/60" : "bg-muted/20")}>
+    <div
+      className={cn(
+        "rounded-md border p-3 space-y-3 bg-card",
+        isLocked ? "border-l-2 border-l-sky-500 dark:border-l-sky-400" : "bg-muted/20",
+      )}
+    >
       <div className="flex items-start gap-3">
         <div className="grid grid-cols-[180px_1fr] gap-3 flex-1 items-start">
           <div className="space-y-1">
             <Label className="text-xs flex items-center gap-1.5">
               {t("config.key")}
               {isWeight && (
-                <Badge variant="secondary" className="h-4 px-1 text-[10px] font-normal">
+                <Badge variant="outline" className="h-4 gap-0.5 px-1 text-[10px] font-normal">
+                  <Lock className="h-2.5 w-2.5" />
                   {t("config.reserved")}
                 </Badge>
               )}
               {isBuiltin && !isWeight && (
-                <Badge variant="secondary" className="h-4 gap-0.5 px-1 text-[10px] font-normal">
+                <Badge variant="outline" className="h-4 gap-0.5 px-1 text-[10px] font-normal">
                   <Lock className="h-2.5 w-2.5" />
                   {t("config.reserved")}
                 </Badge>
@@ -615,12 +746,12 @@ function DefinitionEditorCard({
               </p>
             )}
             {isWeight && (
-              <p className="text-[10px] text-blue-700">
+              <p className="text-[10px] text-muted-foreground">
                 {t("config.weightHint")}
               </p>
             )}
             {isBuiltin && !isWeight && (
-              <p className="text-[10px] text-blue-700">
+              <p className="text-[10px] text-muted-foreground">
                 {t("config.builtinKeyHint")}
               </p>
             )}
@@ -659,69 +790,17 @@ function DefinitionEditorCard({
               {t("config.allowedValuesHint")}
             </span>
           </Label>
-          <label className="flex items-center gap-1.5 text-xs cursor-pointer">
-            <Checkbox
-              checked={draft.allow_custom_values}
-              onCheckedChange={(c) => onChange({ allow_custom_values: c === true })}
-            />
-            <span>{t("config.allowCustomValues")}</span>
-          </label>
+          {!isBuiltin && (
+            <label className="flex items-center gap-1.5 text-xs cursor-pointer">
+              <Checkbox
+                checked={draft.allow_custom_values}
+                onCheckedChange={(c) => onChange({ allow_custom_values: c === true })}
+              />
+              <span>{t("config.allowCustomValues")}</span>
+            </label>
+          )}
         </div>
-        {draft.values.length > 0 ? (
-          <div className="flex flex-wrap gap-1.5">
-            {draft.values.map((v) => (
-              <Badge
-                key={v}
-                variant="secondary"
-                className="h-6 gap-1.5 pl-2 pr-1 text-xs font-normal"
-              >
-                <ValueColorEditor
-                  value={v}
-                  color={draft.value_colors?.[v]}
-                  onSetColor={(color) => onSetValueColor(v, color)}
-                />
-                <span className="font-mono">{v}</span>
-                <button
-                  type="button"
-                  className="ml-0.5 rounded-full hover:bg-foreground/10 p-0.5"
-                  onClick={() => onRemoveValue(v)}
-                  aria-label={t("config.removeValueAria", { value: v })}
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              </Badge>
-            ))}
-          </div>
-        ) : (
-          <p className="text-[11px] italic text-muted-foreground">
-            {t("config.noValuesHint")}
-          </p>
-        )}
-        <div className="flex items-center gap-1.5">
-          <Input
-            value={draft.newValueDraft}
-            onChange={(e) => onChange({ newValueDraft: e.target.value })}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                onAddValue();
-              }
-            }}
-            placeholder={isWeight ? t("config.weightValuePlaceholder") : t("config.addValuePlaceholder")}
-            className="h-7 text-xs flex-1 font-mono"
-          />
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            className="h-7 text-xs gap-1"
-            disabled={!draft.newValueDraft.trim()}
-            onClick={onAddValue}
-          >
-            <Plus className="h-3 w-3" />
-            {t("common.add")}
-          </Button>
-        </div>
+        <AllowedValuesEditor draft={draft} onChange={onChange} />
       </div>
     </div>
   );
