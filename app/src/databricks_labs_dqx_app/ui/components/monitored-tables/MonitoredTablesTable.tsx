@@ -14,7 +14,7 @@ import { ChevronDown, ChevronUp, FileEdit, Loader2, ShieldCheck } from "lucide-r
 import { cn } from "@/lib/utils";
 import { useColumnLayout, type ColumnLayoutDef } from "@/components/data-table/column-layout";
 import { EditColumnsDropdown } from "@/components/data-table/EditColumnsDropdown";
-import { formatDateShort } from "@/lib/format-utils";
+import { formatDateTime, getRelativeTimeParts } from "@/lib/format-utils";
 import type { MonitoredTableSummaryOut } from "@/lib/api";
 
 /** Column keys that carry a comparable value and can drive client sort. */
@@ -74,10 +74,34 @@ function TruncatedCell({
         </span>
       </TooltipTrigger>
       {overflow && (
-        <TooltipContent side="top" className="max-w-md break-words">
+        // `text-wrap` overrides the base TooltipContent's `text-balance`
+        // default — balanced wrapping reflows a single clipped value (e.g. a
+        // long table FQN) across lines unevenly, which reads as "awkward"
+        // wrapping. Plain wrap keeps lines filled left-to-right instead.
+        <TooltipContent side="top" className="max-w-md text-wrap break-words text-left">
           {tooltipText ?? text}
         </TooltipContent>
       )}
+    </Tooltip>
+  );
+}
+
+/** Relative "time-since" cell with an in-app tooltip (not the native
+ *  `title` attribute) revealing the absolute timestamp on hover. */
+function RelativeTimeCell({ iso }: { iso: string | null | undefined }) {
+  const { t } = useTranslation();
+  const rel = getRelativeTimeParts(iso);
+  if (!rel) return <span className="text-muted-foreground">—</span>;
+  const label =
+    rel.key === "justNow"
+      ? t("monitoredTables.relativeJustNow")
+      : t(`monitoredTables.relative${rel.key[0].toUpperCase()}${rel.key.slice(1)}`, { count: rel.count });
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="cursor-default">{label}</span>
+      </TooltipTrigger>
+      <TooltipContent side="top">{formatDateTime(iso)}</TooltipContent>
     </Tooltip>
   );
 }
@@ -189,11 +213,7 @@ const COLUMNS: Record<MonitoredTablesSortKey, ColumnDef> = {
     defaultWidth: 130,
     sortable: true,
     renderHeader: (label) => label,
-    renderCell: (r) => {
-      const ts = r.table.last_profiled_at;
-      if (!ts) return <span className="text-muted-foreground">{"—"}</span>;
-      return <span title={ts}>{formatDateShort(ts)}</span>;
-    },
+    renderCell: (r) => <RelativeTimeCell iso={r.table.last_profiled_at} />,
   },
   owner: {
     labelKey: "monitoredTables.colOwner",
@@ -224,13 +244,15 @@ const COLUMNS: Record<MonitoredTablesSortKey, ColumnDef> = {
   },
 };
 
+// Checks/Rules column order matches dqlake's `BindingsTable` DEFAULT_ORDER
+// (steward, owner, rulesCount, checksCount, ...) — Rules before Checks.
 const DEFAULT_ORDER: MonitoredTablesSortKey[] = [
   "catalog",
   "schema",
   "table",
   "description",
-  "checksCount",
   "rulesCount",
+  "checksCount",
   "dqScore",
   "lastRun",
   "owner",

@@ -12,6 +12,7 @@ import {
   getMonitoredTablesSortValue,
   type MonitoredTablesSortKey,
 } from "@/components/monitored-tables/MonitoredTablesTable";
+import { AddMonitoredTableModal } from "@/components/monitored-tables/AddMonitoredTableModal";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -108,18 +109,19 @@ function MonitoredTablesPage() {
   const queryClient = useQueryClient();
 
   const [statusFilter, setStatusFilter] = useState<string>(ALL);
-  const [stewardFilter, setStewardFilter] = useState("");
+  const [stewardFilter, setStewardFilter] = useState<string>(ALL);
   const [catalogFilter, setCatalogFilter] = useState<string>(ALL);
   const [schemaFilter, setSchemaFilter] = useState<string>(ALL);
   const [nameSearch, setNameSearch] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<MonitoredTableSummaryOut | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [page, setPage] = useState(1);
+  const [addOpen, setAddOpen] = useState(false);
 
   const queryParams = useMemo(
     () => ({
       status: statusFilter === ALL ? undefined : statusFilter,
-      steward: stewardFilter.trim() || undefined,
+      steward: stewardFilter === ALL ? undefined : stewardFilter,
       catalog: catalogFilter === ALL ? undefined : catalogFilter,
       schema: schemaFilter === ALL ? undefined : schemaFilter,
       name: nameSearch.trim() || undefined,
@@ -143,6 +145,11 @@ function MonitoredTablesPage() {
     const rows = catalogFilter === ALL ? allTables : allTables.filter((r) => splitFqn(r.table.table_fqn).catalog === catalogFilter);
     return Array.from(new Set(rows.map((r) => splitFqn(r.table.table_fqn).schema))).sort();
   }, [allTables, catalogFilter]);
+  const stewardOptions = useMemo(
+    () =>
+      Array.from(new Set(allTables.map((r) => r.table.steward).filter((s): s is string => !!s))).sort(),
+    [allTables],
+  );
 
   const [sortKey, setSortKey] = useState<MonitoredTablesSortKey | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
@@ -183,7 +190,7 @@ function MonitoredTablesPage() {
 
   const hasActiveFilters =
     statusFilter !== ALL ||
-    stewardFilter.trim() !== "" ||
+    stewardFilter !== ALL ||
     catalogFilter !== ALL ||
     schemaFilter !== ALL ||
     nameSearch.trim() !== "";
@@ -237,66 +244,16 @@ function MonitoredTablesPage() {
             <p className="text-sm text-muted-foreground mt-1">{t("monitoredTables.subtitle")}</p>
           </div>
           {perms.canCreateRules && (
-            <Button onClick={() => navigate({ to: "/monitored-tables/new" })} className="gap-2">
+            <Button onClick={() => setAddOpen(true)} className="gap-2">
               <Plus className="h-4 w-4" />
               {t("monitoredTables.monitorTable")}
             </Button>
           )}
         </div>
 
-        {/* Bare filter row — no Card/heading wrapper, matching the Rules
-            Registry list treatment. */}
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="relative w-56">
-            <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-            <Input
-              placeholder={t("monitoredTables.searchTablesPlaceholder")}
-              value={nameSearch}
-              onChange={(e) => applyFilter(setNameSearch)(e.target.value)}
-              className="h-8 text-xs pl-7"
-            />
-          </div>
-          <Select value={catalogFilter} onValueChange={applyFilter(setCatalogFilter)}>
-            <SelectTrigger className="h-8 w-40 text-xs" aria-label={t("monitoredTables.colCatalog")}>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ALL} className="text-xs">{t("monitoredTables.allCatalogs")}</SelectItem>
-              {catalogOptions.map((c) => (
-                <SelectItem key={c} value={c} className="text-xs">{c}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select value={schemaFilter} onValueChange={applyFilter(setSchemaFilter)}>
-            <SelectTrigger className="h-8 w-40 text-xs" aria-label={t("monitoredTables.colSchema")}>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ALL} className="text-xs">{t("monitoredTables.allSchemas")}</SelectItem>
-              {schemaOptions.map((s) => (
-                <SelectItem key={s} value={s} className="text-xs">{s}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select value={statusFilter} onValueChange={applyFilter(setStatusFilter)}>
-            <SelectTrigger className="h-8 w-40 text-xs">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ALL} className="text-xs">{t("monitoredTables.allStatuses")}</SelectItem>
-              <SelectItem value="draft" className="text-xs">{t("monitoredTables.statusDraft")}</SelectItem>
-              <SelectItem value="published" className="text-xs">{t("monitoredTables.statusPublished")}</SelectItem>
-            </SelectContent>
-          </Select>
-          <Input
-            placeholder={t("monitoredTables.stewardPlaceholder")}
-            value={stewardFilter}
-            onChange={(e) => applyFilter(setStewardFilter)(e.target.value)}
-            className="h-8 w-40 text-xs"
-          />
-        </div>
-
-        {/* Bare table — no Card wrapper, matching the Rules Registry list. */}
+        {/* Bare table — no Card wrapper, matching the Rules Registry list.
+            The filter row is passed as `toolbarExtra` so it renders inline
+            with the Edit Columns button rather than on its own row. */}
         <MonitoredTablesTable
           rows={pagedTables}
           sortKey={sortKey}
@@ -306,6 +263,62 @@ function MonitoredTablesPage() {
             navigate({ to: "/monitored-tables/$bindingId", params: { bindingId: summary.table.binding_id } })
           }
           pendingBindingId={pendingId}
+          toolbarExtra={
+            <>
+              <div className="relative w-56">
+                <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                <Input
+                  placeholder={t("monitoredTables.searchTablesPlaceholder")}
+                  value={nameSearch}
+                  onChange={(e) => applyFilter(setNameSearch)(e.target.value)}
+                  className="h-8 text-xs pl-7"
+                />
+              </div>
+              <Select value={catalogFilter} onValueChange={applyFilter(setCatalogFilter)}>
+                <SelectTrigger className="h-8 w-40 text-xs" aria-label={t("monitoredTables.colCatalog")}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ALL} className="text-xs">{t("monitoredTables.allCatalogs")}</SelectItem>
+                  {catalogOptions.map((c) => (
+                    <SelectItem key={c} value={c} className="text-xs">{c}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={schemaFilter} onValueChange={applyFilter(setSchemaFilter)}>
+                <SelectTrigger className="h-8 w-40 text-xs" aria-label={t("monitoredTables.colSchema")}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ALL} className="text-xs">{t("monitoredTables.allSchemas")}</SelectItem>
+                  {schemaOptions.map((s) => (
+                    <SelectItem key={s} value={s} className="text-xs">{s}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={statusFilter} onValueChange={applyFilter(setStatusFilter)}>
+                <SelectTrigger className="h-8 w-40 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ALL} className="text-xs">{t("monitoredTables.allStatuses")}</SelectItem>
+                  <SelectItem value="draft" className="text-xs">{t("monitoredTables.statusDraft")}</SelectItem>
+                  <SelectItem value="published" className="text-xs">{t("monitoredTables.statusPublished")}</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select value={stewardFilter} onValueChange={applyFilter(setStewardFilter)}>
+                <SelectTrigger className="h-8 w-40 text-xs" aria-label={t("monitoredTables.colSteward")}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ALL} className="text-xs">{t("monitoredTables.allStewards")}</SelectItem>
+                  {stewardOptions.map((s) => (
+                    <SelectItem key={s} value={s} className="text-xs">{s}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </>
+          }
           renderActions={
             perms.canCreateRules
               ? (summary) => (
@@ -356,6 +369,8 @@ function MonitoredTablesPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <AddMonitoredTableModal open={addOpen} onOpenChange={setAddOpen} />
     </FadeIn>
   );
 }

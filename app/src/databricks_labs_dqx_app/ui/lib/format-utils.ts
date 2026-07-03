@@ -58,6 +58,30 @@ export function formatDateTime(iso: string | null | undefined): string {
   }
 }
 
+export type RelativeTimeParts =
+  | { key: "justNow" }
+  | { key: "minutesAgo" | "hoursAgo" | "daysAgo"; count: number };
+
+/**
+ * Relative time-since breakdown ("just now" / "5m ago" / "3h ago" / "2d
+ * ago"), ported from dqlake's `BindingsTable` last-run/last-updated columns.
+ * Callers translate `key` via i18next (e.g. `t("monitoredTables.relative." +
+ * key, { count })`) and pair the rendered text with an in-app tooltip (not
+ * the native `title` attribute) showing the absolute timestamp — see
+ * `formatDateTime`.
+ */
+export function getRelativeTimeParts(iso: string | null | undefined): RelativeTimeParts | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return null;
+  const ms = Date.now() - d.getTime();
+  const m = Math.floor(ms / 60000);
+  if (m < 1) return { key: "justNow" };
+  if (m < 60) return { key: "minutesAgo", count: m };
+  if (m < 24 * 60) return { key: "hoursAgo", count: Math.floor(m / 60) };
+  return { key: "daysAgo", count: Math.floor(m / (24 * 60)) };
+}
+
 export function formatUser(email: string | null | undefined): string {
   if (!email) return "—";
   const atIdx = email.indexOf("@");
