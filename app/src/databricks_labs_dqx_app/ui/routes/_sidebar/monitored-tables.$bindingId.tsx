@@ -627,6 +627,9 @@ function ApplyRulesTab({
   const [pendingRuleId, setPendingRuleId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"all" | "needs-attention">("all");
+  // Set by the by-column lens's "jump to rule" action so the target card
+  // auto-expands in the by-rule lens instead of just scrolling into view.
+  const [expandRuleId, setExpandRuleId] = useState<string | null>(null);
   const aiAvailability = useAiAvailability();
 
   // DQX materializes one `dq_applied_rules` ROW per mapping group — a rule
@@ -940,6 +943,7 @@ function ApplyRulesTab({
                 onRemove={() => setRemoveTarget(rule)}
                 onRemoveMapping={(groupIdx) => handleRemoveMappingGroup(rule.rule_id, groupIdx)}
                 busyMappingGroupIdx={busyMappingGroupIdx >= 0 ? busyMappingGroupIdx : null}
+                forceOpen={expandRuleId === rule.rule_id}
                 onAddMapping={() => {
                   setAddColumnContext(null);
                   setMappingRuleId(rule.rule_id);
@@ -969,6 +973,7 @@ function ApplyRulesTab({
             setFilter("all");
             setSearch("");
             setLens("by-rule");
+            setExpandRuleId(ruleId);
             setTimeout(() => {
               document.getElementById(`rule-card-${ruleId}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
             }, 50);
