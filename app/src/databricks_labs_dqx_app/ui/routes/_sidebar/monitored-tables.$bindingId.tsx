@@ -121,10 +121,16 @@ function DetailError({ resetErrorBoundary }: { resetErrorBoundary: () => void })
 /**
  * Subtle vertical rule grouping the binding-detail tab strip: About/Profile
  * (read-only exploration) vs Apply Rules/Results (rule authoring + outcomes).
- * Uses the theme `border` token so it stays visible in both light and dark.
+ *
+ * The TabsList background is `bg-muted`, which in the dark theme resolves to
+ * the *exact same* oklch value as the `border` token — so `bg-border` was
+ * fully invisible in dark mode (and barely visible in light mode, a ~2.5%
+ * lightness gap). Use `muted-foreground` instead: it's calibrated to
+ * contrast against `muted` in both themes, matching dqlake's separator
+ * (a `text-muted-foreground/40` pipe glyph) far more closely than `border`.
  */
 function TabGroupDivider() {
-  return <div aria-hidden="true" className="mx-1 self-stretch w-px my-1.5 bg-border" />;
+  return <div aria-hidden="true" className="mx-1 self-stretch w-px my-1.5 bg-muted-foreground/40" />;
 }
 
 function DetailSkeleton() {
