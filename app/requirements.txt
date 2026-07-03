@@ -1,2 +1,2 @@
 .build/databricks_labs_dqx-0.15.0-py3-none-any.whl
-.build/databricks_labs_dqx_app-0.15.0.post10.dev0+65186e3.b20260629t160819-py3-none-any.whl
+.build/databricks_labs_dqx_app-0.15.0.post11.dev0+b859b5a.b20260702t170817-py3-none-any.whl

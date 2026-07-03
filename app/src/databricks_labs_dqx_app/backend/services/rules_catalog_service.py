@@ -167,12 +167,15 @@ class RulesCatalogService:
             rule_id = uuid4().hex[:16]
             check_json = json.dumps(check)
             check_expr = self._sql.json_literal_expr(check_json)
+            # INSERT ... SELECT avoids INVALID_INLINE_TABLE errors that
+            # Databricks throws when parse_json() contains escaped single
+            # quotes (''…'') inside a VALUES clause.
             sql = (
                 f"INSERT INTO {self._table} "
                 f"(rule_id, table_fqn, {check_col}, version, status, source, "
                 f"created_by, created_at, updated_by, updated_at) "
-                f"VALUES ('{rule_id}', '{e_table}', {check_expr}, 1, 'draft', '{e_source}', "
-                f"'{e_user}', now(), '{e_user}', now())"
+                f"SELECT '{rule_id}', '{e_table}', {check_expr}, 1, 'draft', '{e_source}', "
+                f"'{e_user}', now(), '{e_user}', now()"
             )
             self._sql.execute(sql)
             self._record_history(
@@ -643,9 +646,9 @@ class RulesCatalogService:
             sql = (
                 f"INSERT INTO {self._history_table} "
                 f"(rule_id, table_fqn, {self._check_col}, version, source, action, "
-                f"prev_status, new_status, changed_by, changed_at) VALUES "
-                f"({rule_id_sql}, '{e_table}', {check_sql}, {version}, '{e_source}', "
-                f"'{e_action}', {prev_sql}, {new_sql}, '{e_user}', now())"
+                f"prev_status, new_status, changed_by, changed_at) "
+                f"SELECT {rule_id_sql}, '{e_table}', {check_sql}, {version}, '{e_source}', "
+                f"'{e_action}', {prev_sql}, {new_sql}, '{e_user}', now()"
             )
             self._sql.execute(sql)
         except Exception:
