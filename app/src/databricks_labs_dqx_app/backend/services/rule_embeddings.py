@@ -151,11 +151,19 @@ class RuleEmbeddingsService:
         etc.) so a Vector Search / embedding hiccup never fails a rule
         publish. Safe to call unconditionally from the approve route.
 
+        When ``vs_endpoint_name``/``vs_index_name`` are also configured,
+        also best-effort upserts the same row into the Direct Access Vector
+        Search index (see ``services.vector_store``) — the OLTP corpus
+        table isn't a UC Delta source a Delta-Sync index could read from,
+        so the app keeps the index in sync itself. A failure on that leg
+        (e.g. index not yet ONLINE) never fails the OLTP write, which is
+        the source of truth.
+
         Args:
             rule: The just-published registry rule.
 
         Returns:
-            ``True`` iff a row was written.
+            ``True`` iff the OLTP corpus row was written.
         """
         if not self.is_configured():
             logger.debug("Embedding endpoint not configured; skipping embed for rule %s", rule.rule_id)
@@ -167,10 +175,12 @@ class RuleEmbeddingsService:
                 logger.warning("Embedding endpoint returned no vector for rule %s", rule.rule_id)
                 return False
             self._upsert(rule.rule_id, rule.version, text, embedding)
-            return True
         except Exception:
             logger.warning("Failed to embed rule %s (non-fatal)", rule.rule_id, exc_info=True)
             return False
+
+        self._upsert_vector_search_index(rule.rule_id, text, embedding)
+        return True
 
     def backfill(self, rules: list[RegistryRule]) -> int:
         """Embed every rule in *rules* (e.g. all currently-published rules).
@@ -196,3 +206,23 @@ class RuleEmbeddingsService:
                 "updated_at": RawSql("current_timestamp()"),
             },
         )
+
+    def _upsert_vector_search_index(self, rule_id: str, text: str, embedding: list[float]) -> None:
+        """Best-effort mirror of the OLTP row into the Direct Access VS index.
+
+        No-op when ``vs_endpoint_name``/``vs_index_name`` are unset (the
+        suggester reports ``available=False`` in that case anyway). Any SDK
+        failure — e.g. the index hasn't finished provisioning yet — is
+        logged and swallowed; the OLTP corpus row (the source of truth) is
+        already written by the time this runs.
+        """
+        index_name = self._app_settings.get_vs_index_name()
+        if not self._app_settings.get_vs_endpoint_name() or not index_name:
+            return
+        try:
+            self._sp_ws.vector_search_indexes.upsert_data_vector_index(
+                index_name=index_name,
+                inputs_json=json.dumps([{"rule_id": rule_id, "embed_text": text, "embedding": embedding}]),
+            )
+        except Exception:
+            logger.warning("Failed to upsert rule %s into Vector Search index %s (non-fatal)", rule_id, index_name)

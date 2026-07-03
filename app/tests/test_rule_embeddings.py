@@ -7,6 +7,7 @@ Covers ``build_rule_embed_text`` (pure function) and ``RuleEmbeddingsService``
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 from unittest.mock import create_autospec
 
@@ -104,7 +105,11 @@ class TestBuildRuleEmbedText:
 
 @pytest.fixture
 def app_settings() -> create_autospec:
-    return create_autospec(AppSettingsService, instance=True)
+    settings = create_autospec(AppSettingsService, instance=True)
+    # Vector Search settings default to unset; individual tests opt in.
+    settings.get_vs_endpoint_name.return_value = ""
+    settings.get_vs_index_name.return_value = ""
+    return settings
 
 
 @pytest.fixture
@@ -188,6 +193,52 @@ class TestEmbedAndStore:
 
         assert stored is False
         sql_executor_mock.upsert.assert_not_called()
+
+
+class TestEmbedAndStoreVectorSearchUpsert:
+    """``embed_and_store`` also upserts into the Direct Access VS index (Phase 7F).
+
+    Rule embeddings live in the OLTP ``dq_rule_embeddings`` table, not a UC
+    Delta table a Delta-Sync index could read from — so the Direct Access
+    index the admin points ``vs_endpoint_name``/``vs_index_name`` at must be
+    kept in sync by the app itself, on the same publish/re-embed path that
+    writes the OLTP corpus row.
+    """
+
+    def test_upserts_into_vs_index_when_configured(self, svc, app_settings, sp_ws, sql_executor_mock):
+        app_settings.get_embedding_endpoint_name.return_value = "my-embedding-endpoint"
+        app_settings.get_vs_endpoint_name.return_value = "vs-endpoint"
+        app_settings.get_vs_index_name.return_value = "catalog.schema.vs_index"
+        sp_ws.serving_endpoints.query.return_value = SimpleNamespace(data=[SimpleNamespace(embedding=[1.0, 2.0])])
+
+        stored = svc.embed_and_store(_rule(rule_id="r42", version=3))
+
+        assert stored is True
+        sp_ws.vector_search_indexes.upsert_data_vector_index.assert_called_once()
+        _, kwargs = sp_ws.vector_search_indexes.upsert_data_vector_index.call_args
+        assert kwargs["index_name"] == "catalog.schema.vs_index"
+        payload = json.loads(kwargs["inputs_json"])
+        assert payload == [{"rule_id": "r42", "embed_text": payload[0]["embed_text"], "embedding": [1.0, 2.0]}]
+
+    def test_skips_vs_upsert_when_not_configured(self, svc, app_settings, sp_ws):
+        app_settings.get_embedding_endpoint_name.return_value = "my-embedding-endpoint"
+        sp_ws.serving_endpoints.query.return_value = SimpleNamespace(data=[SimpleNamespace(embedding=[1.0, 2.0])])
+
+        svc.embed_and_store(_rule())
+
+        sp_ws.vector_search_indexes.upsert_data_vector_index.assert_not_called()
+
+    def test_oltp_write_still_succeeds_when_vs_upsert_fails(self, svc, app_settings, sp_ws, sql_executor_mock):
+        app_settings.get_embedding_endpoint_name.return_value = "my-embedding-endpoint"
+        app_settings.get_vs_endpoint_name.return_value = "vs-endpoint"
+        app_settings.get_vs_index_name.return_value = "catalog.schema.vs_index"
+        sp_ws.serving_endpoints.query.return_value = SimpleNamespace(data=[SimpleNamespace(embedding=[1.0, 2.0])])
+        sp_ws.vector_search_indexes.upsert_data_vector_index.side_effect = RuntimeError("index not ready")
+
+        stored = svc.embed_and_store(_rule(rule_id="r1"))
+
+        assert stored is True
+        sql_executor_mock.upsert.assert_called_once()
 
 
 class TestBackfill:
