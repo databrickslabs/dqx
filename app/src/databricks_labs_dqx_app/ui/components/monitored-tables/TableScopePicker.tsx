@@ -107,7 +107,13 @@ export function useTableScopePicker(enabled: boolean): TableScopePickerState {
     },
   });
 
-  const effectiveFqns = selectedTables.length > 0 ? selectedTables : tableOptions.map((o) => o.value);
+  // Memoized for the same reason as `resolvedSchemaScopes` above: a fresh
+  // array on every render (via `.map`) would give consumers an unstable
+  // reference even when nothing selection-relevant changed.
+  const effectiveFqns = useMemo(
+    () => (selectedTables.length > 0 ? selectedTables : tableOptions.map((o) => o.value)),
+    [selectedTables, tableOptions],
+  );
 
   const reset = useCallback(() => {
     setSelectedCatalogs([]);
@@ -117,14 +123,31 @@ export function useTableScopePicker(enabled: boolean): TableScopePickerState {
 
   // Clear child selections when their parent scope narrows so state never
   // references catalogs/schemas that are no longer selected.
+  //
+  // Both setters return the *same* array reference (`prev`) when nothing
+  // was actually filtered out — `Array.prototype.filter` always allocates
+  // a new array, and handing that back unconditionally would make the
+  // state "change" (by reference) on every run even when its contents are
+  // identical. That matters here because the resulting state feeds back
+  // into `resolvedSchemaScopes` / the table-query `useQueries` above,
+  // which can retrigger these very effects — an unstable reference is
+  // exactly the shape of bug that caused the intermittent "Maximum update
+  // depth exceeded" loop in this picker (see the `combine` fix on the
+  // queries above for the sibling half of that fix).
   useEffect(() => {
     const catalogSet = new Set(selectedCatalogs);
-    setSelectedSchemas((prev) => prev.filter((s) => catalogSet.has(splitScope(s)[0])));
+    setSelectedSchemas((prev) => {
+      const next = prev.filter((s) => catalogSet.has(splitScope(s)[0]));
+      return next.length === prev.length ? prev : next;
+    });
   }, [selectedCatalogs]);
 
   useEffect(() => {
     const scopeSet = new Set(resolvedSchemaScopes);
-    setSelectedTables((prev) => prev.filter((fqn) => scopeSet.has(fqn.slice(0, fqn.lastIndexOf(".")))));
+    setSelectedTables((prev) => {
+      const next = prev.filter((fqn) => scopeSet.has(fqn.slice(0, fqn.lastIndexOf("."))));
+      return next.length === prev.length ? prev : next;
+    });
   }, [resolvedSchemaScopes]);
 
   return {
