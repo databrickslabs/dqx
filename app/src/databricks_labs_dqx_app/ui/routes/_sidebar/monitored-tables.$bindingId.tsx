@@ -15,17 +15,9 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -53,10 +45,8 @@ import {
   Loader2,
   Plus,
   RotateCcw,
-  Search,
   ShieldCheck,
   Sparkles,
-  Trash2,
   UploadCloud,
 } from "lucide-react";
 import {
@@ -69,22 +59,28 @@ import {
   useSetAppliedRulePin,
   useSetAppliedRuleSeverityOverride,
   useListRegistryRules,
-  getListRegistryRulesQueryKey,
-  useGetTableColumns,
   useSuggestRulesForTable,
   type AppliedRuleOut,
   type RegistryRuleOut,
-  type RuleSlot,
-  type ColumnOut,
   type SuggestedRuleMappingOut,
 } from "@/lib/api";
 import { useLabelDefinitions, type LabelDefinition } from "@/lib/api-custom";
 import { usePermissions } from "@/hooks/use-permissions";
 import { formatDateShort } from "@/lib/format-utils";
-import { RegistryRuleFormDialog } from "@/components/RegistryRuleFormDialog";
 import { ApprovalStepsBanner } from "@/components/ApprovalStepsBanner";
-import { HelpTooltip } from "@/components/HelpTooltip";
 import { useAiAvailability, aiUnavailableReason } from "@/hooks/use-ai-availability";
+import { AI_BANNER_BORDER, AI_BUTTON_BG, AI_ICON_COLOR, AI_TEXT_GRADIENT } from "@/lib/ai-style";
+import { AddRulesDialog } from "@/components/apply-rules/AddRulesDialog";
+import { MappingChips } from "@/components/apply-rules/MappingChips";
+import { RuleConfigCard } from "@/components/apply-rules/RuleConfigCard";
+import { RulesByColumn } from "@/components/apply-rules/RulesByColumn";
+import {
+  RESERVED_DIMENSION_KEY,
+  RESERVED_SEVERITY_KEY,
+  TagBadge,
+  colorFor,
+  extractApiError,
+} from "@/components/apply-rules/shared";
 
 export const Route = createFileRoute("/_sidebar/monitored-tables/$bindingId")({
   component: () => (
@@ -99,47 +95,6 @@ export const Route = createFileRoute("/_sidebar/monitored-tables/$bindingId")({
     </QueryErrorResetBoundary>
   ),
 });
-
-const RESERVED_NAME_KEY = "name";
-const RESERVED_DIMENSION_KEY = "dimension";
-const RESERVED_SEVERITY_KEY = "severity";
-
-function getTag(rule: RegistryRuleOut, key: string): string {
-  const md = (rule.user_metadata ?? {}) as Record<string, unknown>;
-  const v = md[key];
-  return typeof v === "string" ? v : "";
-}
-
-function extractApiError(err: unknown, fallback: string): string {
-  const axErr = err as { response?: { data?: { detail?: string } } };
-  return axErr?.response?.data?.detail ?? fallback;
-}
-
-function colorFor(defs: LabelDefinition[], key: string, value: string): string | undefined {
-  const def = defs.find((d) => d.key === key);
-  return def?.value_colors?.[value] ?? undefined;
-}
-
-function TagBadge({ label, color }: { label: string; color?: string }) {
-  if (!label) return null;
-  return (
-    <Badge variant="outline" className="gap-1 text-[10px] font-normal">
-      {color && (
-        <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ backgroundColor: color }} aria-hidden />
-      )}
-      {label}
-    </Badge>
-  );
-}
-
-function familyForType(typeName: string): "numeric" | "text" | "temporal" | "boolean" | "any" {
-  const t = typeName.toUpperCase();
-  if (/^(INT|BIGINT|SMALLINT|TINYINT|FLOAT|DOUBLE|DECIMAL|NUMERIC|LONG|SHORT|BYTE)/.test(t)) return "numeric";
-  if (/^(STRING|VARCHAR|CHAR)/.test(t)) return "text";
-  if (/^(DATE|TIMESTAMP)/.test(t)) return "temporal";
-  if (t === "BOOLEAN") return "boolean";
-  return "any";
-}
 
 function DetailError({ resetErrorBoundary }: { resetErrorBoundary: () => void }) {
   const { t } = useTranslation();
@@ -521,21 +476,6 @@ function ApplyRulesTab({
     );
   };
 
-  const byColumn = useMemo(() => {
-    const map = new Map<string, { ruleName: string; slot: string }[]>();
-    for (const rule of appliedRules) {
-      const name = rule.rule_name || rule.rule_id;
-      for (const group of rule.column_mapping ?? []) {
-        for (const [slot, column] of Object.entries(group)) {
-          const list = map.get(column) ?? [];
-          list.push({ ruleName: name, slot });
-          map.set(column, list);
-        }
-      }
-    }
-    return map;
-  }, [appliedRules]);
-
   return (
     <div className="space-y-4 pt-4">
       <ApprovalStepsBanner />
@@ -563,7 +503,7 @@ function ApplyRulesTab({
         {canEdit && (
           <div className="flex items-center gap-2">
             {aiAvailability.available && (
-              <Button size="sm" variant="outline" className="gap-2" onClick={() => setSuggestOpen(true)}>
+              <Button size="sm" className={`gap-2 ${AI_BUTTON_BG}`} onClick={() => setSuggestOpen(true)}>
                 <Sparkles className="h-3.5 w-3.5" />
                 {t("monitoredTables.suggestRulesButton")}
               </Button>
@@ -577,116 +517,44 @@ function ApplyRulesTab({
       </div>
 
       {appliedRules.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-16 text-center">
+        <div className="flex flex-col items-center justify-center py-16 text-center border border-dashed rounded-lg">
           <Columns3 className="h-10 w-10 text-muted-foreground/30 mb-3" />
-          <p className="text-sm text-muted-foreground">
+          <p className="text-sm text-muted-foreground mb-3 max-w-sm">
             {canEdit ? t("monitoredTables.emptyAppliedRulesCta") : t("monitoredTables.emptyAppliedRules")}
           </p>
+          {canEdit && (
+            <Button size="sm" className="gap-2" onClick={() => setAddOpen(true)}>
+              <Plus className="h-3.5 w-3.5" />
+              {t("monitoredTables.addRulesButton")}
+            </Button>
+          )}
         </div>
       ) : lens === "by-rule" ? (
         <div className="space-y-3">
-          {appliedRules.map((rule) => {
-            const dimension = rule.rule_dimension || "";
-            const severity = rule.rule_severity || "";
-            const registryRule = ruleById.get(rule.rule_id);
-            const busy = pendingId === rule.id;
-            return (
-              <Card key={rule.id ?? rule.rule_id}>
-                <CardContent className="py-3 space-y-2">
-                  <div className="flex items-start justify-between gap-3 flex-wrap">
-                    <div className="min-w-0">
-                      <p className="font-medium text-sm truncate">{rule.rule_name || rule.rule_id}</p>
-                      <div className="flex flex-wrap gap-1 mt-1">
-                        <TagBadge label={dimension} color={colorFor(labelDefinitions, RESERVED_DIMENSION_KEY, dimension)} />
-                        <TagBadge label={severity} color={colorFor(labelDefinitions, RESERVED_SEVERITY_KEY, severity)} />
-                      </div>
-                      <div className="mt-2 space-y-1">
-                        {(rule.column_mapping ?? []).map((group, i) => (
-                          <div key={i} className="flex flex-wrap gap-1">
-                            {Object.entries(group).map(([slot, column]) => (
-                              <Badge key={slot} variant="secondary" className="text-[10px] font-mono">
-                                {slot} → {column}
-                              </Badge>
-                            ))}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                    {canEdit && (
-                      <div className="flex items-center gap-2 shrink-0">
-                        {busy ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
-                        ) : (
-                          <>
-                            <Select
-                              value={rule.pinned_version == null ? "latest" : "pinned"}
-                              onValueChange={(v) => handlePinChange(rule, v)}
-                            >
-                              <SelectTrigger className="h-7 w-36 text-xs">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="latest" className="text-xs">{t("monitoredTables.pinFollowLatest")}</SelectItem>
-                                <SelectItem value="pinned" className="text-xs">
-                                  {t("monitoredTables.pinVersion", {
-                                    version: rule.pinned_version ?? registryRule?.version ?? 1,
-                                  })}
-                                </SelectItem>
-                              </SelectContent>
-                            </Select>
-                            <Select
-                              value={rule.severity_override ?? "none"}
-                              onValueChange={(v) => handleSeverityChange(rule, v)}
-                            >
-                              <SelectTrigger className="h-7 w-32 text-xs">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="none" className="text-xs">{t("monitoredTables.severityOverrideNone")}</SelectItem>
-                                {severityValues.map((v) => (
-                                  <SelectItem key={v} value={v} className="text-xs">{v}</SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-7 w-7 p-0 text-destructive"
-                              title={t("monitoredTables.removeRuleButton")}
-                              onClick={() => setRemoveTarget(rule)}
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </Button>
-                          </>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-            );
-          })}
-        </div>
-      ) : (
-        <div className="space-y-2">
-          {Array.from(byColumn.entries()).map(([column, uses]) => (
-            <Card key={column}>
-              <CardContent className="py-3">
-                <p className="font-mono font-medium text-sm">{column}</p>
-                <div className="flex flex-wrap gap-1 mt-1">
-                  {uses.map((u, i) => (
-                    <Badge key={i} variant="outline" className="text-[10px]">
-                      {u.ruleName} ({u.slot})
-                    </Badge>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
+          {appliedRules.map((rule) => (
+            <RuleConfigCard
+              key={rule.id ?? rule.rule_id}
+              rule={rule}
+              registryRule={ruleById.get(rule.rule_id)}
+              labelDefinitions={labelDefinitions}
+              severityValues={severityValues}
+              canEdit={canEdit}
+              busy={pendingId === rule.id}
+              onPinChange={(v) => handlePinChange(rule, v)}
+              onSeverityChange={(v) => handleSeverityChange(rule, v)}
+              onRemove={() => setRemoveTarget(rule)}
+            />
           ))}
         </div>
+      ) : (
+        <RulesByColumn
+          appliedRules={appliedRules}
+          canEdit={canEdit}
+          onAddRule={() => setAddOpen(true)}
+        />
       )}
 
-      <AddRuleDialog
+      <AddRulesDialog
         open={addOpen}
         onOpenChange={setAddOpen}
         bindingId={bindingId}
@@ -724,270 +592,6 @@ function ApplyRulesTab({
         </AlertDialogContent>
       </AlertDialog>
     </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Add Rule dialog (select published rule -> map slots to columns)
-// ---------------------------------------------------------------------------
-
-function AddRuleDialog({
-  open,
-  onOpenChange,
-  bindingId,
-  tableFqn,
-  publishedRules,
-  labelDefinitions,
-  onApplied,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  bindingId: string;
-  tableFqn: string;
-  publishedRules: RegistryRuleOut[];
-  labelDefinitions: LabelDefinition[];
-  onApplied: () => void;
-}) {
-  const { t } = useTranslation();
-  const [search, setSearch] = useState("");
-  const [selectedRule, setSelectedRule] = useState<RegistryRuleOut | null>(null);
-  const [mapping, setMapping] = useState<Record<string, string | string[]>>({});
-  const [createOpen, setCreateOpen] = useState(false);
-  const queryClient = useQueryClient();
-
-  const parts = tableFqn.split(".");
-  const columnsQuery = useGetTableColumns(parts[0] ?? "", parts[1] ?? "", parts[2] ?? "", {
-    query: { enabled: open && parts.length === 3 },
-  });
-  const columns: ColumnOut[] = columnsQuery.data?.data ?? [];
-
-  const filteredRules = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return publishedRules;
-    return publishedRules.filter((r) => {
-      const name = getTag(r, RESERVED_NAME_KEY).toLowerCase();
-      return name.includes(q) || r.rule_id.toLowerCase().includes(q);
-    });
-  }, [publishedRules, search]);
-
-  const applyMutation = useApplyRuleToTable();
-
-  const reset = () => {
-    setSelectedRule(null);
-    setMapping({});
-    setSearch("");
-  };
-
-  const handleClose = (next: boolean) => {
-    if (!next) reset();
-    onOpenChange(next);
-  };
-
-  const slots: RuleSlot[] = selectedRule?.definition.slots ?? [];
-  const mappingComplete = slots.every((slot) => {
-    const v = mapping[slot.name];
-    if (slot.cardinality === "many") return Array.isArray(v) && v.length > 0;
-    return typeof v === "string" && v.length > 0;
-  });
-
-  const handleApply = () => {
-    if (!selectedRule || !mappingComplete) return;
-    const group: Record<string, string> = {};
-    for (const slot of slots) {
-      const v = mapping[slot.name];
-      group[slot.name] = Array.isArray(v) ? v.join(",") : (v as string);
-    }
-    applyMutation.mutate(
-      { bindingId, data: { rule_id: selectedRule.rule_id, column_mapping: [group] } },
-      {
-        onSuccess: () => {
-          toast.success(t("monitoredTables.toastApplied"));
-          onApplied();
-          handleClose(false);
-        },
-        onError: (err) => toast.error(extractApiError(err, t("monitoredTables.toastApplyFailed")), { duration: 6000 }),
-      },
-    );
-  };
-
-  const openCreateRule = () => {
-    onOpenChange(false);
-    setCreateOpen(true);
-  };
-
-  const handleCreateSaved = () => {
-    queryClient.invalidateQueries({ queryKey: getListRegistryRulesQueryKey() });
-  };
-
-  return (
-    <>
-      <Dialog open={open} onOpenChange={handleClose}>
-        <DialogContent className="sm:max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>{t("monitoredTables.addRuleDialogTitle")}</DialogTitle>
-            <DialogDescription>{t("monitoredTables.addRuleDialogDescription")}</DialogDescription>
-          </DialogHeader>
-
-          {!selectedRule ? (
-            <div className="space-y-3">
-              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                {t("monitoredTables.stepSelectRule")}
-              </p>
-              <div className="relative">
-                <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-                <Input
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder={t("monitoredTables.searchRulesPlaceholder")}
-                  className="pl-7 h-8 text-xs"
-                />
-              </div>
-              <div className="max-h-72 overflow-y-auto border rounded-md divide-y">
-                {filteredRules.length === 0 ? (
-                  <p className="text-sm text-muted-foreground text-center py-6">
-                    {t("monitoredTables.noPublishedRules")}
-                  </p>
-                ) : (
-                  filteredRules.map((rule) => {
-                    const name = getTag(rule, RESERVED_NAME_KEY) || rule.rule_id;
-                    const dimension = getTag(rule, RESERVED_DIMENSION_KEY);
-                    const severity = getTag(rule, RESERVED_SEVERITY_KEY);
-                    return (
-                      <button
-                        key={rule.rule_id}
-                        type="button"
-                        onClick={() => setSelectedRule(rule)}
-                        className="w-full text-left p-3 hover:bg-muted/40 transition-colors"
-                      >
-                        <p className="text-sm font-medium">{name}</p>
-                        <div className="flex flex-wrap gap-1 mt-1">
-                          <TagBadge label={dimension} color={colorFor(labelDefinitions, RESERVED_DIMENSION_KEY, dimension)} />
-                          <TagBadge label={severity} color={colorFor(labelDefinitions, RESERVED_SEVERITY_KEY, severity)} />
-                        </div>
-                      </button>
-                    );
-                  })
-                )}
-              </div>
-              <Button variant="outline" size="sm" className="gap-2 w-full" onClick={openCreateRule}>
-                {t("monitoredTables.createNewRuleButton")}
-              </Button>
-              <p className="text-xs text-muted-foreground">{t("monitoredTables.createNewRuleHint")}</p>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              <div className="flex items-center gap-1.5">
-                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  {t("monitoredTables.stepMapColumns")}
-                </p>
-                <HelpTooltip text={t("monitoredTables.mapColumnsTooltip")} />
-              </div>
-              <p className="text-sm font-medium">{getTag(selectedRule, RESERVED_NAME_KEY) || selectedRule.rule_id}</p>
-              <div className="space-y-3">
-                {slots.map((slot) => {
-                  const familyMatches = columns.filter(
-                    (c) => slot.family === "any" || familyForType(c.type_name) === slot.family,
-                  );
-                  if (slot.cardinality === "many") {
-                    const selected = (mapping[slot.name] as string[] | undefined) ?? [];
-                    return (
-                      <div key={slot.name} className="space-y-1.5">
-                        <p className="text-sm font-medium">
-                          {t("monitoredTables.slotColumnsLabel", { slot: slot.name })}
-                        </p>
-                        {familyMatches.length === 0 ? (
-                          <p className="text-xs text-muted-foreground">{t("monitoredTables.noMatchingColumns")}</p>
-                        ) : (
-                          <div className="grid grid-cols-2 gap-1.5 max-h-40 overflow-y-auto border rounded-md p-2">
-                            {familyMatches.map((col) => {
-                              const checked = selected.includes(col.name);
-                              return (
-                                <label key={col.name} className="flex items-center gap-1.5 text-xs">
-                                  <Checkbox
-                                    checked={checked}
-                                    onCheckedChange={(v) => {
-                                      const next = v
-                                        ? [...selected, col.name]
-                                        : selected.filter((c) => c !== col.name);
-                                      setMapping((m) => ({ ...m, [slot.name]: next }));
-                                    }}
-                                  />
-                                  <span className="font-mono truncate">{col.name}</span>
-                                </label>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  }
-                  return (
-                    <div key={slot.name} className="space-y-1.5">
-                      <p className="text-sm font-medium">
-                        {t("monitoredTables.slotColumnLabel", { slot: slot.name })}
-                      </p>
-                      <Select
-                        value={(mapping[slot.name] as string | undefined) ?? ""}
-                        onValueChange={(v) => setMapping((m) => ({ ...m, [slot.name]: v }))}
-                      >
-                        <SelectTrigger className="h-8 text-xs">
-                          <SelectValue placeholder={t("monitoredTables.selectColumnPlaceholder")} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {familyMatches.length === 0 ? (
-                            <div className="p-2 text-xs text-muted-foreground">
-                              {t("monitoredTables.noMatchingColumns")}
-                            </div>
-                          ) : (
-                            familyMatches.map((col) => (
-                              <SelectItem key={col.name} value={col.name} className="text-xs font-mono">
-                                {col.name}
-                              </SelectItem>
-                            ))
-                          )}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  );
-                })}
-              </div>
-              {!mappingComplete && (
-                <p className="text-xs text-amber-600">{t("monitoredTables.mappingIncomplete")}</p>
-              )}
-            </div>
-          )}
-
-          <DialogFooter>
-            {selectedRule && (
-              <Button variant="outline" onClick={() => setSelectedRule(null)}>
-                {t("monitoredTables.backButton")}
-              </Button>
-            )}
-            <Button variant="outline" onClick={() => handleClose(false)}>
-              {t("common.cancel")}
-            </Button>
-            {selectedRule && (
-              <Button onClick={handleApply} disabled={!mappingComplete || applyMutation.isPending} className="gap-2">
-                {applyMutation.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                {applyMutation.isPending ? t("monitoredTables.applying") : t("monitoredTables.applyButton")}
-              </Button>
-            )}
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <RegistryRuleFormDialog
-        open={createOpen}
-        onOpenChange={(next) => {
-          setCreateOpen(next);
-          if (!next) onOpenChange(true);
-        }}
-        editingRule={null}
-        viewingRule={null}
-        labelDefinitions={labelDefinitions}
-        onSaved={handleCreateSaved}
-      />
-    </>
   );
 }
 
@@ -1100,8 +704,8 @@ function SuggestRulesDialog({
       <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Sparkles className="h-4 w-4 text-primary" />
-            {t("monitoredTables.suggestRulesDialogTitle")}
+            <Sparkles className={`h-4 w-4 ${AI_ICON_COLOR}`} />
+            <span className={AI_TEXT_GRADIENT}>{t("monitoredTables.suggestRulesDialogTitle")}</span>
           </DialogTitle>
           <DialogDescription>{t("monitoredTables.suggestRulesDialogDescription")}</DialogDescription>
         </DialogHeader>
@@ -1137,7 +741,7 @@ function SuggestRulesDialog({
                 <label
                   key={`${s.rule_id}-${idx}`}
                   className={`flex items-start gap-3 rounded-md border p-3 cursor-pointer transition-colors ${
-                    checked ? "border-primary/40 bg-primary/5" : "hover:bg-muted/40"
+                    checked ? AI_BANNER_BORDER : "hover:bg-muted/40"
                   }`}
                 >
                   <Checkbox checked={checked} onCheckedChange={() => toggle(idx)} className="mt-0.5" />
@@ -1154,13 +758,7 @@ function SuggestRulesDialog({
                     {s.explanation && (
                       <p className="text-xs text-muted-foreground">{s.explanation}</p>
                     )}
-                    <div className="flex flex-wrap gap-1">
-                      {Object.entries(s.column_mapping ?? {}).map(([slot, column]) => (
-                        <Badge key={slot} variant="secondary" className="text-[10px] font-mono">
-                          {slot} → {column}
-                        </Badge>
-                      ))}
-                    </div>
+                    <MappingChips columnMapping={s.column_mapping ? [s.column_mapping] : []} />
                   </div>
                 </label>
               );
@@ -1173,7 +771,7 @@ function SuggestRulesDialog({
             {t("common.cancel")}
           </Button>
           {state && state.available && state.suggestions.length > 0 && (
-            <Button onClick={handleAdd} disabled={applying || selected.size === 0} className="gap-2">
+            <Button onClick={handleAdd} disabled={applying || selected.size === 0} className={`gap-2 ${AI_BUTTON_BG}`}>
               {applying && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
               {t("monitoredTables.suggestRulesAddButton", { count: selected.size })}
             </Button>
