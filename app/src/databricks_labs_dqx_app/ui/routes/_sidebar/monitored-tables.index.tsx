@@ -69,7 +69,7 @@ import { cn } from "@/lib/utils";
 
 const PAGE_SIZE = 25;
 
-export const Route = createFileRoute("/_sidebar/monitored-tables")({
+export const Route = createFileRoute("/_sidebar/monitored-tables/")({
   component: () => (
     <QueryErrorResetBoundary>
       {({ reset }) => (
