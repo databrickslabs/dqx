@@ -266,6 +266,14 @@ function RegistryRulesPage() {
     });
   }, [allRules, nameSearch]);
 
+  const hasActiveFilters =
+    statusFilter !== ALL ||
+    dimensionFilter !== ALL ||
+    severityFilter !== ALL ||
+    stewardFilter.trim() !== "" ||
+    tagFilter.trim() !== "" ||
+    nameSearch.trim() !== "";
+
   const invalidate = useCallback(
     () => queryClient.invalidateQueries({ queryKey: getListRegistryRulesQueryKey() }),
     [queryClient],
@@ -461,7 +469,13 @@ function RegistryRulesPage() {
             {rules.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-16 text-center">
                 <ShieldCheck className="h-10 w-10 text-muted-foreground/30 mb-3" />
-                <p className="text-sm text-muted-foreground">{t("rulesRegistry.emptyState")}</p>
+                <p className="text-sm text-muted-foreground">
+                  {hasActiveFilters
+                    ? t("rulesRegistry.emptyState")
+                    : perms.canCreateRules
+                      ? t("rulesRegistry.emptyStateNoRulesCta")
+                      : t("rulesRegistry.emptyStateNoRules")}
+                </p>
               </div>
             ) : (
               <div className="divide-y">

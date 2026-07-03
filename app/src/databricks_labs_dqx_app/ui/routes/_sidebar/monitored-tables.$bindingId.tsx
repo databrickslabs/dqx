@@ -579,7 +579,9 @@ function ApplyRulesTab({
       {appliedRules.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-16 text-center">
           <Columns3 className="h-10 w-10 text-muted-foreground/30 mb-3" />
-          <p className="text-sm text-muted-foreground">{t("monitoredTables.emptyAppliedRules")}</p>
+          <p className="text-sm text-muted-foreground">
+            {canEdit ? t("monitoredTables.emptyAppliedRulesCta") : t("monitoredTables.emptyAppliedRules")}
+          </p>
         </div>
       ) : lens === "by-rule" ? (
         <div className="space-y-3">

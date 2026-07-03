@@ -232,6 +232,8 @@ function MonitoredTablesPage() {
   const { data } = useListMonitoredTables(queryParams);
   const tables = useMemo(() => data?.data ?? [], [data]);
 
+  const hasActiveFilters = statusFilter !== ALL || stewardFilter.trim() !== "" || nameSearch.trim() !== "";
+
   const invalidate = useCallback(
     () => queryClient.invalidateQueries({ queryKey: getListMonitoredTablesQueryKey() }),
     [queryClient],
@@ -317,7 +319,13 @@ function MonitoredTablesPage() {
             {tables.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-16 text-center">
                 <Boxes className="h-10 w-10 text-muted-foreground/30 mb-3" />
-                <p className="text-sm text-muted-foreground">{t("monitoredTables.emptyState")}</p>
+                <p className="text-sm text-muted-foreground">
+                  {hasActiveFilters
+                    ? t("monitoredTables.emptyState")
+                    : perms.canCreateRules
+                      ? t("monitoredTables.emptyStateNoTablesCta")
+                      : t("monitoredTables.emptyStateNoTables")}
+                </p>
               </div>
             ) : (
               <div className="divide-y">
