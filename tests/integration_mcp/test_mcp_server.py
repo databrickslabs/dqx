@@ -182,7 +182,10 @@ def test_mcp_server_end_to_end(workspace_auth, app_auth):
     host, get_token = workspace_auth  # control-plane bearer: CLI deploy + Model Serving
     get_app_token = app_auth  # OAuth bearer the app's /mcp front-door accepts
 
-    with deploy_mcp_app(host, get_token) as app, seed_demo_data(app["service_principal"]) as data:
+    with (
+        deploy_mcp_app(host, get_token) as app,
+        seed_demo_data(app["service_principal"], app["runner_service_principal"]) as data,
+    ):
         client = McpClient(app["url"], get_app_token)
         wait_until_ready(client)  # a freshly-deployed app needs a moment before /mcp serves
         table = data["table"]

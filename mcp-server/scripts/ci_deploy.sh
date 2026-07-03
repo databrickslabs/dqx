@@ -10,9 +10,13 @@
 # Env:
 #   NAME_PREFIX                          resource name prefix (default: mcp-dqx-ci)
 #   DQX_MCP_TEST_CATALOG                 catalog the setup job may create/drop a temp schema in (required)
-#   DQX_MCP_RUNNER_SERVICE_PRINCIPAL_ID  application id of the workspace SP the runner job runs as
-#                                        (required — the runner job's run_as; the deploying identity
-#                                        needs the "User" role on it)
+#   DQX_MCP_RUNNER_SERVICE_PRINCIPAL_ID  application id of the workspace SP the runner job runs as.
+#                                        Optional: a real deploy sets this to a dedicated
+#                                        least-privilege SP (the deploying identity then needs the
+#                                        "User"/servicePrincipal.user role on it). When unset (CI),
+#                                        run_as defaults to the *deploying identity* itself — resolved
+#                                        via `databricks current-user me` — so run_as == creator and
+#                                        no cross-SP binding grant is needed.
 #   BUNDLE_TARGET                        bundle target (default: dev)
 #   DATABRICKS_PROFILE                   optional CLI profile (else relies on DATABRICKS_HOST/TOKEN)
 #
@@ -25,13 +29,24 @@ BUNDLE_TARGET="${BUNDLE_TARGET:-dev}"
 : "${DATABRICKS_HOST:?DATABRICKS_HOST is not set (workspace URL)}"
 : "${DATABRICKS_TOKEN:?DATABRICKS_TOKEN is not set (workspace auth)}"
 : "${DQX_MCP_TEST_CATALOG:?DQX_MCP_TEST_CATALOG is not set (a catalog the deployer can create schemas in)}"
-: "${DQX_MCP_RUNNER_SERVICE_PRINCIPAL_ID:?DQX_MCP_RUNNER_SERVICE_PRINCIPAL_ID is not set (application id of the runner-job run_as SP)}"
 PROFILE_ARG=()
 [ -n "${DATABRICKS_PROFILE:-}" ] && PROFILE_ARG=(--profile "$DATABRICKS_PROFILE")
 
+# The runner job's run_as SP. Use the explicit override if given (a real deploy's dedicated SP);
+# otherwise default to the *deploying identity* — whoever the CLI authenticates as — so run_as ==
+# the job's creator and Databricks needs no servicePrincipal.user grant to bind it (pinning a
+# *different* SP requires that grant, which is what made a hard-coded runner SP 403 in CI).
+RUNNER_SP="${DQX_MCP_RUNNER_SERVICE_PRINCIPAL_ID:-}"
+if [ -z "$RUNNER_SP" ]; then
+  RUNNER_SP="$(databricks current-user me "${PROFILE_ARG[@]}" -o json \
+    | python3 -c 'import sys,json; print(json.load(sys.stdin).get("userName",""))')"
+  echo "runner_service_principal_id unset; defaulting run_as to the deploying identity: ${RUNNER_SP}"
+fi
+: "${RUNNER_SP:?could not resolve the runner run_as SP (set DQX_MCP_RUNNER_SERVICE_PRINCIPAL_ID, or ensure the deploy identity is resolvable via 'databricks current-user me')}"
+
 VARS=(--var "name_prefix=${NAME_PREFIX}"
       --var "catalog_name=${DQX_MCP_TEST_CATALOG}"
-      --var "runner_service_principal_id=${DQX_MCP_RUNNER_SERVICE_PRINCIPAL_ID}")
+      --var "runner_service_principal_id=${RUNNER_SP}")
 
 cd "$(dirname "$0")/.."  # mcp-server/
 
@@ -65,6 +80,8 @@ read -r APP_URL APP_SP < <(databricks apps get "${NAME_PREFIX}" "${PROFILE_ARG[@
   | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d["url"], d.get("service_principal_client_id",""))')
 echo "DQX_MCP_SERVER_URL=${APP_URL}"
 echo "DQX_MCP_APP_SERVICE_PRINCIPAL=${APP_SP}"
+# The runner job's resolved run_as SP — tests grant it READ on the seed contract volume.
+echo "DQX_MCP_RUNNER_SERVICE_PRINCIPAL=${RUNNER_SP}"
 # Use if-blocks (not `[ ] && echo`): the latter returns non-zero when the var is unset (local
 # runs), which would make this script exit 1 on an otherwise successful deploy.
 if [ -n "${GITHUB_OUTPUT:-}" ]; then echo "server_url=${APP_URL}" >> "$GITHUB_OUTPUT"; fi

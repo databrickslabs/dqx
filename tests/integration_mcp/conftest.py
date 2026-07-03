@@ -11,10 +11,12 @@ the deploy/teardown scripts and HTTP calls, so no DATABRICKS_TOKEN needs to be s
 it works under the acceptance action's OIDC auth and under a local profile alike.
 """
 
+import base64
 import contextlib
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -25,7 +27,6 @@ from uuid import uuid4
 import pytest
 import requests
 from databricks.sdk import WorkspaceClient
-from databricks.sdk.config import Config
 
 from tests.constants import TEST_CATALOG
 
@@ -39,11 +40,41 @@ AI_QUERY_ENDPOINT = os.environ.get("DQX_AI_QUERY_TEST_ENDPOINT", "databricks-cla
 # uses a different catalog.
 CATALOG = os.environ.get("DQX_MCP_TEST_CATALOG") or TEST_CATALOG
 
+# The runner job's run_as SP — an *explicit override* only. For a real deploy, set this to a
+# dedicated least-privilege SP. When empty (the CI default), ci_deploy.sh resolves run_as to the
+# *deploying identity* via `databricks current-user me`, so run_as == the job's creator and no
+# servicePrincipal.user grant is needed (the same pattern as the demo asset-bundle test and the
+# SDK-created integration jobs). Databricks only lets you bind a *different* SP as run_as if the
+# deployer holds servicePrincipal.user on it — which is why hard-coding TOOLS_CLIENT_ID 403'd.
+RUNNER_SP = os.environ.get("DQX_MCP_RUNNER_SERVICE_PRINCIPAL_ID", "")
+
 
 def _bearer_from(config) -> str:
     """Mint a fresh bearer from an SDK config (refreshes OAuth/metadata tokens as needed)."""
     token = (config.authenticate() or {}).get("Authorization", "").removeprefix("Bearer ").strip()
     assert token, "could not obtain a workspace bearer token from the SDK config"
+    return token
+
+
+def _databricks_oauth_m2m_token(host: str, client_id: str, client_secret: str) -> str:
+    """Mint a **Databricks** OAuth (M2M) access token straight from the workspace OIDC token endpoint.
+
+    Uses ``{host}/oidc/v1/token`` (client-credentials, scope ``all-apis``) directly rather than the
+    SDK's ``auth_type`` routing: on Azure workspaces the SDK's oauth-m2m gets pulled toward Azure AD
+    by the ambient ARM_* env and sends ``all-apis`` to Azure's endpoint (AADSTS1002012 — Azure wants
+    ``<resource>/.default``), which would also yield an AAD token the Apps front-door rejects. Hitting
+    the Databricks OIDC endpoint directly guarantees a Databricks-issued token, which the front-door
+    accepts. Raises for a bad response so credential problems fail fast.
+    """
+    resp = requests.post(
+        f"{host}/oidc/v1/token",
+        data={"grant_type": "client_credentials", "scope": "all-apis"},
+        auth=(client_id, client_secret),
+        timeout=30,
+    )
+    resp.raise_for_status()
+    token = resp.json().get("access_token", "")
+    assert token, f"no access_token in the OAuth response from {host}/oidc/v1/token"
     return token
 
 
@@ -68,32 +99,38 @@ def workspace_auth() -> "tuple[str, Callable[[], str]]":
 def app_auth(workspace_auth: "tuple[str, Callable[[], str]]") -> "Callable[[], str]":
     """``get_token`` for the app's /mcp front-door, which only accepts OAuth tokens.
 
-    The Databricks Apps front-door honors **OAuth** tokens (user U2M, or service-principal
-    M2M-with-secret) and rejects the acceptance harness's metadata-service token with 401 — even
-    though that identity owns the app. This is a token-*type* limitation, not a permission one.
+    The Databricks Apps front-door honors **Databricks OAuth** tokens (user U2M, or service-principal
+    M2M-with-secret minted at ``{host}/oidc/v1/token``) and rejects the acceptance harness's ambient
+    token with 401 — that ambient token is an **Azure AD** token (``iss=sts.windows.net``,
+    ``aud=2ff814a6-…`` = the AzureDatabricks API resource), which is valid for the control-plane REST
+    APIs but NOT for the Apps front-door. This is a token-*type* limitation, not a permission one
+    (confirmed by the 401 RCA in ``wait_until_ready``).
 
-    When ``DQX_MCP_APP_CLIENT_ID`` + ``DQX_MCP_APP_CLIENT_SECRET`` are present (provisioned from the
-    acceptance vault for a service principal that has CAN_USE on the app), authenticate as that SP
-    via OAuth M2M, which the front-door accepts. Otherwise fall back to the ambient SDK auth — an
-    OAuth profile locally also works. MCP-specific env names are used deliberately so that adding
-    these to the shared vault never changes how other suites' ``WorkspaceClient`` authenticates.
+    So authenticate to the front-door via OAuth **M2M**: an SP client id + a **Databricks OAuth**
+    secret (``auth_type="oauth-m2m"`` uses ``{host}/oidc/v1/token`` → a Databricks token the
+    front-door accepts). Prefer the MCP-specific env (``DQX_MCP_APP_CLIENT_ID`` /
+    ``DQX_MCP_APP_CLIENT_SECRET``); in CI fall back to the acceptance vault's ``TOOLS_CLIENT_ID`` +
+    **``TOOLS_DATABRICKS_SECRET``** (the SP's *Databricks OAuth* secret — NOT ``TOOLS_CLIENT_SECRET``,
+    which is the Azure AD secret that yields the rejected token type). When none are set, fall back to
+    the ambient auth — a local ``databricks auth login`` OAuth profile is itself accepted.
     """
     host, ambient_get_token = workspace_auth
-    client_id = os.environ.get("DQX_MCP_APP_CLIENT_ID")
-    client_secret = os.environ.get("DQX_MCP_APP_CLIENT_SECRET")
+    client_id = os.environ.get("DQX_MCP_APP_CLIENT_ID") or os.environ.get("TOOLS_CLIENT_ID")
+    client_secret = os.environ.get("DQX_MCP_APP_CLIENT_SECRET") or os.environ.get("TOOLS_DATABRICKS_SECRET")
     if not (client_id and client_secret):
         return ambient_get_token  # local OAuth profile (front-door accepts it)
-    config = Config(host=host, client_id=client_id, client_secret=client_secret, auth_type="oauth-m2m")
-    _bearer_from(config)  # fail fast if the M2M credentials are bad
-    return lambda: _bearer_from(config)
+    _databricks_oauth_m2m_token(host, client_id, client_secret)  # fail fast if the M2M credentials are bad
+    return lambda: _databricks_oauth_m2m_token(host, client_id, client_secret)
 
 
-def _script_env(name_prefix: str, secret_scope: str, host: str, token: str) -> dict[str, str]:
+def _script_env(name_prefix: str, host: str, token: str) -> dict[str, str]:
     return {
         **os.environ,
         "NAME_PREFIX": name_prefix,
-        "CONFIG_SECRET_SCOPE": secret_scope,
         "DQX_MCP_TEST_CATALOG": CATALOG,
+        # Pass through the explicit override (empty in CI, where ci_deploy.sh defaults run_as to the
+        # deploying identity). Local runs set this to a real dedicated runner SP.
+        "DQX_MCP_RUNNER_SERVICE_PRINCIPAL_ID": RUNNER_SP,
         "DATABRICKS_HOST": host,
         "DATABRICKS_TOKEN": token,
     }
@@ -105,6 +142,37 @@ def _emitted(stdout: str, key: str) -> str:
         (line.split("=", 1)[1].strip() for line in reversed(stdout.splitlines()) if line.startswith(f"{key}=")),
         "",
     )
+
+
+# Mask anything credential-shaped before it can reach a log/skip message: a JWT (``eyJ…`.`.`…``),
+# a ``Bearer <x>`` header, or any long opaque run (40+ chars) that could be a token/secret. UUID
+# identifiers (36 chars) and OAuth scope words fall below the threshold, so RCA claims survive.
+_TOKENISH = re.compile(r"eyJ[\w-]+\.[\w-]+\.[\w-]+|Bearer\s+\S+|[A-Za-z0-9_\-]{40,}", re.IGNORECASE)
+
+
+def _redact(text: str) -> str:
+    """Scrub token/secret-shaped substrings from server-controlled text before logging it."""
+    return _TOKENISH.sub("[REDACTED]", text or "")
+
+
+def _decode_jwt_claims(token: str) -> dict:
+    """Best-effort decode of a bearer for 401 RCA — header alg + a few non-sensitive claims, with NO
+    signature check and NEVER the raw token/signature. An opaque (non-JWT) token is itself the tell:
+    the Databricks Apps front-door wants an OAuth JWT, not a metadata/PAT-style token.
+    """
+    parts = token.split(".")
+    if len(parts) != 3:
+        return {"format": "opaque (non-JWT) — a metadata/PAT-style token, not an OAuth JWT"}
+
+    def _seg(seg: str) -> dict:
+        try:
+            return json.loads(base64.urlsafe_b64decode(seg + "=" * (-len(seg) % 4)))
+        except ValueError:  # covers binascii.Error + json.JSONDecodeError + UnicodeDecodeError
+            return {}
+
+    header, payload = _seg(parts[0]), _seg(parts[1])
+    claims = {k: payload[k] for k in ("iss", "aud", "sub", "azp", "scope", "scp", "tid", "client_id") if k in payload}
+    return {"format": "jwt", "alg": header.get("alg"), "claims": claims}
 
 
 @contextlib.contextmanager
@@ -120,10 +188,9 @@ def deploy_mcp_app(host: str, get_token: Callable[[], str]) -> Iterator[dict[str
     the long test, so a token minted at deploy time would be expired by then.
     """
     name_prefix = f"mcp-dqx-it-{uuid4().hex[:6]}"
-    secret_scope = f"dqx-config-{name_prefix}"
 
     def env() -> dict[str, str]:
-        return _script_env(name_prefix, secret_scope, host, get_token())
+        return _script_env(name_prefix, host, get_token())
 
     try:
         result = subprocess.run(
@@ -141,7 +208,13 @@ def deploy_mcp_app(host: str, get_token: Callable[[], str]) -> Iterator[dict[str
     url = _emitted(result.stdout, "DQX_MCP_SERVER_URL")
     assert url, "ci_deploy.sh did not emit DQX_MCP_SERVER_URL"
     try:
-        yield {"url": url, "service_principal": _emitted(result.stdout, "DQX_MCP_APP_SERVICE_PRINCIPAL")}
+        yield {
+            "url": url,
+            "service_principal": _emitted(result.stdout, "DQX_MCP_APP_SERVICE_PRINCIPAL"),
+            # The SP the runner job actually runs as (the deploying identity when no override is set).
+            # The seed grants it READ on the contract volume so generate_rules_from_contract can read it.
+            "runner_service_principal": _emitted(result.stdout, "DQX_MCP_RUNNER_SERVICE_PRINCIPAL"),
+        }
     finally:
         subprocess.run(["bash", str(_MCP_SCRIPTS / "ci_destroy.sh")], env=env(), check=False)
 
@@ -192,6 +265,14 @@ class McpClient:
         self._url = url
         self._get_token = get_token  # mint a fresh bearer per request (no expiry over a long run)
 
+    @property
+    def url(self) -> str:
+        return self._url
+
+    def current_token(self) -> str:
+        """Mint the bearer this client sends — for 401 diagnostics only."""
+        return self._get_token()
+
     def list_tools(self) -> list[dict]:
         return _mcp_request(self._url, self._get_token(), "tools/list", {})["tools"]
 
@@ -231,13 +312,14 @@ def wait_until_ready(client: McpClient, *, timeout: float = 180.0, interval: flo
     A just-deployed app needs a moment before its server answers; until then /mcp can return
     404/5xx — retry those until it lists tools (or time out with the last error).
 
-    A **401/403**, however, is not a "warming up" state: the request authenticated against the
-    workspace but the Databricks Apps OBO front-door rejected the *identity*. The acceptance
-    harness authenticates via the metadata service, whose tokens the front-door does not accept —
-    only OAuth tokens (user U2M, or SP M2M-with-secret) carrying the app's ``user_api_scopes`` are.
-    Retrying can't change that, so skip with a clear reason rather than burning the timeout and
-    failing. The suite still runs fully under an OAuth profile locally, and in CI once an OAuth
-    token is provided to the harness.
+    A **401/403**, however, is not a "warming up" state: the app *did* deploy and *did* respond
+    (it wasn't refused) — the Databricks Apps front-door rejected the request. Retrying can't change
+    that, so skip. The skip surfaces the *actual* response (status, ``WWW-Authenticate`` header,
+    body) instead of a guess: a **401** means the token itself was not accepted (authentication) —
+    e.g. the acceptance harness's metadata-service token, which the front-door does not honor; only
+    OAuth tokens (user U2M, or SP M2M-with-secret) with the app's ``user_api_scopes`` are. A **403**
+    would mean the identity authenticated but lacks CAN_USE (authorization). The suite runs fully
+    under an OAuth profile locally, and in CI once an OAuth token is provided to the harness.
     """
     deadline = time.monotonic() + timeout
     last: Exception | None = None
@@ -246,13 +328,26 @@ def wait_until_ready(client: McpClient, *, timeout: float = 180.0, interval: flo
             client.list_tools()
             return
         except requests.HTTPError as exc:
-            status = exc.response.status_code if exc.response is not None else None
+            resp = exc.response
+            status = resp.status_code if resp is not None else None
             if status in {401, 403}:
+                www = _redact(resp.headers.get("WWW-Authenticate", "")) if resp is not None else ""
+                loc = _redact(resp.headers.get("Location", "")) if resp is not None else ""
+                body = _redact((resp.text or "")[:400]) if resp is not None else ""
+                # Decodes claims only — never emits the raw token (see _decode_jwt_claims).
+                token_info = _decode_jwt_claims(client.current_token())
+                kind = (
+                    "token not accepted (authentication)" if status == 401 else "identity lacks CAN_USE (authorization)"
+                )
+                # Single line on purpose: the acceptance harness only surfaces the first line of a
+                # skip reason, so the RCA fields must not be newline-separated.
                 pytest.skip(
-                    f"MCP app front-door rejected the test identity ({status} Unauthorized): it only "
-                    "accepts OAuth tokens, not the acceptance metadata-service token. Set "
-                    "DQX_MCP_APP_CLIENT_ID / DQX_MCP_APP_CLIENT_SECRET (an SP with CAN_USE on the app) "
-                    "to run live in CI — see the app_auth fixture. Runs under an OAuth profile locally."
+                    f"MCP app front-door returned {status} at {client.url} — {kind}. The app DID "
+                    f"deploy and respond (not refused). RCA token={token_info} || "
+                    f"WWW-Authenticate={www!r} || Location={loc!r} || body[:400]={body!r} || "
+                    "In CI auth comes from the metadata service; the Apps front-door needs an OAuth "
+                    "token (U2M or SP M2M-with-secret) — set DQX_MCP_APP_CLIENT_ID / "
+                    "DQX_MCP_APP_CLIENT_SECRET (an SP with CAN_USE) to run live; OAuth profile works locally."
                 )
             last = exc
             if time.monotonic() >= deadline:
@@ -339,7 +434,7 @@ def _resolve_warehouse_id(client: WorkspaceClient) -> str:
 
 
 @contextlib.contextmanager
-def seed_demo_data(app_sp: str) -> Iterator[dict[str, str]]:
+def seed_demo_data(app_sp: str, runner_sp: str = "") -> Iterator[dict[str, str]]:
     """Seed the dirty 'customers' table + an ODCS contract, then drop everything on exit.
 
     Creates a throwaway schema under ``CATALOG``, the sample table, and a UC-volume contract.
@@ -355,7 +450,8 @@ def seed_demo_data(app_sp: str) -> Iterator[dict[str, str]]:
     """
     client = WorkspaceClient()
     warehouse_id = _resolve_warehouse_id(client)
-    runner_sp = os.environ.get("DQX_MCP_RUNNER_SERVICE_PRINCIPAL_ID", "").strip()
+    # Prefer the SP the deploy actually resolved run_as to; fall back to the explicit override.
+    runner_sp = (runner_sp or RUNNER_SP).strip()
     schema = f"dqx_mcp_it_{uuid4().hex[:8]}"
     fq_schema = f"{CATALOG}.{schema}"
     table = f"{fq_schema}.customers"
