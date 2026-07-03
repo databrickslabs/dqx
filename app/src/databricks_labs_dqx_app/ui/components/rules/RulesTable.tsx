@@ -339,6 +339,14 @@ export interface RulesTableProps {
   renderActions: (rule: RegistryRuleOut) => ReactNode;
   /** Rendered to the left of the "Edit Columns" trigger — the filter row. */
   toolbarExtra?: ReactNode;
+  /**
+   * Message shown as a single spanning row inside the table body when
+   * `rows` is empty, instead of swapping out the whole table for a
+   * separate empty-state panel. Matches dqlake's RulesTable, which always
+   * renders the table shell (filters + Edit Columns + headers) and only
+   * replaces the body with a text row when there's nothing to show.
+   */
+  emptyMessage?: ReactNode;
 }
 
 /**
@@ -357,6 +365,7 @@ export function RulesTable({
   onRowClick,
   renderActions,
   toolbarExtra,
+  emptyMessage,
 }: RulesTableProps) {
   const { t } = useTranslation();
   const ctx = useMemo<RulesTableRenderContext>(() => ({ labelDefinitions }), [labelDefinitions]);
@@ -416,7 +425,12 @@ export function RulesTable({
                   <TableHead
                     key={k}
                     className={cn(
-                      "relative",
+                      // dqlake's RulesTable is denser than the shared shadcn
+                      // Table primitive's default (h-10 px-3): override back
+                      // down to px-2 here so this table's row height matches
+                      // dqlake's without touching the shared component used
+                      // by other, taller tables in the app.
+                      "relative h-10 px-2",
                       def.headClassName,
                       def.sortable && "cursor-pointer select-none",
                     )}
@@ -449,14 +463,20 @@ export function RulesTable({
           </TableHeader>
           <TableBody>
             {rows.map((r) => (
-              <TableRow key={r.rule_id} className="cursor-pointer" onClick={() => onRowClick(r)}>
+              <TableRow key={r.rule_id} className="cursor-pointer hover:bg-muted/50" onClick={() => onRowClick(r)}>
                 {visibleKeys.map((k) => {
                   const width = colWidths[k] ?? COLUMNS[k].defaultWidth;
                   return (
                     <TableCell
                       key={k}
                       style={{ width, minWidth: width, maxWidth: width }}
-                      className="overflow-hidden"
+                      // See the TableHead comment above — p-2 (rather than
+                      // the shared component's p-3) is what keeps this
+                      // table's row height matching dqlake's. Deliberately
+                      // a single `p-2` (not `px-2 py-2`): tailwind-merge
+                      // only recognizes the override when it's in the same
+                      // conflict group as the base class it replaces.
+                      className="overflow-hidden p-2"
                       onClick={k === "actions" ? (e) => e.stopPropagation() : undefined}
                     >
                       {k === "actions" ? renderActions(r) : COLUMNS[k].renderCell(r, ctx)}
@@ -465,6 +485,13 @@ export function RulesTable({
                 })}
               </TableRow>
             ))}
+            {rows.length === 0 && emptyMessage && (
+              <TableRow>
+                <TableCell colSpan={visibleKeys.length} className="text-center text-muted-foreground py-8">
+                  {emptyMessage}
+                </TableCell>
+              </TableRow>
+            )}
           </TableBody>
         </Table>
       </div>

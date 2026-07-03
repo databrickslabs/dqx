@@ -21,7 +21,6 @@ import {
   Plus,
   RotateCcw,
   Search,
-  ShieldCheck,
   XCircle,
   Archive,
   ArchiveRestore,
@@ -506,35 +505,24 @@ function RegistryRulesPage() {
           )}
         </div>
 
-        {rules.length === 0 ? (
-          <>
-            <div className="flex flex-wrap items-center gap-2">{filterControls}</div>
-            <div className="flex flex-col items-center justify-center py-16 text-center">
-              <ShieldCheck className="h-10 w-10 text-muted-foreground/30 mb-3" />
-              <p className="text-sm text-muted-foreground">
-                {hasActiveFilters
-                  ? t("rulesRegistry.emptyState")
-                  : perms.canCreateRules
-                    ? t("rulesRegistry.emptyStateNoRulesCta")
-                    : t("rulesRegistry.emptyStateNoRules")}
-              </p>
-            </div>
-          </>
-        ) : (
-          <>
-            <RulesTable
-              rows={pagedRules}
-              labelDefinitions={labelDefinitions}
-              sortKey={sortKey}
-              sortDir={sortDir}
-              onHeaderClick={handleHeaderClick}
-              onRowClick={openRule}
-              renderActions={renderActionsCell}
-              toolbarExtra={filterControls}
-            />
-            <Pagination page={page} totalItems={rules.length} pageSize={PAGE_SIZE} onPageChange={setPage} />
-          </>
-        )}
+        <RulesTable
+          rows={pagedRules}
+          labelDefinitions={labelDefinitions}
+          sortKey={sortKey}
+          sortDir={sortDir}
+          onHeaderClick={handleHeaderClick}
+          onRowClick={openRule}
+          renderActions={renderActionsCell}
+          toolbarExtra={filterControls}
+          emptyMessage={
+            hasActiveFilters
+              ? t("rulesRegistry.emptyState")
+              : perms.canCreateRules
+                ? t("rulesRegistry.emptyStateNoRulesCta")
+                : t("rulesRegistry.emptyStateNoRules")
+          }
+        />
+        <Pagination page={page} totalItems={rules.length} pageSize={PAGE_SIZE} onPageChange={setPage} />
       </div>
 
       <AlertDialog open={deleteTarget !== null} onOpenChange={(open) => !open && setDeleteTarget(null)}>
