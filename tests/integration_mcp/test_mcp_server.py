@@ -31,7 +31,7 @@ from tests.integration_mcp.conftest import (
 #   - age outside [0, 120] ... 2 rows (-3 and 210)
 #   - name NULL .............. 1 row  (is_not_null_and_not_empty)
 # Across 4 distinct rows, so 4 invalid / 6 valid out of 10.
-EXPLICIT_CHECKS = [
+EXPLICIT_CHECKS: list[dict] = [
     {"criticality": "error", "check": {"function": "is_not_null", "arguments": {"column": "customer_id"}}},
     {
         "criticality": "error",
@@ -128,6 +128,44 @@ def _assert_agent_discovers_tools(
     assert any(col in final_text.lower() for col in ("order_id", "customer_id", "status", "amount", "column"))
 
 
+def _assert_persisting_tools(client: McpClient, table: str) -> None:
+    """Exercise the tools that persist data — both write to the caller's private per-user schema.
+
+    save_checks writes to ``<catalog>.dqx_mcp_<user>.customers_checks`` (loaded back by the FQN it
+    reports); apply_checks_and_save_to_table writes the clean/quarantine split to the same schema.
+    Kept as a helper so the end-to-end test stays within pylint's per-function statement budget.
+    """
+    saved = client.call(
+        "save_checks", {"checks": EXPLICIT_CHECKS, "output_name": "customers_checks", "mode": "overwrite"}
+    )
+    assert saved["saved"] is True and saved["count"] == len(EXPLICIT_CHECKS)
+    # grant-on-write: the calling user is granted access to the table the runner created
+    assert saved.get("access_granted_to"), "save_checks should grant the caller access to the checks table"
+    saved_location = saved["location"]
+    assert ".dqx_mcp_" in saved_location and saved_location.endswith(".customers_checks"), saved_location
+    loaded = client.call("load_checks", {"location": saved_location})
+    assert loaded["count"] == len(EXPLICIT_CHECKS)
+    assert {c["check"]["function"] for c in loaded["checks"]} == {c["check"]["function"] for c in EXPLICIT_CHECKS}
+
+    applied = client.call(
+        "apply_checks_and_save_to_table",
+        {
+            "table_name": table,
+            "checks": EXPLICIT_CHECKS,
+            "output_name": "customers_clean",
+            "quarantine_name": "customers_quarantine",
+            "mode": "overwrite",
+        },
+    )
+    assert applied["quarantine_rows"] == EXPECTED_INVALID_ROWS
+    assert applied["output_rows"] == EXPECTED_TOTAL_ROWS - EXPECTED_INVALID_ROWS
+    # grant-on-write: the calling user is granted access to both output tables the runner created
+    assert applied.get("access_granted_to"), "apply should grant the caller access to the outputs"
+    assert applied.get("output_schema", "").rsplit(".", 1)[-1].startswith("dqx_mcp_"), applied.get("output_schema")
+    assert applied["output_table"].endswith(".customers_clean"), applied["output_table"]
+    assert len(applied.get("granted_tables") or []) == 2, applied.get("granted_tables")
+
+
 def test_mcp_server_end_to_end(workspace_auth, app_auth):
     """Deploy the MCP app once and exercise every tool end-to-end against the seeded table."""
     host, get_token = workspace_auth  # control-plane bearer: CLI deploy + Model Serving
@@ -182,38 +220,9 @@ def test_mcp_server_end_to_end(workspace_auth, app_auth):
         assert run["valid_rows"] == EXPECTED_TOTAL_ROWS - EXPECTED_INVALID_ROWS
         assert run["error_sample"] and run["rule_summary"]
 
-        # 9. save_checks -> load_checks round-trip. Outputs go to the caller's private per-user
-        #    schema (dqx_mcp_<user>); we load them back by the FQN save_checks reports.
-        saved = client.call(
-            "save_checks", {"checks": EXPLICIT_CHECKS, "output_name": "customers_checks", "mode": "overwrite"}
-        )
-        assert saved["saved"] is True and saved["count"] == len(EXPLICIT_CHECKS)
-        # grant-on-write: the calling user is granted access to the table the runner created
-        assert saved.get("access_granted_to"), "save_checks should grant the caller access to the checks table"
-        saved_location = saved["location"]
-        assert ".dqx_mcp_" in saved_location and saved_location.endswith(".customers_checks"), saved_location
-        loaded = client.call("load_checks", {"location": saved_location})
-        assert loaded["count"] == len(EXPLICIT_CHECKS)
-        assert {c["check"]["function"] for c in loaded["checks"]} == {c["check"]["function"] for c in EXPLICIT_CHECKS}
-
-        # 10. apply_checks_and_save_to_table — clean / quarantine split in the caller's per-user schema.
-        applied = client.call(
-            "apply_checks_and_save_to_table",
-            {
-                "table_name": table,
-                "checks": EXPLICIT_CHECKS,
-                "output_name": "customers_clean",
-                "quarantine_name": "customers_quarantine",
-                "mode": "overwrite",
-            },
-        )
-        assert applied["quarantine_rows"] == EXPECTED_INVALID_ROWS
-        assert applied["output_rows"] == EXPECTED_TOTAL_ROWS - EXPECTED_INVALID_ROWS
-        # grant-on-write: the calling user is granted access to both output tables the runner created
-        assert applied.get("access_granted_to"), "apply should grant the caller access to the outputs"
-        assert applied.get("output_schema", "").rsplit(".", 1)[-1].startswith("dqx_mcp_"), applied.get("output_schema")
-        assert applied["output_table"].endswith(".customers_clean"), applied["output_table"]
-        assert len(applied.get("granted_tables") or []) == 2, applied.get("granted_tables")
+        # 9-10. Persisting tools (save_checks -> load_checks round-trip, then
+        #       apply_checks_and_save_to_table) — both write to the caller's private per-user schema.
+        _assert_persisting_tools(client, table)
 
         # 11. Agent-in-the-loop — a real model must discover + invoke a tool (skip if unreachable).
         if _endpoint_reachable(host, get_token):
