@@ -19,6 +19,17 @@ export const RESERVED_DESCRIPTION_KEY = "description";
 export const RESERVED_DIMENSION_KEY = "dimension";
 export const RESERVED_SEVERITY_KEY = "severity";
 
+/**
+ * Severity label-definition values are stored/seeded lowest-first
+ * (``["Low", "Medium", "High", "Critical"]``) so they read naturally as an
+ * ascending scale in the admin editor. Every *display* surface (filters,
+ * dropdowns) wants the opposite — most severe first — so callers reverse
+ * through this helper rather than re-deriving the convention inline.
+ */
+export function orderSeverityValuesForDisplay(values: string[]): string[] {
+  return [...values].reverse();
+}
+
 export function getTag(rule: RegistryRuleOut, key: string): string {
   const md = (rule.user_metadata ?? {}) as Record<string, unknown>;
   const v = md[key];

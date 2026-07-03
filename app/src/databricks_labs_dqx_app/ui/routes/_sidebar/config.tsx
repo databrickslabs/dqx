@@ -29,7 +29,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Badge } from "@/components/ui/badge";
 import {
   useTimezone,
   useSaveTimezone,
@@ -79,7 +78,15 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { ChevronDown, Check } from "lucide-react";
+import { motion, AnimatePresence } from "motion/react";
+import { AI_BUTTON_BG, AI_ICON_COLOR, AI_TEXT_GRADIENT } from "@/lib/ai-style";
 
 export const Route = createFileRoute("/_sidebar/config")({
   component: () => <ConfigPage />,
@@ -263,6 +270,37 @@ function TimezoneSettings() {
 const LABEL_KEY_RE = /^[A-Za-z][A-Za-z0-9_]*$/;
 const RESERVED_WEIGHT_KEY = "weight";
 const HEX_COLOR_RE = /^#[0-9A-Fa-f]{6}$/;
+
+/** Red asterisk marking a required field — pair with a label, no annotation needed for optional fields. */
+function RequiredAsterisk() {
+  return (
+    <span className="text-destructive" aria-hidden="true">
+      *
+    </span>
+  );
+}
+
+/** Small padlock affordance explaining why a reserved field is locked, on hover/focus. */
+function LockedFieldHint({ text }: { text: string }) {
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            className="inline-flex items-center justify-center text-muted-foreground hover:text-foreground cursor-help"
+            aria-label={text}
+            tabIndex={0}
+          >
+            <Lock className="h-3 w-3" />
+          </span>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-xs text-xs">
+          <p>{text}</p>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
 
 interface DraftDefinition extends LabelDefinition {
   draftId: string;
@@ -456,11 +494,6 @@ function LabelDefinitionsSettings() {
           >
             {t("config.reset")}
           </Button>
-          {!isDirty && (data?.definitions?.length ?? 0) > 0 && (
-            <span className="text-xs text-muted-foreground">
-              {t("config.definitionsActive", { count: data?.definitions?.length ?? 0 })}
-            </span>
-          )}
         </div>
       </CardContent>
     </Card>
@@ -473,7 +506,11 @@ interface DefinitionEditorCardProps {
   onRemove: () => void;
 }
 
-/** Small color swatch + hex text editor for one value's optional badge color. */
+/**
+ * Color dot that opens a small popover (native color input + hex field) on
+ * click — replaces the old always-visible color box so the collapsed value
+ * row stays compact and the picker only appears when needed.
+ */
 function ValueColorEditor({
   value,
   color,
@@ -484,6 +521,7 @@ function ValueColorEditor({
   onSetColor: (color: string | null) => void;
 }) {
   const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
   const [hexText, setHexText] = useState(color ?? "");
 
   useEffect(() => {
@@ -505,29 +543,52 @@ function ValueColorEditor({
     }
   };
 
+  const swatchColor = color && HEX_COLOR_RE.test(color) ? color : undefined;
+
   return (
-    <span className="flex items-center gap-1" title={t("config.valueColorTitle", { value })}>
-      <input
-        type="color"
-        aria-label={t("config.valueColorAria", { value })}
-        value={color && HEX_COLOR_RE.test(color) ? color : "#94a3b8"}
-        onChange={(e) => onSetColor(e.target.value)}
-        className="h-5 w-5 cursor-pointer rounded border p-0"
-      />
-      <Input
-        value={hexText}
-        onChange={(e) => setHexText(e.target.value)}
-        onBlur={(e) => commitHex(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") {
-            e.preventDefault();
-            commitHex(e.currentTarget.value);
-          }
-        }}
-        placeholder={t("config.valueColorPlaceholder")}
-        className="h-5 w-20 px-1 text-[10px] font-mono"
-      />
-    </span>
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          onClick={(e) => e.stopPropagation()}
+          aria-label={t("config.valueColorAria", { value })}
+          title={t("config.valueColorTitle", { value })}
+          className={cn(
+            "h-3.5 w-3.5 shrink-0 rounded-full border cursor-pointer transition-transform hover:scale-125",
+            !swatchColor && "border-dashed",
+          )}
+          style={{ backgroundColor: swatchColor ?? "transparent" }}
+        />
+      </PopoverTrigger>
+      <PopoverContent
+        className="w-48 p-2"
+        align="start"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-2">
+          <input
+            type="color"
+            aria-label={t("config.valueColorAria", { value })}
+            value={swatchColor ?? "#94a3b8"}
+            onChange={(e) => onSetColor(e.target.value)}
+            className="h-7 w-8 cursor-pointer rounded border p-0"
+          />
+          <Input
+            value={hexText}
+            onChange={(e) => setHexText(e.target.value)}
+            onBlur={(e) => commitHex(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                commitHex(e.currentTarget.value);
+              }
+            }}
+            placeholder={t("config.valueColorPlaceholder")}
+            className="h-7 flex-1 text-xs font-mono"
+          />
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -651,11 +712,7 @@ function AllowedValuesEditor({
             onClick={() => setExpanded(isOpen ? null : i)}
           >
             <div className="grid grid-cols-[auto_1fr_auto] items-center gap-2 px-2.5 py-1.5">
-              <span
-                className="h-3 w-3 shrink-0 rounded-full border"
-                style={{ backgroundColor: color && HEX_COLOR_RE.test(color) ? color : "transparent" }}
-                aria-hidden
-              />
+              <ValueColorEditor value={v} color={color} onSetColor={(c) => patchValue(i, { color: c })} />
               <span className="flex items-baseline gap-2 min-w-0">
                 <span className="font-mono text-xs shrink-0">{v}</span>
                 {description && !isOpen && (
@@ -674,33 +731,42 @@ function AllowedValuesEditor({
                 <X className="h-3.5 w-3.5" />
               </button>
             </div>
-            {isOpen && (
-              <div className="space-y-2 border-t px-2.5 pb-2.5 pt-2" onClick={(e) => e.stopPropagation()}>
-                <div className="grid grid-cols-[1fr_auto] gap-2 items-end">
-                  <div className="space-y-1">
-                    <Label className="text-[10px] text-muted-foreground">{t("config.valueLabel")}</Label>
-                    <Input
-                      value={v}
-                      onChange={(e) => patchValue(i, { name: e.target.value })}
-                      className="h-7 text-xs font-mono"
-                    />
+            <AnimatePresence initial={false}>
+              {isOpen && (
+                <motion.div
+                  key="expanded"
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: "auto", opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: 0.18, ease: "easeInOut" }}
+                  className="overflow-hidden"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="space-y-2 border-t px-2.5 pb-2.5 pt-2">
+                    <div className="space-y-1">
+                      <Label className="text-[10px] text-muted-foreground">
+                        {t("config.valueLabel")} <RequiredAsterisk />
+                      </Label>
+                      <Input
+                        value={v}
+                        onChange={(e) => patchValue(i, { name: e.target.value })}
+                        className="h-7 w-40 text-xs font-mono"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[10px] text-muted-foreground">{t("config.descriptionLabel")}</Label>
+                      <Textarea
+                        value={description}
+                        onChange={(e) => patchValue(i, { description: e.target.value })}
+                        placeholder={t("config.valueDescriptionPlaceholder")}
+                        className="max-w-xs text-xs min-h-[28px] py-1"
+                        rows={1}
+                      />
+                    </div>
                   </div>
-                  <ValueColorEditor value={v} color={color} onSetColor={(c) => patchValue(i, { color: c })} />
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-[10px] text-muted-foreground">
-                    {t("config.descriptionLabel")} <span>{t("config.optional")}</span>
-                  </Label>
-                  <Textarea
-                    value={description}
-                    onChange={(e) => patchValue(i, { description: e.target.value })}
-                    placeholder={t("config.valueDescriptionPlaceholder")}
-                    className="text-xs min-h-[28px] py-1"
-                    rows={1}
-                  />
-                </div>
-              </div>
-            )}
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         );
       })}
@@ -719,28 +785,15 @@ function DefinitionEditorCard({ draft, onChange, onRemove }: DefinitionEditorCar
   const isBuiltin = !!draft.is_builtin;
   const isLocked = isWeight || isBuiltin;
   return (
-    <div
-      className={cn(
-        "rounded-md border p-3 space-y-3 bg-card",
-        isLocked ? "border-l-2 border-l-sky-500 dark:border-l-sky-400" : "bg-muted/20",
-      )}
-    >
+    <div className="rounded-md border bg-muted/30 p-3 space-y-3">
       <div className="flex items-start gap-3">
         <div className="grid grid-cols-[180px_1fr] gap-3 flex-1 items-start">
           <div className="space-y-1">
             <Label className="text-xs flex items-center gap-1.5">
               {t("config.key")}
-              {isWeight && (
-                <Badge variant="outline" className="h-4 gap-0.5 px-1 text-[10px] font-normal">
-                  <Lock className="h-2.5 w-2.5" />
-                  {t("config.reserved")}
-                </Badge>
-              )}
-              {isBuiltin && !isWeight && (
-                <Badge variant="outline" className="h-4 gap-0.5 px-1 text-[10px] font-normal">
-                  <Lock className="h-2.5 w-2.5" />
-                  {t("config.reserved")}
-                </Badge>
+              {!isLocked && <RequiredAsterisk />}
+              {isLocked && (
+                <LockedFieldHint text={isWeight ? t("config.weightHint") : t("config.builtinKeyLockedTooltip")} />
               )}
             </Label>
             <Input
@@ -748,33 +801,22 @@ function DefinitionEditorCard({ draft, onChange, onRemove }: DefinitionEditorCar
               onChange={(e) => onChange({ key: e.target.value })}
               placeholder={t("config.keyPlaceholder")}
               disabled={isBuiltin}
-              className={cn("h-8 text-xs font-mono", !keyValid && "border-destructive")}
+              className={cn("h-8 w-40 text-xs font-mono", !keyValid && "border-destructive")}
             />
             {!keyValid && (
               <p className="text-[10px] text-destructive">
                 {t("config.keyHint")}
               </p>
             )}
-            {isWeight && (
-              <p className="text-[10px] text-muted-foreground">
-                {t("config.weightHint")}
-              </p>
-            )}
-            {isBuiltin && !isWeight && (
-              <p className="text-[10px] text-muted-foreground">
-                {t("config.builtinKeyHint")}
-              </p>
-            )}
           </div>
           <div className="space-y-1">
-            <Label className="text-xs">
-              {t("config.descriptionLabel")} <span className="text-muted-foreground">{t("config.optional")}</span>
-            </Label>
+            <Label className="text-xs">{t("config.descriptionLabel")}</Label>
             <Textarea
               value={draft.description ?? ""}
               onChange={(e) => onChange({ description: e.target.value })}
               placeholder={isWeight ? t("config.weightDescriptionPlaceholder") : t("config.descriptionPlaceholder")}
-              className="text-xs min-h-[32px] py-1.5"
+              disabled={isLocked}
+              className="max-w-xs text-xs min-h-[32px] py-1.5"
               rows={1}
             />
           </div>
@@ -794,12 +836,7 @@ function DefinitionEditorCard({ draft, onChange, onRemove }: DefinitionEditorCar
       </div>
       <div className="space-y-1.5">
         <div className="flex items-center justify-between">
-          <Label className="text-xs">
-            {t("config.allowedValues")}{" "}
-            <span className="text-muted-foreground">
-              {t("config.allowedValuesHint")}
-            </span>
-          </Label>
+          <Label className="text-xs">{t("config.allowedValues")}</Label>
           {!isBuiltin && (
             <label className="flex items-center gap-1.5 text-xs cursor-pointer">
               <Checkbox
@@ -1659,38 +1696,39 @@ function RunReviewStatusesSettings() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// AI settings (Rules Registry Phase 4.5) — the kill-switch, endpoint, and
-// rate limit for AIGateway (Build-with-AI / per-field suggest), plus the
-// optional Vector Search settings that light up the rule-mapping suggester
-// on Monitored Tables. ADMIN only — every AI affordance elsewhere in the app
-// degrades to hidden/disabled while these are unset (see
-// hooks/use-ai-availability.ts).
+// AI settings (Rules Registry Phase 4.5, trimmed to essentials in 8B) — the
+// kill-switch + serving endpoint for AIGateway (Build-with-AI / per-field
+// suggest). ADMIN only — every AI affordance elsewhere in the app degrades
+// to hidden/disabled while these are unset (see hooks/use-ai-availability.ts).
+//
+// The rule-mapping suggester's Vector Search settings (embedding endpoint,
+// VS endpoint/index) are no longer surfaced here — they auto-derive from
+// this toggle + endpoint alone (see ``AppSettingsService`` on the backend),
+// so the suggester is always-on whenever AI is enabled, no extra fields to
+// fill in.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Sentinel for "no endpoint selected" — Radix Select rejects an empty-string
-// item value, so the embedding-endpoint dropdown (which is optional) maps
-// this sentinel to/from "" at the component boundary.
+// item value.
 const NO_ENDPOINT_VALUE = "__none__";
 
 /**
- * Serving-endpoint dropdown shared by the AI + embedding endpoint fields.
- * Always includes the currently-configured value as an option even if it's
- * missing from the fetched workspace list (e.g. typed before this dropdown
- * existed, or the endpoint was since deleted) so saving doesn't silently
- * blank out an existing setting.
+ * Serving-endpoint dropdown for the AI endpoint field. Always includes the
+ * currently-configured value as an option even if it's missing from the
+ * fetched workspace list (e.g. typed before this dropdown existed, or the
+ * endpoint was since deleted) so saving doesn't silently blank out an
+ * existing setting.
  */
 function ServingEndpointSelect({
   value,
   onChange,
   endpoints,
   disabled,
-  allowNone,
 }: {
   value: string;
   onChange: (value: string) => void;
   endpoints: string[];
   disabled?: boolean;
-  allowNone?: boolean;
 }) {
   const { t } = useTranslation();
   const options = useMemo(() => {
@@ -1711,11 +1749,6 @@ function ServingEndpointSelect({
         <SelectValue placeholder={t("config.aiSettingsSelectEndpointPlaceholder")} />
       </SelectTrigger>
       <SelectContent>
-        {allowNone && (
-          <SelectItem value={NO_ENDPOINT_VALUE} className="text-xs">
-            {t("config.aiSettingsNoEndpointOption")}
-          </SelectItem>
-        )}
         {options.length === 0 && (
           <SelectLabel className="font-normal">{t("config.aiSettingsNoEndpointsFound")}</SelectLabel>
         )}
@@ -1746,62 +1779,40 @@ function AiSettingsCard() {
 
   const [aiEnabled, setAiEnabled] = useState(false);
   const [aiEndpoint, setAiEndpoint] = useState("");
-  const [rateLimit, setRateLimit] = useState("");
-  const [embeddingEndpoint, setEmbeddingEndpoint] = useState("");
-  const [vsEndpoint, setVsEndpoint] = useState("");
-  const [vsIndex, setVsIndex] = useState("");
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
     if (data && !hydrated) {
       setAiEnabled(data.ai_enabled);
       setAiEndpoint(data.ai_endpoint_name);
-      setRateLimit(String(data.ai_rate_limit_per_user_per_hour));
-      setEmbeddingEndpoint(data.embedding_endpoint_name ?? "");
-      setVsEndpoint(data.vs_endpoint_name ?? "");
-      setVsIndex(data.vs_index_name ?? "");
       setHydrated(true);
     }
   }, [data, hydrated]);
 
-  const parsedRateLimit = Number(rateLimit);
-  const rateLimitValid = rateLimit.trim() !== "" && Number.isInteger(parsedRateLimit) && parsedRateLimit >= 0;
-
   const isDirty = useMemo(() => {
     if (!data) return false;
-    return (
-      aiEnabled !== data.ai_enabled ||
-      aiEndpoint.trim() !== data.ai_endpoint_name ||
-      String(parsedRateLimit) !== String(data.ai_rate_limit_per_user_per_hour) ||
-      embeddingEndpoint.trim() !== (data.embedding_endpoint_name ?? "") ||
-      vsEndpoint.trim() !== (data.vs_endpoint_name ?? "") ||
-      vsIndex.trim() !== (data.vs_index_name ?? "")
-    );
-  }, [data, aiEnabled, aiEndpoint, parsedRateLimit, embeddingEndpoint, vsEndpoint, vsIndex]);
+    return aiEnabled !== data.ai_enabled || aiEndpoint.trim() !== data.ai_endpoint_name;
+  }, [data, aiEnabled, aiEndpoint]);
 
   const handleSave = () => {
-    if (!rateLimitValid) return;
     const payload: AiSettingsIn = {
       ai_enabled: aiEnabled,
       ai_endpoint_name: aiEndpoint.trim(),
-      ai_rate_limit_per_user_per_hour: parsedRateLimit,
-      embedding_endpoint_name: embeddingEndpoint.trim(),
-      vs_endpoint_name: vsEndpoint.trim(),
-      vs_index_name: vsIndex.trim(),
     };
     saveMutation.mutate(
       { data: payload },
       {
-        onSuccess: (resp) => {
+        onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: getGetAiSettingsQueryKey() });
           toast.success(t("config.aiSettingsSaved"));
           // Fire-and-forget: kick off Vector Search endpoint/index creation
-          // if the admin just configured (or already had) all three
-          // Vector Search settings. Provisioning is async and can take
-          // minutes, so this call is never awaited by the UI — the
-          // suggester reports readiness separately once the index comes
-          // online. Silently ignore failures; this is best-effort.
-          if (resp.data.embedding_endpoint_name && resp.data.vs_endpoint_name && resp.data.vs_index_name) {
+          // now that AI is enabled — the embedding/VS names auto-derive
+          // server-side, so the only gate is the enable toggle. Provisioning
+          // is async and can take minutes, so this call is never awaited by
+          // the UI — the suggester reports readiness separately once the
+          // index comes online. Silently ignore failures; this is
+          // best-effort.
+          if (aiEnabled) {
             ensureVectorStoreMutation.mutate(undefined, { onError: () => {} });
           }
         },
@@ -1817,10 +1828,6 @@ function AiSettingsCard() {
     if (!data) return;
     setAiEnabled(data.ai_enabled);
     setAiEndpoint(data.ai_endpoint_name);
-    setRateLimit(String(data.ai_rate_limit_per_user_per_hour));
-    setEmbeddingEndpoint(data.embedding_endpoint_name ?? "");
-    setVsEndpoint(data.vs_endpoint_name ?? "");
-    setVsIndex(data.vs_index_name ?? "");
   };
 
   if (isLoading || !data) {
@@ -1828,11 +1835,11 @@ function AiSettingsCard() {
   }
 
   return (
-    <Card>
+    <Card className="border-fuchsia-500/30 dark:border-fuchsia-400/30">
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <Sparkles className="h-5 w-5" />
-          {t("config.aiSettingsTitle")}
+          <Sparkles className={cn("h-5 w-5", AI_ICON_COLOR)} />
+          <span className={cn("font-bold", AI_TEXT_GRADIENT)}>{t("config.aiSettingsTitle")}</span>
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -1851,79 +1858,22 @@ function AiSettingsCard() {
           />
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className="space-y-1">
-            <Label className="text-[11px] text-muted-foreground">{t("config.aiSettingsEndpointLabel")}</Label>
-            <ServingEndpointSelect
-              value={aiEndpoint}
-              onChange={setAiEndpoint}
-              endpoints={servingEndpoints}
-              disabled={!isAdmin || saveMutation.isPending}
-            />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-[11px] text-muted-foreground">{t("config.aiSettingsRateLimitLabel")}</Label>
-            <Input
-              type="number"
-              min={0}
-              value={rateLimit}
-              onChange={(e) => setRateLimit(e.target.value)}
-              disabled={!isAdmin || saveMutation.isPending}
-              className="h-8 text-xs"
-            />
-          </div>
-        </div>
-        {!rateLimitValid && (
-          <p className="text-[11px] text-destructive flex items-center gap-1">
-            <AlertCircle className="h-3 w-3" />
-            {t("config.aiSettingsRateLimitHint")}
-          </p>
-        )}
-
-        <div className="rounded-md border p-3 space-y-3">
-          <div>
-            <p className="text-sm font-medium">{t("config.aiSettingsVectorSearchTitle")}</p>
-            <p className="text-[11px] text-muted-foreground">{t("config.aiSettingsVectorSearchDescription")}</p>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-3">
-            <div className="space-y-1">
-              <Label className="text-[11px] text-muted-foreground">{t("config.aiSettingsEmbeddingEndpointLabel")}</Label>
-              <ServingEndpointSelect
-                value={embeddingEndpoint}
-                onChange={setEmbeddingEndpoint}
-                endpoints={servingEndpoints}
-                disabled={!isAdmin || saveMutation.isPending}
-                allowNone
-              />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-[11px] text-muted-foreground">{t("config.aiSettingsVsEndpointLabel")}</Label>
-              <Input
-                value={vsEndpoint}
-                onChange={(e) => setVsEndpoint(e.target.value)}
-                disabled={!isAdmin || saveMutation.isPending}
-                className="h-8 text-xs font-mono"
-                autoComplete="off"
-              />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-[11px] text-muted-foreground">{t("config.aiSettingsVsIndexLabel")}</Label>
-              <Input
-                value={vsIndex}
-                onChange={(e) => setVsIndex(e.target.value)}
-                disabled={!isAdmin || saveMutation.isPending}
-                className="h-8 text-xs font-mono"
-                autoComplete="off"
-              />
-            </div>
-          </div>
+        <div className="space-y-1">
+          <Label className="text-[11px] text-muted-foreground">{t("config.aiSettingsEndpointLabel")}</Label>
+          <ServingEndpointSelect
+            value={aiEndpoint}
+            onChange={setAiEndpoint}
+            endpoints={servingEndpoints}
+            disabled={!isAdmin || saveMutation.isPending}
+          />
         </div>
 
         <div className="flex flex-wrap items-center gap-2 pt-2 border-t">
           <Button
             size="sm"
             onClick={handleSave}
-            disabled={!isAdmin || !isDirty || !rateLimitValid || saveMutation.isPending}
+            disabled={!isAdmin || !isDirty || saveMutation.isPending}
+            className={AI_BUTTON_BG}
           >
             {saveMutation.isPending && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}
             {t("config.aiSettingsSaveButton")}

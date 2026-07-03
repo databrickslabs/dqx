@@ -81,6 +81,7 @@ import {
   colorFor,
   extractApiError,
 } from "@/components/apply-rules/shared";
+import { orderSeverityValuesForDisplay } from "@/components/RegistryRuleBadges";
 
 export const Route = createFileRoute("/_sidebar/monitored-tables/$bindingId")({
   component: () => (
@@ -405,7 +406,7 @@ function ApplyRulesTab({
   const { data: labelDefsData } = useLabelDefinitions();
   const labelDefinitions = useMemo(() => labelDefsData?.definitions ?? [], [labelDefsData]);
   const severityValues = useMemo(
-    () => labelDefinitions.find((d) => d.key === RESERVED_SEVERITY_KEY)?.values ?? [],
+    () => orderSeverityValuesForDisplay(labelDefinitions.find((d) => d.key === RESERVED_SEVERITY_KEY)?.values ?? []),
     [labelDefinitions],
   );
 

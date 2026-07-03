@@ -64,6 +64,7 @@ import {
   RESERVED_NAME_KEY,
   RESERVED_DIMENSION_KEY,
   RESERVED_SEVERITY_KEY,
+  orderSeverityValuesForDisplay,
   getTag,
   freeTags,
   colorFor,
@@ -73,7 +74,7 @@ import {
   AuthorKindBadge,
 } from "@/components/RegistryRuleBadges";
 
-export const Route = createFileRoute("/_sidebar/registry-rules")({
+export const Route = createFileRoute("/_sidebar/registry-rules/")({
   component: () => (
     <QueryErrorResetBoundary>
       {({ reset }) => (
@@ -140,7 +141,7 @@ function RegistryRulesPage() {
     [labelDefinitions],
   );
   const severityValues = useMemo(
-    () => labelDefinitions.find((d) => d.key === RESERVED_SEVERITY_KEY)?.values ?? [],
+    () => orderSeverityValuesForDisplay(labelDefinitions.find((d) => d.key === RESERVED_SEVERITY_KEY)?.values ?? []),
     [labelDefinitions],
   );
 

@@ -71,6 +71,7 @@ import {
 } from "@/lib/api";
 import { useAiAvailability, aiUnavailableReason } from "@/hooks/use-ai-availability";
 import { AI_BUTTON_BG, AI_ICON_COLOR, AI_BANNER_BG, AI_BANNER_BORDER } from "@/lib/ai-style";
+import { orderSeverityValuesForDisplay } from "@/components/RegistryRuleBadges";
 
 const RESERVED_NAME_KEY = "name";
 const RESERVED_DESCRIPTION_KEY = "description";
@@ -613,7 +614,7 @@ export function RegistryRuleFormDialog({
     [labelDefinitions],
   );
   const severityValues = useMemo(
-    () => labelDefinitions.find((d) => d.key === RESERVED_SEVERITY_KEY)?.values ?? [],
+    () => orderSeverityValuesForDisplay(labelDefinitions.find((d) => d.key === RESERVED_SEVERITY_KEY)?.values ?? []),
     [labelDefinitions],
   );
   const tagDefinitions = useMemo(
