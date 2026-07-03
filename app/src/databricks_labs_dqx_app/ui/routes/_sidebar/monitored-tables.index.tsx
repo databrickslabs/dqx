@@ -35,6 +35,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -47,6 +55,8 @@ import {
 import {
   AlertCircle,
   Boxes,
+  ChevronDown,
+  ChevronUp,
   FileEdit,
   Loader2,
   Plus,
@@ -298,10 +308,75 @@ function MonitoredTablesPage() {
 
   const { data } = useListMonitoredTables(queryParams);
   const tables = useMemo(() => data?.data ?? [], [data]);
+
+  type SortKey = "table" | "status" | "appliedRules" | "lastProfiled" | "steward";
+  const [sortKey, setSortKey] = useState<SortKey | null>(null);
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+
+  const handleHeaderClick = useCallback(
+    (key: SortKey) => {
+      if (sortKey !== key) {
+        setSortKey(key);
+        setSortDir("asc");
+        return;
+      }
+      if (sortDir === "asc") {
+        setSortDir("desc");
+        return;
+      }
+      setSortKey(null);
+    },
+    [sortKey, sortDir],
+  );
+
+  const sortValue = useCallback((summary: MonitoredTableSummaryOut, key: SortKey): string | number => {
+    switch (key) {
+      case "table":
+        return summary.table.table_fqn.toLowerCase();
+      case "status":
+        return summary.table.status;
+      case "appliedRules":
+        return summary.applied_rule_count ?? 0;
+      case "lastProfiled":
+        return summary.table.last_profiled_at ?? "";
+      case "steward":
+        return (summary.table.steward ?? "").toLowerCase();
+    }
+  }, []);
+
+  const sortedTables = useMemo(() => {
+    if (!sortKey) return tables;
+    const copy = [...tables];
+    copy.sort((a, b) => {
+      const av = sortValue(a, sortKey);
+      const bv = sortValue(b, sortKey);
+      if (av < bv) return sortDir === "asc" ? -1 : 1;
+      if (av > bv) return sortDir === "asc" ? 1 : -1;
+      return 0;
+    });
+    return copy;
+  }, [tables, sortKey, sortDir, sortValue]);
+
   const pagedTables = useMemo(() => {
     const start = (page - 1) * PAGE_SIZE;
-    return tables.slice(start, start + PAGE_SIZE);
-  }, [tables, page]);
+    return sortedTables.slice(start, start + PAGE_SIZE);
+  }, [sortedTables, page]);
+
+  function SortableHead({ sortKeyName, className, children }: { sortKeyName: SortKey; className?: string; children: React.ReactNode }) {
+    const isSorted = sortKey === sortKeyName;
+    return (
+      <TableHead
+        className={cn("text-xs font-medium cursor-pointer select-none", className)}
+        onClick={() => handleHeaderClick(sortKeyName)}
+        aria-sort={isSorted ? (sortDir === "asc" ? "ascending" : "descending") : undefined}
+      >
+        <span className="inline-flex items-center gap-1">
+          {children}
+          {isSorted && (sortDir === "asc" ? <ChevronUp className="h-3 w-3" aria-hidden /> : <ChevronDown className="h-3 w-3" aria-hidden />)}
+        </span>
+      </TableHead>
+    );
+  }
 
   const hasActiveFilters = statusFilter !== ALL || stewardFilter.trim() !== "" || nameSearch.trim() !== "";
 
@@ -408,65 +483,70 @@ function MonitoredTablesPage() {
                 </p>
               </div>
             ) : (
-              <div className="divide-y">
-                <div className="hidden md:grid grid-cols-[1fr_auto_auto_auto_auto_auto] gap-3 px-4 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground bg-muted/30">
-                  <span>{t("monitoredTables.colTable")}</span>
-                  <span>{t("monitoredTables.colStatus")}</span>
-                  <span>{t("monitoredTables.colAppliedRules")}</span>
-                  <span>{t("monitoredTables.colLastProfiled")}</span>
-                  <span>{t("monitoredTables.colSteward")}</span>
-                  <span className="text-right">{t("monitoredTables.colActions")}</span>
+              <>
+                <Table>
+                  <TableHeader>
+                    <TableRow className="bg-muted/50 hover:bg-muted/50">
+                      <SortableHead sortKeyName="table">{t("monitoredTables.colTable")}</SortableHead>
+                      <SortableHead sortKeyName="status">{t("monitoredTables.colStatus")}</SortableHead>
+                      <SortableHead sortKeyName="appliedRules">{t("monitoredTables.colAppliedRules")}</SortableHead>
+                      <SortableHead sortKeyName="lastProfiled">{t("monitoredTables.colLastProfiled")}</SortableHead>
+                      <SortableHead sortKeyName="steward">{t("monitoredTables.colSteward")}</SortableHead>
+                      <TableHead className="text-xs font-medium text-right">{t("monitoredTables.colActions")}</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {pagedTables.map((summary) => {
+                      const bindingId = summary.table.binding_id;
+                      const busy = pendingId === bindingId;
+                      return (
+                        <TableRow
+                          key={bindingId}
+                          className="cursor-pointer"
+                          onClick={() => navigate({ to: "/monitored-tables/$bindingId", params: { bindingId } })}
+                        >
+                          <TableCell className="min-w-[10rem] max-w-[20rem]">
+                            <code className="text-sm font-mono truncate block">{summary.table.table_fqn}</code>
+                          </TableCell>
+                          <TableCell><StatusBadge status={summary.table.status} /></TableCell>
+                          <TableCell className="text-xs text-muted-foreground tabular-nums">
+                            {t("monitoredTables.appliedRuleCount", { count: summary.applied_rule_count })}
+                          </TableCell>
+                          <TableCell className="text-xs text-muted-foreground">
+                            {summary.table.last_profiled_at
+                              ? formatDateShort(summary.table.last_profiled_at)
+                              : t("monitoredTables.neverProfiled")}
+                          </TableCell>
+                          <TableCell className="text-xs text-muted-foreground truncate max-w-[10rem]">
+                            {summary.table.steward || "—"}
+                          </TableCell>
+                          <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+                            {busy ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground inline-block" />
+                            ) : (
+                              perms.canCreateRules && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-7 w-7 p-0 text-destructive"
+                                  title={t("monitoredTables.actionDelete")}
+                                  onClick={() => setDeleteTarget(summary)}
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </Button>
+                              )
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+                <div className="p-3">
+                  <Pagination page={page} totalItems={tables.length} pageSize={PAGE_SIZE} onPageChange={setPage} />
                 </div>
-                {pagedTables.map((summary) => {
-                  const bindingId = summary.table.binding_id;
-                  const busy = pendingId === bindingId;
-                  return (
-                    <div
-                      key={bindingId}
-                      className="grid grid-cols-1 md:grid-cols-[1fr_auto_auto_auto_auto_auto] gap-2 md:gap-3 items-center px-4 py-3 hover:bg-muted/20 cursor-pointer transition-colors"
-                      onClick={() => navigate({ to: "/monitored-tables/$bindingId", params: { bindingId } })}
-                    >
-                      <div className="min-w-0">
-                        <code className="text-sm font-mono truncate block">{summary.table.table_fqn}</code>
-                      </div>
-                      <div><StatusBadge status={summary.table.status} /></div>
-                      <div className="text-xs text-muted-foreground tabular-nums">
-                        {t("monitoredTables.appliedRuleCount", { count: summary.applied_rule_count })}
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        {summary.table.last_profiled_at
-                          ? formatDateShort(summary.table.last_profiled_at)
-                          : t("monitoredTables.neverProfiled")}
-                      </div>
-                      <div className="text-xs text-muted-foreground truncate max-w-[10rem]">
-                        {summary.table.steward || "—"}
-                      </div>
-                      <div
-                        className="flex items-center justify-end gap-1"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        {busy ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
-                        ) : (
-                          perms.canCreateRules && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-7 w-7 p-0 text-destructive"
-                              title={t("monitoredTables.actionDelete")}
-                              onClick={() => setDeleteTarget(summary)}
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </Button>
-                          )
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+              </>
             )}
-            <Pagination page={page} totalItems={tables.length} pageSize={PAGE_SIZE} onPageChange={setPage} />
           </CardContent>
         </Card>
       </div>
