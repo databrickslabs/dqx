@@ -1111,6 +1111,8 @@ export interface AlertChannelIn {
   trigger: "all_runs" | "manual_only" | "scheduled_only";
   enabled: boolean;
   notify_dry_runs: boolean;
+  scope_mode: "all" | "tables";
+  scope_tables: string[];
 }
 
 export interface AlertChannelOut {
@@ -1120,6 +1122,8 @@ export interface AlertChannelOut {
   trigger: string;
   enabled: boolean;
   notify_dry_runs: boolean;
+  scope_mode: "all" | "tables";
+  scope_tables: string[];
 }
 
 export interface DryRunNotifyPayload {
@@ -1129,6 +1133,8 @@ export interface DryRunNotifyPayload {
   error_rows?: number | null;
   warning_rows?: number | null;
   status?: string;
+  checks_json?: string | null;
+  error_message?: string | null;
 }
 
 export interface NotifyRunsIn {

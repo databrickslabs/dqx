@@ -1281,6 +1281,15 @@
     "confirmDelete": "Excluir",
     "edit": "Editar",
     "notifyDryRuns": "Também enviar resultados de dry run",
-    "notifyDryRunsOn": "Dry runs: ativado"
+    "notifyDryRunsOn": "Dry runs: ativado",
+    "scopeLabel": "Escopo de tabelas",
+    "scopeAll": "Todas as tabelas",
+    "scopeSpecific": "Tabelas específicas",
+    "scopeSelectTables": "Selecionar tabelas",
+    "scopeSelectTablesPlaceholder": "Escolher tabelas…",
+    "scopeTables": "Tabelas",
+    "scopeTableCount_one": "{{count}} tabela",
+    "scopeTableCount_other": "{{count}} tabelas",
+    "noApprovedTables": "Nenhuma regra aprovada encontrada"
   }
 }

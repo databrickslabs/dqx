@@ -166,6 +166,7 @@ function YamlImportCard({ onDone }: { onDone: () => void }) {
               error_rows: resp.data.data.error_rows,
               warning_rows: resp.data.data.warning_rows,
               status: "success",
+              checks_json: parsedChecks ? JSON.stringify(parsedChecks) : undefined,
             }).catch(() => {});
           }
         } catch {

@@ -373,6 +373,8 @@ function CreateSqlCheckPage() {
           if (resp.data?.data) {
             setDryRunResult(resp.data.data);
             toast.success(t("rulesCreateSql.dryRunComplete"));
+            const activeCheck = checks.find((c) => c.id === dryRunCheckId);
+            const checksPayload = activeCheck ? [buildSqlCheckPayload(activeCheck)] : [];
             notifyDryRunResult({
               source_table_fqn: resp.data.data.source_table_fqn,
               total_rows: resp.data.data.total_rows,
@@ -380,6 +382,7 @@ function CreateSqlCheckPage() {
               error_rows: resp.data.data.error_rows,
               warning_rows: resp.data.data.warning_rows,
               status: "success",
+              checks_json: checksPayload.length > 0 ? JSON.stringify(checksPayload) : undefined,
             }).catch(() => {});
           }
         } catch {

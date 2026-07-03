@@ -1281,6 +1281,15 @@
     "confirmDelete": "Delete",
     "edit": "Edit",
     "notifyDryRuns": "Also send dry run results",
-    "notifyDryRunsOn": "Dry runs: on"
+    "notifyDryRunsOn": "Dry runs: on",
+    "scopeLabel": "Table scope",
+    "scopeAll": "All tables",
+    "scopeSpecific": "Specific tables",
+    "scopeSelectTables": "Select tables",
+    "scopeSelectTablesPlaceholder": "Choose tables…",
+    "scopeTables": "Tables",
+    "scopeTableCount_one": "{{count}} table",
+    "scopeTableCount_other": "{{count}} tables",
+    "noApprovedTables": "No approved rules found"
   }
 }

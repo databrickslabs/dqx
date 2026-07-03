@@ -6,6 +6,7 @@ import logging
 from typing import Annotated
 from uuid import uuid4
 
+from databricks.sdk import WorkspaceClient
 from fastapi import APIRouter, Depends, HTTPException
 
 from databricks_labs_dqx_app.backend.common.authorization import UserRole
@@ -14,6 +15,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_app_settings_service,
     get_conf,
     get_job_service,
+    get_sp_ws,
     require_role,
     require_runner,
 )
@@ -36,6 +38,19 @@ router = APIRouter()
 
 _ALL_ROLES = [UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTHOR, UserRole.VIEWER]
 _ADMIN_ONLY = [UserRole.ADMIN]
+
+
+def _channel_dict(body: AlertChannelIn, channel_id: str) -> dict:
+    return {
+        "channel_id": channel_id,
+        "name": body.name,
+        "webhook_url": body.webhook_url,
+        "trigger": body.trigger,
+        "enabled": body.enabled,
+        "notify_dry_runs": body.notify_dry_runs,
+        "scope_mode": body.scope_mode,
+        "scope_tables": body.scope_tables,
+    }
 
 
 @router.get(
@@ -65,14 +80,7 @@ def create_alert_channel(
     """Create a new alert channel."""
     channels = settings.get_alert_channels()
     channel_id = uuid4().hex[:16]
-    new_channel = {
-        "channel_id": channel_id,
-        "name": body.name,
-        "webhook_url": body.webhook_url,
-        "trigger": body.trigger,
-        "enabled": body.enabled,
-        "notify_dry_runs": body.notify_dry_runs,
-    }
+    new_channel = _channel_dict(body, channel_id)
     channels.append(new_channel)
     settings.save_alert_channels(channels)
     return AlertChannelOut(**new_channel)
@@ -93,14 +101,7 @@ def update_alert_channel(
     channels = settings.get_alert_channels()
     for i, ch in enumerate(channels):
         if ch.get("channel_id") == channel_id:
-            channels[i] = {
-                "channel_id": channel_id,
-                "name": body.name,
-                "webhook_url": body.webhook_url,
-                "trigger": body.trigger,
-                "enabled": body.enabled,
-                "notify_dry_runs": body.notify_dry_runs,
-            }
+            channels[i] = _channel_dict(body, channel_id)
             settings.save_alert_channels(channels)
             return AlertChannelOut(**channels[i])
     raise HTTPException(status_code=404, detail=f"Alert channel '{channel_id}' not found")
@@ -151,27 +152,22 @@ def notify_runs(
     settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
     job_svc: Annotated[JobService, Depends(get_job_service)],
     conf: Annotated[AppConfig, Depends(get_conf)],
+    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
 ) -> NotifyRunsOut:
     """Send Teams notifications for the given run IDs.
 
     Reads run results from ``dq_validation_runs``, then posts to every
-    enabled channel whose trigger matches the supplied ``trigger`` value.
+    enabled channel whose trigger and scope match.
     """
     channels = settings.get_alert_channels()
-    active_channels = [
-        ch for ch in channels
-        if ch.get("enabled", True) and _trigger_matches(ch.get("trigger", "all_runs"), body.trigger)
-    ]
-
-    if not active_channels:
-        return NotifyRunsOut(notified=0, skipped=len(channels))
+    workspace_url = _workspace_url(sp_ws, conf)
 
     runs_table = f"{conf.catalog}.{conf.schema_name}.dq_validation_runs"
     runs: list[dict] = []
     for run_id in body.run_ids:
         row = job_svc.get_run_result_row(runs_table, run_id)
         if row:
-            runs.append(row)
+            runs.append(dict(row))
 
     if not runs:
         logger.info("notifyRuns: no run results found for %s", body.run_ids)
@@ -180,11 +176,27 @@ def notify_runs(
     notifier = TeamsNotifier()
     notified = 0
     errors: list[str] = []
-    skipped = len(channels) - len(active_channels)
+    skipped = 0
 
-    for ch in active_channels:
+    for ch in channels:
+        if not ch.get("enabled", True):
+            skipped += 1
+            continue
+        if not _trigger_matches(ch.get("trigger", "all_runs"), body.trigger):
+            skipped += 1
+            continue
+        # Filter runs to those matching this channel's scope
+        scoped_runs = [r for r in runs if _scope_matches(ch, r.get("source_table_fqn", ""))]
+        if not scoped_runs:
+            skipped += 1
+            continue
         try:
-            notifier.send_run_notification(runs, ch["webhook_url"], trigger=body.trigger)
+            notifier.send_run_notification(
+                scoped_runs, ch["webhook_url"],
+                trigger=body.trigger,
+                workspace_url=workspace_url,
+                job_id=conf.job_id,
+            )
             notified += 1
             logger.info("Sent run notification to channel '%s'", ch.get("name", ch["channel_id"]))
         except Exception as exc:
@@ -205,21 +217,12 @@ def notify_runs(
 def notify_dry_run_result(
     body: NotifyResultIn,
     settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
+    conf: Annotated[AppConfig, Depends(get_conf)],
 ) -> NotifyRunsOut:
-    """Send a Teams notification for a completed dry run.
-
-    Posts to every enabled channel that has ``notify_dry_runs`` set.
-    The result data is passed in the request body so the caller doesn't
-    need a ``run_id`` stored in ``dq_validation_runs``.
-    """
+    """Send a Teams notification for a completed dry run."""
     channels = settings.get_alert_channels()
-    active_channels = [
-        ch for ch in channels
-        if ch.get("enabled", True) and ch.get("notify_dry_runs", False)
-    ]
-
-    if not active_channels:
-        return NotifyRunsOut(notified=0, skipped=len(channels))
+    workspace_url = _workspace_url(sp_ws, conf)
 
     run_data = {
         "source_table_fqn": body.source_table_fqn,
@@ -228,16 +231,31 @@ def notify_dry_run_result(
         "valid_rows": body.valid_rows,
         "error_rows": body.error_rows,
         "warning_rows": body.warning_rows,
+        "created_at": body.created_at,
+        "requesting_user": body.requesting_user,
+        "checks_json": body.checks_json,
+        "error_message": body.error_message,
     }
 
     notifier = TeamsNotifier()
     notified = 0
     errors: list[str] = []
-    skipped = len(channels) - len(active_channels)
+    skipped = 0
 
-    for ch in active_channels:
+    for ch in channels:
+        if not ch.get("enabled", True) or not ch.get("notify_dry_runs", False):
+            skipped += 1
+            continue
+        if not _scope_matches(ch, body.source_table_fqn):
+            skipped += 1
+            continue
         try:
-            notifier.send_run_notification([run_data], ch["webhook_url"], trigger="dry_run")
+            notifier.send_run_notification(
+                [run_data], ch["webhook_url"],
+                trigger="dry_run",
+                workspace_url=workspace_url,
+                job_id=conf.job_id,
+            )
             notified += 1
             logger.info("Sent dry-run notification to channel '%s'", ch.get("name", ch["channel_id"]))
         except Exception as exc:
@@ -249,8 +267,19 @@ def notify_dry_run_result(
     return NotifyRunsOut(notified=notified, skipped=skipped, errors=errors)
 
 
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _workspace_url(sp_ws: WorkspaceClient, conf: AppConfig) -> str:
+    """Return the workspace host URL (no trailing slash)."""
+    try:
+        return sp_ws.config.host.rstrip("/")
+    except Exception:
+        return ""
+
+
 def _trigger_matches(channel_trigger: str, run_trigger: str) -> bool:
-    """Return True if the channel's trigger setting matches the run trigger."""
     if channel_trigger == "all_runs":
         return True
     if channel_trigger == "manual_only" and run_trigger == "manual":
@@ -258,3 +287,13 @@ def _trigger_matches(channel_trigger: str, run_trigger: str) -> bool:
     if channel_trigger == "scheduled_only" and run_trigger == "scheduled":
         return True
     return False
+
+
+def _scope_matches(channel: dict, source_table_fqn: str) -> bool:
+    """Return True if the table is within the channel's configured scope."""
+    scope_mode = channel.get("scope_mode", "all")
+    if scope_mode == "all":
+        return True
+    if scope_mode == "tables":
+        return source_table_fqn in (channel.get("scope_tables") or [])
+    return True

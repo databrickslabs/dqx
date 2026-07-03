@@ -947,7 +947,7 @@ function UnifiedRulesPage() {
         const r = await runDryRunOnPreview(body);
         setPreviewDryRunResult(r.data);
         toast.success(t("rulesSingleTable.toastDryRunComplete"));
-        notifyDryRunResult({ source_table_fqn: previewTable, total_rows: r.data.total_rows, valid_rows: r.data.pass_rows, error_rows: r.data.error_rows, warning_rows: r.data.warning_rows, status: "success" }).catch(() => {});
+        notifyDryRunResult({ source_table_fqn: previewTable, total_rows: r.data.total_rows, valid_rows: r.data.pass_rows, error_rows: r.data.error_rows, warning_rows: r.data.warning_rows, status: "success", checks_json: JSON.stringify(checksForTable) }).catch(() => {});
       } else {
         // Inline path reading directly from the live table via Spark (no job submission)
         const body: TableDryRunIn = {
@@ -958,7 +958,7 @@ function UnifiedRulesPage() {
         const r = await runDryRunOnTable(body);
         setPreviewDryRunResult(r.data);
         toast.success(t("rulesSingleTable.toastDryRunComplete"));
-        notifyDryRunResult({ source_table_fqn: previewTable, total_rows: r.data.total_rows, valid_rows: r.data.pass_rows, error_rows: r.data.error_rows, warning_rows: r.data.warning_rows, status: "success" }).catch(() => {});
+        notifyDryRunResult({ source_table_fqn: previewTable, total_rows: r.data.total_rows, valid_rows: r.data.pass_rows, error_rows: r.data.error_rows, warning_rows: r.data.warning_rows, status: "success", checks_json: JSON.stringify(checksForTable) }).catch(() => {});
       }
     } catch (err) {
       const axErr = err as { response?: { data?: { detail?: string } } };

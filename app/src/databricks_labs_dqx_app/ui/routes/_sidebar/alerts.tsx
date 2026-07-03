@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
 import { useTranslation } from "react-i18next";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { toast } from "sonner";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -11,6 +11,8 @@ import {
   Trash2,
   FlaskConical,
   Loader2,
+  ChevronsUpDown,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -36,8 +38,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { usePermissions } from "@/hooks/use-permissions";
+import { useListRules } from "@/lib/api";
 import {
   useListAlertChannels,
   createAlertChannel,
@@ -63,6 +68,8 @@ interface ChannelFormState {
   trigger: "all_runs" | "manual_only" | "scheduled_only";
   enabled: boolean;
   notify_dry_runs: boolean;
+  scope_mode: "all" | "tables";
+  scope_tables: string[];
 }
 
 const DEFAULT_FORM: ChannelFormState = {
@@ -71,6 +78,8 @@ const DEFAULT_FORM: ChannelFormState = {
   trigger: "all_runs",
   enabled: true,
   notify_dry_runs: false,
+  scope_mode: "all",
+  scope_tables: [],
 };
 
 // ---------------------------------------------------------------------------
@@ -89,6 +98,14 @@ function AlertsPage() {
   const [form, setForm] = useState<ChannelFormState>(DEFAULT_FORM);
   const [deleteTarget, setDeleteTarget] = useState<AlertChannelOut | null>(null);
   const [testingId, setTestingId] = useState<string | null>(null);
+
+  // Fetch approved rules to populate the table scope selector
+  const { data: approvedRulesResp } = useListRules({ status: "approved" }, { query: { enabled: dialogOpen } });
+  const approvedTableFqns = useMemo(() => {
+    const rules = approvedRulesResp?.data ?? [];
+    const fqns = new Set(rules.map((r) => r.table_fqn).filter(Boolean));
+    return Array.from(fqns).sort() as string[];
+  }, [approvedRulesResp]);
 
   const saveMutation = useMutation({
     mutationFn: (data: { channelId: string | null; body: AlertChannelIn }) => {
@@ -136,15 +153,21 @@ function AlertsPage() {
       trigger: ch.trigger as ChannelFormState["trigger"],
       enabled: ch.enabled,
       notify_dry_runs: ch.notify_dry_runs,
+      scope_mode: (ch.scope_mode as ChannelFormState["scope_mode"]) ?? "all",
+      scope_tables: ch.scope_tables ?? [],
     });
     setDialogOpen(true);
   };
 
   const handleSave = () => {
     if (!form.name.trim() || !form.webhook_url.trim()) return;
+    const body: AlertChannelIn = {
+      ...form,
+      scope_tables: form.scope_mode === "all" ? [] : form.scope_tables,
+    };
     saveMutation.mutate({
       channelId: editingChannel?.channel_id ?? null,
-      body: form,
+      body,
     });
   };
 
@@ -168,6 +191,24 @@ function AlertsPage() {
     if (trigger === "manual_only") return t("alerts.triggerManualOnly");
     if (trigger === "scheduled_only") return t("alerts.triggerScheduledOnly");
     return t("alerts.triggerAllRuns");
+  };
+
+  const toggleScopeTable = (fqn: string) => {
+    setForm((f) => {
+      const already = f.scope_tables.includes(fqn);
+      return {
+        ...f,
+        scope_tables: already
+          ? f.scope_tables.filter((t) => t !== fqn)
+          : [...f.scope_tables, fqn],
+      };
+    });
+  };
+
+  const closeDialog = () => {
+    setDialogOpen(false);
+    setEditingChannel(null);
+    setForm(DEFAULT_FORM);
   };
 
   return (
@@ -278,6 +319,14 @@ function AlertsPage() {
                     <span className="font-medium text-foreground">{t("alerts.trigger")}:</span>{" "}
                     {triggerLabel(ch.trigger)}
                   </span>
+                  {ch.scope_mode === "tables" && ch.scope_tables?.length > 0 && (
+                    <span>
+                      <span className="font-medium text-foreground">{t("alerts.scopeTables")}:</span>{" "}
+                      {ch.scope_tables.length === 1
+                        ? ch.scope_tables[0].split(".").pop()
+                        : t("alerts.scopeTableCount", { count: ch.scope_tables.length })}
+                    </span>
+                  )}
                   {ch.notify_dry_runs && (
                     <span className="font-medium text-foreground">{t("alerts.notifyDryRunsOn")}</span>
                   )}
@@ -290,7 +339,7 @@ function AlertsPage() {
       )}
 
       {/* Create / Edit dialog */}
-      <Dialog open={dialogOpen} onOpenChange={(open) => { if (!open) { setDialogOpen(false); setEditingChannel(null); setForm(DEFAULT_FORM); } }}>
+      <Dialog open={dialogOpen} onOpenChange={(open) => { if (!open) closeDialog(); }}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>
@@ -337,6 +386,81 @@ function AlertsPage() {
               </Select>
             </div>
 
+            {/* Scope selection */}
+            <div className="space-y-1.5">
+              <Label>{t("alerts.scopeLabel")}</Label>
+              <Select
+                value={form.scope_mode}
+                onValueChange={(v) =>
+                  setForm((f) => ({
+                    ...f,
+                    scope_mode: v as ChannelFormState["scope_mode"],
+                    scope_tables: v === "all" ? [] : f.scope_tables,
+                  }))
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">{t("alerts.scopeAll")}</SelectItem>
+                  <SelectItem value="tables">{t("alerts.scopeSpecific")}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {form.scope_mode === "tables" && (
+              <div className="space-y-1.5">
+                <Label>{t("alerts.scopeSelectTables")}</Label>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" className="w-full justify-between font-normal">
+                      {form.scope_tables.length === 0
+                        ? t("alerts.scopeSelectTablesPlaceholder")
+                        : t("alerts.scopeTableCount", { count: form.scope_tables.length })}
+                      <ChevronsUpDown size={14} className="opacity-60" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-[var(--radix-popover-trigger-width)] max-h-56 overflow-y-auto p-2" align="start">
+                    {approvedTableFqns.length === 0 ? (
+                      <p className="px-2 py-1 text-sm text-muted-foreground">{t("alerts.noApprovedTables")}</p>
+                    ) : (
+                      approvedTableFqns.map((fqn) => (
+                        <label
+                          key={fqn}
+                          className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-accent cursor-pointer text-sm"
+                        >
+                          <Checkbox
+                            checked={form.scope_tables.includes(fqn)}
+                            onCheckedChange={() => toggleScopeTable(fqn)}
+                          />
+                          <span className="truncate">{fqn}</span>
+                        </label>
+                      ))
+                    )}
+                  </PopoverContent>
+                </Popover>
+
+                {form.scope_tables.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 pt-1">
+                    {form.scope_tables.map((fqn) => (
+                      <Badge key={fqn} variant="secondary" className="gap-1 max-w-xs">
+                        <span className="truncate text-xs">{fqn.split(".").pop()}</span>
+                        <button
+                          type="button"
+                          onClick={() => toggleScopeTable(fqn)}
+                          className="shrink-0 opacity-60 hover:opacity-100"
+                          aria-label={`Remove ${fqn}`}
+                        >
+                          <X size={10} />
+                        </button>
+                      </Badge>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="flex items-center gap-3">
               <Switch
                 id="alert-enabled"
@@ -357,7 +481,7 @@ function AlertsPage() {
           </div>
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => { setDialogOpen(false); setEditingChannel(null); setForm(DEFAULT_FORM); }}>
+            <Button variant="outline" onClick={closeDialog}>
               {t("alerts.cancel")}
             </Button>
             <Button

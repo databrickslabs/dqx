@@ -391,6 +391,14 @@ class AlertChannelIn(BaseModel):
     )
     enabled: bool = Field(default=True, description="Whether this channel is active")
     notify_dry_runs: bool = Field(default=False, description="Also send dry run results to this channel")
+    scope_mode: str = Field(
+        default="all",
+        description="Table scope: all | tables (specific FQNs)",
+    )
+    scope_tables: list[str] = Field(
+        default_factory=list,
+        description="Table FQNs to notify on when scope_mode=tables",
+    )
 
 
 class AlertChannelOut(BaseModel):
@@ -400,6 +408,8 @@ class AlertChannelOut(BaseModel):
     trigger: str
     enabled: bool
     notify_dry_runs: bool = False
+    scope_mode: str = "all"
+    scope_tables: list[str] = Field(default_factory=list)
 
 
 class NotifyResultIn(BaseModel):
@@ -409,6 +419,10 @@ class NotifyResultIn(BaseModel):
     error_rows: int | None = None
     warning_rows: int | None = None
     status: str = Field(default="success")
+    created_at: str | None = None
+    requesting_user: str | None = None
+    checks_json: str | None = Field(default=None, description="JSON string of check definitions applied")
+    error_message: str | None = None
 
 
 class TestWebhookIn(BaseModel):
