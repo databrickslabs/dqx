@@ -33,6 +33,7 @@ import { Route as SidebarRulesCreateSqlRouteImport } from './../routes/_sidebar/
 import { Route as SidebarRulesCreateReusableRouteImport } from './../routes/_sidebar/rules.create-reusable'
 import { Route as SidebarRulesCreateRouteImport } from './../routes/_sidebar/rules.create'
 import { Route as SidebarRulesActiveRouteImport } from './../routes/_sidebar/rules.active'
+import { Route as SidebarRegistryRulesRuleIdRouteImport } from './../routes/_sidebar/registry-rules.$ruleId'
 import { Route as SidebarMonitoredTablesBindingIdRouteImport } from './../routes/_sidebar/monitored-tables.$bindingId'
 
 const SidebarRouteRoute = SidebarRouteRouteImport.update({
@@ -156,6 +157,12 @@ const SidebarRulesActiveRoute = SidebarRulesActiveRouteImport.update({
   path: '/active',
   getParentRoute: () => SidebarRulesRoute,
 } as any)
+const SidebarRegistryRulesRuleIdRoute =
+  SidebarRegistryRulesRuleIdRouteImport.update({
+    id: '/$ruleId',
+    path: '/$ruleId',
+    getParentRoute: () => SidebarRegistryRulesRoute,
+  } as any)
 const SidebarMonitoredTablesBindingIdRoute =
   SidebarMonitoredTablesBindingIdRouteImport.update({
     id: '/$bindingId',
@@ -172,11 +179,12 @@ export interface FileRoutesByFullPath {
   '/monitored-tables': typeof SidebarMonitoredTablesRouteWithChildren
   '/profile': typeof SidebarProfileRoute
   '/profiler': typeof SidebarProfilerRoute
-  '/registry-rules': typeof SidebarRegistryRulesRoute
+  '/registry-rules': typeof SidebarRegistryRulesRouteWithChildren
   '/rules': typeof SidebarRulesRouteWithChildren
   '/runs': typeof SidebarRunsRouteWithChildren
   '/runs-history': typeof SidebarRunsHistoryRoute
   '/monitored-tables/$bindingId': typeof SidebarMonitoredTablesBindingIdRoute
+  '/registry-rules/$ruleId': typeof SidebarRegistryRulesRuleIdRoute
   '/rules/active': typeof SidebarRulesActiveRoute
   '/rules/create': typeof SidebarRulesCreateRoute
   '/rules/create-reusable': typeof SidebarRulesCreateReusableRoute
@@ -198,9 +206,10 @@ export interface FileRoutesByTo {
   '/monitored-tables': typeof SidebarMonitoredTablesRouteWithChildren
   '/profile': typeof SidebarProfileRoute
   '/profiler': typeof SidebarProfilerRoute
-  '/registry-rules': typeof SidebarRegistryRulesRoute
+  '/registry-rules': typeof SidebarRegistryRulesRouteWithChildren
   '/runs-history': typeof SidebarRunsHistoryRoute
   '/monitored-tables/$bindingId': typeof SidebarMonitoredTablesBindingIdRoute
+  '/registry-rules/$ruleId': typeof SidebarRegistryRulesRuleIdRoute
   '/rules/active': typeof SidebarRulesActiveRoute
   '/rules/create': typeof SidebarRulesCreateRoute
   '/rules/create-reusable': typeof SidebarRulesCreateReusableRoute
@@ -224,11 +233,12 @@ export interface FileRoutesById {
   '/_sidebar/monitored-tables': typeof SidebarMonitoredTablesRouteWithChildren
   '/_sidebar/profile': typeof SidebarProfileRoute
   '/_sidebar/profiler': typeof SidebarProfilerRoute
-  '/_sidebar/registry-rules': typeof SidebarRegistryRulesRoute
+  '/_sidebar/registry-rules': typeof SidebarRegistryRulesRouteWithChildren
   '/_sidebar/rules': typeof SidebarRulesRouteWithChildren
   '/_sidebar/runs': typeof SidebarRunsRouteWithChildren
   '/_sidebar/runs-history': typeof SidebarRunsHistoryRoute
   '/_sidebar/monitored-tables/$bindingId': typeof SidebarMonitoredTablesBindingIdRoute
+  '/_sidebar/registry-rules/$ruleId': typeof SidebarRegistryRulesRuleIdRoute
   '/_sidebar/rules/active': typeof SidebarRulesActiveRoute
   '/_sidebar/rules/create': typeof SidebarRulesCreateRoute
   '/_sidebar/rules/create-reusable': typeof SidebarRulesCreateReusableRoute
@@ -257,6 +267,7 @@ export interface FileRouteTypes {
     | '/runs'
     | '/runs-history'
     | '/monitored-tables/$bindingId'
+    | '/registry-rules/$ruleId'
     | '/rules/active'
     | '/rules/create'
     | '/rules/create-reusable'
@@ -281,6 +292,7 @@ export interface FileRouteTypes {
     | '/registry-rules'
     | '/runs-history'
     | '/monitored-tables/$bindingId'
+    | '/registry-rules/$ruleId'
     | '/rules/active'
     | '/rules/create'
     | '/rules/create-reusable'
@@ -308,6 +320,7 @@ export interface FileRouteTypes {
     | '/_sidebar/runs'
     | '/_sidebar/runs-history'
     | '/_sidebar/monitored-tables/$bindingId'
+    | '/_sidebar/registry-rules/$ruleId'
     | '/_sidebar/rules/active'
     | '/_sidebar/rules/create'
     | '/_sidebar/rules/create-reusable'
@@ -496,6 +509,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SidebarRulesActiveRouteImport
       parentRoute: typeof SidebarRulesRoute
     }
+    '/_sidebar/registry-rules/$ruleId': {
+      id: '/_sidebar/registry-rules/$ruleId'
+      path: '/$ruleId'
+      fullPath: '/registry-rules/$ruleId'
+      preLoaderRoute: typeof SidebarRegistryRulesRuleIdRouteImport
+      parentRoute: typeof SidebarRegistryRulesRoute
+    }
     '/_sidebar/monitored-tables/$bindingId': {
       id: '/_sidebar/monitored-tables/$bindingId'
       path: '/$bindingId'
@@ -519,6 +539,17 @@ const SidebarMonitoredTablesRouteWithChildren =
   SidebarMonitoredTablesRoute._addFileChildren(
     SidebarMonitoredTablesRouteChildren,
   )
+
+interface SidebarRegistryRulesRouteChildren {
+  SidebarRegistryRulesRuleIdRoute: typeof SidebarRegistryRulesRuleIdRoute
+}
+
+const SidebarRegistryRulesRouteChildren: SidebarRegistryRulesRouteChildren = {
+  SidebarRegistryRulesRuleIdRoute: SidebarRegistryRulesRuleIdRoute,
+}
+
+const SidebarRegistryRulesRouteWithChildren =
+  SidebarRegistryRulesRoute._addFileChildren(SidebarRegistryRulesRouteChildren)
 
 interface SidebarRulesRouteChildren {
   SidebarRulesActiveRoute: typeof SidebarRulesActiveRoute
@@ -570,7 +601,7 @@ interface SidebarRouteRouteChildren {
   SidebarMonitoredTablesRoute: typeof SidebarMonitoredTablesRouteWithChildren
   SidebarProfileRoute: typeof SidebarProfileRoute
   SidebarProfilerRoute: typeof SidebarProfilerRoute
-  SidebarRegistryRulesRoute: typeof SidebarRegistryRulesRoute
+  SidebarRegistryRulesRoute: typeof SidebarRegistryRulesRouteWithChildren
   SidebarRulesRoute: typeof SidebarRulesRouteWithChildren
   SidebarRunsRoute: typeof SidebarRunsRouteWithChildren
   SidebarRunsHistoryRoute: typeof SidebarRunsHistoryRoute
@@ -584,7 +615,7 @@ const SidebarRouteRouteChildren: SidebarRouteRouteChildren = {
   SidebarMonitoredTablesRoute: SidebarMonitoredTablesRouteWithChildren,
   SidebarProfileRoute: SidebarProfileRoute,
   SidebarProfilerRoute: SidebarProfilerRoute,
-  SidebarRegistryRulesRoute: SidebarRegistryRulesRoute,
+  SidebarRegistryRulesRoute: SidebarRegistryRulesRouteWithChildren,
   SidebarRulesRoute: SidebarRulesRouteWithChildren,
   SidebarRunsRoute: SidebarRunsRouteWithChildren,
   SidebarRunsHistoryRoute: SidebarRunsHistoryRoute,
