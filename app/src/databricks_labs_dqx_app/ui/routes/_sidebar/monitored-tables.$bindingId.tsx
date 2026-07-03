@@ -36,12 +36,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import {
   AlertCircle,
   ArrowLeft,
   BarChart3,
   ClipboardList,
   Columns3,
+  Info,
   Loader2,
   Plus,
   RotateCcw,
@@ -60,7 +62,10 @@ import {
   useSetAppliedRuleSeverityOverride,
   useListRegistryRules,
   useSuggestRulesForTable,
+  useGetTableColumns,
   type AppliedRuleOut,
+  type ColumnOut,
+  type MonitoredTableOut,
   type RegistryRuleOut,
   type SuggestedRuleMappingOut,
 } from "@/lib/api";
@@ -224,6 +229,10 @@ function MonitoredTableDetailPage() {
 
         <Tabs defaultValue="apply-rules">
           <TabsList>
+            <TabsTrigger value="about" className="gap-1.5">
+              <Info className="h-3.5 w-3.5" />
+              {t("monitoredTables.tabAbout")}
+            </TabsTrigger>
             <TabsTrigger value="profile" className="gap-1.5">
               <BarChart3 className="h-3.5 w-3.5" />
               {t("monitoredTables.tabProfile")}
@@ -237,6 +246,10 @@ function MonitoredTableDetailPage() {
               {t("monitoredTables.tabResults")}
             </TabsTrigger>
           </TabsList>
+
+          <TabsContent value="about">
+            <AboutTab table={table} />
+          </TabsContent>
 
           <TabsContent value="profile">
             <ProfileTab bindingId={bindingId} />
@@ -258,6 +271,153 @@ function MonitoredTableDetailPage() {
         </Tabs>
       </div>
     </FadeIn>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// About tab
+// ---------------------------------------------------------------------------
+
+function AboutTab({ table }: { table: MonitoredTableOut }) {
+  const { t } = useTranslation();
+  const [filter, setFilter] = useState("");
+  const parts = table.table_fqn.split(".");
+  const [catalog, schema, tableName] = parts;
+
+  const columnsQuery = useGetTableColumns(catalog ?? "", schema ?? "", tableName ?? "", {
+    query: { enabled: parts.length === 3 },
+  });
+  const columns: ColumnOut[] = columnsQuery.data?.data ?? [];
+
+  const filteredColumns = useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    if (!q) return columns;
+    return columns.filter(
+      (c) => c.name.toLowerCase().includes(q) || (c.comment ?? "").toLowerCase().includes(q),
+    );
+  }, [columns, filter]);
+
+  return (
+    <div className="space-y-8 pt-4">
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold">{t("monitoredTables.aboutSectionTitle")}</h2>
+        <dl className="grid grid-cols-[160px_1fr] gap-x-4 gap-y-2 text-xs">
+          <dt className="text-muted-foreground uppercase tracking-wide">{t("monitoredTables.aboutCatalog")}</dt>
+          <dd className="font-mono">{catalog ?? t("monitoredTables.aboutUnknown")}</dd>
+
+          <dt className="text-muted-foreground uppercase tracking-wide">{t("monitoredTables.aboutSchema")}</dt>
+          <dd className="font-mono">{schema ?? t("monitoredTables.aboutUnknown")}</dd>
+
+          <dt className="text-muted-foreground uppercase tracking-wide">{t("monitoredTables.aboutTableName")}</dt>
+          <dd className="font-mono">{tableName ?? t("monitoredTables.aboutUnknown")}</dd>
+
+          <dt className="text-muted-foreground uppercase tracking-wide">{t("monitoredTables.aboutStatus")}</dt>
+          <dd>
+            {table.status === "published" ? (
+              <Badge variant="outline" className="gap-1 border-emerald-500 text-emerald-600">
+                <ShieldCheck className="h-2.5 w-2.5" />
+                {t("monitoredTables.statusPublished")}
+              </Badge>
+            ) : (
+              <Badge variant="secondary">{t("monitoredTables.statusDraft")}</Badge>
+            )}
+          </dd>
+
+          <dt className="text-muted-foreground uppercase tracking-wide">{t("monitoredTables.aboutSteward")}</dt>
+          <dd>{table.steward || <span className="text-muted-foreground italic">{t("monitoredTables.aboutStewardNone")}</span>}</dd>
+
+          <dt className="text-muted-foreground uppercase tracking-wide">{t("monitoredTables.aboutLastProfiled")}</dt>
+          <dd>{table.last_profiled_at ? formatDateShort(table.last_profiled_at) : t("monitoredTables.neverProfiled")}</dd>
+
+          <dt className="text-muted-foreground uppercase tracking-wide">{t("monitoredTables.aboutCreatedBy")}</dt>
+          <dd>{table.created_by || t("monitoredTables.aboutUnknown")}</dd>
+
+          <dt className="text-muted-foreground uppercase tracking-wide">{t("monitoredTables.aboutCreatedAt")}</dt>
+          <dd>{table.created_at ? formatDateShort(table.created_at) : t("monitoredTables.aboutUnknown")}</dd>
+
+          <dt className="text-muted-foreground uppercase tracking-wide">{t("monitoredTables.aboutUpdatedBy")}</dt>
+          <dd>{table.updated_by || t("monitoredTables.aboutUnknown")}</dd>
+
+          <dt className="text-muted-foreground uppercase tracking-wide">{t("monitoredTables.aboutUpdatedAt")}</dt>
+          <dd>{table.updated_at ? formatDateShort(table.updated_at) : t("monitoredTables.aboutUnknown")}</dd>
+        </dl>
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold">
+          {t("monitoredTables.aboutSchemaSectionTitle", { count: columns.length })}
+        </h2>
+        {columnsQuery.isError ? (
+          <div className="flex flex-col items-center justify-center py-10 text-center border border-dashed rounded-lg">
+            <AlertCircle className="h-8 w-8 text-destructive/30 mb-2" />
+            <p className="text-sm font-medium text-muted-foreground">{t("monitoredTables.aboutLoadFailedTitle")}</p>
+            <p className="text-xs text-muted-foreground/70 mt-1 max-w-sm">{t("monitoredTables.aboutLoadFailedHint")}</p>
+          </div>
+        ) : (
+          <div className="rounded-md border overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-muted/30">
+                <tr>
+                  <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wide px-3 py-2">
+                    {t("monitoredTables.aboutColColumn")}
+                  </th>
+                  <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wide px-3 py-2 w-24">
+                    {t("monitoredTables.aboutColType")}
+                  </th>
+                  <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wide px-3 py-2 w-24">
+                    {t("monitoredTables.aboutColNullable")}
+                  </th>
+                  <th className="px-3 py-1.5">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                        {t("monitoredTables.aboutColDescription")}
+                      </span>
+                      <Input
+                        placeholder={t("monitoredTables.aboutFilterColumnsPlaceholder")}
+                        value={filter}
+                        onChange={(e) => setFilter(e.target.value)}
+                        className="max-w-xs h-7 text-xs font-normal normal-case tracking-normal"
+                      />
+                    </div>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredColumns.map((c) => (
+                  <tr key={c.name} className="border-t">
+                    <td className="px-3 py-2 align-top">
+                      <span className="font-mono text-xs">{c.name}</span>
+                    </td>
+                    <td className="px-3 py-2 align-top">
+                      <Badge variant="outline" className="text-[10px] font-mono">
+                        {c.type_name}
+                      </Badge>
+                    </td>
+                    <td className="px-3 py-2 align-top text-xs text-muted-foreground">
+                      {c.nullable === false ? "—" : "✓"}
+                    </td>
+                    <td className="px-3 py-2 align-top">
+                      {c.comment ? (
+                        <span className="text-xs">{c.comment}</span>
+                      ) : (
+                        <span className="text-muted-foreground italic text-xs">{t("monitoredTables.aboutNoDescription")}</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+                {filteredColumns.length === 0 && (
+                  <tr>
+                    <td colSpan={4} className="text-center text-muted-foreground py-6 text-sm">
+                      {t("monitoredTables.aboutNoMatchingColumns")}
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+    </div>
   );
 }
 
