@@ -38,6 +38,10 @@ interface RulesByColumnProps {
   canEdit: boolean;
   onAddRule?: (column: ColumnRef) => void;
   onJumpToRule?: (ruleId: string) => void;
+  /** Filter columns by name OR by the name of any rule applied to them
+   *  (case-insensitive substring) — shared with the by-rule lens's search
+   *  box in the parent toolbar. */
+  search?: string;
 }
 
 function useRulesByColumn(appliedRules: AppliedRuleOut[]): Map<string, RuleEntry[]> {
@@ -76,7 +80,7 @@ interface EmptyColumnRowProps {
 function EmptyColumnRow({ column, family, canEdit, onAddRule }: EmptyColumnRowProps) {
   const { t } = useTranslation();
   return (
-    <div className="rounded-lg border bg-card text-card-foreground flex items-center gap-3 px-4 py-2.5">
+    <div id={`column-card-${column.name}`} className="rounded-lg border bg-card text-card-foreground flex items-center gap-3 px-4 py-2.5">
       <span className="font-mono text-sm font-semibold">{column.name}</span>
       <FamilyBadge family={family} />
       <span className="text-xs text-muted-foreground">{column.type_name}</span>
@@ -111,7 +115,7 @@ interface ColumnCardProps {
 function ColumnCard({ column, family, entries, isOpen, onToggle, canEdit, onAddRule, onJumpToRule }: ColumnCardProps) {
   const { t } = useTranslation();
   return (
-    <div className="rounded-lg border bg-card text-card-foreground">
+    <div id={`column-card-${column.name}`} className="rounded-lg border bg-card text-card-foreground">
       <button
         type="button"
         onClick={onToggle}
@@ -178,7 +182,7 @@ function ColumnCard({ column, family, entries, isOpen, onToggle, canEdit, onAddR
   );
 }
 
-export function RulesByColumn({ appliedRules, tableFqn, canEdit, onAddRule, onJumpToRule }: RulesByColumnProps) {
+export function RulesByColumn({ appliedRules, tableFqn, canEdit, onAddRule, onJumpToRule, search }: RulesByColumnProps) {
   const { t } = useTranslation();
   const rulesByColumn = useRulesByColumn(appliedRules);
   const [openColumn, setOpenColumn] = useState<string | null>(null);
@@ -197,9 +201,26 @@ export function RulesByColumn({ appliedRules, tableFqn, canEdit, onAddRule, onJu
     );
   }
 
+  const q = search?.trim().toLowerCase() ?? "";
+  const visible = q
+    ? columns.filter((col) => {
+        if (col.name.toLowerCase().includes(q)) return true;
+        const entries = rulesByColumn.get(col.name) ?? [];
+        return entries.some((e) => e.ruleName.toLowerCase().includes(q));
+      })
+    : columns;
+
+  if (visible.length === 0) {
+    return (
+      <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
+        {t("monitoredTables.noRulesMatchFilter")}
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-2">
-      {columns.map((column) => {
+      {visible.map((column) => {
         const family = familyForType(column.type_name);
         const entries = rulesByColumn.get(column.name) ?? [];
 
