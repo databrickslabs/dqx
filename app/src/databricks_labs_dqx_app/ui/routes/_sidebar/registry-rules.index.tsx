@@ -19,6 +19,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
   AlertCircle,
   Plus,
   RotateCcw,
@@ -32,6 +40,8 @@ import {
   Trash2,
   Loader2,
   Lock,
+  ChevronUp,
+  ChevronDown,
 } from "lucide-react";
 import {
   AlertDialog,
@@ -180,10 +190,78 @@ function RegistryRulesPage() {
     });
   }, [serverFilteredRules, stewardFilter, nameSearch]);
 
+  type SortKey = "name" | "dimension" | "severity" | "status" | "version" | "steward" | "updated";
+  const [sortKey, setSortKey] = useState<SortKey | null>(null);
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+
+  const handleHeaderClick = useCallback(
+    (key: SortKey) => {
+      if (sortKey !== key) {
+        setSortKey(key);
+        setSortDir("asc");
+        return;
+      }
+      if (sortDir === "asc") {
+        setSortDir("desc");
+        return;
+      }
+      setSortKey(null);
+    },
+    [sortKey, sortDir],
+  );
+
+  const sortValue = useCallback((rule: RegistryRuleOut, key: SortKey): string | number => {
+    switch (key) {
+      case "name":
+        return (getTag(rule, RESERVED_NAME_KEY) || rule.rule_id).toLowerCase();
+      case "dimension":
+        return getTag(rule, RESERVED_DIMENSION_KEY).toLowerCase();
+      case "severity":
+        return getTag(rule, RESERVED_SEVERITY_KEY).toLowerCase();
+      case "status":
+        return rule.status;
+      case "version":
+        return rule.version;
+      case "steward":
+        return (rule.steward ?? "").toLowerCase();
+      case "updated":
+        return rule.updated_at ?? "";
+    }
+  }, []);
+
+  const sortedRules = useMemo(() => {
+    if (!sortKey) return rules;
+    const copy = [...rules];
+    copy.sort((a, b) => {
+      const av = sortValue(a, sortKey);
+      const bv = sortValue(b, sortKey);
+      if (av < bv) return sortDir === "asc" ? -1 : 1;
+      if (av > bv) return sortDir === "asc" ? 1 : -1;
+      return 0;
+    });
+    return copy;
+  }, [rules, sortKey, sortDir, sortValue]);
+
   const pagedRules = useMemo(() => {
     const start = (page - 1) * PAGE_SIZE;
-    return rules.slice(start, start + PAGE_SIZE);
-  }, [rules, page]);
+    return sortedRules.slice(start, start + PAGE_SIZE);
+  }, [sortedRules, page]);
+
+  function SortableHead({ sortKeyName, className, children }: { sortKeyName: SortKey; className?: string; children: React.ReactNode }) {
+    const isSorted = sortKey === sortKeyName;
+    return (
+      <TableHead
+        className={cn("text-xs font-medium cursor-pointer select-none", className)}
+        onClick={() => handleHeaderClick(sortKeyName)}
+        aria-sort={isSorted ? (sortDir === "asc" ? "ascending" : "descending") : undefined}
+      >
+        <span className="inline-flex items-center gap-1">
+          {children}
+          {isSorted && (sortDir === "asc" ? <ChevronUp className="h-3 w-3" aria-hidden /> : <ChevronDown className="h-3 w-3" aria-hidden />)}
+        </span>
+      </TableHead>
+    );
+  }
 
   const hasActiveFilters =
     statusFilter !== ALL ||
@@ -407,118 +485,118 @@ function RegistryRulesPage() {
               </div>
             ) : (
               <>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b bg-muted/50">
-                        <th className="text-left p-3 font-medium text-xs">{t("rulesRegistry.colName")}</th>
-                        <th className="text-left p-3 font-medium text-xs">{t("rulesRegistry.colAuthor")}</th>
-                        <th className="text-left p-3 font-medium text-xs">{t("rulesRegistry.colDimension")}</th>
-                        <th className="text-left p-3 font-medium text-xs">{t("rulesRegistry.colSeverity")}</th>
-                        <th className="text-left p-3 font-medium text-xs">{t("rulesRegistry.colStatus")}</th>
-                        <th className="text-left p-3 font-medium text-xs">{t("rulesRegistry.colVersion")}</th>
-                        <th className="text-left p-3 font-medium text-xs">{t("rulesRegistry.colMode")}</th>
-                        <th className="text-left p-3 font-medium text-xs">{t("rulesRegistry.colSteward")}</th>
-                        <th className="text-left p-3 font-medium text-xs">{t("rulesRegistry.colUpdated")}</th>
-                        <th className="text-right p-3 font-medium text-xs">{t("rulesRegistry.colActions")}</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {pagedRules.map((rule) => {
-                        const name = getTag(rule, RESERVED_NAME_KEY) || rule.rule_id;
-                        const dimension = getTag(rule, RESERVED_DIMENSION_KEY);
-                        const severity = getTag(rule, RESERVED_SEVERITY_KEY);
-                        const busy = pendingRuleId === rule.rule_id;
-                        const tags = freeTags(rule);
-                        return (
-                          <tr
-                            key={rule.rule_id}
-                            className="border-b last:border-b-0 hover:bg-muted/20 cursor-pointer transition-colors"
-                            onClick={() => openRule(rule)}
-                          >
-                            <td className="p-3 min-w-[10rem] max-w-[16rem]">
-                              <div className="flex items-center gap-1.5 font-medium text-sm truncate">
-                                {rule.is_builtin && (
-                                  <span title={t("rulesRegistry.builtinTooltip")}>
-                                    <Lock className="h-3 w-3 text-muted-foreground shrink-0" />
-                                  </span>
-                                )}
-                                <span className="truncate">{name}</span>
-                              </div>
-                              {Object.keys(tags).length > 0 && (
-                                <div className="flex flex-wrap gap-1 mt-1">
-                                  {Object.entries(tags).slice(0, 3).map(([k, v]) => (
-                                    <Badge key={k} variant="outline" className="text-[9px] font-normal px-1 py-0">
-                                      {k}={v}
-                                    </Badge>
-                                  ))}
-                                </div>
+                <Table>
+                  <TableHeader>
+                    <TableRow className="bg-muted/50 hover:bg-muted/50">
+                      <SortableHead sortKeyName="name">{t("rulesRegistry.colName")}</SortableHead>
+                      <TableHead className="text-xs font-medium">{t("rulesRegistry.colAuthor")}</TableHead>
+                      <SortableHead sortKeyName="dimension">{t("rulesRegistry.colDimension")}</SortableHead>
+                      <SortableHead sortKeyName="severity">{t("rulesRegistry.colSeverity")}</SortableHead>
+                      <SortableHead sortKeyName="status">{t("rulesRegistry.colStatus")}</SortableHead>
+                      <SortableHead sortKeyName="version">{t("rulesRegistry.colVersion")}</SortableHead>
+                      <TableHead className="text-xs font-medium">{t("rulesRegistry.colMode")}</TableHead>
+                      <SortableHead sortKeyName="steward">{t("rulesRegistry.colSteward")}</SortableHead>
+                      <SortableHead sortKeyName="updated">{t("rulesRegistry.colUpdated")}</SortableHead>
+                      <TableHead className="text-xs font-medium text-right">{t("rulesRegistry.colActions")}</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {pagedRules.map((rule) => {
+                      const name = getTag(rule, RESERVED_NAME_KEY) || rule.rule_id;
+                      const dimension = getTag(rule, RESERVED_DIMENSION_KEY);
+                      const severity = getTag(rule, RESERVED_SEVERITY_KEY);
+                      const busy = pendingRuleId === rule.rule_id;
+                      const tags = freeTags(rule);
+                      return (
+                        <TableRow
+                          key={rule.rule_id}
+                          className="cursor-pointer"
+                          onClick={() => openRule(rule)}
+                        >
+                          <TableCell className="min-w-[10rem] max-w-[16rem] whitespace-normal">
+                            <div className="flex items-center gap-1.5 font-medium text-sm truncate">
+                              {rule.is_builtin && (
+                                <span title={t("rulesRegistry.builtinTooltip")}>
+                                  <Lock className="h-3 w-3 text-muted-foreground shrink-0" />
+                                </span>
                               )}
-                            </td>
-                            <td className="p-3">
-                              <AuthorKindBadge authorKind={rule.author_kind ?? undefined} />
-                            </td>
-                            <td className="p-3">
-                              <TagBadge label={dimension} color={colorFor(labelDefinitions, RESERVED_DIMENSION_KEY, dimension)} />
-                            </td>
-                            <td className="p-3">
-                              <TagBadge label={severity} color={colorFor(labelDefinitions, RESERVED_SEVERITY_KEY, severity)} />
-                            </td>
-                            <td className="p-3"><StatusBadge status={rule.status} /></td>
-                            <td className="p-3 text-xs text-muted-foreground font-mono">v{rule.version}</td>
-                            <td className="p-3"><ModeBadge mode={rule.mode} /></td>
-                            <td className="p-3 text-xs text-muted-foreground truncate max-w-[10rem]">{rule.steward || "—"}</td>
-                            <td className="p-3 text-xs text-muted-foreground">{formatDateShort(rule.updated_at)}</td>
-                            <td className="p-3 text-right" onClick={(e) => e.stopPropagation()}>
-                              {busy ? (
-                                <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground inline-block" />
-                              ) : (
-                                <div className="flex items-center justify-end gap-1">
-                                  {rule.status === "draft" && perms.canCreateRules && (
-                                    <>
-                                      <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-blue-600" title={t("rulesRegistry.actionSubmit")} onClick={() => handleSubmit(rule)}>
-                                        <SendHorizonal className="h-3.5 w-3.5" />
-                                      </Button>
-                                      <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-destructive" title={t("rulesRegistry.actionDelete")} onClick={() => setDeleteTarget(rule)}>
-                                        <Trash2 className="h-3.5 w-3.5" />
-                                      </Button>
-                                    </>
-                                  )}
-                                  {rule.status === "pending_approval" && perms.canApproveRules && (
-                                    <>
-                                      <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-emerald-600" title={t("rulesRegistry.actionApprove")} onClick={() => handleApprove(rule)}>
-                                        <CheckCircle2 className="h-3.5 w-3.5" />
-                                      </Button>
-                                      <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-destructive" title={t("rulesRegistry.actionReject")} onClick={() => handleReject(rule)}>
-                                        <XCircle className="h-3.5 w-3.5" />
-                                      </Button>
-                                    </>
-                                  )}
-                                  {rule.status === "approved" && perms.canApproveRules && (
-                                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0" title={t("rulesRegistry.actionDeprecate")} onClick={() => handleDeprecate(rule)}>
-                                      <Archive className="h-3.5 w-3.5" />
+                              <span className="truncate">{name}</span>
+                            </div>
+                            {Object.keys(tags).length > 0 && (
+                              <div className="flex flex-wrap gap-1 mt-1">
+                                {Object.entries(tags).slice(0, 3).map(([k, v]) => (
+                                  <Badge key={k} variant="outline" className="text-[9px] font-normal px-1 py-0">
+                                    {k}={v}
+                                  </Badge>
+                                ))}
+                              </div>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            <AuthorKindBadge authorKind={rule.author_kind ?? undefined} />
+                          </TableCell>
+                          <TableCell>
+                            <TagBadge label={dimension} color={colorFor(labelDefinitions, RESERVED_DIMENSION_KEY, dimension)} />
+                          </TableCell>
+                          <TableCell>
+                            <TagBadge label={severity} color={colorFor(labelDefinitions, RESERVED_SEVERITY_KEY, severity)} />
+                          </TableCell>
+                          <TableCell><StatusBadge status={rule.status} /></TableCell>
+                          <TableCell className="text-xs text-muted-foreground font-mono">v{rule.version}</TableCell>
+                          <TableCell><ModeBadge mode={rule.mode} /></TableCell>
+                          <TableCell className="text-xs text-muted-foreground truncate max-w-[10rem]">{rule.steward || "—"}</TableCell>
+                          <TableCell className="text-xs text-muted-foreground">{formatDateShort(rule.updated_at)}</TableCell>
+                          <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+                            {busy ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground inline-block" />
+                            ) : (
+                              <div className="flex items-center justify-end gap-1">
+                                {rule.status === "draft" && perms.canCreateRules && (
+                                  <>
+                                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-blue-600" title={t("rulesRegistry.actionSubmit")} onClick={() => handleSubmit(rule)}>
+                                      <SendHorizonal className="h-3.5 w-3.5" />
                                     </Button>
-                                  )}
-                                  {rule.status === "deprecated" && perms.canApproveRules && (
-                                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0" title={t("rulesRegistry.actionUndeprecate")} onClick={() => handleUndeprecate(rule)}>
-                                      <ArchiveRestore className="h-3.5 w-3.5" />
-                                    </Button>
-                                  )}
-                                  {rule.status === "rejected" && perms.canCreateRules && (
                                     <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-destructive" title={t("rulesRegistry.actionDelete")} onClick={() => setDeleteTarget(rule)}>
                                       <Trash2 className="h-3.5 w-3.5" />
                                     </Button>
-                                  )}
-                                </div>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                                  </>
+                                )}
+                                {rule.status === "pending_approval" && perms.canApproveRules && (
+                                  <>
+                                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-emerald-600" title={t("rulesRegistry.actionApprove")} onClick={() => handleApprove(rule)}>
+                                      <CheckCircle2 className="h-3.5 w-3.5" />
+                                    </Button>
+                                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-destructive" title={t("rulesRegistry.actionReject")} onClick={() => handleReject(rule)}>
+                                      <XCircle className="h-3.5 w-3.5" />
+                                    </Button>
+                                  </>
+                                )}
+                                {rule.status === "approved" && perms.canApproveRules && (
+                                  <Button variant="ghost" size="sm" className="h-7 w-7 p-0" title={t("rulesRegistry.actionDeprecate")} onClick={() => handleDeprecate(rule)}>
+                                    <Archive className="h-3.5 w-3.5" />
+                                  </Button>
+                                )}
+                                {rule.status === "deprecated" && perms.canApproveRules && (
+                                  <Button variant="ghost" size="sm" className="h-7 w-7 p-0" title={t("rulesRegistry.actionUndeprecate")} onClick={() => handleUndeprecate(rule)}>
+                                    <ArchiveRestore className="h-3.5 w-3.5" />
+                                  </Button>
+                                )}
+                                {rule.status === "rejected" && perms.canCreateRules && (
+                                  <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-destructive" title={t("rulesRegistry.actionDelete")} onClick={() => setDeleteTarget(rule)}>
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </Button>
+                                )}
+                              </div>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+                <div className="p-3">
+                  <Pagination page={page} totalItems={rules.length} pageSize={PAGE_SIZE} onPageChange={setPage} />
                 </div>
-                <Pagination page={page} totalItems={rules.length} pageSize={PAGE_SIZE} onPageChange={setPage} />
               </>
             )}
           </CardContent>
