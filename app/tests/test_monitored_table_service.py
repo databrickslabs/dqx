@@ -130,6 +130,60 @@ class TestRegister:
 
 
 # ---------------------------------------------------------------------------
+# bulk_register
+# ---------------------------------------------------------------------------
+
+
+class TestBulkRegister:
+    def test_empty_list_returns_empty_summary(self, svc, sql):
+        result = svc.bulk_register([], "alice@x")
+        assert result.registered == []
+        assert result.skipped_existing == []
+        assert result.invalid == []
+        sql.query.assert_not_called()
+        sql.execute.assert_not_called()
+
+    def test_partitions_new_existing_and_invalid(self, svc, sql):
+        # cat.schema.existing is already monitored; cat.schema.new1/new2 are not;
+        # bad-fqn fails validate_fqn.
+        sql.query.return_value = [["cat.schema.existing"]]
+        result = svc.bulk_register(
+            ["cat.schema.existing", "cat.schema.new1", "cat.schema.new2", "bad-fqn"],
+            "alice@x",
+            steward="bob@x",
+        )
+        assert sorted(result.registered) == ["cat.schema.new1", "cat.schema.new2"]
+        assert result.skipped_existing == ["cat.schema.existing"]
+        assert result.invalid == ["bad-fqn"]
+        assert sql.execute.call_count == 2
+        inserted_fqns = {call.args[0].split("VALUES")[1] for call in sql.execute.call_args_list}
+        assert any("cat.schema.new1" in v for v in inserted_fqns)
+        assert any("cat.schema.new2" in v for v in inserted_fqns)
+
+    def test_dedupes_within_input(self, svc, sql):
+        sql.query.return_value = []
+        result = svc.bulk_register(["cat.schema.new1", "cat.schema.new1"], "alice@x")
+        assert result.registered == ["cat.schema.new1"]
+        assert sql.execute.call_count == 1
+
+    def test_all_invalid_skips_existence_query(self, svc, sql):
+        result = svc.bulk_register(["bad-fqn", "also bad"], "alice@x")
+        assert result.registered == []
+        assert result.skipped_existing == []
+        assert sorted(result.invalid) == ["also bad", "bad-fqn"]
+        sql.query.assert_not_called()
+        sql.execute.assert_not_called()
+
+    def test_existence_check_uses_single_query(self, svc, sql):
+        sql.query.return_value = []
+        svc.bulk_register(["cat.schema.new1", "cat.schema.new2"], "alice@x")
+        assert sql.query.call_count == 1
+        select_sql = sql.query.call_args[0][0]
+        assert "cat.schema.new1" in select_sql
+        assert "cat.schema.new2" in select_sql
+
+
+# ---------------------------------------------------------------------------
 # list_monitored_tables
 # ---------------------------------------------------------------------------
 

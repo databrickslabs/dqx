@@ -47,6 +47,15 @@ class DuplicateMonitoredTableError(ValueError):
 
 
 @dataclass
+class BulkRegisterResult:
+    """Summary returned by :meth:`MonitoredTableService.bulk_register`."""
+
+    registered: list[str] = field(default_factory=list)
+    skipped_existing: list[str] = field(default_factory=list)
+    invalid: list[str] = field(default_factory=list)
+
+
+@dataclass
 class AppliedRuleSummary:
     """An ``AppliedRule`` joined (in Python, over the JSON ``user_metadata`` blob) with its
     registry rule's descriptive tags — used by :meth:`MonitoredTableService.get`.
@@ -160,6 +169,66 @@ class MonitoredTableService:
         self._insert(binding)
         logger.info("Registered monitored table %s (binding_id=%s)", table_fqn, binding.binding_id)
         return binding
+
+    def bulk_register(
+        self, table_fqns: list[str], user_email: str, steward: str | None = None
+    ) -> BulkRegisterResult:
+        """Register many *table_fqns* under Rules Registry governance in one pass.
+
+        Unlike :meth:`register`, already-monitored tables are skipped
+        gracefully (reported in ``skipped_existing``) rather than raising
+        :class:`DuplicateMonitoredTableError`, and syntactically invalid FQNs
+        are reported in ``invalid`` rather than aborting the whole batch.
+        Input order is preserved and duplicates are deduped. Existence is
+        checked with a single ``IN (...)`` query rather than one round-trip
+        per FQN.
+        """
+        deduped = list(dict.fromkeys(table_fqns))
+        valid: list[str] = []
+        invalid: list[str] = []
+        for fqn in deduped:
+            try:
+                validate_fqn(fqn)
+                valid.append(fqn)
+            except ValueError:
+                invalid.append(fqn)
+        if not valid:
+            return BulkRegisterResult(registered=[], skipped_existing=[], invalid=invalid)
+
+        existing = self._get_existing_table_fqns(valid)
+        skipped_existing = [fqn for fqn in valid if fqn in existing]
+        to_register = [fqn for fqn in valid if fqn not in existing]
+
+        registered: list[str] = []
+        for fqn in to_register:
+            now = datetime.now(timezone.utc)
+            binding = MonitoredTable(
+                binding_id=uuid4().hex[:16],
+                table_fqn=fqn,
+                steward=steward,
+                status="draft",
+                last_profiled_at=None,
+                created_by=user_email,
+                created_at=now,
+                updated_by=user_email,
+                updated_at=now,
+            )
+            self._insert(binding)
+            registered.append(fqn)
+
+        logger.info(
+            "Bulk-registered %d monitored table(s), skipped %d existing, rejected %d invalid",
+            len(registered),
+            len(skipped_existing),
+            len(invalid),
+        )
+        return BulkRegisterResult(registered=registered, skipped_existing=skipped_existing, invalid=invalid)
+
+    def _get_existing_table_fqns(self, table_fqns: list[str]) -> set[str]:
+        in_list = ", ".join(f"'{escape_sql_string(fqn)}'" for fqn in table_fqns)
+        sql = f"SELECT table_fqn FROM {self._table} WHERE table_fqn IN ({in_list})"  # noqa: S608
+        rows = self._sql.query(sql)
+        return {row[0] for row in rows if row and row[0] is not None}
 
     def _insert(self, binding: MonitoredTable) -> None:
         sql = (
