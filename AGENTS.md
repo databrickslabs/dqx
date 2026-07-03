@@ -277,6 +277,13 @@ model: Any  # type: ignore[assignment] — mlflow has no stubs
 ```
 `Any` in `anomaly/` is a known legacy exception. New code outside that module must not introduce it.
 
+**Avoid `from __future__ import annotations`**. Making every annotation a lazy
+string hides circular dependencies and heavy-import problems that should fail loudly at import time. Keep
+annotations eager. **Quoted forward references** (e.g. `config: "ScoringConfig"`) and `if TYPE_CHECKING:`
+imports should generally be avoided too — they defer the same problem one annotation at a time. When you
+hit a circular import, prefer to restructure (move the shared type to a module both sides import, or break
+the dependency); reach for a `TYPE_CHECKING` import plus a quoted reference only as a last resort, or for a self-reference.
+
 ### Docstrings
 
 Use [Google Style Python Docstrings](https://sphinxcontrib-napoleon.readthedocs.io/en/latest/example_google.html) for public functions, classes, and modules. See [Writing Docstrings](https://databrickslabs.github.io/dqx/docs/dev/contributing/#writing-docstrings) for full guidance.
