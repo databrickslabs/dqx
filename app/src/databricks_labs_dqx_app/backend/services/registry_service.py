@@ -7,8 +7,8 @@ Manages the LIVE ``dq_rules`` template rows and their frozen
 This is the REGISTRY gate (tier 1 of the two-tier approval model): a
 table-agnostic rule definition moves ``draft -> pending_approval ->
 approved (published) -> deprecated``, independent of whether/where it is
-later *applied* to a monitored table (tier 2, Phase 3 — ``dq_applied_rules``
-does not exist yet).
+later *applied* to a monitored table (tier 2 — ``dq_applied_rules``, owned
+by ``ApplyRulesService``).
 
 Mirrors :class:`~databricks_labs_dqx_app.backend.services.rules_catalog_service.RulesCatalogService`'s
 shape (status machine, history recording, dialect-portable SQL via the
@@ -414,10 +414,10 @@ class RegistryService:
     def delete(self, rule_id: str, user_email: str) -> None:
         """Delete a registry rule.
 
-        TODO(Phase 3): once ``dq_applied_rules`` exists, block (409) deletion
-        of a rule that is currently applied to any monitored table. That
-        table doesn't exist yet, so deletion is unconditionally allowed for
-        now.
+        Unconditional at this layer — the applied-to-table (409) guard lives
+        in the route handler (``routes/v1/registry_rules.py``), which checks
+        ``ApplyRulesService.count_applications_for_rule`` before calling this
+        method, since that check spans a different service/table.
         """
         rule = self._get(rule_id)
         if rule is None:

@@ -244,6 +244,17 @@ class ApplyRulesService:
         rows = self._sql.query(sql)
         return [self._row_to_applied_rule(row) for row in rows]
 
+    def count_applications_for_rule(self, rule_id: str) -> int:
+        """Count how many monitored tables currently have *rule_id* applied.
+
+        Used by the registry delete gate — a rule that's live on one or more
+        tables cannot be deleted until every application is removed first.
+        """
+        e = escape_sql_string(rule_id)
+        sql = f"SELECT COUNT(*) FROM {self._table} WHERE rule_id = '{e}'"  # noqa: S608
+        rows = self._sql.query(sql)
+        return int(rows[0][0]) if rows and rows[0] and rows[0][0] is not None else 0
+
     def get_applied(self, applied_rule_id: str) -> AppliedRule | None:
         """Get a single applied rule by id."""
         e = escape_sql_string(applied_rule_id)

@@ -183,6 +183,25 @@ class TestListAndGet:
 
 
 # ---------------------------------------------------------------------------
+# count_applications_for_rule
+# ---------------------------------------------------------------------------
+
+
+class TestCountApplicationsForRule:
+    def test_counts_applications(self, svc, sql):
+        sql.query.return_value = [["3"]]
+        assert svc.count_applications_for_rule("r1") == 3
+
+    def test_zero_when_no_rows(self, svc, sql):
+        sql.query.return_value = []
+        assert svc.count_applications_for_rule("r1") == 0
+
+    def test_zero_when_null_count(self, svc, sql):
+        sql.query.return_value = [[None]]
+        assert svc.count_applications_for_rule("r1") == 0
+
+
+# ---------------------------------------------------------------------------
 # remove_applied
 # ---------------------------------------------------------------------------
 

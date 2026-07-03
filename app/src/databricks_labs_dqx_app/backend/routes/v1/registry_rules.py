@@ -1,9 +1,10 @@
 """Rules Registry routes — the REGISTRY (tier-1) approval gate.
 
 Per ``docs/superpowers/specs/2026-07-02-rules-registry-design.md`` §5, this
-is independent of the per-table application gate (tier 2, Phase 3). Only a
+is independent of the per-table application gate (tier 2, Phase 3). A
 published (``approved``) registry rule can later be applied to a monitored
-table — that plumbing (``dq_applied_rules``) doesn't exist yet.
+table via ``dq_applied_rules`` (see ``ApplyRulesService``) — the delete
+route below blocks (409) deleting a rule that's still applied anywhere.
 """
 
 from typing import Annotated
@@ -13,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from databricks_labs_dqx_app.backend.common.authorization import UserRole
 from databricks_labs_dqx_app.backend.dependencies import (
+    get_apply_rules_service,
     get_materializer,
     get_obo_ws,
     get_registry_service,
@@ -29,6 +31,7 @@ from databricks_labs_dqx_app.backend.models import (
     RegistryRuleVersionOut,
     UpdateRegistryRuleIn,
 )
+from databricks_labs_dqx_app.backend.services.apply_rules_service import ApplyRulesService
 from databricks_labs_dqx_app.backend.services.materializer import Materializer
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
 from databricks_labs_dqx_app.backend.services.rule_embeddings import RuleEmbeddingsService
@@ -186,17 +189,30 @@ def update_registry_rule(
 def delete_registry_rule(
     rule_id: str,
     svc: Annotated[RegistryService, Depends(get_registry_service)],
+    apply_rules: Annotated[ApplyRulesService, Depends(get_apply_rules_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
 ) -> dict[str, str]:
     """Delete a registry rule.
 
-    TODO(Phase 3): block (409) deletion of a rule currently applied to any
-    monitored table once ``dq_applied_rules`` exists.
+    Blocked (409) when the rule is currently applied to one or more
+    monitored tables — remove every application first via the Apply Rules
+    flow, then delete.
     """
     try:
+        applied_count = apply_rules.count_applications_for_rule(rule_id)
+        if applied_count > 0:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Cannot delete: this rule is applied to {applied_count} monitored table(s). "
+                    "Remove it from those tables before deleting."
+                ),
+            )
         user_email = _current_user_email(obo_ws)
         svc.delete(rule_id, user_email)
         return {"status": "deleted", "rule_id": rule_id}
+    except HTTPException:
+        raise
     except RuntimeError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:

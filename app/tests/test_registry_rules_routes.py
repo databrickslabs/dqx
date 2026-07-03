@@ -120,16 +120,29 @@ class TestCreateAndUpdate:
 class TestDelete:
     def test_delete_success(self):
         svc = MagicMock()
-        result = delete_registry_rule("r1", svc=svc, obo_ws=_mock_obo_ws())
+        apply_rules = MagicMock()
+        apply_rules.count_applications_for_rule.return_value = 0
+        result = delete_registry_rule("r1", svc=svc, apply_rules=apply_rules, obo_ws=_mock_obo_ws())
         assert result == {"status": "deleted", "rule_id": "r1"}
         svc.delete.assert_called_once_with("r1", "alice@x")
 
     def test_delete_missing_rule_raises_404(self):
         svc = MagicMock()
+        apply_rules = MagicMock()
+        apply_rules.count_applications_for_rule.return_value = 0
         svc.delete.side_effect = RuntimeError("Registry rule not found: r1")
         with pytest.raises(HTTPException) as excinfo:
-            delete_registry_rule("r1", svc=svc, obo_ws=_mock_obo_ws())
+            delete_registry_rule("r1", svc=svc, apply_rules=apply_rules, obo_ws=_mock_obo_ws())
         assert excinfo.value.status_code == 404
+
+    def test_delete_applied_rule_raises_409(self):
+        svc = MagicMock()
+        apply_rules = MagicMock()
+        apply_rules.count_applications_for_rule.return_value = 2
+        with pytest.raises(HTTPException) as excinfo:
+            delete_registry_rule("r1", svc=svc, apply_rules=apply_rules, obo_ws=_mock_obo_ws())
+        assert excinfo.value.status_code == 409
+        svc.delete.assert_not_called()
 
 
 class TestLifecycleRoutes:
