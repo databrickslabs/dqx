@@ -290,7 +290,7 @@ async def lifespan(app: FastAPI):
                     logger.warning("Error closing Lakebase pool during init failure", exc_info=True)
             set_oltp_executor(None)
             logger.exception(
-                "Lakebase initialisation failed (instance=%s, database=%s, schema=%s). "
+                "Lakebase initialisation failed (endpoint=%s, database=%s, schema=%s). "
                 "Refusing to start — silent fallback to Delta would split OLTP writes across "
                 "two physical stores and orphan prior Lakebase data on every flap. "
                 "Common causes: the project branch/endpoint is not provisioned, the app SP "
@@ -350,8 +350,7 @@ async def lifespan(app: FastAPI):
 
     if not (conf.wheels_volume and conf.job_id):
         msg = (
-            "DQX_WHEELS_VOLUME or DQX_JOB_ID is not set — profiler, dry-run, "
-            "and scheduler features will be unavailable"
+            "DQX_WHEELS_VOLUME or DQX_JOB_ID is not set — profiler, dry-run, and scheduler features will be unavailable"
         )
         if conf.require_task_runner:
             # Production-style deploy (bundle sets DQX_REQUIRE_TASK_RUNNER=1):
