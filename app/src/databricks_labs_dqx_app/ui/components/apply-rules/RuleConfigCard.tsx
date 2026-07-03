@@ -6,7 +6,7 @@
 // All controls STAGE changes on the monitored-table binding — they never
 // touch the live checks until the table is published.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "@tanstack/react-router";
 import { Check, ChevronDown, Loader2, MoreVertical } from "lucide-react";
@@ -259,6 +259,9 @@ function SeverityDropdown({
 // ---------------------------------------------------------------------------
 
 interface RuleConfigCardProps {
+  /** Merged display rule for this rule_id — see `mergeRuleRowGroup`: its
+   *  `column_mapping` is the concatenation of every underlying applied-rule
+   *  row's mapping group for this rule_id. */
   rule: AppliedRuleOut;
   registryRule: RegistryRuleOut | undefined;
   labelDefinitions: LabelDefinition[];
@@ -269,6 +272,16 @@ interface RuleConfigCardProps {
   onSeverityChange: (value: string) => void;
   onRemove: () => void;
   onJumpToColumn?: (colName: string) => void;
+  /** Removes the mapping group (and its owning applied-rule row) at this
+   *  combined-mapping index. */
+  onRemoveMapping?: (groupIdx: number) => void;
+  /** Opens the "apply this rule to another column" flow — stages a new
+   *  mapping group as its own applied-check entry. */
+  onAddMapping?: () => void;
+  /** Optional expand override — set by the by-column lens's "jump to rule"
+   *  action so the target card opens automatically instead of requiring an
+   *  extra click. */
+  forceOpen?: boolean;
 }
 
 export function RuleConfigCard({
@@ -282,10 +295,20 @@ export function RuleConfigCard({
   onSeverityChange,
   onRemove,
   onJumpToColumn,
+  onRemoveMapping,
+  onAddMapping,
+  forceOpen,
 }: RuleConfigCardProps) {
   const { t } = useTranslation();
-  const [isOpen, setIsOpen] = useState(false);
+  const [isOpen, setIsOpen] = useState(Boolean(forceOpen));
   const [logicOpen, setLogicOpen] = useState(false);
+
+  // The by-column lens's "jump to rule" action re-renders this card with
+  // forceOpen=true (see monitored-tables.$bindingId.tsx) — keep it in sync
+  // if it flips after mount instead of only honoring it at initial state.
+  useEffect(() => {
+    if (forceOpen) setIsOpen(true);
+  }, [forceOpen]);
 
   const dimension = rule.rule_dimension || "";
   const ruleSeverity = rule.rule_severity || "";
@@ -297,7 +320,7 @@ export function RuleConfigCard({
 
   return (
     <div
-      id={`rule-card-${rule.id ?? rule.rule_id}`}
+      id={`rule-card-${rule.rule_id}`}
       className={cn(
         "rounded-lg border mb-2 transition-colors overflow-hidden",
         incomplete && "border-l-yellow-500 border-l-[3px]",
@@ -407,6 +430,8 @@ export function RuleConfigCard({
               columnMapping={rule.column_mapping ?? []}
               slots={slots}
               onJumpToColumn={onJumpToColumn}
+              onRemoveGroup={canEdit ? onRemoveMapping : undefined}
+              onAddGroup={canEdit ? onAddMapping : undefined}
             />
           </div>
         </div>

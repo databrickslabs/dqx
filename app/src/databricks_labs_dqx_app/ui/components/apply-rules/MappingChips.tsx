@@ -45,10 +45,17 @@ function ReadonlyChip({
   colorClass,
   label,
   onJump,
+  onRemove,
+  removeTitle,
 }: {
   colorClass: string;
   label: string;
   onJump?: () => void;
+  /** When set, renders an "x" affordance that removes the whole mapping
+   *  group this chip belongs to (every chip for the same group, across
+   *  every slot row, shares the same group index). */
+  onRemove?: () => void;
+  removeTitle?: string;
 }) {
   return (
     <span className={cn("inline-flex items-center gap-1 rounded border px-2 py-0.5 text-xs font-mono", colorClass)}>
@@ -63,6 +70,20 @@ function ReadonlyChip({
       ) : (
         label
       )}
+      {onRemove && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onRemove();
+          }}
+          title={removeTitle}
+          aria-label={removeTitle}
+          className="ml-0.5 opacity-60 hover:opacity-100 focus:outline-none leading-none"
+        >
+          ×
+        </button>
+      )}
     </span>
   );
 }
@@ -76,12 +97,28 @@ interface MappingChipsProps {
   slots?: RuleSlot[];
   /** Jump to a column's card in the by-column lens. */
   onJumpToColumn?: (colName: string) => void;
+  /** Removes the mapping group at this index (every chip for that group,
+   *  across every slot row). Omit to render fully read-only chips with no
+   *  remove affordance. */
+  onRemoveGroup?: (groupIdx: number) => void;
+  /** Opens the "apply this rule to another column" flow, which stages a new
+   *  mapping group (and therefore a new applied-check entry) for this rule.
+   *  Rendered as a dashed "+ Apply to another column" button below the last
+   *  slot row, matching dqlake's affordance. Omit to hide it. */
+  onAddGroup?: () => void;
   className?: string;
 }
 
-export function MappingChips({ columnMapping, slots, onJumpToColumn, className }: MappingChipsProps) {
+export function MappingChips({
+  columnMapping,
+  slots,
+  onJumpToColumn,
+  onRemoveGroup,
+  onAddGroup,
+  className,
+}: MappingChipsProps) {
   const { t } = useTranslation();
-  if (columnMapping.length === 0) return null;
+  if (columnMapping.length === 0 && !onAddGroup) return null;
 
   // No declared slots (e.g. aggregate rule) — fall back to the flat
   // per-group rendering used before slots were threaded through.
@@ -116,7 +153,8 @@ export function MappingChips({ columnMapping, slots, onJumpToColumn, className }
       </div>
 
       <div className="space-y-2">
-        {slots.map((slot) => {
+        {slots.map((slot, slotIdx) => {
+          const isLastSlot = slotIdx === slots.length - 1;
           const filled = columnMapping
             .map((group, groupIdx) => ({ colName: group[slot.name], groupIdx }))
             .filter((e): e is { colName: string; groupIdx: number } => Boolean(e.colName));
@@ -129,7 +167,7 @@ export function MappingChips({ columnMapping, slots, onJumpToColumn, className }
               </div>
               <span className="text-muted-foreground text-xs justify-self-center self-center">&rarr;</span>
               <div className="flex flex-wrap items-center gap-1.5">
-                {filled.length === 0 ? (
+                {filled.length === 0 && !onAddGroup ? (
                   <span className="text-xs text-muted-foreground italic">
                     {t("monitoredTables.noColumnMapped")}
                   </span>
@@ -140,8 +178,21 @@ export function MappingChips({ columnMapping, slots, onJumpToColumn, className }
                       colorClass={paletteAt(groupIdx)}
                       label={colName}
                       onJump={onJumpToColumn ? () => onJumpToColumn(colName) : undefined}
+                      onRemove={onRemoveGroup ? () => onRemoveGroup(groupIdx) : undefined}
+                      removeTitle={t("monitoredTables.removeMappingGroupTitle", { count: groupIdx + 1 })}
                     />
                   ))
+                )}
+
+                {/* + Apply to another column: only on the last slot row */}
+                {onAddGroup && isLastSlot && (
+                  <button
+                    type="button"
+                    onClick={onAddGroup}
+                    className="text-xs text-muted-foreground hover:text-foreground border border-dashed border-border rounded px-2 py-0.5"
+                  >
+                    {t("monitoredTables.applyToAnotherColumnButton")}
+                  </button>
                 )}
               </div>
             </div>

@@ -81,7 +81,12 @@ import { AddRulesDialog } from "@/components/apply-rules/AddRulesDialog";
 import { AiSuggestionDialog } from "@/components/apply-rules/AiSuggestionDialog";
 import { RuleConfigCard, computeStatus } from "@/components/apply-rules/RuleConfigCard";
 import { RulesByColumn, type ColumnRef } from "@/components/apply-rules/RulesByColumn";
-import { RESERVED_SEVERITY_KEY, extractApiError } from "@/components/apply-rules/shared";
+import {
+  RESERVED_SEVERITY_KEY,
+  extractApiError,
+  groupAppliedRulesByRuleId,
+  mergeRuleRowGroup,
+} from "@/components/apply-rules/shared";
 import { orderSeverityValuesForDisplay } from "@/components/RegistryRuleBadges";
 import { ProfileColumnList } from "@/components/bindings/ProfileColumnList";
 
@@ -615,12 +620,30 @@ function ApplyRulesTab({
   const [lens, setLens] = useState<"by-rule" | "by-column">("by-rule");
   const [addOpen, setAddOpen] = useState(false);
   const [addColumnContext, setAddColumnContext] = useState<ColumnRef | null>(null);
+  const [mappingRuleId, setMappingRuleId] = useState<string | null>(null);
   const [suggestOpen, setSuggestOpen] = useState(false);
   const [removeTarget, setRemoveTarget] = useState<AppliedRuleOut | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
+  const [pendingRuleId, setPendingRuleId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"all" | "needs-attention">("all");
   const aiAvailability = useAiAvailability();
+
+  // DQX materializes one `dq_applied_rules` ROW per mapping group — a rule
+  // applied to several columns produces several rows sharing the same
+  // rule_id. Group them into one card per rule_id (dqlake's "N mapping
+  // groups under one rule" model) for the by-rule lens.
+  const rowsByRuleId = useMemo(() => {
+    const map = new Map<string, AppliedRuleOut[]>();
+    for (const rule of appliedRules) {
+      const list = map.get(rule.rule_id) ?? [];
+      list.push(rule);
+      map.set(rule.rule_id, list);
+    }
+    return map;
+  }, [appliedRules]);
+  const ruleGroups = useMemo(() => groupAppliedRulesByRuleId(appliedRules), [appliedRules]);
+  const mergedRules = useMemo(() => ruleGroups.map(mergeRuleRowGroup), [ruleGroups]);
 
   const { data: labelDefsData } = useLabelDefinitions();
   const labelDefinitions = useMemo(() => labelDefsData?.definitions ?? [], [labelDefsData]);
@@ -637,29 +660,30 @@ function ApplyRulesTab({
     return m;
   }, [publishedRules]);
 
-  // Completeness status per applied rule — drives the "needs attention"
+  // Completeness status per rule group — drives the "needs attention"
   // filter and the by-rule/by-column incomplete-mapping indicators.
   const statuses = useMemo(
-    () => appliedRules.map((rule) => computeStatus(rule, ruleById.get(rule.rule_id)?.definition.slots ?? [])),
-    [appliedRules, ruleById],
+    () => mergedRules.map((rule) => computeStatus(rule, ruleById.get(rule.rule_id)?.definition.slots ?? [])),
+    [mergedRules, ruleById],
   );
   const incompleteCount = statuses.filter((s) => s.kind === "incomplete").length;
 
   // Total checks: aggregate rules (0 slots) count as 1 check each;
-  // column-mapped rules count as the number of non-empty mapping groups.
+  // column-mapped rules count as the number of non-empty mapping groups
+  // across every row sharing that rule_id.
   const totalChecks = useMemo(() => {
-    return appliedRules.reduce((sum, rule) => {
+    return mergedRules.reduce((sum, rule) => {
       const slots = ruleById.get(rule.rule_id)?.definition.slots ?? [];
       if (slots.length === 0) return sum + 1;
       const groups = rule.column_mapping ?? [];
       return sum + groups.filter((entry) => slots.some((s) => Boolean(entry[s.name]))).length;
     }, 0);
-  }, [appliedRules, ruleById]);
+  }, [mergedRules, ruleById]);
 
-  const visibleAppliedRules = useMemo(() => {
-    let filtered = appliedRules;
+  const visibleMergedRules = useMemo(() => {
+    let filtered = mergedRules;
     if (filter === "needs-attention") {
-      filtered = appliedRules.filter((_, i) => statuses[i].kind === "incomplete");
+      filtered = mergedRules.filter((_, i) => statuses[i].kind === "incomplete");
     }
     const q = search.trim().toLowerCase();
     if (q) {
@@ -675,7 +699,7 @@ function ApplyRulesTab({
       });
     }
     return filtered;
-  }, [appliedRules, statuses, filter, search]);
+  }, [mergedRules, statuses, filter, search]);
 
   const removeMutation = useRemoveAppliedRule();
   const pinMutation = useSetAppliedRulePin();
@@ -686,59 +710,87 @@ function ApplyRulesTab({
     setAddOpen(true);
   };
 
-  const confirmRemove = () => {
-    if (!removeTarget?.id) return;
-    const appliedRuleId = removeTarget.id;
-    setRemoveTarget(null);
-    setPendingId(appliedRuleId);
-    removeMutation.mutate(
-      { bindingId, appliedRuleId },
-      {
-        onSuccess: () => {
-          toast.success(t("monitoredTables.toastRemoved"));
-          onMutated();
-        },
-        onError: (err) => toast.error(extractApiError(err, t("monitoredTables.toastRemoveFailed")), { duration: 6000 }),
-        onSettled: () => setPendingId(null),
+  // Removes a single applied-rule row (one mapping group). Used both for
+  // "remove this whole rule" (every row for a rule_id) and for the
+  // MappingChips per-group "x" (a single row).
+  const removeRow = (appliedRuleId: string, options?: { silent?: boolean }) =>
+    removeMutation.mutateAsync({ bindingId, appliedRuleId }).then(
+      () => {
+        if (!options?.silent) toast.success(t("monitoredTables.toastRemoved"));
       },
+      (err: unknown) => {
+        toast.error(extractApiError(err, t("monitoredTables.toastRemoveFailed")), { duration: 6000 });
+        throw err;
+      },
+    );
+
+  const confirmRemove = () => {
+    if (!removeTarget) return;
+    const rows = rowsByRuleId.get(removeTarget.rule_id) ?? (removeTarget.id ? [removeTarget] : []);
+    const ruleId = removeTarget.rule_id;
+    setRemoveTarget(null);
+    setPendingRuleId(ruleId);
+    Promise.allSettled(rows.filter((r) => r.id).map((r) => removeRow(r.id!, { silent: true }))).then(() => {
+      toast.success(t("monitoredTables.toastRemoved"));
+      onMutated();
+      setPendingRuleId(null);
+    });
+  };
+
+  // Removes the mapping group at `groupIdx` (its owning row) from a rule's
+  // combined mapping — each row owns exactly one mapping group by
+  // convention (see `groupAppliedRulesByRuleId`), so this deletes rows[groupIdx].
+  const handleRemoveMappingGroup = (ruleId: string, groupIdx: number) => {
+    const rows = rowsByRuleId.get(ruleId) ?? [];
+    const row = rows[groupIdx];
+    if (!row?.id) return;
+    setPendingId(row.id);
+    removeRow(row.id).then(
+      () => {
+        onMutated();
+        setPendingId(null);
+      },
+      () => setPendingId(null),
     );
   };
 
   const handlePinChange = (rule: AppliedRuleOut, value: string) => {
-    if (!rule.id) return;
-    const appliedRuleId = rule.id;
+    const rows = rowsByRuleId.get(rule.rule_id) ?? [];
     const registryRule = ruleById.get(rule.rule_id);
     const pinned_version = value === "latest" ? null : registryRule?.version ?? rule.pinned_version ?? null;
-    setPendingId(appliedRuleId);
-    pinMutation.mutate(
-      { bindingId, appliedRuleId, data: { pinned_version } },
-      {
-        onSuccess: () => {
-          toast.success(t("monitoredTables.toastPinSet"));
-          onMutated();
-        },
-        onError: (err) => toast.error(extractApiError(err, t("monitoredTables.toastPinFailed")), { duration: 6000 }),
-        onSettled: () => setPendingId(null),
-      },
-    );
+    setPendingRuleId(rule.rule_id);
+    Promise.allSettled(
+      rows
+        .filter((r) => r.id)
+        .map((r) => pinMutation.mutateAsync({ bindingId, appliedRuleId: r.id!, data: { pinned_version } })),
+    ).then((results) => {
+      if (results.some((r) => r.status === "rejected")) {
+        toast.error(t("monitoredTables.toastPinFailed"), { duration: 6000 });
+      } else {
+        toast.success(t("monitoredTables.toastPinSet"));
+      }
+      onMutated();
+      setPendingRuleId(null);
+    });
   };
 
   const handleSeverityChange = (rule: AppliedRuleOut, value: string) => {
-    if (!rule.id) return;
-    const appliedRuleId = rule.id;
+    const rows = rowsByRuleId.get(rule.rule_id) ?? [];
     const severity = value === "none" ? null : value;
-    setPendingId(appliedRuleId);
-    overrideMutation.mutate(
-      { bindingId, appliedRuleId, data: { severity } },
-      {
-        onSuccess: () => {
-          toast.success(t("monitoredTables.toastOverrideSet"));
-          onMutated();
-        },
-        onError: (err) => toast.error(extractApiError(err, t("monitoredTables.toastOverrideFailed")), { duration: 6000 }),
-        onSettled: () => setPendingId(null),
-      },
-    );
+    setPendingRuleId(rule.rule_id);
+    Promise.allSettled(
+      rows
+        .filter((r) => r.id)
+        .map((r) => overrideMutation.mutateAsync({ bindingId, appliedRuleId: r.id!, data: { severity } })),
+    ).then((results) => {
+      if (results.some((r) => r.status === "rejected")) {
+        toast.error(t("monitoredTables.toastOverrideFailed"), { duration: 6000 });
+      } else {
+        toast.success(t("monitoredTables.toastOverrideSet"));
+      }
+      onMutated();
+      setPendingRuleId(null);
+    });
   };
 
   return (
@@ -752,7 +804,7 @@ function ApplyRulesTab({
               <TooltipTrigger asChild>
                 <span className="text-sm font-semibold cursor-help">
                   {t("monitoredTables.checksCount", { count: totalChecks })}{" "}
-                  {t("monitoredTables.viaRulesCount", { count: appliedRules.length })}
+                  {t("monitoredTables.viaRulesCount", { count: mergedRules.length })}
                 </span>
               </TooltipTrigger>
               <TooltipContent side="bottom" className="max-w-xs text-center">
@@ -862,7 +914,7 @@ function ApplyRulesTab({
         </div>
       ) : lens === "by-rule" ? (
         <div className="space-y-3">
-          {visibleAppliedRules.length === 0 ? (
+          {visibleMergedRules.length === 0 ? (
             <div className="rounded-lg border border-dashed p-10 text-center text-sm text-muted-foreground">
               {search.trim()
                 ? t("monitoredTables.noRulesMatchFilter")
@@ -871,18 +923,24 @@ function ApplyRulesTab({
                   : t("monitoredTables.emptyAppliedRules")}
             </div>
           ) : (
-            visibleAppliedRules.map((rule) => (
+            visibleMergedRules.map((rule) => (
               <RuleConfigCard
-                key={rule.id ?? rule.rule_id}
+                key={rule.rule_id}
                 rule={rule}
                 registryRule={ruleById.get(rule.rule_id)}
                 labelDefinitions={labelDefinitions}
                 severityValues={severityValues}
                 canEdit={canEdit}
-                busy={pendingId === rule.id}
+                busy={pendingRuleId === rule.rule_id}
                 onPinChange={(v) => handlePinChange(rule, v)}
                 onSeverityChange={(v) => handleSeverityChange(rule, v)}
                 onRemove={() => setRemoveTarget(rule)}
+                onRemoveMapping={(groupIdx) => handleRemoveMappingGroup(rule.rule_id, groupIdx)}
+                onAddMapping={() => {
+                  setAddColumnContext(null);
+                  setMappingRuleId(rule.rule_id);
+                  setAddOpen(true);
+                }}
                 onJumpToColumn={(colName) => {
                   setFilter("all");
                   setSearch("");
@@ -917,7 +975,10 @@ function ApplyRulesTab({
         open={addOpen}
         onOpenChange={(next) => {
           setAddOpen(next);
-          if (!next) setAddColumnContext(null);
+          if (!next) {
+            setAddColumnContext(null);
+            setMappingRuleId(null);
+          }
         }}
         bindingId={bindingId}
         tableFqn={tableFqn}
@@ -925,6 +986,7 @@ function ApplyRulesTab({
         labelDefinitions={labelDefinitions}
         onApplied={onMutated}
         initialColumn={addColumnContext}
+        presetRule={mappingRuleId ? (ruleById.get(mappingRuleId) ?? null) : null}
       />
 
       <AiSuggestionDialog

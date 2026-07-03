@@ -47,13 +47,26 @@ interface RulesByColumnProps {
 function useRulesByColumn(appliedRules: AppliedRuleOut[]): Map<string, RuleEntry[]> {
   return useMemo(() => {
     const map = new Map<string, RuleEntry[]>();
+    // Tracks the next combined mapping-group index per rule_id — mirrors
+    // `mergeRuleRowGroup`'s `rows.flatMap(r => r.column_mapping)` ordering
+    // so a chip's color dot here matches its color thread in the by-rule
+    // lens's MappingChips, even though each applied-rule ROW here only
+    // knows its own (always-0) local group index.
+    const nextIndexByRuleId = new Map<string, number>();
     for (const rule of appliedRules) {
       const ruleName = rule.rule_name || rule.rule_id;
-      (rule.column_mapping ?? []).forEach((group, mappingIndex) => {
+      (rule.column_mapping ?? []).forEach((group) => {
+        const mappingIndex = nextIndexByRuleId.get(rule.rule_id) ?? 0;
+        nextIndexByRuleId.set(rule.rule_id, mappingIndex + 1);
         for (const [slot, column] of Object.entries(group)) {
           if (!column) continue;
           const list = map.get(column) ?? [];
-          list.push({ ruleId: rule.id ?? rule.rule_id, ruleName, slot, mappingIndex });
+          // Keyed by rule_id (not the row id) — the by-rule lens groups
+          // every applied-rule ROW for a rule_id into one card (see
+          // `groupAppliedRulesByRuleId`), so this must match the card's
+          // `rule-card-${rule_id}` DOM id regardless of which underlying row
+          // the clicked column's mapping group came from.
+          list.push({ ruleId: rule.rule_id, ruleName, slot, mappingIndex });
           map.set(column, list);
         }
       });

@@ -5,7 +5,7 @@
 // application on the binding (useApplyRuleToTable) — it does not touch the
 // live checks until the table is published.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -50,6 +50,14 @@ interface AddRulesDialogProps {
    * fix for the by-column "Add rule" flow not doing anything useful.
    */
   initialColumn?: ColumnRef | null;
+  /**
+   * When set, the dialog skips the rule-selection step and goes straight to
+   * the mapping step for this rule — used by the "+ Apply to another
+   * column" affordance on an already-applied rule's card, which stages a
+   * brand-new mapping group (and therefore its own applied-check entry) for
+   * a rule that's already applied to the table.
+   */
+  presetRule?: RegistryRuleOut | null;
 }
 
 export function AddRulesDialog({
@@ -61,6 +69,7 @@ export function AddRulesDialog({
   labelDefinitions,
   onApplied,
   initialColumn = null,
+  presetRule = null,
 }: AddRulesDialogProps) {
   const { t } = useTranslation();
   const [search, setSearch] = useState("");
@@ -68,6 +77,16 @@ export function AddRulesDialog({
   const [mapping, setMapping] = useState<Record<string, string | string[]>>({});
   const [createOpen, setCreateOpen] = useState(false);
   const queryClient = useQueryClient();
+
+  // Preset mode ("+ Apply to another column" on an existing rule card):
+  // jump straight to the mapping step with a fresh (empty) mapping every
+  // time the dialog opens, skipping the rule-selection list entirely.
+  useEffect(() => {
+    if (open && presetRule) {
+      setSelectedRule(presetRule);
+      setMapping({});
+    }
+  }, [open, presetRule]);
 
   const parts = tableFqn.split(".");
   const columnsQuery = useGetTableColumns(parts[0] ?? "", parts[1] ?? "", parts[2] ?? "", {
@@ -157,8 +176,18 @@ export function AddRulesDialog({
       <Dialog open={open} onOpenChange={handleClose}>
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>{t("monitoredTables.addRuleDialogTitle")}</DialogTitle>
-            <DialogDescription>{t("monitoredTables.addRuleDialogDescription")}</DialogDescription>
+            <DialogTitle>
+              {presetRule
+                ? t("monitoredTables.addMappingDialogTitle")
+                : t("monitoredTables.addRuleDialogTitle")}
+            </DialogTitle>
+            <DialogDescription>
+              {presetRule
+                ? t("monitoredTables.addMappingDialogDescription", {
+                    rule: getTag(presetRule, RESERVED_NAME_KEY) || presetRule.rule_id,
+                  })
+                : t("monitoredTables.addRuleDialogDescription")}
+            </DialogDescription>
           </DialogHeader>
 
           {!selectedRule ? (
@@ -261,7 +290,7 @@ export function AddRulesDialog({
           )}
 
           <DialogFooter>
-            {selectedRule && (
+            {selectedRule && !presetRule && (
               <Button variant="outline" onClick={() => setSelectedRule(null)}>
                 {t("monitoredTables.backButton")}
               </Button>
