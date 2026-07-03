@@ -1,12 +1,13 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useCallback, useMemo, useState, Suspense } from "react";
+import { useCallback, useEffect, useMemo, useState, Suspense } from "react";
 import { useTranslation } from "react-i18next";
-import { QueryErrorResetBoundary, useQueryClient } from "@tanstack/react-query";
+import { QueryErrorResetBoundary, useQueries, useQueryClient } from "@tanstack/react-query";
 import { ErrorBoundary } from "react-error-boundary";
 import { toast } from "sonner";
 import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
 import { FadeIn } from "@/components/anim/FadeIn";
-import { CatalogBrowser } from "@/components/CatalogBrowser";
+import { Pagination } from "@/components/Pagination";
+import { MultiSelectPopover } from "@/components/monitored-tables/MultiSelectPopover";
 import {
   Card,
   CardContent,
@@ -57,13 +58,19 @@ import {
 import {
   useListMonitoredTables,
   getListMonitoredTablesQueryKey,
-  useRegisterMonitoredTable,
   useDeleteMonitoredTable,
+  useListCatalogs,
+  getListSchemasQueryOptions,
+  getListTablesQueryOptions,
+  useBulkRegisterMonitoredTables,
   type MonitoredTableSummaryOut,
+  type BulkRegisterMonitoredTablesOut,
 } from "@/lib/api";
 import { usePermissions } from "@/hooks/use-permissions";
 import { formatDateShort } from "@/lib/format-utils";
 import { cn } from "@/lib/utils";
+
+const PAGE_SIZE = 25;
 
 export const Route = createFileRoute("/_sidebar/monitored-tables")({
   component: () => (
@@ -132,7 +139,23 @@ function extractApiError(err: unknown, fallback: string): string {
 
 const ALL = "all";
 
-function RegisterTableDialog({
+/** Splits a "catalog.schema" scope key back into its two parts. */
+function splitScope(scope: string): [string, string] {
+  const dotIndex = scope.indexOf(".");
+  return [scope.slice(0, dotIndex), scope.slice(dotIndex + 1)];
+}
+
+function buildSummaryToast(
+  t: (key: string, opts?: Record<string, unknown>) => string,
+  summary: BulkRegisterMonitoredTablesOut,
+): string {
+  const registered = summary.registered?.length ?? 0;
+  const skipped = summary.skipped_existing?.length ?? 0;
+  const invalid = summary.invalid?.length ?? 0;
+  return t("monitoredTables.wizard.toastSummary", { registered, skipped, invalid });
+}
+
+function AddMonitoredTablesDialog({
   open,
   onOpenChange,
   onRegistered,
@@ -142,68 +165,223 @@ function RegisterTableDialog({
   onRegistered: () => void;
 }) {
   const { t } = useTranslation();
-  const [tableFqn, setTableFqn] = useState("");
   const [steward, setSteward] = useState("");
-  const registerMutation = useRegisterMonitoredTable();
+  const [selectedCatalogs, setSelectedCatalogs] = useState<string[]>([]);
+  const [selectedSchemas, setSelectedSchemas] = useState<string[]>([]);
+  const [selectedTables, setSelectedTables] = useState<string[]>([]);
+  const [pendingFqns, setPendingFqns] = useState<string[] | null>(null);
 
-  const handleClose = (next: boolean) => {
-    if (!next) {
-      setTableFqn("");
-      setSteward("");
+  const bulkMutation = useBulkRegisterMonitoredTables();
+
+  const { data: catalogsResp, isLoading: catalogsLoading } = useListCatalogs({
+    query: { enabled: open },
+  });
+  const catalogOptions = useMemo(
+    () => (catalogsResp?.data ?? []).map((c) => ({ value: c.name, label: c.name })),
+    [catalogsResp],
+  );
+
+  const schemaQueries = useQueries({
+    queries: selectedCatalogs.map((catalog) =>
+      getListSchemasQueryOptions(catalog, { query: { enabled: open } }),
+    ),
+  });
+  const schemasLoading = schemaQueries.some((q) => q.isLoading);
+  const schemaOptions = useMemo(() => {
+    const opts: { value: string; label: string }[] = [];
+    selectedCatalogs.forEach((catalog, i) => {
+      (schemaQueries[i]?.data?.data ?? []).forEach((s) => {
+        opts.push({ value: `${catalog}.${s.name}`, label: `${catalog}.${s.name}` });
+      });
+    });
+    return opts;
+  }, [selectedCatalogs, schemaQueries]);
+
+  // Resolved schema scope: user-picked schemas if any, otherwise every schema
+  // under the selected catalogs (so "Next" with only catalogs picked imports
+  // everything beneath them).
+  const resolvedSchemaScopes = useMemo(
+    () => (selectedSchemas.length > 0 ? selectedSchemas : schemaOptions.map((o) => o.value)),
+    [selectedSchemas, schemaOptions],
+  );
+
+  const tableQueries = useQueries({
+    queries: resolvedSchemaScopes.map((scope) => {
+      const [catalog, schema] = splitScope(scope);
+      return getListTablesQueryOptions(catalog, schema, { query: { enabled: open } });
+    }),
+  });
+  const tablesLoading = tableQueries.some((q) => q.isLoading);
+  const tableOptions = useMemo(() => {
+    const opts: { value: string; label: string }[] = [];
+    resolvedSchemaScopes.forEach((scope, i) => {
+      (tableQueries[i]?.data?.data ?? []).forEach((tbl) => {
+        opts.push({ value: `${scope}.${tbl.name}`, label: `${scope}.${tbl.name}` });
+      });
+    });
+    return opts;
+  }, [resolvedSchemaScopes, tableQueries]);
+
+  const effectiveFqns = selectedTables.length > 0 ? selectedTables : tableOptions.map((o) => o.value);
+
+  const resetState = useCallback(() => {
+    setSteward("");
+    setSelectedCatalogs([]);
+    setSelectedSchemas([]);
+    setSelectedTables([]);
+    setPendingFqns(null);
+  }, []);
+
+  const handleClose = useCallback(
+    (next: boolean) => {
+      if (!next) resetState();
+      onOpenChange(next);
+    },
+    [onOpenChange, resetState],
+  );
+
+  const submitBulk = useCallback(
+    (fqns: string[]) => {
+      bulkMutation.mutate(
+        { data: { table_fqns: fqns, steward: steward.trim() || undefined } },
+        {
+          onSuccess: (resp) => {
+            toast.success(buildSummaryToast(t, resp.data));
+            onRegistered();
+            handleClose(false);
+          },
+          onError: (err) => {
+            toast.error(extractApiError(err, t("monitoredTables.toastRegisterFailed")), {
+              duration: 6000,
+            });
+          },
+        },
+      );
+    },
+    [bulkMutation, steward, t, onRegistered, handleClose],
+  );
+
+  const handleNext = () => {
+    if (effectiveFqns.length === 0) return;
+    if (effectiveFqns.length > 10) {
+      setPendingFqns(effectiveFqns);
+      return;
     }
-    onOpenChange(next);
+    submitBulk(effectiveFqns);
   };
 
-  const handleSubmit = () => {
-    if (!tableFqn) return;
-    registerMutation.mutate(
-      { data: { table_fqn: tableFqn, steward: steward.trim() || undefined } },
-      {
-        onSuccess: () => {
-          toast.success(t("monitoredTables.toastRegistered"));
-          onRegistered();
-          handleClose(false);
-        },
-        onError: (err) => {
-          toast.error(extractApiError(err, t("monitoredTables.toastRegisterFailed")), {
-            duration: 6000,
-          });
-        },
-      },
-    );
-  };
+  // Clear child selections when their parent scope narrows so state never
+  // references catalogs/schemas that are no longer selected.
+  useEffect(() => {
+    const catalogSet = new Set(selectedCatalogs);
+    setSelectedSchemas((prev) => prev.filter((s) => catalogSet.has(splitScope(s)[0])));
+  }, [selectedCatalogs]);
+
+  useEffect(() => {
+    const scopeSet = new Set(resolvedSchemaScopes);
+    setSelectedTables((prev) => prev.filter((fqn) => scopeSet.has(fqn.slice(0, fqn.lastIndexOf(".")))));
+  }, [resolvedSchemaScopes]);
 
   return (
-    <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>{t("monitoredTables.registerDialogTitle")}</DialogTitle>
-          <DialogDescription>{t("monitoredTables.registerDialogDescription")}</DialogDescription>
-        </DialogHeader>
-        <div className="space-y-4">
-          <CatalogBrowser value={tableFqn} onChange={setTableFqn} />
-          <div className="space-y-1.5">
-            <Label htmlFor="mt-steward">{t("monitoredTables.stewardLabel")}</Label>
-            <Input
-              id="mt-steward"
-              value={steward}
-              onChange={(e) => setSteward(e.target.value)}
-              placeholder={t("monitoredTables.stewardPlaceholder")}
+    <>
+      <Dialog open={open} onOpenChange={handleClose}>
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>{t("monitoredTables.wizard.title")}</DialogTitle>
+            <DialogDescription>{t("monitoredTables.wizard.description")}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <MultiSelectPopover
+              label={t("monitoredTables.wizard.catalogsLabel")}
+              placeholder={t("monitoredTables.wizard.catalogsPlaceholder")}
+              searchPlaceholder={t("monitoredTables.wizard.searchCatalogs")}
+              options={catalogOptions}
+              selected={selectedCatalogs}
+              onChange={setSelectedCatalogs}
+              isLoading={catalogsLoading}
+              emptyText={t("monitoredTables.wizard.emptyCatalogs")}
             />
-            <p className="text-xs text-muted-foreground">{t("monitoredTables.stewardOptionalHint")}</p>
+            <MultiSelectPopover
+              label={t("monitoredTables.wizard.schemasLabel")}
+              placeholder={t("monitoredTables.wizard.schemasPlaceholder")}
+              searchPlaceholder={t("monitoredTables.wizard.searchSchemas")}
+              options={schemaOptions}
+              selected={selectedSchemas}
+              onChange={setSelectedSchemas}
+              isLoading={schemasLoading}
+              disabled={selectedCatalogs.length === 0}
+              disabledHint={t("monitoredTables.wizard.selectCatalogFirst")}
+              emptyText={t("monitoredTables.wizard.emptySchemas")}
+            />
+            <MultiSelectPopover
+              label={t("monitoredTables.wizard.tablesLabel")}
+              placeholder={t("monitoredTables.wizard.tablesPlaceholder")}
+              searchPlaceholder={t("monitoredTables.wizard.searchTables")}
+              options={tableOptions}
+              selected={selectedTables}
+              onChange={setSelectedTables}
+              isLoading={tablesLoading}
+              disabled={selectedCatalogs.length === 0}
+              disabledHint={t("monitoredTables.wizard.selectCatalogFirst")}
+              emptyText={t("monitoredTables.wizard.emptyTables")}
+            />
+            <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+              {selectedCatalogs.length === 0
+                ? t("monitoredTables.wizard.scopeHintEmpty")
+                : t("monitoredTables.wizard.scopeSummary", { count: effectiveFqns.length })}
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="mt-steward">{t("monitoredTables.stewardLabel")}</Label>
+              <Input
+                id="mt-steward"
+                value={steward}
+                onChange={(e) => setSteward(e.target.value)}
+                placeholder={t("monitoredTables.stewardPlaceholder")}
+              />
+              <p className="text-xs text-muted-foreground">{t("monitoredTables.stewardOptionalHint")}</p>
+            </div>
           </div>
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => handleClose(false)}>
-            {t("common.cancel")}
-          </Button>
-          <Button onClick={handleSubmit} disabled={!tableFqn || registerMutation.isPending} className="gap-2">
-            {registerMutation.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-            {t("monitoredTables.registerSubmit")}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => handleClose(false)}>
+              {t("common.cancel")}
+            </Button>
+            <Button
+              onClick={handleNext}
+              disabled={effectiveFqns.length === 0 || bulkMutation.isPending}
+              className="gap-2"
+            >
+              {bulkMutation.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              {t("monitoredTables.wizard.nextButton")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={pendingFqns !== null} onOpenChange={(next) => !next && setPendingFqns(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t("monitoredTables.wizard.confirmTitle", { count: pendingFqns?.length ?? 0 })}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("monitoredTables.wizard.confirmDescription", { count: pendingFqns?.length ?? 0 })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                const fqns = pendingFqns ?? [];
+                setPendingFqns(null);
+                submitBulk(fqns);
+              }}
+            >
+              {t("monitoredTables.wizard.confirmAction")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }
 
@@ -219,6 +397,7 @@ function MonitoredTablesPage() {
   const [registerOpen, setRegisterOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<MonitoredTableSummaryOut | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
 
   const queryParams = useMemo(
     () => ({
@@ -231,8 +410,21 @@ function MonitoredTablesPage() {
 
   const { data } = useListMonitoredTables(queryParams);
   const tables = useMemo(() => data?.data ?? [], [data]);
+  const pagedTables = useMemo(() => {
+    const start = (page - 1) * PAGE_SIZE;
+    return tables.slice(start, start + PAGE_SIZE);
+  }, [tables, page]);
 
   const hasActiveFilters = statusFilter !== ALL || stewardFilter.trim() !== "" || nameSearch.trim() !== "";
+
+  const applyFilter = useCallback(
+    <T,>(setter: (v: T) => void) =>
+      (v: T) => {
+        setter(v);
+        setPage(1);
+      },
+    [],
+  );
 
   const invalidate = useCallback(
     () => queryClient.invalidateQueries({ queryKey: getListMonitoredTablesQueryKey() }),
@@ -291,11 +483,11 @@ function MonitoredTablesPage() {
               <Input
                 placeholder={t("monitoredTables.searchPlaceholder")}
                 value={nameSearch}
-                onChange={(e) => setNameSearch(e.target.value)}
+                onChange={(e) => applyFilter(setNameSearch)(e.target.value)}
                 className="h-8 text-xs pl-7"
               />
             </div>
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <Select value={statusFilter} onValueChange={applyFilter(setStatusFilter)}>
               <SelectTrigger className="h-8 w-40 text-xs">
                 <SelectValue />
               </SelectTrigger>
@@ -308,7 +500,7 @@ function MonitoredTablesPage() {
             <Input
               placeholder={t("monitoredTables.stewardPlaceholder")}
               value={stewardFilter}
-              onChange={(e) => setStewardFilter(e.target.value)}
+              onChange={(e) => applyFilter(setStewardFilter)(e.target.value)}
               className="h-8 w-40 text-xs"
             />
           </CardContent>
@@ -337,7 +529,7 @@ function MonitoredTablesPage() {
                   <span>{t("monitoredTables.colSteward")}</span>
                   <span className="text-right">{t("monitoredTables.colActions")}</span>
                 </div>
-                {tables.map((summary) => {
+                {pagedTables.map((summary) => {
                   const bindingId = summary.table.binding_id;
                   const busy = pendingId === bindingId;
                   return (
@@ -386,11 +578,12 @@ function MonitoredTablesPage() {
                 })}
               </div>
             )}
+            <Pagination page={page} totalItems={tables.length} pageSize={PAGE_SIZE} onPageChange={setPage} />
           </CardContent>
         </Card>
       </div>
 
-      <RegisterTableDialog open={registerOpen} onOpenChange={setRegisterOpen} onRegistered={invalidate} />
+      <AddMonitoredTablesDialog open={registerOpen} onOpenChange={setRegisterOpen} onRegistered={invalidate} />
 
       <AlertDialog open={deleteTarget !== null} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <AlertDialogContent>
