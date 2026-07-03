@@ -16,7 +16,7 @@ import { useLabelDefinitions } from "@/lib/api-custom";
 import { usePermissions } from "@/hooks/use-permissions";
 import {
   RegistryRuleFormDialog,
-  type AuthoringTab,
+  type PageTab,
 } from "@/components/RegistryRuleFormDialog";
 import { StatusBadge, ModeBadge, AuthorKindBadge, getTag, RESERVED_NAME_KEY } from "@/components/RegistryRuleBadges";
 
@@ -89,7 +89,7 @@ function RegistryRuleDetailPage() {
   );
 
   const handleActiveTabChange = useCallback(
-    (nextTab: AuthoringTab) => {
+    (nextTab: PageTab) => {
       navigate({
         to: "/registry-rules/$ruleId",
         params: { ruleId },
@@ -127,7 +127,7 @@ function RegistryRuleDetailPage() {
           viewingRule={canEdit ? null : rule}
           labelDefinitions={labelDefinitions}
           onSaved={invalidateDetail}
-          activeTab={tab as AuthoringTab | undefined}
+          activeTab={tab as PageTab | undefined}
           onActiveTabChange={handleActiveTabChange}
         />
       </div>

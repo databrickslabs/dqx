@@ -58,7 +58,6 @@ import { useLabelDefinitions } from "@/lib/api-custom";
 import { usePermissions } from "@/hooks/use-permissions";
 import { formatDateShort } from "@/lib/format-utils";
 import { cn } from "@/lib/utils";
-import { RegistryRuleFormDialog } from "@/components/RegistryRuleFormDialog";
 import { ApprovalStepsBanner } from "@/components/ApprovalStepsBanner";
 import { Pagination } from "@/components/Pagination";
 import {
@@ -206,8 +205,6 @@ function RegistryRulesPage() {
     [],
   );
 
-  const [createOpen, setCreateOpen] = useState(false);
-
   const [pendingRuleId, setPendingRuleId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<RegistryRuleOut | null>(null);
 
@@ -303,7 +300,7 @@ function RegistryRulesPage() {
             <p className="text-sm text-muted-foreground mt-1">{t("rulesRegistry.description")}</p>
           </div>
           {perms.canCreateRules && (
-            <Button onClick={() => setCreateOpen(true)} className="gap-2">
+            <Button onClick={() => navigate({ to: "/registry-rules/new" })} className="gap-2">
               <Plus className="h-4 w-4" />
               {t("rulesRegistry.newRule")}
             </Button>
@@ -526,15 +523,6 @@ function RegistryRulesPage() {
           </CardContent>
         </Card>
       </div>
-
-      <RegistryRuleFormDialog
-        open={createOpen}
-        onOpenChange={setCreateOpen}
-        editingRule={null}
-        viewingRule={null}
-        labelDefinitions={labelDefinitions}
-        onSaved={invalidate}
-      />
 
       <AlertDialog open={deleteTarget !== null} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <AlertDialogContent>
