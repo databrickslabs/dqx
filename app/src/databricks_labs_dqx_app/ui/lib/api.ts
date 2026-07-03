@@ -131,10 +131,13 @@ export interface AiSettingsIn {
  * Effective AI Gateway + Vector Search settings.
 
 ``embedding_endpoint_name``/``vs_endpoint_name``/``vs_index_name``
-(Rules Registry Phase 4B/4C) are entirely optional: empty (the default)
-means the rule-mapping suggester reports ``available=False`` rather
-than attempting a call. No Vector Search infrastructure is required
-for any other app feature.
+(Rules Registry Phase 4B/4C) are auto-derived since Phase 8B — the
+admin UI no longer exposes them as separate inputs. They always
+resolve to a usable value (see ``AppSettingsService.EMBEDDING_ENDPOINT_NAME_DEFAULT``
+and ``_default_vs_endpoint_name``/``_default_vs_index_name``) so the
+rule-mapping suggester's vector store works from the AI enable
+toggle + serving endpoint alone. Still independently settable via
+this API for backwards compatibility/testing.
  */
 export interface AiSettingsOut {
   ai_enabled: boolean;
