@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate, useParams, useSearch } from "@tanstack/react-router";
-import { Suspense, useCallback, useMemo, useState } from "react";
+import { Suspense, useCallback, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { QueryErrorResetBoundary, useQueryClient } from "@tanstack/react-query";
 import { ErrorBoundary } from "react-error-boundary";
@@ -32,6 +32,7 @@ import {
 } from "@/lib/api";
 import { useLabelDefinitions } from "@/lib/api-custom";
 import { usePermissions } from "@/hooks/use-permissions";
+import { useUnsavedGuard } from "@/hooks/use-unsaved-guard";
 import {
   RegistryRuleFormDialog,
   type PageTab,
@@ -105,6 +106,10 @@ function RegistryRuleDetailPage() {
 
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [applyModalOpen, setApplyModalOpen] = useState(false);
+  const [isDirty, setIsDirty] = useState(false);
+  // Set right before a successful save navigates us away, so the guard
+  // doesn't fire a spurious "unsaved changes" prompt on our own redirect.
+  const justSavedRef = useRef(false);
 
   const invalidateDetail = useCallback(
     () => queryClient.invalidateQueries({ queryKey: getGetRegistryRuleQueryKey(ruleId) }),
@@ -115,6 +120,8 @@ function RegistryRuleDetailPage() {
     () => navigate({ to: "/registry-rules" }),
     [navigate],
   );
+
+  const { blocker } = useUnsavedGuard({ hasUnsavedChanges: isDirty, bypassRef: justSavedRef });
 
   const deleteMutation = useDeleteRegistryRule();
   const handleConfirmDelete = useCallback(() => {
@@ -213,9 +220,13 @@ function RegistryRuleDetailPage() {
           editingRule={canEdit ? rule : null}
           viewingRule={canEdit ? null : rule}
           labelDefinitions={labelDefinitions}
-          onSaved={invalidateDetail}
+          onSaved={() => {
+            justSavedRef.current = true;
+            invalidateDetail();
+          }}
           activeTab={tab as PageTab | undefined}
           onActiveTabChange={handleActiveTabChange}
+          onDirtyChange={setIsDirty}
         />
       </div>
 
@@ -243,6 +254,24 @@ function RegistryRuleDetailPage() {
               onClick={handleConfirmDelete}
             >
               {t("rulesRegistry.actionDelete")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={blocker.status === "blocked"}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("common.unsavedChanges")}</AlertDialogTitle>
+            <AlertDialogDescription>{t("rulesRegistry.unsavedChangesDescription")}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => blocker.reset?.()}>{t("common.stayOnPage")}</AlertDialogCancel>
+            <AlertDialogAction
+              className={cn("bg-destructive text-white hover:bg-destructive/90")}
+              onClick={() => blocker.proceed?.()}
+            >
+              {t("rulesRegistry.discardAndLeave")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

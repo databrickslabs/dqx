@@ -1583,6 +1583,8 @@
     "tagsLabel": "Tags (optional)",
     "saveDraft": "Save as draft",
     "saveAndSubmit": "Save & submit",
+    "unsavedChangesDescription": "You have unsaved rule changes. Leaving will discard your edits.",
+    "discardAndLeave": "Discard & leave",
     "nameRequired": "Name is required.",
     "functionRequired": "Select a check function.",
     "predicateRequired": "Enter a SQL predicate.",

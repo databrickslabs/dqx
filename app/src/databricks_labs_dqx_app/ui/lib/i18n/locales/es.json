@@ -1583,6 +1583,8 @@
     "tagsLabel": "Etiquetas (opcional)",
     "saveDraft": "Guardar como borrador",
     "saveAndSubmit": "Guardar y enviar",
+    "unsavedChangesDescription": "Tienes cambios sin guardar en la regla. Salir descartará tus ediciones.",
+    "discardAndLeave": "Descartar y salir",
     "nameRequired": "El nombre es obligatorio.",
     "functionRequired": "Selecciona una función de verificación.",
     "predicateRequired": "Ingresa un predicado SQL.",

@@ -1583,6 +1583,8 @@
     "tagsLabel": "Tag (opzionale)",
     "saveDraft": "Salva come bozza",
     "saveAndSubmit": "Salva e invia",
+    "unsavedChangesDescription": "Ci sono modifiche non salvate alla regola. Uscendo perderai le modifiche.",
+    "discardAndLeave": "Scarta ed esci",
     "nameRequired": "Il nome è obbligatorio.",
     "functionRequired": "Seleziona una funzione di controllo.",
     "predicateRequired": "Inserisci un predicato SQL.",

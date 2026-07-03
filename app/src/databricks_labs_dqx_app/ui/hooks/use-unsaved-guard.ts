@@ -29,8 +29,12 @@ export function useUnsavedGuard({ hasUnsavedChanges, isRunning = false, bypassRe
   }, [shouldBlock, bypassRef]);
 
   const blocker = useBlocker({
-    shouldBlockFn: () => {
+    shouldBlockFn: ({ current, next }) => {
       if (bypassRef?.current) return false;
+      // A same-route navigation (e.g. switching the routed detail page's
+      // horizontal tabs via `?tab=`) isn't "leaving" the editor — only
+      // block when the destination is a different route.
+      if (current?.routeId === next?.routeId) return false;
       return shouldBlock;
     },
     withResolver: true,

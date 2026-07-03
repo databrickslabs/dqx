@@ -1583,6 +1583,8 @@
     "tagsLabel": "Tags (opcional)",
     "saveDraft": "Salvar como rascunho",
     "saveAndSubmit": "Salvar e enviar",
+    "unsavedChangesDescription": "Você tem alterações não salvas na regra. Sair descartará suas edições.",
+    "discardAndLeave": "Descartar e sair",
     "nameRequired": "O nome é obrigatório.",
     "functionRequired": "Selecione uma função de verificação.",
     "predicateRequired": "Informe um predicado SQL.",
