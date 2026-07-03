@@ -1889,6 +1889,8 @@
       "confirmDescription_other": "Esto iniciará la supervisión de {{count}} tablas. ¿Continuar?",
       "confirmAction": "Continuar",
       "toastSummary": "{{registered}} registradas, {{skipped}} ya supervisadas, {{invalid}} inválidas.",
+      "toastAttachRulesHint": "Abra cada tabla supervisada para adjuntar reglas.",
+      "toastSingleRegistered": "Tabla registrada.",
       "untitledMonitor": "Nuevo monitor de tabla",
       "lockedTabHint": "Disponible después de guardar este monitor."
     },

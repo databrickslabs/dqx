@@ -1889,6 +1889,8 @@
       "confirmDescription_other": "Isso iniciará o monitoramento de {{count}} tabelas. Continuar?",
       "confirmAction": "Continuar",
       "toastSummary": "{{registered}} registrada(s), {{skipped}} já monitorada(s), {{invalid}} inválida(s).",
+      "toastAttachRulesHint": "Abra cada tabela monitorada para anexar regras.",
+      "toastSingleRegistered": "Tabela registrada.",
       "untitledMonitor": "Novo monitor de tabela",
       "lockedTabHint": "Disponível depois de salvar este monitor."
     },

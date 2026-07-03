@@ -1889,6 +1889,8 @@
       "confirmDescription_other": "This will start monitoring {{count}} tables. Continue?",
       "confirmAction": "Continue",
       "toastSummary": "{{registered}} registered, {{skipped}} already monitored, {{invalid}} invalid.",
+      "toastAttachRulesHint": "Open each monitored table to attach rules.",
+      "toastSingleRegistered": "Table registered.",
       "untitledMonitor": "New table monitor",
       "lockedTabHint": "Available after you save this monitor."
     },
