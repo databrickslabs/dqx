@@ -85,17 +85,20 @@ _VALID_POLARITIES = frozenset({"pass", "fail"})
 class AiRulesService:
     """Generates DQX rules using either the legacy ChatDatabricks leg or the AIGateway.
 
-    Two request families live here:
+    Two request families live here, both entirely OBO-authenticated:
 
     - **Legacy / contract leg** (:meth:`generate`, :meth:`generate_from_schema_info`):
-      unchanged ChatDatabricks-based generation used by the data-contract importer's
-      natural-language quality-expectation path, which needs the OBO WorkspaceClient for UC
-      schema lookups and predates the AIGateway. Left as-is — it's a synchronous call chain
-      consumed by :class:`~databricks_labs_dqx_app.backend.services.contract_rules_service.ContractRulesService`.
+      ChatDatabricks-based generation used by the data-contract importer's natural-language
+      quality-expectation path; predates the AIGateway. Uses the OBO WorkspaceClient for both
+      the UC schema lookup and the model call itself, so the LLM invocation runs as the
+      calling user, not the app's service principal. Left otherwise unchanged — it's a
+      synchronous call chain consumed by
+      :class:`~databricks_labs_dqx_app.backend.services.contract_rules_service.ContractRulesService`.
     - **AIGateway-backed purpose calls** (:meth:`generate_checks_via_gateway`,
-      :meth:`generate_rule`, :meth:`suggest_field`): route through :class:`AIGateway` for the
-      kill-switch, per-user rate limit, and audit log described in the Rules Registry design
-      spec §8. ``generate_checks_via_gateway`` is the reworked backing for the
+      :meth:`generate_rule`, :meth:`suggest_field`): route through :class:`AIGateway` (itself
+      OBO-authenticated — see ``services/ai_gateway.py``) for the kill-switch, per-user rate
+      limit, and audit log described in the Rules Registry design spec §8.
+      ``generate_checks_via_gateway`` is the reworked backing for the
       ``aiAssistedChecksGeneration`` route.
 
     The few-shot prompt and available-functions list are built once (ClassVar) and reused
@@ -105,10 +108,9 @@ class AiRulesService:
     _few_shot_messages: ClassVar[list[BaseMessage] | None] = None
     _available_functions: ClassVar[str | None] = None
 
-    def __init__(self, obo_ws: WorkspaceClient, sp_ws: WorkspaceClient, gateway: AIGateway) -> None:
-        self._obo_ws = obo_ws  # user identity — UC table access
-        self._sp_ws = sp_ws  # service principal — Foundation Model serving scope (legacy leg)
-        self._gateway = gateway  # AIGateway-backed purpose calls
+    def __init__(self, obo_ws: WorkspaceClient, gateway: AIGateway) -> None:
+        self._obo_ws = obo_ws  # user identity — UC table access + legacy ChatDatabricks leg
+        self._gateway = gateway  # AIGateway-backed purpose calls (also OBO under the hood)
 
     # ------------------------------------------------------------------
     # Class-level prompt construction (once per process)
@@ -205,7 +207,10 @@ class AiRulesService:
         and few-shot context as :meth:`generate` — DQX's own contract text-rule
         path needs ``dspy`` + a SparkSession, which the stateless app container
         doesn't have, so we route contract text rules through this LLM leg
-        instead and tag the results with ``rule_type: text_llm`` upstream.
+        instead and tag the results with ``rule_type: text_llm`` upstream. The
+        model call itself runs with the caller's OBO WorkspaceClient (never the
+        app's service principal), so it is subject to the calling user's own
+        UC permissions on the configured serving endpoint.
 
         Args:
             user_input: Natural language description of the quality expectation.
@@ -224,7 +229,7 @@ class AiRulesService:
         # expensive inference without truncating legitimate responses.
         llm = ChatDatabricks(
             endpoint=conf.llm_endpoint,
-            workspace_client=self._sp_ws,
+            workspace_client=self._obo_ws,
             max_tokens=conf.llm_max_tokens,
         )
         response = llm.invoke(messages)

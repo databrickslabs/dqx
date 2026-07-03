@@ -41,20 +41,20 @@ def _ws_with_response(content: str) -> MagicMock:
 
 class TestAvailability:
     async def test_disabled_raises_unavailable(self):
-        gateway = AIGateway(sp_ws=MagicMock(), app_settings=_settings(enabled=False))
+        gateway = AIGateway(user_ws=MagicMock(), app_settings=_settings(enabled=False))
 
         with pytest.raises(AIUnavailableError):
             await gateway.query(user_email="a@x", purpose="test", messages=[{"role": "user", "content": "hi"}])
 
     async def test_no_endpoint_raises_unavailable(self):
-        gateway = AIGateway(sp_ws=MagicMock(), app_settings=_settings(endpoint=""))
+        gateway = AIGateway(user_ws=MagicMock(), app_settings=_settings(endpoint=""))
 
         with pytest.raises(AIUnavailableError):
             await gateway.query(user_email="a@x", purpose="test", messages=[{"role": "user", "content": "hi"}])
 
     async def test_disabled_never_calls_the_serving_endpoint(self):
         ws = MagicMock()
-        gateway = AIGateway(sp_ws=ws, app_settings=_settings(enabled=False))
+        gateway = AIGateway(user_ws=ws, app_settings=_settings(enabled=False))
 
         with pytest.raises(AIUnavailableError):
             await gateway.query(user_email="a@x", purpose="test", messages=[{"role": "user", "content": "hi"}])
@@ -65,7 +65,7 @@ class TestAvailability:
 class TestRateLimit:
     async def test_exceeding_the_hourly_quota_raises(self):
         ws = _ws_with_response("hello")
-        gateway = AIGateway(sp_ws=ws, app_settings=_settings(rate_limit=2))
+        gateway = AIGateway(user_ws=ws, app_settings=_settings(rate_limit=2))
 
         await gateway.query(user_email="a@x", purpose="p", messages=[{"role": "user", "content": "1"}])
         await gateway.query(user_email="a@x", purpose="p", messages=[{"role": "user", "content": "2"}])
@@ -75,7 +75,7 @@ class TestRateLimit:
 
     async def test_rate_limit_is_per_user(self):
         ws = _ws_with_response("hello")
-        gateway = AIGateway(sp_ws=ws, app_settings=_settings(rate_limit=1))
+        gateway = AIGateway(user_ws=ws, app_settings=_settings(rate_limit=1))
 
         await gateway.query(user_email="a@x", purpose="p", messages=[{"role": "user", "content": "1"}])
         # A different user has their own independent quota.
@@ -86,7 +86,7 @@ class TestRateLimit:
 
     async def test_zero_rate_limit_means_unlimited(self):
         ws = _ws_with_response("hello")
-        gateway = AIGateway(sp_ws=ws, app_settings=_settings(rate_limit=0))
+        gateway = AIGateway(user_ws=ws, app_settings=_settings(rate_limit=0))
 
         for _ in range(5):
             await gateway.query(user_email="a@x", purpose="p", messages=[{"role": "user", "content": "x"}])
@@ -95,7 +95,7 @@ class TestRateLimit:
 class TestHappyPath:
     async def test_returns_message_content_and_calls_serving_endpoint(self):
         ws = _ws_with_response("the response content")
-        gateway = AIGateway(sp_ws=ws, app_settings=_settings(endpoint="rules-endpoint"))
+        gateway = AIGateway(user_ws=ws, app_settings=_settings(endpoint="rules-endpoint"))
 
         result = await gateway.query(
             user_email="steward@x",
@@ -113,7 +113,7 @@ class TestHappyPath:
     async def test_no_message_content_raises_parse_error(self):
         ws = create_autospec(WorkspaceClient, instance=True)
         ws.serving_endpoints.query.return_value = SimpleNamespace(choices=[])
-        gateway = AIGateway(sp_ws=ws, app_settings=_settings())
+        gateway = AIGateway(user_ws=ws, app_settings=_settings())
 
         with pytest.raises(AIResponseParseError):
             await gateway.query(user_email="a@x", purpose="p", messages=[{"role": "user", "content": "hi"}])

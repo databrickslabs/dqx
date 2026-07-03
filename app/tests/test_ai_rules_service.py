@@ -20,7 +20,7 @@ from databricks_labs_dqx_app.backend.services.ai_rules_service import AiRulesSer
 
 
 def _service(gateway: MagicMock) -> AiRulesService:
-    return AiRulesService(obo_ws=MagicMock(), sp_ws=MagicMock(), gateway=gateway)
+    return AiRulesService(obo_ws=MagicMock(), gateway=gateway)
 
 
 def _gateway_returning(*contents: str) -> MagicMock:

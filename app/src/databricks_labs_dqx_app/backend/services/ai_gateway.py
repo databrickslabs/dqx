@@ -17,6 +17,14 @@ Owns the *transport* and safety rails for every AI-assisted feature in the app:
   bare JSON object and raises a clean :class:`AIResponseParseError` instead of crashing the
   caller on malformed model output.
 
+**Authentication**: every model call is made with the caller's own On-Behalf-Of (OBO)
+``WorkspaceClient`` (see ``dependencies.get_ai_gateway``), never the app's service
+principal — AI generation is a user-facing, request-scoped action, so it should run with
+the same identity and UC permissions as the rest of that user's request. This is why the
+app bundle requests the ``serving.serving-endpoints`` OBO scope (see ``databricks.yml``);
+end users must be granted ``CAN_QUERY`` on the configured serving endpoint(s) for AI
+features to work for them (kill-switch + rate limiting still apply on top).
+
 Purpose-specific prompt construction and DQX-native validation/repair of generated rule
 JSON live in :class:`~databricks_labs_dqx_app.backend.services.ai_rules_service.AiRulesService`,
 which depends on this gateway for the actual model call — this class has no opinion on
@@ -84,8 +92,10 @@ class AIGateway:
     phase.
     """
 
-    def __init__(self, sp_ws: WorkspaceClient, app_settings: AppSettingsService) -> None:
-        self._sp_ws = sp_ws
+    def __init__(self, user_ws: WorkspaceClient, app_settings: AppSettingsService) -> None:
+        # OBO WorkspaceClient — every model call runs as the calling user, not the
+        # app's service principal (see the module docstring's Authentication note).
+        self._user_ws = user_ws
         self._app_settings = app_settings
         # user_email -> monotonic call timestamps within the current rolling window.
         self._call_log: dict[str, deque[float]] = defaultdict(deque)
@@ -182,7 +192,7 @@ class AIGateway:
         if temperature is not None:
             query_kwargs["temperature"] = temperature
 
-        response = await asyncio.to_thread(self._sp_ws.serving_endpoints.query, **query_kwargs)
+        response = await asyncio.to_thread(self._user_ws.serving_endpoints.query, **query_kwargs)
         content = self._extract_content(response)
         self._audit(user_email=user_email, endpoint=endpoint, purpose=purpose, output_size=len(content))
         return content

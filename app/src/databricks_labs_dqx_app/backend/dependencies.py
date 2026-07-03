@@ -230,31 +230,32 @@ async def get_role_service(
 
 
 async def get_ai_gateway(
-    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
     app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
 ) -> AIGateway:
-    """Create an AIGateway using the app's service-principal credentials.
+    """Create an AIGateway using the caller's OBO credentials.
 
-    The service principal has the Foundation Model serving scope that OBO tokens lack, so
-    every AIGateway call (kill-switch, rate limit, audit — see services/ai_gateway.py) runs
-    as the SP, gated by role checks (``require_role``) at the route layer instead of by UC
-    permissions on the serving endpoint itself.
+    Every AIGateway call (kill-switch, rate limit, audit — see services/ai_gateway.py) runs
+    as the calling user via their OBO token, so the serving-endpoint call is subject to the
+    user's own UC permissions on the endpoint, not the app's service principal's. Role checks
+    (``require_role``) at the route layer remain the app-level gate on top of that; the SP
+    itself no longer needs (and should not be granted) query access to AI serving endpoints.
     """
-    return AIGateway(sp_ws=sp_ws, app_settings=app_settings)
+    return AIGateway(user_ws=obo_ws, app_settings=app_settings)
 
 
 async def get_ai_rules_service(
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
-    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
     gateway: Annotated[AIGateway, Depends(get_ai_gateway)],
 ) -> AiRulesService:
-    """Create an AiRulesService with split authentication.
+    """Create an AiRulesService, entirely OBO-authenticated.
 
-    Schema lookups use the OBO client (user's UC permissions). The legacy ChatDatabricks leg
-    (contract importer) uses the SP client directly; the new AIGateway-backed purpose calls
-    (generate_rule/suggest_field/generate_checks_via_gateway) go through the injected gateway.
+    Schema lookups and both LLM legs (the legacy ChatDatabricks path used by the contract
+    importer, and the AIGateway-backed purpose calls — generate_rule/suggest_field/
+    generate_checks_via_gateway) run as the calling user, so every model invocation and UC
+    read triggered by an AI-assisted request is subject to that user's own permissions.
     """
-    return AiRulesService(obo_ws=obo_ws, sp_ws=sp_ws, gateway=gateway)
+    return AiRulesService(obo_ws=obo_ws, gateway=gateway)
 
 
 async def get_contract_rules_service(
