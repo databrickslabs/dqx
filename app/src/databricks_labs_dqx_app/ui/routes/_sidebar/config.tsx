@@ -55,8 +55,17 @@ import {
   useGetAiSettings,
   useSaveAiSettings,
   getGetAiSettingsQueryKey,
+  useListServingEndpoints,
   type AiSettingsIn,
 } from "@/lib/api";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import type { AxiosError } from "axios";
 import { toast } from "sonner";
 import { useCurrentUserRoleSuspense } from "@/hooks/use-suspense-queries";
@@ -1657,6 +1666,71 @@ function RunReviewStatusesSettings() {
 // hooks/use-ai-availability.ts).
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Sentinel for "no endpoint selected" — Radix Select rejects an empty-string
+// item value, so the embedding-endpoint dropdown (which is optional) maps
+// this sentinel to/from "" at the component boundary.
+const NO_ENDPOINT_VALUE = "__none__";
+
+/**
+ * Serving-endpoint dropdown shared by the AI + embedding endpoint fields.
+ * Always includes the currently-configured value as an option even if it's
+ * missing from the fetched workspace list (e.g. typed before this dropdown
+ * existed, or the endpoint was since deleted) so saving doesn't silently
+ * blank out an existing setting.
+ */
+function ServingEndpointSelect({
+  value,
+  onChange,
+  endpoints,
+  disabled,
+  allowNone,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  endpoints: string[];
+  disabled?: boolean;
+  allowNone?: boolean;
+}) {
+  const { t } = useTranslation();
+  const options = useMemo(() => {
+    const set = new Set(endpoints);
+    if (value) set.add(value);
+    return Array.from(set).sort();
+  }, [endpoints, value]);
+
+  const selectValue = value || NO_ENDPOINT_VALUE;
+
+  return (
+    <Select
+      value={selectValue}
+      onValueChange={(v) => onChange(v === NO_ENDPOINT_VALUE ? "" : v)}
+      disabled={disabled}
+    >
+      <SelectTrigger className="h-8 text-xs font-mono w-full">
+        <SelectValue placeholder={t("config.aiSettingsSelectEndpointPlaceholder")} />
+      </SelectTrigger>
+      <SelectContent>
+        {allowNone && (
+          <SelectItem value={NO_ENDPOINT_VALUE} className="text-xs">
+            {t("config.aiSettingsNoEndpointOption")}
+          </SelectItem>
+        )}
+        {options.length === 0 && (
+          <SelectLabel className="font-normal">{t("config.aiSettingsNoEndpointsFound")}</SelectLabel>
+        )}
+        {options.map((name) => {
+          const isCustom = !endpoints.includes(name);
+          return (
+            <SelectItem key={name} value={name} className="text-xs font-mono">
+              {isCustom ? t("config.aiSettingsCustomEndpointOption", { value: name }) : name}
+            </SelectItem>
+          );
+        })}
+      </SelectContent>
+    </Select>
+  );
+}
+
 function AiSettingsCard() {
   const { t } = useTranslation();
   const { data: settingsResp, isLoading } = useGetAiSettings();
@@ -1665,6 +1739,8 @@ function AiSettingsCard() {
   const saveMutation = useSaveAiSettings();
   const { data: role } = useCurrentUserRoleSuspense();
   const isAdmin = role?.data?.role === "admin";
+  const { data: servingEndpointsResp } = useListServingEndpoints();
+  const servingEndpoints = useMemo(() => servingEndpointsResp?.data.names ?? [], [servingEndpointsResp]);
 
   const [aiEnabled, setAiEnabled] = useState(false);
   const [aiEndpoint, setAiEndpoint] = useState("");
@@ -1767,13 +1843,11 @@ function AiSettingsCard() {
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1">
             <Label className="text-[11px] text-muted-foreground">{t("config.aiSettingsEndpointLabel")}</Label>
-            <Input
+            <ServingEndpointSelect
               value={aiEndpoint}
-              onChange={(e) => setAiEndpoint(e.target.value)}
-              placeholder={t("config.aiSettingsEndpointPlaceholder")}
+              onChange={setAiEndpoint}
+              endpoints={servingEndpoints}
               disabled={!isAdmin || saveMutation.isPending}
-              className="h-8 text-xs font-mono"
-              autoComplete="off"
             />
           </div>
           <div className="space-y-1">
@@ -1803,12 +1877,12 @@ function AiSettingsCard() {
           <div className="grid gap-3 sm:grid-cols-3">
             <div className="space-y-1">
               <Label className="text-[11px] text-muted-foreground">{t("config.aiSettingsEmbeddingEndpointLabel")}</Label>
-              <Input
+              <ServingEndpointSelect
                 value={embeddingEndpoint}
-                onChange={(e) => setEmbeddingEndpoint(e.target.value)}
+                onChange={setEmbeddingEndpoint}
+                endpoints={servingEndpoints}
                 disabled={!isAdmin || saveMutation.isPending}
-                className="h-8 text-xs font-mono"
-                autoComplete="off"
+                allowNone
               />
             </div>
             <div className="space-y-1">

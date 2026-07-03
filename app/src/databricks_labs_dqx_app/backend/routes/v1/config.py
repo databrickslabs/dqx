@@ -5,7 +5,7 @@ import re
 from typing import Annotated
 
 from databricks.sdk import WorkspaceClient
-from databricks.sdk.errors import DatabricksError
+from databricks.sdk.errors.base import DatabricksError
 from fastapi import APIRouter, Depends, HTTPException
 
 from databricks_labs_dqx_app.backend.common.authorization import UserRole, get_user_email
