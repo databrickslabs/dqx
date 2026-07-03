@@ -232,10 +232,6 @@ function SeverityDropdown({
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
-        <DropdownMenuItem onClick={() => onSeverityChange("none")} className="gap-2 py-1.5">
-          {!severity ? <Check className="h-3.5 w-3.5" /> : <span className="inline-block w-3.5" />}
-          <span>{t("monitoredTables.severityOverrideNone")}</span>
-        </DropdownMenuItem>
         {severityValues.map((v) => (
           <DropdownMenuItem key={v} onClick={() => onSeverityChange(v)} className="gap-2 py-1.5">
             {severity === v ? <Check className="h-3.5 w-3.5" /> : <span className="inline-block w-3.5" />}
