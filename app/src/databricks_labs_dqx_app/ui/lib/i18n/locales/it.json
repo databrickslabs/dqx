@@ -1573,7 +1573,7 @@
     "namePlaceholder": "es. L'importo dell'ordine è positivo",
     "stewardLabel": "Responsabile",
     "descriptionLabel": "Descrizione",
-    "descriptionPlaceholder": "Cosa verifica questa regola e perché è importante?",
+    "descriptionPlaceholder": "Cosa verifica questa regola e perché.",
     "dimensionLabel": "Dimensione",
     "dimensionTooltip": "La dimensione di qualità dei dati che questa regola protegge — es. completezza, accuratezza o coerenza.",
     "selectDimension": "Seleziona una dimensione…",

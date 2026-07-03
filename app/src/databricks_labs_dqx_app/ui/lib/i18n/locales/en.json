@@ -1573,7 +1573,7 @@
     "namePlaceholder": "e.g. Order amount is positive",
     "stewardLabel": "Steward",
     "descriptionLabel": "Description",
-    "descriptionPlaceholder": "What does this rule check, and why does it matter?",
+    "descriptionPlaceholder": "What this rule checks and why.",
     "dimensionLabel": "Dimension",
     "dimensionTooltip": "The data quality dimension this rule protects — e.g. completeness, accuracy, or consistency.",
     "selectDimension": "Select a dimension…",

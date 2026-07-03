@@ -1573,7 +1573,7 @@
     "namePlaceholder": "ex.: Valor do pedido é positivo",
     "stewardLabel": "Responsável",
     "descriptionLabel": "Descrição",
-    "descriptionPlaceholder": "O que esta regra verifica e por que ela importa?",
+    "descriptionPlaceholder": "O que esta regra verifica e por quê.",
     "dimensionLabel": "Dimensão",
     "dimensionTooltip": "A dimensão de qualidade de dados que esta regra protege — ex.: completude, exatidão ou consistência.",
     "selectDimension": "Selecione uma dimensão…",
