@@ -85,7 +85,11 @@ function RuleLogicBody({ registryRule }: { registryRule: RegistryRuleOut }) {
   );
 }
 
-function RuleLogicDisclosure({
+// Exported so the AddRulesDialog map step can render the exact same
+// disclosure (name, chevron, read-only rule body) for a not-yet-applied
+// rule, instead of re-implementing its own "view rule logic" affordance —
+// see AddRulesDialog.tsx's mapping step.
+export function RuleLogicDisclosure({
   open,
   onToggle,
   registryRule,

@@ -30,8 +30,8 @@ import {
 } from "@/lib/api";
 import type { LabelDefinition } from "@/lib/api-custom";
 import { RegistryRuleFormDialog } from "@/components/RegistryRuleFormDialog";
-import { HelpTooltip } from "@/components/HelpTooltip";
-import { columnsForSlot, MultiColumnPicker, SingleColumnPicker } from "./ColumnPicker";
+import { columnsForSlot } from "./ColumnPicker";
+import { RuleMappingCard } from "./RuleMappingCard";
 import type { ColumnRef } from "./RulesByColumn";
 import { RESERVED_DIMENSION_KEY, RESERVED_NAME_KEY, RESERVED_SEVERITY_KEY, TagBadge, colorFor, extractApiError, getTag } from "./shared";
 
@@ -243,46 +243,21 @@ export function AddRulesDialog({
             </div>
           ) : (
             <div className="space-y-3">
-              <div className="flex items-center gap-1.5">
-                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  {t("monitoredTables.stepMapColumns")}
-                </p>
-                <HelpTooltip text={t("monitoredTables.mapColumnsTooltip")} />
-              </div>
-              <p className="text-sm font-medium">{getTag(selectedRule, RESERVED_NAME_KEY) || selectedRule.rule_id}</p>
-              <div className="space-y-3">
-                {slots.map((slot) => {
-                  if (slot.cardinality === "many") {
-                    const selected = (mapping[slot.name] as string[] | undefined) ?? [];
-                    return (
-                      <div key={slot.name} className="space-y-1.5">
-                        <p className="text-sm font-medium">
-                          {t("monitoredTables.slotColumnsLabel", { slot: slot.name })}
-                        </p>
-                        <MultiColumnPicker
-                          slot={slot}
-                          columns={columns}
-                          value={selected}
-                          onChange={(next) => setMapping((m) => ({ ...m, [slot.name]: next }))}
-                        />
-                      </div>
-                    );
-                  }
-                  return (
-                    <div key={slot.name} className="space-y-1.5">
-                      <p className="text-sm font-medium">
-                        {t("monitoredTables.slotColumnLabel", { slot: slot.name })}
-                      </p>
-                      <SingleColumnPicker
-                        slot={slot}
-                        columns={columns}
-                        value={mapping[slot.name] as string | undefined}
-                        onChange={(v) => setMapping((m) => ({ ...m, [slot.name]: v }))}
-                      />
-                    </div>
-                  );
-                })}
-              </div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                {t("monitoredTables.stepMapColumns")}
+              </p>
+              {/* Same card used by the by-rule lens's applied-rule list
+                  (RuleConfigCard), with live column pickers standing in for
+                  MappingChips since the rule isn't applied yet — keeps the
+                  pick->map flow visually consistent with the main Apply
+                  Rules page instead of a bespoke form. */}
+              <RuleMappingCard
+                rule={selectedRule}
+                columns={columns}
+                mapping={mapping}
+                onChange={(slotName, value) => setMapping((m) => ({ ...m, [slotName]: value }))}
+                labelDefinitions={labelDefinitions}
+              />
               {!mappingComplete && (
                 <p className="text-xs text-amber-600">{t("monitoredTables.mappingIncomplete")}</p>
               )}
