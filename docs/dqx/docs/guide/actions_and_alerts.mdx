@@ -349,6 +349,10 @@ DQAction(
 
 `SlackDQAlertDestination` posts a Block Kit message to a Slack incoming webhook. Delivery is restricted to `hooks.slack.com`.
 
+<Admonition type="note" title="Use a Slack App webhook">
+Create the webhook via a **Slack App** (add the *Incoming Webhooks* feature to an app in your workspace) rather than the older *legacy custom integration*, which Slack has deprecated. Both produce a `hooks.slack.com/services/…` URL that works with DQX; the app-based one is the supported, future-proof path. The URL carries its own token, so no additional authentication is required.
+</Admonition>
+
 <Tabs>
   <TabItem value="Python" label="Python (classes)" default>
 
@@ -388,7 +392,13 @@ alert = DQAlert(
 
 ### Microsoft Teams
 
-`TeamsDQAlertDestination` posts a MessageCard to a Teams incoming webhook. Delivery is restricted to `webhook.office.com` and `office.com`.
+`TeamsDQAlertDestination` posts a MessageCard to a Microsoft Teams channel via a **Power Automate Workflows** webhook. Delivery is restricted to the Workflows webhook hosts `logic.azure.com` and `environment.api.powerplatform.com`.
+
+<Admonition type="note" title="Use a Workflows webhook — Office 365 Connectors are retired">
+Microsoft **retired the legacy Office 365 Connector incoming webhooks** (`webhook.office.com`) in May 2026. Create a **Workflows** webhook instead: in Teams, use the *Workflows* app → template **"Post to a channel when a webhook request is received"**, and use the generated URL as `webhook_url`. Workflows renders the MessageCard text and facts, but **not interactive buttons**.
+
+Anonymous Workflows URLs on `logic.azure.com` carry their authorization in the URL (a signature query parameter), so DQX can POST to them directly. Newer `environment.api.powerplatform.com` endpoints may require an Entra bearer token, which this destination does not send — those are not currently supported.
+</Admonition>
 
 <Tabs>
   <TabItem value="Python" label="Python (classes)" default>
@@ -400,7 +410,7 @@ alert = DQAlert(
     destinations=[
         TeamsDQAlertDestination(
             name="teams-dq-channel",
-            webhook_url="https://webhook.office.com/webhookb2/…",
+            webhook_url="https://prod-00.westus.logic.azure.com:443/workflows/…/triggers/manual/paths/invoke?sig=…",
         )
     ]
 )
@@ -415,7 +425,7 @@ alert = DQAlert(
     destinations:
       - type: teams
         name: teams-dq-channel
-        webhook_url: https://webhook.office.com/webhookb2/…
+        webhook_url: https://prod-00.westus.logic.azure.com:443/workflows/…/triggers/manual/paths/invoke?sig=…
 ```
 
   </TabItem>

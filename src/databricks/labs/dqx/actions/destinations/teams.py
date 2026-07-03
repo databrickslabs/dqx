@@ -1,8 +1,15 @@
-"""Microsoft Teams MessageCard alert destination.
+"""Microsoft Teams alert destination (Power Automate Workflows webhook).
 
-Delivers DQX alert messages to Microsoft Teams incoming webhook URLs using
-the legacy MessageCard format.  Hosts are restricted to *webhook.office.com*
-and *office.com* suffixes.
+Delivers DQX alert messages to a Microsoft Teams channel via a Power Automate
+*Workflows* webhook ("Post to a channel when a webhook request is received"),
+using the MessageCard payload format.
+
+Microsoft retired the legacy Office 365 Connector incoming webhooks
+(*webhook.office.com*) in May 2026; the Workflows webhook is the supported
+replacement. Workflows still accepts MessageCard payloads — text and facts
+render — but interactive elements such as buttons do not. Hosts are restricted
+to the Workflows webhook domains *logic.azure.com* and
+*environment.api.powerplatform.com*.
 """
 
 from typing import ClassVar, Literal
@@ -12,24 +19,37 @@ from databricks.labs.dqx.actions.message import AlertMessage
 
 
 class TeamsDQAlertDestination(WebhookAlertDestination):
-    """Microsoft Teams incoming-webhook destination using MessageCard format.
+    """Microsoft Teams destination using a Power Automate Workflows webhook.
 
-    Posts a Teams MessageCard to a Teams incoming webhook URL.  The card
-    includes an activity title with the alert title, and a facts section
-    derived from *message.fields*.
+    Posts a Teams MessageCard to a Workflows webhook URL created via the
+    Workflows app in Teams ("Post to a channel when a webhook request is
+    received"). The card includes an activity title with the alert title and a
+    facts section derived from *message.fields*.
+
+    The legacy Office 365 Connector webhooks (*webhook.office.com*) were retired
+    by Microsoft in May 2026 and are no longer supported; create a Workflows
+    webhook instead. Workflows renders the MessageCard text and facts but not
+    interactive buttons.
+
+    Note:
+        Workflows webhook URLs on *logic.azure.com* carry their authorization in
+        the URL (a signature query parameter), so an anonymous POST works. Newer
+        *environment.api.powerplatform.com* endpoints may require an Entra bearer
+        token, which this destination does not send, so such endpoints are not
+        currently supported.
 
     Class attributes:
-        allowed_host_suffixes: Restricts delivery to *webhook.office.com*
-            and *office.com* hosts.
+        allowed_host_suffixes: Restricts delivery to the Workflows webhook hosts
+            *logic.azure.com* and *environment.api.powerplatform.com*.
 
     Attributes:
         type: Discriminator literal, always *"teams"*.
         name: Logical name for this destination instance.
-        webhook_url: The Teams incoming webhook URL (plain string or *DQSecret*).
+        webhook_url: The Teams Workflows webhook URL (plain string or *DQSecret*).
     """
 
     type: Literal["teams"] = "teams"
-    allowed_host_suffixes: ClassVar[list[str] | None] = ["webhook.office.com", "office.com"]
+    allowed_host_suffixes: ClassVar[list[str] | None] = ["logic.azure.com", "environment.api.powerplatform.com"]
 
     def _build_payload(self, message: AlertMessage) -> dict[str, object]:
         """Build a Teams MessageCard payload from *message*.

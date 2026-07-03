@@ -18,6 +18,12 @@ class SlackDQAlertDestination(WebhookAlertDestination):
     The payload includes sections for the alert title, summary, condition,
     table, run metadata, severity, and all observed metrics.
 
+    Note:
+        Create the webhook via a Slack App (the *Incoming Webhooks* feature) rather than the
+        deprecated legacy custom integration. Both yield a *hooks.slack.com* URL that works here;
+        the app-based one is the supported path. The URL carries its own token, so no additional
+        authentication is sent.
+
     Class attributes:
         allowed_host_suffixes: Restricts delivery to *hooks.slack.com*.
 

@@ -133,7 +133,7 @@ class TestTeamsRoundTrip:
     def test_round_trip(self) -> None:
         dest = TeamsDQAlertDestination(
             name="teams-dest",
-            webhook_url="https://webhook.office.com/some/path",
+            webhook_url="https://prod-00.westus.logic.azure.com/workflows/abc/triggers/manual/paths/invoke?sig=xyz",
         )
         alert = DQAlert(destinations=[dest], name="teams-alert")
         action = DQAction(action=alert)
@@ -148,7 +148,10 @@ class TestTeamsRoundTrip:
         if isinstance(restored.action, DQAlert):
             dest_restored = restored.action.destinations[0]
             assert isinstance(dest_restored, TeamsDQAlertDestination)
-            assert dest_restored.webhook_url == "https://webhook.office.com/some/path"
+            assert (
+                dest_restored.webhook_url
+                == "https://prod-00.westus.logic.azure.com/workflows/abc/triggers/manual/paths/invoke?sig=xyz"
+            )
 
 
 # ---------------------------------------------------------------------------

@@ -220,10 +220,16 @@ def test_teams_delivers_to_resolved_url():
     services = _make_services(webhook_client=client)
     context = ActionContext(metrics={}, run_id="r1", run_time=datetime.now(timezone.utc))
 
-    dest = TeamsDQAlertDestination(name="teams_test", webhook_url="https://my.webhook.office.com/webhookb2/x")
+    dest = TeamsDQAlertDestination(
+        name="teams_test",
+        webhook_url="https://prod-00.westus.logic.azure.com/workflows/abc/triggers/manual/paths/invoke?sig=xyz",
+    )
     dest.deliver(_make_message(), context, services)
 
-    assert client.calls[0].url == "https://my.webhook.office.com/webhookb2/x"
+    assert (
+        client.calls[0].url
+        == "https://prod-00.westus.logic.azure.com/workflows/abc/triggers/manual/paths/invoke?sig=xyz"
+    )
 
 
 def test_teams_allowed_host_suffixes():
@@ -231,13 +237,16 @@ def test_teams_allowed_host_suffixes():
     services = _make_services(webhook_client=client)
     context = ActionContext(metrics={}, run_id="r1", run_time=datetime.now(timezone.utc))
 
-    dest = TeamsDQAlertDestination(name="teams_test", webhook_url="https://my.webhook.office.com/webhookb2/x")
+    dest = TeamsDQAlertDestination(
+        name="teams_test",
+        webhook_url="https://prod-00.westus.logic.azure.com/workflows/abc/triggers/manual/paths/invoke?sig=xyz",
+    )
     dest.deliver(_make_message(), context, services)
 
     suffixes = client.calls[0].allowed_host_suffixes
     assert suffixes is not None
-    assert "webhook.office.com" in suffixes
-    assert "office.com" in suffixes
+    assert "logic.azure.com" in suffixes
+    assert "environment.api.powerplatform.com" in suffixes
 
 
 def test_teams_payload_has_message_card_type():
@@ -245,7 +254,10 @@ def test_teams_payload_has_message_card_type():
     services = _make_services(webhook_client=client)
     context = ActionContext(metrics={}, run_id="r1", run_time=datetime.now(timezone.utc))
 
-    dest = TeamsDQAlertDestination(name="teams_test", webhook_url="https://my.webhook.office.com/webhookb2/x")
+    dest = TeamsDQAlertDestination(
+        name="teams_test",
+        webhook_url="https://prod-00.westus.logic.azure.com/workflows/abc/triggers/manual/paths/invoke?sig=xyz",
+    )
     dest.deliver(_make_message(), context, services)
 
     payload = client.calls[0].payload
@@ -257,7 +269,10 @@ def test_teams_payload_has_sections():
     services = _make_services(webhook_client=client)
     context = ActionContext(metrics={}, run_id="r1", run_time=datetime.now(timezone.utc))
 
-    dest = TeamsDQAlertDestination(name="teams_test", webhook_url="https://my.webhook.office.com/webhookb2/x")
+    dest = TeamsDQAlertDestination(
+        name="teams_test",
+        webhook_url="https://prod-00.westus.logic.azure.com/workflows/abc/triggers/manual/paths/invoke?sig=xyz",
+    )
     dest.deliver(_make_message(), context, services)
 
     payload = client.calls[0].payload
@@ -270,7 +285,10 @@ def test_teams_payload_context_field():
     services = _make_services(webhook_client=client)
     context = ActionContext(metrics={}, run_id="r1", run_time=datetime.now(timezone.utc))
 
-    dest = TeamsDQAlertDestination(name="teams_test", webhook_url="https://my.webhook.office.com/webhookb2/x")
+    dest = TeamsDQAlertDestination(
+        name="teams_test",
+        webhook_url="https://prod-00.westus.logic.azure.com/workflows/abc/triggers/manual/paths/invoke?sig=xyz",
+    )
     dest.deliver(_make_message(), context, services)
 
     payload = client.calls[0].payload
@@ -278,7 +296,10 @@ def test_teams_payload_context_field():
 
 
 def test_teams_type_discriminator():
-    dest = TeamsDQAlertDestination(name="teams_test", webhook_url="https://my.webhook.office.com/webhookb2/x")
+    dest = TeamsDQAlertDestination(
+        name="teams_test",
+        webhook_url="https://prod-00.westus.logic.azure.com/workflows/abc/triggers/manual/paths/invoke?sig=xyz",
+    )
     assert dest.type == "teams"
 
 
@@ -479,7 +500,10 @@ def test_slack_validate_raises_for_empty_url():
 
 def test_teams_validate_raises_for_empty_name():
     with pytest.raises(InvalidActionError):
-        TeamsDQAlertDestination(name="", webhook_url="https://my.webhook.office.com/hook")
+        TeamsDQAlertDestination(
+            name="",
+            webhook_url="https://prod-00.westus.logic.azure.com/workflows/abc/triggers/manual/paths/invoke?sig=xyz",
+        )
 
 
 def test_teams_validate_raises_for_empty_url():
@@ -514,7 +538,10 @@ def test_slack_validate_passes_for_valid_destination():
 
 def test_teams_validate_passes_for_valid_destination():
     """Valid Teams destination with non-empty name and URL must construct."""
-    dest = TeamsDQAlertDestination(name="teams_ok", webhook_url="https://my.webhook.office.com/webhookb2/x")
+    dest = TeamsDQAlertDestination(
+        name="teams_ok",
+        webhook_url="https://prod-00.westus.logic.azure.com/workflows/abc/triggers/manual/paths/invoke?sig=xyz",
+    )
     assert dest.name == "teams_ok"
 
 
@@ -529,7 +556,10 @@ def test_teams_payload_section_activity_title_matches_message_title():
     context = ActionContext(metrics={}, run_id="r1", run_time=datetime.now(timezone.utc))
     msg = _make_message(title="My Alert Title")
 
-    dest = TeamsDQAlertDestination(name="teams_test", webhook_url="https://my.webhook.office.com/webhookb2/x")
+    dest = TeamsDQAlertDestination(
+        name="teams_test",
+        webhook_url="https://prod-00.westus.logic.azure.com/workflows/abc/triggers/manual/paths/invoke?sig=xyz",
+    )
     dest.deliver(msg, context, services)
 
     payload = client.calls[0].payload
@@ -547,7 +577,10 @@ def test_teams_payload_section_facts_derived_from_message_fields():
     context = ActionContext(metrics={}, run_id="r1", run_time=datetime.now(timezone.utc))
     msg = _make_message(fields={"condition": "error_row_count > 0", "run_id": "run-xyz"})
 
-    dest = TeamsDQAlertDestination(name="teams_test", webhook_url="https://my.webhook.office.com/webhookb2/x")
+    dest = TeamsDQAlertDestination(
+        name="teams_test",
+        webhook_url="https://prod-00.westus.logic.azure.com/workflows/abc/triggers/manual/paths/invoke?sig=xyz",
+    )
     dest.deliver(msg, context, services)
 
     payload = client.calls[0].payload
