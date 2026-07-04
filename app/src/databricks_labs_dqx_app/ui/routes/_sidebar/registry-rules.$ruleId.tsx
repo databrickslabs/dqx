@@ -24,11 +24,13 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { AlertCircle, MoreVertical, RotateCcw, Table2, Trash2 } from "lucide-react";
+import { AlertCircle, MoreVertical, Pencil, RotateCcw, Table2, Trash2 } from "lucide-react";
 import {
   useGetRegistryRuleSuspense,
   getGetRegistryRuleQueryKey,
   useDeleteRegistryRule,
+  useCreateRegistryRule,
+  type CreateRegistryRuleIn,
 } from "@/lib/api";
 import { useLabelDefinitions } from "@/lib/api-custom";
 import { usePermissions } from "@/hooks/use-permissions";
@@ -151,10 +153,16 @@ function RegistryRuleDetailPage() {
     [navigate, ruleId],
   );
 
-  // Only drafts are editable in place — every other status (pending
-  // approval, approved, rejected, deprecated) is opened read-only, matching
-  // the old modal's edit-vs-view split.
+  // Only drafts are editable in place — the backend's update_draft rejects
+  // any other status (pending approval, approved, rejected, deprecated)
+  // because an approved rule's published snapshot must stay immutable (see
+  // RegistryService.approve's frozen dq_rule_versions row). For every other
+  // status we instead offer "Edit as new draft" below, which clones the
+  // rule into a fresh draft the user can freely edit and submit — mirroring
+  // dqlake's "editing a published rule creates a new version" behavior
+  // without touching the frozen original.
   const canEdit = rule.status === "draft" && perms.canCreateRules;
+  const canEditAsNewDraft = rule.status !== "draft" && perms.canCreateRules;
   const name = getTag(rule, RESERVED_NAME_KEY) || rule.rule_id;
 
   // The backend deleteRegistryRule route allows admin/approver/author
@@ -168,6 +176,34 @@ function RegistryRuleDetailPage() {
   const canApply = perms.canCreateRules && rule.status === "approved";
   const showActionsMenu = canDelete || canApply;
 
+  const createMutation = useCreateRegistryRule();
+  const handleEditAsNewDraft = useCallback(() => {
+    const payload: CreateRegistryRuleIn = {
+      mode: rule.mode,
+      definition: rule.definition,
+      polarity: rule.polarity ?? null,
+      user_metadata: rule.user_metadata ?? {},
+      steward: rule.steward ?? null,
+      author_kind: rule.author_kind ?? "human",
+    };
+    createMutation.mutate(
+      { data: payload },
+      {
+        onSuccess: (resp) => {
+          toast.success(t("rulesRegistry.toastDraftCopyCreated"));
+          navigate({
+            to: "/registry-rules/$ruleId",
+            params: { ruleId: resp.data.rule.rule_id },
+            search: { tab: "about" },
+          });
+        },
+        onError: (err) => {
+          toast.error(extractApiError(err, t("rulesRegistry.saveFailed")), { duration: 6000 });
+        },
+      },
+    );
+  }, [createMutation, rule, navigate, t]);
+
   return (
     <FadeIn>
       <div className="space-y-6">
@@ -178,13 +214,26 @@ function RegistryRuleDetailPage() {
           <StatusBadge status={rule.status} />
           <ModeBadge mode={rule.mode} />
           <AuthorKindBadge authorKind={rule.author_kind ?? undefined} />
+          {canEditAsNewDraft && (
+            <Button
+              variant="outline"
+              size="sm"
+              className={cn("gap-2 h-8", !showActionsMenu && "ml-auto")}
+              onClick={handleEditAsNewDraft}
+              disabled={createMutation.isPending}
+              title={t("rulesRegistry.editAsNewDraftTooltip")}
+            >
+              <Pencil className="h-3.5 w-3.5" />
+              {t("rulesRegistry.actionEditAsNewDraft")}
+            </Button>
+          )}
           {showActionsMenu && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="ml-auto h-8 w-8 p-0"
+                  className={cn("h-8 w-8 p-0", !canEditAsNewDraft && "ml-auto")}
                   aria-label={t("rulesRegistry.actionsMenuLabel")}
                 >
                   <MoreVertical className="h-4 w-4" />

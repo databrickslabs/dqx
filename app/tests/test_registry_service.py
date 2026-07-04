@@ -136,6 +136,39 @@ class TestCreateRule:
         # Creation still succeeds despite the warning.
         assert rule.status == "draft"
 
+    def test_clones_non_draft_rule_into_editable_draft(self, svc, sql):
+        """Regression test for the "can't edit an existing rule" bug: an
+        approved (or pending/rejected/deprecated) rule can't be edited
+        in-place via ``update_draft`` (see
+        ``TestUpdateDraft.test_rejects_editing_non_draft_rule``), so the
+        Studio UI's "Edit as new draft" action instead clones the rule's
+        mode/definition/user_metadata/steward/author_kind through
+        ``create_rule`` — exactly like authoring a brand-new rule. This
+        must always succeed (dedup warning aside) and produce an
+        independent, freshly-editable draft rather than mutating the
+        frozen original."""
+        approved_definition = _native_definition()
+        approved_metadata = {"name": "Is not null", "dimension": "Completeness", "severity": "Medium"}
+
+        clone, warning = svc.create_rule(
+            mode="dqx_native",
+            definition=approved_definition,
+            user_email="alice@x",
+            polarity=None,
+            author_kind="human",
+            user_metadata=approved_metadata,
+            steward="system",
+        )
+
+        # Creation always succeeds — a dedup warning may fire (the clone
+        # shares its fingerprint with the rule it was cloned from) but must
+        # never block it, and it must never touch the frozen original.
+        assert clone.status == "draft"
+        assert clone.version == 0
+        assert clone.definition == approved_definition
+        assert clone.user_metadata == approved_metadata
+        assert clone.steward == "system"
+
 
 # ---------------------------------------------------------------------------
 # update_draft
