@@ -258,25 +258,32 @@ def test_blank_query():
 def test_mixed_content():
     assert not is_sql_query_safe("WITH cte AS (UPDATE users SET x=1) SELECT * FROM cte")
 
+
 def test_select_blocked_when_forbid_select():
-    assert not is_sql_query_safe("id IN (SELECT id FROM users)", forbid_select=True)    
+    assert not is_sql_query_safe("id IN (SELECT id FROM users)", forbid_select=True)
+
 
 def test_select_allowed_by_default():
     assert is_sql_query_safe("SELECT id FROM users WHERE active = true")
 
+
 def test_select_blocked_case_insensitive_when_forbid_select():
     assert not is_sql_query_safe("id IN (sElEcT id FROM t)", forbid_select=True)
+
 
 def test_select_substring_safe_when_forbid_select():
     # word-boundary: identifiers that merely contain "select" must NOT be flagged
     assert is_sql_query_safe("select_flag = true AND selected_count > 0", forbid_select=True)
 
+
 def test_plain_predicate_safe_when_forbid_select():
-    assert is_sql_query_safe("country = 'US' AND amount > 100", forbid_select=True)   
+    assert is_sql_query_safe("country = 'US' AND amount > 100", forbid_select=True)
+
 
 def test_safe_filter_expr_raises_on_select():
     with pytest.raises(UnsafeSqlQueryError):
-        safe_filter_expr("id IN (SELECT id FROM users)")     
+        safe_filter_expr("id IN (SELECT id FROM users)")
+
 
 def test_safe_json_load_dict():
     value = '{"key": "value"}'

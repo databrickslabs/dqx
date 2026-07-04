@@ -241,6 +241,7 @@ def is_sql_query_safe(query: str, forbid_select: bool = False) -> bool:
         forbidden_statements = forbidden_statements + ["select"]
     return not any(re.search(rf"\b{kw}\b", normalized_query) for kw in forbidden_statements)
 
+
 def safe_filter_expr(filter_expr: str | None) -> Column:
     """Build a Spark column from a filter expression, rejecting unsafe SQL.
 
@@ -260,6 +261,7 @@ def safe_filter_expr(filter_expr: str | None) -> Column:
     if filter_expr and not is_sql_query_safe(filter_expr, forbid_select=True):
         raise UnsafeSqlQueryError(f"Unsafe filter expression: '{filter_expr}'")
     return F.expr(filter_expr) if filter_expr else F.lit(True)
+
 
 def safe_json_load(value: str):
     """

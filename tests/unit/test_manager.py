@@ -1,5 +1,5 @@
-import pytest
 from unittest.mock import create_autospec, PropertyMock
+import pytest
 
 from pyspark.errors import AnalysisException
 from pyspark.sql import DataFrame, SparkSession
@@ -99,7 +99,7 @@ def test_rule_manager_allows_safe_filter():
         suppress_skipped=False,
     )
     # accessing filter_condition compiles the filter; a safe one must not raise
-    assert manager.filter_condition is not None   
+    assert manager.filter_condition is not None
 
 
 def test_rule_manager_raises_on_unsafe_filter_for_dataset_check():
