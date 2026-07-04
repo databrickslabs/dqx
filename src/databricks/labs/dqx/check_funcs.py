@@ -431,6 +431,11 @@ def sql_expression(
 
     Args:
         expression: SQL expression. Fail if expression evaluates to False, pass if it evaluates to True.
+            Security note: this parameter accepts arbitrary SQL and is evaluated as-is, so it may
+            include subqueries and run with the permissions of the process executing the checks.
+            Only use check definitions from trusted sources, especially in automated or multi-tenant
+            pipelines. Unlike *filter* and *row_filter*, SELECT is not blocked here because subqueries
+            can be legitimate in an SQL expression.
         msg: optional message of the *Column* type, automatically generated if None
         name: optional name of the resulting column, automatically generated if None
         negate: if the condition should be negated (true) or not. For example, "col is not null" will mark null
