@@ -651,12 +651,14 @@ class AppSettingsService:
         """Return the embedding serving endpoint name.
 
         Defaults to :data:`EMBEDDING_ENDPOINT_NAME_DEFAULT` when the
-        setting has never been saved (no row) — mirrors
-        :meth:`get_ai_endpoint_name`. An explicit empty save is honoured
-        (returns ``""``), same as that method.
+        setting is unset — either no row at all, or a row holding an
+        empty/whitespace-only value. Vector Search cannot provision
+        without a real embedding endpoint, so an empty stored value is
+        treated as "unset" and falls back to the default rather than
+        silently disabling provisioning.
         """
         raw = self.get_setting(self._EMBEDDING_ENDPOINT_NAME_KEY)
-        if raw is None:
+        if raw is None or not raw.strip():
             return self.EMBEDDING_ENDPOINT_NAME_DEFAULT
         return raw.strip()
 
@@ -675,11 +677,13 @@ class AppSettingsService:
         """Return the Vector Search endpoint name.
 
         Defaults to an auto-derived, catalog-scoped name (see
-        :meth:`_default_vs_endpoint_name`) when the setting has never
-        been saved (no row).
+        :meth:`_default_vs_endpoint_name`) when the setting is unset —
+        either no row at all, or a row holding an empty/whitespace-only
+        value (an empty stored value would otherwise silently disable
+        Vector Search provisioning).
         """
         raw = self.get_setting(self._VS_ENDPOINT_NAME_KEY)
-        if raw is None:
+        if raw is None or not raw.strip():
             return self._default_vs_endpoint_name()
         return raw.strip()
 
@@ -698,10 +702,12 @@ class AppSettingsService:
 
         Defaults to an auto-derived name under this app's own UC
         catalog/schema (see :meth:`_default_vs_index_name`) when the
-        setting has never been saved (no row).
+        setting is unset — either no row at all, or a row holding an
+        empty/whitespace-only value (an empty stored value would
+        otherwise silently disable Vector Search provisioning).
         """
         raw = self.get_setting(self._VS_INDEX_NAME_KEY)
-        if raw is None:
+        if raw is None or not raw.strip():
             return self._default_vs_index_name()
         return raw.strip()
 

@@ -164,6 +164,29 @@ class TestVectorSearchSettings:
         assert getattr(svc, getter_name)() == expected
 
     @pytest.mark.parametrize(
+        ("getter_name", "expected"),
+        [
+            ("get_embedding_endpoint_name", "databricks-gte-large-en"),
+            ("get_vs_endpoint_name", "dqx_studio_rule_suggester_dqx_test"),
+            ("get_vs_index_name", "dqx_test.dqx_app_test.dq_rule_embeddings_index"),
+        ],
+    )
+    @pytest.mark.parametrize("stored", ["", "   ", "\n\t"])
+    def test_empty_or_whitespace_row_falls_back_to_auto_derived_value(
+        self, settings_service, getter_name, expected, stored
+    ):
+        """A row holding an empty/whitespace value must be treated as unset.
+
+        Regression: deployments seeded these keys with empty strings (pre-8B),
+        which blocked auto-derive and silently disabled Vector Search
+        provisioning + the mapping suggester. Empty must fall back to default.
+        """
+        svc, sql_executor_mock = settings_service
+        sql_executor_mock.query.return_value = [[stored]]
+
+        assert getattr(svc, getter_name)() == expected
+
+    @pytest.mark.parametrize(
         ("setter_name", "getter_name", "key"),
         [
             ("save_embedding_endpoint_name", "get_embedding_endpoint_name", "embedding_endpoint_name"),
