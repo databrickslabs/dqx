@@ -233,7 +233,10 @@ def _maybe_start_vector_store_provisioning(
         vs_app_settings = AppSettingsService(sql=oltp_for_vs)
         if vs_app_settings.get_ai_enabled():
             vs_embeddings = RuleEmbeddingsService(sql=oltp_for_vs, sp_ws=sp_ws, app_settings=vs_app_settings)
-            vs_provisioner = VectorStoreProvisioner(sp_ws=sp_ws, app_settings=vs_app_settings, embeddings=vs_embeddings)
+            vs_registry = RegistryService(sql=oltp_for_vs)
+            vs_provisioner = VectorStoreProvisioner(
+                sp_ws=sp_ws, app_settings=vs_app_settings, embeddings=vs_embeddings, registry=vs_registry
+            )
             app.state.vector_store_startup_task = asyncio.create_task(vs_provisioner.ensure_vector_store())
         else:
             logger.debug("AI features disabled; skipping Vector Search auto-provisioning at startup")

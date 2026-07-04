@@ -347,9 +347,10 @@ async def get_vector_store_provisioner(
     sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
     app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
     embeddings: Annotated[RuleEmbeddingsService, Depends(get_rule_embeddings_service)],
+    registry: Annotated[RegistryService, Depends(get_registry_service)],
 ) -> VectorStoreProvisioner:
     """Create the idempotent, best-effort Vector Search endpoint/index provisioner."""
-    return VectorStoreProvisioner(sp_ws=sp_ws, app_settings=app_settings, embeddings=embeddings)
+    return VectorStoreProvisioner(sp_ws=sp_ws, app_settings=app_settings, embeddings=embeddings, registry=registry)
 
 
 async def get_rule_suggester(
