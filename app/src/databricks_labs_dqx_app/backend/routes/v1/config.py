@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import re
+import threading
 from typing import Annotated
 
 from databricks.sdk import WorkspaceClient
@@ -971,6 +972,33 @@ class AiSettingsIn(BaseModel):
     vs_index_name: str | None = None
 
 
+def _fire_and_forget_ensure_vector_store(provisioner: VectorStoreProvisioner) -> None:
+    """Kick off Vector Search auto-provisioning on a background thread.
+
+    ``VectorStoreProvisioner.ensure_vector_store`` is an async, best-effort,
+    never-raising coroutine (see ``services/vector_store.py``) that submits
+    the Vector Search endpoint/index creation calls and returns immediately
+    — creation itself finishes asynchronously on the Databricks control
+    plane. The app startup lifespan can attach it to the running event loop
+    via ``asyncio.create_task``, but this route runs synchronously with no
+    event loop of its own, so we run the coroutine to completion on a
+    dedicated daemon thread via ``asyncio.run`` instead.
+
+    This must never block the admin's "save AI settings" request or
+    propagate an error back to the caller: any failure here — including one
+    that somehow escapes ``ensure_vector_store``'s own swallow-and-log
+    behaviour — is logged and dropped.
+    """
+
+    def _run() -> None:
+        try:
+            asyncio.run(provisioner.ensure_vector_store())
+        except Exception:
+            logger.warning("Background Vector Search auto-provisioning failed (non-fatal)", exc_info=True)
+
+    threading.Thread(target=_run, name="ensure-vector-store-on-save", daemon=True).start()
+
+
 def _ai_settings_out(svc: AppSettingsService) -> AiSettingsOut:
     return AiSettingsOut(
         ai_enabled=svc.get_ai_enabled(),
@@ -1004,6 +1032,7 @@ def get_ai_settings(
 def save_ai_settings(
     body: AiSettingsIn,
     svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    provisioner: Annotated[VectorStoreProvisioner, Depends(get_vector_store_provisioner)],
     email: Annotated[str, Depends(get_user_email)],
 ) -> AiSettingsOut:
     """Update one or more AI Gateway / Vector Search settings (admin only)."""
@@ -1034,6 +1063,17 @@ def save_ai_settings(
         svc.save_vs_index_name(body.vs_index_name, user_email=email)
 
     logger.info("Saved AI Gateway / Vector Search settings (by=%s)", email)
+
+    # Best-effort, non-blocking Vector Search auto-provisioning: whenever a
+    # save leaves AI enabled (whether this call just flipped the switch on
+    # or merely updated an endpoint/rate-limit while it was already on),
+    # give the endpoint/index creation a kick so admins don't also have to
+    # remember to hit the dedicated ``POST /ensure-vector-store`` endpoint.
+    # No-op (inside the provisioner) when embedding/VS settings aren't
+    # fully configured; never raises; never blocks this response.
+    if svc.get_ai_enabled():
+        _fire_and_forget_ensure_vector_store(provisioner)
+
     return _ai_settings_out(svc)
 
 
