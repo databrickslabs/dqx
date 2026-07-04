@@ -28,9 +28,14 @@ def project_to_check_schema(check: dict) -> dict:
     Storage backends persist columns alongside the check that are not part of the check metadata
     accepted by *apply_checks_by_metadata* (e.g. *run_config_name*, *created_at*, *rule_fingerprint*,
     *rule_set_fingerprint*). Loading a check therefore yields those extra keys. This helper drops
-    them so a loaded check round-trips cleanly and matches the shape produced by the Delta path
-    (*DataFrameConverter.from_dataframe*). The allowed keys are derived from *CheckSpec.model_fields*
-    so a new logical field added to the schema is retained automatically.
+    them so a loaded check round-trips cleanly.
+
+    Both load paths funnel their assembled check dict through this single projection so they agree
+    on the loaded shape: the Lakebase path (*LakebaseChecksStorageHandler._load_checks_from_lakebase*)
+    and the Delta path (*DataFrameConverter.from_dataframe*). The allowed keys are derived from
+    *CheckSpec.model_fields*, so a new logical field added to the schema is retained by both paths
+    automatically — provided the backing store also carries it (adding a *CheckSpec* field still
+    requires a matching Delta table column and Lakebase column for the value to survive a round-trip).
 
     Args:
         check: A check dict that may carry storage-only keys.
@@ -246,7 +251,7 @@ class ChecksDeserializer:
 
     def deserialize(self, checks: list[dict]) -> list[DQRule]:
         """
-        Converts a list of quality checks defined as Python dictionaries to a list of `DQRule` objects.
+        Converts a list of quality checks defined as Python dictionaries to a list of *DQRule* objects.
 
         Args:
             checks: list of dictionaries describing checks. Each check is a dictionary
@@ -265,17 +270,16 @@ class ChecksDeserializer:
         Raises:
             InvalidCheckError: If any dictionary is invalid or unsupported.
         """
-        status = ChecksValidator.validate_checks(checks, self.custom_checks)
+        status, specs = ChecksValidator._validate_and_parse(checks, self.custom_checks)
         if status.has_errors:
             raise InvalidCheckError(str(status))
 
         dq_rule_checks: list[DQRule] = []
-        for check_def in checks:
-            logger.debug(f"Processing check definition: {check_def}")
+        for spec in specs:
+            # No errors means every check parsed, so specs holds a CheckSpec for each entry.
+            assert spec is not None  # validated above; narrows the type for the reads below
+            logger.debug(f"Processing check definition: {spec}")
 
-            # Parse through the already-validated Pydantic schema to avoid re-reading raw dicts.
-            # model_validate is safe here because ChecksValidator already confirmed the structure.
-            spec = CheckSpec.model_validate(check_def)
             func_name = spec.check.function
             func = resolve_check_function(func_name, self.custom_checks, fail_on_missing=True)
             assert func  # should already be validated

@@ -340,10 +340,6 @@ def test_checks_validator_missing_function():
         ({"check": {"function": "is_not_null", "arguments": {"column": "a"}}, "name": 42}, "name"),
         ({"check": {"function": "is_not_null", "arguments": {"column": "a"}}, "filter": 1}, "filter"),
         ({"check": {"function": "is_not_null", "arguments": {"column": "a"}}, "message_expr": 1}, "message_expr"),
-        (
-            {"check": {"function": "is_not_null", "arguments": {"column": "a"}}, "user_metadata": {"confidence": 0.95}},
-            "user_metadata -> confidence",
-        ),
     ],
 )
 def test_checks_validator_field_type_error_names_offending_field(check, expected_field):
@@ -423,6 +419,66 @@ def test_project_to_check_schema_strips_storage_columns():
     projected = project_to_check_schema(row)
     assert set(projected) == {"name", "criticality", "check", "filter", "user_metadata"}
     assert not ChecksValidator.validate_checks([projected]).has_errors
+
+
+# ---------------------------------------------------------------------------
+# Pydantic error-type pinning
+#
+# The error translator (ChecksValidator._translate_pydantic_error) branches on Pydantic's
+# internal error *type* codes to reproduce the legacy message text. A Pydantic upgrade that
+# renamed one of these codes would silently change which branch fires and degrade the message —
+# a change the message-string tests above might not catch cleanly. This test asserts the exact
+# type codes the translator depends on, so such a rename fails loudly and points at the shim.
+# ---------------------------------------------------------------------------
+
+
+def _first_error_for_loc(check: dict, loc: tuple) -> dict:
+    """Return the first Pydantic error whose loc matches, validating with the standard context."""
+    try:
+        CheckSpec.model_validate(check, context={"raw_check": check})
+    except ValidationError as exc:
+        for err in exc.errors():
+            if err["loc"] == loc:
+                return err
+    raise AssertionError(f"No error at loc {loc} for {check}")
+
+
+@pytest.mark.parametrize(
+    ("check", "loc", "expected_type"),
+    [
+        # missing 'check' key
+        ({"criticality": "error"}, ("check",), "missing"),
+        # 'check' is not a mapping
+        ({"check": "not_a_dict"}, ("check",), "model_type"),
+        # missing 'function' inside the check block
+        ({"check": {"arguments": {"column": "a"}}}, ("check", "function"), "missing"),
+        # for_each_column not a list
+        (
+            {"check": {"function": "is_not_null", "for_each_column": "x", "arguments": {"column": "a"}}},
+            ("check", "for_each_column"),
+            "list_type",
+        ),
+        # for_each_column empty (field validator raises ValueError -> value_error)
+        (
+            {"check": {"function": "is_not_null", "for_each_column": [], "arguments": {"column": "a"}}},
+            ("check", "for_each_column"),
+            "value_error",
+        ),
+        # arguments not a dict
+        ({"check": {"function": "is_not_null", "arguments": "nope"}}, ("check", "arguments"), "dict_type"),
+        # semantic errors (criticality value, function resolution, argument validation) surface as a
+        # single model-level value_error with an empty loc
+        (
+            {"criticality": "bogus", "check": {"function": "is_not_null", "arguments": {"column": "a"}}},
+            (),
+            "value_error",
+        ),
+    ],
+)
+def test_translator_relies_on_stable_pydantic_error_types(check, loc, expected_type):
+    """Pin the Pydantic error *type* codes the translation shim branches on (finding #4)."""
+    error = _first_error_for_loc(check, loc)
+    assert error["type"] == expected_type, error
 
 
 # ---------------------------------------------------------------------------
@@ -528,6 +584,40 @@ def test_deserialize_preserves_name_and_filter():
     assert rule.name == "my_rule"
     assert rule.criticality == "warn"
     assert rule.filter == "id > 0"
+
+
+@pytest.mark.parametrize(
+    "user_metadata",
+    [
+        {"confidence": 0.95},  # float
+        {"attempts": 3},  # int
+        {"enabled": True},  # bool
+        {"threshold": Decimal("1.5")},  # Decimal
+        {"owner": "team-a", "confidence": 0.95},  # mixed str + non-str
+    ],
+)
+def test_deserialize_preserves_non_string_user_metadata(user_metadata):
+    """user_metadata with non-string values must load without InvalidCheckError (regression).
+
+    The pre-Pydantic-migration validator never inspected user_metadata, so checks carrying
+    non-string values loaded fine. Narrowing the field to dict[str, str] regressed that; the
+    field is kept dict[str, Any] to preserve released behaviour.
+    """
+    checks = [
+        {
+            "criticality": "error",
+            "check": {"function": "is_not_null", "arguments": {"column": "id"}},
+            "user_metadata": user_metadata,
+        }
+    ]
+
+    # Structural validation must not flag the non-string values.
+    status = ChecksValidator.validate_checks(checks)
+    assert not status.has_errors, status.errors
+
+    # Deserialization must preserve the values verbatim (no coercion to str).
+    rules = deserialize_checks(checks)
+    assert rules[0].user_metadata == user_metadata
 
 
 def test_serialize_checks_round_trips_via_deserialize():

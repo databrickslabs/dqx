@@ -179,8 +179,10 @@ class DataFrameConverter:
                 check_dict["filter"] = row.filter
             if row.user_metadata is not None:
                 check_dict["user_metadata"] = row.user_metadata
-            # Denormalize special markers back to objects
-            checks.append(ChecksNormalizer.denormalize_value(check_dict))
+            # Route through the same projection as the Lakebase load path so both loaders agree on
+            # the loaded shape (the allow-list is derived from CheckSpec.model_fields). Then
+            # denormalize special markers back to objects.
+            checks.append(ChecksNormalizer.denormalize_value(project_to_check_schema(check_dict)))
         return checks
 
     @staticmethod
@@ -536,7 +538,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         engine = create_engine(
             engine_url,
             pool_recycle=45 * 60,  # recycle connections every 45 minutes
-            connect_args={'sslmode': 'require'},
+            connect_args={"sslmode": "require"},
             pool_size=4,
         )
         event.listen(engine, "do_connect", self._prepare_before_connect(config))
@@ -803,7 +805,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         if not inspector.has_table(table, schema=schema):
             return False
         cols = inspector.get_columns(table, schema=schema)
-        existing_column_names = {col['name'] for col in cols}
+        existing_column_names = {col["name"] for col in cols}
         return all(x in existing_column_names for x in _VERSIONING_COLUMNS)
 
     def _check_for_undefined_table_error(self, e: ProgrammingError, config: LakebaseChecksStorageConfig) -> NoReturn:
@@ -820,8 +822,8 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
             NotFound: If the table does not exist in the Lakebase instance (pgcode 42P01).
             ProgrammingError: Re-raises the original error if it's not an undefined table error.
         """
-        pgcode = getattr(getattr(e, 'orig', None), 'pgcode', None)
-        postgres_undefined_table_error = '42P01'
+        pgcode = getattr(getattr(e, "orig", None), "pgcode", None)
+        postgres_undefined_table_error = "42P01"
         if pgcode == postgres_undefined_table_error:
             raise NotFound(f"Table '{config.location}' does not exist in the Lakebase instance") from e
         raise e
