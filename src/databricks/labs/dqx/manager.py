@@ -13,7 +13,7 @@ from databricks.labs.dqx.rule import (
     DQRule,
 )
 from databricks.labs.dqx.schema.dq_result_schema import dq_result_item_schema
-from databricks.labs.dqx.utils import get_column_name_or_alias
+from databricks.labs.dqx.utils import get_column_name_or_alias, safe_filter_expr
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +68,7 @@ class DQRuleManager:
         """
         Returns the filter condition for the check.
         """
-        return F.expr(self.check.filter) if self.check.filter else F.lit(True)
+        return safe_filter_expr(self.check.filter)
 
     @cached_property
     def invalid_columns(self) -> list[str]:

@@ -9,6 +9,7 @@ import pyspark.sql.functions as F
 from databricks.labs.dqx.rule import register_rule
 from databricks.labs.dqx.check_funcs import make_condition, get_normalized_column_and_expr, get_limit_expr
 from databricks.labs.dqx.errors import InvalidParameterError
+from databricks.labs.dqx.utils import safe_filter_expr
 
 POINT_TYPE = "ST_Point"
 LINESTRING_TYPE = "ST_LineString"
@@ -915,7 +916,7 @@ def are_polygons_mutually_disjoint(
         df_with_hash = df.withColumn(row_id_col, F.xxhash64(F.struct("*")))
 
         # Apply filter after hashing (so hash is available for final join to preserve all rows)
-        filtered_df = df_with_hash.filter(F.expr(row_filter)) if row_filter is not None else df_with_hash
+        filtered_df = df_with_hash.filter(safe_filter_expr(row_filter)) if row_filter is not None else df_with_hash
 
         duplicates_df = filtered_df.groupBy(row_id_col).count().filter("count > 1").select(row_id_col)
 
