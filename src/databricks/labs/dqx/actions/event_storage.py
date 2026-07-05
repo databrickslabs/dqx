@@ -41,6 +41,7 @@ from databricks.labs.dqx.config import ActionEventsConfig, LakebaseActionsStorag
 from databricks.labs.dqx.io import save_dataframe_as_table
 from databricks.labs.dqx.config import OutputConfig
 from databricks.labs.dqx.lakebase_engine import LakebaseConnectionMixin
+from databricks.labs.dqx.utils import to_utc
 
 logger = logging.getLogger(__name__)
 
@@ -147,7 +148,7 @@ class TableActionEventStore(ActionEventStore):
                 status=ActionStatus(row["status"]),
                 observed_metrics=dict(row["observed_metrics"]) if row["observed_metrics"] else {},
                 run_id=row["run_id"],
-                run_time=row["run_time"],
+                run_time=to_utc(row["run_time"]),
                 input_location=row["input_location"],
                 destinations=list(row["destinations"]) if row["destinations"] else [],
                 delivery_errors=list(row["delivery_errors"]) if row["delivery_errors"] else [],
@@ -173,7 +174,7 @@ class TableActionEventStore(ActionEventStore):
             (F.col("run_config_name") == self._config.run_config_name) & (F.col("fired"))
         )
         grouped = fired.groupBy("action_name").agg(F.max("run_time").alias("last_fired"))
-        return {row["action_name"]: row["last_fired"] for row in grouped.collect()}
+        return {row["action_name"]: to_utc(row["last_fired"]) for row in grouped.collect()}
 
 
 # ---------------------------------------------------------------------------
@@ -333,7 +334,7 @@ class LakebaseActionEventStore(LakebaseConnectionMixin, ActionEventStore):
                 status=ActionStatus(row["status"]),
                 observed_metrics=dict(metrics_raw),
                 run_id=row["run_id"],
-                run_time=row["run_time"],
+                run_time=to_utc(row["run_time"]),
                 input_location=row["input_location"],
                 destinations=list(row["destinations"]) if row["destinations"] else [],
                 delivery_errors=list(row["delivery_errors"]) if row["delivery_errors"] else [],
@@ -371,7 +372,7 @@ class LakebaseActionEventStore(LakebaseConnectionMixin, ActionEventStore):
         for row in rows:
             action_name = row["action_name"]
             if action_name not in last_fired:  # rows are run_time-descending, so first seen is latest
-                last_fired[action_name] = row["run_time"]
+                last_fired[action_name] = to_utc(row["run_time"])
         return last_fired
 
 

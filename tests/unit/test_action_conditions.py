@@ -32,6 +32,47 @@ class TestBasicComparisons:
 
 
 # ---------------------------------------------------------------------------
+# Spark-SQL operator spellings (= for equality, <> for inequality)
+# ---------------------------------------------------------------------------
+
+
+class TestSparkOperatorSpellings:
+    def test_single_equals_equality_true(self):
+        assert ConditionEvaluator.evaluate("error_row_count = 5", {"error_row_count": 5}) is True
+
+    def test_single_equals_equality_false(self):
+        assert ConditionEvaluator.evaluate("error_row_count = 5", {"error_row_count": 4}) is False
+
+    def test_angle_not_equal_true(self):
+        assert ConditionEvaluator.evaluate("error_row_count <> 0", {"error_row_count": 3}) is True
+
+    def test_angle_not_equal_false(self):
+        assert ConditionEvaluator.evaluate("error_row_count <> 0", {"error_row_count": 0}) is False
+
+    def test_double_equals_still_supported(self):
+        assert ConditionEvaluator.evaluate("error_row_count == 5", {"error_row_count": 5}) is True
+
+    def test_bang_equals_still_supported(self):
+        assert ConditionEvaluator.evaluate("error_row_count != 0", {"error_row_count": 2}) is True
+
+    def test_ge_le_operators_not_rewritten(self):
+        # ">=" / "<=" must be preserved, not mangled by the single-"=" rewrite.
+        assert ConditionEvaluator.evaluate("error_row_count >= 5", {"error_row_count": 5}) is True
+        assert ConditionEvaluator.evaluate("error_row_count <= 5", {"error_row_count": 5}) is True
+
+    def test_single_equals_in_compound_condition(self):
+        result = ConditionEvaluator.evaluate(
+            "error_row_count = 0 and warning_row_count <> 0",
+            {"error_row_count": 0, "warning_row_count": 4},
+        )
+        assert result is True
+
+    def test_single_equals_validates(self):
+        # Spark-style spelling must pass construction-time validation, not raise a syntax error.
+        ConditionEvaluator.validate("error_row_count = 0 or warning_row_count <> 0")
+
+
+# ---------------------------------------------------------------------------
 # Boolean logic tests
 # ---------------------------------------------------------------------------
 
@@ -236,9 +277,10 @@ class TestSyntaxErrorsRaiseError:
             ConditionEvaluator.validate("")
 
     def test_statement_mode_raises(self):
-        # Assignments are statements, not expressions
+        # Statements (not expressions) are rejected. Note: "x = 1" is no longer a statement here —
+        # a single "=" is normalized to "==" (equality), so use an unambiguous statement instead.
         with pytest.raises(InvalidConditionError):
-            ConditionEvaluator.validate("x = 1")
+            ConditionEvaluator.validate("import os")
 
 
 # ---------------------------------------------------------------------------

@@ -14,10 +14,38 @@ The evaluator is purely structural, operating on the parsed AST.
 
 import ast
 import collections.abc
+import re
 
 from typing import SupportsFloat, cast
 
 from databricks.labs.dqx.errors import InvalidConditionError
+
+# Spark-SQL-style operators accepted in conditions and normalized to their Python-AST
+# equivalents before parsing: ``=`` -> ``==`` (equality) and ``<>`` -> ``!=`` (inequality).
+# The lookbehind/lookahead leave the multi-character operators ``==``, ``>=``, ``<=`` and
+# ``!=`` untouched, so both the Spark and Python spellings are valid.
+_NOT_EQUAL_SQL_RE = re.compile(r"<>")
+_SINGLE_EQUALS_RE = re.compile(r"(?<![=<>!])=(?!=)")
+
+
+def _normalize_operators(condition: str) -> str:
+    """Translate Spark-SQL comparison operators to the Python spellings the parser expects.
+
+    Lets conditions be written with Spark conventions (``=`` for equality, ``<>`` for
+    inequality) in addition to the Python forms (``==`` / ``!=``). Multi-character operators
+    (``==``, ``>=``, ``<=``, ``!=``) are preserved. Note: the substitution is textual and not
+    quote-aware, so a ``=`` or ``<>`` inside a string literal would also be rewritten — conditions
+    compare numeric metrics, so string literals containing these operators are not expected.
+
+    Args:
+        condition: The raw condition expression as written by the user.
+
+    Returns:
+        The condition with ``<>`` and single ``=`` normalized to ``!=`` and ``==``.
+    """
+    condition = _NOT_EQUAL_SQL_RE.sub("!=", condition)
+    return _SINGLE_EQUALS_RE.sub("==", condition)
+
 
 # ---------------------------------------------------------------------------
 # Typed operator wrapper functions
@@ -405,7 +433,7 @@ def _parse_condition(condition: str) -> ast.Expression:
     if not condition or not condition.strip():
         raise InvalidConditionError("Condition expression must not be empty")
     try:
-        return ast.parse(condition, mode="eval")
+        return ast.parse(_normalize_operators(condition), mode="eval")
     except SyntaxError as exc:
         raise InvalidConditionError(f"Condition has a syntax error: {exc}") from exc
 

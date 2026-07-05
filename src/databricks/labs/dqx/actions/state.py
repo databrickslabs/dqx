@@ -18,6 +18,7 @@ from datetime import datetime, timedelta
 
 from databricks.labs.dqx.actions.alert import DQAlert, DQAlertFrequency, NotifyOn
 from databricks.labs.dqx.actions.base import ActionContext, ActionStatus
+from databricks.labs.dqx.utils import to_utc
 from databricks.labs.dqx.actions.dq_action import DQAction
 from databricks.labs.dqx.actions.log_sanitize import sanitize_for_log
 
@@ -282,7 +283,7 @@ class ActionStateStore:
         if last_fired is None:
             return True
 
-        elapsed = run_time - last_fired
+        elapsed = to_utc(run_time) - to_utc(last_fired)
         if frequency == DQAlertFrequency.HOURLY:
             return elapsed >= timedelta(hours=1)
         if frequency == DQAlertFrequency.DAILY:

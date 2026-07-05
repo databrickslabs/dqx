@@ -204,6 +204,26 @@ def test_hourly_allowed_at_exact_boundary() -> None:
     assert store.should_fire(dq_action, ctx, condition_result=True) is True
 
 
+def test_hourly_handles_naive_last_fired_from_event_store() -> None:
+    """Regression: event stores can return a tz-naive *run_time* (e.g. Spark Connect reads a
+    TIMESTAMP as naive), while *context.run_time* is tz-aware UTC. Comparing them must not raise
+    *TypeError* — a naive seeded value is treated as UTC."""
+    naive_last_fired = datetime(2024, 6, 1, 12, 0, 0)  # no tzinfo, as returned from the event store
+    store = ActionStateStore(event_store=FakeEventStore(last_fired={"default-action": naive_last_fired}))
+    store.seed()
+
+    alert = _make_dq_alert(frequency=DQAlertFrequency.HOURLY)
+    dq_action = DQAction(action=alert, name="default-action")
+
+    # 30 minutes later (tz-aware) → within the window → suppressed, and must not raise.
+    ctx_within = _make_context(run_time=datetime(2024, 6, 1, 12, 30, 0, tzinfo=timezone.utc))
+    assert store.should_fire(dq_action, ctx_within, condition_result=True) is False
+
+    # 61 minutes later (tz-aware) → outside the window → allowed.
+    ctx_after = _make_context(run_time=datetime(2024, 6, 1, 13, 1, 0, tzinfo=timezone.utc))
+    assert store.should_fire(dq_action, ctx_after, condition_result=True) is True
+
+
 # ---------------------------------------------------------------------------
 # should_fire: DAILY frequency
 # ---------------------------------------------------------------------------

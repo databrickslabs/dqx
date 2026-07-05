@@ -10,10 +10,11 @@ import TabItem from '@theme/TabItem';
 
 DQX **actions** let you react automatically when observed summary metrics cross a threshold. After checks are applied and the Spark observation is materialized, each action evaluates its optional *condition* against the observed metrics and, when the condition is satisfied (or when there is no condition), executes its inner logic.
 
-The two built-in action types are:
+The built-in action types are:
 
 - *DQAlert* — delivers a notification to one or more destinations (Slack, Microsoft Teams, generic HTTPS webhook, or an in-process callback).
 - *FailPipeline* — raises `PipelineFailedError` to abort the current pipeline run.
+- *NoOpAction* — fires when its condition is met but performs no side effect; useful for testing and for dry-run/audit runs that record what *would* have fired.
 
 Actions require a `DQMetricsObserver` to be configured on the engine because they evaluate metrics collected by that observer.
 
@@ -21,11 +22,11 @@ Actions require a `DQMetricsObserver` to be configured on the engine because the
 
 A `DQAction` binds an inner *action* to an optional gating *condition*. When *condition* is `None` the action fires unconditionally after every DQX run; when it is set, it is validated at construction time so syntax errors surface immediately rather than at evaluation time.
 
-Actions can be defined **either** programmatically with the DQX classes **or** declaratively as metadata — a list of plain dicts, typically loaded from a YAML or JSON file — exactly like DQX checks. The two forms are equivalent, and every example on this page shows both. In the metadata form each list entry has an `action` key carrying a `type` discriminator (`alert` or `fail_pipeline`) plus an optional `condition`; a `DQSecret` credential is written as a nested mapping with a single `secret` key whose value is a `scope/key` reference. Callback destinations are the one exception — they hold a live Python callable and have no metadata form, so they can only be configured in code.
+Actions can be defined **either** programmatically with the DQX classes **or** declaratively as metadata — a list of plain dicts, typically loaded from a YAML or JSON file — exactly like DQX checks. The two forms are equivalent, and every example on this page shows both. In the metadata form each list entry has an `action` key carrying a `type` discriminator (for example `alert`, `fail_pipeline`, or `noop`) plus an optional `condition`; a `DQSecret` credential is written as a nested mapping with a single `secret` key whose value is a `scope/key` reference. Callback destinations are the one exception — they hold a live Python callable and have no metadata form, so they can only be configured in code.
 
 To run actions, attach them to a `DQEngine` together with a `DQMetricsObserver`. `DQEngine` accepts `DQAction` instances, raw metadata dicts, or a list loaded from a file with `DQActionManager` — and mixed lists of instances and dicts are supported.
 
-The reference sections below cover the available [destination types](#dqalert-destinations), [FailPipeline](#failpipeline), [alert frequency and notify_on](#alert-frequency-and-notify_on), and [persisting actions and their history](#persisting-actions-and-their-history).
+The reference sections below cover the [action types](#action-types) ([DQAlert](#dqalert), [FailPipeline](#failpipeline), [NoOpAction](#noopaction-dry-run--audit)), the [alert types](#alert-types) (`DQAlert` destinations), [controlling when alerts are sent](#controlling-when-alerts-are-sent), and [persisting actions and their history](#persisting-actions-and-their-history).
 
 ### Auto-fire on save methods (recommended)
 
@@ -262,7 +263,27 @@ Call *evaluate_actions* only after a Spark action (count, write, etc.) has been 
 
 ### Condition syntax and available metrics
 
-Conditions are SQL-like boolean expressions evaluated against the observed metrics dictionary. The evaluator uses a safe expression parser — it does **not** execute arbitrary Python.
+Conditions follow **Spark SQL expression** conventions — e.g. `=` for equality, `<>` for inequality, and `and` / `or` / `not` for boolean logic — so a condition reads like a Spark `WHERE` predicate over the metric names. They are, however, evaluated by a safe expression parser against the observed-metrics dictionary, **not** by Spark, so they are a restricted subset: only the operators listed below are permitted, and function calls, column/attribute access, and subscripts are rejected (no arbitrary Python or SQL).
+
+**Supported operators:**
+
+| Category | Operators | Notes |
+|---|---|---|
+| Comparison | `=` or `==`, `!=` or `<>`, `<`, `<=`, `>`, `>=` | Spark spellings `=` and `<>` are accepted as aliases for `==` and `!=` |
+| Boolean | `and`, `or`, `not` | Combine and negate sub-conditions |
+| Arithmetic | `+`, `-`, `*`, `/`, `//`, `%`, `**` | Operands are treated as numbers |
+| Unary | `-`, `+` | e.g. `-error_row_count` |
+| Grouping | `( ... )` | Control precedence |
+
+Chained comparisons are supported (e.g. `0 < error_row_count < 100`). Operands are metric names (resolved from the metrics below), numeric literals, or sub-expressions; numeric strings are coerced to numbers automatically.
+
+For example, all of these are equivalent ways to express "exactly zero valid rows":
+
+```text
+valid_row_count = 0
+valid_row_count == 0
+not valid_row_count <> 0
+```
 
 Built-in metrics available in every condition:
 
@@ -341,9 +362,124 @@ DQAction(
   </TabItem>
 </Tabs>
 
-## DQAlert destinations
+## Action Types
 
-`DQAlert` dispatches a single alert message concurrently to all configured destinations. A delivery failure in one destination is isolated — the remaining destinations still receive the alert, and per-destination errors are captured in `ActionResult.destination_errors`.
+Every action is wrapped in a `DQAction` that binds it to an optional [condition](#condition-syntax-and-available-metrics); the action runs when the condition is met (or when no condition is set). DQX ships three built-in action types, each documented in its own section below:
+
+- [DQAlert](#dqalert) — send a notification to one or more destinations.
+- [FailPipeline](#failpipeline) — abort the current run by raising `PipelineFailedError`.
+- [NoOpAction](#noopaction-dry-run--audit) — fire without any side effect (testing / dry-run / audit).
+
+### DQAlert
+
+`DQAlert` delivers a notification to one or more destinations (Slack, Microsoft Teams, generic HTTPS webhook, log, or an in-process callback). A single alert message is dispatched concurrently to every configured destination, and a delivery failure in one destination is isolated — the others still receive the alert, and per-destination errors are captured in `ActionResult.destination_errors`. The available destinations are listed under [Alert types](#alert-types), and [Controlling when alerts are sent](#controlling-when-alerts-are-sent) covers rate-limiting and status-change-only delivery.
+
+<Tabs>
+  <TabItem value="Python" label="Python (classes)" default>
+
+```python
+from databricks.labs.dqx.actions import DQAction, DQAlert, SlackDQAlertDestination
+
+alert = DQAction(
+    condition="error_row_count > 0",
+    action=DQAlert(destinations=[SlackDQAlertDestination(name="slack", webhook_url="https://hooks.slack.com/…")]),
+)
+```
+
+  </TabItem>
+  <TabItem value="YAML" label="YAML (metadata)">
+
+```yaml
+- action:
+    type: alert
+    destinations:
+      - type: slack
+        name: slack
+        webhook_url: https://hooks.slack.com/…
+  condition: error_row_count > 0
+```
+
+  </TabItem>
+</Tabs>
+
+### FailPipeline
+
+`FailPipeline` raises `PipelineFailedError` to abort the current run. The evaluator defers the error until all other non-terminal actions (e.g. alert notifications) have completed, so alerts are always delivered before the pipeline is stopped.
+
+<Tabs>
+  <TabItem value="Python" label="Python (classes)" default>
+
+```python
+from databricks.labs.dqx.actions import DQAction, FailPipeline
+
+# Fail with a custom message when error row count exceeds 1000
+fail_action = DQAction(
+    condition="error_row_count > 1000",
+    action=FailPipeline(message="Too many errors — aborting pipeline."),
+)
+
+# Fail with an auto-generated message that includes observed metrics
+fail_action_auto = DQAction(
+    condition="error_row_count > 0",
+    action=FailPipeline(),  # message generated automatically from context.metrics
+)
+```
+
+  </TabItem>
+  <TabItem value="YAML" label="YAML (metadata)">
+
+```yaml
+# Fail with a custom message when error row count exceeds 1000
+- action:
+    type: fail_pipeline
+    message: Too many errors — aborting pipeline.
+  condition: error_row_count > 1000
+# Fail with an auto-generated message that includes observed metrics
+- action:
+    type: fail_pipeline
+  condition: error_row_count > 0
+```
+
+  </TabItem>
+</Tabs>
+
+### NoOpAction (dry-run / audit)
+
+`NoOpAction` fires when its condition is met but performs **no side effect** — it neither notifies nor
+fails the run. Because action events are still recorded (see
+[Recording action event history](#recording-action-event-history)), it is useful as an observe-only /
+dry-run mode: capture *what would have fired* into the events table while validating conditions and
+thresholds before wiring up real alerts. It is fully serializable (`type: noop`), so it loads and
+persists like any other action.
+
+<Tabs>
+  <TabItem value="Python" label="Python (classes)" default>
+
+```python
+from databricks.labs.dqx.actions import DQAction, NoOpAction
+
+audit = DQAction(
+    condition="error_row_count > 0",
+    action=NoOpAction(name="record_on_errors"),
+)
+```
+
+  </TabItem>
+  <TabItem value="YAML" label="YAML (metadata)">
+
+```yaml
+- action:
+    type: noop
+    name: record_on_errors
+  condition: error_row_count > 0
+```
+
+  </TabItem>
+</Tabs>
+
+## Alert Types
+
+`DQAlert` can deliver to any of the following destination types. Each is configured as an entry in the alert's `destinations` list.
 
 ### Slack
 
@@ -528,82 +664,7 @@ alert = DQAlert(
 )
 ```
 
-## FailPipeline
-
-`FailPipeline` raises `PipelineFailedError` to abort the current run. The evaluator defers the error until all other non-terminal actions (e.g. alert notifications) have completed, so alerts are always delivered before the pipeline is stopped.
-
-<Tabs>
-  <TabItem value="Python" label="Python (classes)" default>
-
-```python
-from databricks.labs.dqx.actions import DQAction, FailPipeline
-
-# Fail with a custom message when error row count exceeds 1 000
-fail_action = DQAction(
-    condition="error_row_count > 1000",
-    action=FailPipeline(message="Too many errors — aborting pipeline."),
-)
-
-# Fail with an auto-generated message that includes observed metrics
-fail_action_auto = DQAction(
-    condition="error_row_count > 0",
-    action=FailPipeline(),  # message generated automatically from context.metrics
-)
-```
-
-  </TabItem>
-  <TabItem value="YAML" label="YAML (metadata)">
-
-```yaml
-# Fail with a custom message when error row count exceeds 1 000
-- action:
-    type: fail_pipeline
-    message: Too many errors — aborting pipeline.
-  condition: error_row_count > 1000
-# Fail with an auto-generated message that includes observed metrics
-- action:
-    type: fail_pipeline
-  condition: error_row_count > 0
-```
-
-  </TabItem>
-</Tabs>
-
-## NoOpAction (dry-run / audit)
-
-`NoOpAction` fires when its condition is met but performs **no side effect** — it neither notifies nor
-fails the run. Because action events are still recorded (see
-[Recording action event history](#recording-action-event-history)), it is useful as an observe-only /
-dry-run mode: capture *what would have fired* into the events table while validating conditions and
-thresholds before wiring up real alerts. It is fully serializable (`type: noop`), so it loads and
-persists like any other action.
-
-<Tabs>
-  <TabItem value="Python" label="Python (classes)" default>
-
-```python
-from databricks.labs.dqx.actions import DQAction, NoOpAction
-
-audit = DQAction(
-    condition="error_row_count > 0",
-    action=NoOpAction(name="record_on_errors"),
-)
-```
-
-  </TabItem>
-  <TabItem value="YAML" label="YAML (metadata)">
-
-```yaml
-- action:
-    type: noop
-    name: record_on_errors
-  condition: error_row_count > 0
-```
-
-  </TabItem>
-</Tabs>
-
-## Alert frequency and notify_on
+## Controlling when alerts are sent
 
 Two knobs control when `DQAlert` actually sends a notification after its condition fires.
 

@@ -29,6 +29,25 @@ from databricks.labs.dqx.table_manager import SparkTableDataProvider
 from databricks.sdk.errors import NotFound
 
 
+def to_utc(value: datetime.datetime) -> datetime.datetime:
+    """Return *value* as a timezone-aware UTC datetime.
+
+    Datetimes read back from Spark or SQL *TIMESTAMP* columns can be timezone-naive (for example,
+    Spark Connect returns naive datetimes), while values produced in-process are timezone-aware UTC.
+    Mixing the two in arithmetic raises *TypeError*, so this normalizes everything to UTC: a naive
+    value is assumed to already be in UTC and given UTC tzinfo, and an aware value is converted to UTC.
+
+    Args:
+        value: A timezone-aware or timezone-naive datetime.
+
+    Returns:
+        The equivalent timezone-aware UTC datetime.
+    """
+    if value.tzinfo is None:
+        return value.replace(tzinfo=datetime.timezone.utc)
+    return value.astimezone(datetime.timezone.utc)
+
+
 def _validate_spark_column(value: Any) -> Any:
     """Accept both classic pyspark.sql.Column and the Spark Connect variant.
 
