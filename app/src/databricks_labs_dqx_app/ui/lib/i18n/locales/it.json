@@ -1527,7 +1527,7 @@
     "actionApplyToTables": "Applica alle tabelle",
     "actionViewJson": "Visualizza/modifica JSON",
     "jsonDialogTitle": "JSON del controllo DQX",
-    "jsonDialogDescriptionEditable": "Il dict di controllo DQX nativo generato da questa regola, con gli slot riutilizzabili mostrati come segnaposto invece di colonne reali. Modifica e salva per aggiornare la regola.",
+    "jsonDialogDescriptionEditable": "Qui viene modificata solo la definizione del controllo — funzione, argomenti, messaggio e predicato. Nome e gravità mostrati qui sono di sola lettura; modificali nel modulo sopra.",
     "jsonDialogDescriptionReadOnly": "Il dict di controllo DQX nativo generato da questa regola, con gli slot riutilizzabili mostrati come segnaposto invece di colonne reali.",
     "jsonSaveButton": "Salva",
     "jsonSaveAsNewDraftButton": "Salva come nuova bozza",

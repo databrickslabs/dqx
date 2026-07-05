@@ -132,8 +132,17 @@ export function useTableScopePicker(enabled: boolean): TableScopePickerState {
   // Memoized for the same reason as `resolvedSchemaScopes` above: a fresh
   // array on every render (via `.map`) would give consumers an unstable
   // reference even when nothing selection-relevant changed.
+  //
+  // The "no explicit table selection" fallback must exclude already-monitored
+  // (disabled) tables — they can't be explicitly selected either, so falling
+  // back to the full unfiltered list would overstate the resulting "Add N
+  // tables" count and submit tables that are already monitored (the backend
+  // dedups them as skipped, but the count shown to the user would be wrong).
   const effectiveFqns = useMemo(
-    () => (selectedTables.length > 0 ? selectedTables : tableOptions.map((o) => o.value)),
+    () =>
+      selectedTables.length > 0
+        ? selectedTables
+        : tableOptions.filter((o) => !("disabled" in o && o.disabled)).map((o) => o.value),
     [selectedTables, tableOptions],
   );
 

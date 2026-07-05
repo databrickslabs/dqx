@@ -1527,7 +1527,7 @@
     "actionApplyToTables": "Apply to tables",
     "actionViewJson": "View / edit JSON",
     "jsonDialogTitle": "DQX check JSON",
-    "jsonDialogDescriptionEditable": "The native DQX check dict this rule compiles to, with reusable slots shown as placeholders instead of real columns. Edit and save to update the rule.",
+    "jsonDialogDescriptionEditable": "This edits only the check definition — function, arguments, message, and predicate. Name and severity shown here are read-only; change them in the form above.",
     "jsonDialogDescriptionReadOnly": "The native DQX check dict this rule compiles to, with reusable slots shown as placeholders instead of real columns.",
     "jsonSaveButton": "Save",
     "jsonSaveAsNewDraftButton": "Save as new draft",

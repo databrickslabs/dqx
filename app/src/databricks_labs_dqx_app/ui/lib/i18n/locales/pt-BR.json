@@ -1527,7 +1527,7 @@
     "actionApplyToTables": "Aplicar às tabelas",
     "actionViewJson": "Ver/editar JSON",
     "jsonDialogTitle": "JSON de verificação DQX",
-    "jsonDialogDescriptionEditable": "O dict de verificação DQX nativo que esta regra gera, com slots reutilizáveis mostrados como espaços reservados em vez de colunas reais. Edite e salve para atualizar a regra.",
+    "jsonDialogDescriptionEditable": "Isso edita apenas a definição da verificação — função, argumentos, mensagem e predicado. Nome e severidade mostrados aqui são somente leitura; altere-os no formulário acima.",
     "jsonDialogDescriptionReadOnly": "O dict de verificação DQX nativo que esta regra gera, com slots reutilizáveis mostrados como espaços reservados em vez de colunas reais.",
     "jsonSaveButton": "Salvar",
     "jsonSaveAsNewDraftButton": "Salvar como novo rascunho",
