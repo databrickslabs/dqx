@@ -31,17 +31,17 @@ _SINGLE_EQUALS_RE = re.compile(r"(?<![=<>!])=(?!=)")
 def _normalize_operators(condition: str) -> str:
     """Translate Spark-SQL comparison operators to the Python spellings the parser expects.
 
-    Lets conditions be written with Spark conventions (``=`` for equality, ``<>`` for
-    inequality) in addition to the Python forms (``==`` / ``!=``). Multi-character operators
-    (``==``, ``>=``, ``<=``, ``!=``) are preserved. Note: the substitution is textual and not
-    quote-aware, so a ``=`` or ``<>`` inside a string literal would also be rewritten — conditions
-    compare numeric metrics, so string literals containing these operators are not expected.
+    Lets conditions be written with Spark conventions (*=* for equality, *<>* for inequality) in
+    addition to the Python forms (*==* / *!=*). Multi-character operators (*==*, *>=*, *<=*, *!=*)
+    are preserved. Note: the substitution is textual and not quote-aware, so a *=* or *<>* inside a
+    string literal would also be rewritten — conditions compare numeric metrics, so string literals
+    containing these operators are not expected.
 
     Args:
         condition: The raw condition expression as written by the user.
 
     Returns:
-        The condition with ``<>`` and single ``=`` normalized to ``!=`` and ``==``.
+        The condition with *<>* and single *=* normalized to *!=* and *==*.
     """
     condition = _NOT_EQUAL_SQL_RE.sub("!=", condition)
     return _SINGLE_EQUALS_RE.sub("==", condition)
@@ -435,7 +435,8 @@ def _parse_condition(condition: str) -> ast.Expression:
     try:
         return ast.parse(_normalize_operators(condition), mode="eval")
     except SyntaxError as exc:
-        raise InvalidConditionError(f"Condition has a syntax error: {exc}") from exc
+        # Reference the user's original expression, not the operator-normalized form.
+        raise InvalidConditionError(f"Condition {condition!r} has a syntax error: {exc}") from exc
 
 
 # ---------------------------------------------------------------------------

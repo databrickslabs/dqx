@@ -141,6 +141,8 @@ class TableActionEventStore(ActionEventStore):
 
         result: dict[str, AlertEvent] = {}
         for row in ranked.collect():
+            if row["run_time"] is None:
+                continue  # defensive: skip rows with a missing timestamp (e.g. externally-inserted data)
             alert_event = AlertEvent(
                 action_name=row["action_name"],
                 condition=row["condition"],
@@ -174,7 +176,9 @@ class TableActionEventStore(ActionEventStore):
             (F.col("run_config_name") == self._config.run_config_name) & (F.col("fired"))
         )
         grouped = fired.groupBy("action_name").agg(F.max("run_time").alias("last_fired"))
-        return {row["action_name"]: to_utc(row["last_fired"]) for row in grouped.collect()}
+        return {
+            row["action_name"]: to_utc(row["last_fired"]) for row in grouped.collect() if row["last_fired"] is not None
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -326,6 +330,8 @@ class LakebaseActionEventStore(LakebaseConnectionMixin, ActionEventStore):
             action_name = row["action_name"]
             if action_name in result:
                 continue  # already have the most recent (ordered by run_time desc)
+            if row["run_time"] is None:
+                continue  # defensive: skip rows with a missing timestamp (e.g. externally-inserted data)
             metrics_raw = row["observed_metrics"] or {}
             result[action_name] = AlertEvent(
                 action_name=action_name,
@@ -371,6 +377,8 @@ class LakebaseActionEventStore(LakebaseConnectionMixin, ActionEventStore):
             rows = conn.execute(stmt).mappings().all()
         for row in rows:
             action_name = row["action_name"]
+            if row["run_time"] is None:
+                continue  # defensive: skip rows with a missing timestamp (e.g. externally-inserted data)
             if action_name not in last_fired:  # rows are run_time-descending, so first seen is latest
                 last_fired[action_name] = to_utc(row["run_time"])
         return last_fired
