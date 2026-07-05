@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -91,6 +91,18 @@ export function LabelsEditor({
   const editorTitle = title ?? t("labelsEditor.title");
   const [open, setOpen] = useState(defaultOpen);
   const [rows, setRows] = useState<Row[]>(() => recordToRows(value));
+
+  // `defaultOpen` is often computed from data that loads asynchronously
+  // (e.g. an existing rule's tags, hydrated after this component's first
+  // render). `useState(defaultOpen)` only seeds the initial value, so if
+  // the caller re-renders with `defaultOpen` flipping from false to true
+  // once the data arrives, the disclosure would otherwise stay collapsed
+  // forever even though there's now content to show. Auto-expand the one
+  // time that happens; never force it back closed once the user has
+  // interacted with it.
+  useEffect(() => {
+    if (defaultOpen) setOpen(true);
+  }, [defaultOpen]);
 
   const definitionsMap = useMemo(() => {
     const m = new Map<string, LabelDefinition>();

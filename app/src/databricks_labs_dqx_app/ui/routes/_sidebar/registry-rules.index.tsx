@@ -61,6 +61,9 @@ import {
   RESERVED_SEVERITY_KEY,
   orderSeverityValuesForDisplay,
   getTag,
+  colorFor,
+  ColorDot,
+  type LabelColorDefinition,
 } from "@/components/RegistryRuleBadges";
 
 export const Route = createFileRoute("/_sidebar/registry-rules/")({
@@ -434,7 +437,12 @@ function RegistryRulesPage() {
         <SelectContent>
           <SelectItem value={ALL} className="text-xs">{t("rulesRegistry.allDimensions")}</SelectItem>
           {dimensionValues.map((v) => (
-            <SelectItem key={v} value={v} className="text-xs">{v}</SelectItem>
+            <SelectItem key={v} value={v} className="text-xs">
+              <span className="flex items-center gap-1.5">
+                <ColorDot color={colorFor(labelDefinitions as LabelColorDefinition[], RESERVED_DIMENSION_KEY, v)} />
+                {v}
+              </span>
+            </SelectItem>
           ))}
         </SelectContent>
       </Select>
@@ -445,7 +453,12 @@ function RegistryRulesPage() {
         <SelectContent>
           <SelectItem value={ALL} className="text-xs">{t("rulesRegistry.allSeverities")}</SelectItem>
           {severityValues.map((v) => (
-            <SelectItem key={v} value={v} className="text-xs">{v}</SelectItem>
+            <SelectItem key={v} value={v} className="text-xs">
+              <span className="flex items-center gap-1.5">
+                <ColorDot color={colorFor(labelDefinitions as LabelColorDefinition[], RESERVED_SEVERITY_KEY, v)} />
+                {v}
+              </span>
+            </SelectItem>
           ))}
         </SelectContent>
       </Select>

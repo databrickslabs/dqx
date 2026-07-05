@@ -1346,7 +1346,7 @@
     "clearCheckFilter": "Limpar filtro de verificação"
   },
   "labelsEditor": {
-    "title": "Rótulos (opcional)",
+    "title": "Rótulos",
     "addLabel": "Adicionar rótulo",
     "customLabel": "Rótulo personalizado",
     "customLabelTooltip": "Adicionar um rótulo cuja chave não está no catálogo do administrador",

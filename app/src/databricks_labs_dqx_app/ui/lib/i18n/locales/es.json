@@ -1346,7 +1346,7 @@
     "clearCheckFilter": "Limpiar filtro de verificación"
   },
   "labelsEditor": {
-    "title": "Etiquetas (opcional)",
+    "title": "Etiquetas",
     "addLabel": "Agregar etiqueta",
     "customLabel": "Etiqueta personalizada",
     "customLabelTooltip": "Agregar una etiqueta cuya clave no esté en el catálogo del administrador",

@@ -1346,7 +1346,7 @@
     "clearCheckFilter": "Clear check filter"
   },
   "labelsEditor": {
-    "title": "Labels (optional)",
+    "title": "Labels",
     "addLabel": "Add label",
     "customLabel": "Custom label",
     "customLabelTooltip": "Add a label whose key isn't in the admin catalog",

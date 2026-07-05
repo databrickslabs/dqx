@@ -136,7 +136,10 @@ const COLUMNS: Record<ColumnKey, ColumnDef> = {
   aiAuthorship: {
     labelKey: "rulesRegistry.colAiAuthorship",
     toggleable: true,
-    defaultVisible: true,
+    // Hidden by default — the list row's top area shows Status + Version
+    // instead of the type/authorship chips. Still available via Edit
+    // Columns for anyone who wants it back.
+    defaultVisible: false,
     defaultWidth: 56,
     sortable: true,
     resizable: false,
@@ -184,7 +187,7 @@ const COLUMNS: Record<ColumnKey, ColumnDef> = {
   status: {
     labelKey: "rulesRegistry.colStatus",
     toggleable: true,
-    defaultVisible: false,
+    defaultVisible: true,
     defaultWidth: 140,
     sortable: true,
     renderHeader: (label) => label,
@@ -193,7 +196,7 @@ const COLUMNS: Record<ColumnKey, ColumnDef> = {
   version: {
     labelKey: "rulesRegistry.colVersion",
     toggleable: true,
-    defaultVisible: false,
+    defaultVisible: true,
     defaultWidth: 90,
     sortable: true,
     renderHeader: (label) => label,
