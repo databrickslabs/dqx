@@ -58,6 +58,14 @@ interface AddRulesDialogProps {
    * a rule that's already applied to the table.
    */
   presetRule?: RegistryRuleOut | null;
+  /**
+   * Column names `presetRule` is already mapped to (across its other
+   * mapping groups) — passed through to the mapping step's column pickers
+   * so the "+ Apply to another column" flow can't re-pick a column the
+   * rule already covers. See `getUsedColumnsForRule`. Ignored outside the
+   * preset flow.
+   */
+  presetExcludeColumns?: string[];
 }
 
 export function AddRulesDialog({
@@ -70,6 +78,7 @@ export function AddRulesDialog({
   onApplied,
   initialColumn = null,
   presetRule = null,
+  presetExcludeColumns,
 }: AddRulesDialogProps) {
   const { t } = useTranslation();
   const [selectedRule, setSelectedRule] = useState<RegistryRuleOut | null>(null);
@@ -200,7 +209,6 @@ export function AddRulesDialog({
               <RulesPicker
                 rules={publishedRules}
                 labelDefinitions={labelDefinitions}
-                selectedId={null}
                 onSelect={selectRule}
               />
               <Button variant="outline" size="sm" className="gap-2 w-full" onClick={openCreateRule}>
@@ -224,6 +232,7 @@ export function AddRulesDialog({
                 mapping={mapping}
                 onChange={(slotName, value) => setMapping((m) => ({ ...m, [slotName]: value }))}
                 labelDefinitions={labelDefinitions}
+                excludeColumns={presetRule ? presetExcludeColumns : undefined}
               />
               {!mappingComplete && (
                 <p className="text-xs text-amber-600">{t("monitoredTables.mappingIncomplete")}</p>

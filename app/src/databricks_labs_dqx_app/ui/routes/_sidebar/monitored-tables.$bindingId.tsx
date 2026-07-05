@@ -83,6 +83,7 @@ import { RulesByColumn, type ColumnRef } from "@/components/apply-rules/RulesByC
 import {
   RESERVED_SEVERITY_KEY,
   extractApiError,
+  getUsedColumnsForRule,
   groupAppliedRulesByRuleId,
   mergeRuleRowGroup,
 } from "@/components/apply-rules/shared";
@@ -648,6 +649,7 @@ function ApplyRulesTab({
   const [addOpen, setAddOpen] = useState(false);
   const [addColumnContext, setAddColumnContext] = useState<ColumnRef | null>(null);
   const [mappingRuleId, setMappingRuleId] = useState<string | null>(null);
+  const [mappingExcludeColumns, setMappingExcludeColumns] = useState<string[]>([]);
   const [suggestOpen, setSuggestOpen] = useState(false);
   const [removeTarget, setRemoveTarget] = useState<AppliedRuleOut | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
@@ -976,6 +978,7 @@ function ApplyRulesTab({
                 onAddMapping={() => {
                   setAddColumnContext(null);
                   setMappingRuleId(rule.rule_id);
+                  setMappingExcludeColumns(getUsedColumnsForRule(rule));
                   setAddOpen(true);
                 }}
                 onJumpToColumn={(colName) => {
@@ -1028,6 +1031,7 @@ function ApplyRulesTab({
             }
             setAddColumnContext(null);
             setMappingRuleId(null);
+            setMappingExcludeColumns([]);
           }
         }}
         bindingId={bindingId}
@@ -1037,6 +1041,7 @@ function ApplyRulesTab({
         onApplied={onMutated}
         initialColumn={addColumnContext}
         presetRule={mappingRuleId ? (ruleById.get(mappingRuleId) ?? null) : null}
+        presetExcludeColumns={mappingExcludeColumns}
       />
 
       <AiSuggestionDialog

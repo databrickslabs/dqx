@@ -73,6 +73,25 @@ export function mergeRuleRowGroup(group: RuleRowGroup): AppliedRuleOut {
   };
 }
 
+/** Every column name a rule is already mapped to, across every mapping
+ *  group and slot (multi-value slots store their columns as a
+ *  comma-joined string — see `AddRulesDialog#handleApply`). Used by the
+ *  "+ Apply to another column" flow to exclude columns the rule already
+ *  covers from the column picker, mirroring dqlake's `usedSetForNew`
+ *  exclusion in `bindings/MappingChips.tsx`. */
+export function getUsedColumnsForRule(rule: AppliedRuleOut): string[] {
+  const used = new Set<string>();
+  for (const group of rule.column_mapping ?? []) {
+    for (const value of Object.values(group)) {
+      if (!value) continue;
+      for (const col of value.split(",")) {
+        if (col) used.add(col);
+      }
+    }
+  }
+  return [...used];
+}
+
 export function TagBadge({ label, color }: { label: string; color?: string }) {
   if (!label) return null;
   return (

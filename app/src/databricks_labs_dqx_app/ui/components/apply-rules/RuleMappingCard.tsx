@@ -31,11 +31,23 @@ interface RuleMappingCardProps {
   mapping: Record<string, string | string[]>;
   onChange: (slotName: string, value: string | string[]) => void;
   labelDefinitions: LabelDefinition[];
+  /** Column names already mapped to this rule (e.g. via other mapping
+   *  groups) — excluded from every slot's candidate list so the "+ Apply to
+   *  another column" flow can't re-pick a column the rule already covers.
+   *  See `getUsedColumnsForRule`. */
+  excludeColumns?: string[];
 }
 
 /** Editable analog of `RuleConfigCard` + `MappingChips`, used while a rule is
  *  being mapped (before it's applied) in `AddRulesDialog`'s map step. */
-export function RuleMappingCard({ rule, columns, mapping, onChange, labelDefinitions }: RuleMappingCardProps) {
+export function RuleMappingCard({
+  rule,
+  columns,
+  mapping,
+  onChange,
+  labelDefinitions,
+  excludeColumns,
+}: RuleMappingCardProps) {
   const { t } = useTranslation();
   const [logicOpen, setLogicOpen] = useState(false);
   const dimension = getTag(rule, RESERVED_DIMENSION_KEY);
@@ -76,6 +88,7 @@ export function RuleMappingCard({ rule, columns, mapping, onChange, labelDefinit
                       columns={columns}
                       value={(mapping[slot.name] as string[] | undefined) ?? []}
                       onChange={(next) => onChange(slot.name, next)}
+                      excludeColumns={excludeColumns}
                     />
                   ) : (
                     <SingleColumnPicker
@@ -83,6 +96,7 @@ export function RuleMappingCard({ rule, columns, mapping, onChange, labelDefinit
                       columns={columns}
                       value={mapping[slot.name] as string | undefined}
                       onChange={(v) => onChange(slot.name, v)}
+                      excludeColumns={excludeColumns}
                     />
                   )}
                 </div>

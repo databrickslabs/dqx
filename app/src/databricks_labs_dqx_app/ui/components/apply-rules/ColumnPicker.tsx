@@ -25,8 +25,20 @@ export function familyForType(typeName: string): ColumnFamily {
   return "any";
 }
 
-export function columnsForSlot(columns: ColumnOut[], slot: Pick<RuleSlot, "family">): ColumnOut[] {
-  return columns.filter((c) => slot.family === "any" || familyForType(c.type_name) === slot.family);
+/**
+ * @param excludeColumns Column names to omit from the candidate list — used
+ * by the "+ Apply to another column" flow to hide columns the rule is
+ * already mapped to, mirroring dqlake's `usedSetForNew` exclusion.
+ */
+export function columnsForSlot(
+  columns: ColumnOut[],
+  slot: Pick<RuleSlot, "family">,
+  excludeColumns?: string[],
+): ColumnOut[] {
+  const exclude = excludeColumns?.length ? new Set(excludeColumns) : null;
+  return columns.filter(
+    (c) => (slot.family === "any" || familyForType(c.type_name) === slot.family) && !exclude?.has(c.name),
+  );
 }
 
 interface SingleColumnPickerProps {
@@ -34,12 +46,14 @@ interface SingleColumnPickerProps {
   columns: ColumnOut[];
   value: string | undefined;
   onChange: (column: string) => void;
+  /** See `columnsForSlot`'s `excludeColumns`. */
+  excludeColumns?: string[];
 }
 
 /** Single-column picker for a `cardinality: "one"` slot. */
-export function SingleColumnPicker({ slot, columns, value, onChange }: SingleColumnPickerProps) {
+export function SingleColumnPicker({ slot, columns, value, onChange, excludeColumns }: SingleColumnPickerProps) {
   const { t } = useTranslation();
-  const matches = columnsForSlot(columns, slot);
+  const matches = columnsForSlot(columns, slot, excludeColumns);
   return (
     <Select value={value ?? ""} onValueChange={onChange}>
       <SelectTrigger className="h-8 text-xs">
@@ -65,12 +79,14 @@ interface MultiColumnPickerProps {
   columns: ColumnOut[];
   value: string[];
   onChange: (columns: string[]) => void;
+  /** See `columnsForSlot`'s `excludeColumns`. */
+  excludeColumns?: string[];
 }
 
 /** Multi-column checklist picker for a `cardinality: "many"` slot. */
-export function MultiColumnPicker({ slot, columns, value, onChange }: MultiColumnPickerProps) {
+export function MultiColumnPicker({ slot, columns, value, onChange, excludeColumns }: MultiColumnPickerProps) {
   const { t } = useTranslation();
-  const matches = columnsForSlot(columns, slot);
+  const matches = columnsForSlot(columns, slot, excludeColumns);
   if (matches.length === 0) {
     return <p className="text-xs text-muted-foreground">{t("monitoredTables.noMatchingColumns")}</p>;
   }

@@ -1,9 +1,9 @@
 // RulesPicker — a selectable, mini variant of RulesTable used inside
 // AddRulesDialog's rule-selection step. Ported from dqlake's
 // `bindings/RulesPicker.tsx` (itself forked from dqlake's RulesTable): a
-// compact table with a leading "Select" column and its own search box +
-// Edit Columns control, so picking a rule to apply means scanning a real
-// table view instead of a plain search-box list of buttons.
+// compact table with a search box + Edit Columns control, so picking a rule
+// to apply means scanning a real table view instead of a plain search-box
+// list of buttons.
 //
 // Reuses DQX's own column-layout infrastructure (`useColumnLayout` /
 // `EditColumnsDropdown`, shared with the main Rules Registry list) rather
@@ -13,11 +13,15 @@
 //
 // Two deliberate deviations from dqlake's picker, both forced by DQX's data
 // model (not stylistic choices):
-//   - Single-select, not multi-select-then-"Add N rules": DQX's apply
-//     endpoint takes one explicit `column_mapping` per rule, so
-//     AddRulesDialog maps exactly one rule at a time (its Step 2). Clicking
-//     a row/checkbox here immediately hands the rule to the caller, which
-//     advances to the mapping step — there is no multi-row batch-add.
+//   - Single-select, click-a-row-to-advance, no leading checkbox column:
+//     DQX's apply endpoint takes one explicit `column_mapping` per rule, so
+//     AddRulesDialog maps exactly one rule at a time (its Step 2) and there
+//     is no multi-row batch-add / "Add N rules" step for a checkbox to feed
+//     into. dqlake's checkbox reflects a real multi-select `Set`; here the
+//     caller never re-renders with a `selectedId` (the dialog immediately
+//     advances to the mapping step), so a checkbox column would only ever
+//     show dead, non-interactive state. Clicking anywhere on a row selects
+//     it, same as before.
 //   - No steward filter dropdown: DQX has no rule-stewards listing endpoint
 //     analogous to dqlake's `useList_rule_stewardsSuspense`.
 
@@ -26,7 +30,6 @@ import { useTranslation } from "react-i18next";
 import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Search, Sparkles } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
@@ -257,18 +260,14 @@ const LS_KEY_LAYOUT = "dqx.rulesPicker.layout";
 // without dominating the viewport — same page size dqlake uses.
 const PAGE_SIZE = 10;
 
-const SELECT_COL_WIDTH = 48;
-
 export interface RulesPickerProps {
   rules: RegistryRuleOut[];
   labelDefinitions: LabelColorDefinition[];
-  /** Currently selected rule id, if any. */
-  selectedId?: string | null;
   /** Fired when a row is chosen — the caller advances to the mapping step. */
   onSelect: (rule: RegistryRuleOut) => void;
 }
 
-export function RulesPicker({ rules, labelDefinitions, selectedId, onSelect }: RulesPickerProps) {
+export function RulesPicker({ rules, labelDefinitions, onSelect }: RulesPickerProps) {
   const { t } = useTranslation();
   const ctx = useMemo(() => ({ labelDefinitions }), [labelDefinitions]);
   const [search, setSearch] = useState("");
@@ -326,9 +325,8 @@ export function RulesPicker({ rules, labelDefinitions, selectedId, onSelect }: R
     setSortDir(null);
   }
 
-  const totalWidth =
-    SELECT_COL_WIDTH + visibleKeys.reduce((acc, k) => acc + (colWidths[k] ?? COLUMNS[k].defaultWidth), 0);
-  const visibleColCount = visibleKeys.length + 1;
+  const totalWidth = visibleKeys.reduce((acc, k) => acc + (colWidths[k] ?? COLUMNS[k].defaultWidth), 0);
+  const visibleColCount = visibleKeys.length;
 
   return (
     <div className="space-y-3">
@@ -357,17 +355,12 @@ export function RulesPicker({ rules, labelDefinitions, selectedId, onSelect }: R
       <div className="overflow-x-auto min-h-[20rem] max-h-[26rem] overflow-y-auto border rounded-md">
         <Table className="table-fixed" style={{ width: totalWidth, minWidth: totalWidth }}>
           <colgroup>
-            <col style={{ width: SELECT_COL_WIDTH }} />
             {visibleKeys.map((k) => (
               <col key={k} style={{ width: colWidths[k] ?? COLUMNS[k].defaultWidth }} />
             ))}
           </colgroup>
           <TableHeader>
             <TableRow>
-              <TableHead
-                style={{ width: SELECT_COL_WIDTH, minWidth: SELECT_COL_WIDTH, maxWidth: SELECT_COL_WIDTH }}
-                className="text-center h-10 px-2"
-              />
               {visibleKeys.map((k) => {
                 const def = COLUMNS[k];
                 const width = colWidths[k] ?? def.defaultWidth;
@@ -416,20 +409,9 @@ export function RulesPicker({ rules, labelDefinitions, selectedId, onSelect }: R
                 <TableRow
                   key={r.rule_id}
                   className="cursor-pointer hover:bg-muted/50"
-                  data-selected={selectedId === r.rule_id || undefined}
                   onClick={() => onSelect(r)}
+                  aria-label={t("monitoredTables.selectRuleLabel", { name })}
                 >
-                  <TableCell
-                    style={{ width: SELECT_COL_WIDTH, minWidth: SELECT_COL_WIDTH, maxWidth: SELECT_COL_WIDTH }}
-                    className="text-center p-2"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <Checkbox
-                      checked={selectedId === r.rule_id}
-                      onCheckedChange={() => onSelect(r)}
-                      aria-label={t("monitoredTables.selectRuleLabel", { name })}
-                    />
-                  </TableCell>
                   {visibleKeys.map((k) => {
                     const width = colWidths[k] ?? COLUMNS[k].defaultWidth;
                     return (
