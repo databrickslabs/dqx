@@ -1290,6 +1290,13 @@
     "scopeTables": "Tabelas",
     "scopeTableCount_one": "{{count}} tabela",
     "scopeTableCount_other": "{{count}} tabelas",
-    "noApprovedTables": "Nenhuma regra aprovada encontrada"
+    "noApprovedTables": "Nenhuma regra aprovada encontrada",
+    "copy": "Copiar",
+    "endpointCopied": "URL do endpoint copiada",
+    "couldNotCopy": "Não foi possível copiar para a área de transferência",
+    "monitoringEndpointsTitle": "API de status de validação",
+    "monitoringEndpointsDescription": "Consulte esses endpoints somente leitura a partir do Site24x7 (ou qualquer monitor de disponibilidade) para verificar o status de sucesso/falha das execuções de validação. Autentique-se com um token OAuth do Databricks.",
+    "endpointTableLabel": "Último status por tabela — substitua {table_fqn} por uma tabela real",
+    "endpointRunLabel": "Status por ID de execução — substitua {run_id} por uma execução real"
   }
 }

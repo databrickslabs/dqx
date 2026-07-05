@@ -1290,6 +1290,13 @@
     "scopeTables": "Tables",
     "scopeTableCount_one": "{{count}} table",
     "scopeTableCount_other": "{{count}} tables",
-    "noApprovedTables": "No approved rules found"
+    "noApprovedTables": "No approved rules found",
+    "copy": "Copy",
+    "endpointCopied": "Endpoint URL copied",
+    "couldNotCopy": "Could not copy to clipboard",
+    "monitoringEndpointsTitle": "Validation Status API",
+    "monitoringEndpointsDescription": "Poll these read-only endpoints from Site24x7 (or any uptime monitor) to check the pass/fail status of validation runs. Authenticate with a Databricks OAuth token.",
+    "endpointTableLabel": "Latest status by table — replace {table_fqn} with a real table",
+    "endpointRunLabel": "Status by run ID — replace {run_id} with a real run"
   }
 }

@@ -412,6 +412,15 @@ class AlertChannelOut(BaseModel):
     scope_tables: list[str] = Field(default_factory=list)
 
 
+class AlertStatusOut(BaseModel):
+    status: str = Field(description="Validation run status: SUCCESS | FAILED | CANCELED")
+    source_table_fqn: str
+    run_id: str
+    error_rows: int | None = None
+    warning_rows: int | None = None
+    updated_at: str | None = None
+
+
 class NotifyResultIn(BaseModel):
     source_table_fqn: str = Field(description="Fully qualified table name that was dry-run")
     total_rows: int | None = None

@@ -13,6 +13,7 @@ import {
   Loader2,
   ChevronsUpDown,
   X,
+  Copy,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -138,6 +139,26 @@ function AlertsPage() {
       setDeleteTarget(null);
     },
   });
+
+  const handleCopy = async (value: string, message: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      toast.success(message, { duration: 1500 });
+    } catch {
+      toast.error(t("alerts.couldNotCopy"));
+    }
+  };
+
+  // Site24x7 (or any uptime monitor) polls these directly, authenticating
+  // with a Databricks OAuth token — not scoped to any single channel.
+  const monitoringEndpoints = useMemo(() => {
+    if (typeof window === "undefined") return [];
+    const origin = window.location.origin;
+    return [
+      { label: t("alerts.endpointTableLabel"), url: `${origin}/api/v1/alerts/status/table/{table_fqn}` },
+      { label: t("alerts.endpointRunLabel"), url: `${origin}/api/v1/alerts/status/run/{run_id}` },
+    ];
+  }, [t]);
 
   const openCreate = () => {
     setEditingChannel(null);
@@ -337,6 +358,32 @@ function AlertsPage() {
           ))}
         </div>
       )}
+
+      <div className="space-y-2 rounded-md border p-4">
+        <div>
+          <h2 className="text-base font-semibold">{t("alerts.monitoringEndpointsTitle")}</h2>
+          <p className="text-xs text-muted-foreground mt-0.5">{t("alerts.monitoringEndpointsDescription")}</p>
+        </div>
+        {monitoringEndpoints.map((row) => (
+          <div key={row.url} className="flex items-center gap-2">
+            <Badge variant="secondary" className="shrink-0 font-mono text-[10px]">
+              GET
+            </Badge>
+            <code className="min-w-0 flex-1 truncate rounded bg-muted px-2 py-1 text-xs font-mono" title={row.label}>
+              {row.url}
+            </code>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={() => handleCopy(row.url, t("alerts.endpointCopied"))}
+              aria-label={t("alerts.copy")}
+            >
+              <Copy size={12} />
+            </Button>
+          </div>
+        ))}
+      </div>
 
       {/* Create / Edit dialog */}
       <Dialog open={dialogOpen} onOpenChange={(open) => { if (!open) closeDialog(); }}>

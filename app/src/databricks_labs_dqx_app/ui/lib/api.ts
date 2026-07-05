@@ -67,6 +67,16 @@ export interface AlertChannelOut {
   scope_tables?: string[];
 }
 
+export interface AlertStatusOut {
+  /** Validation run status: SUCCESS | FAILED | CANCELED */
+  status: string;
+  source_table_fqn: string;
+  run_id: string;
+  error_rows?: number | null;
+  warning_rows?: number | null;
+  updated_at?: string | null;
+}
+
 export interface AnomalyConfig {
   columns?: string[] | null;
   segment_by?: string[] | null;
@@ -10995,6 +11005,306 @@ export function useNotifyDryRunResult<TData = Awaited<ReturnType<typeof notifyDr
   const queryOptions = getNotifyDryRunResultQueryOptions(notifyResultIn,options)
 
   const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+/**
+ * Return the latest run's pass/fail status for a table.
+ *
+ * Meant for external polling (e.g. a Site24x7 REST monitor authenticating
+ * with a Databricks OAuth token) — 200 on a clean run, 503 on a failed one.
+ * @summary Get Alert Status By Table
+ */
+export const getAlertStatusByTable = (
+    tableFqn: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<AlertStatusOut>> => {
+
+
+    return axios.get(
+      `/api/v1/alerts/status/table/${tableFqn}`,options
+    );
+  }
+
+
+
+
+export const getGetAlertStatusByTableQueryKey = (tableFqn: string,) => {
+    return [
+    `/api/v1/alerts/status/table/${tableFqn}`
+    ] as const;
+    }
+
+
+export const getGetAlertStatusByTableQueryOptions = <TData = Awaited<ReturnType<typeof getAlertStatusByTable>>, TError = AxiosError<HTTPValidationError>>(tableFqn: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAlertStatusByTable>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAlertStatusByTableQueryKey(tableFqn);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAlertStatusByTable>>> = ({ signal }) => getAlertStatusByTable(tableFqn, { signal, ...axiosOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: tableFqn !== null && tableFqn !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAlertStatusByTable>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetAlertStatusByTableQueryResult = NonNullable<Awaited<ReturnType<typeof getAlertStatusByTable>>>
+export type GetAlertStatusByTableQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetAlertStatusByTable<TData = Awaited<ReturnType<typeof getAlertStatusByTable>>, TError = AxiosError<HTTPValidationError>>(
+ tableFqn: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAlertStatusByTable>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getAlertStatusByTable>>,
+          TError,
+          Awaited<ReturnType<typeof getAlertStatusByTable>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetAlertStatusByTable<TData = Awaited<ReturnType<typeof getAlertStatusByTable>>, TError = AxiosError<HTTPValidationError>>(
+ tableFqn: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAlertStatusByTable>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getAlertStatusByTable>>,
+          TError,
+          Awaited<ReturnType<typeof getAlertStatusByTable>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetAlertStatusByTable<TData = Awaited<ReturnType<typeof getAlertStatusByTable>>, TError = AxiosError<HTTPValidationError>>(
+ tableFqn: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAlertStatusByTable>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Alert Status By Table
+ */
+
+export function useGetAlertStatusByTable<TData = Awaited<ReturnType<typeof getAlertStatusByTable>>, TError = AxiosError<HTTPValidationError>>(
+ tableFqn: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAlertStatusByTable>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetAlertStatusByTableQueryOptions(tableFqn,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getGetAlertStatusByTableSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getAlertStatusByTable>>, TError = AxiosError<HTTPValidationError>>(tableFqn: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getAlertStatusByTable>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAlertStatusByTableQueryKey(tableFqn);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAlertStatusByTable>>> = ({ signal }) => getAlertStatusByTable(tableFqn, { signal, ...axiosOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof getAlertStatusByTable>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetAlertStatusByTableSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof getAlertStatusByTable>>>
+export type GetAlertStatusByTableSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetAlertStatusByTableSuspense<TData = Awaited<ReturnType<typeof getAlertStatusByTable>>, TError = AxiosError<HTTPValidationError>>(
+ tableFqn: string, options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getAlertStatusByTable>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetAlertStatusByTableSuspense<TData = Awaited<ReturnType<typeof getAlertStatusByTable>>, TError = AxiosError<HTTPValidationError>>(
+ tableFqn: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getAlertStatusByTable>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetAlertStatusByTableSuspense<TData = Awaited<ReturnType<typeof getAlertStatusByTable>>, TError = AxiosError<HTTPValidationError>>(
+ tableFqn: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getAlertStatusByTable>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Alert Status By Table
+ */
+
+export function useGetAlertStatusByTableSuspense<TData = Awaited<ReturnType<typeof getAlertStatusByTable>>, TError = AxiosError<HTTPValidationError>>(
+ tableFqn: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getAlertStatusByTable>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetAlertStatusByTableSuspenseQueryOptions(tableFqn,options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+/**
+ * Return a specific run's pass/fail status.
+ *
+ * Same 200/503 contract as ``getAlertStatusByTable`` but keyed by
+ * ``run_id`` instead of table name.
+ * @summary Get Alert Status By Run
+ */
+export const getAlertStatusByRun = (
+    runId: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<AlertStatusOut>> => {
+
+
+    return axios.get(
+      `/api/v1/alerts/status/run/${runId}`,options
+    );
+  }
+
+
+
+
+export const getGetAlertStatusByRunQueryKey = (runId: string,) => {
+    return [
+    `/api/v1/alerts/status/run/${runId}`
+    ] as const;
+    }
+
+
+export const getGetAlertStatusByRunQueryOptions = <TData = Awaited<ReturnType<typeof getAlertStatusByRun>>, TError = AxiosError<HTTPValidationError>>(runId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAlertStatusByRun>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAlertStatusByRunQueryKey(runId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAlertStatusByRun>>> = ({ signal }) => getAlertStatusByRun(runId, { signal, ...axiosOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: runId !== null && runId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAlertStatusByRun>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetAlertStatusByRunQueryResult = NonNullable<Awaited<ReturnType<typeof getAlertStatusByRun>>>
+export type GetAlertStatusByRunQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetAlertStatusByRun<TData = Awaited<ReturnType<typeof getAlertStatusByRun>>, TError = AxiosError<HTTPValidationError>>(
+ runId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAlertStatusByRun>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getAlertStatusByRun>>,
+          TError,
+          Awaited<ReturnType<typeof getAlertStatusByRun>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetAlertStatusByRun<TData = Awaited<ReturnType<typeof getAlertStatusByRun>>, TError = AxiosError<HTTPValidationError>>(
+ runId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAlertStatusByRun>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getAlertStatusByRun>>,
+          TError,
+          Awaited<ReturnType<typeof getAlertStatusByRun>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetAlertStatusByRun<TData = Awaited<ReturnType<typeof getAlertStatusByRun>>, TError = AxiosError<HTTPValidationError>>(
+ runId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAlertStatusByRun>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Alert Status By Run
+ */
+
+export function useGetAlertStatusByRun<TData = Awaited<ReturnType<typeof getAlertStatusByRun>>, TError = AxiosError<HTTPValidationError>>(
+ runId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAlertStatusByRun>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetAlertStatusByRunQueryOptions(runId,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getGetAlertStatusByRunSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getAlertStatusByRun>>, TError = AxiosError<HTTPValidationError>>(runId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getAlertStatusByRun>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAlertStatusByRunQueryKey(runId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAlertStatusByRun>>> = ({ signal }) => getAlertStatusByRun(runId, { signal, ...axiosOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof getAlertStatusByRun>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetAlertStatusByRunSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof getAlertStatusByRun>>>
+export type GetAlertStatusByRunSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetAlertStatusByRunSuspense<TData = Awaited<ReturnType<typeof getAlertStatusByRun>>, TError = AxiosError<HTTPValidationError>>(
+ runId: string, options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getAlertStatusByRun>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetAlertStatusByRunSuspense<TData = Awaited<ReturnType<typeof getAlertStatusByRun>>, TError = AxiosError<HTTPValidationError>>(
+ runId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getAlertStatusByRun>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetAlertStatusByRunSuspense<TData = Awaited<ReturnType<typeof getAlertStatusByRun>>, TError = AxiosError<HTTPValidationError>>(
+ runId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getAlertStatusByRun>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Alert Status By Run
+ */
+
+export function useGetAlertStatusByRunSuspense<TData = Awaited<ReturnType<typeof getAlertStatusByRun>>, TError = AxiosError<HTTPValidationError>>(
+ runId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getAlertStatusByRun>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetAlertStatusByRunSuspenseQueryOptions(runId,options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 
   return withQueryKey(query, queryOptions.queryKey);
 }

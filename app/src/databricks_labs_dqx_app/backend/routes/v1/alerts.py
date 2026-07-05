@@ -22,6 +22,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
 from databricks_labs_dqx_app.backend.models import (
     AlertChannelIn,
     AlertChannelOut,
+    AlertStatusOut,
     NotifyResultIn,
     NotifyRunsIn,
     NotifyRunsOut,
@@ -265,6 +266,77 @@ def notify_dry_run_result(
             skipped += 1
 
     return NotifyRunsOut(notified=notified, skipped=skipped, errors=errors)
+
+
+def _status_out(row: dict) -> AlertStatusOut:
+    return AlertStatusOut(
+        status=row.get("status") or "UNKNOWN",
+        source_table_fqn=row.get("source_table_fqn") or "",
+        run_id=row.get("run_id") or "",
+        error_rows=row.get("error_rows"),
+        warning_rows=row.get("warning_rows"),
+        updated_at=row.get("updated_at"),
+    )
+
+
+def _raise_for_status(row: dict) -> AlertStatusOut:
+    """Return the status body on pass, or raise 503 on fail.
+
+    Pass = a completed run with no error rows. Anything else (FAILED,
+    CANCELED, or SUCCESS with error_rows > 0) is reported as a failure so
+    an uptime monitor sees it as "down".
+    """
+    out = _status_out(row)
+    error_rows = row.get("error_rows") or 0
+    if out.status == "SUCCESS" and error_rows == 0:
+        return out
+    raise HTTPException(status_code=503, detail=out.model_dump())
+
+
+@router.get(
+    "/status/table/{table_fqn:path}",
+    response_model=AlertStatusOut,
+    operation_id="getAlertStatusByTable",
+    dependencies=[require_role(*_ALL_ROLES)],
+)
+def get_alert_status_by_table(
+    table_fqn: str,
+    job_svc: Annotated[JobService, Depends(get_job_service)],
+    conf: Annotated[AppConfig, Depends(get_conf)],
+) -> AlertStatusOut:
+    """Return the latest run's pass/fail status for a table.
+
+    Meant for external polling (e.g. a Site24x7 REST monitor authenticating
+    with a Databricks OAuth token) — 200 on a clean run, 503 on a failed one.
+    """
+    runs_table = f"{conf.catalog}.{conf.schema_name}.dq_validation_runs"
+    row = job_svc.get_latest_run_result_row(runs_table, table_fqn)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"No validation run recorded for '{table_fqn}'")
+    return _raise_for_status(row)
+
+
+@router.get(
+    "/status/run/{run_id}",
+    response_model=AlertStatusOut,
+    operation_id="getAlertStatusByRun",
+    dependencies=[require_role(*_ALL_ROLES)],
+)
+def get_alert_status_by_run(
+    run_id: str,
+    job_svc: Annotated[JobService, Depends(get_job_service)],
+    conf: Annotated[AppConfig, Depends(get_conf)],
+) -> AlertStatusOut:
+    """Return a specific run's pass/fail status.
+
+    Same 200/503 contract as ``getAlertStatusByTable`` but keyed by
+    ``run_id`` instead of table name.
+    """
+    runs_table = f"{conf.catalog}.{conf.schema_name}.dq_validation_runs"
+    row = job_svc.get_run_result_row(runs_table, run_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
+    return _raise_for_status(row)
 
 
 # ---------------------------------------------------------------------------
