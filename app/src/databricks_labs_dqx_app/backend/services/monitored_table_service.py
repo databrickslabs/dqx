@@ -301,17 +301,22 @@ class MonitoredTableService:
         return int(rows[0][0]) if rows and rows[0] and rows[0][0] is not None else 0
 
     def _count_materialized_checks(self, table_fqn: str) -> int:
-        """Count ``dq_quality_rules`` rows materialized from Rules Registry applications for *table_fqn*.
+        """Count active ``dq_quality_rules`` rows for *table_fqn*, regardless of authoring source.
 
-        One applied rule can render into more than one materialized check
-        (one per column-mapping group), so this is intentionally a separate
-        counter from :meth:`_count_applied_rules` rather than an alias for
-        it — matching dqlake's `BindingOutBrief.check_count` semantics.
+        ``dq_quality_rules`` holds every check for a table — authored
+        directly (``source`` in ``ui``/``sql``/``profiler``/``import``/``ai``)
+        as well as materialized from a Rules Registry application
+        (``source = 'registry'``). This must count all of them, not just
+        registry-sourced rows, matching dqlake's `BindingOutBrief.check_count`
+        semantics (which counts every check on a binding with no provenance
+        filter). ``rejected`` rows are excluded since they're no longer
+        active, mirroring :data:`RulesCatalogService.VALID_STATUSES`'s
+        terminal "dead" state.
         """
         e = escape_sql_string(table_fqn)
         sql = (
             f"SELECT COUNT(*) FROM {self._quality_rules_table} "  # noqa: S608
-            f"WHERE table_fqn = '{e}' AND source = 'registry'"
+            f"WHERE table_fqn = '{e}' AND status != 'rejected'"
         )
         rows = self._sql.query(sql)
         return int(rows[0][0]) if rows and rows[0] and rows[0][0] is not None else 0

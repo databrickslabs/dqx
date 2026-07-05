@@ -82,8 +82,9 @@ export function MultiSelectPopover({
   // selected, indeterminate otherwise. Clicking it toggles between
   // "select every visible option" and "clear every visible option".
   const allFilteredSelected =
-    filteredOptions.length > 0 && filteredOptions.every((o) => selectedSet.has(o.value));
-  const someFilteredSelected = filteredOptions.some((o) => selectedSet.has(o.value));
+    filteredOptions.length > 0 &&
+    filteredOptions.every((o) => selectedSet.has(o.value) || !!o.disabled);
+  const someFilteredSelected = filteredOptions.some((o) => selectedSet.has(o.value) || !!o.disabled);
   const selectAllState: boolean | "indeterminate" = allFilteredSelected
     ? true
     : someFilteredSelected
