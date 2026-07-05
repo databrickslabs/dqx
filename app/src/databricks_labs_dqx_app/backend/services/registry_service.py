@@ -427,6 +427,29 @@ class RegistryService:
         self._record_history(rule_id, rule.definition, rule.version, "delete", rule.status, None, user_email)
         logger.info("Deleted registry rule %s (by %s)", rule_id, user_email)
 
+    def delete_builtin_rules(self) -> int:
+        """Purge every ``is_builtin`` rule (and its version snapshots) from the registry.
+
+        Used by the startup best-effort purge (see ``app.py`` lifespan) to
+        remove built-in rules that were auto-seeded by a previous version of
+        the app — the Rules Registry now starts empty and is populated only
+        by rules authors create or import themselves. There are no
+        foreign-key constraints between ``dq_rules`` and ``dq_rule_versions``
+        (the link is service-enforced), so ordering is not FK-critical, but
+        the version snapshots are deleted too so no orphans remain. Returns
+        the number of ``dq_rules`` rows deleted; a no-op (returns 0) once the
+        purge has already run.
+        """
+        rows = self._sql.query(f"SELECT rule_id FROM {self._table} WHERE is_builtin = TRUE")  # noqa: S608
+        rule_ids = [row[0] for row in rows]
+        if not rule_ids:
+            return 0
+        id_list = ", ".join(f"'{escape_sql_string(rule_id)}'" for rule_id in rule_ids)
+        self._sql.execute(f"DELETE FROM {self._versions_table} WHERE rule_id IN ({id_list})")
+        self._sql.execute(f"DELETE FROM {self._table} WHERE is_builtin = TRUE")
+        logger.info("Purged %d built-in registry rule(s)", len(rule_ids))
+        return len(rule_ids)
+
     # ------------------------------------------------------------------
     # Internal persistence helpers
     # ------------------------------------------------------------------

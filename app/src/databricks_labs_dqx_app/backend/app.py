@@ -9,7 +9,6 @@ from databricks.sdk.service.jobs import JobEnvironment, JobSettings
 from fastapi import FastAPI
 
 from ._scheduler_registry import get_scheduler, set_scheduler
-from .builtin_rules_seed import seed_builtin_rules_if_absent
 from .config import conf
 from .dependencies import get_sp_ws, set_oltp_executor
 from .logger import logger
@@ -387,20 +386,24 @@ async def lifespan(app: FastAPI):
     except Exception as seed_e:
         logger.warning("Could not seed reserved label definitions: %s", seed_e, exc_info=True)
 
-    # Seed every built-in DQX check function as a pre-published Rules
-    # Registry rule (Rules Registry Phase 2C). Idempotent — re-running never
-    # duplicates or overwrites an admin-edited built-in rule, see
-    # ``builtin_rules_seed.seed_builtin_rules_if_absent``. Best-effort for
-    # the same reason as the seeds above: the registry list/create routes
-    # still function without built-ins present, just with an empty catalog
-    # until the next successful restart.
+    # NOTE: the Rules Registry deliberately starts EMPTY. We used to seed every
+    # built-in DQX check function as a pre-published registry rule at startup,
+    # but that cluttered a fresh install with ~78 auto-provisioned rules the
+    # user never asked for. The registry now begins empty and is populated only
+    # by rules authors create (or import) themselves. The seeding helper
+    # ``builtin_rules_seed.seed_builtin_rules_if_absent`` is retained for a
+    # potential future opt-in admin action, but is not invoked on startup.
+    #
+    # Best-effort: purge any built-in rules a previous version of the app
+    # already auto-seeded, so upgrading in place converges to an empty
+    # registry too. No-op once the purge has run once.
     try:
-        oltp_for_registry_seed = pg_executor if pg_executor is not None else sp_sql
-        seeded_count = seed_builtin_rules_if_absent(RegistryService(sql=oltp_for_registry_seed))
-        if seeded_count:
-            logger.info("Seeded %d built-in registry rule(s) at startup", seeded_count)
-    except Exception as seed_e:
-        logger.warning("Could not seed built-in registry rules: %s", seed_e, exc_info=True)
+        oltp_for_registry_purge = pg_executor if pg_executor is not None else sp_sql
+        purged_count = RegistryService(sql=oltp_for_registry_purge).delete_builtin_rules()
+        if purged_count:
+            logger.info("Removed %d auto-seeded built-in registry rule(s)", purged_count)
+    except Exception as purge_e:
+        logger.warning("Could not purge auto-seeded built-in registry rules: %s", purge_e, exc_info=True)
 
     try:
         tmp_cat = conf.catalog.replace("`", "")

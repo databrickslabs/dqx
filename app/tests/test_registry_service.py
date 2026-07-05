@@ -324,6 +324,24 @@ class TestDelete:
             svc.delete("missing", "alice@x")
 
 
+class TestDeleteBuiltinRules:
+    def test_deletes_builtin_rows_and_versions_returns_count(self, svc, sql):
+        sql.query.return_value = [["b1"], ["b2"]]
+        deleted = svc.delete_builtin_rules()
+        assert deleted == 2
+        calls = [c.args[0] for c in sql.execute.call_args_list]
+        versions_delete = next(c for c in calls if c.startswith("DELETE FROM") and "dq_rule_versions" in c)
+        assert "'b1'" in versions_delete and "'b2'" in versions_delete
+        rules_delete = next(c for c in calls if c.startswith("DELETE FROM") and "dq_rules " in c and "dq_rule_versions" not in c)
+        assert "is_builtin = TRUE" in rules_delete
+
+    def test_no_builtins_is_noop(self, svc, sql):
+        sql.query.return_value = []
+        deleted = svc.delete_builtin_rules()
+        assert deleted == 0
+        sql.execute.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # list_rules / get_rule
 # ---------------------------------------------------------------------------
