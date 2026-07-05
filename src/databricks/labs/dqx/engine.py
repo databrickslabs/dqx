@@ -2,15 +2,16 @@ import copy
 import inspect
 import logging
 import os
+import re
 from concurrent import futures
 from collections.abc import Callable
-from dataclasses import replace
 from datetime import datetime
 from functools import cached_property
 from typing import Any
 from uuid import uuid4
 
 import pyspark.sql.functions as F
+from pyspark.errors import AnalysisException
 from pyspark.sql import DataFrame, Observation, SparkSession
 from pyspark.sql.streaming import StreamingQuery
 
@@ -40,6 +41,7 @@ from databricks.labs.dqx.manager import DQRuleManager
 from databricks.labs.dqx.reporting_columns import ColumnArguments, DefaultColumnNames, merge_info_columns
 from databricks.labs.dqx.rule import (
     Criticality,
+    CHECK_FUNC_MIN_DBR_VERSION_ATTRIBUTE,
     DQRule,
     CHECK_FUNC_REGISTRY_ORIGINAL_COLUMNS_PRESELECTION,
 )
@@ -53,6 +55,7 @@ from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.errors import InvalidCheckError, InvalidConfigError, InvalidParameterError
 from databricks.labs.dqx.utils import list_tables, safe_strip_file_from_path, resolve_variables, VariableValue
 from databricks.labs.dqx.io import is_one_time_trigger
+from databricks.labs.dqx.checks_semantic_validator import ChecksSemanticValidator, ChecksSemanticValidationMode
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +146,8 @@ class DQEngineCore(DQEngineCoreBase):
             raise InvalidCheckError(
                 "All elements in the 'checks' list must be instances of DQRule. Use 'apply_checks_by_metadata' to pass checks as list of dicts instead."
             )
+
+        self._validate_dbr_version_requirements(checks)
 
         warning_checks = self._get_check_columns(checks, Criticality.WARN.value)
         error_checks = self._get_check_columns(checks, Criticality.ERROR.value)
@@ -295,22 +300,43 @@ class DQEngineCore(DQEngineCoreBase):
         checks: list[dict],
         custom_check_functions: dict[str, Callable] | None = None,
         validate_custom_check_functions: bool = True,
+        semantic_validation_mode: str | None = ChecksSemanticValidationMode.WARN,
     ) -> ChecksValidationStatus:
         """
-        Validate checks defined as metadata to ensure they conform to the expected structure and types.
+        Validate checks defined as metadata to ensure they conform to the expected
+        structure and types, and are semantically consistent as a ruleset.
 
-        This method validates the presence of required keys, the existence and callability of functions,
-        and the types of arguments passed to those functions.
+        Structural validation checks for required keys, callable functions, and
+        correct argument types. Semantic validation detects duplicate rules and
+        similar rules with conflicting arguments (e.g. two is_in_range checks on
+        the same column with different thresholds).
+
+        Note:
+            Rules using raw Spark SQL expressions are not deeply inspected during
+            semantic validation — only structured metadata is compared.
 
         Args:
             checks: List of checks to apply to the DataFrame. Each check should be a dictionary.
-            custom_check_functions: Optional dictionary with custom check functions (e.g., *globals()* of the calling module).
+            custom_check_functions: Optional dictionary with custom check functions
+                (e.g., *globals()* of the calling module).
             validate_custom_check_functions: If True, validate custom check functions.
+            semantic_validation_mode: Controls how semantic issues are surfaced.
+                Use *ChecksSemanticValidationMode.WARN* (default) to log warnings,
+                *ChecksSemanticValidationMode.FAIL* to raise on any issue, or
+                *None* to skip semantic validation entirely.
 
         Returns:
-            ChecksValidationStatus indicating the validation result.
+            ChecksValidationStatus indicating the structural validation result.
+
+        Raises:
+            ValueError: If semantic_validation_mode is FAIL and issues are found.
         """
-        return ChecksValidator.validate_checks(checks, custom_check_functions, validate_custom_check_functions)
+        status = ChecksValidator.validate_checks(checks, custom_check_functions, validate_custom_check_functions)
+
+        if semantic_validation_mode is not None:
+            ChecksSemanticValidator.apply(checks, mode=semantic_validation_mode)
+
+        return status
 
     def get_invalid(self, df: DataFrame) -> DataFrame:
         """
@@ -391,6 +417,64 @@ class DQEngineCore(DQEngineCoreBase):
         """Check if all elements in the checks list are instances of DQRule."""
         return all(isinstance(check, DQRule) for check in checks)
 
+    def _validate_dbr_version_requirements(self, checks: list[DQRule]) -> None:
+        """Raise InvalidCheckError if the current Databricks Runtime version is below the version required by any check.
+
+        The requirement is declared by decorating a check function with *requires_dbr_version("major.minor")*.
+        The current DBR version is resolved via the *current_version().dbr_version* Spark SQL function and compared
+        as a *(major, minor)* tuple. The version string may carry a suffix (for example *"18.2.x-photon-scala2.13"*
+        on serverless or *"15.4 LTS"*); only the leading *major.minor* is used.
+
+        When the version cannot be determined - *current_version().dbr_version* returns null or empty - the
+        requirement is not enforced rather than blocking an environment that may well support the check.
+
+        Args:
+            checks: List of DQRule instances to validate.
+
+        Raises:
+            InvalidCheckError: If the current DBR version is below the maximum required version, if the
+                *current_version()* function is unavailable (non-Databricks environment), or if a non-empty
+                version string has no leading *major.minor* and cannot be parsed.
+        """
+        versioned = {
+            c.check_func.__name__: getattr(c.check_func, CHECK_FUNC_MIN_DBR_VERSION_ATTRIBUTE)
+            for c in checks
+            if getattr(c.check_func, CHECK_FUNC_MIN_DBR_VERSION_ATTRIBUTE, None) is not None
+        }
+
+        if not versioned:
+            return
+
+        required = max(versioned.values())
+        try:
+            rows = self.spark.sql("select current_version().dbr_version as dbr_version").collect()
+            dbr_version_str = rows[0]["dbr_version"] if rows else None
+        except AnalysisException as e:
+            raise InvalidCheckError(
+                "Check functions with a DBR version requirement can only run on Databricks Runtime. "
+                f"Failed to resolve the current DBR version: {e}"
+            ) from e
+
+        # When the version cannot be determined (null or empty), skip enforcement rather than blocking an
+        # environment that may well support the check.
+        if dbr_version_str is None or not dbr_version_str.strip():
+            return
+
+        # Resolve the leading "major.minor" prefix, tolerating suffixes such as "18.2.x-photon-scala2.13"
+        # (serverless) or "15.4 LTS".
+        match = re.match(r"\s*(\d+)\.(\d+)", dbr_version_str)
+        if match is None:
+            raise InvalidCheckError(f"Cannot parse Databricks Runtime version: '{dbr_version_str}'.")
+        current = (int(match.group(1)), int(match.group(2)))
+
+        if current < required:
+            check_names = ", ".join(sorted(versioned))
+            required_str = f"{required[0]}.{required[1]}"
+            raise InvalidCheckError(
+                f"Check functions [{check_names}] require Databricks Runtime >= {required_str}, "
+                f"but the current version is {dbr_version_str}."
+            )
+
     def _preselect_original_columns(self, df: DataFrame, check: DQRule) -> DQRule:
         """
         Certain data quality checks (such as has_valid_schema) require access to the DataFrame's original schema—before
@@ -421,7 +505,7 @@ class DQEngineCore(DQEngineCoreBase):
         # preselect original columns
         rule_kwargs = check.check_func_kwargs.copy()
         rule_kwargs["columns"] = [col for col in df.columns if col not in set(self._result_column_names.values())]
-        return replace(check, check_func_kwargs=rule_kwargs)
+        return check.replace(check_func_kwargs=rule_kwargs)
 
     def _append_empty_checks(self, df: DataFrame) -> DataFrame:
         """Append empty checks at the end of DataFrame.
@@ -1144,25 +1228,35 @@ class DQEngine(DQEngineBase):
         checks: list[dict],
         custom_check_functions: dict[str, Callable] | None = None,
         validate_custom_check_functions: bool = True,
+        semantic_validation_mode: str | None = ChecksSemanticValidationMode.WARN,
     ) -> ChecksValidationStatus:
         """
         Validate checks defined as metadata to ensure they conform to the expected structure and types.
 
         This method validates the presence of required keys, the existence and callability of functions,
-        and the types of arguments passed to those functions.
+        and the types of arguments passed to those functions. It also runs semantic validation across the
+        ruleset to detect duplicate and conflicting rules.
 
         Args:
             checks: List of checks to apply to the DataFrame. Each check should be a dictionary.
             custom_check_functions: Optional dictionary with custom check functions (e.g., *globals()* of the calling module).
             validate_custom_check_functions: If True, validate custom check functions.
+            semantic_validation_mode: Controls how semantic issues are surfaced.
+                Use *ChecksSemanticValidationMode.WARN* (default) to log warnings,
+                *ChecksSemanticValidationMode.FAIL* to raise on any issue, or
+                *None* to skip semantic validation entirely.
 
         Returns:
             ChecksValidationStatus indicating the validation result.
+
+        Raises:
+            ValueError: If semantic_validation_mode is FAIL and issues are found.
         """
         return DQEngineCore.validate_checks(
             checks=checks,
             custom_check_functions=custom_check_functions,
             validate_custom_check_functions=validate_custom_check_functions,
+            semantic_validation_mode=semantic_validation_mode,
         )
 
     def get_invalid(self, df: DataFrame) -> DataFrame:
@@ -1306,7 +1400,10 @@ class DQEngine(DQEngineBase):
 
     @telemetry_logger("engine", "load_checks")
     def load_checks(
-        self, config: BaseChecksStorageConfig, variables: dict[str, VariableValue] | None = None
+        self,
+        config: BaseChecksStorageConfig,
+        variables: dict[str, VariableValue] | None = None,
+        semantic_validation_mode: str | None = ChecksSemanticValidationMode.WARN,
     ) -> list[dict]:
         """Load DQ rules (checks) from the storage backend described by *config*.
 
@@ -1332,17 +1429,25 @@ class DQEngine(DQEngineBase):
             config: Configuration object describing the storage backend.
             variables: Optional mapping of placeholder names to replacement values. Replaces placeholders
                 in all string values of the check definitions before returning.
+            semantic_validation_mode: Controls semantic validation behavior after loading.
+                Use *ChecksSemanticValidationMode.WARN* (default) to log warnings and continue,
+                *ChecksSemanticValidationMode.FAIL* to raise if issues are found, or
+                *None* to skip semantic validation entirely.
 
         Returns:
             List of DQ rules (checks) represented as dictionaries.
 
         Raises:
             InvalidConfigError: If the configuration type is unsupported.
+            ValueError: If semantic_validation_mode is FAIL and issues are found.
         """
         handler = self._checks_handler_factory.create(config)
         checks = handler.load(config)
         merged_variables = self._merge_variables(variables)
-        return resolve_variables(checks=checks, variables=merged_variables)
+        resolved = resolve_variables(checks=checks, variables=merged_variables)
+        if semantic_validation_mode is not None:
+            ChecksSemanticValidator.apply(resolved, mode=semantic_validation_mode)
+        return resolved
 
     def _merge_variables(self, per_call: dict[str, VariableValue] | None) -> dict[str, VariableValue] | None:
         """Merge engine-level default variables with per-call overrides.
@@ -1364,6 +1469,7 @@ class DQEngine(DQEngineBase):
         checks: list[dict],
         config: BaseChecksStorageConfig,
         variables: dict[str, VariableValue] | None = None,
+        semantic_validation_mode: str | None = ChecksSemanticValidationMode.WARN,
     ) -> None:
         """Persist DQ rules (checks) to the storage backend described by *config*.
 
@@ -1390,15 +1496,22 @@ class DQEngine(DQEngineBase):
             config: Configuration object describing the storage backend and write options.
             variables: Optional mapping of placeholder names to replacement values. Replaces placeholders
                 in all string values of the check definitions before saving.
+            semantic_validation_mode: Controls semantic validation behavior before saving.
+                Use *ChecksSemanticValidationMode.WARN* (default) to log warnings and continue,
+                *ChecksSemanticValidationMode.FAIL* to abort saving if issues are found, or
+                *None* to skip semantic validation entirely.
 
         Returns:
             None
 
         Raises:
             InvalidConfigError: If the configuration type is unsupported.
+            ValueError: If semantic_validation_mode is FAIL and issues are found.
         """
         merged_variables = self._merge_variables(variables)
         resolved_checks = resolve_variables(checks=checks, variables=merged_variables)
+        if semantic_validation_mode is not None:
+            ChecksSemanticValidator.apply(resolved_checks, mode=semantic_validation_mode)
         handler = self._checks_handler_factory.create(config)
         handler.save(resolved_checks, config)
 

@@ -5,11 +5,21 @@ sidebar_position: 314
 import Admonition from '@theme/Admonition';
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
+import ThemedImage from '@theme/ThemedImage';
+import useBaseUrl from '@docusaurus/useBaseUrl';
 
 # DQX Studio (No-Code UI)
 
 **DQX Studio** is the web application for authoring, reviewing, running, and monitoring data quality rules without writing code.
 It runs as a [Databricks App](https://docs.databricks.com/en/dev-tools/databricks-apps/index.html) inside your workspace and exposes all the core DQX capabilities — profiling, rule authoring, approval workflows, scheduled runs, and results tracking — through a browser.
+
+<ThemedImage
+  alt="DQX Studio landing page"
+  sources={{
+    light: useBaseUrl('/img/dqx_studio_landing_light.png'),
+    dark: useBaseUrl('/img/dqx_studio_landing_dark.png'),
+  }}
+/>
 
 <Admonition type="tip" title="When to use DQX Studio">
 DQX Studio is the recommended entry point for:
@@ -112,6 +122,24 @@ Use this flow when your check operates on the columns of one table — for examp
 
 For a complete list of built-in checks and their arguments, see [Quality Checks Reference](/docs/reference/quality_checks).
 
+#### Schema and reference-table checks
+
+Checks that compare the target table against a reference — [`has_valid_schema`](/docs/reference/quality_checks#dataset-level-checks-reference) (schema validation) and `foreign_key` — are authored from the **same single-table editor**. Pick the check from the catalog and the editor reveals the extra fields it needs; there is no separate schema-validation page, so everything you build for one table lives in one place.
+
+For `has_valid_schema` you pin the expected shape of the table — its columns, their order, and their data types — and DQX flags drift the next time the table runs through a check:
+
+- **Expected schema** — supply it either as a Spark DDL string (e.g. `id BIGINT, email STRING`) or by pointing at a **reference table** whose schema is the contract (loaded at run time). The two are mutually exclusive. In DDL mode, click **Snapshot from target table** to pre-fill the editor with the table's current shape — handy for "canonical/golden" tables you want to freeze.
+- **Match mode** — **Compatible** (every expected column must exist with a type-compatible counterpart; extra columns and minor type widenings such as `int → long` pass) or **Strict** (same columns, same order, same exact types — anything different fails).
+- **Column subset** *(optional)* — limit the check with **Validate only these columns** or ignore noise with **Ignore these columns**. In DDL mode the expected schema is auto-trimmed to match your subset so both sides of the comparison stay aligned; in reference-table mode the subset only filters the actual side, and the studio warns you when that mismatch could surprise you.
+
+As with any rule, run a **dry run** against a small row sample to confirm the check behaves as expected before saving.
+
+<Admonition type="tip" title="When schema validation pays off">
+- **Contracts** — keep producers and consumers honest by failing the run the moment a column is renamed, dropped, or retyped.
+- **Onboarding/migrations** — snapshot the source table's schema before a migration; pin the target's expected schema after; let the rule prove the move was clean.
+- **Combining with row-level checks** — schema validation answers "does the *shape* match?" while `is_not_null` / `is_in_list` / `regex_match` answer "does the *content* match?". You usually want both.
+</Admonition>
+
 ### Cross-table rules
 
 Use this flow when a check needs to compare data across multiple tables — for example, referential integrity ("every `order_id` must exist in `orders`"), reconciliation ("sum of `amount` in `payments` equals total in `invoices`"), or any custom SQL condition.
@@ -134,7 +162,9 @@ If you're starting from scratch and don't yet know what rules to write, profilin
 1. Pick a catalog, schema, and table in the browser.
 2. Click **Run profiler**.
 3. Wait for the job to complete — profiling runs as a serverless Databricks Job and uses your own table permissions, so no elevated access is required.
-4. Review the suggested rules. The profiler produces candidate checks based on actual data patterns (null rates, uniqueness, value ranges, regex fits, and more).
+4. Review the **Profiler & Generate results** modal. The studio shows:
+   - **Profiler statistics** (row counts, null rates, distinct counts, min/max, percentiles, top values, regex fits) so you can sanity-check the suggestions against the underlying data shape.
+   - **Candidate rules** derived from those statistics, ready to keep or discard.
 5. Keep the ones you like and discard the rest. Everything you keep is saved as drafts for review.
 
 See [Data Profiling](/docs/guide/data_profiling) for the full list of statistics and candidate check types the profiler produces.
@@ -145,13 +175,25 @@ DQX Studio also supports AI-assisted rule suggestions — you describe the busin
 
 ### Import rules
 
-If you already maintain rules in YAML or JSON, the **Import rules** flow lets you paste them in or upload a file. Imported rules land as drafts so you can review them before they go live.
+The **Import rules** page is the bulk-entry point for rules that already exist outside DQX Studio. Two tabs cover the two supported sources, and both land as drafts so you can review before they go live.
 
-The accepted formats are the same as the programmatic storage formats — see [Quality Checks Definition](/docs/guide/quality_checks_definition) for the schema.
+#### From DQX YAML
+
+If you already maintain rules in DQX's native YAML/JSON, paste them in or upload a file. The studio parses, validates, and previews the checks in a table before you save. You can also dry-run the imported set against any table you have access to. The accepted formats are the same as the programmatic storage formats — see [Quality Checks Definition](/docs/guide/quality_checks_definition) for the schema.
+
+#### From data contract
+
+If your data product is described by an [Open Data Contract Standard (ODCS) v3](https://opendatacontract.com/) contract, upload or paste it and DQX Studio will derive a full set of checks (schema validation, predefined constraints, and any explicit DQX rules embedded in the contract's `quality` section). For each ODCS schema you pick the Unity Catalog table the rules should target; the studio also validates that the columns the contract references actually exist on the chosen table and grays out the save buttons until the mismatch is resolved.
+
+This is the UI entry point for the same generation pipeline documented in [Data Contract Quality Rules Generation](/docs/guide/data_contract_quality_rules_generation) — pick whichever fits your workflow better.
+
+<Admonition type="tip" title="Bookmarks">
+The old standalone `/rules/from-contract` URL still works; it redirects to the **Import rules** page with the Data contract tab pre-selected so links shared earlier keep landing in the right place.
+</Admonition>
 
 ### Dry-run before committing
 
-While authoring, each rule supports a **dry run** that evaluates the check against a small sample of the target table without persisting results. Use it to sanity-check that your rule behaves as expected before submitting it for approval.
+Every rule flow — single-table (including schema and reference-table checks), cross-table SQL, contract import, and YAML import — exposes a **Dry run** affordance that evaluates the check against a small sample of the target table without persisting anything to run history. Use it to sanity-check that the rule behaves as expected before submitting it for approval. Dry-run results show the pass / error / warning counts, a per-check breakdown, and up to ten sample violating rows.
 
 ## Reviewing and approving drafts
 
@@ -168,7 +210,9 @@ By design, a draft author who does not also hold approval rights cannot approve 
 
 ## Browsing active rules
 
-The **Active Rules** page lists every approved rule grouped by target table (or under **Cross-table rules** for SQL checks). From here you can:
+The **Active Rules** page lists every approved rule grouped by target table. Schema-validation and other reference-table checks (`has_valid_schema`, `foreign_key`) group under their target table alongside the rest of that table's rules — they target a single table, so they are *not* shown under the **Cross-table rules** group. Only cross-table SQL checks, which aren't tied to one table, live under that group. The **Edit / View** action opens the editor that matches the group: the single-table editor for a real table (which loads all of that table's checks, schema validation included) and the SQL editor for a cross-table rule.
+
+From here you can:
 
 - **Filter** by catalog, schema, table, or label.
 - **Expand** any rule to see its definition, labels, author, approval history, and comments.
@@ -187,11 +231,11 @@ Both are managed from the **Run Rules** page, which is visible to users with the
 ### Manual runs
 
 1. Open the **Run Rules** page.
-2. Pick the rules you want to run — filter by table or labels to select a coherent set.
-3. Choose the target tables (if a rule applies to multiple) and any per-run parameters.
-4. Click **Run** to submit. DQX Studio creates a Databricks Job run and shows you a progress indicator.
+2. Pick the rules you want to run — filter by catalog, schema, label, or text to select a coherent set. Single-table rules — including schema-validation and reference-table checks — are grouped by their target table; only cross-table SQL checks live under the **Cross-table rules** group.
+3. Choose how many sample rows the runner should evaluate.
+4. Click **Run selected** to submit. DQX Studio creates a Databricks Job run per table and shows a progress indicator.
 
-You can leave the page while a run is in flight — it will continue in the background and surface in **Runs History** when it finishes.
+You can leave the page while a run is in flight — it will continue in the background and surface in **Runs History** when it finishes. If any table fails to submit (missing permissions, malformed rule, etc.), the failure banner now lists the per-table reason inline so you can self-diagnose without digging through logs.
 
 ### Scheduled runs
 
@@ -208,9 +252,13 @@ Schedules survive restarts and deduplicate — if a scheduled run is still in fl
 All schedule times are interpreted in the timezone configured on the **Configuration** page. Ask your admin to set this to your team's primary timezone before creating schedules.
 </Admonition>
 
-#### Pausing and editing schedules
+#### Pausing, editing, and deleting schedules
 
-Any schedule can be paused (without losing its configuration) and resumed later. Editing a schedule immediately reschedules the next run — there is no need to delete and recreate.
+The **Schedules** tab on the Run Rules page shows every configured schedule with **pause** and **delete** icons directly in the row — no need to dive into the editor first:
+
+- **Pause** a schedule to stop it firing without losing its configuration. Click again to resume.
+- **Delete** a schedule when you no longer need it. Past run history and the approved rules themselves are untouched — only the schedule entry is removed.
+- **Edit** a schedule by opening the editor; saving immediately re-computes the next fire time, so there's no need to delete and recreate.
 
 ## Runs history
 
@@ -220,9 +268,9 @@ For each run you can see:
 
 - When it started and how long it took.
 - Whether it was triggered manually or by a schedule (and which schedule).
-- Which rules it covered.
-- Pass, warning, and error counts per rule.
-- A link to drill into individual row-level failures.
+- Which rules it covered, with the **error / warning counts and ratios** for each check (the table-level summary uses the same ratio bar, so you can compare a single check against the whole table at a glance).
+- A drill-in to row-level failures: click a failed check name and the quarantine sample is filtered to just the rows that failed *that* specific check, making triage a one-click action instead of a manual scan.
+- A comment thread for the run — the **Add comment** button sits on the left of the editor so reviewers can leave notes without losing their place.
 
 Use this view to spot regressions, audit rule behaviour over time, and share results with stakeholders. For aggregated, cross-table monitoring of pass/fail trends and quality KPIs, complement Runs History with the [Quality Dashboard](/docs/guide/quality_dashboard).
 
@@ -234,12 +282,13 @@ The **Configuration** page is where admins manage DQX Studio-level settings that
 | ------- | ---------------- |
 | **Timezone** | The timezone used to interpret and display all schedule times and run timestamps. |
 | **Labels** | Labels users can attach to rules. Defining labels centrally keeps tagging consistent. |
-| **Role mappings** | Which workspace groups map to which DQX roles (author, approver, runner, admin). |
+| **Role mappings** | Which workspace groups map to which DQX roles (author, approver, runner, admin). Every change is audited — the studio keeps a full history of role-mapping edits (who, when, before/after) so you can answer "who granted this group runner privilege?" without grepping logs. |
 
 Changes take effect immediately for all users — no restart is required.
 
 ## Getting help
 
+- **In-app docs link**: every page in DQX Studio links to this guide from the bottom of the sidebar — open it any time without leaving the app.
 - **Docs**: you are reading them. Start at the [User Guide](/docs/guide/) or [Quality Checks Reference](/docs/reference/quality_checks) when you need to know what a specific check does.
 - **Issues and discussions**: file an issue or ask a question on [GitHub](https://github.com/databrickslabs/dqx).
 - **Contributing**: want to fix something or suggest a feature? See the [contributing guide](/docs/dev/contributing).

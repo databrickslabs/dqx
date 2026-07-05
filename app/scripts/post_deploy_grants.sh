@@ -68,6 +68,26 @@ validate_warehouse_id() {
   fi
 }
 
+# Validate a UC *principal* (grantee) before interpolating it into a
+# backticked identifier. Unlike validate_uc_identifier this must also
+# accept user emails (local-part@domain) and SP application UUIDs, so it
+# permits the characters legal in those — but still rejects backticks,
+# quotes, backslashes, whitespace, and anything else that could escape
+# the backtick-quoted identifier or smuggle additional SQL. The deployer
+# name comes from ``current-user me`` JSON and is therefore not trusted.
+validate_principal() {
+  local name="$1" value="$2"
+  if [[ -z "$value" ]]; then
+    echo "ERROR: $name is empty." >&2
+    exit 1
+  fi
+  if [[ ! "$value" =~ ^[A-Za-z0-9][A-Za-z0-9._%+@-]*$ ]]; then
+    echo "ERROR: $name '$value' contains characters that are unsafe to interpolate into SQL." >&2
+    echo "       Allowed: [A-Za-z0-9._%+@-], must start with a letter or digit." >&2
+    exit 1
+  fi
+}
+
 PROFILE=""
 TARGET=""
 
@@ -220,14 +240,14 @@ run_sql() {
 }
 
 echo ""
-echo "==> Granting permissions to App SP ($APP_SP_ID)..."
+echo "==> Granting UC permissions to App SP ($APP_SP_ID)..."
 run_sql "GRANT USE CATALOG ON CATALOG \`$CATALOG\` TO \`$APP_SP_ID\`"
 run_sql "GRANT ALL PRIVILEGES ON SCHEMA \`$CATALOG\`.\`$SCHEMA\` TO \`$APP_SP_ID\`"
 run_sql "GRANT ALL PRIVILEGES ON SCHEMA \`$CATALOG\`.\`$TMP_SCHEMA\` TO \`$APP_SP_ID\`"
 run_sql "GRANT ALL PRIVILEGES ON VOLUME \`$CATALOG\`.\`$SCHEMA\`.\`$VOLUME\` TO \`$APP_SP_ID\`"
 
 echo ""
-echo "==> Granting permissions to Job SP ($JOB_SP)..."
+echo "==> Granting UC permissions to Job SP ($JOB_SP)..."
 run_sql "GRANT USE CATALOG ON CATALOG \`$CATALOG\` TO \`$JOB_SP\`"
 run_sql "GRANT ALL PRIVILEGES ON SCHEMA \`$CATALOG\`.\`$SCHEMA\` TO \`$JOB_SP\`"
 run_sql "GRANT ALL PRIVILEGES ON SCHEMA \`$CATALOG\`.\`$TMP_SCHEMA\` TO \`$JOB_SP\`"
@@ -284,6 +304,18 @@ if [[ -n "$EXTERNAL_WH_ID" && "$EXTERNAL_WH_ID" != \$* ]]; then
   fi
 fi
 
+# The starter Insights dashboard is configured with ``embed_credentials: true``,
+# so AI/BI runs every widget query under the bundle's deployer identity (the
+# principal authenticated to the CLI profile that ran ``databricks bundle deploy``).
+# That principal doesn't automatically inherit SELECT on the DQX tables: DABs
+# makes them schema-owner, but UC table-level reads need an explicit grant.
+# Without it the Insights page renders, then every tile shows
+# INSUFFICIENT_PERMISSIONS. Granting at the schema level covers existing and
+# future tables created by the migration runner.
+#
+# For SP-based deployers (CI/CD) ``current-user me`` returns the SP and
+# ``userName`` is the application ID — which is what UC expects in a GRANT.
+# For human deployers it's the email. Either way the GRANT line is identical.
 echo ""
 echo "==> Granting end-user permissions for tmp view creation..."
 # The app's dry-run / preview feature creates temp views via the user's
@@ -296,6 +328,37 @@ echo "==> Granting end-user permissions for tmp view creation..."
 run_sql "GRANT USE CATALOG ON CATALOG \`$CATALOG\` TO \`account users\`"
 run_sql "GRANT USE SCHEMA, CREATE TABLE ON SCHEMA \`$CATALOG\`.\`$TMP_SCHEMA\` TO \`account users\`"
 
+# The starter Insights dashboard is configured with ``embed_credentials: true``,
+# so AI/BI runs every widget query under the bundle's deployer identity (the
+# principal authenticated to the CLI profile that ran ``databricks bundle deploy``).
+# That principal doesn't automatically inherit SELECT on the DQX tables: DABs
+# makes them schema-owner, but UC table-level reads need an explicit grant.
+# Without it the Insights page renders, then every tile shows
+# INSUFFICIENT_PERMISSIONS. Granting at the schema level covers existing and
+# future tables created by the migration runner.
+#
+# For SP-based deployers (CI/CD) ``current-user me`` returns the SP and
+# ``userName`` is the application ID — which is what UC expects in a GRANT.
+# For human deployers it's the email. Either way the GRANT line is identical.
+echo ""
+echo "==> Granting SELECT to deployer (for Insights dashboard queries)..."
+DEPLOYER_JSON=$($CLI current-user me -o json 2>/dev/null || echo "")
+DEPLOYER=$(echo "$DEPLOYER_JSON" | jq -r '.userName // .applicationId // empty' 2>/dev/null || echo "")
+if [[ -n "$DEPLOYER" ]]; then
+  # $DEPLOYER is read from ``current-user me`` JSON, so it has NOT been
+  # through the identifier validation the other GRANT operands get.
+  # Validate before interpolating into the backticked identifier.
+  validate_principal "deployer" "$DEPLOYER"
+  echo "   Deployer: $DEPLOYER"
+  run_sql "GRANT USE SCHEMA ON SCHEMA \`$CATALOG\`.\`$SCHEMA\` TO \`$DEPLOYER\`"
+  run_sql "GRANT SELECT ON SCHEMA \`$CATALOG\`.\`$SCHEMA\` TO \`$DEPLOYER\`"
+else
+  echo "   WARNING: Could not resolve deployer identity from profile '$PROFILE'."
+  echo "            The Insights dashboard will show INSUFFICIENT_PERMISSIONS"
+  echo "            until you GRANT USE SCHEMA + SELECT ON SCHEMA"
+  echo "            \`$CATALOG\`.\`$SCHEMA\` to the bundle deployer."
+fi
+
 echo ""
 if (( FAILURES > 0 )); then
   # Exiting non-zero is what makes ``make app-deploy`` (and any CI
@@ -306,4 +369,5 @@ if (( FAILURES > 0 )); then
   echo "==> FAILED: $FAILURES grant(s) did not succeed — see warnings above." >&2
   exit 1
 fi
-echo "==> Done. All grants applied."
+echo "==> Done. All grants applied. Re-running this script is safe — every"
+echo "    grant above is idempotent."

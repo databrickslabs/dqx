@@ -222,8 +222,9 @@ If you create checks as a list of DQRule objects, you can convert them using the
 </Tabs>
 
 <Admonition type="tip" title="Checks validation">
-Wrong types, unknown arguments, and missing required check function parameters are reported by `DQEngine.validate_checks`.
-`load_checks` and `save_checks` (except delta storage) methods do not validate the returned/provided metadata. Call `validate_checks` after load / before save when you want to catch problems before apply (for example hand edited YAML/JSON or checks written to a table without going through DQX).
+Wrong types, unknown arguments, and missing required check function parameters (syntax validation) are reported by `DQEngine.validate_checks`.
+`load_checks` and `save_checks` do not run syntax validation on the returned/provided metadata, so call `validate_checks` after load / before save when you want to catch syntax problems before apply (for example hand edited YAML/JSON or checks written to a table without going through DQX).
+They do, however, run semantic (ruleset-level) validation to detect duplicate and conflicting rules; this is controlled by the `semantic_validation_mode` parameter (`"warn"` by default, `"fail"` to raise, or `None` to skip).
 For field semantics and validation details, see [Quality checks definition](/docs/guide/quality_checks_definition).
 </Admonition>
 

@@ -15,6 +15,9 @@ import {
   ChevronDown,
   PenLine,
   History,
+  LayoutDashboard,
+  BookOpen,
+  ExternalLink,
 } from "lucide-react";
 import {
   SidebarGroup,
@@ -35,10 +38,15 @@ function Layout() {
   const { canCreateRules, canRunRules } = usePermissions();
   const { t } = useTranslation();
 
+  // ``/rules/from-contract`` still resolves (it redirects into
+  // ``/rules/import?tab=contract``) so we leave it in the active-route
+  // detection — old bookmarks should still highlight the Create group
+  // in the sidebar during the brief redirect frame.
   const isCreateActive =
     location.pathname.startsWith("/rules/create") ||
     location.pathname.startsWith("/rules/single-table") ||
     location.pathname.startsWith("/rules/import") ||
+    location.pathname.startsWith("/rules/from-contract") ||
     location.pathname.startsWith("/profiler");
 
   const [createOpen, setCreateOpen] = useState(isCreateActive);
@@ -57,6 +65,9 @@ function Layout() {
       icon: <Database size={14} />,
       match: (path: string) => path.startsWith("/rules/create-sql"),
     },
+    // Schema validation and other reference-table checks (``has_valid_schema``,
+    // ``foreign_key``) are authored and edited in the single-table editor, so
+    // there is no standalone sidebar entry for them.
     {
       to: "/profiler",
       label: t("sidebar.profileAndGenerate"),
@@ -64,10 +75,15 @@ function Layout() {
       match: (path: string) => path.startsWith("/profiler"),
     },
     {
+      // ``/rules/import`` now hosts both DQX YAML *and* the data-contract
+      // generation flow as two tabs, so the standalone "From contract"
+      // entry was removed and the old route redirects here.
       to: "/rules/import",
       label: t("sidebar.importRules"),
       icon: <Upload size={14} />,
-      match: (path: string) => path.startsWith("/rules/import"),
+      match: (path: string) =>
+        path.startsWith("/rules/import") ||
+        path.startsWith("/rules/from-contract"),
     },
   ];
 
@@ -188,6 +204,61 @@ function Layout() {
                 <History size={16} />
                 <span>{t("sidebar.runsHistory")}</span>
               </Link>
+            </SidebarMenuItem>
+
+            {/* Insights — embedded Databricks AI/BI dashboard. Visible to all;
+                the dashboard itself enforces UC permissions on its data so a
+                viewer who can't read e.g. dq_quarantine_records just sees an
+                empty tile rather than being blocked at the app layer. */}
+            <SidebarMenuItem>
+              <Link
+                to="/insights"
+                className={cn(
+                  "flex items-center gap-2 p-2 rounded-lg",
+                  location.pathname.startsWith("/insights")
+                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                    : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                )}
+              >
+                <LayoutDashboard size={16} />
+                <span>{t("sidebar.insights")}</span>
+              </Link>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        </SidebarGroupContent>
+      </SidebarGroup>
+
+      {/* Bottom-pinned external links group. Because the parent
+          ``SidebarContent`` uses ``flex flex-col justify-between``, this
+          second group gets pushed to the bottom of the sidebar with no
+          extra flex plumbing here.
+
+          Documentation lives on the public DQX docs site — using a real
+          <a target="_blank"> rather than the TanStack router <Link>
+          avoids a no-op route match and keeps the docs in their own tab
+          so the user doesn't lose their place in the studio. */}
+      <SidebarGroup className="pb-2">
+        <SidebarGroupContent>
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <a
+                href="https://databrickslabs.github.io/dqx/docs/guide/dqx_studio/#accessing-dqx-studio"
+                target="_blank"
+                rel="noopener noreferrer"
+                className={cn(
+                  "flex items-center gap-2 p-2 rounded-lg text-sm",
+                  "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                )}
+                title={t("sidebar.documentationTitle")}
+              >
+                <BookOpen size={16} />
+                <span className="flex-1">{t("sidebar.documentation")}</span>
+                <ExternalLink
+                  size={12}
+                  className="text-muted-foreground"
+                  aria-hidden
+                />
+              </a>
             </SidebarMenuItem>
           </SidebarMenu>
         </SidebarGroupContent>

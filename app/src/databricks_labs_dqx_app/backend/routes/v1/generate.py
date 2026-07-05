@@ -18,7 +18,7 @@ _AUTHORS_AND_ABOVE = [UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTH
 @router.post(
     "/generate-checks",
     response_model=GenerateChecksOut,
-    operation_id="ai_assisted_checks_generation",
+    operation_id="aiAssistedChecksGeneration",
     dependencies=[require_role(*_AUTHORS_AND_ABOVE)],
 )
 def ai_generate_checks(

@@ -122,7 +122,12 @@ class TestGetUserEmail:
             assert email == "bob@example.com"
             mock_ws_cls.assert_called_once()
 
-    def test_returns_401_when_neither_provided(self):
+    def test_returns_401_when_neither_provided(self, monkeypatch):
+        # The local-dev fallback (DATABRICKS_CONFIG_PROFILE / DATABRICKS_TOKEN)
+        # is loaded from app/.env on package import, so strip it here to
+        # exercise the pure "no identity" path the test name describes.
+        monkeypatch.delenv("DATABRICKS_CONFIG_PROFILE", raising=False)
+        monkeypatch.delenv("DATABRICKS_TOKEN", raising=False)
         with pytest.raises(HTTPException) as excinfo:
             get_user_email(x_forwarded_email=None, x_forwarded_access_token=None)
         assert excinfo.value.status_code == 401

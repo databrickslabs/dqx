@@ -899,12 +899,24 @@ def _lakebase_create_catalog(
 
 @retried(on=[BadRequest, TooManyRequests, RequestLimitExceeded], timeout=timedelta(minutes=2))
 def _lakebase_delete_catalog(workspace: WorkspaceClient, catalog_name: str) -> None:
-    """Delete database catalog; retries on rate limits."""
+    """Delete the database catalog and ensure its Unity Catalog catalog is removed; retries on limits.
+
+    delete_database_catalog tears down the database federation, but the UC catalog object - which is
+    what counts toward the per-metastore catalog limit (1000) - is removed via catalogs.delete. We
+    call both so the metastore slot is freed regardless of what delete_database_catalog leaves behind.
+    Both are NotFound-safe so a prior/partial deletion is tolerated.
+    """
     try:
         workspace.database.delete_database_catalog(name=catalog_name)
-        logger.info(f"Successfully deleted database catalog: {catalog_name}")
+        logger.info(f"Deleted database catalog: {catalog_name}")
     except NotFound:
         logger.info(f"Database catalog {catalog_name} not found (already deleted)")
+
+    try:
+        workspace.catalogs.delete(name=catalog_name, force=True)
+        logger.info(f"Deleted Unity Catalog catalog backing database catalog: {catalog_name}")
+    except NotFound:
+        logger.info(f"Unity Catalog catalog {catalog_name} not found (already deleted)")
 
 
 @retried(on=[BadRequest, TooManyRequests, RequestLimitExceeded], timeout=timedelta(minutes=2))
@@ -932,8 +944,13 @@ def make_lakebase_instance(ws, make_random):
         return LakebaseInstance(name=instance_name, catalog_name=catalog_name, database_name=database_name)
 
     def delete(instance: LakebaseInstance) -> None:
-        _lakebase_delete_catalog(ws, instance.catalog_name)
-        _lakebase_delete_database_instance(ws, instance.name)
+        # Always attempt instance deletion even if catalog deletion fails, otherwise a failed
+        # catalog delete would orphan the instance. Catalogs count toward the metastore limit,
+        # so deleting the catalog first is intentional.
+        try:
+            _lakebase_delete_catalog(ws, instance.catalog_name)
+        finally:
+            _lakebase_delete_database_instance(ws, instance.name)
 
     yield from factory("lakebase", create, delete)
 

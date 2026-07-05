@@ -105,12 +105,18 @@ def _write_metadata_module(meta: dict[str, str]) -> None:
 def _write_app_yml(meta: dict[str, str]) -> None:
     """Write the Databricks Apps launch manifest.
 
-    Two-worker uvicorn. The ``app-module`` value comes from
-    ``pyproject.toml`` so changing the FastAPI app's import path is
-    a one-line edit there.
+    Single-worker uvicorn. The in-process ``SchedulerService`` is gated by
+    a file lock (``/tmp/.dqx_scheduler.lock``) that only excludes other
+    workers in the SAME container, so multi-worker would mean two
+    schedulers fighting over each due schedule. The ``app-module`` value
+    comes from ``pyproject.toml`` so changing the FastAPI app's import
+    path is a one-line edit there. Production DABs deploys override the
+    command via ``var.app_config.command`` in ``databricks.yml``; this
+    manifest is the fallback for paths that don't go through DABs (e.g.
+    direct ``databricks apps`` CLI deploys).
     """
     (BUILD_DIR / "app.yml").write_text(
-        f'command: ["uvicorn", "{meta["app-module"]}", "--workers", "2"]\n',
+        f'command: ["uvicorn", "{meta["app-module"]}", "--workers", "1"]\n',
         encoding="utf-8",
     )
 

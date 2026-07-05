@@ -1,11 +1,18 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { parseFqn, formatDateShort as formatDate, getUserMetadata, labelToken } from "@/lib/format-utils";
+import {
+  parseFqn,
+  formatDateShort as formatDate,
+  getUserMetadata,
+  labelToken,
+} from "@/lib/format-utils";
 import { LabelFilter, LabelsBadges, labelsMatchFilter } from "@/components/Labels";
 import { useTranslation } from "react-i18next";
 
 const SQL_CHECK_PREFIX = "__sql_check__/";
 const CROSS_TABLE_CATALOG = "Cross-table rules";
 import React, { useState, Suspense, useMemo, useCallback, useSyncExternalStore } from "react";
+import { QueryErrorResetBoundary } from "@tanstack/react-query";
+import { ErrorBoundary } from "react-error-boundary";
 import {
   Tooltip,
   TooltipContent,
@@ -32,6 +39,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  AlertCircle,
   AlertTriangle,
   ArrowDown,
   ArrowUp,
@@ -41,6 +49,7 @@ import {
   ClipboardCheck,
   ExternalLink,
   Plus,
+  RotateCcw,
   Trash2,
   SendHorizonal,
   CheckCircle2,
@@ -82,25 +91,46 @@ import { usePermissions } from "@/hooks/use-permissions";
 import { useCurrentUserSuspense } from "@/hooks/use-suspense-queries";
 import selector from "@/lib/selector";
 
-function describeCheck(rule: RuleCatalogEntryOut): string {
+function describeCheck(rule: RuleCatalogEntryOut, t: (key: string) => string): string {
   const check = rule.checks[0] as Record<string, unknown> | undefined;
   if (!check) return "—";
   const checkObj = (check.check as Record<string, unknown>) ?? check;
   const args = (checkObj.arguments as Record<string, unknown>) ?? {};
   const fn = String(checkObj.function ?? "");
   const col = String(args.column ?? (Array.isArray(args.columns) ? (args.columns as string[]).join(", ") : args.columns) ?? "");
-  if (fn === "sql_query") return "SQL check";
+  if (fn === "sql_query") return t("rulesDrafts.sqlCheckLabel");
   return col ? `${fn}(${col})` : fn || "—";
 }
 
 
 export const Route = createFileRoute("/_sidebar/rules/drafts")({
   component: () => (
-    <Suspense fallback={<DraftsSkeleton />}>
-      <DraftsPage />
-    </Suspense>
+    <QueryErrorResetBoundary>
+      {({ reset }) => (
+        <ErrorBoundary onReset={reset} fallbackRender={DraftsError}>
+          <Suspense fallback={<DraftsSkeleton />}>
+            <DraftsPage />
+          </Suspense>
+        </ErrorBoundary>
+      )}
+    </QueryErrorResetBoundary>
   ),
 });
+
+function DraftsError({ resetErrorBoundary }: { resetErrorBoundary: () => void }) {
+  const { t } = useTranslation();
+  return (
+    <div className="flex flex-col items-center justify-center py-16 text-center">
+      <AlertCircle className="h-12 w-12 text-destructive/30 mb-3" />
+      <p className="text-muted-foreground text-sm mb-1">{t("common.loadFailed")}</p>
+      <p className="text-muted-foreground/70 text-xs mb-3">{t("common.retryHint")}</p>
+      <Button variant="outline" size="sm" onClick={resetErrorBoundary} className="gap-2">
+        <RotateCcw className="h-3 w-3" />
+        {t("common.retry")}
+      </Button>
+    </div>
+  );
+}
 
 const _pendingSet = new Set<string>();
 let _pendingVersion = 0;
@@ -383,8 +413,8 @@ function DraftsPage() {
           cmp = (a.display_name || a.table_fqn).localeCompare(b.display_name || b.table_fqn);
           break;
         case "check": {
-          const aCheck = describeCheck(a);
-          const bCheck = describeCheck(b);
+          const aCheck = describeCheck(a, t);
+          const bCheck = describeCheck(b, t);
           cmp = aCheck.localeCompare(bCheck);
           break;
         }
@@ -400,7 +430,7 @@ function DraftsPage() {
       }
       return cmp * dir;
     });
-  }, [allRules, catalogFilter, schemaFilter, mySubmissionsOnly, currentUserEmail, sortKey, sortDir, labelFilter]);
+  }, [allRules, catalogFilter, schemaFilter, mySubmissionsOnly, currentUserEmail, sortKey, sortDir, labelFilter, t]);
 
   // Distinct labels seen across all draft rules — used to populate the
   // LabelFilter dropdown.
@@ -669,7 +699,16 @@ function DraftsPage() {
       t("rulesDrafts.toastFailedSubmit"),
     );
 
-  const handleApprove = (rule: RuleCatalogEntryOut) =>
+  // Approve and reject are destructive (they take the rule out of the
+  // approval queue) — gate them behind a confirm dialog like the bulk
+  // variants do.
+  const [singleApproveTarget, setSingleApproveTarget] = useState<RuleCatalogEntryOut | null>(null);
+  const [singleRejectTarget, setSingleRejectTarget] = useState<RuleCatalogEntryOut | null>(null);
+
+  const handleApprove = (rule: RuleCatalogEntryOut) => setSingleApproveTarget(rule);
+  const handleReject = (rule: RuleCatalogEntryOut) => setSingleRejectTarget(rule);
+
+  const confirmApprove = (rule: RuleCatalogEntryOut) =>
     fireAction(
       ruleKey(rule),
       () => approveRule(rule.rule_id!),
@@ -677,7 +716,7 @@ function DraftsPage() {
       t("rulesDrafts.toastFailedApprove"),
     );
 
-  const handleReject = (rule: RuleCatalogEntryOut) =>
+  const confirmReject = (rule: RuleCatalogEntryOut) =>
     fireAction(
       ruleKey(rule),
       () => rejectRule(rule.rule_id!),
@@ -928,7 +967,7 @@ function DraftsPage() {
                         </td>
                         <td className="p-3 text-xs font-mono text-muted-foreground">
                           <span className="flex items-center gap-1.5">
-                            {describeCheck(rule)}
+                            {describeCheck(rule, t)}
                             {isDuplicate && (
                               <TooltipProvider>
                                 <Tooltip>
@@ -1065,17 +1104,23 @@ function DraftsPage() {
                                         size="sm"
                                         variant="ghost"
                                         disabled={busy}
-                                        onClick={() =>
-                                          rule.table_fqn.startsWith(SQL_CHECK_PREFIX)
-                                            ? navigate({
-                                                to: "/rules/create-sql",
-                                                search: { edit: rule.table_fqn, from: "drafts" },
-                                              })
-                                            : navigate({
-                                                to: "/rules/single-table",
-                                                search: { table: rule.table_fqn, rule_id: rule.rule_id!, from: "drafts" },
-                                              })
-                                        }
+                                        onClick={() => {
+                                          // Only cross-table SQL checks live under the synthetic
+                                          // ``__sql_check__/<name>`` namespace. Reference checks
+                                          // (``has_valid_schema`` / ``foreign_key``) carry a real
+                                          // target-table FQN and edit in the single-table editor.
+                                          if (rule.table_fqn.startsWith(SQL_CHECK_PREFIX)) {
+                                            navigate({
+                                              to: "/rules/create-sql",
+                                              search: { edit: rule.table_fqn, from: "drafts" },
+                                            });
+                                          } else {
+                                            navigate({
+                                              to: "/rules/single-table",
+                                              search: { table: rule.table_fqn, rule_id: rule.rule_id!, from: "drafts" },
+                                            });
+                                          }
+                                        }}
                                         className="h-7 text-xs"
                                       >
                                         <FileEdit className="h-3 w-3" />
@@ -1160,11 +1205,13 @@ function DraftsPage() {
                                     size="sm"
                                     variant="outline"
                                     className="gap-1.5 h-7 text-xs"
-                                    onClick={() =>
-                                      rule.table_fqn.startsWith(SQL_CHECK_PREFIX)
-                                        ? navigate({ to: "/rules/create-sql", search: { edit: rule.table_fqn, from: "drafts" } })
-                                        : navigate({ to: "/rules/single-table", search: { table: rule.table_fqn, rule_id: rule.rule_id!, from: "drafts" } })
-                                    }
+                                    onClick={() => {
+                                      if (rule.table_fqn.startsWith(SQL_CHECK_PREFIX)) {
+                                        navigate({ to: "/rules/create-sql", search: { edit: rule.table_fqn, from: "drafts" } });
+                                      } else {
+                                        navigate({ to: "/rules/single-table", search: { table: rule.table_fqn, rule_id: rule.rule_id!, from: "drafts" } });
+                                      }
+                                    }}
                                   >
                                     <ExternalLink className="h-3 w-3" />
                                     {t("rulesDrafts.editRule")}
@@ -1230,6 +1277,57 @@ function DraftsPage() {
               className="bg-destructive text-white hover:bg-destructive/90"
             >
               {t("rulesDrafts.delete")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={!!singleApproveTarget} onOpenChange={(open) => !open && setSingleApproveTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("rulesDrafts.approveSingleTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("rulesDrafts.approveSingleBody", {
+                name: singleApproveTarget?.display_name || singleApproveTarget?.table_fqn || "",
+              })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                const target = singleApproveTarget;
+                setSingleApproveTarget(null);
+                if (target) void confirmApprove(target);
+              }}
+            >
+              {t("rulesDrafts.approveAction")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={!!singleRejectTarget} onOpenChange={(open) => !open && setSingleRejectTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("rulesDrafts.rejectSingleTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("rulesDrafts.rejectSingleBody", {
+                name: singleRejectTarget?.display_name || singleRejectTarget?.table_fqn || "",
+              })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                const target = singleRejectTarget;
+                setSingleRejectTarget(null);
+                if (target) void confirmReject(target);
+              }}
+              className="bg-destructive text-white hover:bg-destructive/90"
+            >
+              {t("rulesDrafts.rejectAction")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
