@@ -41,7 +41,6 @@ import {
   Search,
   Sparkles,
   Users,
-  Wand2,
   Wrench,
   X,
 } from "lucide-react";
@@ -72,7 +71,7 @@ import {
   type AiGenerateRuleOut,
 } from "@/lib/api";
 import { useAiAvailability, aiUnavailableReason } from "@/hooks/use-ai-availability";
-import { AI_BUTTON_BG, AI_ICON_COLOR, AI_BANNER_BG, AI_BANNER_BORDER } from "@/lib/ai-style";
+import { AI_BUTTON_BG, AI_ICON_COLOR, AI_BANNER_BG, AI_BANNER_BORDER, AI_GRADIENT_URL } from "@/lib/ai-style";
 import { orderSeverityValuesForDisplay, colorFor, ColorDot, type LabelColorDefinition } from "@/components/RegistryRuleBadges";
 
 const RESERVED_NAME_KEY = "name";
@@ -796,7 +795,15 @@ export function RegistryRuleFormDialog({
   const aiAvailability = useAiAvailability();
   const [aiDescription, setAiDescription] = useState("");
   const [aiBusy, setAiBusy] = useState(false);
-  const [aiProposal, setAiProposal] = useState<AiGenerateRuleOut | null>(null);
+  // Auto-grow the Build-with-AI textarea so long prompts don't scroll,
+  // matching dqlake's BuildWithAiBanner.
+  const aiTextareaRef = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    const el = aiTextareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [aiDescription]);
   const generateRuleMutation = useAiGenerateRule();
   const suggestFieldMutation = useAiSuggestField();
   const [suggestingField, setSuggestingField] = useState<string | null>(null);
@@ -822,7 +829,6 @@ export function RegistryRuleFormDialog({
     setNameError(null);
     setErrorMessage(sourceRule?.definition?.error_message ?? "");
     setAiDescription("");
-    setAiProposal(null);
     setPendingNativeArgs(null);
     const freeTags: Record<string, string> = {};
     for (const [k, v] of Object.entries(md)) {
@@ -1023,7 +1029,6 @@ export function RegistryRuleFormDialog({
           : {};
       setPendingNativeArgs(args);
     }
-    setAiProposal(null);
     setAiDescription("");
     // Jump to Implementation so the steward immediately sees what the
     // proposal filled in, regardless of which page tab they were on when
@@ -1037,7 +1042,9 @@ export function RegistryRuleFormDialog({
     setAiBusy(true);
     try {
       const resp = await generateRuleMutation.mutateAsync({ data: { description: aiDescription.trim() } });
-      setAiProposal(resp.data);
+      // Apply directly to the form (dqlake writes the AI result straight into
+      // form state via onResult — no intermediate JSON-preview card).
+      applyAiProposal(resp.data);
     } catch (err) {
       const reason = aiUnavailableReason(err);
       if (reason) {
@@ -1624,74 +1631,61 @@ export function RegistryRuleFormDialog({
   // Build-with-AI banner, ported from dqlake's `BuildWithAiBanner` — always
   // visible above the tab strip (not a sub-tab), gated on AI availability.
   const buildWithAiBanner = showAiBanner && (
-    <div className={cn("rounded-lg p-3 space-y-2.5", AI_BANNER_BG, AI_BANNER_BORDER)}>
-      <div className="flex items-center gap-2">
-        <div className="p-1.5 bg-primary/10 rounded-md">
-          <Sparkles className={cn("h-3.5 w-3.5", AI_ICON_COLOR)} />
-        </div>
-        <div className="min-w-0">
-          <p className="text-sm font-semibold">{t("rulesRegistry.aiBuildTitle")}</p>
-          <p className="text-[11px] text-muted-foreground">{t("rulesRegistry.aiBuildDescription")}</p>
-        </div>
-      </div>
-
-      {aiProposal ? (
-        <div className="rounded-md border bg-card/70 p-3 space-y-2">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-            {t("rulesRegistry.aiProposalTitle")}
-          </p>
-          <div className="space-y-1 text-xs">
-            <p><span className="text-muted-foreground">{t("rulesRegistry.nameLabel")}:</span> {aiProposal.name}</p>
-            {aiProposal.description && (
-              <p><span className="text-muted-foreground">{t("rulesRegistry.descriptionLabel")}:</span> {aiProposal.description}</p>
-            )}
-            <div className="flex flex-wrap gap-1 pt-1">
-              <Badge variant="outline" className="text-[10px]">
-                {t("rulesRegistry.aiProposalModeLabel")}: {aiProposal.mode}
-              </Badge>
-              {aiProposal.dimension && <Badge variant="outline" className="text-[10px]">{aiProposal.dimension}</Badge>}
-              {aiProposal.severity && <Badge variant="outline" className="text-[10px]">{aiProposal.severity}</Badge>}
-            </div>
-            <pre className="mt-1 max-h-32 overflow-auto rounded bg-muted/50 p-2 text-[10px] font-mono whitespace-pre-wrap break-words">
-              {JSON.stringify(aiProposal.definition, null, 2)}
-            </pre>
-          </div>
-          <div className="flex items-center gap-2 pt-1">
-            <Button size="sm" className={cn("h-7 text-xs gap-1.5", AI_BUTTON_BG)} onClick={() => applyAiProposal(aiProposal)}>
-              <Wand2 className="h-3 w-3" />
-              {t("rulesRegistry.aiProposalUseButton")}
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-7 text-xs"
-              onClick={() => setAiProposal(null)}
-            >
-              {t("rulesRegistry.aiProposalDiscardButton")}
-            </Button>
-          </div>
-        </div>
-      ) : (
-        <div className="space-y-2">
-          <Textarea
-            value={aiDescription}
-            onChange={(e) => setAiDescription(e.target.value)}
-            placeholder={t("rulesRegistry.aiBuildPlaceholder")}
-            className="min-h-[64px] text-xs bg-card/60"
-            disabled={aiBusy}
-            maxLength={4000}
-          />
-          <Button
-            size="sm"
-            className={cn("h-7 text-xs gap-1.5", AI_BUTTON_BG)}
-            onClick={handleAiGenerate}
-            disabled={aiBusy || !aiDescription.trim()}
-          >
-            {aiBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
-            {aiBusy ? t("rulesRegistry.aiGenerating") : t("rulesRegistry.aiGenerateButton")}
-          </Button>
-        </div>
+    <div
+      className={cn(
+        "ai-glow-mouse flex items-start gap-3 rounded-lg px-4 py-3 shadow-sm",
+        AI_BANNER_BG,
+        AI_BANNER_BORDER,
       )}
+      onMouseMove={(e) => {
+        const r = e.currentTarget.getBoundingClientRect();
+        e.currentTarget.style.setProperty("--ai-mx", `${e.clientX - r.left}px`);
+        e.currentTarget.style.setProperty("--ai-my", `${e.clientY - r.top}px`);
+      }}
+    >
+      <Sparkles className="h-4 w-4 mt-2 shrink-0" stroke={AI_GRADIENT_URL} />
+      <div className="relative flex-1">
+        <Textarea
+          ref={aiTextareaRef}
+          rows={1}
+          value={aiDescription}
+          onChange={(e) => setAiDescription(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              void handleAiGenerate();
+            }
+          }}
+          disabled={aiBusy}
+          maxLength={4000}
+          aria-label={t("rulesRegistry.aiBuildPlaceholder")}
+          className="min-h-[36px] resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 px-0 py-1.5 text-sm overflow-hidden"
+        />
+        {aiDescription === "" && (
+          <span
+            aria-hidden
+            className="ai-text-shine pointer-events-none absolute left-0 top-1.5 text-sm whitespace-nowrap"
+          >
+            {t("rulesRegistry.aiBuildPlaceholder")}
+          </span>
+        )}
+      </div>
+      <Button
+        type="button"
+        size="sm"
+        onClick={() => void handleAiGenerate()}
+        disabled={aiBusy || !aiDescription.trim()}
+        className={cn("gap-1.5", AI_BUTTON_BG, (aiBusy || !aiDescription.trim()) && "opacity-50 cursor-not-allowed")}
+      >
+        {aiBusy ? (
+          <>
+            <Loader2 className="h-3 w-3 animate-spin" />
+            {t("rulesRegistry.aiGenerating")}
+          </>
+        ) : (
+          t("rulesRegistry.aiGenerateButton")
+        )}
+      </Button>
     </div>
   );
 
