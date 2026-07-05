@@ -86,6 +86,26 @@ class TestCreateAndUpdate:
         assert result.rule.rule_id == "r1"
         assert result.dedup_warning == "possible duplicate"
 
+    def test_create_rejects_unsafe_sql_with_400(self):
+        """``RegistryService.create_rule`` also validates SQL safety (the
+        "save as new draft" clone path for editing a non-draft rule goes
+        through ``create_rule``, not ``update_draft``) — the route must
+        surface that as a 400, not a 500. Mirrors
+        ``test_update_rejects_unsafe_sql_with_400``."""
+        from databricks.labs.dqx.errors import UnsafeSqlQueryError
+
+        svc = MagicMock()
+        svc.create_rule.side_effect = UnsafeSqlQueryError("The rule's SQL contains prohibited statements")
+        body = CreateRegistryRuleIn(
+            mode="sql",
+            definition=RuleDefinition.model_validate(
+                {"body": {"predicate": "1=1; DROP TABLE users"}, "slots": [], "parameters": []}
+            ),
+        )
+        with pytest.raises(HTTPException) as excinfo:
+            create_registry_rule(body=body, svc=svc, obo_ws=_mock_obo_ws())
+        assert excinfo.value.status_code == 400
+
     def test_update_rejects_non_draft_with_400(self):
         svc = MagicMock()
         svc.update_draft.side_effect = ValueError("only draft rules can be edited")

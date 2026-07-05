@@ -169,6 +169,43 @@ class TestCreateRule:
         assert clone.user_metadata == approved_metadata
         assert clone.steward == "system"
 
+    def test_rejects_unsafe_sql_predicate(self, svc, sql):
+        """The 'save as new draft' clone path for editing a non-draft rule
+        goes through ``create_rule``, not ``update_draft`` — so the same
+        SQL-safety gate must apply here too, or unsafe SQL could be
+        persisted via that path. Mirrors
+        ``TestUpdateDraft.test_rejects_unsafe_sql_predicate``."""
+        from databricks.labs.dqx.errors import UnsafeSqlQueryError
+
+        unsafe_definition = RuleDefinition.model_validate(
+            {"body": {"predicate": "1=1; DROP TABLE users"}, "slots": [], "parameters": []}
+        )
+        with pytest.raises(UnsafeSqlQueryError):
+            svc.create_rule(mode="sql", definition=unsafe_definition, user_email="alice@x")
+
+    def test_rejects_unsafe_sql_query_in_native_mode(self, svc, sql):
+        """Mirrors ``TestUpdateDraft.test_rejects_unsafe_sql_query_in_native_mode``:
+        a ``dqx_native`` check routed through ``sql_query`` must have its
+        ``query`` argument validated on create too."""
+        from databricks.labs.dqx.errors import UnsafeSqlQueryError
+
+        unsafe_definition = RuleDefinition.model_validate(
+            {
+                "body": {"function": "sql_query", "arguments": {"query": "DROP TABLE users", "negate": False}},
+                "slots": [],
+                "parameters": [],
+            }
+        )
+        with pytest.raises(UnsafeSqlQueryError):
+            svc.create_rule(mode="dqx_native", definition=unsafe_definition, user_email="alice@x")
+
+    def test_accepts_safe_sql_predicate(self, svc, sql):
+        safe_definition = RuleDefinition.model_validate(
+            {"body": {"predicate": "{{column}} IS NOT NULL"}, "slots": [], "parameters": []}
+        )
+        rule, _ = svc.create_rule(mode="sql", definition=safe_definition, user_email="alice@x")
+        assert rule.definition.body["predicate"] == "{{column}} IS NOT NULL"
+
 
 # ---------------------------------------------------------------------------
 # update_draft

@@ -207,7 +207,15 @@ class RegistryService:
         never a hard error — a published rule sharing the same structural
         fingerprint doesn't block creation, it just flags the possible
         duplicate for the author to review.
+
+        Raises:
+            UnsafeSqlQueryError: *definition*'s SQL body fails
+                :meth:`_validate_definition_sql_safety` — the same check
+                :meth:`update_draft` applies, so an unsafe query can't be
+                persisted via either the initial create or the "save as new
+                draft" clone path used when editing a non-draft rule.
         """
+        self._validate_definition_sql_safety(mode, definition)
         now = datetime.now(timezone.utc)
         rule = RegistryRule(
             rule_id=uuid4().hex[:16],

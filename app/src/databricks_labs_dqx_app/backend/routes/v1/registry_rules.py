@@ -137,6 +137,8 @@ def create_registry_rule(
             steward=body.steward,
         )
         return CreateRegistryRuleOut(rule=RegistryRuleOut.from_domain(rule), dedup_warning=warning)
+    except UnsafeSqlQueryError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Failed to create registry rule: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to create registry rule: {e}")
