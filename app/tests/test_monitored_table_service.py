@@ -192,13 +192,17 @@ class TestListMonitoredTables:
     def test_lists_with_applied_rule_counts(self, svc, sql):
         sql.query.side_effect = [
             [_table_row(binding_id="b1"), _table_row(binding_id="b2")],
-            [["2"]],  # count for b1
-            [["0"]],  # count for b2
+            [["2"]],  # applied-rule count for b1
+            [["3"]],  # materialized-check count for b1
+            [["0"]],  # applied-rule count for b2
+            [["0"]],  # materialized-check count for b2
         ]
         summaries = svc.list_monitored_tables()
         assert len(summaries) == 2
         assert summaries[0].applied_rule_count == 2
+        assert summaries[0].check_count == 3
         assert summaries[1].applied_rule_count == 0
+        assert summaries[1].check_count == 0
 
     def test_filters_by_status_pushed_to_sql(self, svc, sql):
         sql.query.return_value = []
@@ -215,7 +219,8 @@ class TestListMonitoredTables:
     def test_filters_by_catalog_in_python(self, svc, sql):
         sql.query.side_effect = [
             [_table_row(binding_id="b1", table_fqn="cat1.schema.tbl"), _table_row(binding_id="b2", table_fqn="cat2.schema.tbl")],
-            [["0"]],
+            [["0"]],  # applied-rule count for the one row surviving the filter
+            [["0"]],  # materialized-check count for the one row surviving the filter
         ]
         summaries = svc.list_monitored_tables(catalog="cat1")
         assert len(summaries) == 1
@@ -224,7 +229,8 @@ class TestListMonitoredTables:
     def test_filters_by_name_substring(self, svc, sql):
         sql.query.side_effect = [
             [_table_row(binding_id="b1", table_fqn="cat.schema.orders"), _table_row(binding_id="b2", table_fqn="cat.schema.customers")],
-            [["0"]],
+            [["0"]],  # applied-rule count for the one row surviving the filter
+            [["0"]],  # materialized-check count for the one row surviving the filter
         ]
         summaries = svc.list_monitored_tables(name="order")
         assert len(summaries) == 1

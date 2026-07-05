@@ -1099,11 +1099,12 @@ export interface MonitoredTableProfileOut {
 }
 
 /**
- * A monitored table plus a lightweight list-view counter, for ``listMonitoredTables``.
+ * A monitored table plus lightweight list-view counters, for ``listMonitoredTables``.
  */
 export interface MonitoredTableSummaryOut {
   table: MonitoredTableOut;
   applied_rule_count?: number;
+  check_count?: number;
 }
 
 export type NameFamilyName = string | null;

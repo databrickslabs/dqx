@@ -538,16 +538,18 @@ class PublishMonitoredTableOut(BaseModel):
 
 
 class MonitoredTableSummaryOut(BaseModel):
-    """A monitored table plus a lightweight list-view counter, for ``listMonitoredTables``."""
+    """A monitored table plus lightweight list-view counters, for ``listMonitoredTables``."""
 
     table: MonitoredTableOut
     applied_rule_count: int = 0
+    check_count: int = 0
 
     @classmethod
     def from_domain(cls, summary: MonitoredTableSummary) -> "MonitoredTableSummaryOut":
         return cls(
             table=MonitoredTableOut.from_domain(summary.table),
             applied_rule_count=summary.applied_rule_count,
+            check_count=summary.check_count,
         )
 
 

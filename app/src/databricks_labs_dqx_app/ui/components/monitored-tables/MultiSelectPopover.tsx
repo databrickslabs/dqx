@@ -5,12 +5,19 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ChevronDown, Loader2, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export interface MultiSelectOption {
   value: string;
   label: string;
+  /** When true, the option is pre-selected and can't be toggled off — used
+   *  to represent already-monitored tables in the "monitor table(s)"
+   *  picker (matches dqlake's `TablePickerInline` `markMonitored` behavior). */
+  disabled?: boolean;
+  /** Tooltip shown on hover for a disabled option. */
+  disabledReason?: string;
 }
 
 interface MultiSelectPopoverProps {
@@ -61,11 +68,12 @@ export function MultiSelectPopover({
     return [...selectedOnes, ...restOnes];
   }, [options, search, selectedSet]);
 
-  const toggle = (value: string) => {
-    if (selectedSet.has(value)) {
-      onChange(selected.filter((v) => v !== value));
+  const toggle = (o: MultiSelectOption) => {
+    if (o.disabled) return;
+    if (selectedSet.has(o.value)) {
+      onChange(selected.filter((v) => v !== o.value));
     } else {
-      onChange([...selected, value]);
+      onChange([...selected, o.value]);
     }
   };
 
@@ -84,7 +92,9 @@ export function MultiSelectPopover({
 
   const toggleSelectAll = () => {
     if (allFilteredSelected) {
-      const filteredValues = new Set(filteredOptions.map((o) => o.value));
+      // Disabled (already-monitored) options can't be unchecked, even by
+      // "select all" — only their non-disabled siblings get cleared.
+      const filteredValues = new Set(filteredOptions.filter((o) => !o.disabled).map((o) => o.value));
       onChange(selected.filter((v) => !filteredValues.has(v)));
     } else {
       const merged = new Set([...selected, ...filteredOptions.map((o) => o.value)]);
@@ -119,29 +129,34 @@ export function MultiSelectPopover({
           </Button>
         </PopoverTrigger>
         <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
-          {/* Search box + "select all" row share one uniform muted fill so the
-              header reads as a single bar instead of two visually distinct
-              greys. */}
-          <div className="flex items-center gap-2 border-b bg-muted/50 px-2">
+          {/* Clean bg-popover header (no muted fill) with a hairline border,
+              matching dqlake's Command/CommandInput header — a solid grey
+              fill here read as "muddy" against the white item list below. */}
+          <div className="flex items-center gap-2 border-b px-3">
             <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
             <Input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder={searchPlaceholder}
-              className="h-9 flex-1 border-0 bg-transparent shadow-none focus-visible:ring-0 text-sm"
+              className="h-9 flex-1 border-0 bg-transparent shadow-none focus-visible:ring-0 text-sm px-0"
             />
           </div>
-          <label className="flex items-center gap-2 border-b bg-muted/50 px-3 py-1.5 cursor-pointer">
+          <label className="flex items-center gap-2 border-b px-3 py-1.5 cursor-pointer">
             <Checkbox
               checked={selectAllState}
               onCheckedChange={toggleSelectAll}
               disabled={filteredOptions.length === 0}
+              className="shrink-0"
             />
             <span className="text-xs text-muted-foreground">
               {t("monitoredTables.wizard.selectAllVisible")}
             </span>
           </label>
-          <div className="max-h-56 overflow-y-auto p-1">
+          {/* max-h + overflow-y-auto makes the item list scroll independently
+              of the header rows above, matching dqlake's CommandList
+              (`max-h-[300px] overflow-y-auto`) so large catalogs/schemas/
+              tables don't get clipped. */}
+          <div className="max-h-[300px] overflow-y-auto p-1">
             {isLoading ? (
               <div className="flex items-center justify-center py-6">
                 <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
@@ -150,20 +165,33 @@ export function MultiSelectPopover({
               <p className="py-6 text-center text-xs text-muted-foreground">{emptyText}</p>
             ) : (
               filteredOptions.map((o) => {
-                const isSelected = selectedSet.has(o.value);
-                return (
+                const isSelected = selectedSet.has(o.value) || !!o.disabled;
+                const row = (
                   <label
                     key={o.value}
                     className={cn(
-                      "flex items-center gap-2 rounded-sm px-2 py-1.5 text-sm cursor-pointer transition-colors",
+                      "flex items-center gap-2 rounded-sm px-3 py-1.5 text-sm transition-colors",
+                      o.disabled ? "cursor-not-allowed opacity-70" : "cursor-pointer",
                       isSelected ? "bg-primary/10" : "hover:bg-muted",
                     )}
                   >
-                    <Checkbox checked={isSelected} onCheckedChange={() => toggle(o.value)} />
+                    <Checkbox
+                      checked={isSelected}
+                      onCheckedChange={() => toggle(o)}
+                      disabled={o.disabled}
+                      className="shrink-0"
+                    />
                     <span className="truncate text-sm" title={o.label}>
                       {o.label}
                     </span>
                   </label>
+                );
+                if (!o.disabled || !o.disabledReason) return row;
+                return (
+                  <Tooltip key={o.value}>
+                    <TooltipTrigger asChild>{row}</TooltipTrigger>
+                    <TooltipContent side="right">{o.disabledReason}</TooltipContent>
+                  </Tooltip>
                 );
               })
             )}

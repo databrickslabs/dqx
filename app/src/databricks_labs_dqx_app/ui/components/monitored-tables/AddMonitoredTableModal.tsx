@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
@@ -13,16 +13,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { useTableScopePicker, TableScopePickerFields } from "@/components/monitored-tables/TableScopePicker";
 import {
   getListMonitoredTablesQueryKey,
@@ -54,17 +44,15 @@ export interface AddMonitoredTableModalProps {
 /**
  * Dialog-based "monitor table(s)" picker — dqlake-style modal (see
  * `components/rules/TablePickerModal.tsx` in dqlake) instead of a dedicated
- * page. Keeps the multiselect catalog/schema/table scoping and the >10
- * bulk-register confirmation the old `/monitored-tables/new` page had; the
- * steward field is intentionally omitted here (it's set later, from the
- * table detail page) per the current design.
+ * page. A single "Add {count} table(s)" button submits directly — no
+ * separate confirm step; the steward field is intentionally omitted here
+ * (it's set later, from the table detail page) per the current design.
  */
 export function AddMonitoredTableModal({ open, onOpenChange }: AddMonitoredTableModalProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
 
-  const [pendingFqns, setPendingFqns] = useState<string[] | null>(null);
   const picker = useTableScopePicker(open);
   const { effectiveFqns } = picker;
 
@@ -131,14 +119,14 @@ export function AddMonitoredTableModal({ open, onOpenChange }: AddMonitoredTable
     [singleMutation, t, invalidate, closeAndReset, navigate],
   );
 
+  // Single direct action — the button label itself carries the "how many
+  // tables" meaning, so there's no separate ">10 tables" confirm step to
+  // second-guess it (matches dqlake's single "Use this table" / bulk-add
+  // action, just pluralized for the multi-select scope here).
   const handleCreate = () => {
     if (effectiveFqns.length === 0) return;
     if (effectiveFqns.length === 1) {
       submitSingle(effectiveFqns[0]);
-      return;
-    }
-    if (effectiveFqns.length > 10) {
-      setPendingFqns(effectiveFqns);
       return;
     }
     submitBulk(effectiveFqns);
@@ -148,59 +136,32 @@ export function AddMonitoredTableModal({ open, onOpenChange }: AddMonitoredTable
   const canSubmit = effectiveFqns.length > 0 && !isPending;
 
   return (
-    <>
-      <Dialog
-        open={open}
-        onOpenChange={(next) => {
-          if (!next) closeAndReset();
-        }}
-      >
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>{t("monitoredTables.wizard.title")}</DialogTitle>
-            <DialogDescription>{t("monitoredTables.wizard.description")}</DialogDescription>
-          </DialogHeader>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) closeAndReset();
+      }}
+    >
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>{t("monitoredTables.wizard.title")}</DialogTitle>
+          <DialogDescription>{t("monitoredTables.wizard.description")}</DialogDescription>
+        </DialogHeader>
 
-          <div className="space-y-4 py-2">
-            <TableScopePickerFields state={picker} />
-          </div>
+        <div className="space-y-4 py-2">
+          <TableScopePickerFields state={picker} />
+        </div>
 
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={closeAndReset}>
-              {t("common.cancel")}
-            </Button>
-            <Button onClick={handleCreate} disabled={!canSubmit} className="gap-2">
-              {isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-              {t("monitoredTables.wizard.nextButton")}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <AlertDialog open={pendingFqns !== null} onOpenChange={(next) => !next && setPendingFqns(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              {t("monitoredTables.wizard.confirmTitle", { count: pendingFqns?.length ?? 0 })}
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              {t("monitoredTables.wizard.confirmDescription", { count: pendingFqns?.length ?? 0 })}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => {
-                const fqns = pendingFqns ?? [];
-                setPendingFqns(null);
-                submitBulk(fqns);
-              }}
-            >
-              {t("monitoredTables.wizard.confirmAction")}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={closeAndReset}>
+            {t("common.cancel")}
+          </Button>
+          <Button onClick={handleCreate} disabled={!canSubmit} className="gap-2">
+            {isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+            {t("monitoredTables.wizard.addTablesButton", { count: effectiveFqns.length })}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

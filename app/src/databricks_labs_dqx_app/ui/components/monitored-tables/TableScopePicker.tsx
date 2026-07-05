@@ -4,6 +4,7 @@ import { useQueries } from "@tanstack/react-query";
 import { MultiSelectPopover } from "@/components/monitored-tables/MultiSelectPopover";
 import {
   useListCatalogs,
+  useListMonitoredTables,
   getListSchemasQueryOptions,
   getListTablesQueryOptions,
 } from "@/lib/api";
@@ -44,6 +45,7 @@ export interface TableScopePickerState {
  * catalog/schema/table fetches only run while the picker is visible.
  */
 export function useTableScopePicker(enabled: boolean): TableScopePickerState {
+  const { t } = useTranslation();
   const [selectedCatalogs, setSelectedCatalogs] = useState<string[]>([]);
   const [selectedSchemas, setSelectedSchemas] = useState<string[]>([]);
   const [selectedTables, setSelectedTables] = useState<string[]>([]);
@@ -88,7 +90,7 @@ export function useTableScopePicker(enabled: boolean): TableScopePickerState {
   );
 
   // Same `combine` memoization rationale as the schema queries above.
-  const { data: tableOptions, isLoading: tablesLoading } = useQueries({
+  const { data: rawTableOptions, isLoading: tablesLoading } = useQueries({
     queries: resolvedSchemaScopes.map((scope) => {
       const [catalog, schema] = splitScope(scope);
       return getListTablesQueryOptions(catalog, schema, { query: { enabled } });
@@ -106,6 +108,26 @@ export function useTableScopePicker(enabled: boolean): TableScopePickerState {
       };
     },
   });
+
+  // Tables that already have a monitor appear pre-selected + disabled in the
+  // picker below (with a tooltip explaining why) so a user can't accidentally
+  // create a duplicate monitor — matching dqlake's `TablePickerInline`
+  // `markMonitored` behavior. Reuses the same unfiltered list query the
+  // Monitored Tables overview page runs, rather than a bespoke endpoint.
+  const { data: monitoredResp } = useListMonitoredTables({}, { query: { enabled } });
+  const monitoredFqns = useMemo(
+    () => new Set((monitoredResp?.data ?? []).map((r) => r.table.table_fqn)),
+    [monitoredResp],
+  );
+  const tableOptions = useMemo(
+    () =>
+      rawTableOptions.map((o) =>
+        monitoredFqns.has(o.value)
+          ? { ...o, disabled: true, disabledReason: t("monitoredTables.wizard.alreadyMonitoredTooltip") }
+          : o,
+      ),
+    [rawTableOptions, monitoredFqns, t],
+  );
 
   // Memoized for the same reason as `resolvedSchemaScopes` above: a fresh
   // array on every render (via `.map`) would give consumers an unstable

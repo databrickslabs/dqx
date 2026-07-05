@@ -81,6 +81,7 @@ class MonitoredTableSummary:
 
     table: MonitoredTable
     applied_rule_count: int = 0
+    check_count: int = 0
 
 
 @dataclass
@@ -115,6 +116,7 @@ class MonitoredTableService:
         self._table = sql.fqn("dq_monitored_tables")
         self._applied_table = sql.fqn("dq_applied_rules")
         self._rules_table = sql.fqn("dq_rules")
+        self._quality_rules_table = sql.fqn("dq_quality_rules")
         self._profiling_table = profiling_sql.fqn("dq_profiling_results")
         self._select_cols = self._build_select_cols()
         self._applied_select_cols = self._build_applied_select_cols()
@@ -279,7 +281,11 @@ class MonitoredTableService:
             needle = name.lower()
             tables = [t for t in tables if needle in t.table_fqn.lower()]
         return [
-            MonitoredTableSummary(table=t, applied_rule_count=self._count_applied_rules(t.binding_id))
+            MonitoredTableSummary(
+                table=t,
+                applied_rule_count=self._count_applied_rules(t.binding_id),
+                check_count=self._count_materialized_checks(t.table_fqn),
+            )
             for t in tables
         ]
 
@@ -291,6 +297,22 @@ class MonitoredTableService:
     def _count_applied_rules(self, binding_id: str) -> int:
         e = escape_sql_string(binding_id)
         sql = f"SELECT COUNT(*) FROM {self._applied_table} WHERE binding_id = '{e}'"  # noqa: S608
+        rows = self._sql.query(sql)
+        return int(rows[0][0]) if rows and rows[0] and rows[0][0] is not None else 0
+
+    def _count_materialized_checks(self, table_fqn: str) -> int:
+        """Count ``dq_quality_rules`` rows materialized from Rules Registry applications for *table_fqn*.
+
+        One applied rule can render into more than one materialized check
+        (one per column-mapping group), so this is intentionally a separate
+        counter from :meth:`_count_applied_rules` rather than an alias for
+        it — matching dqlake's `BindingOutBrief.check_count` semantics.
+        """
+        e = escape_sql_string(table_fqn)
+        sql = (
+            f"SELECT COUNT(*) FROM {self._quality_rules_table} "  # noqa: S608
+            f"WHERE table_fqn = '{e}' AND source = 'registry'"
+        )
         rows = self._sql.query(sql)
         return int(rows[0][0]) if rows and rows[0] and rows[0][0] is not None else 0
 

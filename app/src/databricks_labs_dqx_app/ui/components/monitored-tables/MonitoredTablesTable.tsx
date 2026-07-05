@@ -173,17 +173,16 @@ const COLUMNS: Record<MonitoredTablesSortKey, ColumnDef> = {
     renderCell: () => <span className="text-muted-foreground">—</span>,
   },
   checksCount: {
-    // DQX doesn't distinguish "checks" (materialized column-level checks)
-    // from "rules" (applied registry rules) in the summary API the way
-    // dqlake's binding does — kept hidden by default until that split
-    // exists server-side.
+    // Count of materialized checks (`dq_quality_rules` rows sourced from the
+    // Rules Registry) for the table — distinct from `rulesCount` (applied
+    // registry rules), matching dqlake's `BindingOutBrief.check_count`.
     labelKey: "monitoredTables.colChecksCount",
     toggleable: true,
-    defaultVisible: false,
+    defaultVisible: true,
     defaultWidth: 90,
-    sortable: false,
+    sortable: true,
     renderHeader: (label) => label,
-    renderCell: () => <span className="text-muted-foreground">—</span>,
+    renderCell: (r) => <span className="tabular-nums">{r.check_count ?? 0}</span>,
   },
   rulesCount: {
     labelKey: "monitoredTables.colRulesCount",
@@ -277,7 +276,7 @@ export function getMonitoredTablesSortValue(
     case "description":
       return "";
     case "checksCount":
-      return -1;
+      return r.check_count ?? 0;
     case "rulesCount":
       return r.applied_rule_count ?? 0;
     case "dqScore":
