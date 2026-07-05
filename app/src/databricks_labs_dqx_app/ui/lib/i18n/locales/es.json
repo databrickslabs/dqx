@@ -1567,6 +1567,8 @@
     "listPlaceholder": "valores, separados, por coma",
     "nativeHint": "Elige una función de verificación para ver sus slots y parámetros.",
     "sqlPredicateLabel": "Predicado SQL",
+    "sqlTemplatingHint": "Haz referencia a los slots de columna reutilizables en tu predicado como",
+    "sqlTemplatingHintSuffix": " — cada uno se sustituye por la columna real cuando la regla se aplica a una tabla.",
     "sqlPredicatePlaceholder": "nombre_columna IS NOT NULL AND nombre_columna > 0",
     "polarityFail": "Falla cuando es verdadero",
     "polarityPass": "Pasa cuando es verdadero",

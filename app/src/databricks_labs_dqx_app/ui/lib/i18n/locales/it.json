@@ -1567,6 +1567,8 @@
     "listPlaceholder": "valori, separati, da virgola",
     "nativeHint": "Scegli una funzione di controllo per vedere i suoi slot e parametri.",
     "sqlPredicateLabel": "Predicato SQL",
+    "sqlTemplatingHint": "Fai riferimento agli slot di colonna riutilizzabili nel tuo predicato come",
+    "sqlTemplatingHintSuffix": " — ognuno viene sostituito con la colonna reale quando la regola viene applicata a una tabella.",
     "sqlPredicatePlaceholder": "nome_colonna IS NOT NULL AND nome_colonna > 0",
     "polarityFail": "Fallisce quando vero",
     "polarityPass": "Supera quando vero",

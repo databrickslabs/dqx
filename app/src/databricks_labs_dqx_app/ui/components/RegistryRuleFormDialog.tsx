@@ -1519,6 +1519,11 @@ export function RegistryRuleFormDialog({
         <div className="space-y-3">
           <div className="space-y-1.5">
             <Label className="text-xs">{t("rulesRegistry.sqlPredicateLabel")}</Label>
+            <p className="text-[10px] text-muted-foreground">
+              {t("rulesRegistry.sqlTemplatingHint")}{" "}
+              <code className="font-mono text-[10px]">{`{{slot_name}}`}</code>
+              {t("rulesRegistry.sqlTemplatingHintSuffix")}
+            </p>
             <Textarea
               className={`font-mono text-xs min-h-[100px] ${sqlError ? "border-red-400 focus-visible:ring-red-400" : ""}`}
               placeholder={t("rulesRegistry.sqlPredicatePlaceholder")}
@@ -1542,7 +1547,6 @@ export function RegistryRuleFormDialog({
               onChange={setPolarity}
               disabled={readOnly}
             />
-            <HelpTooltip text={t("rulesRegistry.polarityTooltip")} />
           </div>
         </div>
       )}

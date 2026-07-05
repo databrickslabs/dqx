@@ -1567,6 +1567,8 @@
     "listPlaceholder": "comma, separated, values",
     "nativeHint": "Pick a check function to see its slots and parameters.",
     "sqlPredicateLabel": "SQL predicate",
+    "sqlTemplatingHint": "Reference reusable column slots in your predicate as",
+    "sqlTemplatingHintSuffix": " — each is substituted with the real column when the rule is applied to a table.",
     "sqlPredicatePlaceholder": "col_name IS NOT NULL AND col_name > 0",
     "polarityFail": "Fails when true",
     "polarityPass": "Passes when true",
