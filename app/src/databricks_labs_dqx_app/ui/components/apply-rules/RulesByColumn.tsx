@@ -42,6 +42,13 @@ interface RulesByColumnProps {
    *  (case-insensitive substring) — shared with the by-rule lens's search
    *  box in the parent toolbar. */
   search?: string;
+  /** Controlled open column name — mirrors dqlake's RulesByColumn. When the
+   *  parent owns this (e.g. to auto-expand a column right after a rule was
+   *  added to it via the "+ Add rule" CTA), pass it down here instead of
+   *  letting this component track its own uncontrolled state. */
+  openColumn?: string | null;
+  /** Fired when a column card is toggled — only used in controlled mode. */
+  onOpenColumnChange?: (name: string | null) => void;
 }
 
 function useRulesByColumn(appliedRules: AppliedRuleOut[]): Map<string, RuleEntry[]> {
@@ -195,10 +202,31 @@ function ColumnCard({ column, family, entries, isOpen, onToggle, canEdit, onAddR
   );
 }
 
-export function RulesByColumn({ appliedRules, tableFqn, canEdit, onAddRule, onJumpToRule, search }: RulesByColumnProps) {
+export function RulesByColumn({
+  appliedRules,
+  tableFqn,
+  canEdit,
+  onAddRule,
+  onJumpToRule,
+  search,
+  openColumn: controlledOpenColumn,
+  onOpenColumnChange,
+}: RulesByColumnProps) {
   const { t } = useTranslation();
   const rulesByColumn = useRulesByColumn(appliedRules);
-  const [openColumn, setOpenColumn] = useState<string | null>(null);
+  const [internalOpenColumn, setInternalOpenColumn] = useState<string | null>(null);
+
+  // Support both controlled (parent owns state) and uncontrolled modes —
+  // mirrors dqlake's RulesByColumn.
+  const isControlled = controlledOpenColumn !== undefined;
+  const openColumn = isControlled ? controlledOpenColumn : internalOpenColumn;
+  const setOpenColumn = (name: string | null) => {
+    if (isControlled) {
+      onOpenColumnChange?.(name);
+    } else {
+      setInternalOpenColumn(name);
+    }
+  };
 
   const parts = tableFqn.split(".");
   const columnsQuery = useGetTableColumns(parts[0] ?? "", parts[1] ?? "", parts[2] ?? "", {

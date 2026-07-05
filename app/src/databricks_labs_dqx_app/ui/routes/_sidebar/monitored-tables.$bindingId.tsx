@@ -125,8 +125,12 @@ function DetailError({ resetErrorBoundary }: { resetErrorBoundary: () => void })
 }
 
 /**
- * Subtle vertical rule grouping the binding-detail tab strip: About/Profile
- * (read-only exploration) vs Apply Rules/Results (rule authoring + outcomes).
+ * Subtle vertical rule grouping the binding-detail tab strip into three
+ * clusters, matching dqlake's `BindingTabsShell` groups (`[About] | [Profile,
+ * Apply Rules] | [Results]`, dqlake's Sharing tab omitted since DQX has no
+ * equivalent): About on its own, then Profile + Apply Rules together, then
+ * Results — one divider between About/Profile and another between Apply
+ * Rules/Results.
  *
  * The TabsList background is `bg-muted`, which in the dark theme resolves to
  * the *exact same* oklch value as the `border` token — so `bg-border` was
@@ -266,15 +270,16 @@ function MonitoredTableDetailPage() {
               <Info className="h-3.5 w-3.5" />
               {t("monitoredTables.tabAbout")}
             </TabsTrigger>
+            <TabGroupDivider />
             <TabsTrigger value="profile" className="gap-1.5">
               <BarChart3 className="h-3.5 w-3.5" />
               {t("monitoredTables.tabProfile")}
             </TabsTrigger>
-            <TabGroupDivider />
             <TabsTrigger value="apply-rules" className="gap-1.5">
               <Columns3 className="h-3.5 w-3.5" />
               {t("monitoredTables.tabApplyRules")}
             </TabsTrigger>
+            <TabGroupDivider />
             <TabsTrigger value="results" className="gap-1.5">
               <ClipboardList className="h-3.5 w-3.5" />
               {t("monitoredTables.tabResults")}
@@ -652,6 +657,10 @@ function ApplyRulesTab({
   // Set by the by-column lens's "jump to rule" action so the target card
   // auto-expands in the by-rule lens instead of just scrolling into view.
   const [expandRuleId, setExpandRuleId] = useState<string | null>(null);
+  // Lifted from RulesByColumn (mirrors dqlake's AppliedRulesList) so the
+  // column card can auto-expand right after a rule is added to it via the
+  // "+ Add rule" CTA on a column card.
+  const [openColumnName, setOpenColumnName] = useState<string | null>(null);
   const aiAvailability = useAiAvailability();
 
   // DQX materializes one `dq_applied_rules` ROW per mapping group — a rule
@@ -988,6 +997,8 @@ function ApplyRulesTab({
           tableFqn={tableFqn}
           canEdit={canEdit}
           search={search}
+          openColumn={openColumnName}
+          onOpenColumnChange={setOpenColumnName}
           onAddRule={(column) => openAddDialog(column)}
           onJumpToRule={(ruleId) => {
             setFilter("all");
@@ -1006,6 +1017,15 @@ function ApplyRulesTab({
         onOpenChange={(next) => {
           setAddOpen(next);
           if (!next) {
+            // If the dialog was opened from a column card's "+ Add rule"
+            // CTA, auto-expand that column card so the user sees the
+            // newly-added rule without an extra click — mirrors dqlake's
+            // RulesByColumn/AppliedRulesList "auto-expand after add"
+            // behavior. Fires on any close (not just a successful apply):
+            // re-expanding an already-open card is harmless.
+            if (addColumnContext) {
+              setOpenColumnName(addColumnContext.name);
+            }
             setAddColumnContext(null);
             setMappingRuleId(null);
           }

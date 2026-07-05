@@ -5,12 +5,11 @@
 // application on the binding (useApplyRuleToTable) — it does not touch the
 // live checks until the table is published.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import {
   Dialog,
   DialogContent,
@@ -19,7 +18,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Loader2, Search } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import {
   useApplyRuleToTable,
   useGetTableColumns,
@@ -32,8 +31,9 @@ import type { LabelDefinition } from "@/lib/api-custom";
 import { RegistryRuleFormDialog } from "@/components/RegistryRuleFormDialog";
 import { columnsForSlot } from "./ColumnPicker";
 import { RuleMappingCard } from "./RuleMappingCard";
+import { RulesPicker } from "./RulesPicker";
 import type { ColumnRef } from "./RulesByColumn";
-import { RESERVED_DIMENSION_KEY, RESERVED_NAME_KEY, RESERVED_SEVERITY_KEY, TagBadge, colorFor, extractApiError, getTag } from "./shared";
+import { RESERVED_NAME_KEY, extractApiError, getTag } from "./shared";
 
 interface AddRulesDialogProps {
   open: boolean;
@@ -72,7 +72,6 @@ export function AddRulesDialog({
   presetRule = null,
 }: AddRulesDialogProps) {
   const { t } = useTranslation();
-  const [search, setSearch] = useState("");
   const [selectedRule, setSelectedRule] = useState<RegistryRuleOut | null>(null);
   const [mapping, setMapping] = useState<Record<string, string | string[]>>({});
   const [createOpen, setCreateOpen] = useState(false);
@@ -94,21 +93,11 @@ export function AddRulesDialog({
   });
   const columns: ColumnOut[] = columnsQuery.data?.data ?? [];
 
-  const filteredRules = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return publishedRules;
-    return publishedRules.filter((r) => {
-      const name = getTag(r, RESERVED_NAME_KEY).toLowerCase();
-      return name.includes(q) || r.rule_id.toLowerCase().includes(q);
-    });
-  }, [publishedRules, search]);
-
   const applyMutation = useApplyRuleToTable();
 
   const reset = () => {
     setSelectedRule(null);
     setMapping({});
-    setSearch("");
   };
 
   const selectRule = (rule: RegistryRuleOut) => {
@@ -174,7 +163,11 @@ export function AddRulesDialog({
   return (
     <>
       <Dialog open={open} onOpenChange={handleClose}>
-        <DialogContent className="sm:max-w-2xl">
+        {/* Widened for the mini Rules-Registry table's rule-selection step
+            (Step 1) — matches dqlake's AddRulesDialog sizing, which is wide
+            enough to show a real table view instead of a search-box list.
+            Step 2's mapping card is comfortable at this width too. */}
+        <DialogContent className="!max-w-[min(92vw,900px)] w-[min(92vw,900px)]">
           <DialogHeader>
             <DialogTitle>
               {presetRule
@@ -200,42 +193,16 @@ export function AddRulesDialog({
                   {t("monitoredTables.addRuleForColumnHint", { column: initialColumn.name })}
                 </p>
               )}
-              <div className="relative">
-                <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-                <Input
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder={t("monitoredTables.searchRulesPlaceholder")}
-                  className="pl-7 h-8 text-xs"
-                />
-              </div>
-              <div className="max-h-72 overflow-y-auto border rounded-md divide-y">
-                {filteredRules.length === 0 ? (
-                  <p className="text-sm text-muted-foreground text-center py-6">
-                    {t("monitoredTables.noPublishedRules")}
-                  </p>
-                ) : (
-                  filteredRules.map((rule) => {
-                    const name = getTag(rule, RESERVED_NAME_KEY) || rule.rule_id;
-                    const dimension = getTag(rule, RESERVED_DIMENSION_KEY);
-                    const severity = getTag(rule, RESERVED_SEVERITY_KEY);
-                    return (
-                      <button
-                        key={rule.rule_id}
-                        type="button"
-                        onClick={() => selectRule(rule)}
-                        className="w-full text-left p-3 hover:bg-muted/40 transition-colors"
-                      >
-                        <p className="text-sm font-medium">{name}</p>
-                        <div className="flex flex-wrap gap-1 mt-1">
-                          <TagBadge label={dimension} color={colorFor(labelDefinitions, RESERVED_DIMENSION_KEY, dimension)} />
-                          <TagBadge label={severity} color={colorFor(labelDefinitions, RESERVED_SEVERITY_KEY, severity)} />
-                        </div>
-                      </button>
-                    );
-                  })
-                )}
-              </div>
+              {/* A compact Rules-Registry table (checkbox rows, sortable +
+                  toggleable columns) rather than a plain search box —
+                  ported from dqlake's RulesPicker/AddRulesDialog so picking
+                  a rule to apply means scanning a real table view. */}
+              <RulesPicker
+                rules={publishedRules}
+                labelDefinitions={labelDefinitions}
+                selectedId={null}
+                onSelect={selectRule}
+              />
               <Button variant="outline" size="sm" className="gap-2 w-full" onClick={openCreateRule}>
                 {t("monitoredTables.createNewRuleButton")}
               </Button>
