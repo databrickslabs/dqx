@@ -154,10 +154,11 @@ function AlertsPage() {
   const monitoringEndpoints = useMemo(() => {
     if (typeof window === "undefined") return [];
     const origin = window.location.origin;
-    return [
-      { label: t("alerts.endpointTableLabel"), url: `${origin}/api/v1/alerts/status/table/{table_fqn}` },
-      { label: t("alerts.endpointRunLabel"), url: `${origin}/api/v1/alerts/status/run/{run_id}` },
+    const paths = [
+      { label: t("alerts.endpointTableLabel"), path: "/api/v1/alerts/status/table/{table_fqn}" },
+      { label: t("alerts.endpointRunLabel"), path: "/api/v1/alerts/status/run/{run_id}" },
     ];
+    return paths.map((p) => ({ ...p, url: `${origin}${p.path}` }));
   }, [t]);
 
   const openCreate = () => {
@@ -369,8 +370,8 @@ function AlertsPage() {
             <Badge variant="secondary" className="shrink-0 font-mono text-[10px]">
               GET
             </Badge>
-            <code className="min-w-0 flex-1 truncate rounded bg-muted px-2 py-1 text-xs font-mono" title={row.label}>
-              {row.url}
+            <code className="min-w-0 flex-1 truncate rounded bg-muted px-2 py-1 text-xs font-mono" title={row.url}>
+              {row.path}
             </code>
             <Button
               type="button"
