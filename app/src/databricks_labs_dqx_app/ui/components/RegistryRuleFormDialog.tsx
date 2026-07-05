@@ -1217,6 +1217,17 @@ export function RegistryRuleFormDialog({
   // Gates the always-visible Build-with-AI banner rendered above the page
   // tab strip (formBody), matching dqlake's `header` slot placement.
   const showAiBanner = !readOnly && aiAvailability.available;
+  // Match dqlake: only offer per-field "Suggest with AI" once there's enough
+  // context for the model to ground a suggestion — a predicate, a
+  // meaningfully-declared slot (not the pristine `column_N`/any seed), a name,
+  // or a description. On a blank form the model would only return filler.
+  const isPristineSlot = (s: RuleSlot) => /^column_\d+$/.test(s.name) && s.family === "any";
+  const enoughAiContext =
+    sqlPredicate.trim().length > 0 ||
+    slots.some((s) => !isPristineSlot(s)) ||
+    name.trim().length > 0 ||
+    description.trim().length > 0;
+  const showFieldSuggest = showAiBanner && enoughAiContext;
 
   const authorKindBadges = (
     <>
@@ -1248,7 +1259,7 @@ export function RegistryRuleFormDialog({
           <Label className="text-xs">
             {t("rulesRegistry.nameLabel")} <span className="text-destructive">*</span>
           </Label>
-          {!readOnly && aiAvailability.available && (
+          {showFieldSuggest && (
             <SuggestButton
               field="name"
               busy={suggestingField === "name"}
@@ -1270,7 +1281,7 @@ export function RegistryRuleFormDialog({
       <div className="space-y-1.5">
         <div className="flex items-center justify-between gap-2">
           <Label className="text-xs">{t("rulesRegistry.descriptionLabel")}</Label>
-          {!readOnly && aiAvailability.available && (
+          {showFieldSuggest && (
             <SuggestButton
               field="description"
               busy={suggestingField === "description"}
@@ -1298,7 +1309,7 @@ export function RegistryRuleFormDialog({
             </Label>
             <HelpTooltip text={t("rulesRegistry.severityTooltip")} />
           </div>
-          {!readOnly && aiAvailability.available && severityValues.length > 0 && (
+          {showFieldSuggest && severityValues.length > 0 && (
             <SuggestButton
               field="severity"
               busy={suggestingField === "severity"}
@@ -1332,7 +1343,7 @@ export function RegistryRuleFormDialog({
             </Label>
             <HelpTooltip text={t("rulesRegistry.dimensionTooltip")} />
           </div>
-          {!readOnly && aiAvailability.available && dimensionValues.length > 0 && (
+          {showFieldSuggest && dimensionValues.length > 0 && (
             <SuggestButton
               field="dimension"
               busy={suggestingField === "dimension"}
