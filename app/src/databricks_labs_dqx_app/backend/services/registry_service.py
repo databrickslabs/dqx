@@ -24,6 +24,9 @@ from datetime import datetime, timezone
 from typing import Any, cast, get_args
 from uuid import uuid4
 
+from databricks.labs.dqx.errors import UnsafeSqlQueryError
+from databricks.labs.dqx.utils import is_sql_query_safe
+
 from databricks_labs_dqx_app.backend.registry_fingerprint import compute_registry_rule_fingerprint
 from databricks_labs_dqx_app.backend.registry_models import (
     AuthorKind,
@@ -303,6 +306,7 @@ class RegistryService:
         if mode is not None:
             rule.mode = mode
         if definition is not None:
+            self._validate_definition_sql_safety(rule.mode, definition)
             rule.definition = definition
         if polarity is not None:
             rule.polarity = polarity
@@ -318,6 +322,43 @@ class RegistryService:
         self._record_history(rule.rule_id, rule.definition, rule.version, "update", "draft", "draft", user_email)
         logger.info("Updated draft registry rule %s", rule.rule_id)
         return rule
+
+    @staticmethod
+    def _validate_definition_sql_safety(mode: RuleMode, definition: RuleDefinition) -> None:
+        """Reject a definition whose SQL body fails :func:`is_sql_query_safe`.
+
+        Mirrors the exact SQL-safety check :meth:`materializer.render_check`
+        already applies at materialization time — enforcing it here too
+        means an unsafe SQL/lowcode predicate or query, or a ``dqx_native``
+        check that routes through ``sql_query``/``sql_expression``, is
+        rejected at save time rather than only surfacing later when a
+        binding is materialized. Slot placeholders (``{{slot}}``) in the raw,
+        un-substituted text don't affect the prohibited-statement check.
+
+        Raises:
+            UnsafeSqlQueryError: the definition's SQL body is unsafe.
+        """
+        body = definition.body
+        candidates: list[str] = []
+        if mode in ("sql", "lowcode"):
+            for key in ("sql_query", "predicate"):
+                value = body.get(key)
+                if isinstance(value, str) and value:
+                    candidates.append(value)
+        elif mode == "dqx_native":
+            function = body.get("function")
+            if function in ("sql_query", "sql_expression"):
+                arguments = body.get("arguments")
+                if isinstance(arguments, dict):
+                    for key in ("query", "expression"):
+                        value = arguments.get(key)
+                        if isinstance(value, str) and value:
+                            candidates.append(value)
+        for candidate in candidates:
+            if not is_sql_query_safe(candidate):
+                raise UnsafeSqlQueryError(
+                    "The rule's SQL contains prohibited statements (e.g. DROP, INSERT, UPDATE) and cannot be saved."
+                )
 
     def _dedup_warning(self, rule: RegistryRule) -> str | None:
         """Return a human-readable warning if a published rule shares this fingerprint."""

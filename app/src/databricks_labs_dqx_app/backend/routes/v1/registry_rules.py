@@ -9,6 +9,7 @@ route below blocks (409) deleting a rule that's still applied anywhere.
 
 from typing import Annotated
 
+from databricks.labs.dqx.errors import UnsafeSqlQueryError
 from databricks.sdk import WorkspaceClient
 from fastapi import APIRouter, Depends, HTTPException, Query
 
@@ -167,6 +168,8 @@ def update_registry_rule(
             author_kind=body.author_kind,
         )
         return RegistryRuleOut.from_domain(rule)
+    except UnsafeSqlQueryError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except RuntimeError as e:

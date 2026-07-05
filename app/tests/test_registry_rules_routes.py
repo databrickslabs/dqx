@@ -116,6 +116,26 @@ class TestCreateAndUpdate:
         update_registry_rule("r1", body=body, svc=svc, obo_ws=_mock_obo_ws())
         assert svc.update_draft.call_args.kwargs["author_kind"] is None
 
+    def test_update_rejects_unsafe_sql_with_400(self):
+        """``RegistryService.update_draft`` raises ``UnsafeSqlQueryError`` for
+        an unsafe SQL/lowcode body or ``sql_query``/``sql_expression``
+        native check (see ``test_registry_service.py``); the route must
+        surface that as a 400, not a 500, so the JSON-edit dialog can show
+        an inline error."""
+        from databricks.labs.dqx.errors import UnsafeSqlQueryError
+
+        svc = MagicMock()
+        svc.update_draft.side_effect = UnsafeSqlQueryError("The rule's SQL contains prohibited statements")
+        body = UpdateRegistryRuleIn(
+            mode="sql",
+            definition=RuleDefinition.model_validate(
+                {"body": {"predicate": "1=1; DROP TABLE users"}, "slots": [], "parameters": []}
+            ),
+        )
+        with pytest.raises(HTTPException) as excinfo:
+            update_registry_rule("r1", body=body, svc=svc, obo_ws=_mock_obo_ws())
+        assert excinfo.value.status_code == 400
+
 
 class TestDelete:
     def test_delete_success(self):

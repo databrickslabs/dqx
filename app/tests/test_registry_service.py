@@ -240,6 +240,59 @@ class TestUpdateDraft:
         updated = svc.update_draft("r1", user_email="alice@x", user_metadata={"name": "x"})
         assert updated.author_kind == "human"
 
+    def test_rejects_unsafe_sql_predicate(self, svc, sql):
+        """A 'sql' mode definition whose predicate fails ``is_sql_query_safe``
+        must be rejected at save time (mirrors the check
+        ``materializer.render_check`` already applies at materialization),
+        not persisted."""
+        from databricks_labs_dqx_app.backend.registry_models import RegistryRule
+
+        draft = RegistryRule(
+            rule_id="r1", mode="sql", status="draft", version=0, definition=_native_definition()
+        )
+        sql.query.return_value = [_row_for(draft)]
+        unsafe_definition = RuleDefinition.model_validate(
+            {"body": {"predicate": "1=1; DROP TABLE users"}, "slots": [], "parameters": []}
+        )
+        from databricks.labs.dqx.errors import UnsafeSqlQueryError
+
+        with pytest.raises(UnsafeSqlQueryError):
+            svc.update_draft("r1", user_email="alice@x", mode="sql", definition=unsafe_definition)
+
+    def test_rejects_unsafe_sql_query_in_native_mode(self, svc, sql):
+        """A ``dqx_native`` check routed through the ``sql_query`` function
+        must have its ``query`` argument validated too, not just genuine
+        'sql'/'lowcode' mode bodies."""
+        from databricks_labs_dqx_app.backend.registry_models import RegistryRule
+        from databricks.labs.dqx.errors import UnsafeSqlQueryError
+
+        draft = RegistryRule(
+            rule_id="r1", mode="dqx_native", status="draft", version=0, definition=_native_definition()
+        )
+        sql.query.return_value = [_row_for(draft)]
+        unsafe_definition = RuleDefinition.model_validate(
+            {
+                "body": {"function": "sql_query", "arguments": {"query": "DROP TABLE users", "negate": False}},
+                "slots": [],
+                "parameters": [],
+            }
+        )
+        with pytest.raises(UnsafeSqlQueryError):
+            svc.update_draft("r1", user_email="alice@x", definition=unsafe_definition)
+
+    def test_accepts_safe_sql_predicate(self, svc, sql):
+        from databricks_labs_dqx_app.backend.registry_models import RegistryRule
+
+        draft = RegistryRule(
+            rule_id="r1", mode="sql", status="draft", version=0, definition=_native_definition()
+        )
+        sql.query.return_value = [_row_for(draft)]
+        safe_definition = RuleDefinition.model_validate(
+            {"body": {"predicate": "{{column}} IS NOT NULL"}, "slots": [], "parameters": []}
+        )
+        updated = svc.update_draft("r1", user_email="alice@x", mode="sql", definition=safe_definition)
+        assert updated.definition.body["predicate"] == "{{column}} IS NOT NULL"
+
 
 # ---------------------------------------------------------------------------
 # Lifecycle transitions

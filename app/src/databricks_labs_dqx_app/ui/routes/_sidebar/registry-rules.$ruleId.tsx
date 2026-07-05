@@ -24,7 +24,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { AlertCircle, MoreVertical, Pencil, RotateCcw, Table2, Trash2 } from "lucide-react";
+import { AlertCircle, Braces, MoreVertical, Pencil, RotateCcw, Table2, Trash2 } from "lucide-react";
 import {
   useGetRegistryRuleSuspense,
   getGetRegistryRuleQueryKey,
@@ -40,6 +40,7 @@ import {
   type PageTab,
 } from "@/components/RegistryRuleFormDialog";
 import { ApplyRuleModal } from "@/components/registry-rules/ApplyRuleModal";
+import { RegistryRuleJsonDialog } from "@/components/registry-rules/RegistryRuleJsonDialog";
 import { StatusBadge, ModeBadge, AuthorKindBadge, getTag, RESERVED_NAME_KEY } from "@/components/RegistryRuleBadges";
 import { cn } from "@/lib/utils";
 
@@ -108,6 +109,7 @@ function RegistryRuleDetailPage() {
 
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [applyModalOpen, setApplyModalOpen] = useState(false);
+  const [jsonDialogOpen, setJsonDialogOpen] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   // Set right before a successful save navigates us away, so the guard
   // doesn't fire a spurious "unsaved changes" prompt on our own redirect.
@@ -174,7 +176,9 @@ function RegistryRuleDetailPage() {
   // Apply requires a published rule — the backend rejects a non-approved
   // rule with 409 (RuleNotPublishedError) — plus create-rule permission.
   const canApply = perms.canCreateRules && rule.status === "approved";
-  const showActionsMenu = canDelete || canApply;
+  // "View / edit JSON" is always offered (read-only when the viewer can't
+  // edit), so the actions menu is always shown once any menu item applies.
+  const showActionsMenu = true;
 
   const createMutation = useCreateRegistryRule();
   const handleEditAsNewDraft = useCallback(() => {
@@ -246,6 +250,10 @@ function RegistryRuleDetailPage() {
                     {t("rulesRegistry.actionApplyToTables")}
                   </DropdownMenuItem>
                 )}
+                <DropdownMenuItem onClick={() => setJsonDialogOpen(true)} className="gap-2">
+                  <Braces className="h-3.5 w-3.5" />
+                  {t("rulesRegistry.actionViewJson")}
+                </DropdownMenuItem>
                 {canDelete && (
                   <DropdownMenuItem
                     onClick={() => setDeleteConfirmOpen(true)}
@@ -287,6 +295,26 @@ function RegistryRuleDetailPage() {
           onApplied={invalidateDetail}
         />
       )}
+
+      <RegistryRuleJsonDialog
+        open={jsonDialogOpen}
+        onOpenChange={setJsonDialogOpen}
+        rule={rule}
+        canEdit={canEdit}
+        canEditAsNewDraft={canEditAsNewDraft}
+        onSaved={(newRuleId) => {
+          justSavedRef.current = true;
+          if (newRuleId && newRuleId !== rule.rule_id) {
+            navigate({
+              to: "/registry-rules/$ruleId",
+              params: { ruleId: newRuleId },
+              search: { tab: "about" },
+            });
+          } else {
+            invalidateDetail();
+          }
+        }}
+      />
 
       <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
         <AlertDialogContent>

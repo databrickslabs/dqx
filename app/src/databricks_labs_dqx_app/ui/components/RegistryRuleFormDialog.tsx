@@ -63,7 +63,6 @@ import {
   type RuleSlot,
   type RuleSlotFamily as RuleSlotFamilyType,
   type RuleParameter,
-  type RuleParameterType,
   type CheckFunctionDef as ApiCheckFunctionDef,
   type CreateRegistryRuleIn,
   type UpdateRegistryRuleIn,
@@ -73,6 +72,12 @@ import {
 import { useAiAvailability, aiUnavailableReason } from "@/hooks/use-ai-availability";
 import { AI_BUTTON_BG, AI_ICON_COLOR, AI_BANNER_BG, AI_BANNER_BORDER, AI_GRADIENT_URL } from "@/lib/ai-style";
 import { orderSeverityValuesForDisplay, colorFor, ColorDot, type LabelColorDefinition } from "@/components/RegistryRuleBadges";
+import {
+  deriveSlotsAndParameters,
+  nativeArguments,
+  parseParamValue,
+  paramValueToRaw,
+} from "@/lib/registry-rule-conversion";
 
 const RESERVED_NAME_KEY = "name";
 const RESERVED_DESCRIPTION_KEY = "description";
@@ -86,76 +91,6 @@ type Polarity = "pass" | "fail";
 // page so browser back/forward moves between them, mirroring the old dqx
 // editor's page-based structure.
 export type PageTab = "about" | "sharing" | "implementation" | "test" | "history";
-
-const COLUMN_KINDS = new Set(["column", "columns"]);
-const PARAM_KIND_TO_TYPE: Record<string, RuleParameterType> = {
-  boolean: "boolean",
-  number: "number",
-  list: "list",
-  string: "string",
-  ref_table: "ref_table",
-  ref_columns: "ref_column",
-};
-
-function deriveSlotsAndParameters(fn: ApiCheckFunctionDef | undefined): {
-  slots: RuleSlot[];
-  parameters: RuleParameter[];
-} {
-  if (!fn) return { slots: [], parameters: [] };
-  const slots: RuleSlot[] = [];
-  const parameters: RuleParameter[] = [];
-  let position = 0;
-  for (const p of fn.params ?? []) {
-    if (COLUMN_KINDS.has(p.kind)) {
-      slots.push({
-        name: p.name,
-        family: "any",
-        position: position++,
-        cardinality: p.kind === "columns" ? "many" : "one",
-      });
-    } else {
-      parameters.push({
-        name: p.name,
-        type: PARAM_KIND_TO_TYPE[p.kind] ?? "string",
-        value: null,
-      });
-    }
-  }
-  return { slots, parameters };
-}
-
-function nativeArguments(slots: RuleSlot[]): Record<string, unknown> {
-  const args: Record<string, unknown> = {};
-  for (const s of slots) args[s.name] = `{{${s.name}}}`;
-  return args;
-}
-
-function parseParamValue(type: RuleParameterType, raw: string): RuleParameter["value"] {
-  const trimmed = raw.trim();
-  if (trimmed === "") return null;
-  switch (type) {
-    case "boolean":
-      return trimmed === "true";
-    case "number": {
-      const n = Number(trimmed);
-      return Number.isNaN(n) ? null : n;
-    }
-    case "list":
-    case "ref_column":
-      return trimmed
-        .split(",")
-        .map((s) => s.trim())
-        .filter((s) => s.length > 0);
-    default:
-      return trimmed;
-  }
-}
-
-function paramValueToRaw(value: RuleParameter["value"]): string {
-  if (value === null || value === undefined) return "";
-  if (Array.isArray(value)) return value.join(", ");
-  return String(value);
-}
 
 const SQL_DDL_DML_PATTERN = /\b(DROP|DELETE|INSERT|UPDATE|ALTER|TRUNCATE|CREATE|GRANT|REVOKE|MERGE)\b/i;
 
