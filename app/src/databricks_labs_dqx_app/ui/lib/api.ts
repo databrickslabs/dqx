@@ -49,6 +49,10 @@ export interface AlertChannelIn {
   enabled?: boolean;
   /** Also send dry run results to this channel */
   notify_dry_runs?: boolean;
+  /** Table scope: all | tables (specific FQNs) */
+  scope_mode?: string;
+  /** Table FQNs to notify on when scope_mode=tables */
+  scope_tables?: string[];
 }
 
 export interface AlertChannelOut {
@@ -59,6 +63,8 @@ export interface AlertChannelOut {
   trigger: string;
   enabled: boolean;
   notify_dry_runs?: boolean;
+  scope_mode?: string;
+  scope_tables?: string[];
 }
 
 export interface AnomalyConfig {
@@ -635,6 +641,11 @@ export interface NotifyResultIn {
   error_rows?: number | null;
   warning_rows?: number | null;
   status?: string;
+  created_at?: string | null;
+  requesting_user?: string | null;
+  /** JSON string of check definitions applied */
+  checks_json?: string | null;
+  error_message?: string | null;
 }
 
 export interface NotifyRunsIn {
@@ -10809,7 +10820,7 @@ export function useTestAlertWebhook<TData = Awaited<ReturnType<typeof testAlertW
  * Send Teams notifications for the given run IDs.
  *
  * Reads run results from ``dq_validation_runs``, then posts to every
- * enabled channel whose trigger matches the supplied ``trigger`` value.
+ * enabled channel whose trigger and scope match.
  * @summary Notify Runs
  */
 export const notifyRuns = (
@@ -10903,10 +10914,6 @@ export function useNotifyRuns<TData = Awaited<ReturnType<typeof notifyRuns>>, TE
 
 /**
  * Send a Teams notification for a completed dry run.
- *
- * Posts to every enabled channel that has ``notify_dry_runs`` set.
- * The result data is passed in the request body so the caller doesn't
- * need a ``run_id`` stored in ``dq_validation_runs``.
  * @summary Notify Dry Run Result
  */
 export const notifyDryRunResult = (
