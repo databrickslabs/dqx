@@ -711,6 +711,12 @@ function snapshotFromRule(rule: RegistryRuleOut): RuleEditSnapshot {
   };
 }
 
+/** A new rule starts with one reusable column slot already declared (matching
+ * dqlake's ColumnsUsedPanel, which seeds `column_1`/ANY) so authors don't have
+ * to add the first slot by hand. Surfaces only in SQL / Low-Code mode; ignored
+ * by native `buildDefinition`. */
+const seededFirstSlot = (): RuleSlot => ({ name: "column_1", family: "any", position: 0, cardinality: "one" });
+
 /** Pristine defaults the "create new rule" hydration branch resets the form to — mirrors {@link snapshotFromRule}'s shape so an untouched new-rule form reads as clean (not dirty). */
 const PRISTINE_NEW_SNAPSHOT: RuleEditSnapshot = {
   name: "",
@@ -725,7 +731,7 @@ const PRISTINE_NEW_SNAPSHOT: RuleEditSnapshot = {
   functionName: "",
   paramRawValues: {},
   sqlPredicate: "",
-  sqlSlots: [],
+  sqlSlots: [seededFirstSlot()],
   authorKind: "human",
 };
 
@@ -870,7 +876,7 @@ export function RegistryRuleFormDialog({
       setFunctionName("");
       setParamRawValues({});
       setSqlPredicate("");
-      setSqlSlots([]);
+      setSqlSlots([seededFirstSlot()]);
       setPolarity("pass");
     }
   }, [open, sourceRule, setPageTab]);
@@ -1222,9 +1228,11 @@ export function RegistryRuleFormDialog({
   // meaningfully-declared slot (not the pristine `column_N`/any seed), a name,
   // or a description. On a blank form the model would only return filler.
   const isPristineSlot = (s: RuleSlot) => /^column_\d+$/.test(s.name) && s.family === "any";
+  const declaredSlots = mode === "dqx_native" ? slots : sqlSlots;
   const enoughAiContext =
     sqlPredicate.trim().length > 0 ||
-    slots.some((s) => !isPristineSlot(s)) ||
+    functionName.trim().length > 0 ||
+    declaredSlots.some((s) => !isPristineSlot(s)) ||
     name.trim().length > 0 ||
     description.trim().length > 0;
   const showFieldSuggest = showAiBanner && enoughAiContext;
