@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import {
@@ -15,7 +15,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Select,
   SelectContent,
@@ -241,6 +240,32 @@ function SuggestButton({
   );
 }
 
+/**
+ * Common section-header style used above chrome-free form sections (e.g.
+ * "Rule Type", "Columns Used") — same typography as the form's `CardTitle`
+ * headers, but without the surrounding card, plus an optional action/help
+ * slot on the right so both usages share one visual language.
+ */
+function SectionHeader({
+  children,
+  tooltip,
+  action,
+}: {
+  children: ReactNode;
+  tooltip?: string;
+  action?: ReactNode;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <div className="flex items-center gap-1.5">
+        <h3 className="text-sm font-semibold leading-none">{children}</h3>
+        {tooltip && <HelpTooltip text={tooltip} />}
+      </div>
+      {action}
+    </div>
+  );
+}
+
 /** Reference-table picker for a `ref_table` DQX-native argument (foreign_key, has_valid_schema, …). */
 function ReferenceTableField({
   value,
@@ -430,19 +455,20 @@ function SlotsPanel({
   };
 
   return (
-    <Card ref={rootRef}>
-      <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0 py-3">
-        <div className="flex items-center gap-1.5">
-          <CardTitle className="text-sm">{t("rulesRegistry.slotsPanelTitle")}</CardTitle>
-          <HelpTooltip text={t("rulesRegistry.slotsPanelTooltip")} />
-        </div>
-        {!disabled && canAddSlot && (
-          <Button type="button" variant="outline" size="sm" onClick={add} className="h-7 px-2.5 text-xs gap-1.5">
-            {t("rulesRegistry.slotsPanelAddButton")}
-          </Button>
-        )}
-      </CardHeader>
-      <CardContent className="space-y-2">
+    <div ref={rootRef} className="space-y-2">
+      <SectionHeader
+        tooltip={t("rulesRegistry.slotsPanelTooltip")}
+        action={
+          !disabled && canAddSlot ? (
+            <Button type="button" variant="outline" size="sm" onClick={add} className="h-7 px-2.5 text-xs gap-1.5">
+              {t("rulesRegistry.slotsPanelAddButton")}
+            </Button>
+          ) : undefined
+        }
+      >
+        {t("rulesRegistry.slotsPanelTitle")}
+      </SectionHeader>
+      <div className="space-y-2">
         {value.length === 0 && (
           <p className="text-xs text-muted-foreground py-1">{t("rulesRegistry.slotsPanelEmpty")}</p>
         )}
@@ -512,8 +538,8 @@ function SlotsPanel({
             </div>
           );
         })}
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 }
 
@@ -1428,10 +1454,6 @@ export function RegistryRuleFormDialog({
         />
       )}
 
-      <div className="flex items-center gap-3 flex-wrap">
-        <ModeSegmentedSwitch value={mode} onChange={setMode} disabled={readOnly} />
-      </div>
-
       {mode === "lowcode" && (
         <p className="text-xs text-muted-foreground italic">{t("rulesRegistry.lowcodeComingSoon")}</p>
       )}
@@ -1731,6 +1753,13 @@ export function RegistryRuleFormDialog({
               {t("rulesRegistry.tabHistory")}
             </TabsTrigger>
           </TabsList>
+        </div>
+        {/* Rule Type is a persistent selector — it drives every tab's
+            Implementation content, so it sits below the tab strip rather
+            than inside a single tab's content. */}
+        <div className="space-y-2 pt-4">
+          <SectionHeader>{t("rulesRegistry.ruleTypeHeader")}</SectionHeader>
+          <ModeSegmentedSwitch value={mode} onChange={setMode} disabled={readOnly} />
         </div>
         <TabsContent value="about" className="pt-4">{aboutTabContent}</TabsContent>
         <TabsContent value="sharing" className="pt-4">{sharingTabContent}</TabsContent>
