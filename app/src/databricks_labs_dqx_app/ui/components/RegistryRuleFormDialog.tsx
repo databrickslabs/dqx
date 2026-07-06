@@ -1643,7 +1643,9 @@ export function RegistryRuleFormDialog({
               {t("rulesRegistry.sqlPredicateLabel")} <span className="text-destructive">*</span>
             </Label>
             <Textarea
-              className={`font-mono text-xs min-h-[100px] ${sqlError ? "border-red-400 focus-visible:ring-red-400" : ""}`}
+              rows={6}
+              spellCheck={false}
+              className={`font-mono text-sm ${sqlError ? "border-red-400 focus-visible:ring-red-400" : ""}`}
               placeholder={t("rulesRegistry.sqlPredicatePlaceholder")}
               value={sqlPredicate}
               onChange={(e) => setSqlPredicate(e.target.value)}
@@ -1655,6 +1657,7 @@ export function RegistryRuleFormDialog({
                 {sqlError}
               </p>
             )}
+            <p className="text-xs text-muted-foreground">{t("rulesRegistry.sqlPredicateHelp")}</p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
             <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
