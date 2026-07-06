@@ -225,6 +225,32 @@ class TestUpdateDraft:
         )
         assert updated.user_metadata["name"] == "Renamed"
 
+    def test_updates_draft_missing_dimension_and_severity_tags(self, svc, sql):
+        """A draft created before ``dimension``/``severity`` became required
+        registry tags (e.g. imported from plain DQX YAML, which has no such
+        concept) must still be editable in place — the completeness gate
+        that later blocks the *frontend* Save buttons until those tags are
+        filled in is purely a UI concern; the backend never required them
+        and must accept the update once the caller supplies them."""
+        from databricks_labs_dqx_app.backend.registry_models import RegistryRule
+
+        draft = RegistryRule(
+            rule_id="r1",
+            mode="dqx_native",
+            status="draft",
+            version=0,
+            definition=_native_definition(),
+            user_metadata={"name": "Legacy import"},
+        )
+        sql.query.return_value = [_row_for(draft)]
+        updated = svc.update_draft(
+            "r1",
+            user_email="alice@x",
+            user_metadata={"name": "Legacy import", "dimension": "Completeness", "severity": "High"},
+        )
+        assert updated.user_metadata["dimension"] == "Completeness"
+        assert updated.user_metadata["severity"] == "High"
+
     def test_rejects_editing_non_draft_rule(self, svc, sql):
         from databricks_labs_dqx_app.backend.registry_models import RegistryRule
 
