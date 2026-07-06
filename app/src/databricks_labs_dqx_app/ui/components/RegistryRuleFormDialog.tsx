@@ -1850,7 +1850,7 @@ export function RegistryRuleFormDialog({
           {isEditing && !isDirty ? (
             // The draft is already persisted and unchanged — submit it
             // for approval directly rather than issuing a redundant save.
-            <Button onClick={handleSubmitOnly} disabled={saving} className="gap-2">
+            <Button onClick={handleSubmitOnly} disabled={saving || !canSave} className="gap-2">
               {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
               {t("rulesRegistry.actionSubmit")}
             </Button>
