@@ -10609,6 +10609,16 @@ submits every freshly-materialized ``draft`` check for approval — reusing
 the same per-rule transition the Drafts & Review queue uses — and rolls
 the binding up to ``pending_approval``. Idempotent: re-submitting an
 unchanged, already-approved table leaves its approved checks untouched.
+
+Rejected-binding recovery: after a reject the binding and its checks sit
+at ``rejected``. An unchanged re-submit does not change any check content,
+so the materializer leaves those rows at ``rejected`` (it only resets a
+row to ``draft`` when its rendered content actually changed). Left alone
+they would be stuck — ``draft -> pending_approval`` never picks them up
+and the binding would roll back down to ``draft`` with a success toast but
+``affected_check_count=0``. So first walk any ``rejected`` rows back to
+``draft`` (a legal per-rule transition), which the ``draft ->
+pending_approval`` step below then re-enters into review and counts.
  * @summary Submit Monitored Table
  */
 export const submitMonitoredTable = (
@@ -10676,6 +10686,11 @@ Reuses the per-rule approve transition so each check's audit trail is
 identical to a hand-approval, then rolls the binding up to ``approved``.
 From here the scheduler picks the checks up (it runs only ``approved``
 ``dq_quality_rules`` rows).
+
+Only a binding currently ``pending_approval`` can be approved — mirrors
+the per-rule transition guard (``RulesCatalogService.VALID_TRANSITIONS``)
+so an already-``draft``/``approved``/``rejected`` binding can't be
+re-approved out of band.
  * @summary Approve Monitored Table
  */
 export const approveMonitoredTable = (
@@ -10743,6 +10758,14 @@ Matches the per-rule reject semantics exactly (``routes/v1/rules.py``
 reject sets a check to ``rejected``), so no check is left dangling in
 ``pending_approval`` under a rejected table, and flips the binding itself
 to ``rejected``.
+
+Only a binding currently ``pending_approval`` can be rejected. Without
+this guard, rejecting an already-``approved`` binding would flip the
+binding's own status to ``rejected`` while its materialized checks stay
+``approved`` and keep executing in the scheduler — the checks' per-rule
+transitions only move ``pending_approval`` rows
+(``RulesCatalogService.VALID_TRANSITIONS["approved"] = {"draft"}``), so
+the binding and its checks would silently disagree.
  * @summary Reject Monitored Table
  */
 export const rejectMonitoredTable = (
