@@ -216,7 +216,7 @@ export function TableScopePickerFields({ state }: { state: TableScopePickerState
       />
       <MultiSelectPopover
         label={t("monitoredTables.wizard.schemasLabel")}
-        placeholder={t("monitoredTables.wizard.schemasPlaceholder")}
+        placeholder={t("monitoredTables.wizard.schemasPlaceholder", { count: state.selectedCatalogs.length })}
         searchPlaceholder={t("monitoredTables.wizard.searchSchemas")}
         options={state.schemaOptions}
         selected={state.selectedSchemas}
@@ -228,7 +228,7 @@ export function TableScopePickerFields({ state }: { state: TableScopePickerState
       />
       <MultiSelectPopover
         label={t("monitoredTables.wizard.tablesLabel")}
-        placeholder={t("monitoredTables.wizard.tablesPlaceholder")}
+        placeholder={t("monitoredTables.wizard.tablesPlaceholder", { count: state.selectedSchemas.length })}
         searchPlaceholder={t("monitoredTables.wizard.searchTables")}
         options={state.tableOptions}
         selected={state.selectedTables}

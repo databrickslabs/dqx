@@ -57,6 +57,16 @@ export function MultiSelectPopover({
 
   const selectedSet = useMemo(() => new Set(selected), [selected]);
 
+  // When exactly one option is selected, the trigger shows that option's own
+  // name instead of a generic "1 selected" — a single pick reads far better
+  // as "acme_catalog" than as a count. Falls back to the count label for 0
+  // or 2+ selections (and defensively if the value can't be resolved to an
+  // option, e.g. stale selection).
+  const singleSelectedLabel = useMemo(() => {
+    if (selected.length !== 1) return null;
+    return options.find((o) => o.value === selected[0])?.label ?? null;
+  }, [selected, options]);
+
   // Selected options float to the top of the list (in their existing
   // relative order), then the rest — so a user scrolling back into an
   // already-large selection doesn't have to hunt for what they picked.
@@ -120,7 +130,7 @@ export function MultiSelectPopover({
             <span className={cn("truncate", selected.length === 0 && "text-muted-foreground")}>
               {selected.length === 0
                 ? placeholder
-                : t("monitoredTables.wizard.selectedCount", { count: selected.length })}
+                : (singleSelectedLabel ?? t("monitoredTables.wizard.selectedCount", { count: selected.length }))}
             </span>
             {isLoading ? (
               <Loader2 className="ml-2 h-4 w-4 shrink-0 animate-spin opacity-50" />
@@ -129,11 +139,43 @@ export function MultiSelectPopover({
             )}
           </Button>
         </PopoverTrigger>
-        <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
-          {/* Clean bg-popover header (no muted fill) with a hairline border,
-              matching dqlake's Command/CommandInput header — a solid grey
-              fill here read as "muddy" against the white item list below. */}
-          <div className="flex items-center gap-2 border-b px-3">
+        {/* ROOT CAUSE of the "list still doesn't scroll" bug: PopoverContent
+            itself had no height bound of its own — only the item list below
+            had a hard-coded `max-h-[300px]`. When the popover opened with
+            less than ~300px of room between the trigger and the viewport
+            edge (e.g. this modal sitting mid-page), Radix doesn't shrink
+            content to fit; the whole card (header + select-all row + the
+            fixed 300px list) rendered at its full intrinsic height and the
+            excess was pushed past the visible viewport — the list's own
+            overflow-y-auto scrollbar existed, but sat mostly off-screen,
+            unreachable by wheel/trackpad. `SelectContent` in this same repo
+            avoids exactly this by binding its own max-height to Radix's
+            computed `--radix-popover-content-available-height` (the actual
+            free space Radix already calculated); this does the same, and
+            makes the card a `flex flex-col` so the header/select-all rows
+            stay pinned (`shrink-0`) while the item list is the sole
+            `min-h-0 flex-1` flex child — `min-h-0` is required because flex
+            items default to a min-height of their own content size, which
+            would otherwise stop the list from ever shrinking below its
+            unscrolled height even inside a bounded parent. The list keeps
+            its own `max-h-[300px] overflow-y-auto` so it still caps out at a
+            sane size when plenty of room is available, but now that cap is
+            never larger than what's actually on screen. */}
+        <PopoverContent
+          className="flex max-h-(--radix-popover-content-available-height) w-[--radix-popover-trigger-width] flex-col overflow-hidden p-0"
+          align="start"
+        >
+          {/* Search row: the shared Input primitive bakes in its own
+              `dark:bg-input/30` fill (see components/ui/input.tsx), which —
+              because a `.dark` compound selector always outranks a bare
+              `.bg-transparent` class regardless of source order — wins over
+              the `bg-transparent` override passed below and only tints the
+              input's own rectangle. That's why the dark-mode search bar
+              looked like a lighter-grey patch covering part of the row
+              (the input) sitting on a darker row (the icon gutter + padding
+              around it). Applying the same token to the row container makes
+              the fill span the row's full width uniformly. */}
+          <div className="flex shrink-0 items-center gap-2 border-b px-3 dark:bg-input/30">
             <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
             <Input
               value={search}
@@ -142,7 +184,7 @@ export function MultiSelectPopover({
               className="h-9 flex-1 border-0 bg-transparent shadow-none focus-visible:ring-0 text-sm px-0"
             />
           </div>
-          <label className="flex items-center gap-2 border-b px-3 py-1.5 cursor-pointer">
+          <label className="flex shrink-0 items-center gap-2 border-b px-3 py-1.5 cursor-pointer">
             <Checkbox
               checked={selectAllState}
               onCheckedChange={toggleSelectAll}
@@ -153,11 +195,7 @@ export function MultiSelectPopover({
               {t("monitoredTables.wizard.selectAllVisible")}
             </span>
           </label>
-          {/* max-h + overflow-y-auto makes the item list scroll independently
-              of the header rows above, matching dqlake's CommandList
-              (`max-h-[300px] overflow-y-auto`) so large catalogs/schemas/
-              tables don't get clipped. */}
-          <div className="max-h-[300px] overflow-y-auto p-1">
+          <div className="min-h-0 max-h-[300px] flex-1 overflow-y-auto p-1">
             {isLoading ? (
               <div className="flex items-center justify-center py-6">
                 <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
@@ -167,25 +205,39 @@ export function MultiSelectPopover({
             ) : (
               filteredOptions.map((o) => {
                 const isSelected = selectedSet.has(o.value) || !!o.disabled;
+                // Clicking the row selects the option AND closes the popover
+                // (single-pick-and-go). Clicking the checkbox itself toggles
+                // the option but keeps the popover open, so multi-selecting
+                // several options doesn't require reopening the dropdown
+                // each time — the checkbox click's `stopPropagation` below
+                // is what keeps it from also firing this row handler.
                 const row = (
-                  <label
+                  <div
                     key={o.value}
+                    role="option"
+                    aria-selected={isSelected}
+                    onClick={() => {
+                      if (o.disabled) return;
+                      toggle(o);
+                      setOpen(false);
+                    }}
                     className={cn(
                       "flex items-center gap-2 rounded-sm px-3 py-1.5 text-sm transition-colors",
                       o.disabled ? "cursor-not-allowed opacity-70" : "cursor-pointer",
                       isSelected ? "bg-primary/10" : "hover:bg-muted",
                     )}
                   >
-                    <Checkbox
-                      checked={isSelected}
-                      onCheckedChange={() => toggle(o)}
-                      disabled={o.disabled}
-                      className="shrink-0"
-                    />
+                    <span className="flex shrink-0" onClick={(e) => e.stopPropagation()}>
+                      <Checkbox
+                        checked={isSelected}
+                        onCheckedChange={() => toggle(o)}
+                        disabled={o.disabled}
+                      />
+                    </span>
                     <span className="truncate text-sm" title={o.label}>
                       {o.label}
                     </span>
-                  </label>
+                  </div>
                 );
                 if (!o.disabled || !o.disabledReason) return row;
                 return (
