@@ -1609,6 +1609,7 @@
     "requiredParametersLabel": "required parameters",
     "columnSlotsLabel": "column slots",
     "canSaveMissingFieldsTooltip": "Fill in the following before saving: {{fields}}.",
+    "canSubmitMissingFieldsTooltip": "Fill in the following before submitting: {{fields}}.",
     "unsavedChangesDescription": "You have unsaved rule changes. Leaving will discard your edits.",
     "discardAndLeave": "Discard & leave",
     "nameRequired": "Name is required.",

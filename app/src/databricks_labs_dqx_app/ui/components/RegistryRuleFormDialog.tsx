@@ -1006,7 +1006,7 @@ export function RegistryRuleFormDialog({
   // -- Save gating -------------------------------------------------------
   // Names of the selected function's non-column parameters that have no
   // default (i.e. genuinely required) — drives both the red `*` markers on
-  // parameter labels below and `canSave`'s native-mode check.
+  // parameter labels below and `canSubmit`'s native-mode check.
   const requiredParamNames = useMemo(
     () =>
       new Set(
@@ -1018,41 +1018,57 @@ export function RegistryRuleFormDialog({
     .filter((p) => requiredParamNames.has(p.name))
     .every((p) => (paramRawValues[p.name] ?? "").trim().length > 0);
   const slotsHaveValidNames = (slots: RuleSlot[]) => slots.every((s) => SLOT_NAME_PATTERN.test(s.name));
-  // Pure derivation of "every field required to define a valid rule is
-  // filled in for the current mode" — gates both footer Save buttons so a
-  // steward can't persist a half-built rule. Low-Code has no editable body
-  // yet (see `lowcodeComingSoon` below), so it's never save-able.
-  const canSave =
-    name.trim().length > 0 &&
-    !nameError &&
-    severity.trim().length > 0 &&
-    dimension.trim().length > 0 &&
-    (mode === "dqx_native"
-      ? functionName.trim().length > 0 && nativeRequiredParamsFilled && slotsHaveValidNames(nativeSlots)
+  // Two-tier save gating (P17-A). A DRAFT must stay saveable while it is
+  // still incomplete — that is what a draft is for, and the registry holds
+  // rules persisted before dimension/severity/required-parameter gating
+  // existed (imported YAML, AI proposals, pre-gate builds). Requiring FULL
+  // completeness just to persist e.g. a description edit dead-ends those
+  // rules: Save sits greyed out until the steward hunts down unrelated
+  // fields across tabs — and a draft cloned from a pre-gate approved rule
+  // via "Edit as new draft" hits the same wall, so every edit path on such
+  // a registry reads as "rules cannot be updated".
+  //
+  // `canSaveDraft` therefore only requires structural validity — the fields
+  // without which `buildDefinition` would persist a malformed body (name,
+  // the mode's body source, well-formed slot names, no prohibited SQL).
+  // `canSubmit` layers the completeness requirements (severity, dimension,
+  // required parameters) on top and gates "Save & submit" / "Submit for
+  // approval" — the quality bar moves to the review boundary instead of
+  // blocking persistence. Low-Code has no editable body yet (see
+  // `lowcodeComingSoon` below), so it's never save-able.
+  const structurallyValid =
+    mode === "dqx_native"
+      ? functionName.trim().length > 0 && slotsHaveValidNames(nativeSlots)
       : mode === "sql"
         ? sqlPredicate.trim().length > 0 && sqlError === null && slotsHaveValidNames(sqlSlots)
-        : false);
+        : false;
+  const canSaveDraft = name.trim().length > 0 && !nameError && structurallyValid;
+  const canSubmit =
+    canSaveDraft &&
+    severity.trim().length > 0 &&
+    dimension.trim().length > 0 &&
+    (mode !== "dqx_native" || nativeRequiredParamsFilled);
 
-  // Human-readable list of exactly which required field(s) `canSave` is
-  // still waiting on. Rules created before a field became required (e.g.
-  // drafts imported from plain DQX YAML, which has no concept of
-  // dimension/severity) can load with `canSave` already false — with no
-  // other signal, the Save buttons just sit greyed out and the edit looks
-  // permanently blocked. Surfacing this list in a tooltip on the disabled
-  // button (see `footerButtons` below) keeps every field fillable and
-  // visible instead of silently trapping the user.
-  const missingRequiredFieldLabels: string[] = [];
-  if (!name.trim() || nameError) missingRequiredFieldLabels.push(t("rulesRegistry.nameLabel"));
-  if (!severity.trim()) missingRequiredFieldLabels.push(t("rulesRegistry.severityLabel"));
-  if (!dimension.trim()) missingRequiredFieldLabels.push(t("rulesRegistry.dimensionLabel"));
+  // Human-readable lists of exactly which field(s) each gate is still
+  // waiting on, surfaced as tooltips on the disabled buttons (see
+  // `footerButtons` below) so a blocked save/submit never looks
+  // permanently broken. `missingDraftFieldLabels` mirrors `canSaveDraft`;
+  // `missingSubmitFieldLabels` extends it with `canSubmit`'s
+  // completeness-only fields.
+  const missingDraftFieldLabels: string[] = [];
+  if (!name.trim() || nameError) missingDraftFieldLabels.push(t("rulesRegistry.nameLabel"));
   if (mode === "dqx_native") {
-    if (!functionName.trim()) missingRequiredFieldLabels.push(t("rulesRegistry.functionLabel"));
-    else if (!nativeRequiredParamsFilled) missingRequiredFieldLabels.push(t("rulesRegistry.requiredParametersLabel"));
-    if (!slotsHaveValidNames(nativeSlots)) missingRequiredFieldLabels.push(t("rulesRegistry.columnSlotsLabel"));
+    if (!functionName.trim()) missingDraftFieldLabels.push(t("rulesRegistry.functionLabel"));
+    if (!slotsHaveValidNames(nativeSlots)) missingDraftFieldLabels.push(t("rulesRegistry.columnSlotsLabel"));
   } else if (mode === "sql") {
-    if (!sqlPredicate.trim() || sqlError) missingRequiredFieldLabels.push(t("rulesRegistry.sqlPredicateLabel"));
-    if (!slotsHaveValidNames(sqlSlots)) missingRequiredFieldLabels.push(t("rulesRegistry.columnSlotsLabel"));
+    if (!sqlPredicate.trim() || sqlError) missingDraftFieldLabels.push(t("rulesRegistry.sqlPredicateLabel"));
+    if (!slotsHaveValidNames(sqlSlots)) missingDraftFieldLabels.push(t("rulesRegistry.columnSlotsLabel"));
   }
+  const missingSubmitFieldLabels: string[] = [...missingDraftFieldLabels];
+  if (!severity.trim()) missingSubmitFieldLabels.push(t("rulesRegistry.severityLabel"));
+  if (!dimension.trim()) missingSubmitFieldLabels.push(t("rulesRegistry.dimensionLabel"));
+  if (mode === "dqx_native" && functionName.trim() && !nativeRequiredParamsFilled)
+    missingSubmitFieldLabels.push(t("rulesRegistry.requiredParametersLabel"));
 
   const buildDefinition = (): RuleDefinition => {
     const trimmedError = errorMessage.trim();
@@ -1935,14 +1951,19 @@ export function RegistryRuleFormDialog({
     </div>
   );
 
-  // When `canSave` is the reason a Save/Submit button is disabled (as
-  // opposed to `saving` or a plain "nothing changed yet" `!isDirty`), wrap
-  // it so hovering/focusing explains exactly which field(s) still need a
-  // value — a disabled `<button>` never fires pointer/focus events, so the
-  // trigger is a focusable wrapping span around it (standard Radix pattern
-  // for tooltips on disabled controls).
-  const withCanSaveTooltip = (button: ReactNode, disabledByCanSave: boolean) => {
-    if (!disabledByCanSave || missingRequiredFieldLabels.length === 0) return button;
+  // When a gate (`canSaveDraft` / `canSubmit`) is the reason a Save/Submit
+  // button is disabled (as opposed to `saving` or a plain "nothing changed
+  // yet" `!isDirty`), wrap it so hovering/focusing explains exactly which
+  // field(s) still need a value — a disabled `<button>` never fires
+  // pointer/focus events, so the trigger is a focusable wrapping span
+  // around it (standard Radix pattern for tooltips on disabled controls).
+  const withMissingFieldsTooltip = (
+    button: ReactNode,
+    disabledByGate: boolean,
+    labels: string[],
+    tooltipKey: string,
+  ) => {
+    if (!disabledByGate || labels.length === 0) return button;
     return (
       <TooltipProvider delayDuration={200}>
         <Tooltip>
@@ -1951,9 +1972,7 @@ export function RegistryRuleFormDialog({
               {button}
             </span>
           </TooltipTrigger>
-          <TooltipContent>
-            {t("rulesRegistry.canSaveMissingFieldsTooltip", { fields: missingRequiredFieldLabels.join(", ") })}
-          </TooltipContent>
+          <TooltipContent>{t(tooltipKey, { fields: labels.join(", ") })}</TooltipContent>
         </Tooltip>
       </TooltipProvider>
     );
@@ -1969,36 +1988,44 @@ export function RegistryRuleFormDialog({
           {/* Grey out once there's nothing to save — either a blank,
               untouched create form or an already-persisted draft with no
               pending edits (re-saving it would just churn the audit log
-              with no real change), matching dqlake's steward editor. */}
-          {withCanSaveTooltip(
+              with no real change), matching dqlake's steward editor.
+              Draft saves only need structural validity (`canSaveDraft`);
+              the completeness bar applies to the submit buttons below. */}
+          {withMissingFieldsTooltip(
             <Button
               variant="secondary"
               onClick={() => handleSave(false)}
-              disabled={saving || !isDirty || !canSave}
+              disabled={saving || !isDirty || !canSaveDraft}
               className="gap-2"
             >
               {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
               {t("rulesRegistry.saveDraft")}
             </Button>,
-            !canSave,
+            !canSaveDraft,
+            missingDraftFieldLabels,
+            "rulesRegistry.canSaveMissingFieldsTooltip",
           )}
           {isEditing && !isDirty ? (
             // The draft is already persisted and unchanged — submit it
             // for approval directly rather than issuing a redundant save.
-            withCanSaveTooltip(
-              <Button onClick={handleSubmitOnly} disabled={saving || !canSave} className="gap-2">
+            withMissingFieldsTooltip(
+              <Button onClick={handleSubmitOnly} disabled={saving || !canSubmit} className="gap-2">
                 {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
                 {t("rulesRegistry.actionSubmit")}
               </Button>,
-              !canSave,
+              !canSubmit,
+              missingSubmitFieldLabels,
+              "rulesRegistry.canSubmitMissingFieldsTooltip",
             )
           ) : (
-            withCanSaveTooltip(
-              <Button onClick={() => handleSave(true)} disabled={saving || !isDirty || !canSave} className="gap-2">
+            withMissingFieldsTooltip(
+              <Button onClick={() => handleSave(true)} disabled={saving || !isDirty || !canSubmit} className="gap-2">
                 {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
                 {t("rulesRegistry.saveAndSubmit")}
               </Button>,
-              !canSave,
+              !canSubmit,
+              missingSubmitFieldLabels,
+              "rulesRegistry.canSubmitMissingFieldsTooltip",
             )
           )}
         </>

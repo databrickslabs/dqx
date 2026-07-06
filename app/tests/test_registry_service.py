@@ -251,6 +251,51 @@ class TestUpdateDraft:
         assert updated.user_metadata["dimension"] == "Completeness"
         assert updated.user_metadata["severity"] == "High"
 
+    def test_metadata_only_edit_persists_on_incomplete_draft(self, svc, sql):
+        """P17-A regression: a draft that is INCOMPLETE by the frontend's
+        submit-completeness standards — required function parameters still
+        null, no ``dimension``/``severity`` tags — must accept a plain
+        metadata edit (e.g. changing the description) without requiring the
+        caller to complete the rule first. Drafts are allowed to be
+        incomplete; completeness is enforced at submit/approve time, not at
+        save time. The incomplete definition must round-trip unchanged."""
+        from databricks_labs_dqx_app.backend.registry_models import RegistryRule
+
+        incomplete_definition = RuleDefinition.model_validate(
+            {
+                "body": {"function": "has_no_aggr_outliers", "arguments": {"column": "{{column}}"}},
+                "slots": [
+                    {"name": "column", "family": "any", "position": 0, "cardinality": "one", "arg_key": "column"}
+                ],
+                # ``time_column`` is a required parameter of the function —
+                # still unset on this draft, exactly like a rule created
+                # before required-parameter gating existed.
+                "parameters": [{"name": "time_column", "type": "string", "value": None}],
+            }
+        )
+        draft = RegistryRule(
+            rule_id="r1",
+            mode="dqx_native",
+            status="draft",
+            version=0,
+            definition=incomplete_definition,
+            user_metadata={"name": "test"},  # no dimension / severity
+        )
+        sql.query.return_value = [_row_for(draft)]
+
+        updated = svc.update_draft(
+            "r1",
+            user_email="alice@x",
+            definition=incomplete_definition,
+            user_metadata={"name": "test", "description": "edited description"},
+        )
+
+        assert updated.user_metadata["description"] == "edited description"
+        assert updated.definition.parameters[0].value is None
+        update_sql = next(c.args[0] for c in sql.execute.call_args_list if c.args[0].startswith("UPDATE"))
+        assert "edited description" in update_sql
+        assert '"value": null' in update_sql
+
     def test_rejects_editing_non_draft_rule(self, svc, sql):
         from databricks_labs_dqx_app.backend.registry_models import RegistryRule
 

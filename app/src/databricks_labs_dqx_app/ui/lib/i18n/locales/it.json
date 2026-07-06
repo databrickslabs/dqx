@@ -1609,6 +1609,7 @@
     "requiredParametersLabel": "parametri obbligatori",
     "columnSlotsLabel": "slot di colonna",
     "canSaveMissingFieldsTooltip": "Compila quanto segue prima di salvare: {{fields}}.",
+    "canSubmitMissingFieldsTooltip": "Compila quanto segue prima di inviare: {{fields}}.",
     "unsavedChangesDescription": "Ci sono modifiche non salvate alla regola. Uscendo perderai le modifiche.",
     "discardAndLeave": "Scarta ed esci",
     "nameRequired": "Il nome è obbligatorio.",
