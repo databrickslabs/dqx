@@ -47,6 +47,8 @@ import { LabelsEditor } from "@/components/Labels";
 import { HelpTooltip } from "@/components/HelpTooltip";
 import { CatalogBrowser } from "@/components/CatalogBrowser";
 import { PredicatePolaritySwitch } from "@/components/rules/PredicatePolaritySwitch";
+import { PredicateEditorExplainer } from "@/components/rules/PredicateEditorExplainer";
+import { AdvancedDisclosure } from "@/components/rules/AdvancedDisclosure";
 import { cn } from "@/lib/utils";
 import type { LabelDefinition } from "@/lib/api-custom";
 import {
@@ -1555,13 +1557,9 @@ export function RegistryRuleFormDialog({
 
       {mode === "sql" && (
         <div className="space-y-3">
+          <PredicateEditorExplainer />
           <div className="space-y-1.5">
             <Label className="text-xs">{t("rulesRegistry.sqlPredicateLabel")}</Label>
-            <p className="text-[10px] text-muted-foreground">
-              {t("rulesRegistry.sqlTemplatingHint")}{" "}
-              <code className="font-mono text-[10px]">{`{{slot_name}}`}</code>
-              {t("rulesRegistry.sqlTemplatingHintSuffix")}
-            </p>
             <Textarea
               className={`font-mono text-xs min-h-[100px] ${sqlError ? "border-red-400 focus-visible:ring-red-400" : ""}`}
               placeholder={t("rulesRegistry.sqlPredicatePlaceholder")}
@@ -1586,20 +1584,38 @@ export function RegistryRuleFormDialog({
               disabled={readOnly}
             />
           </div>
+          {/* DQX's SQL registry rule has no separate GROUP BY / JOINs fields —
+              the entire query lives in one predicate string (see
+              backend/registry_models.py RuleDefinition + materializer.py
+              _substitute_text). So, unlike dqlake, Advanced here houses the
+              error-message override instead of dead group_by/joins UI. */}
+          <AdvancedDisclosure label={t("rulesRegistry.advancedSectionLabel")} defaultOpen={!!errorMessage}>
+            <Label className="text-xs">{t("rulesRegistry.errorMessageLabel")}</Label>
+            <p className="text-[10px] text-muted-foreground">{t("rulesRegistry.errorMessageHelp")}</p>
+            <Textarea
+              className="text-xs min-h-[48px]"
+              value={errorMessage}
+              onChange={(e) => setErrorMessage(e.target.value)}
+              disabled={readOnly}
+              placeholder={t("rulesRegistry.errorMessagePlaceholder")}
+            />
+          </AdvancedDisclosure>
         </div>
       )}
 
-      <div className="border-t pt-3 space-y-1.5">
-        <Label className="text-xs">{t("rulesRegistry.errorMessageLabel")}</Label>
-        <p className="text-[10px] text-muted-foreground">{t("rulesRegistry.errorMessageHelp")}</p>
-        <Textarea
-          className="text-xs min-h-[48px]"
-          value={errorMessage}
-          onChange={(e) => setErrorMessage(e.target.value)}
-          disabled={readOnly}
-          placeholder={t("rulesRegistry.errorMessagePlaceholder")}
-        />
-      </div>
+      {mode !== "sql" && (
+        <div className="border-t pt-3 space-y-1.5">
+          <Label className="text-xs">{t("rulesRegistry.errorMessageLabel")}</Label>
+          <p className="text-[10px] text-muted-foreground">{t("rulesRegistry.errorMessageHelp")}</p>
+          <Textarea
+            className="text-xs min-h-[48px]"
+            value={errorMessage}
+            onChange={(e) => setErrorMessage(e.target.value)}
+            disabled={readOnly}
+            placeholder={t("rulesRegistry.errorMessagePlaceholder")}
+          />
+        </div>
+      )}
     </div>
   );
 
