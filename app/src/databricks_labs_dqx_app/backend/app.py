@@ -394,16 +394,10 @@ async def lifespan(app: FastAPI):
     # ``builtin_rules_seed.seed_builtin_rules_if_absent`` is retained for a
     # potential future opt-in admin action, but is not invoked on startup.
     #
-    # Best-effort: purge any built-in rules a previous version of the app
-    # already auto-seeded, so upgrading in place converges to an empty
-    # registry too. No-op once the purge has run once.
-    try:
-        oltp_for_registry_purge = pg_executor if pg_executor is not None else sp_sql
-        purged_count = RegistryService(sql=oltp_for_registry_purge).delete_builtin_rules()
-        if purged_count:
-            logger.info("Removed %d auto-seeded built-in registry rule(s)", purged_count)
-    except Exception as purge_e:
-        logger.warning("Could not purge auto-seeded built-in registry rules: %s", purge_e, exc_info=True)
+    # Clearing any built-in rules a previous version of the app already
+    # auto-seeded is a manual, one-off developer cleanup action
+    # (``RegistryService.delete_builtin_rules()``) — not a routine migration
+    # step, so it is intentionally not invoked here on every startup.
 
     try:
         tmp_cat = conf.catalog.replace("`", "")
