@@ -453,6 +453,7 @@ class TestSubmitMonitoredTable:
 class TestApproveMonitoredTable:
     def test_approves_pending_checks_and_rolls_up(self):
         svc = MagicMock()
+        svc.get.return_value = MonitoredTableDetail(table=_table(status="pending_approval"), applied_rules=[])
         svc.list_materialized_rule_statuses.side_effect = [
             [("r1", "pending_approval"), ("r2", "pending_approval")],
             [("r1", "approved"), ("r2", "approved")],
@@ -469,16 +470,30 @@ class TestApproveMonitoredTable:
 
     def test_missing_binding_raises_404(self):
         svc = MagicMock()
-        svc.list_materialized_rule_statuses.return_value = []
-        svc.set_status.side_effect = RuntimeError("Monitored table not found: b1")
+        svc.get.return_value = None
         with pytest.raises(HTTPException) as excinfo:
             approve_monitored_table("b1", monitored_tables_svc=svc, rules_catalog=MagicMock(), obo_ws=_mock_obo_ws())
         assert excinfo.value.status_code == 404
+        svc.set_status.assert_not_called()
+
+    def test_approve_on_draft_binding_raises_409_and_state_unchanged(self):
+        svc = MagicMock()
+        svc.get.return_value = MonitoredTableDetail(table=_table(status="draft"), applied_rules=[])
+        rules_catalog = MagicMock()
+        with pytest.raises(HTTPException) as excinfo:
+            approve_monitored_table(
+                "b1", monitored_tables_svc=svc, rules_catalog=rules_catalog, obo_ws=_mock_obo_ws()
+            )
+        assert excinfo.value.status_code == 409
+        # Neither the checks nor the binding's own status should be touched.
+        rules_catalog.set_status.assert_not_called()
+        svc.set_status.assert_not_called()
 
 
 class TestRejectMonitoredTable:
     def test_rejects_pending_checks_and_flips_binding(self):
         svc = MagicMock()
+        svc.get.return_value = MonitoredTableDetail(table=_table(status="pending_approval"), applied_rules=[])
         svc.list_materialized_rule_statuses.return_value = [("r1", "pending_approval")]
         svc.set_status.return_value = _table(status="rejected")
         rules_catalog = MagicMock()
@@ -492,11 +507,28 @@ class TestRejectMonitoredTable:
 
     def test_missing_binding_raises_404(self):
         svc = MagicMock()
-        svc.list_materialized_rule_statuses.return_value = []
-        svc.set_status.side_effect = RuntimeError("Monitored table not found: b1")
+        svc.get.return_value = None
         with pytest.raises(HTTPException) as excinfo:
             reject_monitored_table("b1", monitored_tables_svc=svc, rules_catalog=MagicMock(), obo_ws=_mock_obo_ws())
         assert excinfo.value.status_code == 404
+        svc.set_status.assert_not_called()
+
+    def test_reject_on_approved_binding_raises_409_and_state_unchanged(self):
+        """Regression: rejecting an already-approved binding must not flip its
+        status to 'rejected' while its materialized checks stay 'approved' and
+        keep executing in the scheduler (per-rule transitions only move
+        'pending_approval' rows — VALID_TRANSITIONS['approved'] = {'draft'})."""
+        svc = MagicMock()
+        svc.get.return_value = MonitoredTableDetail(table=_table(status="approved"), applied_rules=[])
+        rules_catalog = MagicMock()
+        with pytest.raises(HTTPException) as excinfo:
+            reject_monitored_table(
+                "b1", monitored_tables_svc=svc, rules_catalog=rules_catalog, obo_ws=_mock_obo_ws()
+            )
+        assert excinfo.value.status_code == 409
+        # Neither the materialized checks nor the binding's own status should be touched.
+        rules_catalog.set_status.assert_not_called()
+        svc.set_status.assert_not_called()
 
 
 class TestLifecycleRbac:

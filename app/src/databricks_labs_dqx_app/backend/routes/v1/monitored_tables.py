@@ -525,8 +525,24 @@ def approve_monitored_table(
     identical to a hand-approval, then rolls the binding up to ``approved``.
     From here the scheduler picks the checks up (it runs only ``approved``
     ``dq_quality_rules`` rows).
+
+    Only a binding currently ``pending_approval`` can be approved — mirrors
+    the per-rule transition guard (``RulesCatalogService.VALID_TRANSITIONS``)
+    so an already-``draft``/``approved``/``rejected`` binding can't be
+    re-approved out of band.
     """
     try:
+        detail = monitored_tables_svc.get(binding_id)
+        if detail is None:
+            raise HTTPException(status_code=404, detail=f"Monitored table not found: {binding_id}")
+        if detail.table.status != "pending_approval":
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Cannot approve monitored table {binding_id}: status is "
+                    f"'{detail.table.status}', expected 'pending_approval'"
+                ),
+            )
         user_email = _current_user_email(obo_ws)
         approved = _transition_binding_checks(
             monitored_tables_svc,
@@ -540,6 +556,8 @@ def approve_monitored_table(
             binding_id, _rollup_binding_status(monitored_tables_svc, binding_id), user_email
         )
         return MonitoredTableReviewOut(table=MonitoredTableOut.from_domain(table), affected_check_count=approved)
+    except HTTPException:
+        raise
     except RuntimeError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
@@ -565,8 +583,27 @@ def reject_monitored_table(
     reject sets a check to ``rejected``), so no check is left dangling in
     ``pending_approval`` under a rejected table, and flips the binding itself
     to ``rejected``.
+
+    Only a binding currently ``pending_approval`` can be rejected. Without
+    this guard, rejecting an already-``approved`` binding would flip the
+    binding's own status to ``rejected`` while its materialized checks stay
+    ``approved`` and keep executing in the scheduler — the checks' per-rule
+    transitions only move ``pending_approval`` rows
+    (``RulesCatalogService.VALID_TRANSITIONS["approved"] = {"draft"}``), so
+    the binding and its checks would silently disagree.
     """
     try:
+        detail = monitored_tables_svc.get(binding_id)
+        if detail is None:
+            raise HTTPException(status_code=404, detail=f"Monitored table not found: {binding_id}")
+        if detail.table.status != "pending_approval":
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Cannot reject monitored table {binding_id}: status is "
+                    f"'{detail.table.status}', expected 'pending_approval'"
+                ),
+            )
         user_email = _current_user_email(obo_ws)
         rejected = _transition_binding_checks(
             monitored_tables_svc,
@@ -578,6 +615,8 @@ def reject_monitored_table(
         )
         table = monitored_tables_svc.set_status(binding_id, "rejected", user_email)
         return MonitoredTableReviewOut(table=MonitoredTableOut.from_domain(table), affected_check_count=rejected)
+    except HTTPException:
+        raise
     except RuntimeError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
