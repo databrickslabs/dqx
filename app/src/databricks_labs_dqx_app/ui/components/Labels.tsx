@@ -564,7 +564,16 @@ function ValuePickerButton({
   return (
     <SearchPickerPopover
       open={open}
-      onOpenChange={setOpen}
+      onOpenChange={(next) => {
+        setOpen(next);
+        // Pre-fill the custom draft with the existing custom value when
+        // reopening, but keep it as the single source of truth from here on
+        // so the Set button's disabled state always matches what onSubmit
+        // will actually send.
+        if (next) {
+          setCustomDraft(isCustomValue ? value : "");
+        }
+      }}
       trigger={
         <Button
           type="button"
@@ -590,7 +599,7 @@ function ValuePickerButton({
             label={t("labelsEditor.orCustomValue")}
             placeholder={t("labelsEditor.customPlaceholder")}
             submitLabel={t("labelsEditor.set")}
-            value={isCustomValue && !customDraft ? value : customDraft}
+            value={customDraft}
             onValueChange={setCustomDraft}
             onSubmit={() => {
               onChange(customDraft.trim());
