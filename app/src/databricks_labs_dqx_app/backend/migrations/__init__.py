@@ -731,6 +731,39 @@ _V8_RULE_EMBEDDINGS = (
 )
 
 
+# Monitored-table status lifecycle converge (P16-H). The v2 OLTP-fallback
+# baseline above already declares the 4-state CHECK set on
+# ``dq_monitored_tables.status``
+# (``draft``/``pending_approval``/``approved``/``rejected``), so this migration
+# is a NO-OP on fresh installs. It exists solely to converge Delta-fallback
+# databases already deployed with the ORIGINAL 2-state constraint
+# (``('draft','published')``): those DBs skip v2 because it is already recorded
+# in ``dq_migrations``, so editing the v2 baseline in place can never reach
+# them — appending a new version is the only way the runner re-visits an
+# already-migrated DB.
+#
+# Order (drop -> rewrite legacy value -> re-add): drop the old constraint so a
+# legacy ``published`` row can be rewritten, rewrite it to ``approved`` (its
+# lifecycle equivalent — a published table's checks were live), then re-add the
+# final 4-state constraint. Every statement is individually re-runnable per the
+# Delta recovery contract at the top of this module: ``DROP CONSTRAINT IF
+# EXISTS`` no-ops when absent, ``UPDATE`` rewrites zero rows once converged, and
+# a re-added-identical constraint raises ``DELTA_CONSTRAINT_ALREADY_EXISTS``
+# which ``_IDEMPOTENT_ERROR_FRAGMENTS`` swallows.
+#
+# Marked ``oltp_fallback=True``: ``dq_monitored_tables`` lives in Lakebase when
+# enabled (the Postgres mirror is v5 in ``backend.migrations.postgres``), so
+# this only runs against Delta when Lakebase is disabled.
+_V9_MONITORED_TABLES_STATUS_CONVERGE = (
+    f"ALTER TABLE {_PLACEHOLDER}.dq_monitored_tables "
+    f"  DROP CONSTRAINT IF EXISTS chk_dq_monitored_tables_status;"
+    f"UPDATE {_PLACEHOLDER}.dq_monitored_tables SET status = 'approved' WHERE status = 'published';"
+    f"ALTER TABLE {_PLACEHOLDER}.dq_monitored_tables "
+    f"  ADD CONSTRAINT chk_dq_monitored_tables_status "
+    f"  CHECK (status IN ('draft','pending_approval','approved','rejected'))"
+)
+
+
 # OLTP fallback migration is identified by ``oltp_fallback=True`` so
 # the runner can skip it when Lakebase is enabled. Keeping the flag on
 # the migration itself (rather than e.g. a hard-coded version number)
@@ -796,6 +829,13 @@ MIGRATIONS: list[Migration] = [
         description="Rule embeddings corpus (dq_rule_embeddings) — Rules Registry Phase 4B, "
         "used only when Lakebase is disabled",
         sql_template=_V8_RULE_EMBEDDINGS,
+        oltp_fallback=True,
+    ),
+    DeltaMigration(
+        version=9,
+        description="Converge dq_monitored_tables status to the 4-state review set "
+        "(draft/pending_approval/approved/rejected) — used only when Lakebase is disabled",
+        sql_template=_V9_MONITORED_TABLES_STATUS_CONVERGE,
         oltp_fallback=True,
     ),
 ]

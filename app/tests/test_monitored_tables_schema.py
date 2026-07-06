@@ -10,7 +10,7 @@ not a new migration version.
 
 from __future__ import annotations
 
-from databricks_labs_dqx_app.backend.migrations import _V2_OLTP_FALLBACK
+from databricks_labs_dqx_app.backend.migrations import MIGRATIONS, _V2_OLTP_FALLBACK
 from databricks_labs_dqx_app.backend.migrations.postgres import PG_MIGRATIONS
 
 
@@ -130,3 +130,73 @@ class TestDqQualityRulesProvenanceDelta:
     def test_provenance_columns_present(self):
         for col in ("registry_rule_id", "registry_version", "applied_rule_id"):
             assert col in _V2_OLTP_FALLBACK
+
+
+class TestMonitoredTableStatusConvergePostgres:
+    """P16-H: appended PG migration that converges DBs deployed with the
+    original 2-state (`draft`/`published`) constraint to the 4-state review set.
+
+    Editing the v1 baseline constraint in place could never reach an
+    already-migrated DB (the runner skips versions recorded in
+    ``dq_migrations``), so a new appended version is required.
+    """
+
+    def _converge(self):
+        # The converge migration is whichever appended version carries the
+        # drop-and-re-add of chk_dq_monitored_tables_status (not the v1
+        # baseline, which CREATEs the table).
+        candidates = [
+            m for m in PG_MIGRATIONS if m.version > 1 and "chk_dq_monitored_tables_status" in m.sql
+        ]
+        assert len(candidates) == 1, "exactly one appended PG converge migration expected"
+        return candidates[0]
+
+    def test_appended_after_baseline(self):
+        assert self._converge().version > 1
+
+    def test_drops_then_updates_then_readds_constraint(self):
+        sql = self._converge().sql
+        drop_at = sql.index("DROP CONSTRAINT IF EXISTS chk_dq_monitored_tables_status")
+        update_at = sql.index("SET status = 'approved' WHERE status = 'published'")
+        add_at = sql.index("ADD CONSTRAINT chk_dq_monitored_tables_status")
+        # Order matters: drop the old constraint, rewrite the legacy value,
+        # then re-add the final constraint — all inside one transaction.
+        assert drop_at < update_at < add_at
+
+    def test_readds_four_state_constraint(self):
+        sql = self._converge().sql
+        assert "CHECK (status IN ('draft','pending_approval','approved','rejected'))" in sql
+
+
+class TestMonitoredTableStatusConvergeDelta:
+    """P16-H: the Delta mirror of the converge migration. Marked
+    ``oltp_fallback=True`` so it only runs on Delta when Lakebase is disabled.
+    """
+
+    def _converge(self):
+        candidates = [
+            m
+            for m in MIGRATIONS
+            if m.version > 2 and "DROP CONSTRAINT IF EXISTS chk_dq_monitored_tables_status" in m.sql_template
+        ]
+        assert len(candidates) == 1, "exactly one appended Delta converge migration expected"
+        return candidates[0]
+
+    def test_appended_after_oltp_baseline(self):
+        assert self._converge().version > 2
+
+    def test_is_oltp_fallback(self):
+        # dq_monitored_tables lives in Lakebase when enabled — the Delta
+        # converge must be skipped there (the Postgres mirror handles it).
+        assert getattr(self._converge(), "oltp_fallback", False) is True
+
+    def test_drops_then_updates_then_readds_constraint(self):
+        sql = self._converge().sql_template
+        drop_at = sql.index("DROP CONSTRAINT IF EXISTS chk_dq_monitored_tables_status")
+        update_at = sql.index("SET status = 'approved' WHERE status = 'published'")
+        add_at = sql.index("ADD CONSTRAINT chk_dq_monitored_tables_status")
+        assert drop_at < update_at < add_at
+
+    def test_readds_four_state_constraint(self):
+        sql = self._converge().sql_template
+        assert "CHECK (status IN ('draft','pending_approval','approved','rejected'))" in sql

@@ -12,6 +12,7 @@
 // preview list, which has no staged row to edit) to fall back to
 // non-interactive display chips.
 
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Loader2 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -125,13 +126,17 @@ function EditableChip({
   removeTitle?: string;
 }) {
   const { t } = useTranslation();
+  // Controlled open so the popover closes on selection, mirroring
+  // `SingleColumnPicker`'s click-to-select-and-commit behavior — an
+  // uncontrolled Popover would stay open after picking a column.
+  const [open, setOpen] = useState(false);
   // The chip's own current column must stay selectable even though it's
   // technically "in use" — only exclude *other* groups' columns from the
   // candidate list.
   const matches = columnsForSlot(columns, slot, excludeColumns.filter((c) => c !== label));
   return (
     <span className={cn("inline-flex items-center gap-1 rounded border px-2 py-0.5 text-xs font-mono", colorClass)}>
-      <Popover>
+      <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
           <button
             type="button"
@@ -142,7 +147,15 @@ function EditableChip({
           </button>
         </PopoverTrigger>
         <PopoverContent className="w-80 p-0" align="start" onClick={(e) => e.stopPropagation()}>
-          <ColumnDropdownList slot={slot} matches={matches} totalAll={columns.length} onSelect={onChange} />
+          <ColumnDropdownList
+            slot={slot}
+            matches={matches}
+            totalAll={columns.length}
+            onSelect={(colName) => {
+              onChange(colName);
+              setOpen(false);
+            }}
+          />
         </PopoverContent>
       </Popover>
       {onJump && (

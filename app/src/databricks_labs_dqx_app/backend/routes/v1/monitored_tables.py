@@ -482,10 +482,30 @@ def submit_monitored_table(
     the same per-rule transition the Drafts & Review queue uses — and rolls
     the binding up to ``pending_approval``. Idempotent: re-submitting an
     unchanged, already-approved table leaves its approved checks untouched.
+
+    Rejected-binding recovery: after a reject the binding and its checks sit
+    at ``rejected``. An unchanged re-submit does not change any check content,
+    so the materializer leaves those rows at ``rejected`` (it only resets a
+    row to ``draft`` when its rendered content actually changed). Left alone
+    they would be stuck — ``draft -> pending_approval`` never picks them up
+    and the binding would roll back down to ``draft`` with a success toast but
+    ``affected_check_count=0``. So first walk any ``rejected`` rows back to
+    ``draft`` (a legal per-rule transition), which the ``draft ->
+    pending_approval`` step below then re-enters into review and counts.
     """
     try:
         user_email = _current_user_email(obo_ws)
         materializer.materialize_binding(binding_id)
+        # Recover rejected checks so an unchanged re-submit re-enters review
+        # (rejected -> draft -> pending_approval, both legal transitions).
+        _transition_binding_checks(
+            monitored_tables_svc,
+            rules_catalog,
+            binding_id,
+            from_status="rejected",
+            to_status="draft",
+            user_email=user_email,
+        )
         submitted = _transition_binding_checks(
             monitored_tables_svc,
             rules_catalog,

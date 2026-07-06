@@ -487,6 +487,39 @@ PG_MIGRATIONS: list[PgMigration] = [
             ");"
         ),
     ),
+    PgMigration(
+        version=5,
+        description="Converge dq_monitored_tables status to the 4-state review set (draft/pending_approval/approved/rejected)",
+        sql=(
+            # ----------------------------------------------------------
+            # Monitored-table status lifecycle converge (P16-H).
+            #
+            # The v1 baseline above already declares the 4-state CHECK
+            # set, so this migration is a NO-OP on fresh installs. It
+            # exists purely to converge databases already deployed with
+            # the ORIGINAL 2-state constraint (``('draft','published')``)
+            # — the v1 baseline is skipped on those DBs because v1 is
+            # already recorded in ``dq_migrations``, so editing v1 in
+            # place could never reach them. Appending a new version is
+            # the only way the runner re-visits an already-migrated DB.
+            #
+            # Order matters and is safe inside the single transaction the
+            # runner wraps every migration in: drop the old constraint
+            # first (so the legacy value can be rewritten), rewrite any
+            # legacy ``published`` binding to ``approved`` (its lifecycle
+            # equivalent — a published table's checks were live), then
+            # re-add the constraint with the final 4-state set. On a
+            # fresh install this drops+re-adds an identical constraint and
+            # rewrites zero rows.
+            # ----------------------------------------------------------
+            f"ALTER TABLE {_S}.dq_monitored_tables "
+            "  DROP CONSTRAINT IF EXISTS chk_dq_monitored_tables_status;"
+            f"UPDATE {_S}.dq_monitored_tables SET status = 'approved' WHERE status = 'published';"
+            f"ALTER TABLE {_S}.dq_monitored_tables "
+            "  ADD CONSTRAINT chk_dq_monitored_tables_status "
+            "    CHECK (status IN ('draft','pending_approval','approved','rejected'));"
+        ),
+    ),
 ]
 
 

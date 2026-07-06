@@ -377,7 +377,8 @@ class TestSubmitMonitoredTable:
     def test_materializes_transitions_draft_checks_and_rolls_up(self):
         svc = MagicMock()
         svc.list_materialized_rule_statuses.side_effect = [
-            [("r1", "draft"), ("r2", "draft")],  # read inside the transition loop
+            [("r1", "draft"), ("r2", "draft")],  # recovery scan (rejected -> draft): none
+            [("r1", "draft"), ("r2", "draft")],  # read inside the draft -> pending loop
             [("r1", "pending_approval"), ("r2", "pending_approval")],  # read for the roll-up
         ]
         svc.set_status.return_value = _table(status="pending_approval")
@@ -401,8 +402,9 @@ class TestSubmitMonitoredTable:
     def test_only_draft_checks_are_submitted(self):
         svc = MagicMock()
         svc.list_materialized_rule_statuses.side_effect = [
-            [("r1", "draft"), ("r2", "approved")],
-            [("r1", "pending_approval"), ("r2", "approved")],
+            [("r1", "draft"), ("r2", "approved")],  # recovery scan: no rejected
+            [("r1", "draft"), ("r2", "approved")],  # draft -> pending loop
+            [("r1", "pending_approval"), ("r2", "approved")],  # roll-up
         ]
         svc.set_status.return_value = _table(status="pending_approval")
         rules_catalog = MagicMock()
@@ -416,11 +418,45 @@ class TestSubmitMonitoredTable:
         assert result.affected_check_count == 1
         rules_catalog.set_status.assert_called_once_with("r1", "pending_approval", "alice@x")
 
+    def test_rejected_checks_are_recovered_on_unchanged_resubmit(self):
+        """Regression (P16-H): after a reject, an unchanged re-submit must walk
+        rejected checks back through ``rejected -> draft -> pending_approval``,
+        count them, and roll the binding up to ``pending_approval`` — not leave
+        them stuck at ``rejected`` with a false-success ``affected_check_count=0``
+        and the binding flipping down to ``draft``.
+        """
+        svc = MagicMock()
+        svc.list_materialized_rule_statuses.side_effect = [
+            [("r1", "rejected"), ("r2", "rejected")],  # recovery scan: rejected -> draft
+            [("r1", "draft"), ("r2", "draft")],  # draft -> pending_approval loop
+            [("r1", "pending_approval"), ("r2", "pending_approval")],  # roll-up
+        ]
+        svc.set_status.return_value = _table(status="pending_approval")
+        materializer = MagicMock()
+        materializer.materialize_binding.return_value = []  # unchanged: nothing re-drafted
+        rules_catalog = MagicMock()
+        result = submit_monitored_table(
+            "b1",
+            monitored_tables_svc=svc,
+            materializer=materializer,
+            rules_catalog=rules_catalog,
+            obo_ws=_mock_obo_ws(),
+        )
+        assert result.table.status == "pending_approval"
+        assert result.affected_check_count == 2
+        # rejected -> draft recovery hop, then draft -> pending_approval hop.
+        rules_catalog.set_status.assert_any_call("r1", "draft", "alice@x")
+        rules_catalog.set_status.assert_any_call("r2", "draft", "alice@x")
+        rules_catalog.set_status.assert_any_call("r1", "pending_approval", "alice@x")
+        rules_catalog.set_status.assert_any_call("r2", "pending_approval", "alice@x")
+        svc.set_status.assert_called_once_with("b1", "pending_approval", "alice@x")
+
     def test_row_transition_failure_is_skipped_not_fatal(self):
         svc = MagicMock()
         svc.list_materialized_rule_statuses.side_effect = [
-            [("r1", "draft"), ("r2", "draft")],
-            [("r1", "draft"), ("r2", "pending_approval")],
+            [("r1", "draft"), ("r2", "draft")],  # recovery scan: no rejected
+            [("r1", "draft"), ("r2", "draft")],  # draft -> pending loop
+            [("r1", "draft"), ("r2", "pending_approval")],  # roll-up
         ]
         svc.set_status.return_value = _table(status="pending_approval")
         rules_catalog = MagicMock()
