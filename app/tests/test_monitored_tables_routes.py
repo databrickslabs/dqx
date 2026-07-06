@@ -23,20 +23,24 @@ from databricks_labs_dqx_app.backend.models import (
     SetAppliedRulePinIn,
     SetAppliedRuleSeverityOverrideIn,
 )
+from databricks_labs_dqx_app.backend.common.authorization import UserRole
 from databricks_labs_dqx_app.backend.registry_models import AppliedRule, MonitoredTable
+from databricks_labs_dqx_app.backend.routes.v1 import monitored_tables as mt_routes
 from databricks_labs_dqx_app.backend.routes.v1.monitored_tables import (
     apply_rule_to_table,
+    approve_monitored_table,
     bulk_register_monitored_tables,
     delete_monitored_table,
     get_monitored_table,
     get_monitored_table_profile,
     list_monitored_tables,
-    publish_monitored_table,
     register_monitored_table,
+    reject_monitored_table,
     remove_applied_rule,
     save_applied_rules,
     set_applied_rule_pin,
     set_applied_rule_severity_override,
+    submit_monitored_table,
     suggest_rules_for_table,
 )
 from databricks_labs_dqx_app.backend.services.apply_rules_service import (
@@ -350,40 +354,171 @@ class TestSetAppliedRuleSeverityOverride:
         assert excinfo.value.status_code == 404
 
 
-class TestPublishMonitoredTable:
-    def test_publish_materializes_and_returns_ids(self):
-        monitored_tables_svc = MagicMock()
-        monitored_tables_svc.publish.return_value = _table(status="published")
-        materializer = MagicMock()
-        materializer.materialize_binding.return_value = ["ar1-0", "ar2-0"]
-        result = publish_monitored_table(
-            "b1", monitored_tables_svc=monitored_tables_svc, materializer=materializer, obo_ws=_mock_obo_ws()
-        )
-        assert result.table.status == "published"
-        assert result.materialized_rule_ids == ["ar1-0", "ar2-0"]
-        monitored_tables_svc.publish.assert_called_once_with("b1", "alice@x")
-        materializer.materialize_binding.assert_called_once_with("b1")
+def _route_required_roles(operation_id: str) -> set[UserRole]:
+    """Extract the ``require_role(...)`` role set declared on a route.
 
-    def test_missing_binding_raises_404(self):
-        monitored_tables_svc = MagicMock()
-        monitored_tables_svc.publish.side_effect = RuntimeError("Monitored table not found: b1")
+    ``require_role(*roles)`` returns ``Depends(_check)`` where ``_check``
+    closes over the ``roles`` tuple; pull it out of the closure so we can
+    assert the RBAC gate structurally without spinning up a TestClient
+    (matching this file's call-the-handler-directly convention).
+    """
+    for route in mt_routes.router.routes:
+        if getattr(route, "operation_id", None) != operation_id:
+            continue
+        for dep in route.dependencies:
+            for cell in getattr(dep.dependency, "__closure__", None) or ():
+                val = cell.cell_contents
+                if isinstance(val, tuple) and val and all(isinstance(v, UserRole) for v in val):
+                    return set(val)
+    raise AssertionError(f"No require_role dependency found for {operation_id}")
+
+
+class TestSubmitMonitoredTable:
+    def test_materializes_transitions_draft_checks_and_rolls_up(self):
+        svc = MagicMock()
+        svc.list_materialized_rule_statuses.side_effect = [
+            [("r1", "draft"), ("r2", "draft")],  # read inside the transition loop
+            [("r1", "pending_approval"), ("r2", "pending_approval")],  # read for the roll-up
+        ]
+        svc.set_status.return_value = _table(status="pending_approval")
         materializer = MagicMock()
-        with pytest.raises(HTTPException) as excinfo:
-            publish_monitored_table(
-                "b1", monitored_tables_svc=monitored_tables_svc, materializer=materializer, obo_ws=_mock_obo_ws()
-            )
-        assert excinfo.value.status_code == 404
+        materializer.materialize_binding.return_value = ["r1", "r2"]
+        rules_catalog = MagicMock()
+        result = submit_monitored_table(
+            "b1",
+            monitored_tables_svc=svc,
+            materializer=materializer,
+            rules_catalog=rules_catalog,
+            obo_ws=_mock_obo_ws(),
+        )
+        assert result.table.status == "pending_approval"
+        assert result.affected_check_count == 2
+        materializer.materialize_binding.assert_called_once_with("b1")
+        rules_catalog.set_status.assert_any_call("r1", "pending_approval", "alice@x")
+        rules_catalog.set_status.assert_any_call("r2", "pending_approval", "alice@x")
+        svc.set_status.assert_called_once_with("b1", "pending_approval", "alice@x")
+
+    def test_only_draft_checks_are_submitted(self):
+        svc = MagicMock()
+        svc.list_materialized_rule_statuses.side_effect = [
+            [("r1", "draft"), ("r2", "approved")],
+            [("r1", "pending_approval"), ("r2", "approved")],
+        ]
+        svc.set_status.return_value = _table(status="pending_approval")
+        rules_catalog = MagicMock()
+        result = submit_monitored_table(
+            "b1",
+            monitored_tables_svc=svc,
+            materializer=MagicMock(),
+            rules_catalog=rules_catalog,
+            obo_ws=_mock_obo_ws(),
+        )
+        assert result.affected_check_count == 1
+        rules_catalog.set_status.assert_called_once_with("r1", "pending_approval", "alice@x")
+
+    def test_row_transition_failure_is_skipped_not_fatal(self):
+        svc = MagicMock()
+        svc.list_materialized_rule_statuses.side_effect = [
+            [("r1", "draft"), ("r2", "draft")],
+            [("r1", "draft"), ("r2", "pending_approval")],
+        ]
+        svc.set_status.return_value = _table(status="pending_approval")
+        rules_catalog = MagicMock()
+        rules_catalog.set_status.side_effect = [ValueError("duplicate pending"), MagicMock()]
+        result = submit_monitored_table(
+            "b1",
+            monitored_tables_svc=svc,
+            materializer=MagicMock(),
+            rules_catalog=rules_catalog,
+            obo_ws=_mock_obo_ws(),
+        )
+        # r1 failed and was skipped; r2 counted.
+        assert result.affected_check_count == 1
 
     def test_materialization_error_raises_404(self):
-        monitored_tables_svc = MagicMock()
-        monitored_tables_svc.publish.return_value = _table(status="published")
+        svc = MagicMock()
         materializer = MagicMock()
         materializer.materialize_binding.side_effect = MaterializationError("Monitored table not found: b1")
         with pytest.raises(HTTPException) as excinfo:
-            publish_monitored_table(
-                "b1", monitored_tables_svc=monitored_tables_svc, materializer=materializer, obo_ws=_mock_obo_ws()
+            submit_monitored_table(
+                "b1",
+                monitored_tables_svc=svc,
+                materializer=materializer,
+                rules_catalog=MagicMock(),
+                obo_ws=_mock_obo_ws(),
             )
         assert excinfo.value.status_code == 404
+
+
+class TestApproveMonitoredTable:
+    def test_approves_pending_checks_and_rolls_up(self):
+        svc = MagicMock()
+        svc.list_materialized_rule_statuses.side_effect = [
+            [("r1", "pending_approval"), ("r2", "pending_approval")],
+            [("r1", "approved"), ("r2", "approved")],
+        ]
+        svc.set_status.return_value = _table(status="approved")
+        rules_catalog = MagicMock()
+        result = approve_monitored_table(
+            "b1", monitored_tables_svc=svc, rules_catalog=rules_catalog, obo_ws=_mock_obo_ws()
+        )
+        assert result.table.status == "approved"
+        assert result.affected_check_count == 2
+        rules_catalog.set_status.assert_any_call("r1", "approved", "alice@x")
+        svc.set_status.assert_called_once_with("b1", "approved", "alice@x")
+
+    def test_missing_binding_raises_404(self):
+        svc = MagicMock()
+        svc.list_materialized_rule_statuses.return_value = []
+        svc.set_status.side_effect = RuntimeError("Monitored table not found: b1")
+        with pytest.raises(HTTPException) as excinfo:
+            approve_monitored_table("b1", monitored_tables_svc=svc, rules_catalog=MagicMock(), obo_ws=_mock_obo_ws())
+        assert excinfo.value.status_code == 404
+
+
+class TestRejectMonitoredTable:
+    def test_rejects_pending_checks_and_flips_binding(self):
+        svc = MagicMock()
+        svc.list_materialized_rule_statuses.return_value = [("r1", "pending_approval")]
+        svc.set_status.return_value = _table(status="rejected")
+        rules_catalog = MagicMock()
+        result = reject_monitored_table(
+            "b1", monitored_tables_svc=svc, rules_catalog=rules_catalog, obo_ws=_mock_obo_ws()
+        )
+        assert result.table.status == "rejected"
+        assert result.affected_check_count == 1
+        rules_catalog.set_status.assert_called_once_with("r1", "rejected", "alice@x")
+        svc.set_status.assert_called_once_with("b1", "rejected", "alice@x")
+
+    def test_missing_binding_raises_404(self):
+        svc = MagicMock()
+        svc.list_materialized_rule_statuses.return_value = []
+        svc.set_status.side_effect = RuntimeError("Monitored table not found: b1")
+        with pytest.raises(HTTPException) as excinfo:
+            reject_monitored_table("b1", monitored_tables_svc=svc, rules_catalog=MagicMock(), obo_ws=_mock_obo_ws())
+        assert excinfo.value.status_code == 404
+
+
+class TestLifecycleRbac:
+    """RBAC is declared on the routes via ``require_role`` — authors submit,
+    only approvers/admins approve or reject (mirrors ``routes/v1/rules.py``)."""
+
+    def test_submit_allows_authors_and_above(self):
+        assert _route_required_roles("submitMonitoredTable") == {
+            UserRole.ADMIN,
+            UserRole.RULE_APPROVER,
+            UserRole.RULE_AUTHOR,
+        }
+
+    def test_approve_is_approvers_only_author_excluded(self):
+        roles = _route_required_roles("approveMonitoredTable")
+        assert roles == {UserRole.ADMIN, UserRole.RULE_APPROVER}
+        assert UserRole.RULE_AUTHOR not in roles
+
+    def test_reject_is_approvers_only_author_excluded(self):
+        roles = _route_required_roles("rejectMonitoredTable")
+        assert roles == {UserRole.ADMIN, UserRole.RULE_APPROVER}
+        assert UserRole.RULE_AUTHOR not in roles
 
 
 class TestSuggestRulesForTable:

@@ -560,11 +560,16 @@ class MonitoredTableOut(BaseModel):
         )
 
 
-class PublishMonitoredTableOut(BaseModel):
-    """Response for ``publishMonitoredTable`` — the published table plus what got materialized."""
+class MonitoredTableReviewOut(BaseModel):
+    """Response for the submit/approve/reject monitored-table lifecycle routes.
+
+    ``table`` carries the binding with its new roll-up status; ``affected_check_count``
+    is how many materialized ``dq_quality_rules`` rows changed status in this
+    transition (submitted, approved, or rejected respectively).
+    """
 
     table: MonitoredTableOut
-    materialized_rule_ids: list[str] = Field(default_factory=list)
+    affected_check_count: int = 0
 
 
 class MonitoredTableSummaryOut(BaseModel):

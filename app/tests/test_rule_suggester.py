@@ -55,7 +55,7 @@ def _rule(rule_id: str, slot_names: list[str], severity: str = "High") -> Regist
 
 
 def _binding_detail(table_fqn: str = "cat.sch.tbl") -> MonitoredTableDetail:
-    table = MonitoredTable(binding_id="b1", table_fqn=table_fqn, status="published")
+    table = MonitoredTable(binding_id="b1", table_fqn=table_fqn, status="approved")
     return MonitoredTableDetail(table=table, applied_rules=[])
 
 

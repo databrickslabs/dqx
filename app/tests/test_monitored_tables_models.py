@@ -43,7 +43,7 @@ class TestMonitoredTable:
         assert table.created_by is None
         assert table.updated_at is None
 
-    @pytest.mark.parametrize("status", ["draft", "published"])
+    @pytest.mark.parametrize("status", ["draft", "pending_approval", "approved", "rejected"])
     def test_accepts_valid_statuses(self, MonitoredTable, status):
         assert MonitoredTable(binding_id="b1", table_fqn="t", status=status).status == status
 

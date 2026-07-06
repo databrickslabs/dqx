@@ -303,7 +303,9 @@ function MonitoredTablesPage() {
                 <SelectContent>
                   <SelectItem value={ALL} className="text-xs">{t("monitoredTables.allStatuses")}</SelectItem>
                   <SelectItem value="draft" className="text-xs">{t("monitoredTables.statusDraft")}</SelectItem>
-                  <SelectItem value="published" className="text-xs">{t("monitoredTables.statusPublished")}</SelectItem>
+                  <SelectItem value="pending_approval" className="text-xs">{t("monitoredTables.statusPendingApproval")}</SelectItem>
+                  <SelectItem value="approved" className="text-xs">{t("monitoredTables.statusApproved")}</SelectItem>
+                  <SelectItem value="rejected" className="text-xs">{t("monitoredTables.statusRejected")}</SelectItem>
                 </SelectContent>
               </Select>
               <Select value={stewardFilter} onValueChange={applyFilter(setStewardFilter)}>

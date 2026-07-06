@@ -172,7 +172,7 @@ class RuleVersion(BaseModel):
 # Monitored tables + applied rules (Layer 2, Phase 3A — §3.1/§7)
 # ---------------------------------------------------------------------------
 
-MonitoredTableStatus = Literal["draft", "published"]
+MonitoredTableStatus = Literal["draft", "pending_approval", "approved", "rejected"]
 
 # One mapping GROUP is ``{slot_name: column_name}`` — the slot→column binding
 # for exactly one materialized check. ``column_mapping`` on an applied rule is

@@ -1,4 +1,4 @@
-"""Monitored Tables routes — Phase 3B/3C (register/list/get/delete/apply/publish + profiling read).
+"""Monitored Tables routes — Phase 3B/3C (register/list/get/delete/apply + submit-for-review + profiling read).
 
 Layer 2 of the Rules Registry
 (``docs/superpowers/specs/2026-07-02-rules-registry-design.md`` §7): a thin
@@ -19,6 +19,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_monitored_table_service,
     get_obo_ws,
     get_rule_suggester,
+    get_rules_catalog_service,
     require_role,
 )
 from databricks_labs_dqx_app.backend.logger import logger
@@ -30,8 +31,8 @@ from databricks_labs_dqx_app.backend.models import (
     MonitoredTableDetailOut,
     MonitoredTableOut,
     MonitoredTableProfileOut,
+    MonitoredTableReviewOut,
     MonitoredTableSummaryOut,
-    PublishMonitoredTableOut,
     RegisterMonitoredTableIn,
     SaveAppliedRulesIn,
     SetAppliedRulePinIn,
@@ -51,11 +52,13 @@ from databricks_labs_dqx_app.backend.services.monitored_table_service import (
     MonitoredTableSummary,
 )
 from databricks_labs_dqx_app.backend.services.rule_suggester import RuleSuggester
+from databricks_labs_dqx_app.backend.services.rules_catalog_service import RulesCatalogService
 
 router = APIRouter()
 
 _ALL_ROLES = [UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTHOR, UserRole.VIEWER]
 _AUTHORS_AND_ABOVE = [UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTHOR]
+_APPROVERS_ONLY = [UserRole.ADMIN, UserRole.RULE_APPROVER]
 
 
 def _current_user_email(obo_ws: WorkspaceClient) -> str:
@@ -387,42 +390,199 @@ def set_applied_rule_severity_override(
 
 
 # ------------------------------------------------------------------
-# Publish (materialize) — Phase 3C
+# Submit-for-review lifecycle (submit / approve / reject) — Phase 3C / P16-H
+#
+# Monitored tables carry the SAME review lifecycle as registry-authored
+# rules (draft -> pending_approval -> approved/rejected). Rather than a
+# parallel status-mutation implementation, these routes REUSE the per-rule
+# transition path (``RulesCatalogService.set_status`` — the exact call
+# ``routes/v1/rules.py`` submit/approve/reject make) to move each of the
+# binding's materialized ``dq_quality_rules`` rows, so audit/history/version
+# semantics are identical for a table's checks whether they were submitted
+# one at a time from Drafts & Review or in bulk from here. The binding's own
+# status is then rolled up from its checks. The scheduler is untouched: it
+# still runs only ``dq_quality_rules`` rows at ``status='approved'``.
 # ------------------------------------------------------------------
 
 
+def _transition_binding_checks(
+    monitored_tables_svc: MonitoredTableService,
+    rules_catalog: RulesCatalogService,
+    binding_id: str,
+    *,
+    from_status: str,
+    to_status: str,
+    user_email: str,
+) -> int:
+    """Move every materialized check of *binding_id* from *from_status* to *to_status*.
+
+    Reuses ``RulesCatalogService.set_status`` (the per-rule transition path)
+    so nothing about a check's audit trail differs from a hand-submitted one.
+    Per-row failures (e.g. a duplicate-pending guard) are logged and skipped
+    rather than aborting the whole binding — mirroring
+    ``RulesCatalogService.set_status_by_table``'s resilience. Returns the
+    count of checks actually transitioned.
+    """
+    count = 0
+    for rule_id, status in monitored_tables_svc.list_materialized_rule_statuses(binding_id):
+        if status != from_status:
+            continue
+        try:
+            rules_catalog.set_status(rule_id, to_status, user_email)
+            count += 1
+        except Exception:  # one bad row must not abort the whole binding
+            logger.warning(
+                "Failed to transition materialized check %s (%s -> %s) for binding %s",
+                rule_id,
+                from_status,
+                to_status,
+                binding_id,
+                exc_info=True,
+            )
+    return count
+
+
+def _rollup_binding_status(monitored_tables_svc: MonitoredTableService, binding_id: str) -> str:
+    """Roll a binding's status up from its materialized checks' statuses.
+
+    Any check still ``pending_approval`` keeps the binding ``pending_approval``
+    (something is still awaiting review); otherwise if any check is
+    ``approved`` the binding is ``approved`` (its live checks can run); with
+    neither, the binding falls back to ``draft``. This makes an unchanged
+    re-submit idempotent (all-approved stays ``approved``) while a re-submit
+    after edits — where changed rows go back to ``pending_approval`` via the
+    materializer's Behaviour A/B — returns the binding to ``pending_approval``.
+    """
+    statuses = {status for _, status in monitored_tables_svc.list_materialized_rule_statuses(binding_id)}
+    if "pending_approval" in statuses:
+        return "pending_approval"
+    if "approved" in statuses:
+        return "approved"
+    return "draft"
+
+
 @router.post(
-    "/{binding_id}/publish",
-    response_model=PublishMonitoredTableOut,
-    operation_id="publishMonitoredTable",
+    "/{binding_id}/submit",
+    response_model=MonitoredTableReviewOut,
+    operation_id="submitMonitoredTable",
     dependencies=[require_role(*_AUTHORS_AND_ABOVE)],
 )
-def publish_monitored_table(
+def submit_monitored_table(
     binding_id: str,
     monitored_tables_svc: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
     materializer: Annotated[Materializer, Depends(get_materializer)],
+    rules_catalog: Annotated[RulesCatalogService, Depends(get_rules_catalog_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
-) -> PublishMonitoredTableOut:
-    """Publish a monitored table and materialize its applied rules into ``dq_quality_rules``.
+) -> MonitoredTableReviewOut:
+    """Submit a monitored table for review.
 
-    Materialized rows always enter the existing per-table ``draft`` review
-    flow (never auto-approved) — see ``backend/services/materializer.py``
-    for the full approval/auto-upgrade semantics.
+    Materializes the binding's applied rules into ``dq_quality_rules`` (the
+    UI has already persisted any staged edits via ``saveAppliedRules``), then
+    submits every freshly-materialized ``draft`` check for approval — reusing
+    the same per-rule transition the Drafts & Review queue uses — and rolls
+    the binding up to ``pending_approval``. Idempotent: re-submitting an
+    unchanged, already-approved table leaves its approved checks untouched.
     """
     try:
         user_email = _current_user_email(obo_ws)
-        table = monitored_tables_svc.publish(binding_id, user_email)
-        materialized_ids = materializer.materialize_binding(binding_id)
-        return PublishMonitoredTableOut(
-            table=MonitoredTableOut.from_domain(table), materialized_rule_ids=materialized_ids
+        materializer.materialize_binding(binding_id)
+        submitted = _transition_binding_checks(
+            monitored_tables_svc,
+            rules_catalog,
+            binding_id,
+            from_status="draft",
+            to_status="pending_approval",
+            user_email=user_email,
         )
+        table = monitored_tables_svc.set_status(
+            binding_id, _rollup_binding_status(monitored_tables_svc, binding_id), user_email
+        )
+        return MonitoredTableReviewOut(table=MonitoredTableOut.from_domain(table), affected_check_count=submitted)
     except MaterializationError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except RuntimeError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        logger.error(f"Failed to publish monitored table {binding_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to publish monitored table: {e}")
+        logger.error(f"Failed to submit monitored table {binding_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to submit monitored table: {e}")
+
+
+@router.post(
+    "/{binding_id}/approve",
+    response_model=MonitoredTableReviewOut,
+    operation_id="approveMonitoredTable",
+    dependencies=[require_role(*_APPROVERS_ONLY)],
+)
+def approve_monitored_table(
+    binding_id: str,
+    monitored_tables_svc: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
+    rules_catalog: Annotated[RulesCatalogService, Depends(get_rules_catalog_service)],
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+) -> MonitoredTableReviewOut:
+    """Approve a monitored table — approving every ``pending_approval`` check mapped to it.
+
+    Reuses the per-rule approve transition so each check's audit trail is
+    identical to a hand-approval, then rolls the binding up to ``approved``.
+    From here the scheduler picks the checks up (it runs only ``approved``
+    ``dq_quality_rules`` rows).
+    """
+    try:
+        user_email = _current_user_email(obo_ws)
+        approved = _transition_binding_checks(
+            monitored_tables_svc,
+            rules_catalog,
+            binding_id,
+            from_status="pending_approval",
+            to_status="approved",
+            user_email=user_email,
+        )
+        table = monitored_tables_svc.set_status(
+            binding_id, _rollup_binding_status(monitored_tables_svc, binding_id), user_email
+        )
+        return MonitoredTableReviewOut(table=MonitoredTableOut.from_domain(table), affected_check_count=approved)
+    except RuntimeError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to approve monitored table {binding_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to approve monitored table: {e}")
+
+
+@router.post(
+    "/{binding_id}/reject",
+    response_model=MonitoredTableReviewOut,
+    operation_id="rejectMonitoredTable",
+    dependencies=[require_role(*_APPROVERS_ONLY)],
+)
+def reject_monitored_table(
+    binding_id: str,
+    monitored_tables_svc: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
+    rules_catalog: Annotated[RulesCatalogService, Depends(get_rules_catalog_service)],
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+) -> MonitoredTableReviewOut:
+    """Reject a monitored table — rejecting every ``pending_approval`` check mapped to it.
+
+    Matches the per-rule reject semantics exactly (``routes/v1/rules.py``
+    reject sets a check to ``rejected``), so no check is left dangling in
+    ``pending_approval`` under a rejected table, and flips the binding itself
+    to ``rejected``.
+    """
+    try:
+        user_email = _current_user_email(obo_ws)
+        rejected = _transition_binding_checks(
+            monitored_tables_svc,
+            rules_catalog,
+            binding_id,
+            from_status="pending_approval",
+            to_status="rejected",
+            user_email=user_email,
+        )
+        table = monitored_tables_svc.set_status(binding_id, "rejected", user_email)
+        return MonitoredTableReviewOut(table=MonitoredTableOut.from_domain(table), affected_check_count=rejected)
+    except RuntimeError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to reject monitored table {binding_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to reject monitored table: {e}")
 
 
 # ------------------------------------------------------------------

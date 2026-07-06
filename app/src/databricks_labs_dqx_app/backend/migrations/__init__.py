@@ -570,8 +570,10 @@ _V2_OLTP_FALLBACK = (
     # dq_monitored_tables — Layer 2: thin binding recording that a table
     # is under active governance (design spec §3.1/§7). Profiling data
     # itself lives in the existing ``dq_profiling_results`` Delta table;
-    # this row just tracks the steward + draft/published lifecycle of
-    # the binding. No UNIQUE constraint on Delta (unsupported) — the
+    # this row just tracks the steward + submit-for-review lifecycle
+    # (draft -> pending_approval -> approved/rejected) of the binding,
+    # mirroring the per-rule dq_quality_rules state machine. No UNIQUE
+    # constraint on Delta (unsupported) — the
     # service enforces one binding per ``table_fqn``.
     f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_monitored_tables ("
     "  binding_id STRING NOT NULL,"
@@ -587,7 +589,7 @@ _V2_OLTP_FALLBACK = (
     ") CLUSTER BY (table_fqn, status);"
     f"ALTER TABLE {_PLACEHOLDER}.dq_monitored_tables "
     f"  ADD CONSTRAINT chk_dq_monitored_tables_status "
-    f"  CHECK (status IN ('draft','published'));"
+    f"  CHECK (status IN ('draft','pending_approval','approved','rejected'));"
     #
     # dq_applied_rules — the LIVE LINK between a published registry rule
     # and a monitored table's column mapping. ``pinned_version`` NULL

@@ -324,7 +324,8 @@ PG_MIGRATIONS: list[PgMigration] = [
             # table is under active governance (see design spec §3.1/§7).
             # Profiling data itself lives in the existing
             # ``dq_profiling_results`` Delta table; this row just tracks
-            # the steward + draft/published lifecycle of the binding.
+            # the steward + submit-for-review lifecycle (draft ->
+            # pending_approval -> approved/rejected) of the binding.
             # ----------------------------------------------------------
             f"CREATE TABLE IF NOT EXISTS {_S}.dq_monitored_tables ("
             "  binding_id       TEXT PRIMARY KEY,"
@@ -338,7 +339,7 @@ PG_MIGRATIONS: list[PgMigration] = [
             "  updated_at       TIMESTAMPTZ,"
             "  CONSTRAINT uq_dq_monitored_tables_table_fqn UNIQUE (table_fqn),"
             "  CONSTRAINT chk_dq_monitored_tables_status "
-            "    CHECK (status IN ('draft','published'))"
+            "    CHECK (status IN ('draft','pending_approval','approved','rejected'))"
             ");"
             f"CREATE INDEX IF NOT EXISTS idx_dq_monitored_tables_status "
             f"  ON {_S}.dq_monitored_tables (status);"

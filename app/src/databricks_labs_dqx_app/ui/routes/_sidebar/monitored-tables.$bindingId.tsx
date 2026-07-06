@@ -39,7 +39,9 @@ import {
   AlertTriangle,
   ArrowLeft,
   BarChart3,
+  CheckCircle2,
   ClipboardList,
+  Clock,
   Columns3,
   Info,
   KeyRound,
@@ -47,10 +49,10 @@ import {
   Plus,
   RefreshCw,
   RotateCcw,
-  ShieldCheck,
   Sparkles,
   UploadCloud,
   X,
+  XCircle,
 } from "lucide-react";
 import {
   useGetMonitoredTableSuspense,
@@ -59,7 +61,9 @@ import {
   getGetMonitoredTableProfileQueryKey,
   useSubmitProfileRun,
   getProfileRunStatus,
-  usePublishMonitoredTable,
+  useSubmitMonitoredTable,
+  useApproveMonitoredTable,
+  useRejectMonitoredTable,
   useSaveAppliedRules,
   useListRegistryRules,
   useGetTableColumns,
@@ -69,6 +73,7 @@ import {
   type MonitoredTableOut,
   type RegistryRuleOut,
 } from "@/lib/api";
+import { StatusBadge } from "@/components/RegistryRuleBadges";
 import { useLabelDefinitions } from "@/lib/api-custom";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useJobPolling } from "@/hooks/use-job-polling";
@@ -219,7 +224,9 @@ function MonitoredTableDetailPage() {
   const { blocker } = useUnsavedGuard({ hasUnsavedChanges: isDirty });
 
   const saveMutation = useSaveAppliedRules();
-  const publishMutation = usePublishMonitoredTable();
+  const submitMutation = useSubmitMonitoredTable();
+  const approveMutation = useApproveMonitoredTable();
+  const rejectMutation = useRejectMonitoredTable();
 
   const persistStagedRows = useCallback(
     () => saveMutation.mutateAsync({ bindingId, data: { applications: buildDesiredApplications(stagedRows) } }),
@@ -241,24 +248,58 @@ function MonitoredTableDetailPage() {
     );
   };
 
-  const handlePublish = () => {
-    persistStagedRows()
-      .then((resp) => {
-        const normalized = normalizeStagedRows(resp.data);
-        setStagedRows(normalized);
-        setBaseline(normalized);
-        return publishMutation.mutateAsync({ bindingId });
-      })
+  // Submit for review: persist any staged edits first (so the materializer
+  // renders the latest applied rules), then move the binding's checks into
+  // the pending_approval queue via the submit endpoint. Preserves P16-F's
+  // staged-save-first sequencing and clears the dirty/nav-guard state.
+  const handleSubmit = () => {
+    const persistFirst = isDirty
+      ? persistStagedRows().then((resp) => {
+          const normalized = normalizeStagedRows(resp.data);
+          setStagedRows(normalized);
+          setBaseline(normalized);
+        })
+      : Promise.resolve();
+    persistFirst
+      .then(() => submitMutation.mutateAsync({ bindingId }))
       .then(() => {
-        toast.success(t("monitoredTables.toastPublished"));
+        toast.success(t("monitoredTables.toastSubmitted"));
         invalidateDetail();
       })
       .catch((err: unknown) => {
-        toast.error(extractApiError(err, t("monitoredTables.toastPublishFailed")), { duration: 6000 });
+        toast.error(extractApiError(err, t("monitoredTables.toastSubmitFailed")), { duration: 6000 });
       });
   };
 
-  const savingOrPublishing = saveMutation.isPending || publishMutation.isPending;
+  const handleApprove = () => {
+    approveMutation.mutateAsync({ bindingId }).then(
+      () => {
+        toast.success(t("monitoredTables.toastApproved"));
+        invalidateDetail();
+      },
+      (err: unknown) => {
+        toast.error(extractApiError(err, t("monitoredTables.toastApproveFailed")), { duration: 6000 });
+      },
+    );
+  };
+
+  const handleReject = () => {
+    rejectMutation.mutateAsync({ bindingId }).then(
+      () => {
+        toast.success(t("monitoredTables.toastRejected"));
+        invalidateDetail();
+      },
+      (err: unknown) => {
+        toast.error(extractApiError(err, t("monitoredTables.toastRejectFailed")), { duration: 6000 });
+      },
+    );
+  };
+
+  const lifecycleBusy =
+    saveMutation.isPending ||
+    submitMutation.isPending ||
+    approveMutation.isPending ||
+    rejectMutation.isPending;
 
   return (
     <FadeIn>
@@ -272,14 +313,7 @@ function MonitoredTableDetailPage() {
           <div>
             <div className="flex items-center gap-2 flex-wrap">
               <h1 className="text-2xl font-semibold tracking-tight leading-none font-mono">{table.table_fqn}</h1>
-              {table.status === "published" ? (
-                <Badge variant="outline" className="gap-1 border-emerald-500 text-emerald-600">
-                  <ShieldCheck className="h-3 w-3" />
-                  {t("monitoredTables.statusBadgePublished")}
-                </Badge>
-              ) : (
-                <Badge variant="secondary">{t("monitoredTables.statusBadgeDraft")}</Badge>
-              )}
+              <StatusBadge status={table.status} />
             </div>
             {table.steward && (
               <p className="text-sm text-muted-foreground mt-1">{t("monitoredTables.colSteward")}: {table.steward}</p>
@@ -290,23 +324,73 @@ function MonitoredTableDetailPage() {
               <Button
                 variant="outline"
                 onClick={handleSaveAsDraft}
-                disabled={!isDirty || savingOrPublishing}
+                disabled={!isDirty || lifecycleBusy}
                 className="gap-2"
               >
                 {saveMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
                 {t("monitoredTables.saveAsDraftButton")}
               </Button>
-              <Button onClick={handlePublish} disabled={savingOrPublishing} className="gap-2">
-                {savingOrPublishing ? (
+              <Button onClick={handleSubmit} disabled={lifecycleBusy} className="gap-2">
+                {saveMutation.isPending || submitMutation.isPending ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
                   <UploadCloud className="h-4 w-4" />
                 )}
-                {savingOrPublishing ? t("monitoredTables.publishing") : t("monitoredTables.publishButton")}
+                {submitMutation.isPending ? t("monitoredTables.submitting") : t("monitoredTables.submitButton")}
               </Button>
             </div>
           )}
         </div>
+
+        {table.status === "pending_approval" && (
+          <div className="flex items-start gap-3 p-3 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-700">
+            <Clock className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+            <div className="space-y-1.5 flex-1">
+              <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
+                {t("monitoredTables.pendingBannerTitle")}
+              </p>
+              <p className="text-sm text-amber-800/90 dark:text-amber-300/90">
+                {t("monitoredTables.pendingBannerBody")}
+              </p>
+              {perms.canApproveRules ? (
+                <div className="flex items-center gap-2 pt-1">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={lifecycleBusy}
+                    onClick={handleApprove}
+                    className="gap-1.5 h-7 text-xs text-green-600 border-green-400 hover:bg-green-100 dark:hover:bg-green-900"
+                  >
+                    {approveMutation.isPending ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <CheckCircle2 className="h-3 w-3" />
+                    )}
+                    {t("monitoredTables.approveAction")}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={lifecycleBusy}
+                    onClick={handleReject}
+                    className="gap-1.5 h-7 text-xs text-red-600 border-red-400 hover:bg-red-100 dark:hover:bg-red-900"
+                  >
+                    {rejectMutation.isPending ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <XCircle className="h-3 w-3" />
+                    )}
+                    {t("monitoredTables.rejectAction")}
+                  </Button>
+                </div>
+              ) : (
+                <p className="text-xs text-amber-700/80 dark:text-amber-300/70 italic">
+                  {t("monitoredTables.awaitingApproval")}
+                </p>
+              )}
+            </div>
+          </div>
+        )}
 
         <Tabs value={activeTab} onValueChange={handleTabChange}>
           <TabsList>
@@ -349,7 +433,7 @@ function MonitoredTableDetailPage() {
           </TabsContent>
 
           <TabsContent value="results">
-            <ResultsTab tableFqn={table.table_fqn} published={table.status === "published"} />
+            <ResultsTab tableFqn={table.table_fqn} status={table.status} />
           </TabsContent>
         </Tabs>
       </div>
@@ -414,14 +498,7 @@ function AboutTab({ table }: { table: MonitoredTableOut }) {
 
           <dt className="text-muted-foreground uppercase tracking-wide">{t("monitoredTables.aboutStatus")}</dt>
           <dd>
-            {table.status === "published" ? (
-              <Badge variant="outline" className="gap-1 border-emerald-500 text-emerald-600">
-                <ShieldCheck className="h-2.5 w-2.5" />
-                {t("monitoredTables.statusPublished")}
-              </Badge>
-            ) : (
-              <Badge variant="secondary">{t("monitoredTables.statusDraft")}</Badge>
-            )}
+            <StatusBadge status={table.status} />
           </dd>
 
           <dt className="text-muted-foreground uppercase tracking-wide">{t("monitoredTables.aboutSteward")}</dt>
@@ -1127,18 +1204,19 @@ function ApplyRulesTab({
 // Results tab
 // ---------------------------------------------------------------------------
 
-function ResultsTab({ tableFqn, published }: { tableFqn: string; published: boolean }) {
+function ResultsTab({ tableFqn, status }: { tableFqn: string; status: string }) {
   const { t } = useTranslation();
 
-  // Materializing an applied rule (publish) does NOT make it live — it lands
-  // in dq_quality_rules as `draft` (or `pending_approval` after re-review, per
-  // the materializer's Behaviour A/B logic) and only actually runs once an
-  // approver flips it to `approved`, exactly like a manually-authored rule.
-  // That gate is easy to miss because nothing on this page surfaces it, so
-  // pull the table's checks here purely to count how many still need review
-  // and point the steward at the existing Drafts & Review queue.
+  // Submitting the table materializes its applied rules into dq_quality_rules
+  // and moves them into the pending_approval queue; they only actually run
+  // once an approver flips them to `approved`, exactly like a manually
+  // authored rule. Nothing runs while the binding is still `draft` (nothing
+  // has been materialized yet), so only fetch/count checks once it has left
+  // draft, and point the steward at the existing Drafts & Review queue for
+  // any still awaiting review.
+  const materialized = status !== "draft";
   const rulesQuery = useGetRules(tableFqn, {
-    query: { enabled: published, retry: false },
+    query: { enabled: materialized, retry: false },
   });
   const checks = rulesQuery.data?.data ?? [];
   const pendingCount = checks.filter((c) => c.status === "draft" || c.status === "pending_approval").length;
@@ -1153,7 +1231,7 @@ function ResultsTab({ tableFqn, published }: { tableFqn: string; published: bool
         <CardDescription>{t("monitoredTables.resultsDescription")}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
-        {!published && (
+        {!materialized && (
           <p className="text-sm text-muted-foreground">{t("monitoredTables.notYetPublishedResultsHint")}</p>
         )}
         {pendingCount > 0 && (

@@ -1074,7 +1074,9 @@ export type MonitoredTableOutStatus = typeof MonitoredTableOutStatus[keyof typeo
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const MonitoredTableOutStatus = {
   draft: 'draft',
-  published: 'published',
+  pending_approval: 'pending_approval',
+  approved: 'approved',
+  rejected: 'rejected',
 } as const;
 
 export type MonitoredTableOutLastProfiledAt = string | null;
@@ -1129,6 +1131,18 @@ export interface MonitoredTableProfileOut {
   summary?: MonitoredTableProfileOutSummary;
   generated_rules?: MonitoredTableProfileOutGeneratedRulesItem[];
   profiled_at?: MonitoredTableProfileOutProfiledAt;
+}
+
+/**
+ * Response for the submit/approve/reject monitored-table lifecycle routes.
+
+``table`` carries the binding with its new roll-up status; ``affected_check_count``
+is how many materialized ``dq_quality_rules`` rows changed status in this
+transition (submitted, approved, or rejected respectively).
+ */
+export interface MonitoredTableReviewOut {
+  table: MonitoredTableOut;
+  affected_check_count?: number;
 }
 
 /**
@@ -1277,14 +1291,6 @@ export interface ProfilerConfig {
   llm_primary_key_detection?: boolean;
   max_null_ratio?: ProfilerConfigMaxNullRatio;
   max_empty_ratio?: ProfilerConfigMaxEmptyRatio;
-}
-
-/**
- * Response for ``publishMonitoredTable`` — the published table plus what got materialized.
- */
-export interface PublishMonitoredTableOut {
-  table: MonitoredTableOut;
-  materialized_rule_ids?: string[];
 }
 
 export interface QuarantineListOut {
@@ -10595,30 +10601,33 @@ export const useSetAppliedRuleSeverityOverride = <TError = AxiosError<HTTPValida
     }
     
 /**
- * Publish a monitored table and materialize its applied rules into ``dq_quality_rules``.
+ * Submit a monitored table for review.
 
-Materialized rows always enter the existing per-table ``draft`` review
-flow (never auto-approved) — see ``backend/services/materializer.py``
-for the full approval/auto-upgrade semantics.
- * @summary Publish Monitored Table
+Materializes the binding's applied rules into ``dq_quality_rules`` (the
+UI has already persisted any staged edits via ``saveAppliedRules``), then
+submits every freshly-materialized ``draft`` check for approval — reusing
+the same per-rule transition the Drafts & Review queue uses — and rolls
+the binding up to ``pending_approval``. Idempotent: re-submitting an
+unchanged, already-approved table leaves its approved checks untouched.
+ * @summary Submit Monitored Table
  */
-export const publishMonitoredTable = (
+export const submitMonitoredTable = (
     bindingId: string, options?: AxiosRequestConfig
- ): Promise<AxiosResponse<PublishMonitoredTableOut>> => {
+ ): Promise<AxiosResponse<MonitoredTableReviewOut>> => {
     
     
     return axios.default.post(
-      `/api/v1/monitored-tables/${bindingId}/publish`,undefined,options
+      `/api/v1/monitored-tables/${bindingId}/submit`,undefined,options
     );
   }
 
 
 
-export const getPublishMonitoredTableMutationOptions = <TError = AxiosError<HTTPValidationError>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof publishMonitoredTable>>, TError,{bindingId: string}, TContext>, axios?: AxiosRequestConfig}
-): UseMutationOptions<Awaited<ReturnType<typeof publishMonitoredTable>>, TError,{bindingId: string}, TContext> => {
+export const getSubmitMonitoredTableMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof submitMonitoredTable>>, TError,{bindingId: string}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof submitMonitoredTable>>, TError,{bindingId: string}, TContext> => {
 
-const mutationKey = ['publishMonitoredTable'];
+const mutationKey = ['submitMonitoredTable'];
 const {mutation: mutationOptions, axios: axiosOptions} = options ?
       options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
       options
@@ -10628,10 +10637,10 @@ const {mutation: mutationOptions, axios: axiosOptions} = options ?
       
 
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof publishMonitoredTable>>, {bindingId: string}> = (props) => {
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof submitMonitoredTable>>, {bindingId: string}> = (props) => {
           const {bindingId} = props ?? {};
 
-          return  publishMonitoredTable(bindingId,axiosOptions)
+          return  submitMonitoredTable(bindingId,axiosOptions)
         }
 
         
@@ -10639,23 +10648,157 @@ const {mutation: mutationOptions, axios: axiosOptions} = options ?
 
   return  { mutationFn, ...mutationOptions }}
 
-    export type PublishMonitoredTableMutationResult = NonNullable<Awaited<ReturnType<typeof publishMonitoredTable>>>
+    export type SubmitMonitoredTableMutationResult = NonNullable<Awaited<ReturnType<typeof submitMonitoredTable>>>
     
-    export type PublishMonitoredTableMutationError = AxiosError<HTTPValidationError>
+    export type SubmitMonitoredTableMutationError = AxiosError<HTTPValidationError>
 
     /**
- * @summary Publish Monitored Table
+ * @summary Submit Monitored Table
  */
-export const usePublishMonitoredTable = <TError = AxiosError<HTTPValidationError>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof publishMonitoredTable>>, TError,{bindingId: string}, TContext>, axios?: AxiosRequestConfig}
+export const useSubmitMonitoredTable = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof submitMonitoredTable>>, TError,{bindingId: string}, TContext>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof publishMonitoredTable>>,
+        Awaited<ReturnType<typeof submitMonitoredTable>>,
         TError,
         {bindingId: string},
         TContext
       > => {
 
-      const mutationOptions = getPublishMonitoredTableMutationOptions(options);
+      const mutationOptions = getSubmitMonitoredTableMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Approve a monitored table — approving every ``pending_approval`` check mapped to it.
+
+Reuses the per-rule approve transition so each check's audit trail is
+identical to a hand-approval, then rolls the binding up to ``approved``.
+From here the scheduler picks the checks up (it runs only ``approved``
+``dq_quality_rules`` rows).
+ * @summary Approve Monitored Table
+ */
+export const approveMonitoredTable = (
+    bindingId: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<MonitoredTableReviewOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/monitored-tables/${bindingId}/approve`,undefined,options
+    );
+  }
+
+
+
+export const getApproveMonitoredTableMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof approveMonitoredTable>>, TError,{bindingId: string}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof approveMonitoredTable>>, TError,{bindingId: string}, TContext> => {
+
+const mutationKey = ['approveMonitoredTable'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof approveMonitoredTable>>, {bindingId: string}> = (props) => {
+          const {bindingId} = props ?? {};
+
+          return  approveMonitoredTable(bindingId,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ApproveMonitoredTableMutationResult = NonNullable<Awaited<ReturnType<typeof approveMonitoredTable>>>
+    
+    export type ApproveMonitoredTableMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Approve Monitored Table
+ */
+export const useApproveMonitoredTable = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof approveMonitoredTable>>, TError,{bindingId: string}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof approveMonitoredTable>>,
+        TError,
+        {bindingId: string},
+        TContext
+      > => {
+
+      const mutationOptions = getApproveMonitoredTableMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Reject a monitored table — rejecting every ``pending_approval`` check mapped to it.
+
+Matches the per-rule reject semantics exactly (``routes/v1/rules.py``
+reject sets a check to ``rejected``), so no check is left dangling in
+``pending_approval`` under a rejected table, and flips the binding itself
+to ``rejected``.
+ * @summary Reject Monitored Table
+ */
+export const rejectMonitoredTable = (
+    bindingId: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<MonitoredTableReviewOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/monitored-tables/${bindingId}/reject`,undefined,options
+    );
+  }
+
+
+
+export const getRejectMonitoredTableMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rejectMonitoredTable>>, TError,{bindingId: string}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof rejectMonitoredTable>>, TError,{bindingId: string}, TContext> => {
+
+const mutationKey = ['rejectMonitoredTable'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof rejectMonitoredTable>>, {bindingId: string}> = (props) => {
+          const {bindingId} = props ?? {};
+
+          return  rejectMonitoredTable(bindingId,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RejectMonitoredTableMutationResult = NonNullable<Awaited<ReturnType<typeof rejectMonitoredTable>>>
+    
+    export type RejectMonitoredTableMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Reject Monitored Table
+ */
+export const useRejectMonitoredTable = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rejectMonitoredTable>>, TError,{bindingId: string}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof rejectMonitoredTable>>,
+        TError,
+        {bindingId: string},
+        TContext
+      > => {
+
+      const mutationOptions = getRejectMonitoredTableMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }

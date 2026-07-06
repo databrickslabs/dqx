@@ -42,7 +42,7 @@ class TestDqMonitoredTablesPostgres:
     def test_status_check_constraint(self):
         baseline = next(m for m in PG_MIGRATIONS if m.version == 1)
         assert "chk_dq_monitored_tables_status" in baseline.sql
-        assert "CHECK (status IN ('draft','published'))" in baseline.sql
+        assert "CHECK (status IN ('draft','pending_approval','approved','rejected'))" in baseline.sql
 
 
 class TestDqAppliedRulesPostgres:
@@ -104,6 +104,7 @@ class TestDqMonitoredTablesDelta:
 
     def test_status_check_constraint(self):
         assert "chk_dq_monitored_tables_status" in _V2_OLTP_FALLBACK
+        assert "CHECK (status IN ('draft','pending_approval','approved','rejected'))" in _V2_OLTP_FALLBACK
 
 
 class TestDqAppliedRulesDelta:

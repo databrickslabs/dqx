@@ -384,34 +384,76 @@ class MonitoredTableService:
         return get_rule_name(metadata), get_rule_dimension(metadata), get_rule_severity(metadata)
 
     # ------------------------------------------------------------------
-    # Publish
+    # Submit-for-review lifecycle (draft -> pending_approval -> approved/rejected)
     # ------------------------------------------------------------------
 
-    def publish(self, binding_id: str, user_email: str) -> MonitoredTable:
-        """Flip a monitored table binding to ``published``.
+    def set_status(self, binding_id: str, status: str, user_email: str) -> MonitoredTable:
+        """Set a monitored table binding's own review-lifecycle status flag.
 
-        This only flips the binding's own status flag — it does NOT
-        materialize applied rules into ``dq_quality_rules`` itself; the
-        route layer calls
-        :meth:`~databricks_labs_dqx_app.backend.services.materializer.Materializer.materialize_binding`
-        right after this (see ``routes/v1/monitored_tables.py:publish_monitored_table``).
-        Publishing is idempotent — publishing an already-published table is
-        a no-op status-wise but still worth re-running the materializer
-        (e.g. to pick up new applied rules or version upgrades).
+        Only flips the binding row's ``status`` column — it never touches
+        ``dq_applied_rules`` or the materialized ``dq_quality_rules`` rows.
+        The route layer (``routes/v1/monitored_tables.py``) orchestrates the
+        binding status alongside the materializer and the per-rule
+        submit/approve/reject transitions so the binding's status stays a
+        faithful roll-up of its materialized checks.
+
+        Raises:
+            ValueError: *status* is not a member of :data:`MonitoredTableStatus`.
+            RuntimeError: *binding_id* does not exist.
         """
+        if status not in self.VALID_STATUSES:
+            raise ValueError(
+                f"Invalid monitored table status {status!r}; expected one of {sorted(self.VALID_STATUSES)}"
+            )
         table = self._get(binding_id)
         if table is None:
             raise RuntimeError(f"Monitored table not found: {binding_id}")
         e = escape_sql_string(binding_id)
         self._sql.execute(
-            f"UPDATE {self._table} SET status = 'published', "
+            f"UPDATE {self._table} SET status = '{escape_sql_string(status)}', "
             f"updated_by = {self._opt_str(user_email)}, updated_at = now() "
             f"WHERE binding_id = '{e}'"
         )
-        table.status = "published"
+        table.status = cast(MonitoredTableStatus, status)
         table.updated_by = user_email
-        logger.info("Published monitored table %s (binding_id=%s, by %s)", table.table_fqn, binding_id, user_email)
+        logger.info(
+            "Set monitored table %s (binding_id=%s) status to %s (by %s)",
+            table.table_fqn,
+            binding_id,
+            status,
+            user_email,
+        )
         return table
+
+    def list_materialized_rule_statuses(self, binding_id: str) -> list[tuple[str, str]]:
+        """Return ``(rule_id, status)`` for every ``dq_quality_rules`` row this binding materialized.
+
+        Resolves the binding's materialized rows through the SAME
+        ``dq_quality_rules.applied_rule_id`` -> ``dq_applied_rules.id`` ->
+        ``dq_applied_rules.binding_id`` linkage the materializer maintains
+        (:meth:`Materializer.materialize_binding` /
+        :meth:`Materializer._cleanup_orphans`), rather than matching on
+        ``table_fqn`` — two bindings can never share this precise link. Used
+        by the submit/approve/reject route orchestration to drive the
+        per-rule status transitions and to roll the binding status up from
+        its checks.
+        """
+        applied_ids = self._applied_rule_ids(binding_id)
+        if not applied_ids:
+            return []
+        placeholders = ", ".join(f"'{escape_sql_string(i)}'" for i in applied_ids)
+        sql = (
+            f"SELECT rule_id, status FROM {self._quality_rules_table} "  # noqa: S608
+            f"WHERE applied_rule_id IN ({placeholders})"
+        )
+        rows = self._sql.query(sql)
+        return [(row[0], row[1]) for row in rows if row and row[0]]
+
+    def _applied_rule_ids(self, binding_id: str) -> list[str]:
+        e = escape_sql_string(binding_id)
+        sql = f"SELECT id FROM {self._applied_table} WHERE binding_id = '{e}'"  # noqa: S608
+        rows = self._sql.query(sql)
+        return [row[0] for row in rows if row and row[0]]
 
     # ------------------------------------------------------------------
     # Delete

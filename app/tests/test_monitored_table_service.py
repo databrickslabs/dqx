@@ -206,9 +206,9 @@ class TestListMonitoredTables:
 
     def test_filters_by_status_pushed_to_sql(self, svc, sql):
         sql.query.return_value = []
-        svc.list_monitored_tables(status="published")
+        svc.list_monitored_tables(status="approved")
         list_sql = sql.query.call_args[0][0]
-        assert "status = 'published'" in list_sql
+        assert "status = 'approved'" in list_sql
 
     def test_filters_by_steward_pushed_to_sql(self, svc, sql):
         sql.query.return_value = []
@@ -279,24 +279,61 @@ class TestGet:
 
 
 # ---------------------------------------------------------------------------
-# publish
+# set_status (submit-for-review lifecycle)
 # ---------------------------------------------------------------------------
 
 
-class TestPublish:
-    def test_publishes_a_draft_binding(self, svc, sql):
+class TestSetStatus:
+    def test_flips_binding_to_pending_approval(self, svc, sql):
         sql.query.return_value = [_table_row(binding_id="b1", status="draft")]
-        table = svc.publish("b1", "alice@x")
-        assert table.status == "published"
+        table = svc.set_status("b1", "pending_approval", "alice@x")
+        assert table.status == "pending_approval"
         update_sql = sql.execute.call_args[0][0]
         assert "UPDATE dqx_test.dqx_app_test.dq_monitored_tables" in update_sql
-        assert "status = 'published'" in update_sql
+        assert "status = 'pending_approval'" in update_sql
+
+    def test_flips_binding_to_approved(self, svc, sql):
+        sql.query.return_value = [_table_row(binding_id="b1", status="pending_approval")]
+        table = svc.set_status("b1", "approved", "alice@x")
+        assert table.status == "approved"
+        assert "status = 'approved'" in sql.execute.call_args[0][0]
+
+    def test_rejects_invalid_status(self, svc, sql):
+        with pytest.raises(ValueError):
+            svc.set_status("b1", "published", "alice@x")
+        sql.execute.assert_not_called()
 
     def test_raises_when_missing(self, svc, sql):
         sql.query.return_value = []
         with pytest.raises(RuntimeError):
-            svc.publish("missing", "alice@x")
+            svc.set_status("missing", "approved", "alice@x")
         sql.execute.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# list_materialized_rule_statuses (binding -> materialized rows linkage)
+# ---------------------------------------------------------------------------
+
+
+class TestListMaterializedRuleStatuses:
+    def test_resolves_rows_via_applied_rule_id_linkage(self, svc, sql):
+        # 1st query: applied-rule ids for the binding; 2nd: their materialized rows.
+        sql.query.side_effect = [
+            [["ar1"], ["ar2"]],
+            [["ar1-0", "pending_approval"], ["ar2-0", "approved"]],
+        ]
+        result = svc.list_materialized_rule_statuses("b1")
+        assert result == [("ar1-0", "pending_approval"), ("ar2-0", "approved")]
+        row_query = sql.query.call_args_list[1][0][0]
+        # Precise linkage — filters by applied_rule_id, never table_fqn.
+        assert "applied_rule_id IN ('ar1', 'ar2')" in row_query
+        assert "table_fqn" not in row_query
+
+    def test_returns_empty_when_no_applied_rules(self, svc, sql):
+        sql.query.return_value = []
+        assert svc.list_materialized_rule_statuses("b1") == []
+        # No second query fired when there are no applied rules.
+        assert sql.query.call_count == 1
 
 
 # ---------------------------------------------------------------------------

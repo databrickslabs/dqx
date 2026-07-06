@@ -8,9 +8,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { ChevronDown, ChevronUp, FileEdit, Loader2, ShieldCheck } from "lucide-react";
+import { ChevronDown, ChevronUp, Loader2 } from "lucide-react";
+import { StatusBadge } from "@/components/RegistryRuleBadges";
 import { cn } from "@/lib/utils";
 import { useColumnLayout, type ColumnLayoutDef } from "@/components/data-table/column-layout";
 import { EditColumnsDropdown } from "@/components/data-table/EditColumnsDropdown";
@@ -111,24 +111,6 @@ function RelativeTimeCell({ iso }: { iso: string | null | undefined }) {
 function splitFqn(fqn: string): { catalog: string; schema: string; table: string } {
   const parts = fqn.split(".");
   return { catalog: parts[0] ?? "", schema: parts[1] ?? "", table: parts[2] ?? fqn };
-}
-
-function StatusBadge({ status }: { status: string }) {
-  const { t } = useTranslation();
-  if (status === "published") {
-    return (
-      <Badge variant="outline" className="gap-1 text-[10px] border-emerald-500 text-emerald-600">
-        <ShieldCheck className="h-2.5 w-2.5" />
-        {t("monitoredTables.statusPublished")}
-      </Badge>
-    );
-  }
-  return (
-    <Badge variant="secondary" className="gap-1 text-[10px]">
-      <FileEdit className="h-2.5 w-2.5" />
-      {t("monitoredTables.statusDraft")}
-    </Badge>
-  );
 }
 
 const COLUMNS: Record<MonitoredTablesSortKey, ColumnDef> = {
