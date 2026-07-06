@@ -6,19 +6,24 @@
 // The single-column picker's popover (trigger chip, search box, "Suggested"
 // vs "Compatible columns" grouping, click-to-select-and-close) is ported 1:1
 // from dqlake's `bindings/MappingChips.tsx` `ColumnPicker` — same layout,
-// same exact-match suggestion heuristic, same commit behavior. DQX has no
-// `cmdk`/`Command` primitive installed, so the list is built from the
-// existing `Popover` + `Input` primitives instead of dqlake's
-// `Command`/`CommandInput` — same interaction pattern, adapted to this
-// app's component set.
+// same exact-match suggestion heuristic, same commit behavior, now on the
+// same `cmdk`-backed `Command` primitive dqlake uses, so ArrowUp/ArrowDown +
+// Enter + type-ahead work the same way here.
 
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ChevronDown, Star } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
 import { cn } from "@/lib/utils";
 import type { ColumnOut, RuleSlot } from "@/lib/api";
 
@@ -71,26 +76,6 @@ function isExactMatch(slotName: string, colName: string): boolean {
   return stripSuffix(slotName) === stripSuffix(colName);
 }
 
-interface ColumnDropdownRowProps {
-  col: ColumnOut;
-  suggested: boolean;
-  onSelect: (colName: string) => void;
-}
-
-function ColumnDropdownRow({ col, suggested, onSelect }: ColumnDropdownRowProps) {
-  return (
-    <button
-      type="button"
-      onClick={() => onSelect(col.name)}
-      className="flex w-full items-center gap-2 rounded-sm px-3 py-1.5 text-left hover:bg-muted focus:outline-none focus:bg-muted"
-    >
-      {suggested && <Star className="h-3 w-3 text-yellow-400 shrink-0" aria-hidden />}
-      <span className="font-mono text-xs flex-1 truncate">{col.name}</span>
-      <span className="text-[10px] text-muted-foreground shrink-0">{col.type_name}</span>
-    </button>
-  );
-}
-
 interface ColumnDropdownListProps {
   slot: RuleSlot;
   /** Already family-filtered + exclusion-filtered candidate columns. */
@@ -102,7 +87,9 @@ interface ColumnDropdownListProps {
 
 /** Popover body: search box + "Suggested"/"Compatible columns" grouping —
  *  ported 1:1 (layout, grouping, exact-match heuristic) from dqlake's
- *  `bindings/MappingChips.tsx` `ColumnPicker`. */
+ *  `bindings/MappingChips.tsx` `ColumnPicker`, now on the `Command`
+ *  primitive so it keeps our own exact-match ordering (`shouldFilter=false`
+ *  + a manual substring filter) instead of cmdk's fuzzy scoring. */
 function ColumnDropdownList({ slot, matches, totalAll, onSelect }: ColumnDropdownListProps) {
   const { t } = useTranslation();
   const [search, setSearch] = useState("");
@@ -112,6 +99,7 @@ function ColumnDropdownList({ slot, matches, totalAll, onSelect }: ColumnDropdow
   const rest = useMemo(() => matches.filter((c) => !isExactMatch(slot.name, c.name)), [matches, slot.name]);
   const suggestedVisible = suggested.filter(matchSearch);
   const restVisible = rest.filter(matchSearch);
+  const noMatches = suggestedVisible.length === 0 && restVisible.length === 0;
 
   return (
     <div className="p-0">
@@ -122,43 +110,46 @@ function ColumnDropdownList({ slot, matches, totalAll, onSelect }: ColumnDropdow
             : t("monitoredTables.columnPickerCountFamily", { shown: matches.length, total: totalAll, family: slot.family })}
         </span>
       </div>
-      <div className="flex items-center gap-2 border-b px-3">
-        <Input
+      <Command shouldFilter={false}>
+        <CommandInput
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onValueChange={setSearch}
           placeholder={t("monitoredTables.searchColumnsPlaceholder")}
-          className="h-9 flex-1 border-0 bg-transparent shadow-none focus-visible:ring-0 text-xs px-0"
+          className="h-9 text-xs"
         />
-      </div>
-      <div className="max-h-64 overflow-y-auto p-1">
-        {suggestedVisible.length === 0 && restVisible.length === 0 && (
-          <p className="py-4 text-center text-xs text-muted-foreground">
-            {matches.length === 0 ? t("monitoredTables.noMatchingColumns") : t("monitoredTables.noColumnsFound")}
-          </p>
-        )}
-        {suggestedVisible.length > 0 && (
-          <div className="pb-1">
-            <div className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-              {t("monitoredTables.suggestedColumnsHeading")}
-            </div>
-            {suggestedVisible.map((col) => (
-              <ColumnDropdownRow key={col.name} col={col} suggested onSelect={onSelect} />
-            ))}
-          </div>
-        )}
-        {restVisible.length > 0 && (
-          <div>
-            {suggestedVisible.length > 0 && (
-              <div className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                {t("monitoredTables.compatibleColumnsHeading")}
-              </div>
-            )}
-            {restVisible.map((col) => (
-              <ColumnDropdownRow key={col.name} col={col} suggested={false} onSelect={onSelect} />
-            ))}
-          </div>
-        )}
-      </div>
+        <CommandList className="max-h-64">
+          {noMatches && (
+            <CommandEmpty>
+              <span className="text-xs text-muted-foreground">
+                {matches.length === 0 ? t("monitoredTables.noMatchingColumns") : t("monitoredTables.noColumnsFound")}
+              </span>
+            </CommandEmpty>
+          )}
+          {suggestedVisible.length > 0 && (
+            <CommandGroup heading={t("monitoredTables.suggestedColumnsHeading")}>
+              {suggestedVisible.map((col) => (
+                <CommandItem key={col.name} value={col.name} onSelect={() => onSelect(col.name)} className="text-xs">
+                  <Star className="h-3 w-3 text-yellow-400 shrink-0" aria-hidden />
+                  <span className="font-mono flex-1 truncate">{col.name}</span>
+                  <span className="text-[10px] text-muted-foreground shrink-0">{col.type_name}</span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          )}
+          {restVisible.length > 0 && (
+            <CommandGroup
+              heading={suggestedVisible.length > 0 ? t("monitoredTables.compatibleColumnsHeading") : undefined}
+            >
+              {restVisible.map((col) => (
+                <CommandItem key={col.name} value={col.name} onSelect={() => onSelect(col.name)} className="text-xs">
+                  <span className="font-mono flex-1 truncate">{col.name}</span>
+                  <span className="text-[10px] text-muted-foreground shrink-0">{col.type_name}</span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          )}
+        </CommandList>
+      </Command>
     </div>
   );
 }

@@ -2,11 +2,18 @@ import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { ChevronDown, Loader2, Search } from "lucide-react";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import { ChevronDown, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export interface MultiSelectOption {
@@ -165,90 +172,91 @@ export function MultiSelectPopover({
           className="flex max-h-(--radix-popover-content-available-height) w-[--radix-popover-trigger-width] flex-col overflow-hidden p-0"
           align="start"
         >
-          {/* Search row: the shared Input primitive bakes in its own
-              `dark:bg-input/30` fill (see components/ui/input.tsx), which —
-              because a `.dark` compound selector always outranks a bare
-              `.bg-transparent` class regardless of source order — wins over
-              the `bg-transparent` override passed below and only tints the
-              input's own rectangle. That's why the dark-mode search bar
-              looked like a lighter-grey patch covering part of the row
-              (the input) sitting on a darker row (the icon gutter + padding
-              around it). Applying the same token to the row container makes
-              the fill span the row's full width uniformly. */}
-          <div className="flex shrink-0 items-center gap-2 border-b px-3 dark:bg-input/30">
-            <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-            <Input
+          {/* `shouldFilter={false}` — this list preserves its own semantics
+              (substring match on `label`, selected-options-float-to-top
+              ordering, tri-state select-all, disabled/already-monitored rows)
+              via `filteredOptions` above rather than cmdk's fuzzy scoring. */}
+          <Command shouldFilter={false} className="flex-1 min-h-0 overflow-hidden">
+            {/* Search row: the shared Input primitive (used by `CommandInput`)
+                bakes in its own `dark:bg-input/30` fill (see
+                components/ui/input.tsx), which — because a `.dark` compound
+                selector always outranks a bare `.bg-transparent` class
+                regardless of source order — wins over the `bg-transparent`
+                override and only tints the input's own rectangle. That's why
+                the dark-mode search bar looked like a lighter-grey patch
+                covering part of the row (the input) sitting on a darker row
+                (the icon gutter + padding around it). Applying the same
+                token to the row container makes the fill span the row's full
+                width uniformly. */}
+            <CommandInput
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onValueChange={setSearch}
               placeholder={searchPlaceholder}
-              className="h-9 flex-1 border-0 bg-transparent shadow-none focus-visible:ring-0 text-sm px-0"
+              className="h-9 text-sm dark:bg-input/30"
             />
-          </div>
-          <label className="flex shrink-0 items-center gap-2 border-b px-3 py-1.5 cursor-pointer">
-            <Checkbox
-              checked={selectAllState}
-              onCheckedChange={toggleSelectAll}
-              disabled={filteredOptions.length === 0}
-              className="shrink-0"
-            />
-            <span className="text-xs text-muted-foreground">
-              {t("monitoredTables.wizard.selectAllVisible")}
-            </span>
-          </label>
-          <div className="min-h-0 max-h-[300px] flex-1 overflow-y-auto p-1">
-            {isLoading ? (
-              <div className="flex items-center justify-center py-6">
-                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-              </div>
-            ) : filteredOptions.length === 0 ? (
-              <p className="py-6 text-center text-xs text-muted-foreground">{emptyText}</p>
-            ) : (
-              filteredOptions.map((o) => {
-                const isSelected = selectedSet.has(o.value) || !!o.disabled;
-                // Clicking the row selects the option AND closes the popover
-                // (single-pick-and-go). Clicking the checkbox itself toggles
-                // the option but keeps the popover open, so multi-selecting
-                // several options doesn't require reopening the dropdown
-                // each time — the checkbox click's `stopPropagation` below
-                // is what keeps it from also firing this row handler.
-                const row = (
-                  <div
-                    key={o.value}
-                    role="option"
-                    aria-selected={isSelected}
-                    onClick={() => {
-                      if (o.disabled) return;
-                      toggle(o);
-                      setOpen(false);
-                    }}
-                    className={cn(
-                      "flex items-center gap-2 rounded-sm px-3 py-1.5 text-sm transition-colors",
-                      o.disabled ? "cursor-not-allowed opacity-70" : "cursor-pointer",
-                      isSelected ? "bg-primary/10" : "hover:bg-muted",
-                    )}
-                  >
-                    <span className="flex shrink-0" onClick={(e) => e.stopPropagation()}>
-                      <Checkbox
-                        checked={isSelected}
-                        onCheckedChange={() => toggle(o)}
-                        disabled={o.disabled}
-                      />
-                    </span>
-                    <span className="truncate text-sm" title={o.label}>
-                      {o.label}
-                    </span>
-                  </div>
-                );
-                if (!o.disabled || !o.disabledReason) return row;
-                return (
-                  <Tooltip key={o.value}>
-                    <TooltipTrigger asChild>{row}</TooltipTrigger>
-                    <TooltipContent side="right">{o.disabledReason}</TooltipContent>
-                  </Tooltip>
-                );
-              })
-            )}
-          </div>
+            {/* ROOT CAUSE of the "list still doesn't scroll" bug (see git
+                history): the list needs its own bounded height in addition
+                to the trigger's dynamic available-height cap — `min-h-0` on
+                the flex child is required because flex items default to a
+                min-height of their own content size, which would otherwise
+                stop the list from ever shrinking below its unscrolled height
+                even inside a bounded parent. */}
+            <CommandList className="min-h-0 max-h-[300px] flex-1 p-1">
+              {isLoading ? (
+                <div className="flex items-center justify-center py-6">
+                  <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                </div>
+              ) : (
+                <>
+                  <CommandEmpty>
+                    <span className="text-xs text-muted-foreground">{emptyText}</span>
+                  </CommandEmpty>
+                  {filteredOptions.length > 0 && (
+                    <CommandGroup>
+                      <CommandItem onSelect={toggleSelectAll} className="border-b rounded-none">
+                        <Checkbox checked={selectAllState} className="shrink-0 pointer-events-none" />
+                        <span className="text-xs text-muted-foreground">
+                          {t("monitoredTables.wizard.selectAllVisible")}
+                        </span>
+                      </CommandItem>
+                      {filteredOptions.map((o) => {
+                        const isSelected = selectedSet.has(o.value) || !!o.disabled;
+                        // Enter/click toggles the highlighted option and keeps
+                        // the popover open — matches dqlake's multi-select
+                        // `Command` behavior (see e.g. `GroupByField`), so
+                        // picking several options doesn't require reopening
+                        // the dropdown each time. Disabled (already-monitored)
+                        // rows are unselectable via keyboard or click — cmdk
+                        // skips `disabled` items during arrow-key navigation
+                        // and never fires `onSelect` for them.
+                        const item = (
+                          <CommandItem
+                            key={o.value}
+                            value={o.value}
+                            disabled={o.disabled}
+                            onSelect={() => toggle(o)}
+                            className={cn(o.disabled ? "opacity-70" : undefined, isSelected && "bg-primary/10")}
+                          >
+                            <Checkbox checked={isSelected} disabled={o.disabled} className="shrink-0 pointer-events-none" />
+                            <span className="truncate text-sm" title={o.label}>
+                              {o.label}
+                            </span>
+                          </CommandItem>
+                        );
+                        if (!o.disabled || !o.disabledReason) return item;
+                        return (
+                          <Tooltip key={o.value}>
+                            <TooltipTrigger asChild>{item}</TooltipTrigger>
+                            <TooltipContent side="right">{o.disabledReason}</TooltipContent>
+                          </Tooltip>
+                        );
+                      })}
+                    </CommandGroup>
+                  )}
+                </>
+              )}
+            </CommandList>
+          </Command>
         </PopoverContent>
       </Popover>
     </div>

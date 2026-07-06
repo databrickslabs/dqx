@@ -27,6 +27,14 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Separator } from "@/components/ui/separator";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -38,7 +46,6 @@ import {
   History as HistoryIcon,
   Info,
   Loader2,
-  Search,
   Sparkles,
   Users,
   Wrench,
@@ -162,55 +169,51 @@ function FunctionCombobox({
         </Button>
       </PopoverTrigger>
       <PopoverContent className="p-0 w-[--radix-popover-trigger-width] min-w-[280px]" align="start">
-        <div className="border-b p-2">
-          <div className="relative">
-            <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground" />
-            <Input
-              autoFocus
-              placeholder={t("rulesRegistry.searchFunctions")}
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              className="h-8 text-xs pl-7"
-            />
-          </div>
-        </div>
-        <div className="max-h-72 overflow-y-auto py-1">
-          {functions.length === 0 ? (
-            <div className="px-3 py-2 text-xs text-muted-foreground">{t("rulesRegistry.loadingFunctions")}</div>
-          ) : grouped.length === 0 ? (
-            <div className="px-3 py-2 text-xs text-muted-foreground">{t("rulesRegistry.noMatches")}</div>
-          ) : (
-            grouped.map(([category, fns]) => (
-              <div key={category}>
-                <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground bg-muted/40">
-                  {category}
-                </div>
-                {fns.map((fn) => {
-                  const selected = fn.name === value;
-                  return (
-                    <button
-                      key={fn.name}
-                      type="button"
-                      onClick={() => {
-                        onChange(fn.name);
-                        setOpen(false);
-                      }}
-                      className={`w-full text-left px-2 py-1.5 text-xs hover:bg-accent flex items-start gap-2 ${selected ? "bg-accent" : ""}`}
-                    >
-                      <Check className={`h-3 w-3 shrink-0 mt-0.5 ${selected ? "opacity-100" : "opacity-0"}`} />
-                      <span className="min-w-0 flex-1">
-                        <span className="font-mono">{fn.name}</span>
-                        {fn.doc && (
-                          <span className="block text-[10px] text-muted-foreground truncate">{fn.doc}</span>
-                        )}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            ))
-          )}
-        </div>
+        <Command shouldFilter={false}>
+          <CommandInput
+            placeholder={t("rulesRegistry.searchFunctions")}
+            value={query}
+            onValueChange={setQuery}
+            className="h-8 text-xs"
+          />
+          <CommandList className="max-h-72">
+            {functions.length === 0 ? (
+              <div className="px-3 py-2 text-xs text-muted-foreground">{t("rulesRegistry.loadingFunctions")}</div>
+            ) : (
+              <>
+                <CommandEmpty>
+                  <span className="text-xs text-muted-foreground">{t("rulesRegistry.noMatches")}</span>
+                </CommandEmpty>
+                {grouped.map(([category, fns]) => (
+                  <CommandGroup key={category} heading={category}>
+                    {fns.map((fn) => {
+                      const selected = fn.name === value;
+                      return (
+                        <CommandItem
+                          key={fn.name}
+                          value={fn.name}
+                          onSelect={() => {
+                            onChange(fn.name);
+                            setOpen(false);
+                          }}
+                          className="items-start gap-2 text-xs"
+                        >
+                          <Check className={`h-3 w-3 shrink-0 mt-0.5 ${selected ? "opacity-100" : "opacity-0"}`} />
+                          <span className="min-w-0 flex-1">
+                            <span className="font-mono">{fn.name}</span>
+                            {fn.doc && (
+                              <span className="block text-[10px] text-muted-foreground truncate">{fn.doc}</span>
+                            )}
+                          </span>
+                        </CommandItem>
+                      );
+                    })}
+                  </CommandGroup>
+                ))}
+              </>
+            )}
+          </CommandList>
+        </Command>
       </PopoverContent>
     </Popover>
   );

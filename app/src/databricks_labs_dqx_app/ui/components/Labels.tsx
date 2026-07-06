@@ -11,6 +11,13 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import {
+  Command,
+  CommandEmpty,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import {
   Check,
   ChevronDown,
   ChevronRight,
@@ -336,16 +343,13 @@ function SearchPickerPopover({
       <PopoverTrigger asChild>{trigger}</PopoverTrigger>
       <PopoverContent align="start" className={cn(widthClassName, "p-2")}>
         <div className="space-y-2">
-          <Input
-            placeholder={searchPlaceholder}
-            value={query}
-            onChange={(e) => onQueryChange(e.target.value)}
-            className="h-7 text-xs"
-            autoFocus
-          />
-          <div className={cn(listMaxHeightClassName, "overflow-y-auto space-y-0.5")}>
-            {children}
-          </div>
+          {/* `shouldFilter={false}` — each consumer (key/value picker) keeps
+              its own substring-match filtering (`filtered` below), so cmdk's
+              fuzzy scoring doesn't reorder results. */}
+          <Command shouldFilter={false}>
+            <CommandInput placeholder={searchPlaceholder} value={query} onValueChange={onQueryChange} className="h-8 text-xs" />
+            <CommandList className={cn(listMaxHeightClassName, "space-y-0.5")}>{children}</CommandList>
+          </Command>
           {footer}
         </div>
       </PopoverContent>
@@ -472,27 +476,22 @@ function KeyPickerButton({
         />
       }
     >
-      {filtered.length === 0 && (
-        <p className="text-xs text-muted-foreground italic px-2 py-3 text-center">
-          {t("labelsEditor.noMatchingKeys")}
-        </p>
-      )}
+      <CommandEmpty>
+        <span className="text-xs text-muted-foreground italic">{t("labelsEditor.noMatchingKeys")}</span>
+      </CommandEmpty>
       {filtered.map((d) => {
         const used = usedKeys.has(d.key);
         return (
-          <button
+          <CommandItem
             key={d.key}
-            type="button"
-            onClick={() => {
+            value={d.key}
+            onSelect={() => {
               onPick(d.key);
               reset();
             }}
-            className={cn(
-              "w-full text-left rounded px-2 py-1.5 text-xs hover:bg-muted",
-              used && "opacity-60",
-            )}
+            className={cn("flex-col items-stretch gap-0.5 rounded px-2 py-1.5 text-xs", used && "opacity-60")}
           >
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 w-full">
               <Tag className="h-3 w-3 opacity-60" />
               <span className="font-medium">{d.key}</span>
               {used && (
@@ -510,7 +509,7 @@ function KeyPickerButton({
                 {d.description}
               </p>
             )}
-          </button>
+          </CommandItem>
         );
       })}
     </SearchPickerPopover>
@@ -627,17 +626,14 @@ function ValuePickerButton({
       }
     >
       {filtered.map((v) => (
-        <button
+        <CommandItem
           key={v}
-          type="button"
-          onClick={() => {
+          value={v}
+          onSelect={() => {
             onChange(v);
             reset();
           }}
-          className={cn(
-            "w-full text-left rounded px-2 py-1 text-xs hover:bg-muted flex items-center gap-2",
-            v === value && "bg-accent/50 font-medium",
-          )}
+          className={cn("rounded px-2 py-1 text-xs", v === value && "bg-accent/50 font-medium")}
         >
           <Check
             className={cn(
@@ -646,13 +642,11 @@ function ValuePickerButton({
             )}
           />
           <span className="truncate font-mono">{v}</span>
-        </button>
+        </CommandItem>
       ))}
-      {filtered.length === 0 && (
-        <p className="text-xs text-muted-foreground italic px-2 py-2 text-center">
-          {t("labelsEditor.noMatchingValues")}
-        </p>
-      )}
+      <CommandEmpty>
+        <span className="text-xs text-muted-foreground italic">{t("labelsEditor.noMatchingValues")}</span>
+      </CommandEmpty>
     </SearchPickerPopover>
   );
 }
