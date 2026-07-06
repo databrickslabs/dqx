@@ -106,7 +106,11 @@ export function AddMonitoredTableModal({ open, onOpenChange }: AddMonitoredTable
             toast.success(t("monitoredTables.wizard.toastSingleRegistered"));
             invalidate();
             closeAndReset();
-            navigate({ to: "/monitored-tables/$bindingId", params: { bindingId: resp.data.table.binding_id } });
+            navigate({
+              to: "/monitored-tables/$bindingId",
+              params: { bindingId: resp.data.table.binding_id },
+              search: { tab: "apply-rules" },
+            });
           },
           onError: (err) => {
             toast.error(extractApiError(err, t("monitoredTables.toastRegisterFailed")), {

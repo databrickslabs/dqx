@@ -167,7 +167,7 @@ function MonitoredTableDetailPage() {
   // moves between tabs — mirrors the Rules Registry detail page and dqlake's
   // rule editor. Push (not replace) a history entry per switch.
   const activeTab: DetailTab =
-    tab && (DETAIL_TAB_KEYS as readonly string[]).includes(tab) ? (tab as DetailTab) : "apply-rules";
+    tab && (DETAIL_TAB_KEYS as readonly string[]).includes(tab) ? (tab as DetailTab) : "about";
   const handleTabChange = useCallback(
     (next: string) => {
       navigate({
