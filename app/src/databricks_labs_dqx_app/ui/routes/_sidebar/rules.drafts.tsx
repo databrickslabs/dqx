@@ -5,6 +5,12 @@ import { useTranslation } from "react-i18next";
 
 const SQL_CHECK_PREFIX = "__sql_check__/";
 const CROSS_TABLE_CATALOG = "Cross-table rules";
+
+function isCrossTableRule(rule: { table_fqn: string; checks: unknown[] }): boolean {
+  if (rule.table_fqn.startsWith(SQL_CHECK_PREFIX)) return true;
+  const check = rule.checks[0] as Record<string, unknown> | undefined;
+  return (check?.check as Record<string, unknown>)?.function === "sql_query";
+}
 import React, { useState, Suspense, useMemo, useCallback, useSyncExternalStore } from "react";
 import {
   Tooltip,
@@ -322,7 +328,7 @@ function DraftsPage() {
     const catalogSet = new Set<string>();
     const schemaMap = new Map<string, Set<string>>();
     for (const rule of allRules) {
-      if (rule.table_fqn.startsWith(SQL_CHECK_PREFIX)) {
+      if (isCrossTableRule(rule)) {
         catalogSet.add(CROSS_TABLE_CATALOG);
         continue;
       }
@@ -343,7 +349,7 @@ function DraftsPage() {
 
   const rules = useMemo(() => {
     const filtered = allRules.filter((rule) => {
-      const isSqlCheck = rule.table_fqn.startsWith(SQL_CHECK_PREFIX);
+      const isSqlCheck = isCrossTableRule(rule);
       if (catalogFilter !== "all") {
         if (catalogFilter === CROSS_TABLE_CATALOG) {
           if (!isSqlCheck) return false;
@@ -1066,7 +1072,7 @@ function DraftsPage() {
                                         variant="ghost"
                                         disabled={busy}
                                         onClick={() =>
-                                          rule.table_fqn.startsWith(SQL_CHECK_PREFIX)
+                                          isCrossTableRule(rule)
                                             ? navigate({
                                                 to: "/rules/create-sql",
                                                 search: { edit: rule.table_fqn, from: "drafts" },
@@ -1161,7 +1167,7 @@ function DraftsPage() {
                                     variant="outline"
                                     className="gap-1.5 h-7 text-xs"
                                     onClick={() =>
-                                      rule.table_fqn.startsWith(SQL_CHECK_PREFIX)
+                                      isCrossTableRule(rule)
                                         ? navigate({ to: "/rules/create-sql", search: { edit: rule.table_fqn, from: "drafts" } })
                                         : navigate({ to: "/rules/single-table", search: { table: rule.table_fqn, rule_id: rule.rule_id!, from: "drafts" } })
                                     }

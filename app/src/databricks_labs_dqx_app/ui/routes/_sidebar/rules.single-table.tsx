@@ -65,7 +65,7 @@ import {
   type RuleCatalogEntryOut,
 } from "@/lib/api";
 import { useQueryClient } from "@tanstack/react-query";
-import { filterTablesByColumns, checkDuplicates, type CheckDuplicatesIn, submitRuleForApproval, useLabelDefinitions, type LabelDefinition, getTablePreview, runDryRunOnPreview, runDryRunOnTable, type PreviewDryRunIn, type TableDryRunIn, type PreviewDryRunOut } from "@/lib/api-custom";
+import { filterTablesByColumns, checkDuplicates, type CheckDuplicatesIn, submitRuleForApproval, useLabelDefinitions, type LabelDefinition, getTablePreview, runDryRunOnPreview, runDryRunOnTable, type PreviewDryRunIn, type TableDryRunIn, type PreviewDryRunOut, notifyDryRunResult } from "@/lib/api-custom";
 import { PreviewDryRunResultPanel } from "@/components/PreviewDryRunResultPanel";
 import {
   Tabs,
@@ -775,7 +775,6 @@ function UnifiedRulesPage() {
       const hasOnlyEmptyDefault = checks.length === 1 && checks[0].fn === "";
       setChecks(hasOnlyEmptyDefault ? drafts : [...checks, ...drafts]);
       toast.success(t("rulesSingleTable.toastAiGenerated", { count: drafts.length }));
-      setAiPrompt("");
     } catch {
       toast.error(t("rulesSingleTable.toastAiFailed"));
     } finally {
@@ -948,6 +947,7 @@ function UnifiedRulesPage() {
         const r = await runDryRunOnPreview(body);
         setPreviewDryRunResult(r.data);
         toast.success(t("rulesSingleTable.toastDryRunComplete"));
+        notifyDryRunResult({ source_table_fqn: previewTable, total_rows: r.data.total_rows, valid_rows: r.data.pass_rows, error_rows: r.data.error_rows, warning_rows: r.data.warning_rows, status: "success", checks_json: JSON.stringify(checksForTable) }).catch(() => {});
       } else {
         // Inline path reading directly from the live table via Spark (no job submission)
         const body: TableDryRunIn = {
@@ -958,6 +958,7 @@ function UnifiedRulesPage() {
         const r = await runDryRunOnTable(body);
         setPreviewDryRunResult(r.data);
         toast.success(t("rulesSingleTable.toastDryRunComplete"));
+        notifyDryRunResult({ source_table_fqn: previewTable, total_rows: r.data.total_rows, valid_rows: r.data.pass_rows, error_rows: r.data.error_rows, warning_rows: r.data.warning_rows, status: "success", checks_json: JSON.stringify(checksForTable) }).catch(() => {});
       }
     } catch (err) {
       const axErr = err as { response?: { data?: { detail?: string } } };
@@ -1358,7 +1359,7 @@ function UnifiedRulesPage() {
                     value={aiPrompt}
                     onChange={(e) => setAiPrompt(e.target.value)}
                     placeholder={t("rulesSingleTable.aiPromptPlaceholder")}
-                    className="min-h-[52px] resize-none text-sm"
+                    className="min-h-[52px] text-sm"
                     disabled={aiGenerating}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" && !e.shiftKey) {

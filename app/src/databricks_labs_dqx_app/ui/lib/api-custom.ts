@@ -6,7 +6,8 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import type { UseMutationOptions, UseMutationResult, UseQueryOptions, UseQueryResult } from "@tanstack/react-query";
 import * as axios from "axios";
 import type { AxiosError, AxiosRequestConfig, AxiosResponse } from "axios";
-import type { RuleCatalogEntryOut, RunStatusOut } from "./api";
+import type { RuleCatalogEntryOut, RunStatusOut, ProfileRunIn, BatchProfileRunIn } from "./api";
+import { submitProfileRun, submitBatchProfileRun } from "./api";
 
 export interface BatchSaveRulesIn {
   table_fqns: string[];
@@ -1065,6 +1066,172 @@ export const useSaveRetentionSettings = <
   const { mutation: mutationOptions, axios: axiosOptions } = options ?? {};
   return useMutation({
     mutationFn: ({ data }: { data: RetentionSettingsIn }) => saveRetentionSettings(data, axiosOptions),
+    ...mutationOptions,
+  });
+};
+
+// ---------------------------------------------------------------------------
+// Profiler run mutations (orval generates these as useQuery; wrap as useMutation)
+// ---------------------------------------------------------------------------
+
+export const useSubmitProfileRunMutation = <
+  TError = AxiosError<unknown>,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof submitProfileRun>>,
+      TError,
+      { data: ProfileRunIn },
+      TContext
+    >;
+    axios?: AxiosRequestConfig;
+  },
+): UseMutationResult<
+  Awaited<ReturnType<typeof submitProfileRun>>,
+  TError,
+  { data: ProfileRunIn },
+  TContext
+> => {
+  const { mutation: mutationOptions, axios: axiosOptions } = options ?? {};
+  return useMutation({
+    mutationFn: ({ data }: { data: ProfileRunIn }) => submitProfileRun(data, axiosOptions),
+    mutationKey: ["submitProfileRun"],
+    ...mutationOptions,
+  });
+};
+
+// ---------------------------------------------------------------------------
+// Alerts — notification channel management
+// ---------------------------------------------------------------------------
+
+export interface AlertChannelIn {
+  name: string;
+  webhook_url: string;
+  trigger: "all_runs" | "manual_only" | "scheduled_only";
+  enabled: boolean;
+  notify_dry_runs: boolean;
+  scope_mode: "all" | "tables";
+  scope_tables: string[];
+}
+
+export interface AlertChannelOut {
+  channel_id: string;
+  name: string;
+  webhook_url: string;
+  trigger: string;
+  enabled: boolean;
+  notify_dry_runs: boolean;
+  scope_mode: "all" | "tables";
+  scope_tables: string[];
+}
+
+export interface DryRunNotifyPayload {
+  source_table_fqn: string;
+  total_rows?: number | null;
+  valid_rows?: number | null;
+  error_rows?: number | null;
+  warning_rows?: number | null;
+  status?: string;
+  checks_json?: string | null;
+  error_message?: string | null;
+}
+
+export interface NotifyRunsIn {
+  run_ids: string[];
+  trigger?: string;
+}
+
+export interface NotifyRunsOut {
+  notified: number;
+  skipped: number;
+  errors: string[];
+}
+
+export const listAlertChannels = (
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<AlertChannelOut[]>> => {
+  return axios.default.get(`/api/v1/alerts/channels`, options);
+};
+
+export const getAlertChannelsQueryKey = () => ["alerts", "channels"] as const;
+
+export const useListAlertChannels = <TError = AxiosError<unknown>>(
+  options?: UseQueryOptions<AlertChannelOut[], TError>,
+): UseQueryResult<AlertChannelOut[], TError> => {
+  return useQuery({
+    queryKey: getAlertChannelsQueryKey(),
+    queryFn: () => listAlertChannels().then((r) => r.data),
+    ...options,
+  });
+};
+
+export const createAlertChannel = (
+  body: AlertChannelIn,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<AlertChannelOut>> => {
+  return axios.default.post(`/api/v1/alerts/channels`, body, options);
+};
+
+export const updateAlertChannel = (
+  channelId: string,
+  body: AlertChannelIn,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<AlertChannelOut>> => {
+  return axios.default.put(`/api/v1/alerts/channels/${channelId}`, body, options);
+};
+
+export const deleteAlertChannel = (
+  channelId: string,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<void>> => {
+  return axios.default.delete(`/api/v1/alerts/channels/${channelId}`, options);
+};
+
+export const testAlertWebhook = (
+  webhookUrl: string,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<{ success: boolean; message: string }>> => {
+  return axios.default.post(`/api/v1/alerts/test`, { webhook_url: webhookUrl }, options);
+};
+
+export const notifyDryRunResult = (
+  payload: DryRunNotifyPayload,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<NotifyRunsOut>> => {
+  return axios.default.post(`/api/v1/alerts/notify-result`, payload, options);
+};
+
+export const notifyRuns = (
+  body: NotifyRunsIn,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<NotifyRunsOut>> => {
+  return axios.default.post(`/api/v1/alerts/notify`, body, options);
+};
+
+export const useSubmitBatchProfileRunMutation = <
+  TError = AxiosError<unknown>,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof submitBatchProfileRun>>,
+      TError,
+      { data: BatchProfileRunIn },
+      TContext
+    >;
+    axios?: AxiosRequestConfig;
+  },
+): UseMutationResult<
+  Awaited<ReturnType<typeof submitBatchProfileRun>>,
+  TError,
+  { data: BatchProfileRunIn },
+  TContext
+> => {
+  const { mutation: mutationOptions, axios: axiosOptions } = options ?? {};
+  return useMutation({
+    mutationFn: ({ data }: { data: BatchProfileRunIn }) => submitBatchProfileRun(data, axiosOptions),
+    mutationKey: ["submitBatchProfileRun"],
     ...mutationOptions,
   });
 };

@@ -15,6 +15,7 @@ import axios, { isAxiosError } from "axios";
 import {
   useBatchRunFromCatalog,
   getListValidationRunsQueryKey,
+  notifyRuns,
 } from "@/lib/api-custom";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -45,6 +46,8 @@ import {
   Zap,
   ChevronRight,
   X,
+  Link2,
+  Copy,
 } from "lucide-react";
 import {
   AlertDialog,
@@ -67,6 +70,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Select,
   SelectContent,
@@ -1326,6 +1330,7 @@ function ExecuteTab({ onGoToHistory }: { onGoToHistory: () => void }) {
               onRunComplete={(runId) => {
                 removeRun(runId);
                 queryClient.invalidateQueries({ queryKey: getListValidationRunsQueryKey() });
+                notifyRuns({ run_ids: [runId], trigger: "manual" }).catch(() => {});
               }}
               onDismissAll={() => {
                 clearActiveRuns();
@@ -1819,6 +1824,21 @@ function SchedulesListView({ isDeleting }: { isDeleting?: boolean }) {
   const [fetchError, setFetchError] = useState<"permission" | "other" | null>(null);
   const prevDeleting = useRef(isDeleting);
 
+  const { data: rulesResp } = useListRules({ status: "approved" }, { query: {} });
+  const approvedRules: RuleCatalogEntryOut[] = useMemo(
+    () => (Array.isArray(rulesResp?.data) ? rulesResp.data.filter((r: RuleCatalogEntryOut) => r.status === "approved") : []),
+    [rulesResp],
+  );
+
+  const handleCopy = async (value: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      toast.success(t("runs.endpointCopied"), { duration: 1500 });
+    } catch {
+      toast.error(t("runs.couldNotCopy"));
+    }
+  };
+
   const handleFetchError = (err: unknown) => {
     setFetchError(isAxiosError(err) && err.response?.status === 403 ? "permission" : "other");
   };
@@ -1894,10 +1914,18 @@ function SchedulesListView({ isDeleting }: { isDeleting?: boolean }) {
             <th className="text-left font-medium text-muted-foreground px-4 py-3">{t("runs.headerSampleSize")}</th>
             <th className="text-left font-medium text-muted-foreground px-4 py-3">{t("runs.headerLastUpdated")}</th>
             <th className="text-left font-medium text-muted-foreground px-4 py-3">{t("runs.headerUpdatedBy")}</th>
+            <th className="text-left font-medium text-muted-foreground px-4 py-3">{t("runs.headerApi")}</th>
           </tr>
         </thead>
         <tbody>
-          {schedules.map((sched) => (
+          {schedules.map((sched) => {
+            // Scope column shows the raw configured tables for "tables" mode; match
+            // that instead of resolveScheduleScope's approved-rules filter so the
+            // API popover never says "no tables" for a table the UI already lists.
+            const scheduleTableFqns = sched.config.scope_mode === "tables"
+              ? Array.from(new Set(sched.config.scope_tables ?? []))
+              : Array.from(new Set(resolveScheduleScope(sched.config, approvedRules)));
+            return (
             <tr key={sched.schedule_name} className="border-b last:border-b-0 hover:bg-muted/30 transition-colors">
               <td className="px-4 py-3">
                 <Link
@@ -1928,8 +1956,62 @@ function SchedulesListView({ isDeleting }: { isDeleting?: boolean }) {
               <td className="px-4 py-3 text-muted-foreground text-xs">
                 {sched.updated_by || sched.created_by || "—"}
               </td>
+              <td className="px-4 py-3">
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button variant="ghost" size="icon" aria-label={t("runs.viewApiEndpoints")}>
+                      <Link2 className="h-4 w-4" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-[480px] max-h-96 overflow-y-auto space-y-2" align="end">
+                    <div>
+                      <p className="text-sm font-semibold">{t("runs.apiEndpointsTitle")}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">{t("runs.apiEndpointsDescription")}</p>
+                    </div>
+                    {scheduleTableFqns.length === 0 ? (
+                      <p className="text-xs text-muted-foreground">{t("runs.apiEndpointsNoTables")}</p>
+                    ) : (
+                      scheduleTableFqns.map((fqn) => {
+                        const path = `/api/v1/alerts/status/table/${encodeURIComponent(fqn)}`;
+                        const url = `${window.location.origin}${path}`;
+                        return (
+                          <div key={fqn} className="flex items-center gap-2" title={url}>
+                            <Badge variant="secondary" className="shrink-0 font-mono text-[10px]">
+                              GET
+                            </Badge>
+                            <code className="min-w-0 flex-1 truncate rounded bg-muted px-2 py-1 text-xs font-mono">
+                              {path}
+                            </code>
+                            <Button variant="ghost" size="icon" onClick={() => handleCopy(url)} aria-label={t("runs.headerApi")}>
+                              <Copy className="h-3 w-3" />
+                            </Button>
+                          </div>
+                        );
+                      })
+                    )}
+                    {(() => {
+                      const runPath = "/api/v1/alerts/status/run/{run_id}";
+                      const runUrl = `${window.location.origin}${runPath}`;
+                      return (
+                        <div className="flex items-center gap-2" title={t("runs.apiEndpointRunLabel")}>
+                          <Badge variant="secondary" className="shrink-0 font-mono text-[10px]">
+                            GET
+                          </Badge>
+                          <code className="min-w-0 flex-1 truncate rounded bg-muted px-2 py-1 text-xs font-mono">
+                            {runPath}
+                          </code>
+                          <Button variant="ghost" size="icon" onClick={() => handleCopy(runUrl)} aria-label={t("runs.headerApi")}>
+                            <Copy className="h-3 w-3" />
+                          </Button>
+                        </div>
+                      );
+                    })()}
+                  </PopoverContent>
+                </Popover>
+              </td>
             </tr>
-          ))}
+            );
+          })}
         </tbody>
       </table>
     </div>

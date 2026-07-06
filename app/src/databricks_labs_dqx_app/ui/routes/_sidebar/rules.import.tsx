@@ -43,13 +43,15 @@ import {
 } from "@/components/ui/tooltip";
 import {
   type SaveRulesIn,
+  type DryRunIn,
   type DryRunResultsOut,
   saveRules,
+  submitDryRun,
   submitRuleForApproval,
-  useSubmitDryRun,
   useGetDryRunResults,
 } from "@/lib/api";
-import { useValidateChecks, getDryRunStatusCustom, cancelDryRun } from "@/lib/api-custom";
+import { useMutation } from "@tanstack/react-query";
+import { useValidateChecks, getDryRunStatusCustom, cancelDryRun, notifyDryRunResult } from "@/lib/api-custom";
 import { useJobPolling } from "@/hooks/use-job-polling";
 import { CatalogBrowser } from "@/components/CatalogBrowser";
 import { LabelsBadges } from "@/components/Labels";
@@ -130,7 +132,9 @@ function YamlImportCard({ onDone }: { onDone: () => void }) {
   const [dryRunJobRunId, setDryRunJobRunId] = useState<number | null>(null);
   const [dryRunViewFqn, setDryRunViewFqn] = useState<string | null>(null);
 
-  const submitDryRunMutation = useSubmitDryRun();
+  const submitDryRunMutation = useMutation({
+    mutationFn: (data: DryRunIn) => submitDryRun(data),
+  });
   const dryRunResultsQuery = useGetDryRunResults(dryRunRunId ?? "", {
     query: { enabled: false },
   });
@@ -155,6 +159,15 @@ function YamlImportCard({ onDone }: { onDone: () => void }) {
           if (resp.data?.data) {
             setDryRunResult(resp.data.data);
             toast.success(t("rulesImport.dryRunComplete"));
+            notifyDryRunResult({
+              source_table_fqn: resp.data.data.source_table_fqn,
+              total_rows: resp.data.data.total_rows,
+              valid_rows: resp.data.data.valid_rows,
+              error_rows: resp.data.data.error_rows,
+              warning_rows: resp.data.data.warning_rows,
+              status: "success",
+              checks_json: parsedChecks ? JSON.stringify(parsedChecks) : undefined,
+            }).catch(() => {});
           }
         } catch {
           toast.error(t("rulesImport.failedFetchDryRun"));
@@ -195,13 +208,11 @@ function YamlImportCard({ onDone }: { onDone: () => void }) {
     try {
       setDryRunResult(null);
       const resp = await submitDryRunMutation.mutateAsync({
-        data: {
-          table_fqn: targetTable,
-          checks: dryRunnableChecks,
-          sample_size: dryRunSampleSize,
-          skip_history: true,
-        },
-      });
+        table_fqn: targetTable,
+        checks: dryRunnableChecks,
+        sample_size: dryRunSampleSize,
+        skip_history: true,
+      } as DryRunIn);
       setDryRunRunId(resp.data.run_id);
       setDryRunJobRunId(resp.data.job_run_id);
       setDryRunViewFqn(resp.data.view_fqn ?? null);
