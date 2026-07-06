@@ -74,6 +74,7 @@ import { useAiAvailability, aiUnavailableReason } from "@/hooks/use-ai-availabil
 import { AI_BUTTON_BG, AI_ICON_COLOR, AI_BANNER_BG, AI_BANNER_BORDER, AI_GRADIENT_URL } from "@/lib/ai-style";
 import { orderSeverityValuesForDisplay, colorFor, ColorDot, type LabelColorDefinition } from "@/components/RegistryRuleBadges";
 import {
+  COLUMN_KINDS,
   deriveSlotsAndParameters,
   listColumnArgKey,
   nativeArguments,
@@ -965,6 +966,36 @@ export function RegistryRuleFormDialog({
 
   const sqlError = mode === "sql" ? validateSqlPredicate(sqlPredicate, t) : null;
 
+  // -- Save gating -------------------------------------------------------
+  // Names of the selected function's non-column parameters that have no
+  // default (i.e. genuinely required) — drives both the red `*` markers on
+  // parameter labels below and `canSave`'s native-mode check.
+  const requiredParamNames = useMemo(
+    () =>
+      new Set(
+        (selectedFn?.params ?? []).filter((p) => p.required && !COLUMN_KINDS.has(p.kind)).map((p) => p.name),
+      ),
+    [selectedFn],
+  );
+  const nativeRequiredParamsFilled = derivedParams
+    .filter((p) => requiredParamNames.has(p.name))
+    .every((p) => (paramRawValues[p.name] ?? "").trim().length > 0);
+  const slotsHaveValidNames = (slots: RuleSlot[]) => slots.every((s) => SLOT_NAME_PATTERN.test(s.name));
+  // Pure derivation of "every field required to define a valid rule is
+  // filled in for the current mode" — gates both footer Save buttons so a
+  // steward can't persist a half-built rule. Low-Code has no editable body
+  // yet (see `lowcodeComingSoon` below), so it's never save-able.
+  const canSave =
+    name.trim().length > 0 &&
+    !nameError &&
+    severity.trim().length > 0 &&
+    dimension.trim().length > 0 &&
+    (mode === "dqx_native"
+      ? functionName.trim().length > 0 && nativeRequiredParamsFilled && slotsHaveValidNames(nativeSlots)
+      : mode === "sql"
+        ? sqlPredicate.trim().length > 0 && sqlError === null && slotsHaveValidNames(sqlSlots)
+        : false);
+
   const buildDefinition = (): RuleDefinition => {
     const trimmedError = errorMessage.trim();
     if (mode === "sql") {
@@ -1463,7 +1494,9 @@ export function RegistryRuleFormDialog({
       {mode === "dqx_native" && (
         <div className="space-y-3">
           <div className="space-y-1.5">
-            <Label className="text-xs">{t("rulesRegistry.functionLabel")}</Label>
+            <Label className="text-xs">
+              {t("rulesRegistry.functionLabel")} <span className="text-destructive">*</span>
+            </Label>
             <FunctionCombobox
               value={functionName}
               functions={checkFunctions}
@@ -1489,7 +1522,9 @@ export function RegistryRuleFormDialog({
                     return (
                       <div key={p.name} className="space-y-1 sm:col-span-2">
                         <div className="flex items-center gap-1.5">
-                          <Label className="text-[11px] text-muted-foreground font-mono">{p.name}</Label>
+                          <Label className="text-[11px] text-muted-foreground font-mono">
+                            {p.name} {requiredParamNames.has(p.name) && <span className="text-destructive">*</span>}
+                          </Label>
                           <HelpTooltip text={t("rulesRegistry.refTableTooltip")} />
                         </div>
                         <ReferenceTableField
@@ -1504,7 +1539,9 @@ export function RegistryRuleFormDialog({
                     return (
                       <div key={p.name} className="space-y-1 sm:col-span-2">
                         <div className="flex items-center gap-1.5">
-                          <Label className="text-[11px] text-muted-foreground font-mono">{p.name}</Label>
+                          <Label className="text-[11px] text-muted-foreground font-mono">
+                            {p.name} {requiredParamNames.has(p.name) && <span className="text-destructive">*</span>}
+                          </Label>
                           <HelpTooltip text={t("rulesRegistry.refColumnsTooltip")} />
                         </div>
                         <ReferenceColumnsField
@@ -1518,7 +1555,9 @@ export function RegistryRuleFormDialog({
                   }
                   return (
                     <div key={p.name} className="space-y-1">
-                      <Label className="text-[11px] text-muted-foreground font-mono">{p.name}</Label>
+                      <Label className="text-[11px] text-muted-foreground font-mono">
+                        {p.name} {requiredParamNames.has(p.name) && <span className="text-destructive">*</span>}
+                      </Label>
                       {p.type === "boolean" ? (
                         <Select
                           value={paramRawValues[p.name] || "false"}
@@ -1559,7 +1598,9 @@ export function RegistryRuleFormDialog({
         <div className="space-y-3">
           <PredicateEditorExplainer />
           <div className="space-y-1.5">
-            <Label className="text-xs">{t("rulesRegistry.sqlPredicateLabel")}</Label>
+            <Label className="text-xs">
+              {t("rulesRegistry.sqlPredicateLabel")} <span className="text-destructive">*</span>
+            </Label>
             <Textarea
               className={`font-mono text-xs min-h-[100px] ${sqlError ? "border-red-400 focus-visible:ring-red-400" : ""}`}
               placeholder={t("rulesRegistry.sqlPredicatePlaceholder")}
@@ -1800,7 +1841,7 @@ export function RegistryRuleFormDialog({
           <Button
             variant="secondary"
             onClick={() => handleSave(false)}
-            disabled={saving || !isDirty}
+            disabled={saving || !isDirty || !canSave}
             className="gap-2"
           >
             {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
@@ -1814,7 +1855,7 @@ export function RegistryRuleFormDialog({
               {t("rulesRegistry.actionSubmit")}
             </Button>
           ) : (
-            <Button onClick={() => handleSave(true)} disabled={saving || !isDirty} className="gap-2">
+            <Button onClick={() => handleSave(true)} disabled={saving || !isDirty || !canSave} className="gap-2">
               {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
               {t("rulesRegistry.saveAndSubmit")}
             </Button>
