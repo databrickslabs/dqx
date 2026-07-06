@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, create_autospec
 
 import pytest
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.errors.platform import BadRequest
 
 from databricks_labs_dqx_app.backend.services.ai_gateway import (
     AIGateway,
@@ -117,6 +118,48 @@ class TestHappyPath:
 
         with pytest.raises(AIResponseParseError):
             await gateway.query(user_email="a@x", purpose="p", messages=[{"role": "user", "content": "hi"}])
+
+
+class TestTemperatureFallback:
+    """The GPT-5 family (incl. the default endpoint) rejects an explicit
+    temperature. The gateway must transparently retry without it so a caller
+    that wants determinism (``temperature=0``) still gets a response."""
+
+    def _reply(self) -> SimpleNamespace:
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="ok"))])
+
+    async def test_retries_without_temperature_when_endpoint_rejects_it(self):
+        ws = create_autospec(WorkspaceClient, instance=True)
+        calls: list[dict] = []
+
+        def _query(**kwargs):
+            calls.append(kwargs)
+            if "temperature" in kwargs:
+                raise BadRequest("Unsupported value: 'temperature' does not support 0 with this model.")
+            return self._reply()
+
+        ws.serving_endpoints.query.side_effect = _query
+        gateway = AIGateway(user_ws=ws, app_settings=_settings())
+
+        result = await gateway.query(
+            user_email="a@x", purpose="p", messages=[{"role": "user", "content": "hi"}], temperature=0
+        )
+
+        assert result == "ok"
+        assert len(calls) == 2
+        assert "temperature" in calls[0]
+        assert "temperature" not in calls[1]
+
+    async def test_unrelated_bad_request_is_not_retried(self):
+        ws = create_autospec(WorkspaceClient, instance=True)
+        ws.serving_endpoints.query.side_effect = BadRequest("some other validation error")
+        gateway = AIGateway(user_ws=ws, app_settings=_settings())
+
+        with pytest.raises(BadRequest):
+            await gateway.query(
+                user_email="a@x", purpose="p", messages=[{"role": "user", "content": "hi"}], temperature=0
+            )
+        assert ws.serving_endpoints.query.call_count == 1
 
 
 class TestParseJsonObject:

@@ -43,6 +43,7 @@ from collections import defaultdict, deque
 from typing import Any
 
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.errors.platform import BadRequest
 from databricks.sdk.service.serving import ChatMessage, ChatMessageRole
 
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
@@ -192,10 +193,31 @@ class AIGateway:
         if temperature is not None:
             query_kwargs["temperature"] = temperature
 
-        response = await asyncio.to_thread(self._user_ws.serving_endpoints.query, **query_kwargs)
+        response = await self._query_endpoint(query_kwargs)
         content = self._extract_content(response)
         self._audit(user_email=user_email, endpoint=endpoint, purpose=purpose, output_size=len(content))
         return content
+
+    async def _query_endpoint(self, query_kwargs: dict[str, Any]) -> Any:
+        """Query the serving endpoint, retrying once without ``temperature`` if it's rejected.
+
+        Several Databricks Foundation Model endpoints (notably the GPT-5
+        family, including the default ``databricks-gpt-5-5``) only accept the
+        default sampling temperature and return a ``BadRequest`` for any
+        explicit ``temperature`` — including ``0``, which callers pass for
+        determinism. Rather than couple every caller to each endpoint's
+        capabilities, drop the optional ``temperature`` and retry once when
+        (and only when) the endpoint rejects that specific parameter. Any
+        other ``BadRequest`` propagates unchanged.
+        """
+        try:
+            return await asyncio.to_thread(self._user_ws.serving_endpoints.query, **query_kwargs)
+        except BadRequest as e:
+            if "temperature" not in query_kwargs or "temperature" not in str(e).lower():
+                raise
+            retry_kwargs = {k: v for k, v in query_kwargs.items() if k != "temperature"}
+            logger.info("Serving endpoint rejected explicit temperature; retrying with the endpoint default")
+            return await asyncio.to_thread(self._user_ws.serving_endpoints.query, **retry_kwargs)
 
     @staticmethod
     def _extract_content(response: Any) -> str:
@@ -211,8 +233,7 @@ class AIGateway:
         """Log one audit line per call. Never logs prompt content or row/user data (CWE-117 guard)."""
         user_hash = hashlib.sha256(user_email.encode()).hexdigest()[:12]
         logger.info(
-            f"ai_gateway_call endpoint={endpoint} purpose={purpose} "
-            f"user_hash={user_hash} output_size={output_size}"
+            f"ai_gateway_call endpoint={endpoint} purpose={purpose} user_hash={user_hash} output_size={output_size}"
         )
 
     # ------------------------------------------------------------------

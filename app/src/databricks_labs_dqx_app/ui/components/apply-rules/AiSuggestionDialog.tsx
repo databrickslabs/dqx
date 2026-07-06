@@ -185,7 +185,7 @@ export function AiSuggestionDialog({
               {t("monitoredTables.suggestRulesEmptyTitle")}
             </p>
             <p className="text-xs text-muted-foreground/70 max-w-sm">
-              {t("monitoredTables.suggestRulesEmptyDescription")}
+              {state.reason || t("monitoredTables.suggestRulesEmptyDescription")}
             </p>
           </div>
         ) : state ? (

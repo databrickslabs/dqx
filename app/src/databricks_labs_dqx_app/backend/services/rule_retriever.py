@@ -132,8 +132,9 @@ class VectorSearchRetriever:
                 "Ask an admin to enable AI in Settings — provisioning is automatic but can "
                 "take a few minutes to complete."
             )
-        except DatabricksError as e:
-            return False, f"Vector Search is unavailable: {e}"
+        except DatabricksError:
+            logger.warning("Vector Search index %s could not be read", index_name, exc_info=True)
+            return False, "Vector Search is temporarily unavailable. Try again shortly."
 
         status = getattr(index, "status", None)
         if getattr(status, "ready", None) is False:

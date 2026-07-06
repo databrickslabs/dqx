@@ -46,6 +46,13 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_TOP_K = 8
 
+# Human-readable reasons for the genuine "available, but nothing to show"
+# outcomes. Kept as constants so the exact wording is asserted by tests and
+# stays consistent with the dialog's empty-state copy.
+_NO_PUBLISHED_RULES_REASON = "No published rules to suggest from yet. Publish rules to the registry first."
+_NO_MATCH_REASON = "No published rules matched this table's columns."
+_NO_CLEAN_MAPPING_REASON = "Found related rules, but none mapped cleanly to this table's columns."
+
 _JUDGE_SYSTEM_PROMPT = (
     "You are a conservative data-quality rule mapping assistant. Given a table's columns and a list of "
     "candidate published rules, suggest which rules apply to which columns. Every slot of a multi-slot rule "
@@ -145,7 +152,7 @@ class RuleSuggester:
             return SuggestRulesResult(available=False, reason="Rule retrieval failed.")
 
         if not candidates:
-            return SuggestRulesResult(available=True, suggestions=[], reason="No candidate rules found.")
+            return SuggestRulesResult(available=True, suggestions=[], reason=_NO_PUBLISHED_RULES_REASON)
 
         candidate_rules: list[RegistryRule] = []
         for candidate in candidates:
@@ -154,7 +161,7 @@ class RuleSuggester:
                 candidate_rules.append(rule)
 
         if not candidate_rules:
-            return SuggestRulesResult(available=True, suggestions=[], reason="No published candidate rules found.")
+            return SuggestRulesResult(available=True, suggestions=[], reason=_NO_PUBLISHED_RULES_REASON)
 
         try:
             judged = await self._judge(candidate_rules, columns, table_fqn, user_email)
@@ -169,6 +176,14 @@ class RuleSuggester:
 
         already_applied = self._already_applied_keys(binding_id)
         suggestions = self._post_process(judged, candidate_rules, columns, already_applied)
+        if not suggestions:
+            # AI ran successfully but produced nothing to add. Distinguish the
+            # two zero-result shapes so the dialog can say *why* rather than
+            # showing a blank panel: the judge proposed mappings that all
+            # failed validation / were already applied, vs the judge found no
+            # rule that fits this table's columns at all.
+            reason = _NO_CLEAN_MAPPING_REASON if judged else _NO_MATCH_REASON
+            return SuggestRulesResult(available=True, suggestions=[], reason=reason)
         return SuggestRulesResult(available=True, suggestions=suggestions)
 
     # ------------------------------------------------------------------

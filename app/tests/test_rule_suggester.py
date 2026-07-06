@@ -22,7 +22,6 @@ from databricks_labs_dqx_app.backend.registry_models import (
 from databricks_labs_dqx_app.backend.services.ai_gateway import (
     AIGateway,
     AIRateLimitExceededError,
-    AIResponseParseError,
     AIUnavailableError,
 )
 from databricks_labs_dqx_app.backend.services.apply_rules_service import ApplyRulesService
@@ -33,14 +32,21 @@ from databricks_labs_dqx_app.backend.services.monitored_table_service import (
 )
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
 from databricks_labs_dqx_app.backend.services.rule_retriever import RetrievedRule, RuleRetrievalUnavailableError
-from databricks_labs_dqx_app.backend.services.rule_suggester import RuleSuggester
+from databricks_labs_dqx_app.backend.services.rule_suggester import (
+    _NO_CLEAN_MAPPING_REASON,
+    _NO_MATCH_REASON,
+    _NO_PUBLISHED_RULES_REASON,
+    RuleSuggester,
+)
 
 
 def _rule(rule_id: str, slot_names: list[str], severity: str = "High") -> RegistryRule:
     definition = RuleDefinition.model_validate(
         {
             "body": {"function": "is_not_null", "arguments": {n: f"{{{{{n}}}}}" for n in slot_names}},
-            "slots": [{"name": n, "family": "any", "position": i, "cardinality": "one"} for i, n in enumerate(slot_names)],
+            "slots": [
+                {"name": n, "family": "any", "position": i, "cardinality": "one"} for i, n in enumerate(slot_names)
+            ],
             "parameters": [],
         }
     )
@@ -86,7 +92,9 @@ def _gateway(judge_response: dict | str | None = None, error: Exception | None =
     if error is not None:
         gw.query.side_effect = error
     else:
-        content = judge_response if isinstance(judge_response, str) else json.dumps(judge_response or {"suggestions": []})
+        content = (
+            judge_response if isinstance(judge_response, str) else json.dumps(judge_response or {"suggestions": []})
+        )
         gw.query.return_value = content
     gw.parse_json_object.side_effect = AIGateway.parse_json_object
     return gw
@@ -237,6 +245,37 @@ class TestHappyPath:
 
         assert result.available is True
         assert result.suggestions == []
+        assert result.reason == _NO_PUBLISHED_RULES_REASON
+
+    async def test_no_matching_rule_sets_distinct_reason(self, monitored_tables, registry, apply_rules):
+        # Candidates retrieved + published, judge ran, but proposed nothing.
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = _profile({"id": {}})
+        registry.get_rule.return_value = _rule("r1", ["column"])
+        retriever = FakeRetriever(candidates=[RetrievedRule(rule_id="r1", score=0.9)])
+        suggester = _suggester(monitored_tables, registry, apply_rules, retriever, _gateway({"suggestions": []}))
+
+        result = await suggester.suggest("b1", "user@x")
+
+        assert result.available is True
+        assert result.suggestions == []
+        assert result.reason == _NO_MATCH_REASON
+
+    async def test_all_judged_filtered_sets_no_clean_mapping_reason(self, monitored_tables, registry, apply_rules):
+        # Judge proposed a mapping, but it maps to a column that doesn't exist,
+        # so post-processing drops it — the reason must say so, not stay blank.
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = _profile({"id": {}})
+        registry.get_rule.return_value = _rule("r1", ["column"])
+        retriever = FakeRetriever(candidates=[RetrievedRule(rule_id="r1", score=0.9)])
+        gateway = _gateway({"suggestions": [{"rule_id": "r1", "mapping": {"column": "does_not_exist"}}]})
+        suggester = _suggester(monitored_tables, registry, apply_rules, retriever, gateway)
+
+        result = await suggester.suggest("b1", "user@x")
+
+        assert result.available is True
+        assert result.suggestions == []
+        assert result.reason == _NO_CLEAN_MAPPING_REASON
 
     async def test_unpublished_candidate_rule_is_dropped(self, monitored_tables, registry, apply_rules):
         monitored_tables.get.return_value = _binding_detail()
@@ -251,6 +290,7 @@ class TestHappyPath:
 
         assert result.available is True
         assert result.suggestions == []
+        assert result.reason == _NO_PUBLISHED_RULES_REASON
 
 
 class TestPostProcessing:
