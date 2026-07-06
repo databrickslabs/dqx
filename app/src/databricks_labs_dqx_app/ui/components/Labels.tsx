@@ -263,7 +263,7 @@ function LabelRow({
           value={row.key}
           onChange={(e) => onChange({ key: e.target.value })}
           disabled={disabled}
-          className="h-7 text-xs flex-1 min-w-0"
+          className="h-7 text-xs w-28 shrink-0"
         />
       )}
       <span className="text-muted-foreground text-xs">=</span>
@@ -280,7 +280,7 @@ function LabelRow({
           value={row.value}
           onChange={(e) => onChange({ value: e.target.value })}
           disabled={disabled}
-          className="h-7 text-xs flex-1 min-w-0"
+          className="h-7 text-xs flex-1 min-w-0 max-w-40"
         />
       )}
       <Button
@@ -434,7 +434,7 @@ function ValuePickerButton({
       <button
         type="button"
         className={cn(
-          "h-7 text-xs flex-1 min-w-0 rounded border px-2 inline-flex items-center justify-between gap-2 hover:bg-muted",
+          "h-7 text-xs flex-1 min-w-0 max-w-40 rounded border px-2 inline-flex items-center justify-between gap-2 hover:bg-muted",
           disabled && "opacity-50 cursor-not-allowed",
         )}
         onClick={() => onChange(isTrue ? "false" : "true")}
@@ -456,7 +456,7 @@ function ValuePickerButton({
           type="button"
           variant="outline"
           size="sm"
-          className="h-7 text-xs flex-1 min-w-0 justify-between font-normal"
+          className="h-7 text-xs flex-1 min-w-0 max-w-40 justify-between font-normal"
           disabled={disabled}
         >
           <span className="truncate">
