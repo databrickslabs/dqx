@@ -441,7 +441,9 @@ export function MonitoredTablesTable({
                         // Condensed to dqlake's compact row density (p-2
                         // instead of the shared primitive's default p-3) —
                         // kept consistent with RulesTable's body cells.
-                        className="overflow-hidden p-2"
+                        // align-middle keeps the status badge cell
+                        // vertically centered in the row.
+                        className="overflow-hidden p-2 align-middle"
                       >
                         {COLUMNS[k].renderCell(r)}
                       </TableCell>

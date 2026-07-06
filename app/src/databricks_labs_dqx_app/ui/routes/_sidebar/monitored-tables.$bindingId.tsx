@@ -221,7 +221,7 @@ function MonitoredTableDetailPage() {
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-2xl font-semibold tracking-tight font-mono">{table.table_fqn}</h1>
+              <h1 className="text-2xl font-semibold tracking-tight leading-none font-mono">{table.table_fqn}</h1>
               {table.status === "published" ? (
                 <Badge variant="outline" className="gap-1 border-emerald-500 text-emerald-600">
                   <ShieldCheck className="h-3 w-3" />

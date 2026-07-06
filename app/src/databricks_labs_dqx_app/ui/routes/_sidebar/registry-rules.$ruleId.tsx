@@ -215,7 +215,7 @@ function RegistryRuleDetailPage() {
 
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex flex-wrap items-center gap-2 min-w-0">
-            <h1 className="text-2xl font-semibold tracking-tight truncate">{name}</h1>
+            <h1 className="text-2xl font-semibold tracking-tight leading-none truncate">{name}</h1>
             <StatusBadge status={rule.status} />
           </div>
           <div className="flex items-center gap-2 ml-auto">

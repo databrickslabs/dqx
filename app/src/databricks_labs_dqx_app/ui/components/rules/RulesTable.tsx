@@ -8,7 +8,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ChevronDown, ChevronUp, Lock, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -23,7 +22,6 @@ import {
   RESERVED_DIMENSION_KEY,
   RESERVED_SEVERITY_KEY,
   getTag,
-  freeTags,
   colorFor,
   TagBadge,
   StatusBadge,
@@ -108,26 +106,14 @@ function TruncatedCell({
 function NameCell({ r }: { r: RegistryRuleOut }) {
   const { t } = useTranslation();
   const name = getTag(r, RESERVED_NAME_KEY) || r.rule_id;
-  const tags = freeTags(r);
   return (
-    <div className="min-w-0">
-      <div className="flex items-center gap-1.5 min-w-0">
-        {r.is_builtin && (
-          <span title={t("rulesRegistry.builtinTooltip")}>
-            <Lock className="h-3 w-3 text-muted-foreground shrink-0" />
-          </span>
-        )}
-        <TruncatedCell text={name} className="font-medium text-sm" />
-      </div>
-      {Object.keys(tags).length > 0 && (
-        <div className="flex flex-wrap gap-1 mt-1">
-          {Object.entries(tags).slice(0, 3).map(([k, v]) => (
-            <Badge key={k} variant="outline" className="text-[9px] font-normal px-1 py-0">
-              {k}={v}
-            </Badge>
-          ))}
-        </div>
+    <div className="flex items-center gap-1.5 min-w-0">
+      {r.is_builtin && (
+        <span title={t("rulesRegistry.builtinTooltip")}>
+          <Lock className="h-3 w-3 text-muted-foreground shrink-0" />
+        </span>
       )}
+      <TruncatedCell text={name} className="font-medium text-sm" />
     </div>
   );
 }
@@ -474,7 +460,9 @@ export function RulesTable({
                       style={{ width, minWidth: width, maxWidth: width }}
                       // Condensed to dqlake's compact row density (p-2
                       // instead of the shared primitive's default p-3).
-                      className="overflow-hidden p-2"
+                      // align-middle keeps badge cells (status/dimension/
+                      // severity/mode) vertically centered in the row.
+                      className="overflow-hidden p-2 align-middle"
                       onClick={k === "actions" ? (e) => e.stopPropagation() : undefined}
                     >
                       {k === "actions" ? renderActions(r) : COLUMNS[k].renderCell(r, ctx)}
