@@ -36,6 +36,7 @@ import {
 } from "@/components/ui/tooltip";
 import {
   AlertCircle,
+  AlertTriangle,
   ArrowLeft,
   BarChart3,
   ClipboardList,
@@ -64,6 +65,7 @@ import {
   useSetAppliedRuleSeverityOverride,
   useListRegistryRules,
   useGetTableColumns,
+  useGetRules,
   type AppliedRuleOut,
   type ColumnOut,
   type MonitoredTableOut,
@@ -1087,6 +1089,20 @@ function ApplyRulesTab({
 
 function ResultsTab({ tableFqn, published }: { tableFqn: string; published: boolean }) {
   const { t } = useTranslation();
+
+  // Materializing an applied rule (publish) does NOT make it live — it lands
+  // in dq_quality_rules as `draft` (or `pending_approval` after re-review, per
+  // the materializer's Behaviour A/B logic) and only actually runs once an
+  // approver flips it to `approved`, exactly like a manually-authored rule.
+  // That gate is easy to miss because nothing on this page surfaces it, so
+  // pull the table's checks here purely to count how many still need review
+  // and point the steward at the existing Drafts & Review queue.
+  const rulesQuery = useGetRules(tableFqn, {
+    query: { enabled: published, retry: false },
+  });
+  const checks = rulesQuery.data?.data ?? [];
+  const pendingCount = checks.filter((c) => c.status === "draft" || c.status === "pending_approval").length;
+
   return (
     <Card className="mt-4">
       <CardHeader>
@@ -1099,6 +1115,22 @@ function ResultsTab({ tableFqn, published }: { tableFqn: string; published: bool
       <CardContent className="space-y-3">
         {!published && (
           <p className="text-sm text-muted-foreground">{t("monitoredTables.notYetPublishedResultsHint")}</p>
+        )}
+        {pendingCount > 0 && (
+          <div className="flex items-start gap-3 p-3 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-700">
+            <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+            <div className="space-y-1.5">
+              <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
+                {t("monitoredTables.resultsApprovalBannerTitle")}
+              </p>
+              <p className="text-sm text-amber-800/90 dark:text-amber-300/90">
+                {t("monitoredTables.resultsApprovalBannerBody", { count: pendingCount })}
+              </p>
+              <Button asChild size="sm" variant="outline" className="gap-1.5 h-7 text-xs border-amber-400 text-amber-700 hover:bg-amber-100 dark:text-amber-300 dark:hover:bg-amber-900">
+                <Link to="/rules/drafts">{t("monitoredTables.resultsApprovalBannerCta")}</Link>
+              </Button>
+            </div>
+          </div>
         )}
         <p className="text-sm text-muted-foreground">
           {t("monitoredTables.resultsTableFqnHint", { table: tableFqn })}
