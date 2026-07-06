@@ -49,6 +49,7 @@ import { HelpTooltip } from "@/components/HelpTooltip";
 import { CatalogBrowser } from "@/components/CatalogBrowser";
 import { PredicatePolaritySwitch } from "@/components/rules/PredicatePolaritySwitch";
 import { PredicateEditorExplainer } from "@/components/rules/PredicateEditorExplainer";
+import { PredicateEditor } from "@/components/rules/PredicateEditor";
 import { AdvancedDisclosure } from "@/components/rules/AdvancedDisclosure";
 import { cn } from "@/lib/utils";
 import type { LabelDefinition } from "@/lib/api-custom";
@@ -1671,15 +1672,16 @@ export function RegistryRuleFormDialog({
             <Label className="text-xs">
               {t("rulesRegistry.sqlPredicateLabel")} <span className="text-destructive">*</span>
             </Label>
-            <Textarea
-              rows={6}
-              spellCheck={false}
-              className={`font-mono text-sm ${sqlError ? "border-red-400 focus-visible:ring-red-400" : ""}`}
-              placeholder={t("rulesRegistry.sqlPredicatePlaceholder")}
-              value={sqlPredicate}
-              onChange={(e) => setSqlPredicate(e.target.value)}
-              disabled={readOnly}
-            />
+            <PredicateEditorExplainer />
+            <div className={sqlError ? "rounded-md ring-1 ring-red-400" : ""}>
+              <PredicateEditor
+                value={sqlPredicate}
+                onChange={setSqlPredicate}
+                declaredColumns={sqlSlots}
+                placeholder={t("rulesRegistry.sqlPredicatePlaceholder")}
+                disabled={readOnly}
+              />
+            </div>
             {sqlError && (
               <p className="text-[10px] text-red-500 flex items-center gap-1">
                 <AlertCircle className="h-2.5 w-2.5 shrink-0" />
@@ -1687,8 +1689,6 @@ export function RegistryRuleFormDialog({
               </p>
             )}
           </div>
-          <PredicateEditorExplainer />
-          <p className="text-xs text-muted-foreground">{t("rulesRegistry.sqlPredicateHelp")}</p>
           <div className="flex flex-wrap items-center gap-3">
             <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
               {t("rulesRegistry.thenTheRow")}
