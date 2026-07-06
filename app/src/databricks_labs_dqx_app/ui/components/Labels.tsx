@@ -212,7 +212,17 @@ export function LabelsEditor({
           </Badge>
         )}
       </button>
-      {open && editor}
+      {/* Animated expand/collapse, symmetric both directions — same
+          grid-template-rows technique used by RuleConfigCard/RulesByColumn's
+          collapsibles elsewhere in the app. */}
+      <div
+        className={cn(
+          "grid transition-[grid-template-rows] duration-200 ease-out",
+          open ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
+        )}
+      >
+        <div className="overflow-hidden">{editor}</div>
+      </div>
     </div>
   );
 }
@@ -540,14 +550,14 @@ function ValuePickerButton({
       <button
         type="button"
         className={cn(
-          "h-7 text-xs flex-1 min-w-0 max-w-40 rounded border px-2 inline-flex items-center justify-between gap-2 hover:bg-muted",
+          "h-7 text-xs font-normal flex-1 min-w-0 max-w-40 rounded border px-2 inline-flex items-center justify-between gap-2 hover:bg-muted",
           disabled && "opacity-50 cursor-not-allowed",
         )}
         onClick={() => onChange(isTrue ? "false" : "true")}
         disabled={disabled}
         title={t("labelsEditor.clickToToggle")}
       >
-        <span className="truncate font-mono">{value || "true"}</span>
+        <span className="truncate">{value || "true"}</span>
         <span className="text-[10px] text-muted-foreground">{t("labelsEditor.clickToToggle")}</span>
       </button>
     );

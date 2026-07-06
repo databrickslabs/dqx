@@ -483,8 +483,21 @@ function SlotsPanel({
       <SectionHeader
         tooltip={t("rulesRegistry.slotsPanelTooltip")}
         action={
-          !disabled && canAddSlot ? (
-            <Button type="button" variant="outline" size="sm" onClick={add} className="h-7 px-2.5 text-xs gap-1.5">
+          // Always reserve the add-button's footprint when the panel isn't
+          // fully disabled (read-only), even when this mode's arity is fixed
+          // (DQX Native with no expandable list argument) — otherwise the
+          // "Columns used" header sits at a different height than in SQL/
+          // Low-Code, which do show a real button here.
+          !disabled ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={canAddSlot ? add : undefined}
+              tabIndex={canAddSlot ? undefined : -1}
+              aria-hidden={!canAddSlot}
+              className={cn("h-7 px-2.5 text-xs gap-1.5", !canAddSlot && "invisible pointer-events-none")}
+            >
               {t("rulesRegistry.slotsPanelAddButton")}
             </Button>
           ) : undefined
@@ -1084,7 +1097,18 @@ export function RegistryRuleFormDialog({
   };
 
   const applyAiProposal = (proposal: AiGenerateRuleOut) => {
-    const appliedMode: RegistryMode = proposal.mode === "sql" ? "sql" : "dqx_native";
+    const body = (proposal.definition ?? {}) as Record<string, unknown>;
+    const nativeFn = typeof body.function === "string" ? body.function : "";
+    // The AI can legitimately propose a raw SQL predicate two ways: an
+    // explicit `mode: "sql"` proposal, or a `dqx_native` proposal whose
+    // selected function is the `sql_query`/`sql_expression` check (both are
+    // real registered DQX functions). Either shape should land the form
+    // directly on the SQL authoring mode with the predicate filled in —
+    // never on DQX Native with that function selected, which would force
+    // the steward to redirect out manually via the same special-case the
+    // Function combobox applies below.
+    const isSqlProposal = proposal.mode === "sql" || nativeFn === "sql_query" || nativeFn === "sql_expression";
+    const appliedMode: RegistryMode = isSqlProposal ? "sql" : "dqx_native";
     // Switch the mode segmented control onto the real authoring mode so the
     // steward immediately sees (and can tweak) what the proposal filled in.
     setMode(appliedMode);
@@ -1105,16 +1129,26 @@ export function RegistryRuleFormDialog({
         : "ai_generated",
     );
 
-    const body = (proposal.definition ?? {}) as Record<string, unknown>;
-    if (proposal.mode === "sql") {
-      setSqlPredicate(typeof body.sql_query === "string" ? body.sql_query : "");
+    if (isSqlProposal) {
+      const nativeArgs =
+        body.arguments && typeof body.arguments === "object"
+          ? (body.arguments as Record<string, unknown>)
+          : {};
+      const predicate =
+        typeof body.sql_query === "string"
+          ? body.sql_query
+          : typeof nativeArgs.query === "string"
+            ? nativeArgs.query
+            : typeof nativeArgs.expression === "string"
+              ? nativeArgs.expression
+              : "";
+      setSqlPredicate(predicate);
       setPolarity(proposal.polarity === "fail" ? "fail" : "pass");
       setFunctionName("");
       setParamRawValues({});
       setPendingNativeArgs(null);
     } else {
-      const fn = typeof body.function === "string" ? body.function : "";
-      setFunctionName(fn);
+      setFunctionName(nativeFn);
       setSqlPredicate("");
       const args =
         body.arguments && typeof body.arguments === "object"
@@ -1523,7 +1557,11 @@ export function RegistryRuleFormDialog({
   const nativeExpandableArgKey = listColumnArgKey(selectedFn);
 
   const implementationTabContent = (
-    <div className="space-y-4 pt-2">
+    // `w-full` pins this tab's content to the tab strip's stable width
+    // regardless of which mode's fields it's currently rendering (DQX
+    // Native / Low-Code / SQL each have different intrinsic content), so
+    // switching Rule Type doesn't visibly shift the panel left/right.
+    <div className="w-full space-y-4 pt-2">
       {/* Rule Type only applies to (and is only shown within) the
           Implementation tab — it drives the rest of this tab's content, so
           it renders at the top of it rather than persistently across all
@@ -1586,7 +1624,7 @@ export function RegistryRuleFormDialog({
             />
           </div>
           {derivedParams.length > 0 && (
-            <div className="space-y-2 border-l pl-3 ml-1">
+            <div className="space-y-2 border-l pl-5 ml-3">
               <Label className="text-xs">{t("rulesRegistry.parametersLabel")}</Label>
               <div className="grid gap-2 sm:grid-cols-2">
                 {derivedParams.map((p) => {
@@ -1982,7 +2020,7 @@ export function RegistryRuleFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={(next) => !saving && onOpenChange(next)}>
-      <DialogContent className="max-w-2xl w-[95vw] max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-2xl w-[95vw] max-h-[90vh] overflow-y-auto [scrollbar-gutter:stable]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             {dialogTitle}
