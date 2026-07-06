@@ -1,13 +1,17 @@
-// AddRulesDialog — apply a PUBLISHED registry rule to a monitored table.
-// Step 1 lists published (approved) registry rules, searchable by name/id.
-// Step 2 maps every one of the selected rule's {{slots}} to a real table
-// column via a family-filtered ColumnPicker. Submitting stages the
-// application on the binding (useApplyRuleToTable) — it does not touch the
-// live checks until the table is published.
+// AddRulesDialog — apply published registry rule(s) to a monitored table.
+// Single step: pick one or more published (approved) registry rules from a
+// searchable table and click Add. Column mapping no longer happens here —
+// each applied rule is staged with an empty `column_mapping` (allowed by
+// the backend precisely so it can be completed later) and the caller
+// auto-expands the rule's card in the by-rule lens so mapping happens there
+// via RuleConfigCard's inline "+ Apply to another column" affordance.
+// Aggregate/dataset-level rules with no slots need no mapping at all, so
+// they're applied with a single empty mapping group and are immediately
+// complete.
 
-import { useEffect, useState } from "react";
-import { useTranslation } from "react-i18next";
-import { useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
+import { useTranslation, Trans } from "react-i18next";
+import { Link } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -19,113 +23,54 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Loader2 } from "lucide-react";
-import {
-  useApplyRuleToTable,
-  useGetTableColumns,
-  getListRegistryRulesQueryKey,
-  type ColumnOut,
-  type RegistryRuleOut,
-  type RuleSlot,
-} from "@/lib/api";
+import { useApplyRuleToTable, type RegistryRuleOut } from "@/lib/api";
 import type { LabelDefinition } from "@/lib/api-custom";
-import { RegistryRuleFormDialog } from "@/components/RegistryRuleFormDialog";
-import { columnsForSlot } from "./ColumnPicker";
-import { RuleMappingCard } from "./RuleMappingCard";
 import { RulesPicker } from "./RulesPicker";
 import type { ColumnRef } from "./RulesByColumn";
-import { RESERVED_NAME_KEY, extractApiError, getTag } from "./shared";
+import { extractApiError } from "./shared";
 
 interface AddRulesDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   bindingId: string;
-  tableFqn: string;
   publishedRules: RegistryRuleOut[];
   labelDefinitions: LabelDefinition[];
-  onApplied: () => void;
+  /** Fired after every selected rule has been applied (staged), with the
+   *  rule ids that were just added — the caller switches to the by-rule
+   *  lens and auto-expands those cards. */
+  onApplied: (ruleIds: string[]) => void;
   /**
    * When opened from the by-column lens's per-column "+ Add rule" CTA, this
-   * carries the clicked column's name/family so it can be preselected for
-   * every slot whose family matches once a rule is picked — this is the
-   * fix for the by-column "Add rule" flow not doing anything useful.
+   * carries the clicked column's name so the dialog can show a hint about
+   * which column the user is adding a rule for. Column mapping itself now
+   * happens in the by-rule card, not here.
    */
   initialColumn?: ColumnRef | null;
-  /**
-   * When set, the dialog skips the rule-selection step and goes straight to
-   * the mapping step for this rule — used by the "+ Apply to another
-   * column" affordance on an already-applied rule's card, which stages a
-   * brand-new mapping group (and therefore its own applied-check entry) for
-   * a rule that's already applied to the table.
-   */
-  presetRule?: RegistryRuleOut | null;
-  /**
-   * Column names `presetRule` is already mapped to (across its other
-   * mapping groups) — passed through to the mapping step's column pickers
-   * so the "+ Apply to another column" flow can't re-pick a column the
-   * rule already covers. See `getUsedColumnsForRule`. Ignored outside the
-   * preset flow.
-   */
-  presetExcludeColumns?: string[];
 }
 
 export function AddRulesDialog({
   open,
   onOpenChange,
   bindingId,
-  tableFqn,
   publishedRules,
   labelDefinitions,
   onApplied,
   initialColumn = null,
-  presetRule = null,
-  presetExcludeColumns,
 }: AddRulesDialogProps) {
   const { t } = useTranslation();
-  const [selectedRule, setSelectedRule] = useState<RegistryRuleOut | null>(null);
-  const [mapping, setMapping] = useState<Record<string, string | string[]>>({});
-  const [createOpen, setCreateOpen] = useState(false);
-  const queryClient = useQueryClient();
-
-  // Preset mode ("+ Apply to another column" on an existing rule card):
-  // jump straight to the mapping step with a fresh (empty) mapping every
-  // time the dialog opens, skipping the rule-selection list entirely.
-  useEffect(() => {
-    if (open && presetRule) {
-      setSelectedRule(presetRule);
-      setMapping({});
-    }
-  }, [open, presetRule]);
-
-  const parts = tableFqn.split(".");
-  const columnsQuery = useGetTableColumns(parts[0] ?? "", parts[1] ?? "", parts[2] ?? "", {
-    query: { enabled: open && parts.length === 3 },
-  });
-  const columns: ColumnOut[] = columnsQuery.data?.data ?? [];
-
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const applyMutation = useApplyRuleToTable();
+  const [applying, setApplying] = useState(false);
 
-  const reset = () => {
-    setSelectedRule(null);
-    setMapping({});
-  };
+  const reset = () => setSelectedIds(new Set());
 
-  const selectRule = (rule: RegistryRuleOut) => {
-    setSelectedRule(rule);
-    if (!initialColumn) {
-      setMapping({});
-      return;
-    }
-    // Preselect every slot whose family matches the column that the
-    // by-column "+ Add rule" CTA was clicked from, so the picker opens
-    // already pointed at that column instead of forcing the user to
-    // re-find it.
-    const initial: Record<string, string | string[]> = {};
-    for (const slot of rule.definition.slots ?? []) {
-      const matches = columnsForSlot(columns, slot).some((c) => c.name === initialColumn.name);
-      if (!matches) continue;
-      initial[slot.name] = slot.cardinality === "many" ? [initialColumn.name] : initialColumn.name;
-    }
-    setMapping(initial);
+  const toggleRule = (rule: RegistryRuleOut) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(rule.rule_id)) next.delete(rule.rule_id);
+      else next.add(rule.rule_id);
+      return next;
+    });
   };
 
   const handleClose = (next: boolean) => {
@@ -133,143 +78,99 @@ export function AddRulesDialog({
     onOpenChange(next);
   };
 
-  const slots: RuleSlot[] = selectedRule?.definition.slots ?? [];
-  const mappingComplete = slots.every((slot) => {
-    const v = mapping[slot.name];
-    if (slot.cardinality === "many") return Array.isArray(v) && v.length > 0;
-    return typeof v === "string" && v.length > 0;
-  });
+  const selectedRules = publishedRules.filter((r) => selectedIds.has(r.rule_id));
 
-  const handleApply = () => {
-    if (!selectedRule || !mappingComplete) return;
-    const group: Record<string, string> = {};
-    for (const slot of slots) {
-      const v = mapping[slot.name];
-      group[slot.name] = Array.isArray(v) ? v.join(",") : (v as string);
-    }
-    applyMutation.mutate(
-      { bindingId, data: { rule_id: selectedRule.rule_id, column_mapping: [group] } },
-      {
-        onSuccess: () => {
-          toast.success(t("monitoredTables.toastApplied"));
-          onApplied();
-          handleClose(false);
-        },
-        onError: (err) => toast.error(extractApiError(err, t("monitoredTables.toastApplyFailed")), { duration: 6000 }),
-      },
+  const handleAdd = async () => {
+    if (selectedRules.length === 0) return;
+    setApplying(true);
+    const results = await Promise.allSettled(
+      selectedRules.map((rule) => {
+        const hasSlots = (rule.definition.slots ?? []).length > 0;
+        // Rules with no slots need no mapping and can be fully applied
+        // immediately with a single empty mapping group. Slotted rules are
+        // staged with an empty column_mapping — the backend now allows
+        // this — so the by-rule card can complete the mapping afterward.
+        const column_mapping = hasSlots ? [] : [{}];
+        return applyMutation.mutateAsync({ bindingId, data: { rule_id: rule.rule_id, column_mapping } });
+      }),
     );
-  };
+    setApplying(false);
 
-  const openCreateRule = () => {
-    onOpenChange(false);
-    setCreateOpen(true);
-  };
+    const appliedIds = selectedRules.filter((_, i) => results[i]?.status === "fulfilled").map((r) => r.rule_id);
+    const failedCount = results.filter((r) => r.status === "rejected").length;
 
-  const handleCreateSaved = () => {
-    queryClient.invalidateQueries({ queryKey: getListRegistryRulesQueryKey() });
+    if (appliedIds.length > 0) {
+      toast.success(t("monitoredTables.toastAppliedCount", { count: appliedIds.length }));
+      onApplied(appliedIds);
+    }
+    if (failedCount > 0) {
+      const firstFailure = results.find((r): r is PromiseRejectedResult => r.status === "rejected");
+      toast.error(extractApiError(firstFailure?.reason, t("monitoredTables.toastApplyFailed")), { duration: 6000 });
+    }
+    if (appliedIds.length > 0) {
+      handleClose(false);
+    }
   };
 
   return (
-    <>
-      <Dialog open={open} onOpenChange={handleClose}>
-        {/* Widened for the mini Rules-Registry table's rule-selection step
-            (Step 1) — matches dqlake's AddRulesDialog sizing, which is wide
-            enough to show a real table view instead of a search-box list.
-            Step 2's mapping card is comfortable at this width too. */}
-        <DialogContent className="!max-w-[min(92vw,900px)] w-[min(92vw,900px)]">
-          <DialogHeader>
-            <DialogTitle>
-              {presetRule
-                ? t("monitoredTables.addMappingDialogTitle")
-                : t("monitoredTables.addRuleDialogTitle")}
-            </DialogTitle>
-            <DialogDescription>
-              {presetRule
-                ? t("monitoredTables.addMappingDialogDescription", {
-                    rule: getTag(presetRule, RESERVED_NAME_KEY) || presetRule.rule_id,
-                  })
-                : t("monitoredTables.addRuleDialogDescription")}
-            </DialogDescription>
-          </DialogHeader>
+    <Dialog open={open} onOpenChange={handleClose}>
+      {/* Widened for the mini Rules-Registry table's rule-selection view —
+          matches dqlake's AddRulesDialog sizing, which is wide enough to
+          show a real table view instead of a search-box list. */}
+      <DialogContent className="!max-w-[min(92vw,900px)] w-[min(92vw,900px)]">
+        <DialogHeader>
+          <DialogTitle>{t("monitoredTables.addRuleDialogTitle")}</DialogTitle>
+          <DialogDescription>{t("monitoredTables.addRuleDialogDescription")}</DialogDescription>
+        </DialogHeader>
 
-          {!selectedRule ? (
-            <div className="space-y-3">
-              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                {t("monitoredTables.stepSelectRule")}
-              </p>
-              {initialColumn && (
-                <p className="text-xs text-muted-foreground">
-                  {t("monitoredTables.addRuleForColumnHint", { column: initialColumn.name })}
-                </p>
-              )}
-              {/* A compact Rules-Registry table (checkbox rows, sortable +
-                  toggleable columns) rather than a plain search box —
-                  ported from dqlake's RulesPicker/AddRulesDialog so picking
-                  a rule to apply means scanning a real table view. */}
-              <RulesPicker
-                rules={publishedRules}
-                labelDefinitions={labelDefinitions}
-                onSelect={selectRule}
-              />
-              <Button variant="outline" size="sm" className="gap-2 w-full" onClick={openCreateRule}>
-                {t("monitoredTables.createNewRuleButton")}
-              </Button>
-              <p className="text-xs text-muted-foreground">{t("monitoredTables.createNewRuleHint")}</p>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                {t("monitoredTables.stepMapColumns")}
-              </p>
-              {/* Same card used by the by-rule lens's applied-rule list
-                  (RuleConfigCard), with live column pickers standing in for
-                  MappingChips since the rule isn't applied yet — keeps the
-                  pick->map flow visually consistent with the main Apply
-                  Rules page instead of a bespoke form. */}
-              <RuleMappingCard
-                rule={selectedRule}
-                columns={columns}
-                mapping={mapping}
-                onChange={(slotName, value) => setMapping((m) => ({ ...m, [slotName]: value }))}
-                labelDefinitions={labelDefinitions}
-                excludeColumns={presetRule ? presetExcludeColumns : undefined}
-              />
-              {!mappingComplete && (
-                <p className="text-xs text-amber-600">{t("monitoredTables.mappingIncomplete")}</p>
-              )}
-            </div>
+        {/* DialogContent's own p-6 already insets the whole body, but the
+            picker's table fills 100% of that body width — this extra px-2
+            gives the table itself a little more breathing room from the
+            dialog edges than the rest of the (narrower) dialog content. */}
+        <div className="space-y-3 px-2">
+          {initialColumn && (
+            <p className="text-xs text-muted-foreground">
+              {t("monitoredTables.addRuleForColumnHint", { column: initialColumn.name })}
+            </p>
           )}
+          {/* A compact Rules-Registry table (checkbox rows, sortable +
+              toggleable columns) rather than a plain search box — ported
+              from dqlake's RulesPicker/AddRulesDialog so picking rules to
+              apply means scanning a real table view. */}
+          <RulesPicker
+            rules={publishedRules}
+            labelDefinitions={labelDefinitions}
+            selectedIds={selectedIds}
+            onToggle={toggleRule}
+          />
+          <p className="text-xs text-muted-foreground">
+            <Trans
+              i18nKey="monitoredTables.createRuleInlineHint"
+              components={{
+                link: (
+                  <Link
+                    to="/registry-rules/new"
+                    className="underline underline-offset-2 hover:text-foreground"
+                    onClick={() => handleClose(false)}
+                  />
+                ),
+              }}
+            />
+          </p>
+        </div>
 
-          <DialogFooter>
-            {selectedRule && !presetRule && (
-              <Button variant="outline" onClick={() => setSelectedRule(null)}>
-                {t("monitoredTables.backButton")}
-              </Button>
-            )}
-            <Button variant="outline" onClick={() => handleClose(false)}>
-              {t("common.cancel")}
-            </Button>
-            {selectedRule && (
-              <Button onClick={handleApply} disabled={!mappingComplete || applyMutation.isPending} className="gap-2">
-                {applyMutation.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                {applyMutation.isPending ? t("monitoredTables.applying") : t("monitoredTables.applyButton")}
-              </Button>
-            )}
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <RegistryRuleFormDialog
-        open={createOpen}
-        onOpenChange={(next) => {
-          setCreateOpen(next);
-          if (!next) onOpenChange(true);
-        }}
-        editingRule={null}
-        viewingRule={null}
-        labelDefinitions={labelDefinitions}
-        onSaved={handleCreateSaved}
-      />
-    </>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => handleClose(false)}>
+            {t("common.cancel")}
+          </Button>
+          <Button onClick={handleAdd} disabled={selectedIds.size === 0 || applying} className="gap-2">
+            {applying && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+            {applying
+              ? t("monitoredTables.applying")
+              : t("monitoredTables.addSelectedRulesButton", { count: selectedIds.size })}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

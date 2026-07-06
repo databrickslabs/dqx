@@ -11,25 +11,21 @@
 // project's constraint to reuse existing DQX helpers over inventing
 // parallel ones takes precedence over copying dqlake's plumbing verbatim.
 //
-// Two deliberate deviations from dqlake's picker, both forced by DQX's data
-// model (not stylistic choices):
-//   - Single-select, click-a-row-to-advance, no leading checkbox column:
-//     DQX's apply endpoint takes one explicit `column_mapping` per rule, so
-//     AddRulesDialog maps exactly one rule at a time (its Step 2) and there
-//     is no multi-row batch-add / "Add N rules" step for a checkbox to feed
-//     into. dqlake's checkbox reflects a real multi-select `Set`; here the
-//     caller never re-renders with a `selectedId` (the dialog immediately
-//     advances to the mapping step), so a checkbox column would only ever
-//     show dead, non-interactive state. Clicking anywhere on a row selects
-//     it, same as before.
+// One deliberate deviation from dqlake's picker, forced by DQX's data model:
 //   - No steward filter dropdown: DQX has no rule-stewards listing endpoint
 //     analogous to dqlake's `useList_rule_stewardsSuspense`.
+//
+// Multi-select via a leading checkbox column, mirroring dqlake's picker —
+// AddRulesDialog no longer maps columns inline (that moved to the by-rule
+// applied-rule card), so applying one rule per pass is no longer a
+// constraint and picking several rules to add at once is supported.
 
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Search, Sparkles } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
@@ -263,11 +259,13 @@ const PAGE_SIZE = 10;
 export interface RulesPickerProps {
   rules: RegistryRuleOut[];
   labelDefinitions: LabelColorDefinition[];
-  /** Fired when a row is chosen — the caller advances to the mapping step. */
-  onSelect: (rule: RegistryRuleOut) => void;
+  /** Currently checked rule ids. */
+  selectedIds: Set<string>;
+  /** Fired when a row's checkbox (or the row itself) is toggled. */
+  onToggle: (rule: RegistryRuleOut) => void;
 }
 
-export function RulesPicker({ rules, labelDefinitions, onSelect }: RulesPickerProps) {
+export function RulesPicker({ rules, labelDefinitions, selectedIds, onToggle }: RulesPickerProps) {
   const { t } = useTranslation();
   const ctx = useMemo(() => ({ labelDefinitions }), [labelDefinitions]);
   const [search, setSearch] = useState("");
@@ -353,14 +351,16 @@ export function RulesPicker({ rules, labelDefinitions, onSelect }: RulesPickerPr
       </div>
 
       <div className="overflow-x-auto min-h-[20rem] max-h-[26rem] overflow-y-auto border rounded-md">
-        <Table className="table-fixed" style={{ width: totalWidth, minWidth: totalWidth }}>
+        <Table className="table-fixed" style={{ width: totalWidth + 36, minWidth: totalWidth + 36 }}>
           <colgroup>
+            <col style={{ width: 36 }} />
             {visibleKeys.map((k) => (
               <col key={k} style={{ width: colWidths[k] ?? COLUMNS[k].defaultWidth }} />
             ))}
           </colgroup>
           <TableHeader>
             <TableRow>
+              <TableHead className="w-9 px-2" />
               {visibleKeys.map((k) => {
                 const def = COLUMNS[k];
                 const width = colWidths[k] ?? def.defaultWidth;
@@ -405,13 +405,18 @@ export function RulesPicker({ rules, labelDefinitions, onSelect }: RulesPickerPr
           <TableBody>
             {pageRows.map((r) => {
               const name = getTag(r, RESERVED_NAME_KEY) || r.rule_id;
+              const checked = selectedIds.has(r.rule_id);
               return (
                 <TableRow
                   key={r.rule_id}
                   className="cursor-pointer hover:bg-muted/50"
-                  onClick={() => onSelect(r)}
+                  onClick={() => onToggle(r)}
                   aria-label={t("monitoredTables.selectRuleLabel", { name })}
+                  data-state={checked ? "selected" : undefined}
                 >
+                  <TableCell className="w-9 px-2" onClick={(e) => e.stopPropagation()}>
+                    <Checkbox checked={checked} onCheckedChange={() => onToggle(r)} aria-label={t("monitoredTables.selectRuleLabel", { name })} />
+                  </TableCell>
                   {visibleKeys.map((k) => {
                     const width = colWidths[k] ?? COLUMNS[k].defaultWidth;
                     return (
@@ -425,7 +430,7 @@ export function RulesPicker({ rules, labelDefinitions, onSelect }: RulesPickerPr
             })}
             {sorted.length === 0 && (
               <TableRow>
-                <TableCell colSpan={visibleColCount} className="text-center text-muted-foreground py-8">
+                <TableCell colSpan={visibleColCount + 1} className="text-center text-muted-foreground py-8">
                   {t("monitoredTables.noPublishedRules")}
                 </TableCell>
               </TableRow>

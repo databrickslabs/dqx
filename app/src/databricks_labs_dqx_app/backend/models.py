@@ -479,7 +479,9 @@ class ApplyRuleIn(BaseModel):
     rule_id: str = Field(description="The published (approved) dq_rules row to apply")
     column_mapping: list[ColumnMappingGroup] = Field(
         description="One slot-name -> column-name mapping group per materialized check; "
-        "every group's keys must exactly match the rule's slot names"
+        "every group's keys must exactly match the rule's slot names. May be an empty list "
+        "to stage the application with no mapping yet (nothing is materialized until a "
+        "follow-up call supplies a fully-covering group)."
     )
     pinned_version: int | None = Field(
         default=None, description="None = follow latest published version; a number freezes to that snapshot"

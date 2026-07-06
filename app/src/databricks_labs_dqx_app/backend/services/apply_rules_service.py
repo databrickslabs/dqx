@@ -110,8 +110,9 @@ class ApplyRulesService:
         Raises:
             RuntimeError: *binding_id* or *rule_id* does not exist.
             RuleNotPublishedError: *rule_id* is not currently ``approved``.
-            MappingIncompleteError: *column_mapping* is empty, or a group's
-                keys don't exactly match the rule's slot names.
+            MappingIncompleteError: a provided group's keys don't exactly
+                match the rule's slot names. An empty *column_mapping* is
+                allowed — it stages the application with no mapping yet.
         """
         self._require_binding_exists(binding_id)
         rule = self._registry.get_rule(rule_id)
@@ -152,8 +153,16 @@ class ApplyRulesService:
 
     @staticmethod
     def _validate_mapping_complete(column_mapping: list[ColumnMappingGroup], slots: list[Any]) -> None:
+        # An empty column_mapping is allowed: it stages the rule application
+        # (materializer.py skips a row with zero mapping groups, so nothing
+        # runs until the caller submits a follow-up apply_rule() call with a
+        # fully-covering group). This lets the UI apply a rule immediately
+        # on selection and defer column mapping to the by-rule card, instead
+        # of forcing mapping to complete before the rule can be staged at
+        # all. Any group that IS provided must still cover the rule's slots
+        # exactly — partial groups are never accepted.
         if not column_mapping:
-            raise MappingIncompleteError("column_mapping must contain at least one mapping group.")
+            return
         expected = {slot.name for slot in slots}
         for group in column_mapping:
             actual = set(group.keys())

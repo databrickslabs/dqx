@@ -83,7 +83,6 @@ import { RulesByColumn, type ColumnRef } from "@/components/apply-rules/RulesByC
 import {
   RESERVED_SEVERITY_KEY,
   extractApiError,
-  getUsedColumnsForRule,
   groupAppliedRulesByRuleId,
   mergeRuleRowGroup,
 } from "@/components/apply-rules/shared";
@@ -648,17 +647,22 @@ function ApplyRulesTab({
   const [lens, setLens] = useState<"by-rule" | "by-column">("by-rule");
   const [addOpen, setAddOpen] = useState(false);
   const [addColumnContext, setAddColumnContext] = useState<ColumnRef | null>(null);
-  const [mappingRuleId, setMappingRuleId] = useState<string | null>(null);
-  const [mappingExcludeColumns, setMappingExcludeColumns] = useState<string[]>([]);
   const [suggestOpen, setSuggestOpen] = useState(false);
   const [removeTarget, setRemoveTarget] = useState<AppliedRuleOut | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [pendingRuleId, setPendingRuleId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"all" | "needs-attention">("all");
-  // Set by the by-column lens's "jump to rule" action so the target card
-  // auto-expands in the by-rule lens instead of just scrolling into view.
-  const [expandRuleId, setExpandRuleId] = useState<string | null>(null);
+  // Set by the by-column lens's "jump to rule" action, or right after
+  // AddRulesDialog stages new rule(s), so the target card(s) auto-expand in
+  // the by-rule lens instead of just scrolling into view.
+  const [expandRuleIds, setExpandRuleIds] = useState<string[]>([]);
+
+  const parts = tableFqn.split(".");
+  const columnsQuery = useGetTableColumns(parts[0] ?? "", parts[1] ?? "", parts[2] ?? "", {
+    query: { enabled: parts.length === 3 },
+  });
+  const columns: ColumnOut[] = columnsQuery.data?.data ?? [];
   // Lifted from RulesByColumn (mirrors dqlake's AppliedRulesList) so the
   // column card can auto-expand right after a rule is added to it via the
   // "+ Add rule" CTA on a column card.
@@ -974,13 +978,10 @@ function ApplyRulesTab({
                 onRemove={() => setRemoveTarget(rule)}
                 onRemoveMapping={(groupIdx) => handleRemoveMappingGroup(rule.rule_id, groupIdx)}
                 busyMappingGroupIdx={busyMappingGroupIdx >= 0 ? busyMappingGroupIdx : null}
-                forceOpen={expandRuleId === rule.rule_id}
-                onAddMapping={() => {
-                  setAddColumnContext(null);
-                  setMappingRuleId(rule.rule_id);
-                  setMappingExcludeColumns(getUsedColumnsForRule(rule));
-                  setAddOpen(true);
-                }}
+                bindingId={bindingId}
+                columns={columns}
+                onMutated={onMutated}
+                forceOpen={expandRuleIds.includes(rule.rule_id)}
                 onJumpToColumn={(colName) => {
                   setFilter("all");
                   setSearch("");
@@ -1007,7 +1008,7 @@ function ApplyRulesTab({
             setFilter("all");
             setSearch("");
             setLens("by-rule");
-            setExpandRuleId(ruleId);
+            setExpandRuleIds([ruleId]);
             setTimeout(() => {
               document.getElementById(`rule-card-${ruleId}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
             }, 50);
@@ -1021,27 +1022,32 @@ function ApplyRulesTab({
           setAddOpen(next);
           if (!next) {
             // If the dialog was opened from a column card's "+ Add rule"
-            // CTA, auto-expand that column card so the user sees the
-            // newly-added rule without an extra click — mirrors dqlake's
-            // RulesByColumn/AppliedRulesList "auto-expand after add"
-            // behavior. Fires on any close (not just a successful apply):
-            // re-expanding an already-open card is harmless.
+            // CTA, auto-expand that column card so it's ready to show the
+            // newly-added rule if the user switches back to the by-column
+            // lens — mirrors dqlake's RulesByColumn/AppliedRulesList
+            // "auto-expand after add" behavior. Fires on any close (not
+            // just a successful apply): re-expanding an already-open card
+            // is harmless.
             if (addColumnContext) {
               setOpenColumnName(addColumnContext.name);
             }
             setAddColumnContext(null);
-            setMappingRuleId(null);
-            setMappingExcludeColumns([]);
           }
         }}
         bindingId={bindingId}
-        tableFqn={tableFqn}
         publishedRules={publishedRules}
         labelDefinitions={labelDefinitions}
-        onApplied={onMutated}
+        onApplied={(ruleIds) => {
+          onMutated();
+          // Land the user directly on the newly-added rule(s)' mapping UI:
+          // force the by-rule lens (even if they were on by-column) and
+          // auto-expand every card that was just staged.
+          setFilter("all");
+          setSearch("");
+          setLens("by-rule");
+          setExpandRuleIds(ruleIds);
+        }}
         initialColumn={addColumnContext}
-        presetRule={mappingRuleId ? (ruleById.get(mappingRuleId) ?? null) : null}
-        presetExcludeColumns={mappingExcludeColumns}
       />
 
       <AiSuggestionDialog

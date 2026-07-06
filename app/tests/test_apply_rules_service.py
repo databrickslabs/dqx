@@ -129,11 +129,20 @@ class TestApplyRule:
             svc.apply_rule("b1", "r1", [{"column": "customer_id"}], "alice@x")
         sql.execute.assert_not_called()
 
-    def test_rejects_empty_mapping(self, svc, sql, registry):
-        sql.query.return_value = [["b1"]]
+    def test_allows_empty_mapping_to_stage_application(self, svc, sql, registry):
+        # An empty column_mapping stages the rule application without any
+        # mapping groups yet — the by-rule card completes the mapping with a
+        # follow-up apply_rule() call. materializer.py skips rows with zero
+        # groups, so nothing runs until then.
         registry.get_rule.return_value = _published_rule()
-        with pytest.raises(MappingIncompleteError):
-            svc.apply_rule("b1", "r1", [], "alice@x")
+        sql.query.side_effect = [
+            [["b1"]],  # binding exists
+            [],  # no existing application with this natural key
+        ]
+        applied = svc.apply_rule("b1", "r1", [], "alice@x")
+        assert applied.column_mapping == []
+        insert_sql = sql.execute.call_args[0][0]
+        assert "INSERT INTO dqx_test.dqx_app_test.dq_applied_rules" in insert_sql
 
     def test_rejects_mapping_missing_a_slot(self, svc, sql, registry):
         sql.query.return_value = [["b1"]]

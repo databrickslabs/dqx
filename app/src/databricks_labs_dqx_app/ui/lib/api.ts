@@ -252,7 +252,7 @@ export type ApplyRuleInTags = { [key: string]: unknown };
 export interface ApplyRuleIn {
   /** The published (approved) dq_rules row to apply */
   rule_id: string;
-  /** One slot-name -> column-name mapping group per materialized check; every group's keys must exactly match the rule's slot names */
+  /** One slot-name -> column-name mapping group per materialized check; every group's keys must exactly match the rule's slot names. May be an empty list to stage the application with no mapping yet (nothing is materialized until a follow-up call supplies a fully-covering group). */
   column_mapping: ApplyRuleInColumnMappingItem[];
   /** None = follow latest published version; a number freezes to that snapshot */
   pinned_version?: ApplyRuleInPinnedVersion;
