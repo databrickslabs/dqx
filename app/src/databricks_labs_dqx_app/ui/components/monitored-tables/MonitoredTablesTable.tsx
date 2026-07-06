@@ -388,7 +388,9 @@ export function MonitoredTablesTable({
                   <TableHead
                     key={k}
                     className={cn(
-                      "relative text-xs font-medium",
+                      // Condensed to dqlake's compact density (px-2) —
+                      // kept consistent with RulesTable's header padding.
+                      "relative text-xs font-medium px-2",
                       def.headClassName,
                       def.sortable && "cursor-pointer select-none",
                     )}
@@ -418,7 +420,7 @@ export function MonitoredTablesTable({
                 );
               })}
               {hasActions && (
-                <TableHead className="text-right text-xs font-medium" style={{ width: 96 }}>
+                <TableHead className="text-right text-xs font-medium px-2" style={{ width: 96 }}>
                   {t("monitoredTables.colActions")}
                 </TableHead>
               )}
@@ -436,7 +438,10 @@ export function MonitoredTablesTable({
                       <TableCell
                         key={k}
                         style={{ width, minWidth: width, maxWidth: width }}
-                        className="overflow-hidden"
+                        // Condensed to dqlake's compact row density (p-2
+                        // instead of the shared primitive's default p-3) —
+                        // kept consistent with RulesTable's body cells.
+                        className="overflow-hidden p-2"
                       >
                         {COLUMNS[k].renderCell(r)}
                       </TableCell>
@@ -445,7 +450,7 @@ export function MonitoredTablesTable({
                   {hasActions && (
                     <TableCell
                       style={{ width: 96 }}
-                      className="text-right"
+                      className="text-right p-2"
                       onClick={(e) => e.stopPropagation()}
                     >
                       {busy ? (
@@ -460,7 +465,7 @@ export function MonitoredTablesTable({
             })}
             {rows.length === 0 && emptyState && (
               <TableRow>
-                <TableCell colSpan={allKeys.length} className="text-center py-16">
+                <TableCell colSpan={allKeys.length} className="text-center py-16 px-2">
                   {emptyState}
                 </TableCell>
               </TableRow>

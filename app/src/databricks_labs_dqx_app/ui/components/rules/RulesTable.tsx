@@ -428,10 +428,11 @@ export function RulesTable({
                   <TableHead
                     key={k}
                     className={cn(
-                      // Matches MonitoredTablesTable's header styling —
-                      // shared Table primitive's default height/padding
-                      // (h-10 px-3), just a smaller/medium-weight label.
-                      "relative text-xs font-medium",
+                      // Matches MonitoredTablesTable's header styling, and
+                      // both are condensed to dqlake's compact density
+                      // (px-2) rather than the shared Table primitive's
+                      // default (px-3) — see TableCell below.
+                      "relative text-xs font-medium px-2",
                       def.headClassName,
                       def.sortable && "cursor-pointer select-none",
                     )}
@@ -471,7 +472,9 @@ export function RulesTable({
                     <TableCell
                       key={k}
                       style={{ width, minWidth: width, maxWidth: width }}
-                      className="overflow-hidden"
+                      // Condensed to dqlake's compact row density (p-2
+                      // instead of the shared primitive's default p-3).
+                      className="overflow-hidden p-2"
                       onClick={k === "actions" ? (e) => e.stopPropagation() : undefined}
                     >
                       {k === "actions" ? renderActions(r) : COLUMNS[k].renderCell(r, ctx)}
@@ -482,7 +485,7 @@ export function RulesTable({
             ))}
             {rows.length === 0 && emptyMessage && (
               <TableRow>
-                <TableCell colSpan={visibleKeys.length} className="text-center text-muted-foreground py-16">
+                <TableCell colSpan={visibleKeys.length} className="text-center text-muted-foreground py-16 px-2">
                   {emptyMessage}
                 </TableCell>
               </TableRow>
