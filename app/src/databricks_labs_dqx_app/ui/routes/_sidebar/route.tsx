@@ -4,14 +4,14 @@ import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import { usePermissions } from "@/hooks/use-permissions";
 import {
-  PlayCircle,
   ClipboardCheck,
   History,
   LayoutDashboard,
   BookOpen,
   ExternalLink,
   Library,
-  Boxes,
+  Table2,
+  Database,
   Upload,
 } from "lucide-react";
 import {
@@ -83,10 +83,30 @@ function Layout() {
                     : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
                 )}
               >
-                <Boxes size={16} />
+                <Table2 size={16} />
                 <span>{t("sidebar.monitoredTables")}</span>
               </Link>
             </SidebarMenuItem>
+
+            {/* Run Rules — only visible to users with the RUNNER role
+                (admins are implicit runners). Authors/approvers without
+                an explicit RUNNER mapping cannot see this entry. */}
+            {canRunRules && (
+            <SidebarMenuItem>
+              <Link
+                to="/runs"
+                className={cn(
+                  "flex items-center gap-2 p-2 rounded-lg",
+                  location.pathname.startsWith("/runs")
+                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                    : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                )}
+              >
+                <Database size={16} />
+                <span>{t("sidebar.runRules")}</span>
+              </Link>
+            </SidebarMenuItem>
+            )}
 
             {/* Import Rules — bulk DQX YAML import or data-contract-driven
                 generation. ``/rules/from-contract`` still resolves (it
@@ -128,26 +148,6 @@ function Layout() {
             </SidebarMenuItem>
 
             <hr className="my-2 border-sidebar-border" />
-
-            {/* Run Rules — only visible to users with the RUNNER role
-                (admins are implicit runners). Authors/approvers without
-                an explicit RUNNER mapping cannot see this entry. */}
-            {canRunRules && (
-            <SidebarMenuItem>
-              <Link
-                to="/runs"
-                className={cn(
-                  "flex items-center gap-2 p-2 rounded-lg",
-                  location.pathname.startsWith("/runs")
-                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                    : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
-                )}
-              >
-                <PlayCircle size={16} />
-                <span>{t("sidebar.runRules")}</span>
-              </Link>
-            </SidebarMenuItem>
-            )}
 
             {/* Runs History — visible to all */}
             <SidebarMenuItem>
