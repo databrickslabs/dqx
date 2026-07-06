@@ -27,8 +27,7 @@ export function PredicateEditorExplainer() {
   return (
     <div className="flex items-start gap-2 text-xs text-muted-foreground border rounded-md px-3 py-2 bg-muted/30">
       <div className="flex-1">
-        {t("rulesRegistry.sqlExplainerText")} <code className="font-mono">{`{{slot_name}}`}</code>{" "}
-        {t("rulesRegistry.sqlExplainerTextSuffix")}
+        {t("rulesRegistry.sqlExplainerText")} <code className="font-mono">{"{{column_name}}"}</code>
       </div>
       <button type="button" onClick={dismiss} aria-label={t("rulesRegistry.sqlExplainerDismiss")}>
         <X className="h-3.5 w-3.5" />

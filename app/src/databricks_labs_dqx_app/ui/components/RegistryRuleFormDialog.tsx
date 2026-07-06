@@ -281,7 +281,7 @@ function SectionHeader({
   return (
     <div className="flex items-center justify-between gap-3">
       <div className="flex items-center gap-1.5">
-        <h3 className="text-sm font-semibold leading-none">{children}</h3>
+        <h3 className="text-xs font-medium leading-none">{children}</h3>
         {tooltip && <HelpTooltip text={tooltip} />}
       </div>
       {action}
@@ -1523,9 +1523,18 @@ export function RegistryRuleFormDialog({
 
   const implementationTabContent = (
     <div className="space-y-4 pt-2">
-      {/* "Columns used" leads the Implementation area, matching dqlake's
-          ImplementationTab order (ColumnsUsedPanel first, mode switch +
-          predicate editor below it). */}
+      {/* Rule Type only applies to (and is only shown within) the
+          Implementation tab — it drives the rest of this tab's content, so
+          it renders at the top of it rather than persistently across all
+          tabs. */}
+      <div className="space-y-2 pb-2">
+        <SectionHeader>{t("rulesRegistry.ruleTypeHeader")}</SectionHeader>
+        <ModeSegmentedSwitch value={mode} onChange={setMode} disabled={readOnly} />
+      </div>
+
+      {/* "Columns used" leads the rest of the Implementation area, matching
+          dqlake's ImplementationTab order (ColumnsUsedPanel first, mode
+          switch + predicate editor below it). */}
       {showColumnsUsedPanel && (
         <SlotsPanel
           value={currentSlots}
@@ -1658,7 +1667,6 @@ export function RegistryRuleFormDialog({
 
       {mode === "sql" && (
         <div className="space-y-3">
-          <PredicateEditorExplainer />
           <div className="space-y-1.5">
             <Label className="text-xs">
               {t("rulesRegistry.sqlPredicateLabel")} <span className="text-destructive">*</span>
@@ -1678,8 +1686,9 @@ export function RegistryRuleFormDialog({
                 {sqlError}
               </p>
             )}
-            <p className="text-xs text-muted-foreground">{t("rulesRegistry.sqlPredicateHelp")}</p>
           </div>
+          <PredicateEditorExplainer />
+          <p className="text-xs text-muted-foreground">{t("rulesRegistry.sqlPredicateHelp")}</p>
           <div className="flex flex-wrap items-center gap-3">
             <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
               {t("rulesRegistry.thenTheRow")}
@@ -1875,13 +1884,6 @@ export function RegistryRuleFormDialog({
               {t("rulesRegistry.tabHistory")}
             </TabsTrigger>
           </TabsList>
-        </div>
-        {/* Rule Type is a persistent selector — it drives every tab's
-            Implementation content, so it sits below the tab strip rather
-            than inside a single tab's content. */}
-        <div className="space-y-2 pt-4">
-          <SectionHeader>{t("rulesRegistry.ruleTypeHeader")}</SectionHeader>
-          <ModeSegmentedSwitch value={mode} onChange={setMode} disabled={readOnly} />
         </div>
         <TabsContent value="about" className="pt-4">{aboutTabContent}</TabsContent>
         <TabsContent value="sharing" className="pt-4">{sharingTabContent}</TabsContent>
