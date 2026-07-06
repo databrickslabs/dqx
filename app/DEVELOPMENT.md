@@ -6,7 +6,7 @@
 - **Node.js 18+** (provides `npm`) — install via `brew install node`, [nvm](https://github.com/nvm-sh/nvm), or [nodejs.org](https://nodejs.org/en/download) — and **yarn** classic v1 (`npm install -g yarn`, used for the committed `app/yarn.lock`; `bun.lock` / `package-lock.json` are gitignored)
 - **bun** — used by `make app-check` to run `tsc -b` (TypeScript incremental compile). Install via `curl -fsSL https://bun.sh/install | bash` or `brew install oven-sh/bun/bun`.
 - **uv** — Python package manager
-- **Databricks CLI** v0.268+ — install per the [official guide](https://docs.databricks.com/aws/en/dev-tools/cli/install) (the legacy `databricks-cli` PyPI package is unrelated and not supported). Verify with `databricks --version`.
+- **Databricks CLI** v1.4.0+ — install per the [official guide](https://docs.databricks.com/aws/en/dev-tools/cli/install) (the legacy `databricks-cli` PyPI package is unrelated and not supported). Verify with `databricks --version`. v1.4.0 is the minimum for `make app-deploy` because the bundle's `postgres_projects` / `postgres_roles` resources are only accepted by CLI ≥ 1.4.0.
 - Access to a Databricks workspace
 
 ## Command Reference

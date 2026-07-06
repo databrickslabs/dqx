@@ -36,3 +36,8 @@ node_modules/
 # Local, untracked deploy targets (real profile / catalog / SP ids). Keep the
 # tracked template target.dev.yml.example; never commit the filled-in copy.
 target.*.yml
+
+# Task-runner lock is not consumed by any build (`uv build tasks/` reads
+# pyproject.toml, not uv.lock) and only ever re-leaks the internal PyPI proxy
+# URL when regenerated on a Databricks machine. Keep it out of the repo.
+tasks/uv.lock

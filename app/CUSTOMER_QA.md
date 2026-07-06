@@ -199,7 +199,7 @@ Three layers, all leveraging native Databricks:
 Three line items:
 
 - **App compute** — Databricks Apps charges a flat hourly rate per running app. The FastAPI process is small (one or two replicas).
-- **Lakebase instance** — runs continuously; size is small (the rules catalog is in the low-thousands of rows for most customers).
+- **Lakebase instance** — an autoscaling serverless Postgres project (default 0.5–1 CU) that scales to zero after ~5 min idle (`lakebase_suspend_timeout`, default `300s`) and wakes on the next request, so you're billed for compute only while it's active. Size is small — the rules catalog is in the low-thousands of rows for most customers.
 - **Task-runner job (serverless)** — only billed when validations run. Cost scales with row count and check complexity; profiler/dryrun is bounded, scheduled is what you make it.
 
 The app does **not** keep a SQL warehouse warm. The Lakeview dashboard auto-stops between uses.

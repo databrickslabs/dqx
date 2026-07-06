@@ -134,7 +134,7 @@ app/
 
 ## Stack
 
-- **Backend:** Python 3.12+, FastAPI, Pydantic 2, Databricks SDK, Databricks Connect, DQX library
+- **Backend:** Python 3.12+, FastAPI, Pydantic 2, Databricks SDK, Databricks SQL Connector, psycopg (Lakebase/Postgres), DQX library
 - **Frontend:** React 19, TypeScript, TanStack Router + React Query, shadcn/ui, Tailwind CSS 4, Vite 7
 - **Code generation:** orval (OpenAPI → TypeScript types + React Query hooks)
 

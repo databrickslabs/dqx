@@ -133,6 +133,8 @@ Lakebase is a bundle-managed Postgres **project** (`resources.postgres_projects.
 
 To run **without** Lakebase (OLTP on Delta): remove the `postgres_projects` and `postgres_roles` blocks from `databricks.yml` and set `lakebase_endpoint: "-"`.
 
+> **The default warehouse and Lakebase sizes are deliberately small.** The bundle ships a `Small` SQL warehouse and a 0.5–1 CU autoscaling, scale-to-zero Lakebase project — sized for a typical rules catalog (low-thousands of rows) and light concurrent use, and chosen to keep idle cost near zero. They are a sensible **starting point, not a tuned production configuration.** Watch the app logs and the warehouse / Lakebase metrics under real load and raise `sql_warehouse_size`, `lakebase_max_cu`, or `DQX_LAKEBASE_POOL_MAX_SIZE` if you see query queueing or connection-pool exhaustion (see [Troubleshooting](#troubleshooting)).
+
 ### Variable reference
 
 All target-level variables, their defaults, and what they control:
