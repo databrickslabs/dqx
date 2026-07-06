@@ -107,16 +107,45 @@ export function getUsedColumnsForRule(rule: AppliedRuleOut): string[] {
 
 let localRowCounter = 0;
 
-/** A stable, never-persisted id for a row staged locally this session —
- *  distinguishable from a real server id (see `isLocalRowId`) so the save
- *  payload builder and row-removal logic never confuse the two. */
+/** A stable, never-persisted id for a row staged locally this session.
+ *  `buildDesiredApplications` drops `id` entirely (it regroups by `rule_id`
+ *  and lets the backend re-derive/ignore row identity), so nothing in this
+ *  app currently needs to distinguish a local id from a real server one —
+ *  it only has to be unique within `stagedRows` for the session. */
 export function nextLocalRowId(): string {
   localRowCounter += 1;
   return `local-${Date.now()}-${localRowCounter}`;
 }
 
-export function isLocalRowId(id: string | null | undefined): boolean {
-  return typeof id === "string" && id.startsWith("local-");
+/** Split every row into one row per mapping GROUP so the "each staged row
+ *  owns exactly one mapping group" convention (relied on by
+ *  `handleRemoveMappingGroup` / `handleChangeMapping` / `handleAddMapping` in
+ *  `monitored-tables.$bindingId.tsx`, which resolve a `groupIdx` from the
+ *  flattened `mergeRuleRowGroup` list back to `rowsForRule[groupIdx]`) always
+ *  holds — even though the server does NOT follow it: `saveAppliedRules`
+ *  persists one `dq_applied_rules` row per `rule_id` carrying the FULL
+ *  `column_mapping` list (see `ApplyRulesService.reconcile`/`apply_rule`), so
+ *  a rule with 2 mapping groups round-trips as a single row with a 2-entry
+ *  `column_mapping`. Without this normalization, `groupIdx` (a position in
+ *  the flattened list) would misalign with `rowsForRule` (server rows) and
+ *  silently corrupt or drop mapping groups on edit/remove.
+ *
+ *  Call this on every path that seeds `stagedRows`/`baseline` from server
+ *  data — initial load, binding switch, and the Save-as-draft/Publish
+ *  response handlers. Rows staged locally (`newStagedRow`, `handleAddMapping`)
+ *  already carry at most one group and pass through unchanged. Split-off
+ *  rows get a fresh local id (`row.id` is display-only here — it's never
+ *  read back by `buildDesiredApplications`, which regroups by `rule_id`). */
+export function normalizeStagedRows(rows: AppliedRuleOut[]): AppliedRuleOut[] {
+  return rows.flatMap((row) => {
+    const groups = row.column_mapping ?? [];
+    if (groups.length <= 1) return [row];
+    return groups.map((group, idx) => ({
+      ...row,
+      id: idx === 0 ? row.id : nextLocalRowId(),
+      column_mapping: [group],
+    }));
+  });
 }
 
 /** Build a new locally-staged applied-rule row for *rule*, not yet persisted

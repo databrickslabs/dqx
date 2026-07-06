@@ -89,6 +89,7 @@ import {
   groupAppliedRulesByRuleId,
   mergeRuleRowGroup,
   nextLocalRowId,
+  normalizeStagedRows,
 } from "@/components/apply-rules/shared";
 import { orderSeverityValuesForDisplay } from "@/components/RegistryRuleBadges";
 import { ProfileColumnList } from "@/components/bindings/ProfileColumnList";
@@ -203,14 +204,14 @@ function MonitoredTableDetailPage() {
   // Save-as-draft/Publish buttons and the unsaved-changes nav guard only
   // engage when there's something to persist.
   // ---------------------------------------------------------------------
-  const [stagedRows, setStagedRows] = useState<AppliedRuleOut[]>(() => appliedRules);
-  const [baseline, setBaseline] = useState<AppliedRuleOut[]>(() => appliedRules);
+  const [stagedRows, setStagedRows] = useState<AppliedRuleOut[]>(() => normalizeStagedRows(appliedRules));
+  const [baseline, setBaseline] = useState<AppliedRuleOut[]>(() => normalizeStagedRows(appliedRules));
   const seededBindingIdRef = useRef(bindingId);
   useEffect(() => {
     if (seededBindingIdRef.current !== bindingId) {
       seededBindingIdRef.current = bindingId;
-      setStagedRows(appliedRules);
-      setBaseline(appliedRules);
+      setStagedRows(normalizeStagedRows(appliedRules));
+      setBaseline(normalizeStagedRows(appliedRules));
     }
   }, [bindingId, appliedRules]);
 
@@ -228,8 +229,9 @@ function MonitoredTableDetailPage() {
   const handleSaveAsDraft = () => {
     persistStagedRows().then(
       (resp) => {
-        setStagedRows(resp.data);
-        setBaseline(resp.data);
+        const normalized = normalizeStagedRows(resp.data);
+        setStagedRows(normalized);
+        setBaseline(normalized);
         toast.success(t("monitoredTables.toastSavedDraft"));
         invalidateDetail();
       },
@@ -242,8 +244,9 @@ function MonitoredTableDetailPage() {
   const handlePublish = () => {
     persistStagedRows()
       .then((resp) => {
-        setStagedRows(resp.data);
-        setBaseline(resp.data);
+        const normalized = normalizeStagedRows(resp.data);
+        setStagedRows(normalized);
+        setBaseline(normalized);
         return publishMutation.mutateAsync({ bindingId });
       })
       .then(() => {
