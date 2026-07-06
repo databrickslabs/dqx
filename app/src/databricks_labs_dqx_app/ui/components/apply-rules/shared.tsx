@@ -4,7 +4,7 @@
 // conventions instead of re-deriving them.
 
 import { Badge } from "@/components/ui/badge";
-import type { AppliedRuleOut, RegistryRuleOut } from "@/lib/api";
+import type { AppliedRuleOut, AppliedRuleOutColumnMappingItem, DesiredAppliedRuleIn, RegistryRuleOut } from "@/lib/api";
 import type { LabelDefinition } from "@/lib/api-custom";
 
 export const RESERVED_NAME_KEY = "name";
@@ -90,6 +90,101 @@ export function getUsedColumnsForRule(rule: AppliedRuleOut): string[] {
     }
   }
   return [...used];
+}
+
+// ---------------------------------------------------------------------------
+// Staged editor helpers (P16-F) — the Apply Rules tab stages every add /
+// mapping-edit / severity-override / pin / removal in a local `stagedRows`
+// array (same `AppliedRuleOut[]` shape the server returns, one row per
+// mapping group, per the "each row owns exactly one mapping group"
+// convention above) and only writes it in one batch via `saveAppliedRules`
+// on Save-as-draft/Publish. These two helpers are the single choke point
+// for creating a new local-only row and for turning `stagedRows` back into
+// the `saveAppliedRules` request payload — every staging call site
+// (AddRulesDialog, AiSuggestionDialog, RuleConfigCard) goes through them so
+// the local-id convention and payload shape never drift apart.
+// ---------------------------------------------------------------------------
+
+let localRowCounter = 0;
+
+/** A stable, never-persisted id for a row staged locally this session —
+ *  distinguishable from a real server id (see `isLocalRowId`) so the save
+ *  payload builder and row-removal logic never confuse the two. */
+export function nextLocalRowId(): string {
+  localRowCounter += 1;
+  return `local-${Date.now()}-${localRowCounter}`;
+}
+
+export function isLocalRowId(id: string | null | undefined): boolean {
+  return typeof id === "string" && id.startsWith("local-");
+}
+
+/** Build a new locally-staged applied-rule row for *rule*, not yet persisted
+ *  anywhere. Display metadata (name/dimension/severity tags) is denormalized
+ *  onto the row up front, exactly like the server's `AppliedRuleOut.from_summary`
+ *  join, so every display component that reads `rule_name`/`rule_dimension`/
+ *  `rule_severity` off a row works identically for staged and persisted rows. */
+export function newStagedRow(
+  bindingId: string,
+  rule: RegistryRuleOut,
+  columnMapping: AppliedRuleOutColumnMappingItem[],
+): AppliedRuleOut {
+  return {
+    id: nextLocalRowId(),
+    binding_id: bindingId,
+    rule_id: rule.rule_id,
+    pinned_version: null,
+    severity_override: null,
+    column_mapping: columnMapping,
+    user_metadata: {},
+    mapping_hash: null,
+    created_by: null,
+    created_at: null,
+    rule_name: getTag(rule, RESERVED_NAME_KEY) || null,
+    rule_dimension: getTag(rule, RESERVED_DIMENSION_KEY) || null,
+    rule_severity: getTag(rule, RESERVED_SEVERITY_KEY) || null,
+  };
+}
+
+/** Turn the flat staged row list into the FULL desired-set payload for
+ *  `saveAppliedRules` — one entry per `rule_id`, whose `column_mapping` is
+ *  the concatenation of every one of that rule_id's rows' mapping groups
+ *  (mirrors `mergeRuleRowGroup`'s display-side merge). Display-only fields
+ *  (`rule_name`/`rule_dimension`/`rule_severity`/`mapping_hash`/`created_*`)
+ *  are dropped — the backend re-derives or ignores them. */
+export function buildDesiredApplications(stagedRows: AppliedRuleOut[]): DesiredAppliedRuleIn[] {
+  return groupAppliedRulesByRuleId(stagedRows).map(({ ruleId, rows }) => {
+    const [first] = rows;
+    return {
+      rule_id: ruleId,
+      column_mapping: rows.flatMap((row) => row.column_mapping ?? []),
+      pinned_version: first?.pinned_version ?? null,
+      severity_override: first?.severity_override ?? null,
+      tags: (first?.user_metadata ?? {}) as Record<string, unknown>,
+    };
+  });
+}
+
+/** Stable, order-independent serialization of a `saveAppliedRules` payload —
+ *  used to diff the staged editor's local rows against the last-persisted
+ *  baseline for `isDirty` (mirrors `RegistryRuleFormDialog`'s
+ *  `stableStringify(currentSnapshot) !== stableStringify(snapshotFromRule(...))`
+ *  pattern). Sorts by `rule_id` and, within each application, by mapping
+ *  group so row insertion order and mapping-group order never cause a false
+ *  "dirty" positive. */
+export function desiredApplicationsKey(stagedRows: AppliedRuleOut[]): string {
+  const normalized = buildDesiredApplications(stagedRows)
+    .map((application) => ({
+      rule_id: application.rule_id,
+      column_mapping: (application.column_mapping ?? [])
+        .map((group) => JSON.stringify(Object.fromEntries(Object.entries(group).sort())))
+        .sort(),
+      pinned_version: application.pinned_version ?? null,
+      severity_override: application.severity_override ?? null,
+      tags: JSON.stringify(Object.fromEntries(Object.entries(application.tags ?? {}).sort())),
+    }))
+    .sort((a, b) => a.rule_id.localeCompare(b.rule_id));
+  return JSON.stringify(normalized);
 }
 
 export function TagBadge({ label, color }: { label: string; color?: string }) {

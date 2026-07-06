@@ -33,12 +33,14 @@ from databricks_labs_dqx_app.backend.models import (
     MonitoredTableSummaryOut,
     PublishMonitoredTableOut,
     RegisterMonitoredTableIn,
+    SaveAppliedRulesIn,
     SetAppliedRulePinIn,
     SetAppliedRuleSeverityOverrideIn,
     SuggestRulesOut,
 )
 from databricks_labs_dqx_app.backend.services.apply_rules_service import (
     ApplyRulesService,
+    DesiredAppliedRule,
     MappingIncompleteError,
     RuleNotPublishedError,
 )
@@ -270,6 +272,51 @@ def apply_rule_to_table(
     except Exception as e:
         logger.error(f"Failed to apply rule to monitored table {binding_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to apply rule: {e}")
+
+
+@router.put(
+    "/{binding_id}/applied-rules",
+    response_model=list[AppliedRuleOut],
+    operation_id="saveAppliedRules",
+    dependencies=[require_role(*_AUTHORS_AND_ABOVE)],
+)
+def save_applied_rules(
+    binding_id: str,
+    body: SaveAppliedRulesIn,
+    svc: Annotated[ApplyRulesService, Depends(get_apply_rules_service)],
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+) -> list[AppliedRuleOut]:
+    """Reconcile the FULL desired set of applied rules for a monitored table in one batch.
+
+    Backs the staged Apply Rules editor: the frontend stages every add /
+    mapping-edit / severity-override / pin / removal locally and calls this
+    once on Save-as-draft or Publish instead of firing an immediate write per
+    edit. Does NOT materialize — materialization stays gated behind the
+    existing publish route.
+    """
+    try:
+        user_email = _current_user_email(obo_ws)
+        desired = [
+            DesiredAppliedRule(
+                rule_id=entry.rule_id,
+                column_mapping=entry.column_mapping,
+                pinned_version=entry.pinned_version,
+                severity_override=entry.severity_override,
+                tags=entry.tags,
+            )
+            for entry in body.applications
+        ]
+        applied = svc.save_applied_rules(binding_id, desired, user_email)
+        return [AppliedRuleOut.from_domain(a) for a in applied]
+    except MappingIncompleteError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except RuleNotPublishedError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to save applied rules for monitored table {binding_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to save applied rules: {e}")
 
 
 @router.delete(

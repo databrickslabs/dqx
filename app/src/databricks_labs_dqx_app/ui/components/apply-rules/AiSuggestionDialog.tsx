@@ -1,13 +1,14 @@
 // AiSuggestionDialog — AI-suggested registry rules for a monitored table,
 // ported (structure/interactions) from dqlake's `bindings/AiSuggestionDialog.tsx`:
 // a checkbox list of suggestions (dimension/severity tags, explanation,
-// mapping chips) with a single "Add N" action that applies every checked
-// suggestion to the binding. Always renders (never blocks the tab) — a
-// missing/misconfigured AI backend degrades to an "unavailable" empty state
-// via `available`/`reason` on the response, matching DQX's AI kill-switch
-// semantics (see `useAiAvailability`).
+// mapping chips) with a single "Add N" action that stages every checked
+// suggestion onto the tab's LOCAL editor state (no network write — see
+// `AddRulesDialog.tsx`'s header for why). Always renders (never blocks the
+// tab) — a missing/misconfigured AI backend degrades to an "unavailable"
+// empty state via `available`/`reason` on the response, matching DQX's AI
+// kill-switch semantics (see `useAiAvailability`).
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -22,15 +23,16 @@ import {
 } from "@/components/ui/dialog";
 import { Loader2, Sparkles } from "lucide-react";
 import {
-  useApplyRuleToTable,
+  useListRegistryRules,
   useSuggestRulesForTable,
+  type RegistryRuleOut,
   type SuggestedRuleMappingOut,
 } from "@/lib/api";
 import type { LabelDefinition } from "@/lib/api-custom";
 import { aiUnavailableReason } from "@/hooks/use-ai-availability";
 import { AI_BANNER_BORDER, AI_BUTTON_BG, AI_ICON_COLOR, AI_TEXT_GRADIENT } from "@/lib/ai-style";
 import { MappingChips } from "./MappingChips";
-import { RESERVED_DIMENSION_KEY, RESERVED_SEVERITY_KEY, TagBadge, colorFor } from "./shared";
+import { RESERVED_DIMENSION_KEY, RESERVED_SEVERITY_KEY, TagBadge, colorFor, newStagedRow } from "./shared";
 
 interface SuggestRulesState {
   available: boolean;
@@ -43,6 +45,9 @@ interface AiSuggestionDialogProps {
   onOpenChange: (open: boolean) => void;
   bindingId: string;
   labelDefinitions: LabelDefinition[];
+  /** Appends one locally-staged row per accepted suggestion. Pure
+   *  local-state mutation — no network call. */
+  onAdd: (rows: ReturnType<typeof newStagedRow>[]) => void;
   onApplied: () => void;
   onAiUnavailable: (reason: string) => void;
 }
@@ -52,15 +57,24 @@ export function AiSuggestionDialog({
   onOpenChange,
   bindingId,
   labelDefinitions,
+  onAdd,
   onApplied,
   onAiUnavailable,
 }: AiSuggestionDialogProps) {
   const { t } = useTranslation();
   const suggestMutation = useSuggestRulesForTable();
-  const applyMutation = useApplyRuleToTable();
+  // Suggestions only carry `rule_id` — resolving it back to a full
+  // `RegistryRuleOut` is what lets `newStagedRow` denormalize the rule's
+  // name/dimension/severity tags onto the staged row the same way every
+  // other staging path does.
+  const { data: registryData } = useListRegistryRules({ status: "approved" });
+  const ruleById = useMemo(() => {
+    const map = new Map<string, RegistryRuleOut>();
+    for (const r of registryData?.data ?? []) map.set(r.rule_id, r);
+    return map;
+  }, [registryData]);
   const [state, setState] = useState<SuggestRulesState | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
-  const [applying, setApplying] = useState(false);
   const fetchedForRef = useRef<string | null>(null);
   // `mutate` is referentially stable across renders (TanStack Query
   // guarantee); the wrapping `suggestMutation` object is NOT, so it must
@@ -106,43 +120,42 @@ export function AiSuggestionDialog({
     });
   };
 
-  const handleAdd = async () => {
+  const handleAdd = () => {
     if (!state) return;
     const chosen = state.suggestions.filter((_, i) => selected.has(i));
     if (chosen.length === 0) {
       toast.error(t("monitoredTables.suggestRulesNoneSelected"));
       return;
     }
-    setApplying(true);
-    let failures = 0;
-    for (const suggestion of chosen) {
-      try {
-        await applyMutation.mutateAsync({
-          bindingId,
-          data: { rule_id: suggestion.rule_id, column_mapping: [suggestion.column_mapping] },
-        });
-      } catch {
-        failures += 1;
-      }
+    // A suggestion whose rule_id isn't in the (approved) registry snapshot
+    // fetched above is dropped rather than staged with missing display
+    // metadata — this can only happen if the rule was unpublished between
+    // the suggestion call and Add, an edge case rare enough not to warrant
+    // its own toast copy.
+    const rows = chosen
+      .map((suggestion) => {
+        const rule = ruleById.get(suggestion.rule_id);
+        if (!rule) return null;
+        return newStagedRow(bindingId, rule, [suggestion.column_mapping]);
+      })
+      .filter((row): row is NonNullable<typeof row> => row !== null);
+    if (rows.length === 0) {
+      toast.error(t("monitoredTables.suggestRulesAddFailed"));
+      return;
     }
-    setApplying(false);
-    const addedCount = chosen.length - failures;
-    if (addedCount > 0) {
-      toast.success(t("monitoredTables.suggestRulesAddedToast", { count: addedCount }));
-      onApplied();
-    }
-    if (failures > 0) {
+    onAdd(rows);
+    toast.success(t("monitoredTables.suggestRulesAddedToast", { count: rows.length }));
+    onApplied();
+    if (rows.length < chosen.length) {
       toast.error(t("monitoredTables.suggestRulesAddFailed"));
     }
-    if (failures === 0) {
-      onOpenChange(false);
-    }
+    onOpenChange(false);
   };
 
   const loading = suggestMutation.isPending && state === null;
 
   return (
-    <Dialog open={open} onOpenChange={(next) => !applying && onOpenChange(next)}>
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
@@ -209,12 +222,11 @@ export function AiSuggestionDialog({
         ) : null}
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={applying}>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
             {t("common.cancel")}
           </Button>
           {state && state.available && state.suggestions.length > 0 && (
-            <Button onClick={handleAdd} disabled={applying || selected.size === 0} className={`gap-2 ${AI_BUTTON_BG}`}>
-              {applying && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+            <Button onClick={handleAdd} disabled={selected.size === 0} className={`gap-2 ${AI_BUTTON_BG}`}>
               {t("monitoredTables.suggestRulesAddButton", { count: selected.size })}
             </Button>
           )}

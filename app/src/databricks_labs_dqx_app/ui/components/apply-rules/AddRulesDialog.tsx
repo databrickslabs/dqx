@@ -1,13 +1,16 @@
-// AddRulesDialog — apply published registry rule(s) to a monitored table.
-// Single step: pick one or more published (approved) registry rules from a
-// searchable table and click Add. Column mapping no longer happens here —
-// each applied rule is staged with an empty `column_mapping` (allowed by
-// the backend precisely so it can be completed later) and the caller
-// auto-expands the rule's card in the by-rule lens so mapping happens there
-// via RuleConfigCard's inline "+ Apply to another column" affordance.
-// Aggregate/dataset-level rules with no slots need no mapping at all, so
-// they're applied with a single empty mapping group and are immediately
-// complete.
+// AddRulesDialog — stage published registry rule(s) onto a monitored
+// table's LOCAL editor state. Single step: pick one or more published
+// (approved) registry rules from a searchable table and click Add. Column
+// mapping no longer happens here — each rule is staged with an empty
+// `column_mapping` and the caller auto-expands the rule's card in the
+// by-rule lens so mapping happens there via RuleConfigCard's inline
+// "+ Apply to another column" affordance. Aggregate/dataset-level rules
+// with no slots need no mapping at all, so they're staged with a single
+// empty mapping group and are immediately complete.
+//
+// Nothing here writes to the network — every add is a pure local-state
+// append (see `newStagedRow`); persistence happens once, in a batch, when
+// the caller hits Save-as-draft/Publish on the tab (P16-F staged editor).
 
 import { useState } from "react";
 import { useTranslation, Trans } from "react-i18next";
@@ -22,12 +25,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Loader2 } from "lucide-react";
-import { useApplyRuleToTable, type RegistryRuleOut } from "@/lib/api";
+import type { RegistryRuleOut } from "@/lib/api";
 import type { LabelDefinition } from "@/lib/api-custom";
 import { RulesPicker } from "./RulesPicker";
 import type { ColumnRef } from "./RulesByColumn";
-import { extractApiError } from "./shared";
+import { newStagedRow } from "./shared";
 
 interface AddRulesDialogProps {
   open: boolean;
@@ -35,10 +37,13 @@ interface AddRulesDialogProps {
   bindingId: string;
   publishedRules: RegistryRuleOut[];
   labelDefinitions: LabelDefinition[];
-  /** Fired after every selected rule has been applied (staged), with the
-   *  rule ids that were just added — the caller switches to the by-rule
-   *  lens and auto-expands those cards. */
+  /** Fired synchronously with the rule ids just staged — the caller appends
+   *  a new local row per rule (via `onAdd`) and switches to the by-rule
+   *  lens, auto-expanding those cards. */
   onApplied: (ruleIds: string[]) => void;
+  /** Appends one locally-staged row per selected rule to the tab's staged
+   *  row list. Pure local-state mutation — no network call. */
+  onAdd: (rows: ReturnType<typeof newStagedRow>[]) => void;
   /**
    * When opened from the by-column lens's per-column "+ Add rule" CTA, this
    * carries the clicked column's name so the dialog can show a hint about
@@ -55,12 +60,11 @@ export function AddRulesDialog({
   publishedRules,
   labelDefinitions,
   onApplied,
+  onAdd,
   initialColumn = null,
 }: AddRulesDialogProps) {
   const { t } = useTranslation();
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const applyMutation = useApplyRuleToTable();
-  const [applying, setApplying] = useState(false);
 
   const reset = () => setSelectedIds(new Set());
 
@@ -80,36 +84,21 @@ export function AddRulesDialog({
 
   const selectedRules = publishedRules.filter((r) => selectedIds.has(r.rule_id));
 
-  const handleAdd = async () => {
+  const handleAdd = () => {
     if (selectedRules.length === 0) return;
-    setApplying(true);
-    const results = await Promise.allSettled(
-      selectedRules.map((rule) => {
-        const hasSlots = (rule.definition.slots ?? []).length > 0;
-        // Rules with no slots need no mapping and can be fully applied
-        // immediately with a single empty mapping group. Slotted rules are
-        // staged with an empty column_mapping — the backend now allows
-        // this — so the by-rule card can complete the mapping afterward.
-        const column_mapping = hasSlots ? [] : [{}];
-        return applyMutation.mutateAsync({ bindingId, data: { rule_id: rule.rule_id, column_mapping } });
-      }),
-    );
-    setApplying(false);
-
-    const appliedIds = selectedRules.filter((_, i) => results[i]?.status === "fulfilled").map((r) => r.rule_id);
-    const failedCount = results.filter((r) => r.status === "rejected").length;
-
-    if (appliedIds.length > 0) {
-      toast.success(t("monitoredTables.toastAppliedCount", { count: appliedIds.length }));
-      onApplied(appliedIds);
-    }
-    if (failedCount > 0) {
-      const firstFailure = results.find((r): r is PromiseRejectedResult => r.status === "rejected");
-      toast.error(extractApiError(firstFailure?.reason, t("monitoredTables.toastApplyFailed")), { duration: 6000 });
-    }
-    if (appliedIds.length > 0) {
-      handleClose(false);
-    }
+    const rows = selectedRules.map((rule) => {
+      const hasSlots = (rule.definition.slots ?? []).length > 0;
+      // Rules with no slots need no mapping and are staged immediately
+      // complete with a single empty mapping group. Slotted rules are
+      // staged with an empty column_mapping so the by-rule card can
+      // complete the mapping afterward.
+      const columnMapping = hasSlots ? [] : [{}];
+      return newStagedRow(bindingId, rule, columnMapping);
+    });
+    onAdd(rows);
+    toast.success(t("monitoredTables.toastAppliedCount", { count: rows.length }));
+    onApplied(selectedRules.map((r) => r.rule_id));
+    handleClose(false);
   };
 
   return (
@@ -163,11 +152,8 @@ export function AddRulesDialog({
           <Button variant="outline" onClick={() => handleClose(false)}>
             {t("common.cancel")}
           </Button>
-          <Button onClick={handleAdd} disabled={selectedIds.size === 0 || applying} className="gap-2">
-            {applying && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-            {applying
-              ? t("monitoredTables.applying")
-              : t("monitoredTables.addSelectedRulesButton", { count: selectedIds.size })}
+          <Button onClick={handleAdd} disabled={selectedIds.size === 0} className="gap-2">
+            {t("monitoredTables.addSelectedRulesButton", { count: selectedIds.size })}
           </Button>
         </DialogFooter>
       </DialogContent>

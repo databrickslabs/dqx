@@ -492,6 +492,34 @@ class ApplyRuleIn(BaseModel):
     tags: dict[str, Any] = Field(default_factory=dict, description="Per-application free-text tags")
 
 
+class DesiredAppliedRuleIn(BaseModel):
+    """One entry in the full desired set of applications for ``saveAppliedRules``."""
+
+    rule_id: str = Field(description="The published (approved) dq_rules row to apply")
+    column_mapping: list[ColumnMappingGroup] = Field(
+        default_factory=list,
+        description="One slot-name -> column-name mapping group per materialized check; may be "
+        "empty to stage the application with no mapping yet.",
+    )
+    pinned_version: int | None = Field(
+        default=None, description="None = follow latest published version; a number freezes to that snapshot"
+    )
+    severity_override: str | None = Field(
+        default=None, description="Overrides the rule's tagged severity for this application only"
+    )
+    tags: dict[str, Any] = Field(default_factory=dict, description="Per-application free-text tags")
+
+
+class SaveAppliedRulesIn(BaseModel):
+    """Request body for ``saveAppliedRules`` — the FULL desired set of applications for a binding.
+
+    Anything currently applied to the binding that isn't (re)supplied here is
+    removed; see ``ApplyRulesService.save_applied_rules`` for reconcile semantics.
+    """
+
+    applications: list[DesiredAppliedRuleIn] = Field(default_factory=list)
+
+
 class SetAppliedRulePinIn(BaseModel):
     """Request body for pinning/unpinning an applied rule's version."""
 

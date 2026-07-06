@@ -1,19 +1,23 @@
 // MappingChips — color-indexed slot->column mapping display for an applied
 // registry rule, ported 1:1 (layout/typography) from dqlake's
-// `bindings/MappingChips.tsx` read-only rendering path. Each mapping GROUP
-// (one entry in `column_mapping`) gets its own color "thread" so a rule
-// applied to several column sets is easy to scan.
+// `bindings/MappingChips.tsx`. Each mapping GROUP (one entry in
+// `column_mapping`) gets its own color "thread" so a rule applied to
+// several column sets is easy to scan.
 //
-// DQX's backend has no "edit an existing application's mapping" endpoint —
-// changing a mapping means removing and re-adding the rule via
-// AddRulesDialog — so, unlike dqlake's editable chips (which open a column
-// picker popover per chip), these chips are always read-only. Jump-to-column
-// navigation stays available.
+// The Apply Rules tab is now a staged local editor (P16-F) with no
+// per-mapping-change network call, so — mirroring dqlake's editable chips —
+// a chip can be clicked to reassign its column via the same family-filtered
+// column-picker popover (`ColumnDropdownList`) `SingleColumnPicker` uses.
+// Pass `onChangeGroup` to enable this; omit it (e.g. the AI-suggestion
+// preview list, which has no staged row to edit) to fall back to
+// non-interactive display chips.
 
 import { useTranslation } from "react-i18next";
 import { Loader2 } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-import type { AppliedRuleOutColumnMappingItem, RuleSlot } from "@/lib/api";
+import type { AppliedRuleOutColumnMappingItem, ColumnOut, RuleSlot } from "@/lib/api";
+import { ColumnDropdownList, columnsForSlot } from "./ColumnPicker";
 
 const PALETTE = [
   "bg-emerald-500/10 text-emerald-700 border-emerald-500/30 dark:text-emerald-400",
@@ -94,6 +98,85 @@ function ReadonlyChip({
   );
 }
 
+/** Clickable chip that opens a family-filtered column-picker popover to
+ *  reassign this slot/group's column, mirroring dqlake's editable chip. The
+ *  trigger itself still renders as a compact colored chip (not a full
+ *  combobox button like `SingleColumnPicker`) so the slot-row layout stays
+ *  identical to the read-only rendering. */
+function EditableChip({
+  colorClass,
+  label,
+  slot,
+  columns,
+  excludeColumns,
+  onChange,
+  onJump,
+  onRemove,
+  removeTitle,
+}: {
+  colorClass: string;
+  label: string;
+  slot: RuleSlot;
+  columns: ColumnOut[];
+  excludeColumns: string[];
+  onChange: (colName: string) => void;
+  onJump?: () => void;
+  onRemove?: () => void;
+  removeTitle?: string;
+}) {
+  const { t } = useTranslation();
+  // The chip's own current column must stay selectable even though it's
+  // technically "in use" — only exclude *other* groups' columns from the
+  // candidate list.
+  const matches = columnsForSlot(columns, slot, excludeColumns.filter((c) => c !== label));
+  return (
+    <span className={cn("inline-flex items-center gap-1 rounded border px-2 py-0.5 text-xs font-mono", colorClass)}>
+      <Popover>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            onClick={(e) => e.stopPropagation()}
+            className="cursor-pointer hover:underline focus:outline-none"
+          >
+            {label}
+          </button>
+        </PopoverTrigger>
+        <PopoverContent className="w-80 p-0" align="start" onClick={(e) => e.stopPropagation()}>
+          <ColumnDropdownList slot={slot} matches={matches} totalAll={columns.length} onSelect={onChange} />
+        </PopoverContent>
+      </Popover>
+      {onJump && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onJump();
+          }}
+          title={t("monitoredTables.jumpToColumnTitle")}
+          aria-label={t("monitoredTables.jumpToColumnTitle")}
+          className="opacity-60 hover:opacity-100 focus:outline-none leading-none"
+        >
+          &#x2197;
+        </button>
+      )}
+      {onRemove && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onRemove();
+          }}
+          title={removeTitle}
+          aria-label={removeTitle}
+          className="ml-0.5 opacity-60 hover:opacity-100 focus:outline-none leading-none"
+        >
+          ×
+        </button>
+      )}
+    </span>
+  );
+}
+
 interface MappingChipsProps {
   /** One mapping GROUP per materialized check: slot-name -> column-name. */
   columnMapping: AppliedRuleOutColumnMappingItem[];
@@ -101,8 +184,16 @@ interface MappingChipsProps {
    *  (matching dqlake's layout: `{{slot}}` + family badge -> chips). When
    *  omitted, falls back to one flat chip row per mapping group. */
   slots?: RuleSlot[];
+  /** The table's real columns — required to render editable chips
+   *  (`onChangeGroup`); a read-only chip list (e.g. the AI-suggestion
+   *  preview) can omit it. */
+  columns?: ColumnOut[];
   /** Jump to a column's card in the by-column lens. */
   onJumpToColumn?: (colName: string) => void;
+  /** Reassigns the column for one slot within one mapping group — makes
+   *  every chip clickable (opens a column-picker popover) instead of a
+   *  static label. Omit to render non-interactive chips. */
+  onChangeGroup?: (groupIdx: number, slotName: string, colName: string) => void;
   /** Removes the mapping group at this index (every chip for that group,
    *  across every slot row). Omit to render fully read-only chips with no
    *  remove affordance. */
@@ -122,7 +213,9 @@ interface MappingChipsProps {
 export function MappingChips({
   columnMapping,
   slots,
+  columns = [],
   onJumpToColumn,
+  onChangeGroup,
   onRemoveGroup,
   busyGroupIdx = null,
   onAddGroup,
@@ -154,6 +247,10 @@ export function MappingChips({
 
   const slotNames = slots.map((s) => s.name);
   const n = countNonEmpty(columnMapping, slotNames);
+  // Every column already used anywhere in this rule's mapping — excluded
+  // from a chip's own picker candidates (minus its own current value, see
+  // `EditableChip`) so the same column can't be picked twice across groups.
+  const usedColumns = columnMapping.flatMap((group) => slotNames.map((s) => group[s]).filter((v): v is string => Boolean(v)));
 
   return (
     <div className={cn("space-y-2", className)}>
@@ -183,17 +280,32 @@ export function MappingChips({
                     {t("monitoredTables.noColumnMapped")}
                   </span>
                 ) : (
-                  filled.map(({ colName, groupIdx }) => (
-                    <ReadonlyChip
-                      key={groupIdx}
-                      colorClass={paletteAt(groupIdx)}
-                      label={colName}
-                      onJump={onJumpToColumn ? () => onJumpToColumn(colName) : undefined}
-                      onRemove={onRemoveGroup ? () => onRemoveGroup(groupIdx) : undefined}
-                      removeTitle={t("monitoredTables.removeMappingGroupTitle", { count: groupIdx + 1 })}
-                      busy={busyGroupIdx === groupIdx}
-                    />
-                  ))
+                  filled.map(({ colName, groupIdx }) =>
+                    onChangeGroup ? (
+                      <EditableChip
+                        key={groupIdx}
+                        colorClass={paletteAt(groupIdx)}
+                        label={colName}
+                        slot={slot}
+                        columns={columns}
+                        excludeColumns={usedColumns}
+                        onChange={(next) => onChangeGroup(groupIdx, slot.name, next)}
+                        onJump={onJumpToColumn ? () => onJumpToColumn(colName) : undefined}
+                        onRemove={onRemoveGroup ? () => onRemoveGroup(groupIdx) : undefined}
+                        removeTitle={t("monitoredTables.removeMappingGroupTitle", { count: groupIdx + 1 })}
+                      />
+                    ) : (
+                      <ReadonlyChip
+                        key={groupIdx}
+                        colorClass={paletteAt(groupIdx)}
+                        label={colName}
+                        onJump={onJumpToColumn ? () => onJumpToColumn(colName) : undefined}
+                        onRemove={onRemoveGroup ? () => onRemoveGroup(groupIdx) : undefined}
+                        removeTitle={t("monitoredTables.removeMappingGroupTitle", { count: groupIdx + 1 })}
+                        busy={busyGroupIdx === groupIdx}
+                      />
+                    ),
+                  )
                 )}
 
                 {/* + Apply to another column: only on the last slot row */}

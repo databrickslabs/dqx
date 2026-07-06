@@ -17,7 +17,9 @@ from fastapi import HTTPException
 from databricks_labs_dqx_app.backend.models import (
     ApplyRuleIn,
     BulkRegisterMonitoredTablesIn,
+    DesiredAppliedRuleIn,
     RegisterMonitoredTableIn,
+    SaveAppliedRulesIn,
     SetAppliedRulePinIn,
     SetAppliedRuleSeverityOverrideIn,
 )
@@ -32,6 +34,7 @@ from databricks_labs_dqx_app.backend.routes.v1.monitored_tables import (
     publish_monitored_table,
     register_monitored_table,
     remove_applied_rule,
+    save_applied_rules,
     set_applied_rule_pin,
     set_applied_rule_severity_override,
     suggest_rules_for_table,
@@ -238,6 +241,59 @@ class TestApplyRuleToTable:
         body = ApplyRuleIn(rule_id="r1", column_mapping=[{"column": "id"}])
         with pytest.raises(HTTPException) as excinfo:
             apply_rule_to_table("b1", body=body, svc=svc, obo_ws=_mock_obo_ws())
+        assert excinfo.value.status_code == 404
+
+
+class TestSaveAppliedRules:
+    def test_save_success(self):
+        svc = MagicMock()
+        applied = AppliedRule(id="ar1", binding_id="b1", rule_id="r1", column_mapping=[{"column": "id"}])
+        svc.save_applied_rules.return_value = [applied]
+        body = SaveAppliedRulesIn(
+            applications=[DesiredAppliedRuleIn(rule_id="r1", column_mapping=[{"column": "id"}])]
+        )
+        result = save_applied_rules("b1", body=body, svc=svc, obo_ws=_mock_obo_ws())
+        assert [r.id for r in result] == ["ar1"]
+        (called_binding_id, called_desired, called_user_email), _kwargs = svc.save_applied_rules.call_args
+        assert called_binding_id == "b1"
+        assert called_user_email == "alice@x"
+        assert [d.rule_id for d in called_desired] == ["r1"]
+        assert called_desired[0].column_mapping == [{"column": "id"}]
+
+    def test_empty_applications_removes_everything(self):
+        svc = MagicMock()
+        svc.save_applied_rules.return_value = []
+        body = SaveAppliedRulesIn(applications=[])
+        result = save_applied_rules("b1", body=body, svc=svc, obo_ws=_mock_obo_ws())
+        assert result == []
+        svc.save_applied_rules.assert_called_once_with("b1", [], "alice@x")
+
+    def test_mapping_incomplete_raises_422(self):
+        svc = MagicMock()
+        svc.save_applied_rules.side_effect = MappingIncompleteError("missing slot")
+        body = SaveAppliedRulesIn(applications=[DesiredAppliedRuleIn(rule_id="r1", column_mapping=[{}])])
+        with pytest.raises(HTTPException) as excinfo:
+            save_applied_rules("b1", body=body, svc=svc, obo_ws=_mock_obo_ws())
+        assert excinfo.value.status_code == 422
+
+    def test_unpublished_rule_raises_409(self):
+        svc = MagicMock()
+        svc.save_applied_rules.side_effect = RuleNotPublishedError("not published")
+        body = SaveAppliedRulesIn(
+            applications=[DesiredAppliedRuleIn(rule_id="r1", column_mapping=[{"column": "id"}])]
+        )
+        with pytest.raises(HTTPException) as excinfo:
+            save_applied_rules("b1", body=body, svc=svc, obo_ws=_mock_obo_ws())
+        assert excinfo.value.status_code == 409
+
+    def test_missing_binding_or_rule_raises_404(self):
+        svc = MagicMock()
+        svc.save_applied_rules.side_effect = RuntimeError("Monitored table not found: b1")
+        body = SaveAppliedRulesIn(
+            applications=[DesiredAppliedRuleIn(rule_id="r1", column_mapping=[{"column": "id"}])]
+        )
+        with pytest.raises(HTTPException) as excinfo:
+            save_applied_rules("b1", body=body, svc=svc, obo_ws=_mock_obo_ws())
         assert excinfo.value.status_code == 404
 
 

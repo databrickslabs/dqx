@@ -76,7 +76,7 @@ function isExactMatch(slotName: string, colName: string): boolean {
   return stripSuffix(slotName) === stripSuffix(colName);
 }
 
-interface ColumnDropdownListProps {
+export interface ColumnDropdownListProps {
   slot: RuleSlot;
   /** Already family-filtered + exclusion-filtered candidate columns. */
   matches: ColumnOut[];
@@ -90,7 +90,7 @@ interface ColumnDropdownListProps {
  *  `bindings/MappingChips.tsx` `ColumnPicker`, now on the `Command`
  *  primitive so it keeps our own exact-match ordering (`shouldFilter=false`
  *  + a manual substring filter) instead of cmdk's fuzzy scoring. */
-function ColumnDropdownList({ slot, matches, totalAll, onSelect }: ColumnDropdownListProps) {
+export function ColumnDropdownList({ slot, matches, totalAll, onSelect }: ColumnDropdownListProps) {
   const { t } = useTranslation();
   const [search, setSearch] = useState("");
 

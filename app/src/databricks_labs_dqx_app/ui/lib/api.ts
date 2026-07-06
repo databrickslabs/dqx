@@ -658,6 +658,39 @@ export interface CustomMetricsOut {
   metrics: string[];
 }
 
+export type DesiredAppliedRuleInColumnMappingItem = {[key: string]: string};
+
+/**
+ * None = follow latest published version; a number freezes to that snapshot
+ */
+export type DesiredAppliedRuleInPinnedVersion = number | null;
+
+/**
+ * Overrides the rule's tagged severity for this application only
+ */
+export type DesiredAppliedRuleInSeverityOverride = string | null;
+
+/**
+ * Per-application free-text tags
+ */
+export type DesiredAppliedRuleInTags = { [key: string]: unknown };
+
+/**
+ * One entry in the full desired set of applications for ``saveAppliedRules``.
+ */
+export interface DesiredAppliedRuleIn {
+  /** The published (approved) dq_rules row to apply */
+  rule_id: string;
+  /** One slot-name -> column-name mapping group per materialized check; may be empty to stage the application with no mapping yet. */
+  column_mapping?: DesiredAppliedRuleInColumnMappingItem[];
+  /** None = follow latest published version; a number freezes to that snapshot */
+  pinned_version?: DesiredAppliedRuleInPinnedVersion;
+  /** Overrides the rule's tagged severity for this application only */
+  severity_override?: DesiredAppliedRuleInSeverityOverride;
+  /** Per-application free-text tags */
+  tags?: DesiredAppliedRuleInTags;
+}
+
 export type DryRunInChecksItem = { [key: string]: unknown };
 
 export interface DryRunIn {
@@ -1734,6 +1767,16 @@ export interface RunStatusOut {
   message?: RunStatusOutMessage;
   /** Whether the temporary view was cleaned up */
   view_cleaned_up?: boolean;
+}
+
+/**
+ * Request body for ``saveAppliedRules`` — the FULL desired set of applications for a binding.
+
+Anything currently applied to the binding that isn't (re)supplied here is
+removed; see ``ApplyRulesService.save_applied_rules`` for reconcile semantics.
+ */
+export interface SaveAppliedRulesIn {
+  applications?: DesiredAppliedRuleIn[];
 }
 
 export type SaveRulesInChecksItem = { [key: string]: unknown };
@@ -10284,6 +10327,76 @@ export const useApplyRuleToTable = <TError = AxiosError<HTTPValidationError>,
       > => {
 
       const mutationOptions = getApplyRuleToTableMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Reconcile the FULL desired set of applied rules for a monitored table in one batch.
+
+Backs the staged Apply Rules editor: the frontend stages every add /
+mapping-edit / severity-override / pin / removal locally and calls this
+once on Save-as-draft or Publish instead of firing an immediate write per
+edit. Does NOT materialize — materialization stays gated behind the
+existing publish route.
+ * @summary Save Applied Rules
+ */
+export const saveAppliedRules = (
+    bindingId: string,
+    saveAppliedRulesIn: SaveAppliedRulesIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<AppliedRuleOut[]>> => {
+    
+    
+    return axios.default.put(
+      `/api/v1/monitored-tables/${bindingId}/applied-rules`,
+      saveAppliedRulesIn,options
+    );
+  }
+
+
+
+export const getSaveAppliedRulesMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveAppliedRules>>, TError,{bindingId: string;data: SaveAppliedRulesIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof saveAppliedRules>>, TError,{bindingId: string;data: SaveAppliedRulesIn}, TContext> => {
+
+const mutationKey = ['saveAppliedRules'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof saveAppliedRules>>, {bindingId: string;data: SaveAppliedRulesIn}> = (props) => {
+          const {bindingId,data} = props ?? {};
+
+          return  saveAppliedRules(bindingId,data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SaveAppliedRulesMutationResult = NonNullable<Awaited<ReturnType<typeof saveAppliedRules>>>
+    export type SaveAppliedRulesMutationBody = SaveAppliedRulesIn
+    export type SaveAppliedRulesMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Save Applied Rules
+ */
+export const useSaveAppliedRules = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveAppliedRules>>, TError,{bindingId: string;data: SaveAppliedRulesIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof saveAppliedRules>>,
+        TError,
+        {bindingId: string;data: SaveAppliedRulesIn},
+        TContext
+      > => {
+
+      const mutationOptions = getSaveAppliedRulesMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }

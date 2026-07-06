@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
@@ -43,6 +44,22 @@ class RuleNotPublishedError(ValueError):
 
 class MappingIncompleteError(ValueError):
     """Raised by :meth:`ApplyRulesService.apply_rule` when *column_mapping* doesn't cover every slot."""
+
+
+@dataclass
+class DesiredAppliedRule:
+    """One entry in the FULL desired set passed to :meth:`ApplyRulesService.save_applied_rules`.
+
+    Mirrors the mutable fields of :class:`~databricks_labs_dqx_app.backend.registry_models.AppliedRule`
+    minus the persistence-only fields (``id``/``binding_id``/``mapping_hash``/``created_by``/``created_at``)
+    that the reconcile loop derives or fills in itself.
+    """
+
+    rule_id: str
+    column_mapping: list[ColumnMappingGroup] = field(default_factory=list)
+    pinned_version: int | None = None
+    severity_override: str | None = None
+    tags: dict[str, Any] = field(default_factory=dict)
 
 
 class ApplyRulesService:
@@ -238,6 +255,105 @@ class ApplyRulesService:
         if not rows:
             return None
         return self._row_to_applied_rule(rows[0])
+
+    # ------------------------------------------------------------------
+    # Batch reconcile (staged editor — save/publish in one action)
+    # ------------------------------------------------------------------
+
+    def save_applied_rules(
+        self,
+        binding_id: str,
+        desired: list[DesiredAppliedRule],
+        user_email: str,
+    ) -> list[AppliedRule]:
+        """Reconcile the FULL desired set of applied rules for *binding_id* in one batch.
+
+        Backs the staged Apply Rules editor: the UI stages every add/remove/
+        mapping-edit/severity-override/pin change locally and calls this once
+        on Save-as-draft or Publish, instead of firing an immediate API call
+        per edit. *desired* must be the complete set of applications the UI
+        wants to end up with for this binding — anything currently applied
+        that isn't (re)supplied here is removed.
+
+        Reconciliation, per entry (keyed by ``rule_id`` — the UI enforces at
+        most one entry per rule; if duplicates arrive anyway, the last one
+        in *desired* wins):
+
+        - Upserts via :meth:`apply_rule`, which already handles the
+          identical-mapping-hash update-in-place case.
+        - A mapping change (new ``mapping_hash``) inserts the new row via
+          :meth:`apply_rule` and removes the old row (via :meth:`remove_applied`,
+          which also cleans up any materialized ``dq_quality_rules`` rows)
+          since it no longer matches any desired entry's hash.
+        - Any existing row whose ``rule_id`` isn't in *desired* at all is
+          removed the same way.
+
+        All entries are validated (published-rule + slot-coverage per group)
+        BEFORE any mutation happens, so a single bad entry never leaves the
+        binding half-reconciled.
+
+        Args:
+            binding_id: The monitored table binding to reconcile.
+            desired: The full desired set of applications for this binding.
+            user_email: Attributed as ``created_by`` on newly inserted rows.
+
+        Returns:
+            The resulting list of :class:`AppliedRule` rows for *binding_id*
+            (insertion order of *desired*, deduplicated by ``rule_id``).
+
+        Raises:
+            RuntimeError: *binding_id* or a desired entry's *rule_id* does not exist.
+            RuleNotPublishedError: a desired entry's rule is not currently ``approved``.
+            MappingIncompleteError: a desired entry's mapping group doesn't
+                exactly cover its rule's slots.
+        """
+        self._require_binding_exists(binding_id)
+
+        deduped: dict[str, DesiredAppliedRule] = {}
+        for entry in desired:
+            deduped[entry.rule_id] = entry
+        deduped_entries = list(deduped.values())
+
+        # Validate every entry up front so a bad one never leaves a
+        # half-applied set (no removals or upserts have happened yet).
+        desired_hashes: dict[str, str] = {}
+        for entry in deduped_entries:
+            rule = self._registry.get_rule(entry.rule_id)
+            if rule is None:
+                raise RuntimeError(f"Registry rule not found: {entry.rule_id}")
+            if rule.status != "approved":
+                raise RuleNotPublishedError(
+                    f"Registry rule '{entry.rule_id}' is not published (status='{rule.status}'); "
+                    "only published rules can be applied to a monitored table."
+                )
+            self._validate_mapping_complete(entry.column_mapping, rule.definition.slots)
+            desired_hashes[entry.rule_id] = compute_mapping_hash(entry.column_mapping)
+
+        # Remove anything not present in the desired set (by rule_id) or
+        # superseded by a mapping change (hash mismatch for that rule_id).
+        for existing in self.list_applied(binding_id):
+            if existing.id is not None and desired_hashes.get(existing.rule_id) != existing.mapping_hash:
+                self.remove_applied(existing.id)
+
+        results = [
+            self.apply_rule(
+                binding_id,
+                entry.rule_id,
+                entry.column_mapping,
+                user_email,
+                pinned_version=entry.pinned_version,
+                severity_override=entry.severity_override,
+                tags=entry.tags,
+            )
+            for entry in deduped_entries
+        ]
+        logger.info(
+            "Reconciled applied rules for binding %s: %d desired, %d resulting",
+            binding_id,
+            len(deduped_entries),
+            len(results),
+        )
+        return results
 
     # ------------------------------------------------------------------
     # List / Get

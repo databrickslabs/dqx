@@ -3,14 +3,14 @@
 // a collapsible card with a chevron header, version-pin + severity-override
 // dropdown badges, a "Rule logic" disclosure showing the rule's SQL/native
 // definition read-only, and an overflow menu to remove the application.
-// All controls STAGE changes on the monitored-table binding — they never
-// touch the live checks until the table is published.
+// All controls mutate the tab's LOCAL staged row list ONLY (P16-F) — nothing
+// here writes to the network. Persistence happens once, in a batch, when the
+// caller hits Save-as-draft/Publish on the tab.
 
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "@tanstack/react-router";
 import { Check, ChevronDown, Loader2, MoreVertical } from "lucide-react";
-import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -20,27 +20,12 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
-import {
-  useApplyRuleToTable,
-  useRemoveAppliedRule,
-  type AppliedRuleOut,
-  type ColumnOut,
-  type RegistryRuleOut,
-  type RuleParameter,
-  type RuleSlot,
-} from "@/lib/api";
+import type { AppliedRuleOut, ColumnOut, RegistryRuleOut, RuleParameter, RuleSlot } from "@/lib/api";
 import type { LabelDefinition } from "@/lib/api-custom";
 import { paramValueToRaw } from "@/lib/registry-rule-conversion";
 import { MultiColumnPicker, SingleColumnPicker } from "./ColumnPicker";
 import { MappingChips } from "./MappingChips";
-import {
-  RESERVED_DIMENSION_KEY,
-  RESERVED_SEVERITY_KEY,
-  TagBadge,
-  colorFor,
-  extractApiError,
-  getUsedColumnsForRule,
-} from "./shared";
+import { RESERVED_DIMENSION_KEY, RESERVED_SEVERITY_KEY, TagBadge, colorFor, getUsedColumnsForRule } from "./shared";
 
 // ---------------------------------------------------------------------------
 // Completeness status — derives whether every applied mapping group fills
@@ -334,10 +319,9 @@ function SeverityDropdown({
 // because the user clicked MappingChips's "+ Apply to another column"
 // button, or automatically right after the rule was newly staged with an
 // empty column_mapping (see monitored-tables.$bindingId.tsx's auto-expand
-// after Add). Submitting calls the same `useApplyRuleToTable` mutation
-// AddRulesDialog used to call, with a single fully-covering mapping group —
-// each call creates its own applied-rule row/materialized check, matching
-// every other apply path in this app.
+// after Add). Submitting stages a new fully-covering mapping group onto the
+// tab's local row list via `onAddGroup` (P16-F) — nothing here writes to
+// the network.
 // ---------------------------------------------------------------------------
 
 function FamilyBadge({ family }: { family: string }) {
@@ -350,27 +334,18 @@ function FamilyBadge({ family }: { family: string }) {
 }
 
 interface InlineAddMappingFormProps {
-  bindingId: string;
-  ruleId: string;
   slots: RuleSlot[];
   columns: ColumnOut[];
   excludeColumns: string[];
   onCancel: () => void;
-  onAdded: () => void;
+  /** Appends *group* as a new mapping group for this rule — pure local
+   *  state mutation on the tab's staged rows, no network call. */
+  onAddGroup: (group: Record<string, string>) => void;
 }
 
-function InlineAddMappingForm({
-  bindingId,
-  ruleId,
-  slots,
-  columns,
-  excludeColumns,
-  onCancel,
-  onAdded,
-}: InlineAddMappingFormProps) {
+function InlineAddMappingForm({ slots, columns, excludeColumns, onCancel, onAddGroup }: InlineAddMappingFormProps) {
   const { t } = useTranslation();
   const [draft, setDraft] = useState<Record<string, string | string[]>>({});
-  const applyMutation = useApplyRuleToTable();
 
   const draftComplete = slots.every((slot) => {
     const v = draft[slot.name];
@@ -385,16 +360,7 @@ function InlineAddMappingForm({
       const v = draft[slot.name];
       group[slot.name] = Array.isArray(v) ? v.join(",") : (v as string);
     }
-    applyMutation.mutate(
-      { bindingId, data: { rule_id: ruleId, column_mapping: [group] } },
-      {
-        onSuccess: () => {
-          toast.success(t("monitoredTables.toastApplied"));
-          onAdded();
-        },
-        onError: (err) => toast.error(extractApiError(err, t("monitoredTables.toastApplyFailed")), { duration: 6000 }),
-      },
-    );
+    onAddGroup(group);
   };
 
   return (
@@ -445,9 +411,8 @@ function InlineAddMappingForm({
         <Button variant="outline" size="sm" onClick={onCancel}>
           {t("common.cancel")}
         </Button>
-        <Button size="sm" onClick={handleConfirm} disabled={!draftComplete || applyMutation.isPending} className="gap-2">
-          {applyMutation.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-          {applyMutation.isPending ? t("monitoredTables.applying") : t("monitoredTables.applyButton")}
+        <Button size="sm" onClick={handleConfirm} disabled={!draftComplete}>
+          {t("monitoredTables.applyButton")}
         </Button>
       </div>
     </div>
@@ -472,21 +437,21 @@ interface RuleConfigCardProps {
   onSeverityChange: (value: string) => void;
   onRemove: () => void;
   onJumpToColumn?: (colName: string) => void;
-  /** Removes the mapping group (and its owning applied-rule row) at this
-   *  combined-mapping index. */
+  /** Removes the mapping group (and its owning staged row) at this
+   *  combined-mapping index — a pure local `stagedRows` mutation (P16-F). */
   onRemoveMapping?: (groupIdx: number) => void;
-  /** Combined-mapping index of the group currently being removed, if any. */
-  busyMappingGroupIdx?: number | null;
-  /** Monitored-table binding this rule is applied to — needed to submit the
-   *  inline "add mapping" form's `useApplyRuleToTable` call directly from
-   *  this card. */
-  bindingId: string;
+  /** Reassigns one slot's column within one mapping group — a pure local
+   *  `stagedRows` mutation. Wired straight through to `MappingChips`'
+   *  `onChangeGroup`, making every chip clickable/editable. */
+  onChangeMapping?: (groupIdx: number, slotName: string, colName: string) => void;
+  /** Appends *group* as a brand-new mapping group for this rule (the
+   *  "+ Apply to another column" flow) — a pure local `stagedRows`
+   *  mutation, or fills in the rule's still-empty first group when it was
+   *  staged without one yet. */
+  onAddMapping: (group: Record<string, string>) => void;
   /** The table's real columns, threaded down to the inline mapping form's
-   *  column pickers. */
+   *  and editable chips' column pickers. */
   columns: ColumnOut[];
-  /** Invoked after the inline mapping form successfully adds a group, so
-   *  the caller can refetch the binding's applied rules. */
-  onMutated: () => void;
   /** Optional expand override — set by the by-column lens's "jump to rule"
    *  action, or right after a fresh "Add rules" apply, so the target card
    *  opens automatically instead of requiring an extra click. */
@@ -505,17 +470,15 @@ export function RuleConfigCard({
   onRemove,
   onJumpToColumn,
   onRemoveMapping,
-  busyMappingGroupIdx = null,
-  bindingId,
+  onChangeMapping,
+  onAddMapping,
   columns,
-  onMutated,
   forceOpen,
 }: RuleConfigCardProps) {
   const { t } = useTranslation();
   const [isOpen, setIsOpen] = useState(Boolean(forceOpen));
   const [logicOpen, setLogicOpen] = useState(false);
   const [addingMapping, setAddingMapping] = useState(false);
-  const removeEmptyRowMutation = useRemoveAppliedRule();
 
   const dimension = rule.rule_dimension || "";
   const ruleSeverity = rule.rule_severity || "";
@@ -661,40 +624,21 @@ export function RuleConfigCard({
             <MappingChips
               columnMapping={rule.column_mapping ?? []}
               slots={slots}
+              columns={columns}
               onJumpToColumn={onJumpToColumn}
+              onChangeGroup={canEdit ? onChangeMapping : undefined}
               onRemoveGroup={canEdit ? onRemoveMapping : undefined}
-              busyGroupIdx={busyMappingGroupIdx}
               onAddGroup={canEdit && !addingMapping ? () => setAddingMapping(true) : undefined}
             />
             {canEdit && addingMapping && (
               <InlineAddMappingForm
-                bindingId={bindingId}
-                ruleId={rule.rule_id}
                 slots={slots}
                 columns={columns}
                 excludeColumns={getUsedColumnsForRule(rule)}
                 onCancel={() => setAddingMapping(false)}
-                onAdded={() => {
+                onAddGroup={(group) => {
                   setAddingMapping(false);
-                  // Completing the FIRST mapping group for a rule that was
-                  // staged with an empty column_mapping (see AddRulesDialog)
-                  // just created a brand-new applied-rule row for the real
-                  // group — apply_rule() never mutates column_mapping on an
-                  // existing row (different mapping produces a different
-                  // mapping_hash, i.e. a different natural key). The old
-                  // empty-mapping row (this card's `rule.id`, guaranteed to
-                  // be the sole row when `needsFirstMapping` was true) is
-                  // now redundant and, if left behind, would break the
-                  // "each row owns exactly one mapping group" convention
-                  // `handleRemoveMappingGroup` relies on. Clean it up.
-                  if (needsFirstMapping && rule.id) {
-                    removeEmptyRowMutation.mutate(
-                      { bindingId, appliedRuleId: rule.id },
-                      { onSettled: onMutated },
-                    );
-                  } else {
-                    onMutated();
-                  }
+                  onAddMapping(group);
                 }}
               />
             )}

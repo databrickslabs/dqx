@@ -12,9 +12,10 @@ from unittest.mock import create_autospec
 
 import pytest
 
-from databricks_labs_dqx_app.backend.registry_models import RegistryRule, RuleDefinition
+from databricks_labs_dqx_app.backend.registry_models import RegistryRule, RuleDefinition, compute_mapping_hash
 from databricks_labs_dqx_app.backend.services.apply_rules_service import (
     ApplyRulesService,
+    DesiredAppliedRule,
     MappingIncompleteError,
     RuleNotPublishedError,
 )
@@ -173,6 +174,147 @@ class TestApplyRule:
         update_sql = sql.execute.call_args[0][0]
         assert "UPDATE dqx_test.dqx_app_test.dq_applied_rules" in update_sql
         assert "INSERT INTO" not in update_sql
+
+
+# ---------------------------------------------------------------------------
+# save_applied_rules (batch reconcile — staged editor)
+# ---------------------------------------------------------------------------
+
+
+class TestSaveAppliedRules:
+    def test_reconciles_new_additions(self, svc, sql, registry):
+        registry.get_rule.return_value = _published_rule()
+        sql.query.side_effect = [
+            [["b1"]],  # binding exists (save_applied_rules)
+            [],  # list_applied: no existing rows
+            [["b1"]],  # binding exists (apply_rule entry1)
+            [],  # apply_rule(entry1): no existing natural-key match
+            [["b1"]],  # binding exists (apply_rule entry2)
+            [],  # apply_rule(entry2): no existing natural-key match
+        ]
+        desired = [
+            DesiredAppliedRule(rule_id="r1", column_mapping=[{"column": "a"}]),
+            DesiredAppliedRule(rule_id="r2", column_mapping=[{"column": "b"}]),
+        ]
+        results = svc.save_applied_rules("b1", desired, "alice@x")
+        assert [r.rule_id for r in results] == ["r1", "r2"]
+        insert_calls = [c.args[0] for c in sql.execute.call_args_list]
+        assert len(insert_calls) == 2
+        assert all("INSERT INTO dqx_test.dqx_app_test.dq_applied_rules" in c for c in insert_calls)
+
+    def test_mapping_change_removes_old_row_and_inserts_new(self, svc, sql, registry):
+        registry.get_rule.return_value = _published_rule()
+        old_hash = "oldhash"
+        existing_row = _applied_row(id_="ar1", column_mapping=[{"column": "old_col"}], mapping_hash=old_hash)
+        new_mapping = [{"column": "new_col"}]
+        sql.query.side_effect = [
+            [["b1"]],  # binding exists (save_applied_rules)
+            [existing_row],  # list_applied
+            [existing_row],  # remove_applied -> get_applied lookup
+            [["b1"]],  # binding exists (apply_rule)
+            [],  # apply_rule -> no natural-key match for the new mapping
+        ]
+        desired = [DesiredAppliedRule(rule_id="r1", column_mapping=new_mapping)]
+        results = svc.save_applied_rules("b1", desired, "alice@x")
+        assert len(results) == 1
+        assert results[0].column_mapping == new_mapping
+        calls = [c.args[0] for c in sql.execute.call_args_list]
+        assert any("DELETE FROM dqx_test.dqx_app_test.dq_quality_rules" in c for c in calls)
+        assert any("DELETE FROM dqx_test.dqx_app_test.dq_applied_rules" in c for c in calls)
+        assert any("INSERT INTO dqx_test.dqx_app_test.dq_applied_rules" in c for c in calls)
+
+    def test_removes_rule_no_longer_desired(self, svc, sql, registry):
+        existing_row = _applied_row(id_="ar1")
+        sql.query.side_effect = [
+            [["b1"]],  # binding exists
+            [existing_row],  # list_applied
+            [existing_row],  # remove_applied -> get_applied lookup
+        ]
+        results = svc.save_applied_rules("b1", [], "alice@x")
+        assert results == []
+        registry.get_rule.assert_not_called()
+        calls = [c.args[0] for c in sql.execute.call_args_list]
+        assert any("DELETE FROM dqx_test.dqx_app_test.dq_quality_rules" in c for c in calls)
+        assert any("DELETE FROM dqx_test.dqx_app_test.dq_applied_rules" in c for c in calls)
+        assert not any("INSERT INTO" in c for c in calls)
+
+    def test_updates_severity_and_pin_in_place_when_mapping_unchanged(self, svc, sql, registry):
+        registry.get_rule.return_value = _published_rule()
+        mapping = [{"column": "customer_id"}]
+        unchanged_hash = compute_mapping_hash(mapping)
+        existing_row = _applied_row(id_="ar1", column_mapping=mapping, mapping_hash=unchanged_hash)
+        sql.query.side_effect = [
+            [["b1"]],  # binding exists (save_applied_rules)
+            [existing_row],  # list_applied (hash matches desired -> not removed)
+            [["b1"]],  # binding exists (apply_rule)
+            [existing_row],  # apply_rule -> natural-key match found -> update path
+        ]
+        desired = [
+            DesiredAppliedRule(
+                rule_id="r1", column_mapping=mapping, pinned_version=3, severity_override="Critical"
+            )
+        ]
+        results = svc.save_applied_rules("b1", desired, "alice@x")
+        assert results[0].pinned_version == 3
+        assert results[0].severity_override == "Critical"
+        calls = [c.args[0] for c in sql.execute.call_args_list]
+        assert len(calls) == 1
+        assert "UPDATE dqx_test.dqx_app_test.dq_applied_rules" in calls[0]
+        assert not any("DELETE" in c for c in calls)
+
+    def test_allows_empty_mapping_to_stage(self, svc, sql, registry):
+        registry.get_rule.return_value = _published_rule()
+        sql.query.side_effect = [
+            [["b1"]],  # binding exists (save_applied_rules)
+            [],  # list_applied
+            [["b1"]],  # binding exists (apply_rule)
+            [],  # apply_rule natural-key lookup
+        ]
+        results = svc.save_applied_rules("b1", [DesiredAppliedRule(rule_id="r1", column_mapping=[])], "alice@x")
+        assert results[0].column_mapping == []
+
+    def test_rejects_unpublished_rule_before_mutating(self, svc, sql, registry):
+        draft_rule = _published_rule(rule_id="r2")
+        draft_rule.status = "draft"
+
+        def get_rule(rule_id: str) -> RegistryRule:
+            return _published_rule() if rule_id == "r1" else draft_rule
+
+        registry.get_rule.side_effect = get_rule
+        sql.query.side_effect = [[["b1"]]]  # binding exists only
+        desired = [
+            DesiredAppliedRule(rule_id="r1", column_mapping=[{"column": "a"}]),
+            DesiredAppliedRule(rule_id="r2", column_mapping=[{"column": "b"}]),
+        ]
+        with pytest.raises(RuleNotPublishedError):
+            svc.save_applied_rules("b1", desired, "alice@x")
+        sql.execute.assert_not_called()
+
+    def test_bad_mapping_leaves_state_untouched(self, svc, sql, registry):
+        registry.get_rule.return_value = _published_rule(slot_names=["column", "reference_column"])
+        sql.query.side_effect = [[["b1"]]]  # binding exists only
+        desired = [
+            DesiredAppliedRule(rule_id="r1", column_mapping=[{"column": "a"}]),  # missing reference_column
+        ]
+        with pytest.raises(MappingIncompleteError):
+            svc.save_applied_rules("b1", desired, "alice@x")
+        sql.execute.assert_not_called()
+
+    def test_last_writer_wins_on_duplicate_rule_id(self, svc, sql, registry):
+        registry.get_rule.return_value = _published_rule()
+        sql.query.side_effect = [
+            [["b1"]],  # binding exists (save_applied_rules)
+            [],  # list_applied
+            [["b1"]],  # binding exists (apply_rule)
+            [],  # apply_rule natural-key lookup for the winning entry
+        ]
+        desired = [
+            DesiredAppliedRule(rule_id="r1", column_mapping=[{"column": "a"}]),
+            DesiredAppliedRule(rule_id="r1", column_mapping=[{"column": "b"}]),
+        ]
+        results = svc.save_applied_rules("b1", desired, "alice@x")
+        assert len(results) == 1
+        assert results[0].column_mapping == [{"column": "b"}]
 
 
 # ---------------------------------------------------------------------------

@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
-import { Suspense, useCallback, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { QueryErrorResetBoundary, useQueryClient } from "@tanstack/react-query";
 import { ErrorBoundary } from "react-error-boundary";
@@ -60,9 +60,7 @@ import {
   useSubmitProfileRun,
   getProfileRunStatus,
   usePublishMonitoredTable,
-  useRemoveAppliedRule,
-  useSetAppliedRulePin,
-  useSetAppliedRuleSeverityOverride,
+  useSaveAppliedRules,
   useListRegistryRules,
   useGetTableColumns,
   useGetRules,
@@ -74,6 +72,7 @@ import {
 import { useLabelDefinitions } from "@/lib/api-custom";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useJobPolling } from "@/hooks/use-job-polling";
+import { useUnsavedGuard } from "@/hooks/use-unsaved-guard";
 import { formatDateShort } from "@/lib/format-utils";
 import { cn } from "@/lib/utils";
 import { useAiAvailability } from "@/hooks/use-ai-availability";
@@ -84,9 +83,12 @@ import { RuleConfigCard, computeStatus } from "@/components/apply-rules/RuleConf
 import { RulesByColumn, type ColumnRef } from "@/components/apply-rules/RulesByColumn";
 import {
   RESERVED_SEVERITY_KEY,
+  buildDesiredApplications,
+  desiredApplicationsKey,
   extractApiError,
   groupAppliedRulesByRuleId,
   mergeRuleRowGroup,
+  nextLocalRowId,
 } from "@/components/apply-rules/shared";
 import { orderSeverityValuesForDisplay } from "@/components/RegistryRuleBadges";
 import { ProfileColumnList } from "@/components/bindings/ProfileColumnList";
@@ -190,25 +192,70 @@ function MonitoredTableDetailPage() {
     [queryClient, bindingId],
   );
 
-  const onMutated = useCallback(() => {
-    invalidateDetail();
-  }, [invalidateDetail]);
+  // ---------------------------------------------------------------------
+  // Staged editor (P16-F) — every add/mapping-edit/severity-override/pin/
+  // removal on the Apply Rules tab mutates `stagedRows` ONLY (no network).
+  // `baseline` is the last-known-persisted state (seeded from the server on
+  // mount/binding-switch and re-seeded from the `saveAppliedRules` mutation
+  // response on a successful Save/Publish — NOT from a background refetch
+  // of `appliedRules`, which could otherwise race with in-flight edits).
+  // `isDirty` diffs the two via a stable, order-independent key so the
+  // Save-as-draft/Publish buttons and the unsaved-changes nav guard only
+  // engage when there's something to persist.
+  // ---------------------------------------------------------------------
+  const [stagedRows, setStagedRows] = useState<AppliedRuleOut[]>(() => appliedRules);
+  const [baseline, setBaseline] = useState<AppliedRuleOut[]>(() => appliedRules);
+  const seededBindingIdRef = useRef(bindingId);
+  useEffect(() => {
+    if (seededBindingIdRef.current !== bindingId) {
+      seededBindingIdRef.current = bindingId;
+      setStagedRows(appliedRules);
+      setBaseline(appliedRules);
+    }
+  }, [bindingId, appliedRules]);
 
+  const isDirty = desiredApplicationsKey(stagedRows) !== desiredApplicationsKey(baseline);
+  const { blocker } = useUnsavedGuard({ hasUnsavedChanges: isDirty });
+
+  const saveMutation = useSaveAppliedRules();
   const publishMutation = usePublishMonitoredTable();
-  const handlePublish = () => {
-    publishMutation.mutate(
-      { bindingId },
-      {
-        onSuccess: () => {
-          toast.success(t("monitoredTables.toastPublished"));
-          invalidateDetail();
-        },
-        onError: (err) => {
-          toast.error(extractApiError(err, t("monitoredTables.toastPublishFailed")), { duration: 6000 });
-        },
+
+  const persistStagedRows = useCallback(
+    () => saveMutation.mutateAsync({ bindingId, data: { applications: buildDesiredApplications(stagedRows) } }),
+    [saveMutation, bindingId, stagedRows],
+  );
+
+  const handleSaveAsDraft = () => {
+    persistStagedRows().then(
+      (resp) => {
+        setStagedRows(resp.data);
+        setBaseline(resp.data);
+        toast.success(t("monitoredTables.toastSavedDraft"));
+        invalidateDetail();
+      },
+      (err: unknown) => {
+        toast.error(extractApiError(err, t("monitoredTables.toastSaveFailed")), { duration: 6000 });
       },
     );
   };
+
+  const handlePublish = () => {
+    persistStagedRows()
+      .then((resp) => {
+        setStagedRows(resp.data);
+        setBaseline(resp.data);
+        return publishMutation.mutateAsync({ bindingId });
+      })
+      .then(() => {
+        toast.success(t("monitoredTables.toastPublished"));
+        invalidateDetail();
+      })
+      .catch((err: unknown) => {
+        toast.error(extractApiError(err, t("monitoredTables.toastPublishFailed")), { duration: 6000 });
+      });
+  };
+
+  const savingOrPublishing = saveMutation.isPending || publishMutation.isPending;
 
   return (
     <FadeIn>
@@ -237,30 +284,22 @@ function MonitoredTableDetailPage() {
           </div>
           {perms.canCreateRules && (
             <div className="flex items-center gap-2">
-              <TooltipProvider delayDuration={200}>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    {/* Every action on this page (apply/remove/pin/override a
-                        rule) already writes straight to the binding's draft
-                        state — there's no local edit buffer to flush, so
-                        this stays permanently disabled for visual parity
-                        with the rule editor's Save-as-draft/Publish pair. */}
-                    <span tabIndex={0}>
-                      <Button variant="outline" disabled className="gap-2">
-                        {t("monitoredTables.saveAsDraftButton")}
-                      </Button>
-                    </span>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom">{t("monitoredTables.saveAsDraftTooltip")}</TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-              <Button onClick={handlePublish} disabled={publishMutation.isPending} className="gap-2">
-                {publishMutation.isPending ? (
+              <Button
+                variant="outline"
+                onClick={handleSaveAsDraft}
+                disabled={!isDirty || savingOrPublishing}
+                className="gap-2"
+              >
+                {saveMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+                {t("monitoredTables.saveAsDraftButton")}
+              </Button>
+              <Button onClick={handlePublish} disabled={savingOrPublishing} className="gap-2">
+                {savingOrPublishing ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
                   <UploadCloud className="h-4 w-4" />
                 )}
-                {publishMutation.isPending ? t("monitoredTables.publishing") : t("monitoredTables.publishButton")}
+                {savingOrPublishing ? t("monitoredTables.publishing") : t("monitoredTables.publishButton")}
               </Button>
             </div>
           )}
@@ -300,9 +339,9 @@ function MonitoredTableDetailPage() {
             <ApplyRulesTab
               bindingId={bindingId}
               tableFqn={table.table_fqn}
-              appliedRules={appliedRules}
+              stagedRows={stagedRows}
+              setStagedRows={setStagedRows}
               canEdit={perms.canCreateRules}
-              onMutated={onMutated}
             />
           </TabsContent>
 
@@ -311,6 +350,24 @@ function MonitoredTableDetailPage() {
           </TabsContent>
         </Tabs>
       </div>
+
+      <AlertDialog open={blocker.status === "blocked"}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("common.unsavedChanges")}</AlertDialogTitle>
+            <AlertDialogDescription>{t("monitoredTables.unsavedChangesDescription")}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => blocker.reset?.()}>{t("common.stayOnPage")}</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-white hover:bg-destructive/90"
+              onClick={() => blocker.proceed?.()}
+            >
+              {t("monitoredTables.discardAndLeave")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </FadeIn>
   );
 }
@@ -635,15 +692,21 @@ function ProfileTab({ bindingId, tableFqn }: { bindingId: string; tableFqn: stri
 function ApplyRulesTab({
   bindingId,
   tableFqn,
-  appliedRules,
+  stagedRows,
+  setStagedRows,
   canEdit,
-  onMutated,
 }: {
   bindingId: string;
   tableFqn: string;
-  appliedRules: AppliedRuleOut[];
+  /** The tab's local staged editor state (P16-F) — the caller
+   *  (`MonitoredTableDetailPage`) owns it so it survives switching away from
+   *  this tab (Radix unmounts inactive `TabsContent`) and so the header's
+   *  Save-as-draft/Publish buttons and the unsaved-changes nav guard can see
+   *  it too. Every control in this tab mutates it via `setStagedRows` only —
+   *  nothing here writes to the network. */
+  stagedRows: AppliedRuleOut[];
+  setStagedRows: (updater: (prev: AppliedRuleOut[]) => AppliedRuleOut[]) => void;
   canEdit: boolean;
-  onMutated: () => void;
 }) {
   const { t } = useTranslation();
   const [lens, setLens] = useState<"by-rule" | "by-column">("by-rule");
@@ -651,8 +714,6 @@ function ApplyRulesTab({
   const [addColumnContext, setAddColumnContext] = useState<ColumnRef | null>(null);
   const [suggestOpen, setSuggestOpen] = useState(false);
   const [removeTarget, setRemoveTarget] = useState<AppliedRuleOut | null>(null);
-  const [pendingId, setPendingId] = useState<string | null>(null);
-  const [pendingRuleId, setPendingRuleId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"all" | "needs-attention">("all");
   // Set by the by-column lens's "jump to rule" action, or right after
@@ -671,20 +732,11 @@ function ApplyRulesTab({
   const [openColumnName, setOpenColumnName] = useState<string | null>(null);
   const aiAvailability = useAiAvailability();
 
-  // DQX materializes one `dq_applied_rules` ROW per mapping group — a rule
-  // applied to several columns produces several rows sharing the same
-  // rule_id. Group them into one card per rule_id (dqlake's "N mapping
-  // groups under one rule" model) for the by-rule lens.
-  const rowsByRuleId = useMemo(() => {
-    const map = new Map<string, AppliedRuleOut[]>();
-    for (const rule of appliedRules) {
-      const list = map.get(rule.rule_id) ?? [];
-      list.push(rule);
-      map.set(rule.rule_id, list);
-    }
-    return map;
-  }, [appliedRules]);
-  const ruleGroups = useMemo(() => groupAppliedRulesByRuleId(appliedRules), [appliedRules]);
+  // DQX materializes one staged ROW per mapping group — a rule applied to
+  // several columns produces several rows sharing the same rule_id. Group
+  // them into one card per rule_id (dqlake's "N mapping groups under one
+  // rule" model) for the by-rule lens.
+  const ruleGroups = useMemo(() => groupAppliedRulesByRuleId(stagedRows), [stagedRows]);
   const mergedRules = useMemo(() => ruleGroups.map(mergeRuleRowGroup), [ruleGroups]);
 
   const { data: labelDefsData } = useLabelDefinitions();
@@ -743,102 +795,97 @@ function ApplyRulesTab({
     return filtered;
   }, [mergedRules, statuses, filter, search]);
 
-  const removeMutation = useRemoveAppliedRule();
-  const pinMutation = useSetAppliedRulePin();
-  const overrideMutation = useSetAppliedRuleSeverityOverride();
-
   const openAddDialog = (column?: ColumnRef) => {
     setAddColumnContext(column ?? null);
     setAddOpen(true);
   };
 
-  // Removes a single applied-rule row (one mapping group). Used both for
-  // "remove this whole rule" (every row for a rule_id) and for the
-  // MappingChips per-group "x" (a single row).
-  const removeRow = (appliedRuleId: string, options?: { silent?: boolean }) =>
-    removeMutation.mutateAsync({ bindingId, appliedRuleId }).then(
-      () => {
-        if (!options?.silent) toast.success(t("monitoredTables.toastRemoved"));
-      },
-      (err: unknown) => {
-        toast.error(extractApiError(err, t("monitoredTables.toastRemoveFailed")), { duration: 6000 });
-        throw err;
-      },
-    );
+  // Every add path (AddRulesDialog, AiSuggestionDialog) hands up a batch of
+  // brand-new locally-staged rows — append them and jump straight to their
+  // mapping UI in the by-rule lens, mirroring the old "auto-expand after
+  // apply" behaviour but with zero network round-trips.
+  const stageNewRows = (rows: AppliedRuleOut[]) => {
+    setStagedRows((prev) => [...prev, ...rows]);
+    setFilter("all");
+    setSearch("");
+    setLens("by-rule");
+    setExpandRuleIds(rows.map((r) => r.rule_id));
+  };
 
   const confirmRemove = () => {
     if (!removeTarget) return;
-    const rows = rowsByRuleId.get(removeTarget.rule_id) ?? (removeTarget.id ? [removeTarget] : []);
     const ruleId = removeTarget.rule_id;
     setRemoveTarget(null);
-    setPendingRuleId(ruleId);
-    Promise.allSettled(rows.filter((r) => r.id).map((r) => removeRow(r.id!, { silent: true }))).then(() => {
-      toast.success(t("monitoredTables.toastRemoved"));
-      onMutated();
-      setPendingRuleId(null);
+    setStagedRows((prev) => prev.filter((r) => r.rule_id !== ruleId));
+    toast.success(t("monitoredTables.toastRemoved"));
+  };
+
+  // Removes the mapping group at `groupIdx` (its owning staged row) from a
+  // rule's combined mapping — each row owns exactly one mapping group by
+  // convention (see `groupAppliedRulesByRuleId`), so this deletes
+  // rowsForRule[groupIdx]. Local-only: no network call.
+  const handleRemoveMappingGroup = (ruleId: string, groupIdx: number) => {
+    setStagedRows((prev) => {
+      const rowsForRule = prev.filter((r) => r.rule_id === ruleId);
+      const target = rowsForRule[groupIdx];
+      if (!target) return prev;
+      return prev.filter((r) => r !== target);
     });
   };
 
-  // Removes the mapping group at `groupIdx` (its owning row) from a rule's
-  // combined mapping — each row owns exactly one mapping group by
-  // convention (see `groupAppliedRulesByRuleId`), so this deletes rows[groupIdx].
-  const handleRemoveMappingGroup = (ruleId: string, groupIdx: number) => {
-    const rows = rowsByRuleId.get(ruleId) ?? [];
-    const row = rows[groupIdx];
-    if (!row?.id) return;
-    setPendingId(row.id);
-    removeRow(row.id).then(
-      () => {
-        onMutated();
-        setPendingId(null);
-      },
-      () => setPendingId(null),
-    );
+  // Reassigns one slot's column within one mapping group (an editable
+  // MappingChips chip) — local-only mutation of that group's owning row.
+  const handleChangeMapping = (ruleId: string, groupIdx: number, slotName: string, colName: string) => {
+    setStagedRows((prev) => {
+      const rowsForRule = prev.filter((r) => r.rule_id === ruleId);
+      const target = rowsForRule[groupIdx];
+      if (!target) return prev;
+      const nextGroup = { ...(target.column_mapping?.[0] ?? {}), [slotName]: colName };
+      return prev.map((r) => (r === target ? { ...r, column_mapping: [nextGroup] } : r));
+    });
+  };
+
+  // "+ Apply to another column" (or completing a freshly-staged rule's
+  // still-empty first group): fills the sole empty-mapping row in place, or
+  // appends a brand-new staged row (cloning the rule's display metadata and
+  // current pin/severity so the "+ Apply to another column" flow doesn't
+  // reset them) — mirrors the old apply_rule-per-group model, just local.
+  const handleAddMapping = (ruleId: string, group: Record<string, string>) => {
+    setStagedRows((prev) => {
+      const rowsForRule = prev.filter((r) => r.rule_id === ruleId);
+      const emptyRow =
+        rowsForRule.length === 1 && (rowsForRule[0].column_mapping ?? []).length === 0 ? rowsForRule[0] : null;
+      if (emptyRow) {
+        return prev.map((r) => (r === emptyRow ? { ...r, column_mapping: [group] } : r));
+      }
+      const template = rowsForRule[0];
+      if (!template) return prev;
+      const newRow: AppliedRuleOut = {
+        ...template,
+        id: nextLocalRowId(),
+        column_mapping: [group],
+        mapping_hash: null,
+        created_at: null,
+      };
+      return [...prev, newRow];
+    });
   };
 
   const handlePinChange = (rule: AppliedRuleOut, value: string) => {
-    const rows = rowsByRuleId.get(rule.rule_id) ?? [];
     const registryRule = ruleById.get(rule.rule_id);
     const pinned_version = value === "latest" ? null : registryRule?.version ?? rule.pinned_version ?? null;
-    setPendingRuleId(rule.rule_id);
-    Promise.allSettled(
-      rows
-        .filter((r) => r.id)
-        .map((r) => pinMutation.mutateAsync({ bindingId, appliedRuleId: r.id!, data: { pinned_version } })),
-    ).then((results) => {
-      if (results.some((r) => r.status === "rejected")) {
-        toast.error(t("monitoredTables.toastPinFailed"), { duration: 6000 });
-      } else {
-        toast.success(t("monitoredTables.toastPinSet"));
-      }
-      onMutated();
-      setPendingRuleId(null);
-    });
+    setStagedRows((prev) => prev.map((r) => (r.rule_id === rule.rule_id ? { ...r, pinned_version } : r)));
   };
 
   const handleSeverityChange = (rule: AppliedRuleOut, value: string) => {
-    const rows = rowsByRuleId.get(rule.rule_id) ?? [];
-    const severity = value === "none" ? null : value;
-    setPendingRuleId(rule.rule_id);
-    Promise.allSettled(
-      rows
-        .filter((r) => r.id)
-        .map((r) => overrideMutation.mutateAsync({ bindingId, appliedRuleId: r.id!, data: { severity } })),
-    ).then((results) => {
-      if (results.some((r) => r.status === "rejected")) {
-        toast.error(t("monitoredTables.toastOverrideFailed"), { duration: 6000 });
-      } else {
-        toast.success(t("monitoredTables.toastOverrideSet"));
-      }
-      onMutated();
-      setPendingRuleId(null);
-    });
+    const severity_override = value === "none" ? null : value;
+    setStagedRows((prev) => prev.map((r) => (r.rule_id === rule.rule_id ? { ...r, severity_override } : r)));
   };
 
   return (
     <div className="space-y-4 pt-4">
       <div className="flex items-center gap-3 flex-wrap">
-        {appliedRules.length > 0 && (
+        {stagedRows.length > 0 && (
           <TooltipProvider delayDuration={200}>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -881,7 +928,7 @@ function ApplyRulesTab({
           </div>
         )}
 
-        {appliedRules.length > 0 && (
+        {stagedRows.length > 0 && (
           <div className="relative w-60">
             <Input
               placeholder={t("monitoredTables.searchRulesAndColumnsPlaceholder")}
@@ -939,7 +986,7 @@ function ApplyRulesTab({
         </div>
       </div>
 
-      {appliedRules.length === 0 && lens === "by-rule" ? (
+      {stagedRows.length === 0 && lens === "by-rule" ? (
         <div className="flex flex-col items-center justify-center py-16 text-center border border-dashed rounded-lg">
           <Columns3 className="h-10 w-10 text-muted-foreground/30 mb-3" />
           <p className="text-sm text-muted-foreground mb-3 max-w-sm">
@@ -963,10 +1010,7 @@ function ApplyRulesTab({
                   : t("monitoredTables.emptyAppliedRules")}
             </div>
           ) : (
-            visibleMergedRules.map((rule) => {
-              const rows = rowsByRuleId.get(rule.rule_id) ?? [];
-              const busyMappingGroupIdx = pendingId ? rows.findIndex((r) => r.id === pendingId) : -1;
-              return (
+            visibleMergedRules.map((rule) => (
               <RuleConfigCard
                 key={rule.rule_id}
                 rule={rule}
@@ -974,15 +1018,16 @@ function ApplyRulesTab({
                 labelDefinitions={labelDefinitions}
                 severityValues={severityValues}
                 canEdit={canEdit}
-                busy={pendingRuleId === rule.rule_id}
+                busy={false}
                 onPinChange={(v) => handlePinChange(rule, v)}
                 onSeverityChange={(v) => handleSeverityChange(rule, v)}
                 onRemove={() => setRemoveTarget(rule)}
                 onRemoveMapping={(groupIdx) => handleRemoveMappingGroup(rule.rule_id, groupIdx)}
-                busyMappingGroupIdx={busyMappingGroupIdx >= 0 ? busyMappingGroupIdx : null}
-                bindingId={bindingId}
+                onChangeMapping={(groupIdx, slotName, colName) =>
+                  handleChangeMapping(rule.rule_id, groupIdx, slotName, colName)
+                }
+                onAddMapping={(group) => handleAddMapping(rule.rule_id, group)}
                 columns={columns}
-                onMutated={onMutated}
                 forceOpen={expandRuleIds.includes(rule.rule_id)}
                 onJumpToColumn={(colName) => {
                   setFilter("all");
@@ -993,13 +1038,12 @@ function ApplyRulesTab({
                   }, 50);
                 }}
               />
-              );
-            })
+            ))
           )}
         </div>
       ) : (
         <RulesByColumn
-          appliedRules={appliedRules}
+          appliedRules={stagedRows}
           tableFqn={tableFqn}
           canEdit={canEdit}
           search={search}
@@ -1039,16 +1083,8 @@ function ApplyRulesTab({
         bindingId={bindingId}
         publishedRules={publishedRules}
         labelDefinitions={labelDefinitions}
-        onApplied={(ruleIds) => {
-          onMutated();
-          // Land the user directly on the newly-added rule(s)' mapping UI:
-          // force the by-rule lens (even if they were on by-column) and
-          // auto-expand every card that was just staged.
-          setFilter("all");
-          setSearch("");
-          setLens("by-rule");
-          setExpandRuleIds(ruleIds);
-        }}
+        onAdd={stageNewRows}
+        onApplied={() => {}}
         initialColumn={addColumnContext}
       />
 
@@ -1057,7 +1093,8 @@ function ApplyRulesTab({
         onOpenChange={setSuggestOpen}
         bindingId={bindingId}
         labelDefinitions={labelDefinitions}
-        onApplied={onMutated}
+        onAdd={stageNewRows}
+        onApplied={() => {}}
         onAiUnavailable={aiAvailability.reportUnavailable}
       />
 
