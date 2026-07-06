@@ -2,16 +2,24 @@
 // registry rule's slots to real table columns. A slot's `family` ("numeric",
 // "text", "temporal", "boolean", or "any") narrows the candidate list so
 // users aren't offered columns that can't satisfy the check.
+//
+// The single-column picker's popover (trigger chip, search box, "Suggested"
+// vs "Compatible columns" grouping, click-to-select-and-close) is ported 1:1
+// from dqlake's `bindings/MappingChips.tsx` `ColumnPicker` — same layout,
+// same exact-match suggestion heuristic, same commit behavior. DQX has no
+// `cmdk`/`Command` primitive installed, so the list is built from the
+// existing `Popover` + `Input` primitives instead of dqlake's
+// `Command`/`CommandInput` — same interaction pattern, adapted to this
+// app's component set.
 
+import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { ChevronDown, Star } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { cn } from "@/lib/utils";
 import type { ColumnOut, RuleSlot } from "@/lib/api";
 
 export type ColumnFamily = "numeric" | "text" | "temporal" | "boolean" | "any";
@@ -41,6 +49,120 @@ export function columnsForSlot(
   );
 }
 
+// ---------------------------------------------------------------------------
+// Exact-match "Suggested" heuristic — ported from dqlake's `ColumnPicker`.
+// Strips common column-name suffixes before comparing so a slot like
+// `amount` surfaces a column named `amount_col` as a suggestion.
+// ---------------------------------------------------------------------------
+
+const STRIP_SUFFIXES = ["_col", "_id", "_dt", "_ts", "_at"];
+
+function stripSuffix(name: string): string {
+  const lower = name.toLowerCase();
+  for (const sfx of STRIP_SUFFIXES) {
+    if (lower.endsWith(sfx)) {
+      return lower.slice(0, lower.length - sfx.length);
+    }
+  }
+  return lower;
+}
+
+function isExactMatch(slotName: string, colName: string): boolean {
+  return stripSuffix(slotName) === stripSuffix(colName);
+}
+
+interface ColumnDropdownRowProps {
+  col: ColumnOut;
+  suggested: boolean;
+  onSelect: (colName: string) => void;
+}
+
+function ColumnDropdownRow({ col, suggested, onSelect }: ColumnDropdownRowProps) {
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect(col.name)}
+      className="flex w-full items-center gap-2 rounded-sm px-3 py-1.5 text-left hover:bg-muted focus:outline-none focus:bg-muted"
+    >
+      {suggested && <Star className="h-3 w-3 text-yellow-400 shrink-0" aria-hidden />}
+      <span className="font-mono text-xs flex-1 truncate">{col.name}</span>
+      <span className="text-[10px] text-muted-foreground shrink-0">{col.type_name}</span>
+    </button>
+  );
+}
+
+interface ColumnDropdownListProps {
+  slot: RuleSlot;
+  /** Already family-filtered + exclusion-filtered candidate columns. */
+  matches: ColumnOut[];
+  /** Total column count on the table, for the filter summary line. */
+  totalAll: number;
+  onSelect: (colName: string) => void;
+}
+
+/** Popover body: search box + "Suggested"/"Compatible columns" grouping —
+ *  ported 1:1 (layout, grouping, exact-match heuristic) from dqlake's
+ *  `bindings/MappingChips.tsx` `ColumnPicker`. */
+function ColumnDropdownList({ slot, matches, totalAll, onSelect }: ColumnDropdownListProps) {
+  const { t } = useTranslation();
+  const [search, setSearch] = useState("");
+
+  const matchSearch = (c: ColumnOut) => search === "" || c.name.toLowerCase().includes(search.toLowerCase());
+  const suggested = useMemo(() => matches.filter((c) => isExactMatch(slot.name, c.name)), [matches, slot.name]);
+  const rest = useMemo(() => matches.filter((c) => !isExactMatch(slot.name, c.name)), [matches, slot.name]);
+  const suggestedVisible = suggested.filter(matchSearch);
+  const restVisible = rest.filter(matchSearch);
+
+  return (
+    <div className="p-0">
+      <div className="flex items-center px-3 pt-2 pb-1 text-[11px] text-muted-foreground border-b">
+        <span>
+          {slot.family === "any"
+            ? t("monitoredTables.columnPickerCountAny", { count: totalAll })
+            : t("monitoredTables.columnPickerCountFamily", { shown: matches.length, total: totalAll, family: slot.family })}
+        </span>
+      </div>
+      <div className="flex items-center gap-2 border-b px-3">
+        <Input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder={t("monitoredTables.searchColumnsPlaceholder")}
+          className="h-9 flex-1 border-0 bg-transparent shadow-none focus-visible:ring-0 text-xs px-0"
+        />
+      </div>
+      <div className="max-h-64 overflow-y-auto p-1">
+        {suggestedVisible.length === 0 && restVisible.length === 0 && (
+          <p className="py-4 text-center text-xs text-muted-foreground">
+            {matches.length === 0 ? t("monitoredTables.noMatchingColumns") : t("monitoredTables.noColumnsFound")}
+          </p>
+        )}
+        {suggestedVisible.length > 0 && (
+          <div className="pb-1">
+            <div className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+              {t("monitoredTables.suggestedColumnsHeading")}
+            </div>
+            {suggestedVisible.map((col) => (
+              <ColumnDropdownRow key={col.name} col={col} suggested onSelect={onSelect} />
+            ))}
+          </div>
+        )}
+        {restVisible.length > 0 && (
+          <div>
+            {suggestedVisible.length > 0 && (
+              <div className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                {t("monitoredTables.compatibleColumnsHeading")}
+              </div>
+            )}
+            {restVisible.map((col) => (
+              <ColumnDropdownRow key={col.name} col={col} suggested={false} onSelect={onSelect} />
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 interface SingleColumnPickerProps {
   slot: RuleSlot;
   columns: ColumnOut[];
@@ -48,29 +170,51 @@ interface SingleColumnPickerProps {
   onChange: (column: string) => void;
   /** See `columnsForSlot`'s `excludeColumns`. */
   excludeColumns?: string[];
+  /** Auto-open the popover on mount — mirrors dqlake's auto-open of a
+   *  freshly added mapping-group placeholder chip right after
+   *  "+ Apply to another column" is clicked, so the steward doesn't need an
+   *  extra click on the newly revealed slot. */
+  autoOpen?: boolean;
 }
 
-/** Single-column picker for a `cardinality: "one"` slot. */
-export function SingleColumnPicker({ slot, columns, value, onChange, excludeColumns }: SingleColumnPickerProps) {
+/** Single-column picker for a `cardinality: "one"` slot. Trigger is a
+ *  combobox-style button; clicking it opens dqlake's column-picker popover
+ *  (search + Suggested/Compatible columns). Selecting a row commits the
+ *  value and closes the popover immediately — matching dqlake's
+ *  click-to-select-and-commit behavior. */
+export function SingleColumnPicker({ slot, columns, value, onChange, excludeColumns, autoOpen }: SingleColumnPickerProps) {
   const { t } = useTranslation();
+  const [open, setOpen] = useState(Boolean(autoOpen));
   const matches = columnsForSlot(columns, slot, excludeColumns);
+
   return (
-    <Select value={value ?? ""} onValueChange={onChange}>
-      <SelectTrigger className="h-8 text-xs">
-        <SelectValue placeholder={t("monitoredTables.selectColumnPlaceholder")} />
-      </SelectTrigger>
-      <SelectContent>
-        {matches.length === 0 ? (
-          <div className="p-2 text-xs text-muted-foreground">{t("monitoredTables.noMatchingColumns")}</div>
-        ) : (
-          matches.map((col) => (
-            <SelectItem key={col.name} value={col.name} className="text-xs font-mono">
-              {col.name}
-            </SelectItem>
-          ))
-        )}
-      </SelectContent>
-    </Select>
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          className="h-8 w-full justify-between text-xs font-mono font-normal"
+        >
+          <span className={cn("truncate", !value && "text-muted-foreground font-sans")}>
+            {value || t("monitoredTables.selectColumnPlaceholder")}
+          </span>
+          <ChevronDown className="ml-2 h-3.5 w-3.5 shrink-0 opacity-50" aria-hidden />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-80 p-0" align="start">
+        <ColumnDropdownList
+          slot={slot}
+          matches={matches}
+          totalAll={columns.length}
+          onSelect={(colName) => {
+            onChange(colName);
+            setOpen(false);
+          }}
+        />
+      </PopoverContent>
+    </Popover>
   );
 }
 

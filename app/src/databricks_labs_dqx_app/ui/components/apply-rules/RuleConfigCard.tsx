@@ -26,9 +26,11 @@ import {
   type AppliedRuleOut,
   type ColumnOut,
   type RegistryRuleOut,
+  type RuleParameter,
   type RuleSlot,
 } from "@/lib/api";
 import type { LabelDefinition } from "@/lib/api-custom";
+import { paramValueToRaw } from "@/lib/registry-rule-conversion";
 import { MultiColumnPicker, SingleColumnPicker } from "./ColumnPicker";
 import { MappingChips } from "./MappingChips";
 import {
@@ -81,6 +83,30 @@ export function computeStatus(rule: AppliedRuleOut, slots: RuleSlot[]): RuleStat
 // SQL/Low-code toggle.
 // ---------------------------------------------------------------------------
 
+// Read-only parameter list — matches the Rules Registry form's own
+// "Parameters" presentation (RegistryRuleFormDialog.tsx: muted-foreground
+// mono label + value, two-column grid) so a check's non-column arguments
+// look the same wherever they're shown, just without the editable inputs.
+function RuleParametersView({ parameters }: { parameters: RuleParameter[] }) {
+  const { t } = useTranslation();
+  if (parameters.length === 0) return null;
+  return (
+    <div className="space-y-1.5">
+      <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+        {t("rulesRegistry.parametersLabel")}
+      </div>
+      <div className="grid gap-x-4 gap-y-1.5 sm:grid-cols-2">
+        {parameters.map((p) => (
+          <div key={p.name} className="flex items-baseline gap-1.5 text-xs">
+            <span className="font-mono text-muted-foreground shrink-0">{p.name}:</span>
+            <span className="font-mono truncate">{paramValueToRaw(p.value) || "—"}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function RuleLogicBody({ registryRule }: { registryRule: RegistryRuleOut }) {
   const { t } = useTranslation();
   const body = (registryRule.definition.body ?? {}) as Record<string, unknown>;
@@ -88,6 +114,7 @@ function RuleLogicBody({ registryRule }: { registryRule: RegistryRuleOut }) {
   const args = body.arguments;
   const sql = typeof body.sql_query === "string" ? body.sql_query : undefined;
   const predicate = typeof body.predicate === "string" ? body.predicate : undefined;
+  const parameters = registryRule.definition.parameters ?? [];
 
   if (!fn && !sql && !predicate) {
     return <p className="text-xs italic text-muted-foreground">{t("monitoredTables.ruleLogicUnavailable")}</p>;
@@ -96,9 +123,14 @@ function RuleLogicBody({ registryRule }: { registryRule: RegistryRuleOut }) {
   const text = sql ?? predicate ?? `${fn}(${args ? JSON.stringify(args) : ""})`;
 
   return (
-    <pre className="font-mono text-xs whitespace-pre-wrap rounded bg-muted/40 p-3 overflow-x-auto">
-      {text}
-    </pre>
+    <div className="space-y-3">
+      <pre className="font-mono text-xs whitespace-pre-wrap rounded bg-muted/40 p-3 overflow-x-auto">
+        {text}
+      </pre>
+      {/* Non-column parameters only apply to DQX-native (function-based)
+          checks — SQL/predicate rules have no declared `parameters`. */}
+      {fn && <RuleParametersView parameters={parameters} />}
+    </div>
   );
 }
 
@@ -217,6 +249,10 @@ function SeverityDropdown({
   onSeverityChange,
   readonly,
 }: {
+  /** Effective severity — `rule.severity_override ?? ruleSeverity`, resolved
+   *  by the caller. Always shown as-is: the badge never falls back to a
+   *  "no override" placeholder string, matching dqlake's effective-severity
+   *  badge. */
   severity: string;
   ruleSeverity: string;
   severityValues: string[];
@@ -226,7 +262,7 @@ function SeverityDropdown({
 }) {
   const { t } = useTranslation();
   const isOverridden = severity !== ruleSeverity && Boolean(severity);
-  const label = severity || t("monitoredTables.severityOverrideNone");
+  const label = severity;
   const color = colorFor(labelDefinitions, RESERVED_SEVERITY_KEY, severity);
 
   const dot = (
@@ -265,7 +301,16 @@ function SeverityDropdown({
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
           {severityValues.map((v) => (
-            <DropdownMenuItem key={v} onClick={() => onSeverityChange(v)} className="gap-2 py-1.5">
+            <DropdownMenuItem
+              key={v}
+              // Selecting the rule's own default severity clears the
+              // override (the "none" sentinel handleSeverityChange already
+              // maps to `severity_override: null`) instead of writing the
+              // default value back as an explicit override — matching
+              // dqlake's `onSeverityChange(isDefault ? null : s.id)`.
+              onClick={() => onSeverityChange(v === ruleSeverity ? "none" : v)}
+              className="gap-2 py-1.5"
+            >
               {severity === v ? <Check className="h-3.5 w-3.5" /> : <span className="inline-block w-3.5" />}
               <span
                 className="inline-block w-2 h-2 rounded-full shrink-0"
@@ -358,7 +403,7 @@ function InlineAddMappingForm({
         {t("monitoredTables.addMappingInlineTitle")}
       </p>
       <div className="space-y-2">
-        {slots.map((slot) => {
+        {slots.map((slot, slotIdx) => {
           const many = slot.cardinality === "many";
           return (
             <div key={slot.name} className="grid grid-cols-[160px_24px_1fr] items-center gap-3">
@@ -384,6 +429,11 @@ function InlineAddMappingForm({
                   value={draft[slot.name] as string | undefined}
                   onChange={(v) => setDraft((d) => ({ ...d, [slot.name]: v }))}
                   excludeColumns={excludeColumns}
+                  // Auto-open the first slot's picker so the steward lands
+                  // straight in it — mirrors dqlake's auto-open of a freshly
+                  // added mapping-group's placeholder chip right after
+                  // "+ Apply to another column" is clicked.
+                  autoOpen={slotIdx === 0}
                 />
               )}
             </div>
@@ -571,7 +621,16 @@ export function RuleConfigCard({
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
               <DropdownMenuItem
-                className="text-destructive focus:text-destructive gap-2"
+                // `text-destructive`/`focus:text-destructive` render as dark
+                // red-on-near-black in the dark theme (`--destructive` is a
+                // deliberately dark token meant for text *on top of* a
+                // destructive background, not as foreground text on the
+                // popover's own background) — low contrast, hard to read.
+                // `text-red-600 dark:text-red-400` is the existing app
+                // convention for destructive text on a neutral background
+                // (see rules.drafts.tsx, profiler.tsx, runs-history.tsx) and
+                // keeps good contrast in both themes.
+                className="text-red-600 dark:text-red-400 focus:text-red-700 dark:focus:text-red-300 gap-2"
                 onClick={onRemove}
               >
                 {t("monitoredTables.removeRuleFromMonitorMenuItem")}
