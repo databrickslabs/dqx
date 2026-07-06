@@ -1658,6 +1658,7 @@
     "slotsPanelNameLabel": "Nome",
     "slotsPanelFamilyLabel": "Tipo de dado",
     "slotsPanelRemove": "Remover",
+    "slotsPanelFixedArityHint": "Os slots de coluna desta função são fixos — renomeie ou altere o tipo, mas não é possível adicionar ou remover slots.",
     "slotFamilyNumeric": "Numérico",
     "slotFamilyText": "Texto",
     "slotFamilyTemporal": "Data / hora",

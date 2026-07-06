@@ -94,22 +94,61 @@ class MaterializationError(RuntimeError):
     """Raised by :meth:`Materializer.materialize_binding` for an unknown *binding_id*."""
 
 
+def _substitute_value(value: Any, group: ColumnMappingGroup, slots: list[RuleSlot]) -> Any:
+    """Substitute ``{{slot}}`` placeholder(s) inside a single ``body.arguments`` value.
+
+    A native rule's frozen argument value is always either a ``{{slotName}}``
+    placeholder string (the KEY stays the DQX function's real parameter
+    name, e.g. ``column`` — only the VALUE is templated), a list of such
+    strings, or a plain value with no placeholder at all (left unchanged).
+    For a ``"many"`` cardinality slot whose placeholder is the *entire*
+    string value, the substitution expands into a LIST of columns (mirrors
+    how a "many" slot's mapped value is a comma-separated string); a
+    ``"one"`` cardinality slot substitutes in place, matching
+    :func:`_substitute_text`.
+    """
+    if isinstance(value, list):
+        return [_substitute_value(item, group, slots) for item in value]
+    if not isinstance(value, str):
+        return value
+    for slot in slots:
+        placeholder = f"{{{{{slot.name}}}}}"
+        if placeholder not in value:
+            continue
+        if slot.name not in group:
+            raise ValueError(f"Mapping group is missing slot '{slot.name}'")
+        mapped = group[slot.name]
+        if slot.cardinality == "many":
+            if value == placeholder:
+                return [c.strip() for c in mapped.split(",") if c.strip()]
+            replacement = ", ".join(c.strip() for c in mapped.split(",") if c.strip())
+        else:
+            replacement = mapped
+        value = value.replace(placeholder, replacement)
+    return value
+
+
 def _substitute_arguments(
     body_arguments: dict[str, Any],
     group: ColumnMappingGroup,
     slots: list[RuleSlot],
     parameters: list[RuleParameter],
 ) -> dict[str, Any]:
-    """Render a ``dqx_native`` rule's frozen ``arguments`` template against one mapping group."""
-    arguments = dict(body_arguments)
+    """Render a ``dqx_native`` rule's frozen ``arguments`` template against one mapping group.
+
+    The dict KEY is always preserved from *body_arguments* — it is the DQX
+    check function's real parameter name (e.g. ``column``) and is
+    independent of the author-chosen slot ``name``. Only the VALUE, which
+    holds a ``{{slotName}}`` placeholder, is substituted with the mapped
+    column(s). Every declared slot must be used inside some argument value
+    and mapped in *group* — a slot with no entry in *group* always raises,
+    even if (in a malformed definition) its placeholder isn't actually
+    referenced anywhere in *body_arguments*.
+    """
+    arguments = {key: _substitute_value(value, group, slots) for key, value in body_arguments.items()}
     for slot in slots:
         if slot.name not in group:
             raise ValueError(f"Mapping group is missing slot '{slot.name}'")
-        value = group[slot.name]
-        if slot.cardinality == "many":
-            arguments[slot.name] = [c.strip() for c in value.split(",") if c.strip()]
-        else:
-            arguments[slot.name] = value
     for param in parameters:
         if param.value is not None:
             arguments[param.name] = param.value

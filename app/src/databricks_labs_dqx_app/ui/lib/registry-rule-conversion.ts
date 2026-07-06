@@ -66,6 +66,7 @@ export function deriveSlotsAndParameters(fn: ApiCheckFunctionDef | undefined): {
         family: "any",
         position: position++,
         cardinality: p.kind === "columns" ? "many" : "one",
+        arg_key: p.name,
       });
     } else {
       parameters.push({
@@ -78,10 +79,16 @@ export function deriveSlotsAndParameters(fn: ApiCheckFunctionDef | undefined): {
   return { slots, parameters };
 }
 
-/** Every declared slot becomes a `{{slot_name}}` placeholder — a registry rule's native `arguments` template is never bound to a real column. */
+/**
+ * Every declared slot becomes a `{{slot_name}}` placeholder — a registry rule's native
+ * `arguments` template is never bound to a real column. The dict KEY is the slot's
+ * `arg_key` (the DQX function's real parameter name — falls back to `slot.name` for
+ * slots that predate `arg_key`); the VALUE is always the author's `{{name}}` placeholder,
+ * so an author-renamed slot still fills the correct function argument.
+ */
 export function nativeArguments(slots: RuleSlot[]): Record<string, unknown> {
   const args: Record<string, unknown> = {};
-  for (const s of slots) args[s.name] = `{{${s.name}}}`;
+  for (const s of slots) args[s.arg_key ?? s.name] = `{{${s.name}}}`;
   return args;
 }
 

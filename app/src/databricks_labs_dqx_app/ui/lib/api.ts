@@ -1624,13 +1624,20 @@ export const RuleSlotCardinality = {
 } as const;
 
 /**
- * A ``{{column}}`` placeholder declared on a registry rule's definition.
+ * For a dqx_native column slot, the DQX check function's real parameter name (e.g. 'column') that this slot's '{{name}}' placeholder fills as a VALUE inside body.arguments[arg_key]. None for sql/lowcode slots (no function parameter to key by) and for legacy/back-compat slots where name already equals the parameter name.
+ */
+export type RuleSlotArgKey = string | null;
 
-``family`` drives the family-filtered column picker when a rule is
-applied to a monitored table. ``position`` fixes a stable display/
-substitution order; ``cardinality`` distinguishes a single-column slot
-(``one``) from a composite/multi-column slot (``many``, e.g. ``is_unique``
-over a list of columns).
+/**
+ * A ``{{name}}`` placeholder declared on a registry rule's definition.
+
+``name`` is author-editable and arbitrary (e.g. ``user_email``) — it no
+longer has to match the DQX check function's parameter name for a
+``dqx_native`` rule. ``family`` drives the family-filtered column picker
+when a rule is applied to a monitored table. ``position`` fixes a stable
+display/substitution order; ``cardinality`` distinguishes a single-column
+slot (``one``) from a composite/multi-column slot (``many``, e.g.
+``is_unique`` over a list of columns).
  */
 export interface RuleSlot {
   /** Slot placeholder name, e.g. 'column' */
@@ -1641,6 +1648,8 @@ export interface RuleSlot {
   position?: number;
   /** Whether the slot binds one or many columns */
   cardinality?: RuleSlotCardinality;
+  /** For a dqx_native column slot, the DQX check function's real parameter name (e.g. 'column') that this slot's '{{name}}' placeholder fills as a VALUE inside body.arguments[arg_key]. None for sql/lowcode slots (no function parameter to key by) and for legacy/back-compat slots where name already equals the parameter name. */
+  arg_key?: RuleSlotArgKey;
 }
 
 export type RunConfigInputConfig = InputConfig | null;

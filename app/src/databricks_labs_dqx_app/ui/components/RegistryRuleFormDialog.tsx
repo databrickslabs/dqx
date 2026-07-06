@@ -345,21 +345,26 @@ function nextSlotName(existing: string[]): string {
 }
 
 /**
- * "Columns used" slot-declaration panel for SQL / Low-Code rules, ported
- * from the dqlake `ColumnsUsedPanel`. DQX Native derives its slots
- * automatically from the selected function's signature (rendered as
- * read-only `{{slot}}` badges elsewhere), so this editable panel only
- * applies to modes where the author writes the predicate by hand and must
- * declare which `{{slot}}` placeholders it references.
+ * "Columns used" slot-declaration panel, ported from the dqlake
+ * `ColumnsUsedPanel`. Shared by all three authoring modes: SQL / Low-Code
+ * authors freely add/remove/rename/retype `{{slot}}` placeholders their
+ * predicate references, while DQX Native's slot SET has fixed arity (one
+ * slot per column-kind function parameter) — for native rules pass
+ * `allowAddRemove={false}` so the author can still rename a slot or change
+ * its family, but can't add or remove rows (arity is dictated by the
+ * selected function's signature, re-seeded whenever it changes).
  */
 function SlotsPanel({
   value,
   onChange,
   disabled,
+  allowAddRemove = true,
 }: {
   value: RuleSlot[];
   onChange: (next: RuleSlot[]) => void;
   disabled?: boolean;
+  /** Whether the author can add/remove slot rows. `false` for dqx_native, where arity is fixed by the selected function's signature. */
+  allowAddRemove?: boolean;
 }) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState<number | null>(null);
@@ -411,13 +416,16 @@ function SlotsPanel({
           <CardTitle className="text-sm">{t("rulesRegistry.slotsPanelTitle")}</CardTitle>
           <HelpTooltip text={t("rulesRegistry.slotsPanelTooltip")} />
         </div>
-        {!disabled && (
+        {!disabled && allowAddRemove && (
           <Button type="button" variant="outline" size="sm" onClick={add} className="h-7 px-2.5 text-xs gap-1.5">
             {t("rulesRegistry.slotsPanelAddButton")}
           </Button>
         )}
       </CardHeader>
       <CardContent className="space-y-2">
+        {!allowAddRemove && (
+          <p className="text-[10px] text-muted-foreground pb-1">{t("rulesRegistry.slotsPanelFixedArityHint")}</p>
+        )}
         {value.length === 0 && (
           <p className="text-xs text-muted-foreground py-1">{t("rulesRegistry.slotsPanelEmpty")}</p>
         )}
@@ -439,7 +447,7 @@ function SlotsPanel({
                 <Badge variant="outline" className="text-[10px] font-medium">
                   {familyLabel(slot.family)}
                 </Badge>
-                {!disabled && (
+                {!disabled && allowAddRemove && (
                   <button
                     type="button"
                     aria-label={t("rulesRegistry.slotsPanelRemove")}
@@ -612,6 +620,7 @@ interface RuleEditSnapshot {
   paramRawValues: Record<string, string>;
   sqlPredicate: string;
   sqlSlots: RuleSlot[];
+  nativeSlots: RuleSlot[];
   authorKind: CreateRegistryRuleInAuthorKind | undefined;
 }
 
@@ -642,6 +651,7 @@ function snapshotFromRule(rule: RegistryRuleOut): RuleEditSnapshot {
     paramRawValues,
     sqlPredicate: isNative ? "" : String((rule.definition?.body ?? {}).predicate ?? ""),
     sqlSlots: isNative ? [] : (rule.definition?.slots ?? []),
+    nativeSlots: isNative ? (rule.definition?.slots ?? []) : [],
     authorKind: rule.author_kind ?? undefined,
   };
 }
@@ -667,6 +677,7 @@ const PRISTINE_NEW_SNAPSHOT: RuleEditSnapshot = {
   paramRawValues: {},
   sqlPredicate: "",
   sqlSlots: [seededFirstSlot()],
+  nativeSlots: [],
   authorKind: "human",
 };
 
@@ -720,6 +731,13 @@ export function RegistryRuleFormDialog({
   const [paramRawValues, setParamRawValues] = useState<Record<string, string>>({});
   const [sqlPredicate, setSqlPredicate] = useState("");
   const [sqlSlots, setSqlSlots] = useState<RuleSlot[]>([]);
+  // DQX Native's slot SET (arity) is fixed by the selected function's
+  // column-kind parameters, but each slot's `name`/`family` is author-
+  // editable through the same SlotsPanel used by SQL/Low-Code — so, unlike
+  // `slots`/`derivedParams` below (which are pure derivations of
+  // `selectedFn`), this needs to be real state: seeded fresh whenever the
+  // function selection changes, but otherwise left alone so edits persist.
+  const [nativeSlots, setNativeSlots] = useState<RuleSlot[]>([]);
   const [errorMessage, setErrorMessage] = useState("");
   const [polarity, setPolarity] = useState<Polarity>("pass");
   const [name, setName] = useState("");
@@ -793,6 +811,10 @@ export function RegistryRuleFormDialog({
         setParamRawValues(raw);
         setSqlPredicate("");
         setSqlSlots([]);
+        // Load the persisted slots as-authored (custom names/families
+        // preserved) rather than re-deriving canonical ones from the
+        // function signature.
+        setNativeSlots(sourceRule.definition?.slots ?? []);
       } else {
         const predicate = (sourceRule.definition?.body ?? {}).predicate;
         setSqlPredicate(typeof predicate === "string" ? predicate : "");
@@ -812,6 +834,7 @@ export function RegistryRuleFormDialog({
       setParamRawValues({});
       setSqlPredicate("");
       setSqlSlots([seededFirstSlot()]);
+      setNativeSlots([]);
       setPolarity("pass");
     }
   }, [open, sourceRule, setPageTab]);
@@ -820,7 +843,12 @@ export function RegistryRuleFormDialog({
     () => checkFunctions.find((f) => f.name === functionName),
     [checkFunctions, functionName],
   );
-  const { slots, parameters: derivedParams } = useMemo(
+  // Pure derivation of the selected function's signature — the canonical
+  // slot SET (arity + default names) and non-column parameters. Used to
+  // (re-)seed `nativeSlots` whenever the function changes, and directly for
+  // `derivedParams` (parameter arity is always fixed by the signature, no
+  // renaming concept applies there).
+  const { slots: fnDerivedSlots, parameters: derivedParams } = useMemo(
     () => deriveSlotsAndParameters(selectedFn),
     [selectedFn],
   );
@@ -845,8 +873,12 @@ export function RegistryRuleFormDialog({
       }
     }
     setParamRawValues(raw);
+    // The AI proposal picked the function; re-seed the slot set to match
+    // its arity (fresh canonical names — an AI proposal never carries
+    // author-chosen slot names).
+    setNativeSlots(fnDerivedSlots);
     setPendingNativeArgs(null);
-  }, [pendingNativeArgs, checkFunctions, selectedFn, derivedParams]);
+  }, [pendingNativeArgs, checkFunctions, selectedFn, derivedParams, fnDerivedSlots]);
 
   const createMutation = useCreateRegistryRule();
   const updateMutation = useUpdateRegistryRule();
@@ -873,6 +905,7 @@ export function RegistryRuleFormDialog({
     paramRawValues,
     sqlPredicate,
     sqlSlots,
+    nativeSlots,
     authorKind,
   };
   const isDirty =
@@ -901,8 +934,8 @@ export function RegistryRuleFormDialog({
       value: parseParamValue(p.type, paramRawValues[p.name] ?? ""),
     }));
     return {
-      body: { function: functionName, arguments: nativeArguments(slots) },
-      slots,
+      body: { function: functionName, arguments: nativeArguments(nativeSlots) },
+      slots: nativeSlots,
       parameters,
       error_message: trimmedError || undefined,
     };
@@ -1163,7 +1196,7 @@ export function RegistryRuleFormDialog({
   // meaningfully-declared slot (not the pristine `column_N`/any seed), a name,
   // or a description. On a blank form the model would only return filler.
   const isPristineSlot = (s: RuleSlot) => /^column_\d+$/.test(s.name) && s.family === "any";
-  const declaredSlots = mode === "dqx_native" ? slots : sqlSlots;
+  const declaredSlots = mode === "dqx_native" ? nativeSlots : sqlSlots;
   const enoughAiContext =
     sqlPredicate.trim().length > 0 ||
     functionName.trim().length > 0 ||
@@ -1346,19 +1379,28 @@ export function RegistryRuleFormDialog({
     </div>
   );
 
-  // "Columns used" (SlotsPanel) only applies to SQL / Low-Code, where the
-  // author writes the predicate by hand and must declare which `{{slot}}`
-  // placeholders it references. DQX Native derives its slots automatically
-  // from the selected function's signature, rendered as read-only badges
-  // below the function picker instead.
-  const showColumnsUsedPanel = mode === "sql" || mode === "lowcode";
+  // "Columns used" (SlotsPanel) now renders for all three modes: SQL /
+  // Low-Code authors freely declare which `{{slot}}` placeholders their
+  // predicate references, while DQX Native shows the same editable panel
+  // seeded from the selected function's signature — author-renamable/
+  // retypeable, but with a fixed slot SET (`allowAddRemove={false}` below).
+  const showColumnsUsedPanel = mode === "sql" || mode === "lowcode" || mode === "dqx_native";
+  const currentSlots = mode === "dqx_native" ? nativeSlots : sqlSlots;
+  const setCurrentSlots = mode === "dqx_native" ? setNativeSlots : setSqlSlots;
 
   const implementationTabContent = (
     <div className="space-y-4 pt-2">
       {/* "Columns used" leads the Implementation area, matching dqlake's
           ImplementationTab order (ColumnsUsedPanel first, mode switch +
           predicate editor below it). */}
-      {showColumnsUsedPanel && <SlotsPanel value={sqlSlots} onChange={setSqlSlots} disabled={readOnly} />}
+      {showColumnsUsedPanel && (
+        <SlotsPanel
+          value={currentSlots}
+          onChange={setCurrentSlots}
+          disabled={readOnly}
+          allowAddRemove={mode !== "dqx_native"}
+        />
+      )}
 
       <div className="flex items-center gap-3 flex-wrap">
         <ModeSegmentedSwitch value={mode} onChange={setMode} disabled={readOnly} />
@@ -1378,29 +1420,16 @@ export function RegistryRuleFormDialog({
               onChange={(fn) => {
                 setFunctionName(fn);
                 setParamRawValues({});
+                // Arity is fixed by the function signature — switching
+                // functions must fully replace the slot set (e.g.
+                // is_not_null's 1 slot -> is_unique's many-cardinality
+                // `columns` slot), not merge with whatever was there before.
+                const nextFn = checkFunctions.find((f) => f.name === fn);
+                setNativeSlots(deriveSlotsAndParameters(nextFn).slots);
               }}
               disabled={readOnly}
             />
           </div>
-          {slots.length > 0 && (
-            <div className="space-y-1.5">
-              <div className="flex items-center gap-1.5">
-                <Label className="text-xs">{t("rulesRegistry.slotsLabel")}</Label>
-                <HelpTooltip text={t("rulesRegistry.slotsTooltip")} />
-              </div>
-              <p className="text-[10px] text-muted-foreground">{t("rulesRegistry.slotsHint")}</p>
-              <div className="flex flex-wrap gap-1.5">
-                {slots.map((s) => (
-                  <Badge key={s.name} variant="secondary" className="font-mono text-[10px]">
-                    {`{{${s.name}}}`}
-                    <span className="ml-1 opacity-60" title={t("rulesRegistry.typeFamilyTooltip")}>
-                      ({s.family})
-                    </span>
-                  </Badge>
-                ))}
-              </div>
-            </div>
-          )}
           {derivedParams.length > 0 && (
             <div className="space-y-2">
               <Label className="text-xs">{t("rulesRegistry.parametersLabel")}</Label>

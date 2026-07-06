@@ -50,19 +50,30 @@ RuleParamValue = str | float | int | bool | list[str] | None
 
 
 class RuleSlot(BaseModel):
-    """A ``{{column}}`` placeholder declared on a registry rule's definition.
+    """A ``{{name}}`` placeholder declared on a registry rule's definition.
 
-    ``family`` drives the family-filtered column picker when a rule is
-    applied to a monitored table. ``position`` fixes a stable display/
-    substitution order; ``cardinality`` distinguishes a single-column slot
-    (``one``) from a composite/multi-column slot (``many``, e.g. ``is_unique``
-    over a list of columns).
+    ``name`` is author-editable and arbitrary (e.g. ``user_email``) — it no
+    longer has to match the DQX check function's parameter name for a
+    ``dqx_native`` rule. ``family`` drives the family-filtered column picker
+    when a rule is applied to a monitored table. ``position`` fixes a stable
+    display/substitution order; ``cardinality`` distinguishes a single-column
+    slot (``one``) from a composite/multi-column slot (``many``, e.g.
+    ``is_unique`` over a list of columns).
     """
 
     name: str = Field(description="Slot placeholder name, e.g. 'column'")
     family: SlotFamily = Field(description="Column family the slot accepts")
     position: int = Field(default=0, description="Stable ordering position among a rule's slots")
     cardinality: SlotCardinality = Field(default="one", description="Whether the slot binds one or many columns")
+    arg_key: str | None = Field(
+        default=None,
+        description=(
+            "For a dqx_native column slot, the DQX check function's real parameter name "
+            "(e.g. 'column') that this slot's '{{name}}' placeholder fills as a VALUE inside "
+            "body.arguments[arg_key]. None for sql/lowcode slots (no function parameter to key "
+            "by) and for legacy/back-compat slots where name already equals the parameter name."
+        ),
+    )
 
 
 class RuleParameter(BaseModel):

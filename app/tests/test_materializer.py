@@ -136,6 +136,74 @@ class TestRenderCheckMatchesHandAuthoredShape:
                 applied_rule_id="ar1",
             )
 
+    def test_dqx_native_arbitrary_slot_name_keys_argument_by_param_name(self):
+        """Author-renamed slot ('user_email' != function param 'column') must still key
+
+        the rendered argument by the DQX function's real parameter name — only the
+        placeholder VALUE is substituted with the mapped column.
+        """
+        definition = RuleDefinition.model_validate(
+            {
+                "body": {"function": "is_not_null", "arguments": {"column": "{{user_email}}"}},
+                "slots": [{"name": "user_email", "family": "text", "position": 0, "cardinality": "one"}],
+                "parameters": [],
+            }
+        )
+        version = RuleVersion(rule_id="r1", version=1, definition=definition, user_metadata={})
+        check, _ = render_check(
+            mode="dqx_native",
+            version=version,
+            group={"user_email": "email_col"},
+            effective_severity="Medium",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+        )
+        assert check["check"]["arguments"] == {"column": "email_col"}
+
+    def test_dqx_native_arbitrary_slot_name_many_cardinality_becomes_list(self):
+        definition = RuleDefinition.model_validate(
+            {
+                "body": {"function": "is_unique", "arguments": {"columns": "{{cols}}"}},
+                "slots": [{"name": "cols", "family": "any", "position": 0, "cardinality": "many"}],
+                "parameters": [],
+            }
+        )
+        version = RuleVersion(rule_id="r1", version=1, definition=definition, user_metadata={})
+        check, _ = render_check(
+            mode="dqx_native",
+            version=version,
+            group={"cols": "a, b, c"},
+            effective_severity="Medium",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+        )
+        assert check["check"]["arguments"] == {"columns": ["a", "b", "c"]}
+
+    def test_missing_slot_mapping_raises_arbitrary_slot_name(self):
+        definition = RuleDefinition.model_validate(
+            {
+                "body": {"function": "is_not_null", "arguments": {"column": "{{user_email}}"}},
+                "slots": [{"name": "user_email", "family": "text", "position": 0, "cardinality": "one"}],
+                "parameters": [],
+            }
+        )
+        version = RuleVersion(rule_id="r1", version=1, definition=definition, user_metadata={})
+        with pytest.raises(ValueError, match="user_email"):
+            render_check(
+                mode="dqx_native",
+                version=version,
+                group={},
+                effective_severity="Medium",
+                per_application_tags={},
+                registry_rule_id="r1",
+                registry_version=1,
+                applied_rule_id="ar1",
+            )
+
     def test_severity_maps_to_criticality(self):
         version = RuleVersion(rule_id="r1", version=1, definition=_is_not_null_definition(), user_metadata={})
         for severity, expected in (("Low", "warn"), ("Medium", "warn"), ("High", "error"), ("Critical", "error")):

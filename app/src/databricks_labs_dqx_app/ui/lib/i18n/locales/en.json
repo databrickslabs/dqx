@@ -1658,6 +1658,7 @@
     "slotsPanelNameLabel": "Name",
     "slotsPanelFamilyLabel": "Data type",
     "slotsPanelRemove": "Remove",
+    "slotsPanelFixedArityHint": "This function's column slots are fixed — rename or retype them, but you can't add or remove slots.",
     "slotFamilyNumeric": "Numeric",
     "slotFamilyText": "Text",
     "slotFamilyTemporal": "Date / time",
