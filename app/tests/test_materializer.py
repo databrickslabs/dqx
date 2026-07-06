@@ -183,6 +183,77 @@ class TestRenderCheckMatchesHandAuthoredShape:
         )
         assert check["check"]["arguments"] == {"columns": ["a", "b", "c"]}
 
+    def test_dqx_native_multi_slot_list_argument_substitutes_each_placeholder(self):
+        """New multi-column authoring style (fixes #6): instead of ONE
+        ``cardinality: "many"`` slot bound to a comma-joined value, the
+        author declares MULTIPLE named ``cardinality: "one"`` slots that
+        share the same ``arg_key`` — the frozen argument VALUE is then a
+        Python LIST of ``{{slot}}`` placeholders (one per slot), rather
+        than a single placeholder string. ``_substitute_arguments``/
+        ``_substitute_value`` already recurse into list values generically,
+        so each element is substituted independently by its own slot's
+        mapped column — no separate list-handling branch was needed.
+        """
+        definition = RuleDefinition.model_validate(
+            {
+                "body": {
+                    "function": "foreign_key",
+                    "arguments": {"columns": ["{{column_1}}", "{{column_2}}"]},
+                },
+                "slots": [
+                    {"name": "column_1", "family": "any", "position": 0, "cardinality": "one", "arg_key": "columns"},
+                    {"name": "column_2", "family": "any", "position": 1, "cardinality": "one", "arg_key": "columns"},
+                ],
+                "parameters": [
+                    {"name": "ref_columns", "type": "ref_column", "value": ["id", "region"]},
+                    {"name": "ref_table", "type": "ref_table", "value": "catalog.schema.customers"},
+                ],
+            }
+        )
+        version = RuleVersion(rule_id="r1", version=1, definition=definition, user_metadata={})
+        check, is_tableless = render_check(
+            mode="dqx_native",
+            version=version,
+            group={"column_1": "colA", "column_2": "colB"},
+            effective_severity="Medium",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+        )
+        assert is_tableless is False
+        assert check["check"]["arguments"]["columns"] == ["colA", "colB"]
+        assert check["check"]["arguments"]["ref_columns"] == ["id", "region"]
+
+    def test_dqx_native_single_slot_list_argument_stays_a_list(self):
+        """A list-typed argument with only ONE declared slot (the initial,
+        not-yet-expanded state of the new multi-slot group) still renders
+        as a one-element LIST, not a bare scalar — ``foreign_key.columns``
+        always expects a list regardless of how many columns the author
+        has added so far.
+        """
+        definition = RuleDefinition.model_validate(
+            {
+                "body": {"function": "foreign_key", "arguments": {"columns": ["{{column_1}}"]}},
+                "slots": [
+                    {"name": "column_1", "family": "any", "position": 0, "cardinality": "one", "arg_key": "columns"},
+                ],
+                "parameters": [],
+            }
+        )
+        version = RuleVersion(rule_id="r1", version=1, definition=definition, user_metadata={})
+        check, _ = render_check(
+            mode="dqx_native",
+            version=version,
+            group={"column_1": "colA"},
+            effective_severity="Medium",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+        )
+        assert check["check"]["arguments"]["columns"] == ["colA"]
+
     def test_missing_slot_mapping_raises_arbitrary_slot_name(self):
         definition = RuleDefinition.model_validate(
             {

@@ -74,6 +74,7 @@ import { AI_BUTTON_BG, AI_ICON_COLOR, AI_BANNER_BG, AI_BANNER_BORDER, AI_GRADIEN
 import { orderSeverityValuesForDisplay, colorFor, ColorDot, type LabelColorDefinition } from "@/components/RegistryRuleBadges";
 import {
   deriveSlotsAndParameters,
+  listColumnArgKey,
   nativeArguments,
   parseParamValue,
   paramValueToRaw,
@@ -348,23 +349,32 @@ function nextSlotName(existing: string[]): string {
  * "Columns used" slot-declaration panel, ported from the dqlake
  * `ColumnsUsedPanel`. Shared by all three authoring modes: SQL / Low-Code
  * authors freely add/remove/rename/retype `{{slot}}` placeholders their
- * predicate references, while DQX Native's slot SET has fixed arity (one
- * slot per column-kind function parameter) — for native rules pass
- * `allowAddRemove={false}` so the author can still rename a slot or change
- * its family, but can't add or remove rows (arity is dictated by the
- * selected function's signature, re-seeded whenever it changes).
+ * predicate references (`allowAddRemove={true}`, the default — every row is
+ * addable/removable).
+ *
+ * DQX Native's slot SET is seeded from the selected function's signature and
+ * mostly has fixed arity (one slot per scalar column-kind parameter) — pass
+ * `allowAddRemove={false}` for those. The exception is a LIST-typed column
+ * parameter (e.g. `foreign_key`'s `columns`): pass its `arg_key` as
+ * `expandableArgKey` so slots sharing that `arg_key` form an add/removable
+ * group (down to a minimum of one, since the function still needs at least
+ * one column), while every other native slot stays fixed. `expandableArgKey`
+ * is ignored when `allowAddRemove` is already `true`.
  */
 function SlotsPanel({
   value,
   onChange,
   disabled,
   allowAddRemove = true,
+  expandableArgKey,
 }: {
   value: RuleSlot[];
   onChange: (next: RuleSlot[]) => void;
   disabled?: boolean;
-  /** Whether the author can add/remove slot rows. `false` for dqx_native, where arity is fixed by the selected function's signature. */
+  /** Whether every slot row is freely addable/removable (SQL/Low-Code). `false` for dqx_native, where arity is normally fixed by the selected function's signature. */
   allowAddRemove?: boolean;
+  /** dqx_native only: `arg_key` of the one column parameter that accepts a LIST of columns — see {@link listColumnArgKey}. Slots sharing it form an expandable group. */
+  expandableArgKey?: string;
 }) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState<number | null>(null);
@@ -392,6 +402,15 @@ function SlotsPanel({
       any: t("rulesRegistry.slotFamilyAny"),
     })[f];
 
+  const expandableGroupSize = expandableArgKey
+    ? value.filter((s) => (s.arg_key ?? s.name) === expandableArgKey).length
+    : 0;
+  const canAddSlot = allowAddRemove || expandableArgKey !== undefined;
+  const canRemoveSlot = (slot: RuleSlot): boolean => {
+    if (allowAddRemove) return true;
+    return expandableArgKey !== undefined && (slot.arg_key ?? slot.name) === expandableArgKey && expandableGroupSize > 1;
+  };
+
   const setAt = (i: number, patch: Partial<RuleSlot>) => {
     const next = value.slice();
     next[i] = { ...next[i], ...patch };
@@ -405,7 +424,8 @@ function SlotsPanel({
   };
   const add = () => {
     const name = nextSlotName(value.map((s) => s.name));
-    onChange([...value, { name, family: "any", position: value.length, cardinality: "one" }]);
+    const arg_key = allowAddRemove ? undefined : expandableArgKey;
+    onChange([...value, { name, family: "any", position: value.length, cardinality: "one", arg_key }]);
     setExpanded(value.length);
   };
 
@@ -416,22 +436,20 @@ function SlotsPanel({
           <CardTitle className="text-sm">{t("rulesRegistry.slotsPanelTitle")}</CardTitle>
           <HelpTooltip text={t("rulesRegistry.slotsPanelTooltip")} />
         </div>
-        {!disabled && allowAddRemove && (
+        {!disabled && canAddSlot && (
           <Button type="button" variant="outline" size="sm" onClick={add} className="h-7 px-2.5 text-xs gap-1.5">
             {t("rulesRegistry.slotsPanelAddButton")}
           </Button>
         )}
       </CardHeader>
       <CardContent className="space-y-2">
-        {!allowAddRemove && (
-          <p className="text-[10px] text-muted-foreground pb-1">{t("rulesRegistry.slotsPanelFixedArityHint")}</p>
-        )}
         {value.length === 0 && (
           <p className="text-xs text-muted-foreground py-1">{t("rulesRegistry.slotsPanelEmpty")}</p>
         )}
         {value.map((slot, i) => {
           const isOpen = expanded === i;
           const nameOk = SLOT_NAME_PATTERN.test(slot.name);
+          const removable = canRemoveSlot(slot);
           return (
             <div
               key={i}
@@ -447,7 +465,7 @@ function SlotsPanel({
                 <Badge variant="outline" className="text-[10px] font-medium">
                   {familyLabel(slot.family)}
                 </Badge>
-                {!disabled && allowAddRemove && (
+                {!disabled && removable && (
                   <button
                     type="button"
                     aria-label={t("rulesRegistry.slotsPanelRemove")}
@@ -934,7 +952,7 @@ export function RegistryRuleFormDialog({
       value: parseParamValue(p.type, paramRawValues[p.name] ?? ""),
     }));
     return {
-      body: { function: functionName, arguments: nativeArguments(nativeSlots) },
+      body: { function: functionName, arguments: nativeArguments(nativeSlots, selectedFn) },
       slots: nativeSlots,
       parameters,
       error_message: trimmedError || undefined,
@@ -1379,14 +1397,21 @@ export function RegistryRuleFormDialog({
     </div>
   );
 
-  // "Columns used" (SlotsPanel) now renders for all three modes: SQL /
-  // Low-Code authors freely declare which `{{slot}}` placeholders their
-  // predicate references, while DQX Native shows the same editable panel
-  // seeded from the selected function's signature — author-renamable/
-  // retypeable, but with a fixed slot SET (`allowAddRemove={false}` below).
-  const showColumnsUsedPanel = mode === "sql" || mode === "lowcode" || mode === "dqx_native";
+  // "Columns used" (SlotsPanel) renders for SQL / Low-Code unconditionally —
+  // authors freely declare which `{{slot}}` placeholders their predicate
+  // references. DQX Native shows the same editable panel seeded from the
+  // selected function's signature, but only when that function actually
+  // HAS column-kind parameters (`fnDerivedSlots`) — a function like
+  // `has_no_row_anomalies` takes none, so there's nothing to show and the
+  // panel would just be empty chrome.
+  const showColumnsUsedPanel = mode === "sql" || mode === "lowcode" || (mode === "dqx_native" && fnDerivedSlots.length > 0);
   const currentSlots = mode === "dqx_native" ? nativeSlots : sqlSlots;
   const setCurrentSlots = mode === "dqx_native" ? setNativeSlots : setSqlSlots;
+  // The one column parameter (if any) on the selected native function that
+  // accepts a LIST of columns — its slots form an add/removable group (see
+  // `SlotsPanel`'s `expandableArgKey`); every other native slot has fixed
+  // arity (one slot per scalar parameter).
+  const nativeExpandableArgKey = listColumnArgKey(selectedFn);
 
   const implementationTabContent = (
     <div className="space-y-4 pt-2">
@@ -1399,6 +1424,7 @@ export function RegistryRuleFormDialog({
           onChange={setCurrentSlots}
           disabled={readOnly}
           allowAddRemove={mode !== "dqx_native"}
+          expandableArgKey={mode === "dqx_native" ? nativeExpandableArgKey : undefined}
         />
       )}
 

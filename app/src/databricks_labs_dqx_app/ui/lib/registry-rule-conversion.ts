@@ -59,13 +59,25 @@ export function deriveSlotsAndParameters(fn: ApiCheckFunctionDef | undefined): {
   const slots: RuleSlot[] = [];
   const parameters: RuleParameter[] = [];
   let position = 0;
+  let columnIndex = 1;
   for (const p of fn.params ?? []) {
     if (COLUMN_KINDS.has(p.kind)) {
+      // Every column-kind parameter is seeded with ONE `column_N`-named
+      // slot bound one-to-one to a real column (`cardinality: "one"`) —
+      // matching the SQL/Low-Code slot-naming scheme (`nextSlotName`) so a
+      // fresh native rule reads `{{column_1}}` instead of the function's
+      // raw parameter name. A "many"/list-kind parameter (e.g.
+      // `foreign_key`'s `columns`) still starts with a single slot, but the
+      // author can add MORE `column_N` slots sharing this same `arg_key`
+      // via `SlotsPanel`'s expandable group (see `listArgKeys` in
+      // `nativeArguments` below and `expandableArgKey` in
+      // `RegistryRuleFormDialog`) — each slot maps one real column, and
+      // together they populate the function's list argument.
       slots.push({
-        name: p.name,
+        name: `column_${columnIndex++}`,
         family: "any",
         position: position++,
-        cardinality: p.kind === "columns" ? "many" : "one",
+        cardinality: "one",
         arg_key: p.name,
       });
     } else {
@@ -79,16 +91,53 @@ export function deriveSlotsAndParameters(fn: ApiCheckFunctionDef | undefined): {
   return { slots, parameters };
 }
 
+/** The `arg_key` of *fn*'s column parameter that accepts a LIST of columns
+ * (`kind: "columns"`, e.g. `foreign_key`'s `columns`), or `undefined` if
+ * *fn* has no such parameter. Drives both {@link nativeArguments}' list-vs-
+ * scalar argument shape and `SlotsPanel`'s expandable multi-slot group. */
+export function listColumnArgKey(fn: ApiCheckFunctionDef | undefined): string | undefined {
+  return fn?.params?.find((p) => p.kind === "columns")?.name;
+}
+
 /**
  * Every declared slot becomes a `{{slot_name}}` placeholder — a registry rule's native
  * `arguments` template is never bound to a real column. The dict KEY is the slot's
  * `arg_key` (the DQX function's real parameter name — falls back to `slot.name` for
  * slots that predate `arg_key`); the VALUE is always the author's `{{name}}` placeholder,
  * so an author-renamed slot still fills the correct function argument.
+ *
+ * A `arg_key` shared by MORE THAN ONE slot (a multi-column group, e.g.
+ * `foreign_key`'s `columns`) always renders as a LIST of placeholders in
+ * slot `position` order — `_substitute_arguments` on the backend already
+ * substitutes each list element independently. A SINGLE slot for an
+ * `arg_key` that *fn*'s signature marks as list-typed (`kind: "columns"`,
+ * see {@link listColumnArgKey}) still renders as a one-element list, since
+ * the function itself expects a list argument regardless of how many
+ * columns the author has declared so far. Every other single slot renders
+ * as a bare placeholder string, INCLUDING a legacy `cardinality: "many"`
+ * slot predating this multi-slot design — that shape is preserved as-is
+ * so already-published rules keep materializing via the older
+ * comma-separated-value substitution path in `_substitute_value`.
  */
-export function nativeArguments(slots: RuleSlot[]): Record<string, unknown> {
+export function nativeArguments(slots: RuleSlot[], fn?: ApiCheckFunctionDef): Record<string, unknown> {
+  const listArgKey = listColumnArgKey(fn);
+  const groups = new Map<string, RuleSlot[]>();
+  for (const s of slots) {
+    const key = s.arg_key ?? s.name;
+    const members = groups.get(key);
+    if (members) members.push(s);
+    else groups.set(key, [s]);
+  }
   const args: Record<string, unknown> = {};
-  for (const s of slots) args[s.arg_key ?? s.name] = `{{${s.name}}}`;
+  for (const [key, members] of groups) {
+    if (members.length > 1) {
+      const ordered = members.slice().sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
+      args[key] = ordered.map((s) => `{{${s.name}}}`);
+      continue;
+    }
+    const slot = members[0];
+    args[key] = slot.cardinality === "one" && key === listArgKey ? [`{{${slot.name}}}`] : `{{${slot.name}}}`;
+  }
   return args;
 }
 
@@ -254,7 +303,7 @@ export function parseDqxCheckJson(
     mode: "dqx_native",
     polarity: null,
     definition: {
-      body: { function: functionName, arguments: nativeArguments(slots) },
+      body: { function: functionName, arguments: nativeArguments(slots, fn) },
       slots,
       parameters,
       error_message: errorMessage,
