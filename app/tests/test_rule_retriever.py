@@ -13,6 +13,7 @@ from unittest.mock import create_autospec
 
 import pytest
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.errors.platform import NotFound
 
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.services.rule_embeddings import RuleEmbeddingsService
@@ -33,7 +34,9 @@ def app_settings():
 
 @pytest.fixture
 def sp_ws():
-    return create_autospec(WorkspaceClient, instance=True)
+    ws = create_autospec(WorkspaceClient, instance=True)
+    ws.vector_search_indexes.get_index.return_value = SimpleNamespace(status=SimpleNamespace(ready=True))
+    return ws
 
 
 @pytest.fixture
@@ -73,6 +76,30 @@ class TestIsAvailable:
         assert "embedding_endpoint_name" in reason
         assert "vs_endpoint_name" in reason
         assert "vs_index_name" not in reason
+
+    def test_unavailable_when_index_not_yet_provisioned(self, retriever, sp_ws):
+        """Settings are configured (always true once auto-derived) but the index doesn't exist yet."""
+        sp_ws.vector_search_indexes.get_index.side_effect = NotFound("index not found")
+
+        available, reason = retriever.is_available()
+
+        assert available is False
+        assert "not been provisioned yet" in reason
+
+    def test_unavailable_when_index_not_ready(self, retriever, sp_ws):
+        sp_ws.vector_search_indexes.get_index.return_value = SimpleNamespace(status=SimpleNamespace(ready=False))
+
+        available, reason = retriever.is_available()
+
+        assert available is False
+        assert "still being built" in reason
+
+    def test_does_not_check_index_when_settings_missing(self, retriever, app_settings, sp_ws):
+        app_settings.get_vs_index_name.return_value = ""
+
+        retriever.is_available()
+
+        sp_ws.vector_search_indexes.get_index.assert_not_called()
 
 
 class TestRetrieve:
