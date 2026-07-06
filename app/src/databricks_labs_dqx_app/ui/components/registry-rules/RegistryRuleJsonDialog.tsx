@@ -39,11 +39,15 @@ interface RegistryRuleJsonDialogProps {
 
 /**
  * View/edit the rule's native DQX-compatible check JSON — the exact
- * `{ check: { function, arguments } }` dict shape `apply_checks_by_metadata`
- * consumes, derived from the rule's stored `definition` (see
- * `lib/registry-rule-conversion.ts`; no separate stored copy — the
- * `definition` already IS the persisted structured form, per the Rules
- * Registry design).
+ * `{ criticality, check: { function, arguments }, user_metadata, name?,
+ * message_expr? }` dict shape `materializer.render_check` stamps into the
+ * materialized `dq_quality_rules.check` row, derived from the rule's stored
+ * `definition` and `user_metadata` (see `lib/registry-rule-conversion.ts`;
+ * no separate stored copy — the `definition` already IS the persisted
+ * structured form, per the Rules Registry design). `user_metadata` is
+ * included so the JSON faithfully mirrors what flows downstream, and
+ * round-trips: editing it here and saving persists back into the rule's
+ * `user_metadata` (the same store the About-tab tag fields write to).
  *
  * Saving reuses the exact same endpoints/lifecycle the visual form uses:
  * a `draft` rule updates in place (`useUpdateRegistryRule`), any other
@@ -82,7 +86,7 @@ export function RegistryRuleJsonDialog({
     setError(null);
     let parsed;
     try {
-      parsed = parseDqxCheckJson(text, rule.definition, checkFunctions, t);
+      parsed = parseDqxCheckJson(text, rule.definition, rule.user_metadata, checkFunctions, t);
     } catch (err) {
       setError(err instanceof Error ? err.message : t("rulesRegistry.jsonParseError"));
       return;
@@ -96,7 +100,7 @@ export function RegistryRuleJsonDialog({
             mode: parsed.mode,
             definition: parsed.definition,
             polarity: parsed.polarity,
-            user_metadata: rule.user_metadata ?? {},
+            user_metadata: parsed.userMetadata,
             steward: rule.steward ?? null,
             author_kind: rule.author_kind ?? null,
           },
@@ -109,7 +113,7 @@ export function RegistryRuleJsonDialog({
             mode: parsed.mode,
             definition: parsed.definition,
             polarity: parsed.polarity,
-            user_metadata: rule.user_metadata ?? {},
+            user_metadata: parsed.userMetadata,
             steward: rule.steward ?? null,
             author_kind: rule.author_kind ?? "human",
           },

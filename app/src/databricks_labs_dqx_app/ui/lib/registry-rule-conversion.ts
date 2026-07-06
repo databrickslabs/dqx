@@ -9,6 +9,13 @@
  *   arguments } }` shape `apply_checks_by_metadata` consumes, with reusable
  *   slots left as `{{slot_name}}` placeholders (a registry rule is
  *   table-agnostic, so it is never rendered against real columns here).
+ *   Also includes `user_metadata` — the rule's reserved tags
+ *   (name/description/dimension/severity) plus any free-text tags — since
+ *   that dict IS what `render_check` stamps into the materialized
+ *   `dq_quality_rules.check` row (minus the per-application provenance keys
+ *   — `registry_rule_id`, `registry_version`, `applied_rule_id`,
+ *   `polarity` — that only exist once a rule is applied to a table and
+ *   therefore have no meaning on a still-unattached registry rule).
  *
  * Centralized here (rather than duplicated in each dialog) so the
  * definition <-> function-signature mapping has exactly one implementation —
@@ -174,7 +181,11 @@ const SQL_FUNCTION_NAMES = new Set(["sql_query", "sql_expression"]);
  * Derive the native DQX check-dict for *rule* — the exact shape
  * `apply_checks_by_metadata` consumes, with slots left as `{{slot}}`
  * placeholders (mirrors `materializer.render_check` before column
- * substitution, since a registry rule is table-agnostic).
+ * substitution, since a registry rule is table-agnostic). Includes
+ * `user_metadata` — *rule*'s own tags dict, unchanged — so the JSON shown
+ * to the user faithfully mirrors what flows into the materialized
+ * `dq_quality_rules.check` row (see the module docstring for exactly which
+ * per-application keys are intentionally excluded).
  */
 export function buildDqxCheckJson(rule: RegistryRuleOut): Record<string, unknown> {
   const definition = rule.definition ?? ({} as RuleDefinition);
@@ -209,6 +220,7 @@ export function buildDqxCheckJson(rule: RegistryRuleOut): Record<string, unknown
   const check: Record<string, unknown> = {
     criticality: resolveCriticality(severity || undefined),
     check: checkInner,
+    user_metadata: rule.user_metadata ?? {},
   };
   const name = getTag(rule, RESERVED_NAME_KEY);
   if (name) check.name = name;
@@ -220,6 +232,16 @@ export interface ParsedCheckDefinition {
   mode: "dqx_native" | "sql";
   definition: RuleDefinition;
   polarity: "pass" | "fail" | null;
+  /**
+   * The rule's `user_metadata` tags dict as edited in the JSON — round-trips
+   * back into the rule's `user_metadata` (the same store the About-tab tag
+   * fields write to). Only string-valued entries survive (mirrors the
+   * backend's `_build_user_metadata` merge, which likewise drops non-string
+   * values); falls back to *currentUserMetadata* unchanged when the `check`
+   * JSON has no `user_metadata` object at all (e.g. hand-crafted JSON that
+   * never had the key), so a missing key never silently wipes existing tags.
+   */
+  userMetadata: Record<string, string>;
 }
 
 /**
@@ -234,12 +256,19 @@ export interface ParsedCheckDefinition {
  * real value. SQL safety is enforced server-side (`RegistryService.update_draft`)
  * on save, since `is_sql_query_safe` has no frontend equivalent.
  *
+ * `user_metadata` round-trips: if the top-level `user_metadata` object is
+ * present, it fully REPLACES *currentUserMetadata* (add/edit/remove a tag —
+ * including the reserved name/description/dimension/severity keys — and it
+ * persists); if the key is absent or not a plain object, *currentUserMetadata*
+ * is kept as-is so a save can never silently drop existing tags.
+ *
  * Throws a plain `Error` with a user-facing message on any validation
  * failure; callers should catch and surface `error.message` inline.
  */
 export function parseDqxCheckJson(
   rawText: string,
   currentDefinition: RuleDefinition,
+  currentUserMetadata: Record<string, unknown> | null | undefined,
   checkFunctions: ApiCheckFunctionDef[],
   t: (key: string, opts?: Record<string, unknown>) => string,
 ): ParsedCheckDefinition {
@@ -273,6 +302,7 @@ export function parseDqxCheckJson(
       : {};
 
   const errorMessage = typeof dict.message_expr === "string" ? dict.message_expr : undefined;
+  const userMetadata = parseUserMetadata(dict.user_metadata, currentUserMetadata);
 
   if (SQL_FUNCTION_NAMES.has(functionName)) {
     const polarity: "pass" | "fail" = args.negate === true ? "fail" : "pass";
@@ -289,6 +319,7 @@ export function parseDqxCheckJson(
         parameters: currentDefinition.parameters ?? [],
         error_message: errorMessage,
       },
+      userMetadata,
     };
   }
 
@@ -308,5 +339,34 @@ export function parseDqxCheckJson(
       parameters,
       error_message: errorMessage,
     },
+    userMetadata,
   };
+}
+
+/**
+ * Resolve the `user_metadata` dict for {@link parseDqxCheckJson}'s result.
+ *
+ * Only string-valued entries are kept — mirrors the backend's
+ * `_build_user_metadata` merge, which likewise drops any non-string key or
+ * value rather than rejecting the whole save. When *raw* isn't a plain
+ * object (missing, `null`, an array, or any other JSON type), the entire
+ * existing tags dict is preserved unchanged so a save can never silently
+ * wipe tags the user didn't intend to touch.
+ */
+function parseUserMetadata(
+  raw: unknown,
+  current: Record<string, unknown> | null | undefined,
+): Record<string, string> {
+  const fallback: Record<string, string> = {};
+  for (const [k, v] of Object.entries(current ?? {})) {
+    if (typeof v === "string") fallback[k] = v;
+  }
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    return fallback;
+  }
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof v === "string") out[k] = v;
+  }
+  return out;
 }
