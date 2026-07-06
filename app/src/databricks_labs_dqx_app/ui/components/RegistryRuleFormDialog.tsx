@@ -29,6 +29,7 @@ import {
 } from "@/components/ui/popover";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Separator } from "@/components/ui/separator";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   AlertCircle,
   Check,
@@ -71,7 +72,7 @@ import {
   type AiGenerateRuleOut,
 } from "@/lib/api";
 import { useAiAvailability, aiUnavailableReason } from "@/hooks/use-ai-availability";
-import { AI_BUTTON_BG, AI_ICON_COLOR, AI_BANNER_BG, AI_BANNER_BORDER, AI_GRADIENT_URL } from "@/lib/ai-style";
+import { AI_BUTTON_BG, AI_BANNER_BG, AI_BANNER_BORDER, AI_GRADIENT_URL } from "@/lib/ai-style";
 import { orderSeverityValuesForDisplay, colorFor, ColorDot, type LabelColorDefinition } from "@/components/RegistryRuleBadges";
 import {
   COLUMN_KINDS,
@@ -214,32 +215,51 @@ function FunctionCombobox({
   );
 }
 
-function SuggestButton({
+/**
+ * In-field "Suggest with AI" affordance, ported from dqlake's
+ * `RuleNameDescriptionFields`/`AboutTab` — a gradient Sparkles icon that
+ * fades in on hover/focus of the surrounding `group`. Two placements:
+ * `"input"` / `"textarea"` absolutely position the icon inside a
+ * `relative group` wrapper around an `Input`/`Textarea` (the field needs a
+ * matching `pr-9`); `"inline"` renders the icon as a plain flex sibling
+ * next to a `Select` trigger (wrap both in a `flex items-center gap-2
+ * group` container instead).
+ */
+function AiSuggestIcon({
   field,
   busy,
   onClick,
   label,
+  position,
 }: {
   field: string;
   busy: boolean;
   onClick: () => void;
   label: string;
+  position: "input" | "textarea" | "inline";
 }) {
   return (
-    <Button
-      type="button"
-      variant="ghost"
-      size="sm"
-      className={cn("h-5 gap-1 px-1.5 text-[10px] hover:text-foreground", AI_ICON_COLOR)}
-      onClick={onClick}
-      disabled={busy}
-      aria-label={label}
-      title={label}
-      data-field={field}
-    >
-      {busy ? <Loader2 className="h-2.5 w-2.5 animate-spin" /> : <Sparkles className="h-2.5 w-2.5" />}
-      {label}
-    </Button>
+    <TooltipProvider delayDuration={300}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            aria-label={label}
+            onClick={onClick}
+            disabled={busy}
+            data-field={field}
+            className={cn(
+              "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 hover:scale-110 disabled:opacity-50 disabled:cursor-not-allowed transition-all shrink-0",
+              position === "input" && "absolute right-2 top-1/2 -translate-y-1/2",
+              position === "textarea" && "absolute right-2 top-2",
+            )}
+          >
+            <Sparkles className="h-4 w-4" stroke={AI_GRADIENT_URL} />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent>{label}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
 }
 
@@ -1308,118 +1328,126 @@ export function RegistryRuleFormDialog({
   const aboutTabContent = (
     <div className="space-y-4 pt-2">
       <div className="space-y-1.5">
-        <div className="flex items-center justify-between gap-2">
-          <Label className="text-xs">
-            {t("rulesRegistry.nameLabel")} <span className="text-destructive">*</span>
-          </Label>
+        <Label className="text-xs">
+          {t("rulesRegistry.nameLabel")} <span className="text-destructive">*</span>
+        </Label>
+        <div className="relative group">
+          <Input
+            className={cn(
+              "h-8 text-xs",
+              nameError && "border-red-400 focus-visible:ring-red-400",
+              showFieldSuggest && "pr-9",
+            )}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            disabled={readOnly}
+            placeholder={t("rulesRegistry.namePlaceholder")}
+          />
           {showFieldSuggest && (
-            <SuggestButton
+            <AiSuggestIcon
               field="name"
               busy={suggestingField === "name"}
               onClick={() => handleAiSuggestField("name")}
               label={t("rulesRegistry.aiSuggestButton")}
+              position="input"
             />
           )}
         </div>
-        <Input
-          className={`h-8 text-xs ${nameError ? "border-red-400 focus-visible:ring-red-400" : ""}`}
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          disabled={readOnly}
-          placeholder={t("rulesRegistry.namePlaceholder")}
-        />
         {nameError && <p className="text-[10px] text-red-500">{nameError}</p>}
       </div>
 
       <div className="space-y-1.5">
-        <div className="flex items-center justify-between gap-2">
-          <Label className="text-xs">{t("rulesRegistry.descriptionLabel")}</Label>
+        <Label className="text-xs">{t("rulesRegistry.descriptionLabel")}</Label>
+        <div className="relative group">
+          <Textarea
+            className={cn("text-xs min-h-[60px]", showFieldSuggest && "pr-9")}
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            disabled={readOnly}
+            placeholder={t("rulesRegistry.descriptionPlaceholder")}
+          />
           {showFieldSuggest && (
-            <SuggestButton
+            <AiSuggestIcon
               field="description"
               busy={suggestingField === "description"}
               onClick={() => handleAiSuggestField("description")}
               label={t("rulesRegistry.aiSuggestButton")}
+              position="textarea"
             />
           )}
         </div>
-        <Textarea
-          className="text-xs min-h-[60px]"
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          disabled={readOnly}
-          placeholder={t("rulesRegistry.descriptionPlaceholder")}
-        />
       </div>
 
       <Separator />
 
       <div className="space-y-1.5">
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-1.5">
-            <Label className="text-xs">
-              {t("rulesRegistry.severityLabel")} <span className="text-destructive">*</span>
-            </Label>
-            <HelpTooltip text={t("rulesRegistry.severityTooltip")} />
-          </div>
+        <div className="flex items-center gap-1.5">
+          <Label className="text-xs">
+            {t("rulesRegistry.severityLabel")} <span className="text-destructive">*</span>
+          </Label>
+          <HelpTooltip text={t("rulesRegistry.severityTooltip")} />
+        </div>
+        <div className="flex items-center gap-2 group">
+          <Select value={severity || undefined} onValueChange={setSeverity} disabled={readOnly}>
+            <SelectTrigger className="h-8 w-full max-w-xs text-xs">
+              <SelectValue placeholder={t("rulesRegistry.selectSeverity")} />
+            </SelectTrigger>
+            <SelectContent>
+              {severityValues.map((v) => (
+                <SelectItem key={v} value={v} className="text-xs">
+                  <span className="flex items-center gap-1.5">
+                    <ColorDot color={colorFor(labelDefinitions as LabelColorDefinition[], RESERVED_SEVERITY_KEY, v)} />
+                    {v}
+                  </span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           {showFieldSuggest && severityValues.length > 0 && (
-            <SuggestButton
+            <AiSuggestIcon
               field="severity"
               busy={suggestingField === "severity"}
               onClick={() => handleAiSuggestField("severity")}
               label={t("rulesRegistry.aiSuggestButton")}
+              position="inline"
             />
           )}
         </div>
-        <Select value={severity || undefined} onValueChange={setSeverity} disabled={readOnly}>
-          <SelectTrigger className="h-8 w-full max-w-xs text-xs">
-            <SelectValue placeholder={t("rulesRegistry.selectSeverity")} />
-          </SelectTrigger>
-          <SelectContent>
-            {severityValues.map((v) => (
-              <SelectItem key={v} value={v} className="text-xs">
-                <span className="flex items-center gap-1.5">
-                  <ColorDot color={colorFor(labelDefinitions as LabelColorDefinition[], RESERVED_SEVERITY_KEY, v)} />
-                  {v}
-                </span>
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
       </div>
 
       <div className="space-y-1.5">
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-1.5">
-            <Label className="text-xs">
-              {t("rulesRegistry.dimensionLabel")} <span className="text-destructive">*</span>
-            </Label>
-            <HelpTooltip text={t("rulesRegistry.dimensionTooltip")} />
-          </div>
+        <div className="flex items-center gap-1.5">
+          <Label className="text-xs">
+            {t("rulesRegistry.dimensionLabel")} <span className="text-destructive">*</span>
+          </Label>
+          <HelpTooltip text={t("rulesRegistry.dimensionTooltip")} />
+        </div>
+        <div className="flex items-center gap-2 group">
+          <Select value={dimension || undefined} onValueChange={setDimension} disabled={readOnly}>
+            <SelectTrigger className="h-8 w-full max-w-xs text-xs">
+              <SelectValue placeholder={t("rulesRegistry.selectDimension")} />
+            </SelectTrigger>
+            <SelectContent>
+              {dimensionValues.map((v) => (
+                <SelectItem key={v} value={v} className="text-xs">
+                  <span className="flex items-center gap-1.5">
+                    <ColorDot color={colorFor(labelDefinitions as LabelColorDefinition[], RESERVED_DIMENSION_KEY, v)} />
+                    {v}
+                  </span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           {showFieldSuggest && dimensionValues.length > 0 && (
-            <SuggestButton
+            <AiSuggestIcon
               field="dimension"
               busy={suggestingField === "dimension"}
               onClick={() => handleAiSuggestField("dimension")}
               label={t("rulesRegistry.aiSuggestButton")}
+              position="inline"
             />
           )}
         </div>
-        <Select value={dimension || undefined} onValueChange={setDimension} disabled={readOnly}>
-          <SelectTrigger className="h-8 w-full max-w-xs text-xs">
-            <SelectValue placeholder={t("rulesRegistry.selectDimension")} />
-          </SelectTrigger>
-          <SelectContent>
-            {dimensionValues.map((v) => (
-              <SelectItem key={v} value={v} className="text-xs">
-                <span className="flex items-center gap-1.5">
-                  <ColorDot color={colorFor(labelDefinitions as LabelColorDefinition[], RESERVED_DIMENSION_KEY, v)} />
-                  {v}
-                </span>
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
       </div>
 
       <LabelsEditor
@@ -1501,6 +1529,19 @@ export function RegistryRuleFormDialog({
               value={functionName}
               functions={checkFunctions}
               onChange={(fn) => {
+                // `sql_expression` / `sql_query` are technically selectable
+                // dqx_native functions, but authoring a raw SQL predicate is
+                // exactly what SQL mode is for — redirect there instead of
+                // wiring them up as a native function selection, mirroring
+                // how `applyAiProposal` resets the *other* mode's fields
+                // when switching modes.
+                if (fn === "sql_expression" || fn === "sql_query") {
+                  setMode("sql");
+                  setFunctionName("");
+                  setParamRawValues({});
+                  setNativeSlots([]);
+                  return;
+                }
                 setFunctionName(fn);
                 setParamRawValues({});
                 // Arity is fixed by the function signature — switching
@@ -1514,7 +1555,7 @@ export function RegistryRuleFormDialog({
             />
           </div>
           {derivedParams.length > 0 && (
-            <div className="space-y-2">
+            <div className="space-y-2 border-l pl-3 ml-1">
               <Label className="text-xs">{t("rulesRegistry.parametersLabel")}</Label>
               <div className="grid gap-2 sm:grid-cols-2">
                 {derivedParams.map((p) => {
