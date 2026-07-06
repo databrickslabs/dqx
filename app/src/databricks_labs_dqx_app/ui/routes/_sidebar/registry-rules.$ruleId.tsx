@@ -41,7 +41,7 @@ import {
 } from "@/components/RegistryRuleFormDialog";
 import { ApplyRuleModal } from "@/components/registry-rules/ApplyRuleModal";
 import { RegistryRuleJsonDialog } from "@/components/registry-rules/RegistryRuleJsonDialog";
-import { StatusBadge, ModeBadge, AuthorKindBadge, getTag, RESERVED_NAME_KEY } from "@/components/RegistryRuleBadges";
+import { StatusBadge, getTag, RESERVED_NAME_KEY } from "@/components/RegistryRuleBadges";
 import { cn } from "@/lib/utils";
 
 function extractApiError(err: unknown, fallback: string): string {
@@ -213,59 +213,61 @@ function RegistryRuleDetailPage() {
       <div className="space-y-6">
         <PageBreadcrumb items={[{ label: t("rulesRegistry.title"), to: "/registry-rules" }]} page={name} />
 
-        <div className="flex flex-wrap items-center gap-2">
-          <h1 className="text-2xl font-semibold tracking-tight truncate">{name}</h1>
-          <StatusBadge status={rule.status} />
-          <ModeBadge mode={rule.mode} />
-          <AuthorKindBadge authorKind={rule.author_kind ?? undefined} />
-          {canEditAsNewDraft && (
-            <Button
-              variant="outline"
-              size="sm"
-              className={cn("gap-2 h-8", !showActionsMenu && "ml-auto")}
-              onClick={handleEditAsNewDraft}
-              disabled={createMutation.isPending}
-              title={t("rulesRegistry.editAsNewDraftTooltip")}
-            >
-              <Pencil className="h-3.5 w-3.5" />
-              {t("rulesRegistry.actionEditAsNewDraft")}
-            </Button>
-          )}
-          {showActionsMenu && (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className={cn("h-8 w-8 p-0", !canEditAsNewDraft && "ml-auto")}
-                  aria-label={t("rulesRegistry.actionsMenuLabel")}
-                >
-                  <MoreVertical className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                {canApply && (
-                  <DropdownMenuItem onClick={() => setApplyModalOpen(true)} className="gap-2">
-                    <Table2 className="h-3.5 w-3.5" />
-                    {t("rulesRegistry.actionApplyToTables")}
-                  </DropdownMenuItem>
-                )}
-                <DropdownMenuItem onClick={() => setJsonDialogOpen(true)} className="gap-2">
-                  <Braces className="h-3.5 w-3.5" />
-                  {t("rulesRegistry.actionViewJson")}
-                </DropdownMenuItem>
-                {canDelete && (
-                  <DropdownMenuItem
-                    onClick={() => setDeleteConfirmOpen(true)}
-                    className={cn("gap-2 text-destructive focus:text-destructive")}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-2 min-w-0">
+            <h1 className="text-2xl font-semibold tracking-tight truncate">{name}</h1>
+            <StatusBadge status={rule.status} />
+          </div>
+          <div className="flex items-center gap-2 ml-auto">
+            {canEditAsNewDraft && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-2 h-8"
+                onClick={handleEditAsNewDraft}
+                disabled={createMutation.isPending}
+                title={t("rulesRegistry.editAsNewDraftTooltip")}
+              >
+                <Pencil className="h-3.5 w-3.5" />
+                {t("rulesRegistry.actionEditAsNewDraft")}
+              </Button>
+            )}
+            {showActionsMenu && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 w-8 p-0"
+                    aria-label={t("rulesRegistry.actionsMenuLabel")}
                   >
-                    <Trash2 className="h-3.5 w-3.5" />
-                    {t("rulesRegistry.actionDelete")}
+                    <MoreVertical className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {canApply && (
+                    <DropdownMenuItem onClick={() => setApplyModalOpen(true)} className="gap-2">
+                      <Table2 className="h-3.5 w-3.5" />
+                      {t("rulesRegistry.actionApplyToTables")}
+                    </DropdownMenuItem>
+                  )}
+                  <DropdownMenuItem onClick={() => setJsonDialogOpen(true)} className="gap-2">
+                    <Braces className="h-3.5 w-3.5" />
+                    {t("rulesRegistry.actionViewJson")}
                   </DropdownMenuItem>
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
+                  {canDelete && (
+                    <DropdownMenuItem
+                      onClick={() => setDeleteConfirmOpen(true)}
+                      className={cn("gap-2 text-destructive focus:text-destructive")}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      {t("rulesRegistry.actionDelete")}
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+          </div>
         </div>
 
         <RegistryRuleFormDialog
