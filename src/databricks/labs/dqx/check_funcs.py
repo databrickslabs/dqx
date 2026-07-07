@@ -2062,6 +2062,159 @@ def has_no_aggr_outliers(
 
 
 @register_rule("dataset")
+def validate_upstream_table(
+    column: str | Column,
+    ref_table: str | None = None,
+    ref_df_name: str | None = None,
+    ref_column: str | Column | None = None,
+    aggr_type: str = "count",
+    aggr_params: dict[str, Any] | None = None,
+    row_filter: str | None = None,
+    ref_row_filter: str | None = None,
+    abs_tolerance: float | None = None,
+    rel_tolerance: float | None = None,
+) -> tuple[Column, Callable]:
+    """
+    Build an upstream table comparison check condition and closure for dataset-level validation.
+
+    This function verifies that an aggregation on a column in the checked DataFrame matches the same
+    aggregation computed on a reference (upstream) DataFrame or table. It is commonly used to validate
+    that a row count (or other aggregate metric) in a downstream table matches its upstream source,
+    catching data loss or duplication introduced during ingestion.
+
+    Args:
+        column: Column name (str) or Column expression to aggregate in the checked DataFrame.
+            Pass *"*"* for *count(*)* over all rows.
+        ref_table: Name of the reference (upstream) table to read from the catalog.
+        ref_df_name: Name of the reference (upstream) DataFrame (used when passing DataFrames directly).
+        ref_column: Column name (str) or Column expression to aggregate in the reference DataFrame.
+            Defaults to *column* when not provided.
+        aggr_type: Aggregation type (default: 'count'). Curated types include count, sum, avg, min, max,
+            count_distinct, stddev, percentile, and more. Any Databricks built-in aggregate is supported.
+        aggr_params: Optional dict of parameters for aggregates requiring them (e.g., percentile value for
+            percentile functions, accuracy for approximate aggregates). Parameters are passed as keyword
+            arguments to the Spark function.
+        row_filter: Optional SQL expression to filter rows in the checked DataFrame before aggregation.
+            Auto-injected from the check filter.
+        ref_row_filter: Optional SQL expression to filter rows in the reference DataFrame or table before
+            aggregation (e.g. to align both sides on the same date partition).
+        abs_tolerance: Values are considered equal if the absolute difference is less than or equal to the
+            tolerance. This is applicable to numeric aggregates.
+        rel_tolerance: Relative tolerance for numeric comparisons. Differences within this relative tolerance
+            are ignored. Useful if the aggregates vary in scale.
+
+    Returns:
+        A tuple of:
+            - A Spark Column representing the condition for upstream comparison violations.
+            - A closure that applies the upstream comparison check and adds the necessary condition/metric
+              columns.
+
+    Raises:
+        MissingParameterError:
+            - if neither *ref_df_name* nor *ref_table* is provided.
+        InvalidParameterError:
+            - if both *ref_df_name* and *ref_table* are provided.
+            - if *abs_tolerance* or *rel_tolerance* is negative.
+    """
+    if ref_df_name is not None and ref_table is not None:
+        raise InvalidParameterError(
+            "Both 'ref_df_name' and 'ref_table' were provided. Please provide only one to avoid ambiguity."
+        )
+    if not ref_df_name and not ref_table:
+        raise MissingParameterError("Either 'ref_df_name' or 'ref_table' is required but neither was provided.")
+
+    abs_tolerance = 0.0 if abs_tolerance is None else abs_tolerance
+    rel_tolerance = 0.0 if rel_tolerance is None else rel_tolerance
+    if abs_tolerance < 0 or rel_tolerance < 0:
+        raise InvalidParameterError("Absolute and/or relative tolerances if provided must be non-negative")
+
+    if aggr_type not in CURATED_AGGR_FUNCTIONS:
+        warnings.warn(
+            f"Using non-curated aggregate function '{aggr_type}'. "
+            f"Curated functions: {', '.join(sorted(CURATED_AGGR_FUNCTIONS))}. "
+            f"Non-curated aggregates must return a single numeric value.",
+            UserWarning,
+            stacklevel=2,
+        )
+
+    ref_column = column if ref_column is None else ref_column
+
+    aggr_col_str_norm, aggr_col_str, aggr_col_expr = get_normalized_column_and_expr(column)
+    _, ref_col_str, ref_col_expr = get_normalized_column_and_expr(ref_column)
+    aggr_display_name = _get_aggregate_display_name(aggr_type, aggr_params)
+    ref_label = f"table '{ref_table}'" if ref_table else f"DataFrame '{ref_df_name}'"
+
+    unique_str = uuid.uuid4().hex  # make sure any column added to the dataframe is unique
+    condition_col = f"__condition_{aggr_col_str_norm}_{aggr_type}_upstream_{unique_str}"
+    metric_col = f"__metric_{aggr_col_str_norm}_{aggr_type}_{unique_str}"
+    ref_metric_col = f"__ref_metric_{aggr_col_str_norm}_{aggr_type}_{unique_str}"
+
+    def apply(df: DataFrame, spark: SparkSession, ref_dfs: dict[str, DataFrame]) -> DataFrame:
+        """
+        Apply the upstream comparison check logic to the DataFrame.
+
+        Computes the specified aggregation on the checked DataFrame and on the reference (upstream)
+        DataFrame or table, then compares the two results within the given tolerance.
+
+        Args:
+            df: The input DataFrame to validate.
+            spark: SparkSession used if reading a reference table.
+            ref_dfs: Dictionary of reference DataFrames (by name), used to resolve *ref_df_name*.
+
+        Returns:
+            The DataFrame with additional condition and metric columns for upstream comparison.
+        """
+        ref_df = _get_ref_df(ref_df_name, ref_table, ref_dfs, spark)
+
+        # Filter rows (rather than nulling out excluded values via F.when) so that
+        # column="*" (count(*) over all rows) works correctly with row_filter/ref_row_filter.
+        filtered_df = df.filter(row_filter) if row_filter else df
+        aggr_expr = _build_aggregate_expression(aggr_type, aggr_col_expr, aggr_params)
+
+        ref_filtered_df = ref_df.filter(ref_row_filter) if ref_row_filter else ref_df
+        ref_aggr_expr = _build_aggregate_expression(aggr_type, ref_col_expr, aggr_params)
+
+        metric_df = filtered_df.select(aggr_expr.alias(metric_col)).limit(1)
+        ref_metric_df = ref_filtered_df.select(ref_aggr_expr.alias(ref_metric_col)).limit(1)
+
+        if aggr_type not in CURATED_AGGR_FUNCTIONS:
+            _validate_aggregate_return_type(metric_df, aggr_type, metric_col)
+            _validate_aggregate_return_type(ref_metric_df, aggr_type, ref_metric_col)
+
+        result_df = df.crossJoin(metric_df).crossJoin(ref_metric_df)
+        match = _match_values_with_tolerance(F.col(metric_col), F.col(ref_metric_col), abs_tolerance, rel_tolerance)
+
+        # Null-safe comparison so an empty or all-null upstream is not silently treated as matching.
+        # _match_values_with_tolerance returns NULL when either metric is NULL (e.g. sum/avg over an
+        # empty reference), which would otherwise make the violation condition NULL (no violation) and
+        # hide data loss. Treat two nulls as equal and a one-sided null as a mismatch (violation).
+        metric_is_null = F.col(metric_col).isNull()
+        ref_metric_is_null = F.col(ref_metric_col).isNull()
+        match = (
+            F.when(metric_is_null & ref_metric_is_null, F.lit(True))
+            .when(metric_is_null | ref_metric_is_null, F.lit(False))
+            .otherwise(match)
+        )
+
+        return result_df.withColumn(condition_col, ~match)
+
+    condition = make_condition(
+        condition=F.col(condition_col),
+        message=F.concat_ws(
+            "",
+            F.lit(f"{aggr_display_name} value "),
+            F.col(metric_col).cast("string"),
+            F.lit(f" in column '{aggr_col_str}' does not match {aggr_display_name} value "),
+            F.col(ref_metric_col).cast("string"),
+            F.lit(f" in column '{ref_col_str}' of upstream {ref_label}"),
+        ),
+        alias=normalize_col_str(f"{aggr_col_str_norm}_{aggr_type.lower()}_not_equal_to_upstream".lstrip("_")),
+    )
+
+    return condition, apply
+
+
+@register_rule("dataset")
 def compare_datasets(
     columns: list[str | Column],
     ref_columns: list[str | Column],

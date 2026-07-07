@@ -45,7 +45,6 @@ from databricks.labs.dqx.errors import InvalidParameterError, UnsafeSqlQueryErro
     ],
 )
 def test_foreign_key_exceptions(ref_df_name, ref_table, ref_columns, columns, expected_exception, expected_message):
-
     with pytest.raises(expected_exception, match=expected_message):
         DQDatasetRule(
             criticality="warn",
@@ -254,5 +253,73 @@ def test_has_valid_schema_parameter_validation(expected_schema, ref_df_name, ref
                 "expected_schema": expected_schema,
                 "ref_df_name": ref_df_name,
                 "ref_table": ref_table,
+            },
+        )
+
+
+@pytest.mark.parametrize(
+    "ref_df_name, ref_table, expected_exception, expected_message",
+    [
+        (
+            "ref_df",
+            "table",
+            InvalidParameterError,
+            "Both 'ref_df_name' and 'ref_table' were provided. Please provide only one to avoid ambiguity.",
+        ),
+        (
+            None,
+            None,
+            MissingParameterError,
+            "Either 'ref_df_name' or 'ref_table' is required but neither was provided.",
+        ),
+        (
+            "",
+            None,
+            MissingParameterError,
+            "Either 'ref_df_name' or 'ref_table' is required but neither was provided.",
+        ),
+        (
+            None,
+            "",
+            MissingParameterError,
+            "Either 'ref_df_name' or 'ref_table' is required but neither was provided.",
+        ),
+    ],
+)
+def test_validate_upstream_table_ref_params_exceptions(ref_df_name, ref_table, expected_exception, expected_message):
+    """ref_df_name/ref_table must be exactly one of the two, otherwise the rule fails to build."""
+    with pytest.raises(expected_exception, match=expected_message):
+        DQDatasetRule(
+            criticality="warn",
+            check_func=check_funcs.validate_upstream_table,
+            column="id",
+            check_func_kwargs={
+                "ref_df_name": ref_df_name,
+                "ref_table": ref_table,
+            },
+        )
+
+
+@pytest.mark.parametrize(
+    "abs_tolerance, rel_tolerance",
+    [
+        (-1, None),
+        (None, -1),
+        (-1, -1),
+    ],
+)
+def test_validate_upstream_table_invalid_tolerance_exceptions(abs_tolerance, rel_tolerance):
+    """Negative abs_tolerance/rel_tolerance must be rejected at rule-build time."""
+    with pytest.raises(
+        InvalidParameterError, match="Absolute and/or relative tolerances if provided must be non-negative"
+    ):
+        DQDatasetRule(
+            criticality="warn",
+            check_func=check_funcs.validate_upstream_table,
+            column="id",
+            check_func_kwargs={
+                "ref_table": "catalog.schema.ref_table",
+                "abs_tolerance": abs_tolerance,
+                "rel_tolerance": rel_tolerance,
             },
         )

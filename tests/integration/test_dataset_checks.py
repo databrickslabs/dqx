@@ -21,6 +21,7 @@ from databricks.labs.dqx.check_funcs import (
     compare_datasets,
     is_data_fresh_per_time_window,
     has_valid_schema,
+    validate_upstream_table,
 )
 from databricks.labs.dqx.utils import get_column_name_or_alias
 from databricks.labs.dqx.errors import InvalidParameterError, MissingParameterError
@@ -1628,6 +1629,300 @@ def test_is_aggr_non_curated_aggregate_with_warning(spark: SparkSession):
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
+def test_validate_upstream_table_ref_df_name_match(spark: SparkSession):
+    """Row counts match against a reference DataFrame passed via ref_df_name -> no violation."""
+    test_df = spark.createDataFrame([["a", 1], ["b", 2], ["c", 3]], SCHEMA)
+    ref_df = spark.createDataFrame([["x", 1], ["y", 2], ["z", 3]], SCHEMA)
+
+    checks = [validate_upstream_table("a", ref_df_name="ref_df", aggr_type="count")]
+    actual = _apply_checks(test_df, checks, ref_dfs={"ref_df": ref_df}, spark=spark)
+
+    expected = spark.createDataFrame(
+        [
+            ["a", 1, None],
+            ["b", 2, None],
+            ["c", 3, None],
+        ],
+        f"{SCHEMA}, a_count_not_equal_to_upstream STRING",
+    )
+
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_validate_upstream_table_ref_df_name_mismatch(spark: SparkSession):
+    """Row counts differ against a reference DataFrame -> violation with both counts in the message."""
+    test_df = spark.createDataFrame([["a", 1], ["b", 2]], SCHEMA)
+    ref_df = spark.createDataFrame([["x", 1], ["y", 2], ["z", 3]], SCHEMA)
+
+    checks = [validate_upstream_table("a", ref_df_name="ref_df", aggr_type="count")]
+    actual = _apply_checks(test_df, checks, ref_dfs={"ref_df": ref_df}, spark=spark)
+
+    expected_message = (
+        "Count value 2 in column 'a' does not match Count value 3 in column 'a' of upstream DataFrame 'ref_df'"
+    )
+    expected = spark.createDataFrame(
+        [
+            ["a", 1, expected_message],
+            ["b", 2, expected_message],
+        ],
+        f"{SCHEMA}, a_count_not_equal_to_upstream STRING",
+    )
+
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_validate_upstream_table_with_tolerance(spark: SparkSession):
+    """Sum comparison via a differently-named ref_column: passes within abs_tolerance, flags outside it."""    
+    checked_schema = "a: string, b: int, c: int"
+    test_df = spark.createDataFrame([["a", 50, 1000], ["b", 50, 1000]], checked_schema)
+    
+    ref_schema = "x: string, amount: int, other: int"
+    ref_df = spark.createDataFrame([["p", 95, 500], ["q", 10, 500]], ref_schema)
+
+    within_tolerance = [
+        validate_upstream_table("b", ref_df_name="ref_df", ref_column="amount", aggr_type="sum", abs_tolerance=10)
+    ]
+    outside_tolerance = [
+        validate_upstream_table("b", ref_df_name="ref_df", ref_column="amount", aggr_type="sum", abs_tolerance=1)
+    ]
+
+    actual_within = _apply_checks(test_df, within_tolerance, ref_dfs={"ref_df": ref_df}, spark=spark)
+    actual_outside = _apply_checks(test_df, outside_tolerance, ref_dfs={"ref_df": ref_df}, spark=spark)
+
+    # _apply_checks selects only "a", "b", plus the condition column - "c" is not part of the output
+    expected_within = spark.createDataFrame(
+        [["a", 50, None], ["b", 50, None]],
+        "a: string, b: int, b_sum_not_equal_to_upstream: string",
+    )
+    expected_outside_message = (
+        "Sum value 100 in column 'b' does not match Sum value 105 in column 'amount' of upstream DataFrame 'ref_df'"
+    )
+    expected_outside = spark.createDataFrame(
+        [["a", 50, expected_outside_message], ["b", 50, expected_outside_message]],
+        "a: string, b: int, b_sum_not_equal_to_upstream: string",
+    )
+
+    assertDataFrameEqual(actual_within, expected_within, checkRowOrder=False)
+    assertDataFrameEqual(actual_outside, expected_outside, checkRowOrder=False)
+
+
+def test_validate_upstream_table_row_filters(spark: SparkSession):
+    """row_filter/ref_row_filter exclude non-matching rows from the count on both sides before comparing."""
+    test_df = spark.createDataFrame([["a", 1], ["b", None], ["c", 3]], SCHEMA)
+    ref_df = spark.createDataFrame([["x", 1], ["y", 3], ["z", None]], SCHEMA)
+
+    checks = [
+        validate_upstream_table(
+            "a",
+            ref_df_name="ref_df",
+            aggr_type="count",
+            row_filter="b is not null",
+            ref_row_filter="b is not null",
+        )
+    ]
+    actual = _apply_checks(test_df, checks, ref_dfs={"ref_df": ref_df}, spark=spark)
+
+    expected = spark.createDataFrame(
+        [
+            ["a", 1, None],
+            ["b", None, None],
+            ["c", 3, None],
+        ],
+        f"{SCHEMA}, a_count_not_equal_to_upstream STRING",
+    )
+
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_validate_upstream_table_star_column_with_row_filter(spark: SparkSession):
+    """column='*' (count(*) over all rows) combined with row_filter counts filtered rows correctly, no violation."""
+    # 5 rows total, but only 3 have b is not null
+    test_df = spark.createDataFrame([["a", 1], ["b", None], ["c", 3], ["d", None], ["e", 5]], SCHEMA)
+    # 4 rows total, but only 3 have b is not null
+    ref_df = spark.createDataFrame([["v", 1], ["w", 2], ["x", 3], ["y", None]], SCHEMA)
+
+    checks = [
+        validate_upstream_table(
+            "*",
+            ref_df_name="ref_df",
+            aggr_type="count",
+            row_filter="b is not null",
+            ref_row_filter="b is not null",
+        )
+    ]
+    actual = _apply_checks(test_df, checks, ref_dfs={"ref_df": ref_df}, spark=spark)
+
+    # both sides have exactly 3 rows with b is not null -> counts match, no violation
+    expected = spark.createDataFrame(
+        [
+            ["a", 1, None],
+            ["b", None, None],
+            ["c", 3, None],
+            ["d", None, None],
+            ["e", 5, None],
+        ],
+        f"{SCHEMA}, count_not_equal_to_upstream STRING",
+    )
+
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_validate_upstream_table_star_column_with_row_filter_mismatch(spark: SparkSession):
+    """column='*' with row_filter flags a violation when filtered row counts differ across sides."""
+    # 5 rows total, only 3 have b is not null
+    test_df = spark.createDataFrame([["a", 1], ["b", None], ["c", 3], ["d", None], ["e", 5]], SCHEMA)
+    # 5 rows total, all 5 have b is not null
+    ref_df = spark.createDataFrame([["v", 1], ["w", 2], ["x", 3], ["y", 4], ["z", 5]], SCHEMA)
+
+    checks = [
+        validate_upstream_table(
+            "*",
+            ref_df_name="ref_df",
+            aggr_type="count",
+            row_filter="b is not null",
+            ref_row_filter="b is not null",
+        )
+    ]
+    actual = _apply_checks(test_df, checks, ref_dfs={"ref_df": ref_df}, spark=spark)
+
+    # 3 filtered rows on the checked side vs 5 filtered rows on the reference side -> violation
+    expected_message = (
+        "Count value 3 in column '*' does not match Count value 5 in column '*' of upstream DataFrame 'ref_df'"
+    )
+    expected = spark.createDataFrame(
+        [
+            ["a", 1, expected_message],
+            ["b", None, expected_message],
+            ["c", 3, expected_message],
+            ["d", None, expected_message],
+            ["e", 5, expected_message],
+        ],
+        f"{SCHEMA}, count_not_equal_to_upstream STRING",
+    )
+
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_validate_upstream_table_ref_column_override(spark: SparkSession):
+    """ref_column targets a differently-named column on the reference side and is correctly aggregated."""
+    test_df = spark.createDataFrame([["p", 7, 500], ["q", 13, 500]], "a: string, b: int, c: int")
+    ref_df = spark.createDataFrame([["m", 8, 900], ["n", 12, 900]], "x: string, y: int, z: int")
+
+    checks = [validate_upstream_table("b", ref_df_name="ref_df", ref_column="y", aggr_type="sum")]
+    actual = _apply_checks(test_df, checks, ref_dfs={"ref_df": ref_df}, spark=spark)
+
+    # _apply_checks selects only "a", "b", plus the condition column - "c" is not part of the output
+    expected = spark.createDataFrame(
+        [["p", 7, None], ["q", 13, None]],
+        "a: string, b: int, b_sum_not_equal_to_upstream: string",
+    )
+
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_validate_upstream_table_empty_upstream_sum_flags(spark: SparkSession):
+    """Regression: sum(b) over an empty upstream is NULL, which must still be flagged as a mismatch."""
+    # Regression: an empty upstream yields sum(b)=NULL. Without null-safe handling the tolerance
+    # comparison would evaluate to NULL, making the violation condition NULL (no violation) and
+    # silently hiding total data loss. A one-sided NULL metric must be flagged as a mismatch.
+    test_df = spark.createDataFrame([["a", 1], ["b", 2]], SCHEMA)
+    ref_df = spark.createDataFrame([], SCHEMA)
+
+    checks = [validate_upstream_table("b", ref_df_name="ref_df", aggr_type="sum")]
+    actual = _apply_checks(test_df, checks, ref_dfs={"ref_df": ref_df}, spark=spark)
+
+    # concat_ws skips the NULL upstream metric, leaving a double space where its value would appear
+    expected_message = (
+        "Sum value 3 in column 'b' does not match Sum value  in column 'b' of upstream DataFrame 'ref_df'"
+    )
+    expected = spark.createDataFrame(
+        [["a", 1, expected_message], ["b", 2, expected_message]],
+        f"{SCHEMA}, b_sum_not_equal_to_upstream STRING",
+    )
+
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_validate_upstream_table_empty_upstream_count_flags(spark: SparkSession):
+    """count(a) over an empty upstream is 0 (not NULL), and is correctly flagged as a mismatch."""
+    # count is null-safe (empty upstream -> 0, not NULL) so a mismatch is flagged directly.
+    test_df = spark.createDataFrame([["a", 1], ["b", 2]], SCHEMA)
+    ref_df = spark.createDataFrame([], SCHEMA)
+
+    checks = [validate_upstream_table("a", ref_df_name="ref_df", aggr_type="count")]
+    actual = _apply_checks(test_df, checks, ref_dfs={"ref_df": ref_df}, spark=spark)
+
+    expected_message = (
+        "Count value 2 in column 'a' does not match Count value 0 in column 'a' of upstream DataFrame 'ref_df'"
+    )
+    expected = spark.createDataFrame(
+        [["a", 1, expected_message], ["b", 2, expected_message]],
+        f"{SCHEMA}, a_count_not_equal_to_upstream STRING",
+    )
+
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_validate_upstream_table_count_distinct(spark: SparkSession):
+    """count_distinct compares distinct values (not row counts) across differently-named columns."""
+    # Distinct value counts differ across sides (3 distinct b vs 2 distinct y) even though the row
+    # counts match, so the check must compare distinct values (not rows) and flag the mismatch.
+    test_df = spark.createDataFrame([["a", 1], ["b", 2], ["c", 3]], SCHEMA)
+    ref_df = spark.createDataFrame([["m", 5], ["n", 5], ["o", 6]], "x: string, y: int")
+
+    checks = [validate_upstream_table("b", ref_df_name="ref_df", ref_column="y", aggr_type="count_distinct")]
+    actual = _apply_checks(test_df, checks, ref_dfs={"ref_df": ref_df}, spark=spark)
+
+    expected_message = (
+        "Distinct count value 3 in column 'b' does not match Distinct count value 2 "
+        "in column 'y' of upstream DataFrame 'ref_df'"
+    )
+    expected = spark.createDataFrame(
+        [["a", 1, expected_message], ["b", 2, expected_message], ["c", 3, expected_message]],
+        f"{SCHEMA}, b_count_distinct_not_equal_to_upstream STRING",
+    )
+
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_validate_upstream_table_with_ref_table(spark: SparkSession, make_schema, make_random):
+    """ref_table (a real Unity Catalog table) is read and compared the same way as ref_df_name."""
+    test_df = spark.createDataFrame([["a", 1], ["b", 2]], SCHEMA)
+    ref_df = spark.createDataFrame([["x", 1], ["y", 2], ["z", 3]], SCHEMA)
+
+    catalog_name = TEST_CATALOG
+    ref_table_schema = make_schema(catalog_name=catalog_name)
+    ref_table = f"{catalog_name}.{ref_table_schema.name}.{make_random(10).lower()}"
+    ref_df.write.saveAsTable(ref_table)
+
+    condition, apply = validate_upstream_table("a", ref_table=ref_table, aggr_type="count")
+    actual = apply(test_df, spark, {}).select("a", "b", condition)
+
+    expected_message = (
+        f"Count value 2 in column 'a' does not match Count value 3 in column 'a' of upstream table '{ref_table}'"
+    )
+    expected = spark.createDataFrame(
+        [["a", 1, expected_message], ["b", 2, expected_message]],
+        f"{SCHEMA}, a_count_not_equal_to_upstream STRING",
+    )
+
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_validate_upstream_table_ref_params_missing():
+    """Neither ref_df_name nor ref_table provided -> MissingParameterError."""
+    with pytest.raises(
+        MissingParameterError, match="Either 'ref_df_name' or 'ref_table' is required but neither was provided."
+    ):
+        validate_upstream_table("a")
+
+
+def test_validate_upstream_table_ref_params_both_provided():
+    """Both ref_df_name and ref_table provided -> InvalidParameterError."""
+    with pytest.raises(InvalidParameterError, match="Both 'ref_df_name' and 'ref_table' were provided"):
+        validate_upstream_table("a", ref_df_name="ref_df", ref_table="catalog.schema.table")
+
+
 def test_dataset_compare(spark: SparkSession, set_utc_timezone):
     schema = "id1 long, id2 long, name string, dt date, ts timestamp, score float, likes bigint, active boolean"
 
@@ -1688,7 +1983,7 @@ def test_dataset_compare(spark: SparkSession, set_utc_timezone):
                             "score": {"df": "26.7", "ref": "26.9"},
                         },
                     },
-                    separators=(',', ':'),
+                    separators=(",", ":"),
                 ),
             },
             {
@@ -1713,7 +2008,7 @@ def test_dataset_compare(spark: SparkSession, set_utc_timezone):
                             "active": {"df": "true"},
                         },
                     },
-                    separators=(',', ':'),
+                    separators=(",", ":"),
                 ),
             },
             {
@@ -1797,7 +2092,7 @@ def test_compare_datasets_with_diff_col_names_and_check_missing(spark: SparkSess
                             "dt": {"df": "2017-01-01", "ref": "2018-01-01"},
                         },
                     },
-                    separators=(',', ':'),
+                    separators=(",", ":"),
                 ),
             },
             {
@@ -1832,7 +2127,7 @@ def test_compare_datasets_with_diff_col_names_and_check_missing(spark: SparkSess
                             "active": {"ref": "true"},
                         },
                     },
-                    separators=(',', ':'),
+                    separators=(",", ":"),
                 ),
             },
             {
@@ -1856,7 +2151,7 @@ def test_compare_datasets_with_diff_col_names_and_check_missing(spark: SparkSess
                             "active": {"df": "true"},
                         },
                     },
-                    separators=(',', ':'),
+                    separators=(",", ":"),
                 ),
             },
         ],
@@ -2003,7 +2298,7 @@ def test_dataset_compare_ref_as_table_and_skip_map_col(spark: SparkSession, set_
                             "score": {"df": "26.7", "ref": "26.9"},
                         },
                     },
-                    separators=(',', ':'),
+                    separators=(",", ":"),
                 ),
             },
             {
@@ -2030,7 +2325,7 @@ def test_dataset_compare_ref_as_table_and_skip_map_col(spark: SparkSession, set_
                             "active": {"df": "true"},
                         },
                     },
-                    separators=(',', ':'),
+                    separators=(",", ":"),
                 ),
             },
             {
@@ -2117,7 +2412,7 @@ def test_dataset_compare_with_empty_ref_and_check_missing(spark: SparkSession):
                         "row_extra": True,
                         "changed": {"name": {"df": "Marcin"}},
                     },
-                    separators=(',', ':'),
+                    separators=(",", ":"),
                 ),
             },
             {
@@ -2130,7 +2425,7 @@ def test_dataset_compare_with_empty_ref_and_check_missing(spark: SparkSession):
                         "row_extra": True,
                         "changed": {"name": {"ref": "Marcin"}},
                     },
-                    separators=(',', ':'),
+                    separators=(",", ":"),
                 ),
             },
         ],
@@ -2172,7 +2467,7 @@ def test_dataset_compare_with_empty_df_and_check_missing(spark: SparkSession):
                         "row_extra": False,
                         "changed": {"name": {"ref": "Marcin"}},
                     },
-                    separators=(',', ':'),
+                    separators=(",", ":"),
                 ),
             },
             {
@@ -2185,7 +2480,7 @@ def test_dataset_compare_with_empty_df_and_check_missing(spark: SparkSession):
                         "row_extra": True,
                         "changed": {"name": {"df": "Marcin"}},
                     },
-                    separators=(',', ':'),
+                    separators=(",", ":"),
                 ),
             },
         ],
@@ -2227,7 +2522,7 @@ def test_dataset_compare_with_empty_df_and_ref(spark: SparkSession):
                         "row_extra": True,
                         "changed": {},
                     },
-                    separators=(',', ':'),
+                    separators=(",", ":"),
                 ),
             },
         ],
@@ -2336,7 +2631,7 @@ def test_compare_dataset_disabled_null_safe_row_matching(spark: SparkSession):
                         "row_extra": False,
                         "changed": {"name": {"ref": "val2"}},
                     },
-                    separators=(',', ':'),
+                    separators=(",", ":"),
                 ),
             },
             {
@@ -2349,7 +2644,7 @@ def test_compare_dataset_disabled_null_safe_row_matching(spark: SparkSession):
                         "row_extra": False,
                         "changed": {"name": {"df": "2"}},
                     },
-                    separators=(',', ':'),
+                    separators=(",", ":"),
                 ),
             },
             {
@@ -2362,7 +2657,7 @@ def test_compare_dataset_disabled_null_safe_row_matching(spark: SparkSession):
                         "row_extra": False,
                         "changed": {"name": {"ref": "3"}},
                     },
-                    separators=(',', ':'),
+                    separators=(",", ":"),
                 ),
             },
             {
@@ -2375,7 +2670,7 @@ def test_compare_dataset_disabled_null_safe_row_matching(spark: SparkSession):
                         "row_extra": True,
                         "changed": {"name": {"df": "val1"}},
                     },
-                    separators=(',', ':'),
+                    separators=(",", ":"),
                 ),
             },
             {"id1": 1, "id2": 1, "name": None, compare_status_column: None},
@@ -2480,7 +2775,7 @@ def test_is_data_fresh_per_time_window(spark: SparkSession, set_utc_timezone):
     )
     actual: DataFrame = apply_method(df)
 
-    actual = actual.select('a', 'b', condition)
+    actual = actual.select("a", "b", condition)
     condition_column = get_column_name_or_alias(condition)
     expected_schema = f"{schedule_schema}, {condition_column} string"
 
@@ -2563,7 +2858,7 @@ def test_is_data_fresh_per_time_window_with_cutt_off(spark: SparkSession, set_ut
     )
 
     actual: DataFrame = apply_method(df)
-    actual = actual.select('a', 'b', condition)
+    actual = actual.select("a", "b", condition)
     condition_column = get_column_name_or_alias(condition)
     expected_schema = f"{schedule_schema}, {condition_column} string"
 
@@ -2640,7 +2935,7 @@ def test_is_data_fresh_per_time_window_check_entire_dataset(spark: SparkSession,
     )
 
     actual: DataFrame = apply_method(df)
-    actual = actual.select('a', 'b', condition)
+    actual = actual.select("a", "b", condition)
     condition_column = get_column_name_or_alias(condition)
     expected_schema = f"{schedule_schema}, {condition_column} string"
 
