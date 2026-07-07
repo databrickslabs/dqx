@@ -136,7 +136,11 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded }:
   const selectablePageKeys = pageRows.map((r) => r.table.binding_id).filter((k) => !disabledKeys?.has(k));
   const allPageSelected = selectablePageKeys.length > 0 && selectablePageKeys.every((k) => selected.has(k));
   const somePageSelected = selectablePageKeys.some((k) => selected.has(k));
-  const isIndeterminate = somePageSelected && !allPageSelected;
+  const checkedState: boolean | "indeterminate" = allPageSelected
+    ? true
+    : somePageSelected
+      ? "indeterminate"
+      : false;
 
   function toggleAll() {
     const next = new Set(selected);
@@ -224,8 +228,7 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded }:
                 className="text-center"
               >
                 <Checkbox
-                  checked={allPageSelected}
-                  data-state={isIndeterminate ? "indeterminate" : allPageSelected ? "checked" : "unchecked"}
+                  checked={checkedState}
                   onCheckedChange={toggleAll}
                   disabled={selectablePageKeys.length === 0}
                   aria-label={t("dataProducts.pickerSelectAllAria")}
