@@ -793,3 +793,50 @@ class TestTickProducts:
         svc._tick_products(datetime.now(timezone.utc))  # must not raise
 
         assert calls == ["bad", "good"]
+
+
+# ---------------------------------------------------------------------------
+# _trigger_run — view_fqn quoting for the task runner (Data Products fix)
+# ---------------------------------------------------------------------------
+
+
+class TestTriggerRunViewFqnQuoting:
+    """The runner does ``spark.table(view_fqn)`` for row-level scheduled runs,
+    so an exotic real table name must arrive backtick-quoted; simple names and
+    synthetic SQL-check keys must stay byte-identical."""
+
+    _DEFAULT_CHECKS = [{"check": {"function": "is_not_null", "arguments": {"column": "id"}}}]
+
+    def _prepare(self, make_scheduler, table_fqn, *, checks=None):
+        svc, _mocks = make_scheduler(catalog="main", schema="dqx")
+        svc._job_id = "123"  # ``int(self._job_id)`` runs before jobs.run_now
+        svc._resolve_scope = lambda cfg: [table_fqn]  # type: ignore[method-assign]
+        svc._get_approved_rule = lambda fqn: {"checks": checks or self._DEFAULT_CHECKS}  # type: ignore[method-assign]
+        svc._load_custom_metrics = lambda: []  # type: ignore[method-assign]
+        return svc
+
+    def _submitted_view_fqn(self, svc):
+        svc._trigger_run("nightly", {}, "run")
+        assert svc._ws.jobs.run_now.call_count == 1
+        return svc._ws.jobs.run_now.call_args.kwargs["job_parameters"]["view_fqn"]
+
+    def test_simple_fqn_passed_unquoted(self, make_scheduler):
+        svc = self._prepare(make_scheduler, "main.default.orders")
+        assert self._submitted_view_fqn(svc) == "main.default.orders"
+
+    def test_exotic_fqn_is_backtick_quoted(self, make_scheduler):
+        # Regression: a real UC schema/table literally named "'ftr_mv_test'"
+        # (quote chars included) fails spark.table() unquoted, marking every
+        # scheduled run FAILED. It must arrive backtick-quoted.
+        fqn = "main.'ftr_mv_test'.'ftr_gold_mv_bkp'"
+        svc = self._prepare(make_scheduler, fqn)
+        assert self._submitted_view_fqn(svc) == "`main`.`'ftr_mv_test'`.`'ftr_gold_mv_bkp'`"
+
+    def test_synthetic_sql_check_key_passed_raw(self, make_scheduler):
+        # Cross-table SQL checks use the table-less synthetic namespace; the
+        # runner builds a temp view from the embedded query and never
+        # spark.table()s the key, so it must not be quoted.
+        checks = [{"check": {"function": "sql_query", "arguments": {"query": "SELECT 1"}}}]
+        svc = self._prepare(make_scheduler, "__sql_check__/my_check", checks=checks)
+        svc._extract_sql_query = lambda entry_checks: "SELECT 1"  # type: ignore[method-assign]
+        assert self._submitted_view_fqn(svc) == "__sql_check__/my_check"

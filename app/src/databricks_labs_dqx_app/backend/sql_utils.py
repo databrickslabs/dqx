@@ -18,6 +18,17 @@ import re
 #   - a backtick, which is the delimiter ``quote_fqn`` uses to embed the
 #     identifier in SQL — an unescaped backtick inside the name would let
 #     the identifier "break out" of its quoting;
+#   - a backslash. A validated FQN also flows into single-quoted SQL string
+#     literals (via ``escape_sql_string`` — e.g. the INSERT in
+#     ``MonitoredTableService.register`` and the ``escape_sql_string`` call
+#     sites in ``materializer``/``metrics``/``rules_catalog_service``).
+#     ``escape_sql_string`` doubles single quotes but does NOT escape
+#     backslashes, and on the Delta / Databricks SQL string-literal path a
+#     backslash is an escape character: a part ending in ``\`` (e.g.
+#     ``tab\``) would turn the doubled closing ``''`` into an escaped quote
+#     and let the literal "break out", corrupting the statement. Backslash
+#     is not a legitimate UC identifier character, so we reject it here
+#     rather than widening ``escape_sql_string``'s escaping regime.
 #   - C0/C1 control characters (incl. newline/CR), which enable log
 #     injection (CWE-117) when the FQN is written to logs, and have no
 #     legitimate use in an identifier.
@@ -25,8 +36,14 @@ import re
 # parentheses, …) is inert once the part is backtick-quoted by
 # ``quote_fqn`` — it is never interpreted as SQL syntax, only as literal
 # identifier text — so it does not need to be blocked here.
-_FQN_PART_RE = re.compile(r"^[^`\x00-\x1f\x7f]+$")
+_FQN_PART_RE = re.compile(r"^[^`\\\x00-\x1f\x7f]+$")
 _MAX_FQN_PART_LEN = 255  # Unity Catalog's documented identifier length limit.
+
+# A "simple" identifier that Spark/Databricks SQL parses without any
+# backtick-quoting: a leading letter/underscore followed by
+# letters/digits/underscores. Used by ``fqn_needs_quoting`` to decide
+# whether a raw FQN can be handed to ``spark.table`` unquoted.
+_SIMPLE_IDENT_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
 _SQL_CHECK_RE = re.compile(r"^__sql_check__/[a-zA-Z0-9_\-]+$")
 
@@ -42,6 +59,14 @@ def escape_sql_string(value: str) -> str:
 
     Databricks SQL uses doubled single-quotes ('') for escaping,
     NOT backslash-escape (\\'). This function normalizes to the correct form.
+
+    Note: this deliberately does NOT escape backslashes. On the Delta /
+    Databricks SQL string-literal path a backslash is itself an escape
+    character, so a value ending in ``\\`` would consume the following
+    quote and let the literal break out. ``validate_fqn`` is relied upon to
+    reject backslashes in any FQN before it reaches this function, so we do
+    not widen the escaping here (which could silently double-escape values
+    that were already correct in other call sites).
     """
     return value.replace("'", "''")
 
@@ -60,9 +85,7 @@ def validate_fqn(fqn: str) -> str:
 
     parts = fqn.split(".")
     if len(parts) != 3:
-        raise ValueError(
-            f"Invalid fully qualified name: '{fqn}'. " "Expected exactly three parts: catalog.schema.table"
-        )
+        raise ValueError(f"Invalid fully qualified name: '{fqn}'. Expected exactly three parts: catalog.schema.table")
 
     for part in parts:
         # A part that arrives already backtick-quoted (e.g. a caller passing
@@ -73,11 +96,29 @@ def validate_fqn(fqn: str) -> str:
             raise ValueError(
                 f"Invalid fully qualified name: '{fqn}'. "
                 f"Part '{part}' contains invalid characters. "
-                "Each part must be 1-255 characters and must not contain a backtick "
-                "or control characters."
+                "Each part must be 1-255 characters and must not contain a backtick, "
+                "a backslash, or control characters."
             )
 
     return fqn
+
+
+def fqn_needs_quoting(fqn: str) -> bool:
+    """Return whether a three-part FQN requires backtick-quoting.
+
+    A FQN is "simple" (and safe to hand to ``spark.table`` unquoted) only if
+    it splits into exactly three parts and every part is a plain identifier
+    (``^[a-zA-Z_][a-zA-Z0-9_]*$``). Anything else — quotes, spaces, leading
+    digits, punctuation — must be routed through ``quote_fqn`` before use.
+
+    Kept separate from ``validate_fqn`` so callers that pass a raw FQN
+    straight to a Spark/SQL consumer can quote *only* the exotic names,
+    leaving the byte representation of normal names unchanged.
+    """
+    parts = fqn.split(".")
+    if len(parts) != 3:
+        return True
+    return not all(_SIMPLE_IDENT_RE.match(p) for p in parts)
 
 
 def quote_fqn(fqn: str) -> str:

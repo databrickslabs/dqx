@@ -865,6 +865,8 @@ class SchedulerService:
         For SQL checks the embedded query is passed in config_json and the runner
         creates a Spark-local temp view.
         """
+        from databricks_labs_dqx_app.backend.sql_utils import fqn_needs_quoting, quote_fqn
+
         table_fqns = self._resolve_scope(cfg)
         if not table_fqns:
             logger.info("Schedule '%s': no approved rules matched scope", schedule_name)
@@ -916,11 +918,24 @@ class SchedulerService:
                 if sql_query is not None:
                     config["sql_query"] = sql_query
 
+                # The runner does ``spark.table(view_fqn)`` for the row-level
+                # (non-SQL-check) path, so an exotic real table name (quotes,
+                # spaces, …) must arrive backtick-quoted or Spark fails to
+                # parse it and every scheduled run for that table records
+                # FAILED. Synthetic ``__sql_check__/<name>`` keys are never
+                # ``spark.table``'d (the runner builds a temp view from the
+                # embedded query) and simple names parse fine unquoted, so we
+                # quote *only* exotic real FQNs — normal names stay
+                # byte-identical in the stored ``view_fqn`` column.
+                view_fqn_param = table_fqn
+                if not is_synthetic and fqn_needs_quoting(table_fqn):
+                    view_fqn_param = quote_fqn(table_fqn)
+
                 self._ws.jobs.run_now(
                     job_id=int(self._job_id),
                     job_parameters={
                         "task_type": "scheduled",
-                        "view_fqn": table_fqn,
+                        "view_fqn": view_fqn_param,
                         "result_catalog": self._catalog,
                         "result_schema": self._schema,
                         "config_json": json.dumps(config),

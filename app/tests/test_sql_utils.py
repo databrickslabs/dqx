@@ -6,6 +6,7 @@ import pytest
 
 from databricks_labs_dqx_app.backend.sql_utils import (
     escape_sql_string,
+    fqn_needs_quoting,
     quote_fqn,
     validate_entity_type,
     validate_fqn,
@@ -90,6 +91,9 @@ class TestValidateFqn:
             ".b.c",
             "a.b.c`d",  # raw backtick — would break out of quote_fqn's identifier quoting
             "a.b.`",  # part is only a backtick — unwraps to empty
+            "a.b.c\\",  # trailing backslash — would escape the closing quote in a SQL string literal
+            "a.b.c\\d",  # mid-part backslash — Delta treats it as a string-literal escape char
+            "a.b.\\",  # part is only a backslash
             "a.b.c\ninjected",  # newline — log injection (CWE-117)
             "a.b.c\x00d",  # NUL byte
             "a." + "x" * 256 + ".c",  # exceeds Unity Catalog's identifier length limit
@@ -129,6 +133,39 @@ class TestQuoteFqn:
         # production, but quote_fqn() must not silently produce a broken (or
         # injectable) identifier if it were ever called on unvalidated input.
         assert quote_fqn("a.weird`name.c") == "`a`.`weird``name`.`c`"
+
+
+# ---------------------------------------------------------------------------
+# fqn_needs_quoting
+# ---------------------------------------------------------------------------
+
+
+class TestFqnNeedsQuoting:
+    @pytest.mark.parametrize(
+        "fqn",
+        [
+            "main.default.t",
+            "my_catalog.my_schema.my_table",
+            "_a._b._c",
+            "a1.b2.c3",
+        ],
+    )
+    def test_simple_names_do_not_need_quoting(self, fqn):
+        assert fqn_needs_quoting(fqn) is False
+
+    @pytest.mark.parametrize(
+        "fqn",
+        [
+            "main.'ftr_mv_test'.'ftr_gold_mv_bkp'",  # embedded quotes
+            "a.b.c d",  # space
+            "1.b.c",  # leading digit
+            "with-hyphens.a.b",  # hyphen
+            "a.b",  # not three parts
+            "__sql_check__/name",  # synthetic key (no dots)
+        ],
+    )
+    def test_exotic_or_nonstandard_names_need_quoting(self, fqn):
+        assert fqn_needs_quoting(fqn) is True
 
 
 # ---------------------------------------------------------------------------
