@@ -133,7 +133,7 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
         {canEdit && (
           <Button
             onClick={() => void editState.handleSaveDraft()}
-            disabled={!editState.isDirty || editState.savePending}
+            disabled={!editState.canSave || editState.savePending}
             variant="outline"
             size="sm"
             className="gap-2"
@@ -146,7 +146,7 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
         {canEdit && !inPublishOnlyState && (
           <Button
             onClick={() => void editState.handleSaveAndPublish()}
-            disabled={!editState.isDirty || editState.saveAndPublishPending}
+            disabled={!editState.canSave || editState.saveAndPublishPending}
             variant="outline"
             size="sm"
             className="gap-2"

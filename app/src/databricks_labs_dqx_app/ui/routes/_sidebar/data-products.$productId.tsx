@@ -27,6 +27,7 @@ import { ProductHeader } from "@/components/data-products/ProductHeader";
 import { ProductAboutTab } from "@/components/data-products/ProductAboutTab";
 import { ProductSharingTab } from "@/components/data-products/ProductSharingTab";
 import { ProductTablesTab } from "@/components/data-products/ProductTablesTab";
+import { ProductSchedulingTab } from "@/components/data-products/ProductSchedulingTab";
 import { useEditProductState } from "@/components/data-products/useEditProductState";
 
 export const Route = createFileRoute("/_sidebar/data-products/$productId")({
@@ -171,7 +172,7 @@ function DataProductDetailPage() {
             ),
             scheduling: (
               <TabBoundary label={t("dataProducts.tabSchedule")}>
-                <ComingSoonTab />
+                <ProductSchedulingTab editState={editState} canEdit={canEdit} />
               </TabBoundary>
             ),
           }}

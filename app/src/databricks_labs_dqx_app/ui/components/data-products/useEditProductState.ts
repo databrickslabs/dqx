@@ -57,6 +57,11 @@ export function useEditProductState(product: DataProductOut) {
   const [steward, setStewardLocal] = useState(product.steward ?? "");
   const [scheduleCron, setScheduleCronLocal] = useState<string | null>(product.schedule_cron ?? null);
   const [scheduleTz, setScheduleTzLocal] = useState<string>(product.schedule_tz ?? "UTC");
+  // Set by Task 9's ProductSchedulingTab/SchedulePicker while the raw-cron
+  // (custom) editor holds an expression the backend scheduler would reject.
+  // Gates the header's Save buttons below so a malformed cron never reaches
+  // the scheduler's malformed-cron backoff path.
+  const [scheduleCronInvalid, setScheduleCronInvalid] = useState(false);
   const [members, setMembers] = useState<DataProductMemberOut[]>(() => product.members ?? []);
 
   const setSteward = useCallback((v: string) => setStewardLocal(v), []);
@@ -140,6 +145,12 @@ export function useEditProductState(product: DataProductOut) {
     return false;
   }, [name, description, product.name, product.description, stewardDirty, scheduleDirty, membersDirty]);
 
+  // Save is blocked while the Schedule tab's raw-cron editor holds an
+  // expression the backend scheduler can't parse — otherwise a PATCH would
+  // persist a cron that lands the product in the scheduler's malformed-cron
+  // backoff instead of ticking.
+  const canSave = isDirty && !scheduleCronInvalid;
+
   // --- Mutations ---
   // Suppress the global mutation onError toast — errors are surfaced locally.
   const updateMut = useUpdateDataProduct({ mutation: { onError: () => {} } });
@@ -156,6 +167,10 @@ export function useEditProductState(product: DataProductOut) {
    *  reconcile members (add new, remove dropped, re-add pin-only changes).
    *  Throws on failure. */
   const persist = useCallback(async () => {
+    if (scheduleCronInvalid) {
+      throw new Error(t("dataProducts.scheduleCronInvalid"));
+    }
+
     const patch: UpdateDataProductIn = {};
     let patchNeeded = false;
 
@@ -202,6 +217,8 @@ export function useEditProductState(product: DataProductOut) {
       }
     }
   }, [
+    scheduleCronInvalid,
+    t,
     name,
     description,
     steward,
@@ -270,6 +287,8 @@ export function useEditProductState(product: DataProductOut) {
     scheduleCron,
     scheduleTz,
     setSchedule,
+    scheduleCronInvalid,
+    setScheduleCronInvalid,
 
     members,
     addMember,
@@ -277,6 +296,7 @@ export function useEditProductState(product: DataProductOut) {
     setMemberPin,
 
     isDirty,
+    canSave,
     handleSaveDraft,
     handleSaveAndPublish,
     handlePublish,
