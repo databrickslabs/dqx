@@ -59,6 +59,17 @@ class TestValidateFqn:
             "_underscore.start_ok.end_ok",
             "with-hyphens.also-ok.also-ok",
             "`backticked`.`parts`.`work_too`",
+            "1.b.c",  # leading digit — legal for a backtick-quoted UC name
+            "a.b.c d",  # space — legal for a backtick-quoted UC name
+            "a.b.c;DROP",  # semicolon is inert once backtick-quoted, not SQL syntax
+            # Real-world regression: Unity Catalog schema/table names created via
+            # the REST API (bypassing the SQL parser) can contain literal quote
+            # characters, e.g. a schema genuinely named "'ftr_mv_test'" — see
+            # https://github.com/databrickslabs/dqx (Add table dialog bug report).
+            "main.'ftr_mv_test'.'ftr_gold_mv_bkp'",
+            "a.b.c'd",  # single quote — inert inside backticks, not a string literal
+            "a.b./*x*/c",  # block-comment markers are just literal identifier text
+            "a.b.c)union",  # parens/keywords are just literal identifier text
         ],
     )
     def test_valid_three_part_names(self, fqn):
@@ -77,12 +88,11 @@ class TestValidateFqn:
             "a..b",
             "a.b.",
             ".b.c",
-            "1.b.c",  # part starting with digit
-            "a.b.c d",  # space
-            "a.b.c;DROP",  # semicolon → injection attempt
-            "a.b.c'd",  # single quote
-            "a.b./*x*/c",  # block comment
-            "a.b.c)union",
+            "a.b.c`d",  # raw backtick — would break out of quote_fqn's identifier quoting
+            "a.b.`",  # part is only a backtick — unwraps to empty
+            "a.b.c\ninjected",  # newline — log injection (CWE-117)
+            "a.b.c\x00d",  # NUL byte
+            "a." + "x" * 256 + ".c",  # exceeds Unity Catalog's identifier length limit
             "__sql_check__/contains spaces",
             "__sql_check__/has;semi",
         ],
@@ -103,6 +113,22 @@ class TestQuoteFqn:
         # quote_fqn doesn't validate; it's purely a quoter. Some callers pass
         # already-validated multi-part names plus a leaf, e.g. for tmp views.
         assert quote_fqn("a.b") == "`a`.`b`"
+
+    def test_quotes_identifier_with_embedded_single_quotes(self):
+        # Regression: a real Unity Catalog schema/table name containing
+        # literal single quotes (e.g. "'ftr_mv_test'") must round-trip
+        # through validate_fqn + quote_fqn and stay backtick-quoted as one
+        # opaque identifier — the quotes are ordinary characters here, not
+        # SQL string-literal delimiters.
+        fqn = "main.'ftr_mv_test'.'ftr_gold_mv_bkp'"
+        assert validate_fqn(fqn) == fqn
+        assert quote_fqn(fqn) == "`main`.`'ftr_mv_test'`.`'ftr_gold_mv_bkp'`"
+
+    def test_embedded_backtick_is_doubled_as_defense_in_depth(self):
+        # validate_fqn() rejects raw backticks before this is ever reached in
+        # production, but quote_fqn() must not silently produce a broken (or
+        # injectable) identifier if it were ever called on unvalidated input.
+        assert quote_fqn("a.weird`name.c") == "`a`.`weird``name`.`c`"
 
 
 # ---------------------------------------------------------------------------

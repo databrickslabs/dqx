@@ -8,9 +8,25 @@ from __future__ import annotations
 
 import re
 
-# Each part: starts with a letter or underscore, followed by alphanumerics,
-# underscores, or hyphens.  No backticks, spaces, or other special characters.
-_FQN_PART_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_\-]*$")
+# Unity Catalog does not restrict catalog/schema/table names to "simple"
+# identifiers — objects created via the REST API (bypassing the SQL parser)
+# or via backtick-quoted DDL can legitimately contain spaces, quotes,
+# hyphens, or punctuation (e.g. a real schema literally named
+# ``'ftr_mv_test'``, quote characters included). Rejecting those blocks
+# discovery/registration of real tables, so this allowlist accepts any
+# character *except*:
+#   - a backtick, which is the delimiter ``quote_fqn`` uses to embed the
+#     identifier in SQL — an unescaped backtick inside the name would let
+#     the identifier "break out" of its quoting;
+#   - C0/C1 control characters (incl. newline/CR), which enable log
+#     injection (CWE-117) when the FQN is written to logs, and have no
+#     legitimate use in an identifier.
+# Every other "special" character (quotes, semicolons, comment markers,
+# parentheses, …) is inert once the part is backtick-quoted by
+# ``quote_fqn`` — it is never interpreted as SQL syntax, only as literal
+# identifier text — so it does not need to be blocked here.
+_FQN_PART_RE = re.compile(r"^[^`\x00-\x1f\x7f]+$")
+_MAX_FQN_PART_LEN = 255  # Unity Catalog's documented identifier length limit.
 
 _SQL_CHECK_RE = re.compile(r"^__sql_check__/[a-zA-Z0-9_\-]+$")
 
@@ -49,13 +65,16 @@ def validate_fqn(fqn: str) -> str:
         )
 
     for part in parts:
-        cleaned = part.strip("`")
-        if not cleaned or not _FQN_PART_RE.match(cleaned):
+        # A part that arrives already backtick-quoted (e.g. a caller passing
+        # through a previously-quoted name) is unwrapped before validation —
+        # the backticks themselves aren't part of the identifier.
+        cleaned = part[1:-1] if len(part) >= 2 and part.startswith("`") and part.endswith("`") else part
+        if not cleaned or len(cleaned) > _MAX_FQN_PART_LEN or not _FQN_PART_RE.match(cleaned):
             raise ValueError(
                 f"Invalid fully qualified name: '{fqn}'. "
                 f"Part '{part}' contains invalid characters. "
-                "Each part must start with a letter or underscore and contain only "
-                "alphanumeric characters, underscores, or hyphens."
+                "Each part must be 1-255 characters and must not contain a backtick "
+                "or control characters."
             )
 
     return fqn
@@ -64,11 +83,15 @@ def validate_fqn(fqn: str) -> str:
 def quote_fqn(fqn: str) -> str:
     """Quote a validated FQN for safe embedding in SQL.
 
-    Wraps each part in backticks (stripping any existing ones first)
-    to prevent identifier injection.  Call validate_fqn() first.
+    Wraps each part in backticks (stripping any existing ones first) to
+    prevent identifier injection. Any backtick remaining inside a part
+    (there shouldn't be one if ``validate_fqn()`` was called first) is
+    doubled per Spark's escaping rule, as defense in depth. Call
+    ``validate_fqn()`` first.
     """
     parts = fqn.split(".")
-    return ".".join(f"`{p.strip('`')}`" for p in parts)
+    unwrapped = (p[1:-1] if len(p) >= 2 and p.startswith("`") and p.endswith("`") else p for p in parts)
+    return ".".join(f"`{p.replace('`', '``')}`" for p in unwrapped)
 
 
 def validate_schedule_name(name: str) -> str:

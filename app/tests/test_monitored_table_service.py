@@ -130,6 +130,27 @@ class TestRegister:
             svc.register("not-a-valid-fqn", "alice@x")
         sql.execute.assert_not_called()
 
+    def test_registers_table_in_schema_with_special_characters(self, svc, sql):
+        # Regression: Unity Catalog schema/table names created outside the SQL
+        # parser (e.g. via the REST API) can legitimately contain characters
+        # like single quotes — discovery must not block registering them.
+        sql.query.return_value = []  # no existing binding
+        fqn = "main.'ftr_mv_test'.'ftr_gold_mv_bkp'"
+        table = svc.register(fqn, "alice@x", steward="bob@x")
+        assert table.table_fqn == fqn
+        insert_sql = sql.execute.call_args[0][0]
+        # table_fqn is stored as a SQL string literal, so the embedded single
+        # quotes are doubled by escape_sql_string() rather than appearing raw.
+        assert "main.''ftr_mv_test''.''ftr_gold_mv_bkp''" in insert_sql
+
+    def test_rejects_fqn_with_embedded_backtick(self, svc, sql):
+        # A raw backtick would let the identifier break out of quote_fqn's
+        # backtick-quoting — this must stay rejected even though quotes and
+        # other punctuation are now accepted.
+        with pytest.raises(ValueError):
+            svc.register("main.weird`schema.tbl", "alice@x")
+        sql.execute.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # bulk_register
@@ -220,7 +241,10 @@ class TestListMonitoredTables:
 
     def test_filters_by_catalog_in_python(self, svc, sql):
         sql.query.side_effect = [
-            [_table_row(binding_id="b1", table_fqn="cat1.schema.tbl"), _table_row(binding_id="b2", table_fqn="cat2.schema.tbl")],
+            [
+                _table_row(binding_id="b1", table_fqn="cat1.schema.tbl"),
+                _table_row(binding_id="b2", table_fqn="cat2.schema.tbl"),
+            ],
             [["0"]],  # applied-rule count for the one row surviving the filter
             [["0"]],  # materialized-check count for the one row surviving the filter
         ]
@@ -230,7 +254,10 @@ class TestListMonitoredTables:
 
     def test_filters_by_name_substring(self, svc, sql):
         sql.query.side_effect = [
-            [_table_row(binding_id="b1", table_fqn="cat.schema.orders"), _table_row(binding_id="b2", table_fqn="cat.schema.customers")],
+            [
+                _table_row(binding_id="b1", table_fqn="cat.schema.orders"),
+                _table_row(binding_id="b2", table_fqn="cat.schema.customers"),
+            ],
             [["0"]],  # applied-rule count for the one row surviving the filter
             [["0"]],  # materialized-check count for the one row surviving the filter
         ]
