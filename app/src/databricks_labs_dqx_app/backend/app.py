@@ -10,7 +10,21 @@ from fastapi import FastAPI
 
 from ._scheduler_registry import get_scheduler, set_scheduler
 from .config import conf
-from .dependencies import get_sp_ws, set_oltp_executor
+from .dependencies import (
+    get_app_settings_service,
+    get_binding_run_service,
+    get_data_product_service,
+    get_job_service,
+    get_materializer,
+    get_monitored_table_service,
+    get_monitored_table_version_service,
+    get_registry_service,
+    get_rules_catalog_service,
+    get_run_set_service,
+    get_sp_ws,
+    get_view_service,
+    set_oltp_executor,
+)
 from .logger import logger
 from .migrations import MigrationRunner
 
@@ -25,6 +39,7 @@ from .migrations import MigrationRunner
 from .migrations.postgres import PgMigrationRunner
 from .routes import api_router
 from .services.app_settings_service import AppSettingsService
+from .services.data_product_service import DataProductService
 from .services.registry_service import RegistryService
 from .services.rule_embeddings import RuleEmbeddingsService
 from .services.scheduler_service import SchedulerService
@@ -199,6 +214,54 @@ async def _update_job_wheels(sp_ws: WorkspaceClient, job_id: str, wheel_paths: l
         new_settings=JobSettings(environments=[env]),
     )
     logger.info("Updated job %s environment with wheels: %s", job_id, wheel_paths)
+
+
+async def _build_scheduler_data_product_service(
+    sp_ws: WorkspaceClient,
+    sp_sql: SqlExecutor,
+    oltp: OltpExecutorProtocol,
+) -> DataProductService:
+    """Wire a ``DataProductService`` for the in-app scheduler's product ticks (Task 5).
+
+    Mirrors the FastAPI dependency chain in ``dependencies.py``
+    (``get_data_product_service`` and its transitive collaborators) but
+    calls the factories directly with explicit arguments — there is no
+    per-request/OBO context at startup. ``get_view_service`` normally
+    splits view-creation credentials (OBO) from schema-DDL credentials
+    (SP); here both legs are pinned to the SP executor, matching how the
+    existing scope-config scheduler path already creates its own views
+    with SP credentials (``SchedulerService._create_view``/
+    ``_create_view_from_sql``) rather than a calling user's OBO token.
+    """
+    monitored_tables = await get_monitored_table_service(sql=oltp, profiling_sql=sp_sql)
+    registry = await get_registry_service(sql=oltp)
+    app_settings = await get_app_settings_service(sql=oltp)
+    rules_catalog = await get_rules_catalog_service(sql=oltp)
+    materializer = await get_materializer(
+        sql=oltp, registry=registry, monitored_tables=monitored_tables, app_settings=app_settings
+    )
+    version_service = await get_monitored_table_version_service(
+        sql=oltp, monitored_tables=monitored_tables, rules_catalog=rules_catalog
+    )
+    view_service = await get_view_service(sql=sp_sql, sp_sql=sp_sql)
+    job_service = await get_job_service(sp_ws=sp_ws, sql=sp_sql)
+    run_set_service = await get_run_set_service(sql=oltp, validation_sql=sp_sql)
+    binding_run_service = await get_binding_run_service(
+        monitored_tables=monitored_tables,
+        version_service=version_service,
+        materializer=materializer,
+        view_service=view_service,
+        job_service=job_service,
+        run_set_service=run_set_service,
+        settings_service=app_settings,
+        sp_sql=sp_sql,
+    )
+    return await get_data_product_service(
+        sql=oltp,
+        monitored_tables=monitored_tables,
+        run_set_service=run_set_service,
+        binding_run_service=binding_run_service,
+    )
 
 
 def _maybe_start_vector_store_provisioning(
@@ -456,6 +519,22 @@ async def lifespan(app: FastAPI):
         logger.info("Scheduler lease held by another worker — skipping")
     else:
         try:
+            oltp_for_scheduler = pg_executor if pg_executor is not None else sp_sql
+            try:
+                data_product_service = await _build_scheduler_data_product_service(
+                    sp_ws, sp_sql, oltp_for_scheduler
+                )
+            except Exception as dp_e:
+                # Best-effort: the scope-config scheduling path must still
+                # start even if Data Products' collaborator chain can't be
+                # wired (e.g. a table from an unapplied migration). The
+                # scheduler simply skips product ticks in that case — see
+                # ``SchedulerService._tick_products``.
+                logger.warning(
+                    "Could not wire DataProductService for scheduler product ticks: %s", dp_e, exc_info=True
+                )
+                data_product_service = None
+
             _scheduler = SchedulerService(
                 ws=sp_ws,
                 warehouse_id=os.environ.get("DATABRICKS_WAREHOUSE_ID")
@@ -466,6 +545,7 @@ async def lifespan(app: FastAPI):
                 tmp_schema=conf.tmp_schema_name,
                 job_id=conf.job_id,
                 oltp_sql=pg_executor,
+                data_product_service=data_product_service,
             )
             set_scheduler(_scheduler)
             _scheduler.start()

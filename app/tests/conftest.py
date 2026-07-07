@@ -148,6 +148,7 @@ def make_scheduler():
         distinct_sql: bool = False,
         distinct_tmp_sql: bool = False,
         oltp_spec: list[str] | None = None,
+        data_product_service: Any | None = None,
     ) -> tuple[Any, SimpleNamespace]:
         from databricks_labs_dqx_app.backend.services.scheduler_service import SchedulerService
 
@@ -194,6 +195,7 @@ def make_scheduler():
             tmp_schema=tmp_schema if tmp_schema is not None else f"{schema}_tmp",
             job_id="test-job-0",
             oltp_sql=oltp,
+            data_product_service=data_product_service,
         )
 
         mocks = SimpleNamespace(oltp=oltp)

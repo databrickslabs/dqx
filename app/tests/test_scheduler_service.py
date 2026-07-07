@@ -1,10 +1,14 @@
-"""Tests for ``SchedulerService`` — the weekly view-GC logic.
+"""Tests for ``SchedulerService`` — the weekly view-GC logic and product ticks.
 
 We focus on the pieces that landed most recently:
 
 - ``_next_saturday_01_utc`` cron-style boundary maths.
 - ``_gc_orphan_views`` orchestration: candidate filtering, in-use
   exclusion, and bounded drop count.
+- Data Products product ticks (design spec §4.3, Task 5): 5-field cron
+  evaluation (``_parse_cron_field``/``_compute_next_cron_run``) and the
+  per-product due-ness/bookkeeping dance (``_tick_one_product``/
+  ``_tick_products``).
 
 The async loop itself (``_loop`` / ``_tick``) is exercised via
 integration tests; here we keep the surface narrow and deterministic.
@@ -13,10 +17,18 @@ integration tests; here we keep the surface narrow and deterministic.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from unittest.mock import create_autospec
 
 import pytest
 
+from databricks_labs_dqx_app.backend.services.data_product_service import (
+    DataProductRunResult,
+    DataProductRunSubmission,
+    DataProductService,
+    NoRunnableMembersError,
+)
 from databricks_labs_dqx_app.backend.services.scheduler_service import (
+    _CRON_WEEKDAY_NAMES,
     _FAILURE_BACKOFF,
     _GC_AGE_HOURS,
     _GC_HOUR_UTC,
@@ -407,3 +419,235 @@ class TestTmpViewNameRegexMatchesGenerator:
             "tmp_view_12345678 ",  # trailing whitespace
         ]:
             assert _TMP_VIEW_NAME_RE.match(bad) is None, f"Regex unexpectedly accepted: {bad!r}"
+
+
+# ---------------------------------------------------------------------------
+# _parse_cron_field / _compute_next_cron_run — Data Products Task 5
+# ---------------------------------------------------------------------------
+
+
+class TestParseCronField:
+    def test_wildcard_returns_full_range(self):
+        assert SchedulerService._parse_cron_field("*", 0, 4) == {0, 1, 2, 3, 4}
+
+    def test_single_value(self):
+        assert SchedulerService._parse_cron_field("9", 0, 23) == {9}
+
+    def test_comma_list(self):
+        assert SchedulerService._parse_cron_field("1,3,5", 0, 23) == {1, 3, 5}
+
+    def test_range(self):
+        assert SchedulerService._parse_cron_field("1-5", 0, 23) == {1, 2, 3, 4, 5}
+
+    def test_step_over_wildcard(self):
+        assert SchedulerService._parse_cron_field("*/15", 0, 59) == {0, 15, 30, 45}
+
+    def test_step_over_range(self):
+        assert SchedulerService._parse_cron_field("0-10/5", 0, 59) == {0, 5, 10}
+
+    def test_weekday_names_resolve_via_map(self):
+        assert SchedulerService._parse_cron_field("MON-FRI", 0, 7, _CRON_WEEKDAY_NAMES) == {1, 2, 3, 4, 5}
+
+    def test_weekday_names_case_insensitive(self):
+        assert SchedulerService._parse_cron_field("mon", 0, 7, _CRON_WEEKDAY_NAMES) == {1}
+
+    @pytest.mark.parametrize("bad", ["", "foo", "60", "-1", "5-1", "1/0"])
+    def test_invalid_field_raises(self, bad):
+        with pytest.raises(ValueError):
+            SchedulerService._parse_cron_field(bad, 0, 59)
+
+
+class TestComputeNextCronRun:
+    def test_daily_after_time_rolls_to_tomorrow(self):
+        # "0 9 * * *" — every day at 09:00. Just past today's 09:00 should
+        # roll to tomorrow, not fire again today.
+        after = datetime(2026, 5, 1, 9, 0, 1, tzinfo=timezone.utc)
+        result = SchedulerService._compute_next_cron_run("0 9 * * *", after, None)
+        assert result == datetime(2026, 5, 2, 9, 0, tzinfo=timezone.utc)
+
+    def test_daily_before_time_fires_today(self):
+        after = datetime(2026, 5, 1, 8, 0, tzinfo=timezone.utc)
+        result = SchedulerService._compute_next_cron_run("0 9 * * *", after, None)
+        assert result == datetime(2026, 5, 1, 9, 0, tzinfo=timezone.utc)
+
+    def test_weekday_range_skips_weekend(self):
+        # "0 6 * * MON-FRI" — 2026-05-01 is a Friday; next occurrence after
+        # Friday 06:00 must skip Sat/Sun and land on Monday.
+        after = datetime(2026, 5, 1, 6, 0, 1, tzinfo=timezone.utc)
+        result = SchedulerService._compute_next_cron_run("0 6 * * MON-FRI", after, None)
+        assert result == datetime(2026, 5, 4, 6, 0, tzinfo=timezone.utc)
+        assert result.isoweekday() == 1  # Monday
+
+    def test_dom_and_dow_both_restricted_matches_either(self):
+        # POSIX rule: when BOTH day-of-month and day-of-week are
+        # restricted, a day matches if EITHER matches. "0 0 1 * MON" fires
+        # on the 1st of the month OR any Monday.
+        after = datetime(2026, 5, 1, 0, 0, 1, tzinfo=timezone.utc)  # just past May 1st (a Friday)
+        result = SchedulerService._compute_next_cron_run("0 0 1 * MON", after, None)
+        assert result == datetime(2026, 5, 4, 0, 0, tzinfo=timezone.utc)  # next Monday, not June 1st
+
+    def test_timezone_converts_local_wall_clock_to_utc(self):
+        # "0 9 * * *" in America/New_York (UTC-4 during EDT in May) means
+        # 13:00 UTC, not 09:00 UTC.
+        after = datetime(2026, 5, 1, 0, 0, tzinfo=timezone.utc)
+        result = SchedulerService._compute_next_cron_run("0 9 * * *", after, "America/New_York")
+        assert result == datetime(2026, 5, 1, 13, 0, tzinfo=timezone.utc)
+
+    def test_unknown_timezone_falls_back_to_utc(self):
+        after = datetime(2026, 5, 1, 8, 0, tzinfo=timezone.utc)
+        result = SchedulerService._compute_next_cron_run("0 9 * * *", after, "Not/A_Real_Zone")
+        assert result == datetime(2026, 5, 1, 9, 0, tzinfo=timezone.utc)
+
+    def test_unsatisfiable_expression_raises_without_hanging(self):
+        # April never has 31 days — must terminate via _CRON_MAX_STEPS
+        # rather than looping forever.
+        after = datetime(2026, 5, 1, 0, 0, tzinfo=timezone.utc)
+        with pytest.raises(ValueError):
+            SchedulerService._compute_next_cron_run("0 0 31 4 *", after, None)
+
+    def test_wrong_field_count_raises(self):
+        with pytest.raises(ValueError):
+            SchedulerService._compute_next_cron_run("0 9 * *", datetime.now(timezone.utc), None)
+
+
+# ---------------------------------------------------------------------------
+# Product ticks — _tick_one_product / _tick_products (Data Products Task 5)
+# ---------------------------------------------------------------------------
+
+
+def _make_product_scheduler(make_scheduler, *, dp_service=None):
+    dp_service = dp_service if dp_service is not None else create_autospec(DataProductService, instance=True)
+    svc, mocks = make_scheduler(catalog="main", schema="dqx", tmp_schema="dqx_tmp", data_product_service=dp_service)
+    return svc, mocks, dp_service
+
+
+def _tracker_row(schedule_name: str, next_run_at: str, status: str = "success") -> tuple:
+    return (schedule_name, "2026-04-30T09:00:00+00:00", next_run_at, "run_old", status)
+
+
+class TestTickOneProduct:
+    def test_due_product_fires_once_and_advances_bookkeeping(self, make_scheduler):
+        svc, mocks, dp_service = _make_product_scheduler(make_scheduler)
+        mocks.oltp.query.return_value = [_tracker_row("product:prod1", "2026-05-01T09:00:00+00:00")]
+        dp_service.run.return_value = DataProductRunResult(
+            run_set_id="rs1",
+            submitted=[
+                DataProductRunSubmission(
+                    binding_id="b1", table_fqn="c.s.t", run_id="r1", job_run_id=1, view_fqn="c.tmp.v1", binding_version=1
+                )
+            ],
+            skipped=[],
+        )
+        now = datetime(2026, 5, 1, 9, 0, 5, tzinfo=timezone.utc)
+
+        svc._tick_one_product({"product_id": "prod1", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC"}, now)
+
+        dp_service.run.assert_called_once_with(
+            "prod1", source="approved", user_email="scheduler", trigger="scheduled"
+        )
+        mocks.oltp.upsert.assert_called_once()
+        kwargs = mocks.oltp.upsert.call_args.kwargs
+        assert kwargs["key_cols"] == {"schedule_name": "product:prod1"}
+        value_cols = kwargs["value_cols"]
+        assert value_cols["status"] == "success"
+        assert "2026-05-02T09:00:00+00:00" in value_cols["next_run_at"].expr
+
+    def test_not_due_product_is_skipped(self, make_scheduler):
+        svc, mocks, dp_service = _make_product_scheduler(make_scheduler)
+        mocks.oltp.query.return_value = [_tracker_row("product:prod1", "2026-05-02T09:00:00+00:00")]
+        now = datetime(2026, 5, 1, 9, 0, 5, tzinfo=timezone.utc)
+
+        svc._tick_one_product({"product_id": "prod1", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC"}, now)
+
+        dp_service.run.assert_not_called()
+        mocks.oltp.upsert.assert_not_called()
+
+    def test_first_tick_seeds_tracker_without_firing_when_not_yet_due(self, make_scheduler):
+        svc, mocks, dp_service = _make_product_scheduler(make_scheduler)
+        mocks.oltp.query.return_value = []  # no existing tracker row
+        now = datetime(2026, 5, 1, 8, 0, 0, tzinfo=timezone.utc)  # before today's 09:00
+
+        svc._tick_one_product({"product_id": "prod1", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC"}, now)
+
+        dp_service.run.assert_not_called()
+        # Seeds a "pending" tracker row so the next tick knows the target time.
+        mocks.oltp.upsert.assert_called_once()
+        value_cols = mocks.oltp.upsert.call_args.kwargs["value_cols"]
+        assert value_cols["status"] == "pending"
+        assert "2026-05-01T09:00:00+00:00" in value_cols["next_run_at"].expr
+
+    def test_run_failure_records_failed_status_and_advances_next_run(self, make_scheduler):
+        svc, mocks, dp_service = _make_product_scheduler(make_scheduler)
+        mocks.oltp.query.return_value = [_tracker_row("product:prod1", "2026-05-01T09:00:00+00:00")]
+        dp_service.run.side_effect = RuntimeError("job submission failed")
+        now = datetime(2026, 5, 1, 9, 0, 5, tzinfo=timezone.utc)
+
+        # Must not raise — a run failure is best-effort, mirroring
+        # _advance_after_failure on the scope-config path.
+        svc._tick_one_product({"product_id": "prod1", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC"}, now)
+
+        mocks.oltp.upsert.assert_called_once()
+        value_cols = mocks.oltp.upsert.call_args.kwargs["value_cols"]
+        assert value_cols["status"] == "failed"
+        assert "2026-05-02T09:00:00+00:00" in value_cols["next_run_at"].expr
+
+    def test_zero_runnable_members_records_failed_status_not_an_exception(self, make_scheduler):
+        svc, mocks, dp_service = _make_product_scheduler(make_scheduler)
+        mocks.oltp.query.return_value = [_tracker_row("product:prod1", "2026-05-01T09:00:00+00:00")]
+        dp_service.run.side_effect = NoRunnableMembersError("zero runnable members")
+        now = datetime(2026, 5, 1, 9, 0, 5, tzinfo=timezone.utc)
+
+        svc._tick_one_product({"product_id": "prod1", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC"}, now)
+
+        mocks.oltp.upsert.assert_called_once()
+        value_cols = mocks.oltp.upsert.call_args.kwargs["value_cols"]
+        assert value_cols["status"] == "failed"
+        assert "2026-05-02T09:00:00+00:00" in value_cols["next_run_at"].expr
+
+
+class TestTickProducts:
+    def test_noop_without_data_product_service(self, make_scheduler):
+        svc, mocks = make_scheduler(catalog="main", schema="dqx", tmp_schema="dqx_tmp")
+        now = datetime(2026, 5, 1, 9, 0, 5, tzinfo=timezone.utc)
+
+        svc._tick_products(now)  # must not raise, must not touch the OLTP executor
+
+        mocks.oltp.query.assert_not_called()
+
+    def test_query_predicate_filters_by_cron_and_published_status(self, make_scheduler):
+        svc, mocks, _dp = _make_product_scheduler(make_scheduler)
+        mocks.oltp.query.return_value = []
+
+        svc._tick_products(datetime.now(timezone.utc))
+
+        sql = mocks.oltp.query.call_args.args[0]
+        assert "schedule_cron IS NOT NULL" in sql
+        assert "status = 'published'" in sql
+
+    def test_missing_table_is_tolerated(self, make_scheduler):
+        svc, mocks, dp_service = _make_product_scheduler(make_scheduler)
+        mocks.oltp.query.side_effect = RuntimeError("TABLE_OR_VIEW_NOT_FOUND")
+
+        svc._tick_products(datetime.now(timezone.utc))  # must not raise
+
+        dp_service.run.assert_not_called()
+
+    def test_one_product_failure_does_not_prevent_the_next(self, make_scheduler, monkeypatch):
+        svc, mocks, dp_service = _make_product_scheduler(make_scheduler)
+        svc._load_scheduled_products = lambda: [  # type: ignore[method-assign]
+            {"product_id": "bad", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC"},
+            {"product_id": "good", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC"},
+        ]
+
+        calls: list[str] = []
+
+        def _tick_one(product, now):
+            calls.append(product["product_id"])
+            if product["product_id"] == "bad":
+                raise RuntimeError("boom")
+
+        monkeypatch.setattr(svc, "_tick_one_product", _tick_one)
+
+        svc._tick_products(datetime.now(timezone.utc))  # must not raise
+
+        assert calls == ["bad", "good"]

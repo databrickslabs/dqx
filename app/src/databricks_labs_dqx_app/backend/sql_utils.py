@@ -14,7 +14,11 @@ _FQN_PART_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_\-]*$")
 
 _SQL_CHECK_RE = re.compile(r"^__sql_check__/[a-zA-Z0-9_\-]+$")
 
-_SCHEDULE_NAME_RE = re.compile(r"^[a-zA-Z0-9_\-]{1,64}$")
+# Colon is allowed alongside the original charset so scheduler bookkeeping
+# rows can use namespaced names such as ``product:<product_id>`` (Data
+# Products Task 5) without widening the surface for anything unsafe — the
+# character set stays a strict allowlist, just with one more safe symbol.
+_SCHEDULE_NAME_RE = re.compile(r"^[a-zA-Z0-9_:\-]{1,64}$")
 
 
 def escape_sql_string(value: str) -> str:

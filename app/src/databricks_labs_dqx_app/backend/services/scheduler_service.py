@@ -8,6 +8,14 @@ a schedule is due.
 Persistence of *last run / next run* timestamps lives in
 ``dq_schedule_runs`` so the scheduler survives app restarts without
 re-triggering runs that already completed.
+
+**Data Products product ticks (design spec §4.3, Task 5):** each tick also
+polls ``dq_data_products`` for published products with a non-null
+``schedule_cron`` and fires ``DataProductService.run(...)`` for due ones.
+This is a SECOND, independent source of due-ness — it runs after the
+scope-config loop above completes and never mutates any state the
+scope-config path reads, so that path's behaviour is unaffected. See
+:meth:`SchedulerService._tick_products` for the full contract.
 """
 
 from __future__ import annotations
@@ -19,10 +27,15 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import uuid4
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from databricks.sdk import WorkspaceClient
 
 from databricks_labs_dqx_app.backend.logger import get_logger
+from databricks_labs_dqx_app.backend.services.data_product_service import (
+    DataProductService,
+    NoRunnableMembersError,
+)
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql, SqlExecutor
 
 logger = get_logger("scheduler")
@@ -35,6 +48,33 @@ _VALID_TRACKER_STATUSES = {"pending", "success", "partial_failure", "failed"}
 # trigger fails *and* its next occurrence cannot be computed. Prevents a
 # deterministic failure from re-firing the schedule on every tick.
 _FAILURE_BACKOFF = timedelta(hours=1)
+
+# ------------------------------------------------------------------
+# Data Products cron evaluation (design spec §4.3, Task 5)
+# ------------------------------------------------------------------
+#
+# Standard 5-field cron day-of-week names, used only by the ``dow`` field
+# of :meth:`SchedulerService._compute_next_cron_run`. ``0`` and ``7`` both
+# mean Sunday in POSIX cron; :meth:`_compute_next_cron_run` normalises ``7``
+# to ``0`` after parsing.
+_CRON_WEEKDAY_NAMES: dict[str, int] = {
+    "SUN": 0,
+    "MON": 1,
+    "TUE": 2,
+    "WED": 3,
+    "THU": 4,
+    "FRI": 5,
+    "SAT": 6,
+}
+
+# Bound on the number of coarse steps ``_compute_next_cron_run`` will take
+# before giving up on an expression with no near-term occurrence (e.g. a
+# day-of-month that never exists, such as ``31`` combined with a month
+# field that never lands on a 31-day month). Each step advances the
+# candidate by at least one unit (month/day/hour/minute), so this bound
+# comfortably covers any real cron schedule while still terminating fast
+# on unsatisfiable input instead of looping forever.
+_CRON_MAX_STEPS = 100_000
 
 # Length of the hex suffix on ``tmp_view_*`` names. ``uuid4().hex`` is
 # always 32 lowercase hex chars; we slice to keep schema-qualified
@@ -123,6 +163,7 @@ class SchedulerService:
         tmp_schema: str,
         job_id: str,
         oltp_sql: OltpExecutorProtocol | None = None,
+        data_product_service: DataProductService | None = None,
     ) -> None:
         """Construct the scheduler.
 
@@ -138,6 +179,13 @@ class SchedulerService:
             :class:`OltpExecutorProtocol` so both concrete executors
             are accepted without a runtime cast — the Protocol is the
             structural contract every OLTP call site relies on.
+        data_product_service:
+            Optional collaborator that fans a Data Product run out to
+            its members (design spec §4.2). When ``None`` (legacy
+            deployments, or unit tests that only exercise the
+            scope-config path), :meth:`_tick_products` is a no-op —
+            the scope-config scheduling path is entirely unaffected
+            either way.
         """
         self._ws = ws
         self._job_id = job_id
@@ -165,6 +213,8 @@ class SchedulerService:
         self._configs_table = self._oltp_sql.fqn("dq_schedule_configs")
         self._settings_table = self._oltp_sql.fqn("dq_app_settings")
         self._rules_table = self._oltp_sql.fqn("dq_quality_rules")
+        self._products_table = self._oltp_sql.fqn("dq_data_products")
+        self._data_product_service = data_product_service
 
         # Orphan-tmp-view GC: fires every Saturday at 01:00 UTC. Held in
         # process memory rather than persisted — a missed Saturday (e.g.
@@ -237,15 +287,20 @@ class SchedulerService:
         recomputed from the current config so schedule time changes take
         effect immediately rather than waiting for the old ``next_run_at``
         to expire.
+
+        After the scope-config loop below completes (unconditionally, and
+        regardless of whether any config exists), :meth:`_tick_products`
+        runs as a SECOND, independent due-ness source over published Data
+        Products (design spec §4.3). It never reads or mutates any state
+        the scope-config loop touches, so scope-config behaviour is
+        unaffected either way.
         """
+        now = datetime.now(timezone.utc)
         configs = await asyncio.to_thread(self._load_schedule_configs)
         if not configs:
             logger.info("Scheduler tick: no schedule configs found")
-            return
-
-        logger.info("Scheduler tick: found %d config(s), recalc=%s", len(configs), recalc)
-
-        now = datetime.now(timezone.utc)
+        else:
+            logger.info("Scheduler tick: found %d config(s), recalc=%s", len(configs), recalc)
 
         for name, cfg in configs.items():
             freq = cfg.get("frequency", "manual")
@@ -324,6 +379,16 @@ class SchedulerService:
             except Exception:
                 logger.exception("Scheduler failed processing schedule '%s'", name)
 
+        # Second, independent due-ness source (design spec §4.3). Runs
+        # after every config has already been processed above — a
+        # product-tick failure is fully isolated inside
+        # :meth:`_tick_products` and cannot roll back or skip anything
+        # the config loop already did.
+        try:
+            await asyncio.to_thread(self._tick_products, now)
+        except Exception:
+            logger.exception("Scheduler failed processing Data Product schedules")
+
     def _advance_after_failure(self, name: str, cfg: dict[str, Any], now: datetime, run_id: str) -> None:
         """Persist a failed run and push ``next_run_at`` forward after a trigger failure.
 
@@ -343,6 +408,301 @@ class SchedulerService:
             self._upsert_tracker(name, now, new_next, run_id, "failed")
         except Exception:
             logger.exception("Schedule '%s': failed to persist tracker after a trigger failure", name)
+
+    # ------------------------------------------------------------------
+    # Data Products product ticks (design spec §4.3, Task 5)
+    # ------------------------------------------------------------------
+    #
+    # A SECOND, independent due-ness source alongside the scope-config loop
+    # above. Bookkeeping reuses the same ``dq_schedule_runs`` table and the
+    # same ``_get_tracker``/``_upsert_tracker`` helpers, keyed by
+    # ``schedule_name = f"product:{product_id}"`` so product schedules and
+    # scope-config schedules can never collide in the tracker table.
+    #
+    # Cron evaluation deliberately does NOT reuse ``_compute_next_run``
+    # (the scope-config path's frequency-dict evaluator): that method has
+    # no cron-expression branch today — an unrecognised ``frequency`` value
+    # (including a bare ``"cron"``) falls through to its generic
+    # ``after + timedelta(hours=1)`` fallback. Reusing it as-is would
+    # silently truncate every Data Product schedule to hourly; extending it
+    # to understand raw cron strings would be a behavioural change to the
+    # method the scope-config path depends on, which the "byte-identical"
+    # requirement rules out. ``_compute_next_cron_run`` is therefore a new,
+    # additive evaluator for the standard 5-field cron dialect the Schedule
+    # tab authors (no third-party cron library — plain calendar/datetime
+    # arithmetic, same as ``_compute_next_run`` itself).
+    #
+    # Timezone: the scope-config path always evaluates ``hour``/``minute``
+    # against naive UTC wall-clock values (see ``_compute_next_run`` and the
+    # UTC-labelled schedule-preview copy in the UI, e.g. "Daily at 09:00
+    # UTC") — there is no per-config timezone field. A Data Product's cron
+    # is instead evaluated in its own ``schedule_tz`` (an IANA zone name,
+    # e.g. ``"America/Sao_Paulo"``); an unset or unrecognised zone falls
+    # back to UTC, matching the scope-config path's behaviour for the
+    # common case where no timezone was configured.
+
+    def _tick_products(self, now: datetime) -> None:
+        """Check every published, cron-scheduled Data Product and trigger due ones.
+
+        No-op when the scheduler was constructed without a
+        :class:`DataProductService` (legacy deployments, or unit tests that
+        only exercise the scope-config path) — this keeps the method safe
+        to call unconditionally from :meth:`_tick`.
+        """
+        if self._data_product_service is None:
+            return
+
+        products = self._load_scheduled_products()
+        if not products:
+            return
+
+        logger.info("Scheduler tick: found %d scheduled data product(s)", len(products))
+
+        for product in products:
+            try:
+                self._tick_one_product(product, now)
+            except Exception:
+                logger.exception(
+                    "Scheduler failed processing product schedule 'product:%s'", product["product_id"]
+                )
+
+    def _load_scheduled_products(self) -> list[dict[str, Any]]:
+        """Return published products with a non-null ``schedule_cron``.
+
+        Best-effort like :meth:`_load_schedule_configs`: a missing
+        ``dq_data_products`` table (a deployment predating Data Products, or
+        a migration that hasn't run yet) yields an empty list rather than
+        raising.
+        """
+        try:
+            sql = (
+                f"SELECT product_id, schedule_cron, schedule_tz FROM {self._products_table} "
+                f"WHERE schedule_cron IS NOT NULL AND status = 'published'"
+            )
+            rows = self._oltp_sql.query(sql)
+        except Exception:
+            logger.debug("dq_data_products table not available; skipping product schedules", exc_info=True)
+            return []
+        return [
+            {"product_id": row[0], "schedule_cron": row[1], "schedule_tz": row[2]}
+            for row in rows
+            if row and row[0] and row[1]
+        ]
+
+    def _tick_one_product(self, product: dict[str, Any], now: datetime) -> None:
+        """Check due-ness for one product and fire its run if due.
+
+        Mirrors the scope-config due-ness/tracker dance in :meth:`_tick`
+        (first tick after a schedule is created seeds ``next_run_at``
+        without firing unless it's already in the past; each due firing
+        advances ``next_run_at`` to the following occurrence). Every branch
+        that fires a run persists a tracker row so a deterministic failure
+        (including zero runnable members) cannot turn into a tight
+        every-tick retry loop.
+        """
+        product_id = product["product_id"]
+        cron_expr = product["schedule_cron"]
+        tz_name = product.get("schedule_tz")
+        schedule_name = f"product:{product_id}"
+
+        tracker = self._get_tracker(schedule_name)
+        next_run = tracker.get("next_run_at") if tracker else None
+
+        if next_run is None:
+            computed = self._compute_next_cron_run(cron_expr, now - timedelta(seconds=1), tz_name)
+            last_run = tracker.get("last_run_at") if tracker else None
+            last_id = tracker.get("last_run_id") if tracker else None
+            last_dt = self._parse_ts(last_run) if last_run else None
+            self._upsert_tracker(schedule_name, last_dt, computed, last_id, "pending")
+            if computed <= now:
+                next_run = computed.isoformat()
+            else:
+                return
+
+        next_run_dt = self._parse_ts(next_run) if isinstance(next_run, str) else next_run
+        if next_run_dt is None or next_run_dt > now:
+            return
+
+        run_id = uuid4().hex[:16]
+        logger.info(
+            "Product schedule '%s' is due (next_run_at=%s), triggering run %s", schedule_name, next_run, run_id
+        )
+
+        assert self._data_product_service is not None  # guarded by _tick_products
+        try:
+            result = self._data_product_service.run(
+                product_id,
+                source="approved",
+                user_email="scheduler",
+                trigger="scheduled",
+            )
+            logger.info(
+                "Product schedule '%s': submitted run set %s (%d member(s), %d skipped)",
+                schedule_name,
+                result.run_set_id,
+                len(result.submitted),
+                len(result.skipped),
+            )
+            new_next = self._compute_next_cron_run(cron_expr, now, tz_name)
+            status = "success" if not result.skipped else "partial_failure"
+            self._upsert_tracker(schedule_name, now, new_next, run_id, status)
+        except NoRunnableMembersError as e:
+            # Zero runnable members (all drafts / never approved) maps to a
+            # 409 at the manual-trigger route, but a scheduled tick must
+            # not treat it as a hard failure that retries every tick.
+            logger.warning("Product schedule '%s': no runnable members: %s", schedule_name, e)
+            self._advance_product_after_failure(schedule_name, cron_expr, tz_name, now, run_id)
+        except Exception:
+            logger.exception("Product schedule '%s' run %s failed to trigger", schedule_name, run_id)
+            self._advance_product_after_failure(schedule_name, cron_expr, tz_name, now, run_id)
+
+    def _advance_product_after_failure(
+        self,
+        schedule_name: str,
+        cron_expr: str,
+        tz_name: str | None,
+        now: datetime,
+        run_id: str,
+    ) -> None:
+        """Persist a failed run and push ``next_run_at`` forward after a trigger failure.
+
+        Mirrors :meth:`_advance_after_failure` for the product path: falls
+        back to :data:`_FAILURE_BACKOFF` if even the next-occurrence
+        computation fails (e.g. a malformed cron expression), so the
+        schedule still moves off "due" instead of re-firing every tick.
+        """
+        try:
+            new_next = self._compute_next_cron_run(cron_expr, now, tz_name)
+        except Exception:
+            logger.exception(
+                "Product schedule '%s': could not compute next_run_at after a failure; using backoff",
+                schedule_name,
+            )
+            new_next = now + _FAILURE_BACKOFF
+        try:
+            self._upsert_tracker(schedule_name, now, new_next, run_id, "failed")
+        except Exception:
+            logger.exception("Product schedule '%s': failed to persist tracker after a failure", schedule_name)
+
+    @staticmethod
+    def _resolve_cron_token(token: str, names: dict[str, int] | None) -> int:
+        """Resolve one cron token to an int, honouring an optional name map (weekdays)."""
+        token = token.strip()
+        if names is not None:
+            upper = token.upper()
+            if upper in names:
+                return names[upper]
+        try:
+            return int(token)
+        except ValueError as exc:
+            raise ValueError(f"Invalid cron token: '{token}'") from exc
+
+    @staticmethod
+    def _parse_cron_field(raw: str, lo: int, hi: int, names: dict[str, int] | None = None) -> set[int]:
+        """Parse one standard 5-field-cron field into its concrete matching values.
+
+        Supports the syntax the Schedule tab's raw-cron input accepts:
+        ``*``, comma-separated lists, ``a-b`` ranges, and ``*/n`` / ``a-b/n``
+        steps. *names* optionally maps case-insensitive tokens (weekday
+        abbreviations ``MON``..``SUN``) to their numeric value for the
+        day-of-week field.
+        """
+        values: set[int] = set()
+        for part in raw.strip().split(","):
+            part = part.strip()
+            if not part:
+                continue
+            base, _, step_s = part.partition("/")
+            step = int(step_s) if step_s else 1
+            if step <= 0:
+                raise ValueError(f"Invalid cron step: '{part}'")
+            if base == "*":
+                start, end = lo, hi
+            elif "-" in base:
+                start_s, end_s = base.split("-", 1)
+                start = SchedulerService._resolve_cron_token(start_s, names)
+                end = SchedulerService._resolve_cron_token(end_s, names)
+            else:
+                start = end = SchedulerService._resolve_cron_token(base, names)
+            if not (lo <= start <= hi and lo <= end <= hi and start <= end):
+                raise ValueError(f"Cron field value out of range [{lo}, {hi}]: '{part}'")
+            values.update(v for v in range(start, end + 1) if (v - start) % step == 0)
+        if not values:
+            raise ValueError(f"Invalid cron field: '{raw}'")
+        return values
+
+    @staticmethod
+    def _compute_next_cron_run(cron_expr: str, after: datetime, tz_name: str | None) -> datetime:
+        """Compute the next UTC occurrence of a standard 5-field cron expression after *after*.
+
+        Field order: ``minute hour day-of-month month day-of-week``
+        (standard POSIX cron order). Day-of-week accepts ``0``-``7`` (both
+        ``0`` and ``7`` mean Sunday) and ``MON``-``SUN`` names. Day
+        matching follows the standard POSIX rule: when BOTH day-of-month
+        and day-of-week are restricted (neither is ``*``), a day matches if
+        EITHER field matches; when only one is restricted, only that one
+        need match.
+
+        *after* must be timezone-aware; the return value is UTC-aware.
+        *tz_name* (an IANA zone name, e.g. ``"America/Sao_Paulo"``) is the
+        zone the cron's wall-clock fields are interpreted in — see the
+        module-level note above on why this diverges from the
+        UTC-only scope-config path. An unset or unrecognised zone falls
+        back to UTC rather than raising.
+        """
+        fields = cron_expr.split()
+        if len(fields) != 5:
+            raise ValueError(f"Cron expression must have exactly 5 fields: '{cron_expr}'")
+        minute_f, hour_f, dom_f, month_f, dow_f = fields
+
+        minutes = SchedulerService._parse_cron_field(minute_f, 0, 59)
+        hours = SchedulerService._parse_cron_field(hour_f, 0, 23)
+        doms = SchedulerService._parse_cron_field(dom_f, 1, 31)
+        months = SchedulerService._parse_cron_field(month_f, 1, 12)
+        raw_dows = SchedulerService._parse_cron_field(dow_f, 0, 7, _CRON_WEEKDAY_NAMES)
+        dows = {0 if v == 7 else v for v in raw_dows}
+        dom_wild = dom_f.strip() == "*"
+        dow_wild = dow_f.strip() == "*"
+
+        try:
+            tz = ZoneInfo(tz_name) if tz_name else timezone.utc
+        except (ZoneInfoNotFoundError, ValueError):
+            logger.warning("Unknown schedule_tz '%s'; evaluating cron in UTC", tz_name)
+            tz = timezone.utc
+
+        candidate = (after.astimezone(tz) + timedelta(minutes=1)).replace(second=0, microsecond=0)
+
+        for _ in range(_CRON_MAX_STEPS):
+            if candidate.month not in months:
+                year = candidate.year + (1 if candidate.month == 12 else 0)
+                month = 1 if candidate.month == 12 else candidate.month + 1
+                candidate = candidate.replace(year=year, month=month, day=1, hour=0, minute=0)
+                continue
+
+            cron_dow = candidate.isoweekday() % 7  # Mon=1..Sat=6, Sun=0 — matches cron numbering
+            if dom_wild and dow_wild:
+                day_ok = True
+            elif dom_wild:
+                day_ok = cron_dow in dows
+            elif dow_wild:
+                day_ok = candidate.day in doms
+            else:
+                day_ok = candidate.day in doms or cron_dow in dows
+            if not day_ok:
+                candidate = (candidate + timedelta(days=1)).replace(hour=0, minute=0)
+                continue
+
+            if candidate.hour not in hours:
+                candidate = (candidate + timedelta(hours=1)).replace(minute=0)
+                continue
+
+            if candidate.minute not in minutes:
+                candidate = candidate + timedelta(minutes=1)
+                continue
+
+            return candidate.astimezone(timezone.utc)
+
+        raise ValueError(f"Could not find next occurrence for cron '{cron_expr}' within lookahead window")
 
     # ------------------------------------------------------------------
     # Config loading
