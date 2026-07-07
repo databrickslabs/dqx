@@ -46,6 +46,7 @@ from databricks_labs_dqx_app.backend.registry_models import (
 )
 from databricks_labs_dqx_app.backend.services.binding_run_service import BindingRunService
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService, MonitoredTableSummary
+from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
 from databricks_labs_dqx_app.backend.services.run_sets import RunSetService
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
@@ -145,11 +146,13 @@ class DataProductService:
         monitored_tables: MonitoredTableService,
         run_set_service: RunSetService,
         binding_run_service: BindingRunService,
+        version_service: MonitoredTableVersionService,
     ) -> None:
         self._sql = sql
         self._monitored_tables = monitored_tables
         self._run_set_service = run_set_service
         self._binding_run_service = binding_run_service
+        self._version_service = version_service
         self._products_table = sql.fqn("dq_data_products")
         self._members_table = sql.fqn("dq_data_product_members")
 
@@ -475,6 +478,7 @@ class DataProductService:
                 )
                 continue
             table = summary.table
+            rules_count, checks_count = self._member_counts(summary, row.pinned_version)
             members.append(
                 DataProductMemberDetail(
                     id=row.id,
@@ -483,8 +487,8 @@ class DataProductService:
                     binding_status=table.status,
                     binding_version=table.version,
                     pinned_version=row.pinned_version,
-                    rules_count=summary.applied_rule_count,
-                    checks_count=summary.check_count,
+                    rules_count=rules_count,
+                    checks_count=checks_count,
                     runnable=_is_runnable(table.status, table.version),
                 )
             )
@@ -496,6 +500,25 @@ class DataProductService:
             runnable_count=sum(1 for m in members if m.runnable),
             last_run_at=last_run_at,
         )
+
+    def _member_counts(self, summary: MonitoredTableSummary, pinned_version: int | None) -> tuple[int, int]:
+        """Return ``(rules_count, checks_count)`` for a member.
+
+        An UNPINNED member tracks the binding's latest approved state, so it
+        reports the live summary counts. A member PINNED to a specific version
+        enforces that version's FROZEN snapshot, so it must report the
+        snapshot's counts (``dq_monitored_table_versions.state_json`` /
+        ``checks_json`` lengths) — not the binding's current (possibly newer or
+        emptied) live count, which would otherwise mislead the owner about what
+        the pin actually enforces. Falls back to the live counts if the pinned
+        snapshot can't be resolved (defensive: a pin should always have a
+        matching frozen row).
+        """
+        if pinned_version is not None:
+            snapshot = self._version_service.snapshot_counts(summary.table.binding_id, pinned_version)
+            if snapshot is not None:
+                return snapshot
+        return summary.applied_rule_count, summary.check_count
 
     def _last_run_at(self, product_id: str) -> datetime | None:
         run_sets = self._run_set_service.list_for_product(product_id, limit=1)

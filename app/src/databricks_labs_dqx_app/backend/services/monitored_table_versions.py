@@ -207,6 +207,35 @@ class MonitoredTableVersionService:
             raise LookupError(f"No frozen snapshot for binding {binding_id} version {version}")
         return self._parse_checks(rows[0][0])
 
+    def snapshot_counts(self, binding_id: str, version: int) -> tuple[int, int] | None:
+        """Return ``(applied_rule_count, check_count)`` for a frozen snapshot, or ``None``.
+
+        ``check_count`` is the length of the frozen ``checks_json`` (the exact
+        checks the runner would execute for that pin); ``applied_rule_count``
+        is the number of applied rules recorded in ``state_json``. Returns
+        ``None`` when no snapshot exists for *(binding_id, version)*, so callers
+        can fall back to the live binding counts.
+
+        Used by :class:`~.data_product_service.DataProductService` so a
+        version-pinned product member reports the counts of the PINNED
+        snapshot rather than the binding's current (possibly newer) live state.
+        """
+        e = escape_sql_string(binding_id)
+        checks_text = self._sql.select_json_text("checks_json")
+        state_text = self._sql.select_json_text("state_json")
+        sql = (
+            f"SELECT {checks_text}, {state_text} FROM {self._versions_table} "  # noqa: S608
+            f"WHERE binding_id = '{e}' AND version = {int(version)}"
+        )
+        rows = self._sql.query(sql)
+        if not rows:
+            return None
+        checks = self._parse_checks(rows[0][0])
+        state = self._parse_state(rows[0][1])
+        applied = state.get("applied_rules")
+        rules_count = len(applied) if isinstance(applied, list) else 0
+        return rules_count, len(checks)
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------

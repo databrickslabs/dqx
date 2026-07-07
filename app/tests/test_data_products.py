@@ -29,6 +29,7 @@ from databricks_labs_dqx_app.backend.services.data_product_service import (
     display_status,
 )
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService, MonitoredTableSummary
+from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
 from databricks_labs_dqx_app.backend.services.run_sets import RunSetService, RunSetSummary
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 
@@ -117,12 +118,21 @@ def binding_run_service():
 
 
 @pytest.fixture
-def service(sql, monitored_tables, run_set_service, binding_run_service):
+def version_service():
+    mock = create_autospec(MonitoredTableVersionService, instance=True)
+    # Default: no frozen snapshot resolves, so members fall back to live counts.
+    mock.snapshot_counts.return_value = None
+    return mock
+
+
+@pytest.fixture
+def service(sql, monitored_tables, run_set_service, binding_run_service, version_service):
     return DataProductService(
         sql=sql,
         monitored_tables=monitored_tables,
         run_set_service=run_set_service,
         binding_run_service=binding_run_service,
+        version_service=version_service,
     )
 
 
@@ -186,6 +196,57 @@ class TestListAndGet:
         detail = service.get("p1")
         assert detail is not None
         assert detail.members[0].runnable is False
+
+    def test_unpinned_member_reports_live_counts(self, service, sql, monitored_tables, version_service):
+        sql.query.side_effect = [
+            [_product_row(product_id="p1")],
+            [_member_row("m1", "b1", pinned_version=None)],
+        ]
+        monitored_tables.list_monitored_tables.return_value = [
+            _table_summary(binding_id="b1", status="approved", version=2, applied_rule_count=3, check_count=5)
+        ]
+        detail = service.get("p1")
+        assert detail is not None
+        assert detail.members[0].rules_count == 3
+        assert detail.members[0].checks_count == 5
+        # No pin -> never consults the frozen snapshot.
+        version_service.snapshot_counts.assert_not_called()
+
+    def test_pinned_member_reports_pinned_snapshot_counts(self, service, sql, monitored_tables, version_service):
+        # Live binding has moved on to v2 and its live counts differ from the
+        # pinned v1 snapshot (regression: pinned member used to show the live
+        # count — 0 here — instead of the frozen snapshot's real 2 checks).
+        sql.query.side_effect = [
+            [_product_row(product_id="p1")],
+            [_member_row("m1", "b1", pinned_version="1")],
+        ]
+        monitored_tables.list_monitored_tables.return_value = [
+            _table_summary(binding_id="b1", status="approved", version=2, applied_rule_count=0, check_count=0)
+        ]
+        version_service.snapshot_counts.return_value = (1, 2)
+        detail = service.get("p1")
+        assert detail is not None
+        version_service.snapshot_counts.assert_called_once_with("b1", 1)
+        assert detail.members[0].rules_count == 1
+        assert detail.members[0].checks_count == 2
+        # The pin itself is still surfaced unchanged.
+        assert detail.members[0].pinned_version == 1
+
+    def test_pinned_member_falls_back_to_live_counts_when_snapshot_missing(
+        self, service, sql, monitored_tables, version_service
+    ):
+        sql.query.side_effect = [
+            [_product_row(product_id="p1")],
+            [_member_row("m1", "b1", pinned_version="1")],
+        ]
+        monitored_tables.list_monitored_tables.return_value = [
+            _table_summary(binding_id="b1", status="approved", version=2, applied_rule_count=3, check_count=5)
+        ]
+        version_service.snapshot_counts.return_value = None  # snapshot not found
+        detail = service.get("p1")
+        assert detail is not None
+        assert detail.members[0].rules_count == 3
+        assert detail.members[0].checks_count == 5
 
 
 class TestCreate:

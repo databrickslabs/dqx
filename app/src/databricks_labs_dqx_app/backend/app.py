@@ -261,6 +261,7 @@ async def _build_scheduler_data_product_service(
         monitored_tables=monitored_tables,
         run_set_service=run_set_service,
         binding_run_service=binding_run_service,
+        version_service=version_service,
     )
 
 

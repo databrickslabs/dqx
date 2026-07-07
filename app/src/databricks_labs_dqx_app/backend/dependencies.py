@@ -507,19 +507,22 @@ async def get_data_product_service(
     monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
     run_set_service: Annotated[RunSetService, Depends(get_run_set_service)],
     binding_run_service: Annotated[BindingRunService, Depends(get_binding_run_service)],
+    version_service: Annotated[MonitoredTableVersionService, Depends(get_monitored_table_version_service)],
 ) -> DataProductService:
     """Create a DataProductService routed at the OLTP executor.
 
     Reuses the monitored-table listing (for per-member rules/checks counts
     and live status), the run-set service (for the shared run set + last-run
-    lookups), and ``BindingRunService`` (for per-member run submission) —
-    the same collaborators Task 3 wired for the single-table run endpoint.
+    lookups), ``BindingRunService`` (for per-member run submission), and the
+    version service (so version-pinned members report their frozen snapshot's
+    counts rather than the binding's live counts).
     """
     return DataProductService(
         sql=sql,
         monitored_tables=monitored_tables,
         run_set_service=run_set_service,
         binding_run_service=binding_run_service,
+        version_service=version_service,
     )
 
 
