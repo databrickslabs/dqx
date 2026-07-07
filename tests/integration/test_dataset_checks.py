@@ -1672,10 +1672,10 @@ def test_validate_upstream_table_ref_df_name_mismatch(spark: SparkSession):
 
 
 def test_validate_upstream_table_with_tolerance(spark: SparkSession):
-    """Sum comparison via a differently-named ref_column: passes within abs_tolerance, flags outside it."""    
+    """Sum comparison via a differently-named ref_column: passes within abs_tolerance, flags outside it."""
     checked_schema = "a: string, b: int, c: int"
     test_df = spark.createDataFrame([["a", 50, 1000], ["b", 50, 1000]], checked_schema)
-    
+
     ref_schema = "x: string, amount: int, other: int"
     ref_df = spark.createDataFrame([["p", 95, 500], ["q", 10, 500]], ref_schema)
 
