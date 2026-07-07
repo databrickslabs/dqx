@@ -85,7 +85,7 @@ Lakebase instance (when enabled, default name = `dqx-studio-lakebase`):
 ```
 
 `(OLTP*)` = lives in **Lakebase Postgres** when
-`lakebase_instance_name` is set, otherwise **Delta** (the
+`lakebase_endpoint` is set, otherwise **Delta** (the
 `v2: Delta OLTP fallback` migration).
 
 ## Key Decisions
@@ -103,15 +103,13 @@ Stateful resources declared in `databricks.yml`:
 - `resources.schemas.main_schema` — `dqx_studio` schema
 - `resources.schemas.tmp_schema` — `dqx_studio_tmp` schema
 - `resources.volumes.wheels` — wheels volume
-- `resources.database_instances.lakebase` — Lakebase Postgres instance (autoscaling)
+- `resources.postgres_projects.dqx_studio` — Lakebase Postgres project (autoscaling, scale-to-zero)
 
 Each carries `lifecycle.prevent_destroy: true` (Databricks CLI 0.268+), which blocks `databricks bundle destroy` and any deploy that would force-replace the resource. To intentionally tear something down: drop the flag, `databricks bundle deployment unbind <key> -t <target>`, then destroy.
 
-The app connects to the always-present `databricks_postgres` admin database on the Lakebase instance (set as the default `lakebase_database_name`) and creates its own `dqx_studio` Postgres schema there on first start. No DAB resource is needed to provision a per-app logical database; the bundle stays fully declarative. We deliberately do not use `database_catalogs` because it also creates a Unity Catalog catalog and therefore requires `CREATE CATALOG` on the metastore — a permission most app deployers don't hold.
+The app connects to the always-present `databricks_postgres` admin database on the Lakebase project (set as the default `lakebase_database_name`) via the `DQX_LAKEBASE_ENDPOINT` endpoint path and creates its own `dqx_studio` Postgres schema there on first start. The app SP's Postgres role (`resources.postgres_roles.app_sp`, a `DATABRICKS_SUPERUSER` member) grants the CREATE-schema privilege. We deliberately do not use `database_catalogs` because it also creates a Unity Catalog catalog and therefore requires `CREATE CATALOG` on the metastore — a permission most app deployers don't hold.
 
-For workspaces where the schemas / volume / Lakebase instance already exist (e.g. created out-of-band before this layout existed), run `make app-bind PROFILE=... TARGET=...` once per target to adopt them — otherwise `databricks bundle deploy` errors out with "already exists" / "Instance name is not unique".
-
-Privileges on UC objects for the auto-created app SP are still reapplied with `scripts/post_deploy_grants.sh` after each deploy, because the app SP's UUID isn't known at bundle-write time.
+UC privileges for the app SP and task-runner SP are declared **natively** as `grants:` on the schema/volume resources (using `${resources.apps.dqx-studio.service_principal_client_id}` and `${var.dqx_service_principal_application_id}`), so `databricks bundle deploy` applies them — there is no post-deploy grant script. The one exception is `USE CATALOG` on the pre-existing (user-selected) catalog, which the bundle can't grant because it doesn't manage the catalog; grant it once per catalog as a documented prerequisite (see `DEPLOYMENT.md`).
 
 ## Architecture
 
@@ -136,7 +134,7 @@ app/
 
 ## Stack
 
-- **Backend:** Python 3.11+, FastAPI, Pydantic 2, Databricks SDK, Databricks Connect, DQX library
+- **Backend:** Python 3.12+, FastAPI, Pydantic 2, Databricks SDK, Databricks SQL Connector, psycopg (Lakebase/Postgres), DQX library
 - **Frontend:** React 19, TypeScript, TanStack Router + React Query, shadcn/ui, Tailwind CSS 4, Vite 7
 - **Code generation:** orval (OpenAPI → TypeScript types + React Query hooks)
 
