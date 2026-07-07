@@ -223,6 +223,111 @@ class TestSubmission:
 
         view_service.drop_view.assert_called_once_with("dqx_studio_tmp.tmp_view_1")
 
+    def test_uses_custom_sample_size(self, service, monitored_tables, version_service, job_service):
+        monitored_tables.get.return_value = _detail(table_fqn="cat.schema.tbl", version=2)
+        version_service.get_checks.return_value = _CHECKS
+
+        service.run_binding("b1", source="approved", version=2, user_email="alice@x", sample_size=250)
+
+        _, submit_kwargs = job_service.submit_run.call_args
+        assert submit_kwargs["config"]["sample_size"] == 250
+        job_service.record_dryrun_started.assert_called_once()
+        _, started_kwargs = job_service.record_dryrun_started.call_args
+        assert started_kwargs["sample_size"] == 250
+
+    def test_defaults_sample_size_when_not_supplied(self, service, monitored_tables, version_service, job_service):
+        monitored_tables.get.return_value = _detail(table_fqn="cat.schema.tbl", version=2)
+        version_service.get_checks.return_value = _CHECKS
+
+        service.run_binding("b1", source="approved", version=2, user_email="alice@x")
+
+        _, submit_kwargs = job_service.submit_run.call_args
+        assert submit_kwargs["config"]["sample_size"] == 1000
+
+
+class TestFailClosedOrdering:
+    """Regression coverage for the fail-closed write order in ``run_binding``.
+
+    A ``dq_run_set_members`` row must never be persisted unless it points
+    at an existing ``dq_validation_runs`` row. ``record_dryrun_started``
+    (which inserts that row) therefore has to run BEFORE the run set is
+    minted/joined and BEFORE the member is added — these tests pin that
+    ordering by asserting what does and does not get written when each
+    step fails.
+    """
+
+    def test_record_dryrun_started_failure_persists_no_run_set_member(
+        self, service, monitored_tables, version_service, job_service, run_set_service, view_service
+    ):
+        monitored_tables.get.return_value = _detail(table_fqn="cat.schema.tbl", version=2)
+        version_service.get_checks.return_value = _CHECKS
+        job_service.record_dryrun_started.side_effect = RuntimeError("db unavailable")
+
+        with pytest.raises(RuntimeError, match="db unavailable"):
+            service.run_binding("b1", source="approved", version=2, user_email="alice@x")
+
+        # The fail-closed invariant: no member (and no run set) was ever
+        # created, because record_dryrun_started — which must succeed
+        # first — never did.
+        run_set_service.create.assert_not_called()
+        run_set_service.add_member.assert_not_called()
+        # The temp view is still cleaned up on this failure path.
+        view_service.drop_view.assert_called_once_with("dqx_studio_tmp.tmp_view_1")
+
+    def test_run_set_create_failure_after_dryrun_started_leaves_validation_run_orphaned_but_no_member(
+        self, service, monitored_tables, version_service, job_service, run_set_service, view_service
+    ):
+        monitored_tables.get.return_value = _detail(table_fqn="cat.schema.tbl", version=2)
+        version_service.get_checks.return_value = _CHECKS
+        run_set_service.create.side_effect = RuntimeError("run set insert failed")
+
+        with pytest.raises(RuntimeError, match="run set insert failed"):
+            service.run_binding("b1", source="approved", version=2, user_email="alice@x")
+
+        # record_dryrun_started already succeeded — the validation-run row
+        # exists — but no run-set member was (or could be) written.
+        job_service.record_dryrun_started.assert_called_once()
+        run_set_service.add_member.assert_not_called()
+        view_service.drop_view.assert_called_once_with("dqx_studio_tmp.tmp_view_1")
+
+    def test_add_member_failure_rolls_back_minted_run_set(
+        self, service, monitored_tables, version_service, job_service, run_set_service, view_service
+    ):
+        monitored_tables.get.return_value = _detail(table_fqn="cat.schema.tbl", version=2)
+        version_service.get_checks.return_value = _CHECKS
+        run_set_service.add_member.side_effect = RuntimeError("member insert failed")
+
+        with pytest.raises(RuntimeError, match="member insert failed"):
+            service.run_binding("b1", source="approved", version=2, user_email="alice@x")
+
+        # record_dryrun_started already succeeded (validation run exists),
+        # a run set was minted, add_member failed on it — the freshly
+        # minted, now-empty run set must be rolled back so it never
+        # aggregates as a phantom "success" with zero members.
+        job_service.record_dryrun_started.assert_called_once()
+        run_set_service.create.assert_called_once()
+        run_set_service.delete_empty.assert_called_once_with("rs-new")
+        view_service.drop_view.assert_called_once_with("dqx_studio_tmp.tmp_view_1")
+
+    def test_add_member_failure_on_caller_supplied_run_set_does_not_delete_it(
+        self, service, monitored_tables, version_service, job_service, run_set_service, view_service
+    ):
+        monitored_tables.get.return_value = _detail(table_fqn="cat.schema.tbl", version=2)
+        version_service.get_checks.return_value = _CHECKS
+        run_set_service.add_member.side_effect = RuntimeError("member insert failed")
+
+        with pytest.raises(RuntimeError, match="member insert failed"):
+            service.run_binding(
+                "b1", source="approved", version=2, user_email="alice@x", run_set_id="rs-existing"
+            )
+
+        # A caller-supplied run set (product fan-out) may already have
+        # other members — it must never be deleted just because one
+        # binding's add_member failed.
+        run_set_service.create.assert_not_called()
+        run_set_service.delete_empty.assert_not_called()
+        view_service.drop_view.assert_called_once_with("dqx_studio_tmp.tmp_view_1")
+
 
 class TestSyntheticCrossTableDispatch:
     def test_synthetic_binding_builds_view_from_sql_query(self, service, monitored_tables, version_service, view_service):

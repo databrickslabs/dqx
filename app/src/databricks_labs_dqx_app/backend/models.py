@@ -915,6 +915,7 @@ class RunMonitoredTableIn(BaseModel):
         default=None,
         description="Pin to a specific approved snapshot version. Ignored when source='draft'.",
     )
+    sample_size: int = Field(default=1000, le=10_000, description="Number of rows to sample")
 
 
 class RunMonitoredTableOut(BaseModel):

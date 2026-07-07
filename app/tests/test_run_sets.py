@@ -84,6 +84,12 @@ class TestCreateAndAddMember:
         sql = oltp_sql.execute.call_args[0][0]
         assert "NULL" in sql
 
+    def test_delete_empty_removes_the_run_set_row(self, service, oltp_sql):
+        service.delete_empty("rs-1")
+        sql = oltp_sql.execute.call_args[0][0]
+        assert f"DELETE FROM {_RUN_SETS}" in sql
+        assert "'rs-1'" in sql
+
 
 class TestGet:
     def test_missing_run_set_raises_lookup_error(self, service, oltp_sql):

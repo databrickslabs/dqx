@@ -141,6 +141,20 @@ class RunSetService:
             f"'{escape_sql_string(run_id)}', '{escape_sql_string(binding_id)}', {self._opt_int(binding_version)})"
         )
 
+    def delete_empty(self, run_set_id: str) -> None:
+        """Best-effort rollback of a just-minted run set that never got a member.
+
+        Callers use this when :meth:`create` succeeded but the subsequent
+        :meth:`add_member` failed, to avoid leaving a dangling ``dq_run_sets``
+        row with zero members (which would otherwise aggregate as a
+        vacuous "success" with no members — see ``BindingRunService``).
+        Deliberately scoped to *run_set_id* only (no member-count guard):
+        callers must only invoke this for a run set they just minted and
+        know has no members.
+        """
+        e = escape_sql_string(run_set_id)
+        self._sql.execute(f"DELETE FROM {self._run_sets_table} WHERE run_set_id = '{e}'")  # noqa: S608
+
     # ------------------------------------------------------------------
     # Read
     # ------------------------------------------------------------------

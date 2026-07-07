@@ -724,7 +724,22 @@ class TestRunMonitoredTable:
         assert result.job_run_id == 42
         assert result.view_fqn == "dqx_studio_tmp.tmp_1"
         svc.run_binding.assert_called_once_with(
-            "b1", source="approved", version=None, user_email="alice@x", trigger="manual"
+            "b1", source="approved", version=None, user_email="alice@x", trigger="manual", sample_size=1000
+        )
+
+    def test_custom_sample_size_is_passed_through(self):
+        svc = MagicMock()
+        svc.run_binding.return_value = BindingRunResult(
+            run_set_id="rs-1", run_id="run-1", job_run_id=42, view_fqn="dqx_studio_tmp.tmp_1"
+        )
+        run_monitored_table(
+            "b1",
+            body=RunMonitoredTableIn(source="approved", version=None, sample_size=250),
+            obo_ws=_mock_obo_ws(),
+            run_svc=svc,
+        )
+        svc.run_binding.assert_called_once_with(
+            "b1", source="approved", version=None, user_email="alice@x", trigger="manual", sample_size=250
         )
 
     def test_binding_not_found_maps_to_404(self):

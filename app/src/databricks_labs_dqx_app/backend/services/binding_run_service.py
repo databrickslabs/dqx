@@ -111,6 +111,7 @@ class BindingRunService:
         user_email: str,
         trigger: RunSetTrigger = "manual",
         run_set_id: str | None = None,
+        sample_size: int = _DEFAULT_SAMPLE_SIZE,
     ) -> BindingRunResult:
         """Resolve checks for *binding_id* and submit a run.
 
@@ -127,6 +128,11 @@ class BindingRunService:
 
         Mints a new run set when *run_set_id* is None (a run set of one);
         otherwise joins the caller-supplied run set (product fan-out).
+
+        *sample_size* bounds the number of rows sampled for the run
+        (default 1000); callers should enforce the same upper bound as
+        the dryrun batch route (``BatchRunFromCatalogIn.sample_size``,
+        <= 10,000) before calling this method.
 
         Raises:
             BindingNotFoundError: *binding_id* does not exist.
@@ -158,10 +164,27 @@ class BindingRunService:
         else:
             view_fqn = self._view_service.create_view(table_fqn)
 
+        # Write order matters here (fail-closed): a run-set member row must
+        # never be persisted unless it can point at an existing
+        # ``dq_validation_runs`` row. So ``record_dryrun_started`` — which
+        # inserts that row — runs BEFORE the run set is minted/joined and
+        # BEFORE the member is added. If it throws, no run-set state has
+        # been written yet, so there is nothing to roll back beyond the
+        # temp view. If the LATER run-set create/add_member step throws,
+        # the validation-run row already exists standalone (not part of
+        # any run set) — that is an accepted, lesser-severity gap (the
+        # invariant is member => validation row, not the reverse) and
+        # requires no cleanup of ``dq_validation_runs`` itself. The one
+        # additional dangling state introduced by minting our own run set
+        # is a run set left with zero members if ``add_member`` then
+        # fails; that is cleaned up explicitly below via ``delete_empty``,
+        # but only when we minted the run set ourselves (a caller-supplied
+        # *run_set_id* may already have other members and must not be
+        # touched).
         try:
             config: dict[str, Any] = {
                 "checks": checks,
-                "sample_size": _DEFAULT_SAMPLE_SIZE,
+                "sample_size": sample_size,
                 "source_table_fqn": table_fqn,
                 "is_sql_check": sql_query is not None,
             }
@@ -177,6 +200,17 @@ class BindingRunService:
                 requesting_user=user_email,
             )
 
+            self._job_service.record_dryrun_started(
+                table=self._runs_table,
+                run_id=run_id,
+                requesting_user=user_email,
+                source_table_fqn=table_fqn,
+                view_fqn=view_fqn,
+                sample_size=sample_size,
+                job_run_id=job_run_id,
+            )
+
+            minted_run_set = run_set_id is None
             resolved_run_set_id = run_set_id or self._run_set_service.create(
                 product_id=None,
                 product_version=None,
@@ -184,17 +218,20 @@ class BindingRunService:
                 trigger=trigger,
                 created_by=user_email,
             )
-            self._run_set_service.add_member(resolved_run_set_id, run_id, binding_id, binding_version)
-
-            self._job_service.record_dryrun_started(
-                table=self._runs_table,
-                run_id=run_id,
-                requesting_user=user_email,
-                source_table_fqn=table_fqn,
-                view_fqn=view_fqn,
-                sample_size=_DEFAULT_SAMPLE_SIZE,
-                job_run_id=job_run_id,
-            )
+            try:
+                self._run_set_service.add_member(resolved_run_set_id, run_id, binding_id, binding_version)
+            except Exception:
+                if minted_run_set:
+                    try:
+                        self._run_set_service.delete_empty(resolved_run_set_id)
+                    except Exception as cleanup_err:
+                        logger.warning(
+                            "Failed to roll back empty run set %s after add_member failure for %s: %s",
+                            resolved_run_set_id,
+                            binding_id,
+                            cleanup_err,
+                        )
+                raise
         except Exception:
             try:
                 self._view_service.drop_view(view_fqn)
