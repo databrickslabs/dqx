@@ -56,7 +56,7 @@ def _make_pg_executor(
     *,
     schema: str = "public",
     database: str = "dqx",
-    instance_name: str = "test-instance",
+    endpoint: str = "projects/test/branches/dev/endpoints/primary",
     token_refresh_seconds: int = 0,
     token_refresh_retry_seconds: int = 10,
     token_refresh_retry_jitter: float = 0.3,
@@ -85,7 +85,7 @@ def _make_pg_executor(
     The returned instance has the minimum attribute surface every
     method under test reads:
 
-    - ``_ws`` / ``_instance_name`` — used by the refresh loop and by
+    - ``_ws`` / ``_endpoint`` — used by the refresh loop and by
       :func:`build_pg_executor` smoke tests.
     - ``_schema`` / ``_database`` — used by ``schema`` / ``database`` /
       ``fqn`` / ``catalog`` properties.
@@ -105,7 +105,7 @@ def _make_pg_executor(
     """
     inst = PgExecutor.__new__(PgExecutor)
     inst._ws = MagicMock(name="WorkspaceClient")
-    inst._instance_name = instance_name
+    inst._endpoint = endpoint
     inst._database = database
     inst._schema = schema
     inst._username = "test-user"
@@ -773,7 +773,7 @@ class TestTokenRefreshLoop:
         ) as gen:
             executor._token_refresh_loop()
 
-        gen.assert_called_with(executor._ws, executor._instance_name)
+        gen.assert_called_with(executor._ws, executor._endpoint)
         assert executor._token_holder.token == "fresh-token"
         assert executor._connect_kwargs["password"] == "fresh-token"
         # Success path updates the observability surface that the
@@ -979,7 +979,7 @@ class TestRefreshFailureEscalation:
 
         ``os._exit`` is patched out so the test runs synchronously.
         """
-        executor = _make_pg_executor(instance_name="lakebase-prod-us-east-1")
+        executor = _make_pg_executor(endpoint="lakebase-prod-us-east-1")
         executor._consecutive_refresh_failures = 12
         before = executor._last_successful_refresh_at
 
@@ -1158,7 +1158,7 @@ class TestRefreshObservability:
             Pool.check_connection = MagicMock()
             executor = PgExecutor(
                 ws=MagicMock(),
-                instance_name="instance",
+                endpoint="instance",
                 database="dqx",
                 schema="public",
                 username="sp",
@@ -1231,7 +1231,7 @@ class TestRefreshTuningClamps:
         ):
             executor = PgExecutor(
                 ws=MagicMock(),
-                instance_name="i",
+                endpoint="i",
                 database="d",
                 schema="s",
                 username="u",
@@ -1251,7 +1251,7 @@ class TestRefreshTuningClamps:
         ):
             high = PgExecutor(
                 ws=MagicMock(),
-                instance_name="i",
+                endpoint="i",
                 database="d",
                 schema="s",
                 username="u",
@@ -1260,7 +1260,7 @@ class TestRefreshTuningClamps:
             )
             low = PgExecutor(
                 ws=MagicMock(),
-                instance_name="i",
+                endpoint="i",
                 database="d",
                 schema="s",
                 username="u",
@@ -1282,7 +1282,7 @@ class TestRefreshTuningClamps:
         ):
             executor = PgExecutor(
                 ws=MagicMock(),
-                instance_name="i",
+                endpoint="i",
                 database="d",
                 schema="s",
                 username="u",
@@ -1302,15 +1302,21 @@ class TestRefreshTuningClamps:
 class TestBuildPgExecutor:
     """Cover the two early-validation RuntimeErrors at lines 436-444."""
 
-    def test_raises_when_instance_has_no_read_write_dns(self) -> None:
-        ws = MagicMock(name="WorkspaceClient")
-        # get_database_instance returns an object whose .read_write_dns is empty.
-        ws.database.get_database_instance.return_value = MagicMock(read_write_dns=None)
+    @staticmethod
+    def _endpoint_with_host(host: str | None) -> MagicMock:
+        """Shape a ``get_endpoint`` return so ``status.hosts.host`` == *host*."""
+        hosts = MagicMock(host=host)
+        return MagicMock(status=MagicMock(hosts=hosts))
 
-        with pytest.raises(RuntimeError, match="has no read_write_dns"):
+    def test_raises_when_endpoint_has_no_host(self) -> None:
+        ws = MagicMock(name="WorkspaceClient")
+        # get_endpoint returns an endpoint whose status.hosts.host is empty.
+        ws.postgres.get_endpoint.return_value = self._endpoint_with_host(None)
+
+        with pytest.raises(RuntimeError, match="has no read/write host"):
             build_pg_executor(
                 ws,
-                instance_name="missing-dns-instance",
+                endpoint="projects/dqx/branches/dev/endpoints/primary",
                 database="dqx",
                 schema="dqx_studio",
             )
@@ -1319,7 +1325,7 @@ class TestBuildPgExecutor:
 
     def test_raises_when_calling_identity_has_no_username_or_id(self) -> None:
         ws = MagicMock(name="WorkspaceClient")
-        ws.database.get_database_instance.return_value = MagicMock(read_write_dns="some.host:5432")
+        ws.postgres.get_endpoint.return_value = self._endpoint_with_host("some.host:5432")
         # Both user_name AND id come back falsy — Lakebase has nothing
         # to authenticate as.
         ws.current_user.me.return_value = MagicMock(user_name=None, id=None)
@@ -1327,7 +1333,7 @@ class TestBuildPgExecutor:
         with pytest.raises(RuntimeError, match="Could not determine workspace identity"):
             build_pg_executor(
                 ws,
-                instance_name="ok-instance",
+                endpoint="projects/dqx/branches/dev/endpoints/primary",
                 database="dqx",
                 schema="dqx_studio",
             )
@@ -1335,7 +1341,7 @@ class TestBuildPgExecutor:
     def test_uses_id_as_fallback_when_user_name_is_empty(self) -> None:
         """``me.user_name or me.id`` fallback — proves we don't bail on user_name=None alone."""
         ws = MagicMock(name="WorkspaceClient")
-        ws.database.get_database_instance.return_value = MagicMock(read_write_dns="ok.host")
+        ws.postgres.get_endpoint.return_value = self._endpoint_with_host("ok.host")
         ws.current_user.me.return_value = MagicMock(user_name=None, id="sp-1234")
 
         # We stop before the real PgExecutor opens its pool — patch
@@ -1347,7 +1353,7 @@ class TestBuildPgExecutor:
         ) as init_mock:
             build_pg_executor(
                 ws,
-                instance_name="ok-instance",
+                endpoint="projects/dqx/branches/dev/endpoints/primary",
                 database="dqx",
                 schema="dqx_studio",
             )
@@ -1357,7 +1363,7 @@ class TestBuildPgExecutor:
         kwargs = init_mock.call_args.kwargs
         assert kwargs["username"] == "sp-1234", "fell through user_name=None to id"
         assert kwargs["host"] == "ok.host"
-        assert kwargs["instance_name"] == "ok-instance"
+        assert kwargs["endpoint"] == "projects/dqx/branches/dev/endpoints/primary"
 
 
 # ===========================================================================
@@ -1666,20 +1672,19 @@ class TestTokenHolder:
 
 
 class TestGenerateToken:
-    """Thin wrapper around ``ws.database.generate_database_credential``."""
+    """Thin wrapper around ``ws.postgres.generate_database_credential``."""
 
     def test_returns_token_from_credential_response(self) -> None:
         ws = MagicMock(name="WorkspaceClient")
-        ws.database.generate_database_credential.return_value = MagicMock(token="fresh-tok")
-        assert _generate_token(ws, "my-instance") == "fresh-tok"
-        # Request ID should be a UUID-shaped string and instance_names a single-item list.
-        call_kwargs = ws.database.generate_database_credential.call_args.kwargs
-        assert call_kwargs["instance_names"] == ["my-instance"]
-        assert isinstance(call_kwargs["request_id"], str)
-        assert len(call_kwargs["request_id"]) >= 32
+        ws.postgres.generate_database_credential.return_value = MagicMock(token="fresh-tok")
+        endpoint = "projects/dqx/branches/dqx/endpoints/primary"
+        assert _generate_token(ws, endpoint) == "fresh-tok"
+        # Credential issuance is endpoint-scoped (Lakebase projects model).
+        call_kwargs = ws.postgres.generate_database_credential.call_args.kwargs
+        assert call_kwargs["endpoint"] == endpoint
 
     def test_raises_when_credential_response_has_no_token(self) -> None:
         ws = MagicMock(name="WorkspaceClient")
-        ws.database.generate_database_credential.return_value = MagicMock(token=None)
+        ws.postgres.generate_database_credential.return_value = MagicMock(token=None)
         with pytest.raises(RuntimeError, match="no token"):
-            _generate_token(ws, "my-instance")
+            _generate_token(ws, "projects/dqx/branches/dqx/endpoints/primary")

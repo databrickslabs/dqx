@@ -1,2 +1,0 @@
-command:
-  ["uvicorn", "databricks_labs_dqx_app.backend.app:app", "--workers", "1"]

@@ -1,6 +1,11 @@
 bundle:
   name: "dqx-studio"
 
+# Per-workspace deploy targets (profile, catalog, service-principal id) live in an
+# untracked ``target.*.yml`` so those values are never committed. Copy
+# ``target.dev.yml.example`` → ``target.dev.yml`` and fill it in.
+include:
+  - "target.*.yml"
 
 variables:
   catalog_name:
@@ -19,19 +24,11 @@ variables:
     description: "Databricks App name (unique per workspace)"
     default: "dqx-studio"
   sql_warehouse_name:
-    description: "Warehouse name to create when a target opts into a bundle-managed warehouse (Mode A only)."
+    description: "Name of the bundle-managed SQL warehouse the app queries through."
     default: "dqx-studio-sql-warehouse"
-  sql_warehouse_id:
-    description: >
-      ID of the SQL warehouse the app uses. Every target MUST set this.
-      Mode A (bundle-managed): ``${resources.sql_warehouses.dqx_sql_warehouse.id}`` AND
-      declare ``sql_warehouses.dqx_sql_warehouse`` locally (illustrative only — no
-      in-repo target uses this).
-      Mode B (external / reuse): literal warehouse ID, no resource block; CAN_USE is
-      granted by ``post_deploy_grants.sh`` (worked example: the ``dqx-app-demo`` target).
-      Default is empty so a target that forgets to set it fails fast at deploy time.
-      See DEPLOYMENT.md → "Choosing a SQL warehouse mode" for the full comparison.
-    default: ""
+  sql_warehouse_size:
+    description: "Cluster size of the bundle-managed SQL warehouse (e.g. 2X-Small / Small / Medium)."
+    default: "Small"
   wheels_volume_name:
     description: "UC volume for DQX wheel files"
     default: "wheels"
@@ -40,20 +37,47 @@ variables:
     default: "00000000-0000-0000-0000-000000000000"
   # Lakebase backend holds OLTP state (rules, settings, RBAC, comments, schedules,
   # scheduler bookkeeping). Append-mostly observability tables (validation runs,
-  # profiling, metrics, quarantine) stay in Delta. New Lakebase instances autoscale
-  # (https://docs.databricks.com/aws/en/oltp/upgrade-to-autoscaling). We connect to
-  # the always-present ``databricks_postgres`` admin DB and isolate per-app via a
-  # dedicated Postgres schema (``DQX_LAKEBASE_SCHEMA_NAME``, default ``dqx_studio``),
+  # profiling, metrics, quarantine) stay in Delta. Lakebase is provisioned natively
+  # as a Postgres *project* (autoscaling, scale-to-zero) whose default branch +
+  # 'primary' endpoint are auto-created on first deploy. The app connects to the
+  # always-present ``databricks_postgres`` admin DB and isolates per-app via a
+  # dedicated Postgres schema (``DQX_LAKEBASE_SCHEMA``, default ``dqx_studio``),
   # which avoids needing CREATE CATALOG on the metastore. See DEPLOYMENT.md.
-  lakebase_instance_name:
-    description: "Lakebase Postgres instance for OLTP state."
-    default: "dqx-studio-lakebase"
+  lakebase_project_id:
+    description: "Lakebase Postgres project id (also its resource-name component)."
+    default: "dqx-studio-db"
+  lakebase_branch:
+    description: >
+      Lakebase project branch the app uses. The project auto-creates this branch
+      (with a 'primary' read/write endpoint) on first deploy. Injected into
+      ``default_branch``, ``lakebase_endpoint``, and the app SP's Postgres role
+      ``parent`` so the whole wiring tracks one name.
+    default: "dqx"
+  lakebase_endpoint:
+    description: >
+      Lakebase endpoint resource path the app connects to (DQX_LAKEBASE_ENDPOINT).
+      Derived from the project + branch; drives BOTH host resolution
+      (``postgres.get_endpoint``) and OAuth credential issuance
+      (``postgres.generate_database_credential``). Set to a sentinel (``-``) and
+      drop the postgres_projects/postgres_roles blocks to run OLTP on Delta instead.
+    default: "projects/${var.lakebase_project_id}/branches/${var.lakebase_branch}/endpoints/primary"
   lakebase_database_name:
-    description: "Postgres database the app connects to inside the Lakebase instance."
+    description: "Postgres database the app connects to inside the Lakebase project."
     default: "databricks_postgres"
-  lakebase_capacity:
-    description: "Lakebase compute capacity (CU_1 / CU_2 / CU_4 / CU_8)"
-    default: "CU_1"
+  lakebase_min_cu:
+    description: "Lakebase endpoint min compute units (floor 0.5; cannot be 0)."
+    default: 0.5
+  lakebase_max_cu:
+    description: "Lakebase endpoint max compute units (>= min)."
+    default: 1
+  lakebase_suspend_timeout:
+    description: >
+      Idle duration after which the Lakebase endpoint scales to zero (suspends).
+      Must be 60s–604800s. This is the scale-to-zero control; when the endpoint is
+      suspended the app's connection pool discards dead connections and transparently
+      reconnects on the next request (pre-ping), which resumes the endpoint. See
+      backend/pg_executor.py.
+    default: "300s"
   app_config:
     type: complex
     description: "Databricks Apps config block"
@@ -61,7 +85,11 @@ variables:
       # Single worker so the in-process SchedulerService (gated by a file lock)
       # doesn't fight itself across workers. The in-memory CacheFactory is per
       # worker (TTL, non-authoritative) so adding workers is otherwise safe.
+      # ``uv run`` resolves the app's locked environment at container start.
       command:
+        - "uv"
+        - "run"
+        - "--no-dev"
         - "uvicorn"
         - "databricks_labs_dqx_app.backend.app:app"
         - "--workers"
@@ -83,8 +111,8 @@ variables:
           value: "${var.admin_group}"
         - name: "DQX_WHEELS_VOLUME"
           value: "/Volumes/${var.catalog_name}/${var.schema_name}/${var.wheels_volume_name}"
-        - name: "DQX_LAKEBASE_INSTANCE_NAME"
-          value: "${var.lakebase_instance_name}"
+        - name: "DQX_LAKEBASE_ENDPOINT"
+          value: "${var.lakebase_endpoint}"
         - name: "DQX_LAKEBASE_DATABASE_NAME"
           value: "${var.lakebase_database_name}"
         # Starter Insights dashboard; admins can override at runtime via Configuration.
@@ -97,15 +125,15 @@ sync:
 
 artifacts:
   default:
+    # build_app.py assembles the app as a SOURCE tree under .build/ (pyproject +
+    # uv.lock + src + requirements.txt=``uv``) — no app wheel, no local dqx wheel
+    # (the app pins databricks-labs-dqx from the registry). We still build the
+    # task-runner wheel for the job (it's not published); its dqx dep resolves
+    # from the registry at job-environment install time.
     build: >
       uv run python scripts/build_app.py &&
-      rm -f .build/databricks_labs_dqx-*.whl &&
       rm -rf .build/tasks &&
-      uv build ../ --wheel --out-dir .build/ &&
-      uv build tasks/ --wheel --out-dir .build/tasks/ &&
-      dqx_whl=$(ls -1t .build/databricks_labs_dqx-*.whl | head -1 | xargs basename) &&
-      echo "$dqx_whl" | cat - .build/requirements.txt > .build/requirements.txt.tmp &&
-      mv .build/requirements.txt.tmp .build/requirements.txt
+      uv build tasks/ --wheel --out-dir .build/tasks/
 
 resources:
   apps:
@@ -123,48 +151,90 @@ resources:
         - serving.serving-endpoints
 
       resources:
+        # Binding the bundle-managed warehouse to the app grants the app SP CAN_USE.
         - name: "dqx-sql-warehouse"
           description: "SQL Warehouse for DQX Studio queries"
           sql_warehouse:
-            id: ${var.sql_warehouse_id}
+            id: ${resources.sql_warehouses.dqx_sql_warehouse.id}
             permission: "CAN_USE"
         - name: "dqx-task-runner-job"
           description: "Job for async profiler and dry-run tasks"
           job:
             id: ${resources.jobs.dqx_task_runner.id}
             permission: "CAN_MANAGE"
-        # ``database:`` binding (instance + database). ``instance_name`` points
-        # at ``resources.database_instances.lakebase``, which the target
-        # declares; the base binding resolves it after the per-target merge.
-        - name: "dqx-lakebase"
-          description: "Lakebase Postgres backend for app OLTP state"
-          database:
-            database_name: ${var.lakebase_database_name}
-            instance_name: ${resources.database_instances.lakebase.name}
-            permission: "CAN_CONNECT_AND_CREATE"
+        # No ``database:`` binding — the app connects via DQX_LAKEBASE_ENDPOINT and
+        # gets connect/create rights from postgres_roles.app_sp (below).
 
+      # Workspace-scoped ACL: use the workspace-local ``users`` group (the
+      # account-level ``account users`` group isn't resolvable by the app
+      # permissions API in workspaces where it isn't synced).
       permissions:
-        - group_name: "account users"
+        - group_name: "users"
           level: "CAN_USE"
 
-  # Stateful storage (schemas, volume, Lakebase instance). Every entry below is
-  # tagged ``lifecycle.prevent_destroy: true`` so ``bundle destroy`` (or any deploy
-  # that would replace the resource) fails fast instead of dropping data. To
-  # intentionally tear one down: remove the flag, ``databricks bundle deployment
-  # unbind <key>``, then destroy. For pre-existing workspaces whose resources were
-  # provisioned out-of-band, run ``make app-bind`` once before the first deploy
-  # (see DEPLOYMENT.md → "Migrating an existing workspace").
+  # Bundle-managed SQL warehouse. The app queries it (app SP via the binding above)
+  # and end-user OBO dry-run/preview queries run through it, so ``users`` needs CAN_USE.
+  sql_warehouses:
+    dqx_sql_warehouse:
+      name: ${var.sql_warehouse_name}
+      cluster_size: ${var.sql_warehouse_size}
+      max_num_clusters: 1
+      auto_stop_mins: 30
+      enable_serverless_compute: true
+      warehouse_type: PRO
+      # List the app SP explicitly: with ``permissions`` set, the app's warehouse
+      # binding would otherwise override them and drop its access. Use workspace
+      # ``users`` — the warehouse permissions API can't resolve account-level
+      # ``account users`` (UC ``grants`` below can).
+      permissions:
+        - level: CAN_USE
+          service_principal_name: ${resources.apps.dqx-studio.service_principal_client_id}
+        - level: CAN_USE
+          group_name: "users"
+
+  # Stateful storage. ``lifecycle.prevent_destroy: true`` makes ``bundle destroy``
+  # (or a replacing deploy) fail fast instead of dropping data; to tear down, drop
+  # the flag, ``bundle deployment unbind <key>``, then destroy.
+  # Grants are native. USE CATALOG on the pre-existing catalog can't be granted here
+  # (the bundle doesn't manage the catalog) — grant it once per catalog (see DEPLOYMENT.md).
   schemas:
     main_schema:
       catalog_name: ${var.catalog_name}
       name: ${var.schema_name}
       comment: "DQX Studio main schema (rules, run history, profiling, metrics, quarantine, OLTP fallback)"
+      grants:
+        - principal: ${resources.apps.dqx-studio.service_principal_client_id}
+          privileges:
+            - ALL_PRIVILEGES
+        - principal: ${var.dqx_service_principal_application_id}
+          privileges:
+            - ALL_PRIVILEGES
+        # The starter Insights dashboard embeds the deployer's credentials, so the
+        # deployer needs SELECT on the DQX tables (created by the app SP, not the
+        # deployer). Schema-level SELECT covers current + future tables.
+        - principal: ${workspace.current_user.userName}
+          privileges:
+            - USE_SCHEMA
+            - SELECT
       lifecycle:
         prevent_destroy: true
     tmp_schema:
       catalog_name: ${var.catalog_name}
       name: ${var.tmp_schema_name}
       comment: "DQX Studio temp schema for per-user dry-run views"
+      grants:
+        - principal: ${resources.apps.dqx-studio.service_principal_client_id}
+          privileges:
+            - ALL_PRIVILEGES
+        - principal: ${var.dqx_service_principal_application_id}
+          privileges:
+            - ALL_PRIVILEGES
+        # End users create temp views here via their OBO token during dry-run /
+        # preview, so they need USE SCHEMA + CREATE TABLE.
+        - principal: "account users"
+          privileges:
+            - USE_SCHEMA
+            - CREATE_TABLE
       lifecycle:
         prevent_destroy: true
 
@@ -175,32 +245,72 @@ resources:
       name: ${var.wheels_volume_name}
       volume_type: MANAGED
       comment: "DQX Studio wheel storage for the task runner"
+      grants:
+        - principal: ${resources.apps.dqx-studio.service_principal_client_id}
+          privileges:
+            - ALL_PRIVILEGES
+        - principal: ${var.dqx_service_principal_application_id}
+          privileges:
+            - ALL_PRIVILEGES
       lifecycle:
         prevent_destroy: true
 
-  # Lakebase Postgres instance backing the app's OLTP state. Name/capacity read
-  # from variables so a target can resize or rename it. The ``dqx-lakebase`` app
-  # binding above references ``${resources.database_instances.lakebase.name}``.
-  # To run without Lakebase, remove this block and the ``dqx-lakebase`` binding,
-  # then set ``lakebase_instance_name: "-"`` (OLTP falls back to Delta).
-  database_instances:
-    lakebase:
-      name: ${var.lakebase_instance_name}
-      capacity: ${var.lakebase_capacity}
+  # Lakebase Postgres *project* backing the app's OLTP state. Creating the project
+  # auto-provisions its default branch + a 'primary' read/write endpoint, so no
+  # branch/endpoint resource is declared here. Scale-to-zero is controlled by
+  # ``suspend_timeout_duration`` (see the app's pre-ping wakeup handling in
+  # backend/pg_executor.py). To run without Lakebase, remove this block and the
+  # postgres_roles block below, then set ``lakebase_endpoint: "-"`` (OLTP falls
+  # back to Delta via the MigrationRunner path).
+  postgres_projects:
+    dqx_studio:
+      project_id: ${var.lakebase_project_id}
+      display_name: "dqx-studio"
+      pg_version: 16
+      default_branch: "projects/${var.lakebase_project_id}/branches/${var.lakebase_branch}"
+      default_endpoint_settings:
+        autoscaling_limit_min_cu: ${var.lakebase_min_cu}
+        autoscaling_limit_max_cu: ${var.lakebase_max_cu}
+        suspend_timeout_duration: ${var.lakebase_suspend_timeout}
       lifecycle:
         prevent_destroy: true
+
+  # Postgres role for the app's service principal, created natively by DABs
+  # (CLI >= 1.4.0). ``postgres_role`` is the app SP's client id (UUID) — the app
+  # authenticates as that identity (PGUSER = the SP client id resolved at runtime),
+  # so the OAuth login matches this role. ``role_id`` (the resource-name component)
+  # must start with a letter, so the UUID is prefixed ``sp-``. DATABRICKS_SUPERUSER
+  # membership lets the app create its ``dqx_studio`` schema + tables on first
+  # connect — the only way to grant object privileges inside Postgres from a
+  # bundle. The SP id is interpolated from the app resource, which makes DABs
+  # create the app first.
+  postgres_roles:
+    app_sp:
+      parent: "projects/${var.lakebase_project_id}/branches/${var.lakebase_branch}"
+      role_id: "sp-${resources.apps.dqx-studio.service_principal_client_id}"
+      postgres_role: ${resources.apps.dqx-studio.service_principal_client_id}
+      identity_type: SERVICE_PRINCIPAL
+      auth_method: LAKEBASE_OAUTH_V1
+      attributes:
+        createdb: true
+        createrole: true
+        bypassrls: true
+      membership_roles:
+        - DATABRICKS_SUPERUSER
 
   dashboards:
     dqx_quality_overview:
       display_name: "[${bundle.target}] DQX Quality Overview"
       file_path: ./dashboards/dqx_quality_overview.lvdash.json
-      warehouse_id: ${var.sql_warehouse_id}
+      warehouse_id: ${resources.sql_warehouses.dqx_sql_warehouse.id}
       dataset_catalog: ${var.catalog_name}
       dataset_schema: ${var.schema_name}
       embed_credentials: true
+      # Workspace-scoped ACL — see the app/warehouse permissions note; use the
+      # workspace-local ``users`` group, not account-level ``account users``.
       permissions:
         - level: CAN_READ
-          group_name: "account users"
+          group_name: "users"
 
   jobs:
     dqx_task_runner:
@@ -236,8 +346,10 @@ resources:
           spec:
             client: "5"
             dependencies:
+              # Local task-runner wheel (not published) + the library pinned
+              # from the registry — same version as the app, no local dqx build.
               - ./.build/tasks/databricks_labs_dqx_task_runner-*.whl
-              - ./.build/databricks_labs_dqx-*.whl
+              - databricks-labs-dqx==0.15.0
       parameters:
         - name: "task_type"
           default: "profile"
@@ -254,38 +366,5 @@ resources:
         - name: "requesting_user"
           default: "unknown"
 
-# Targets: at minimum each one sets ``catalog_name``,
-# ``dqx_service_principal_application_id``, and ``sql_warehouse_id``.
-# Every other variable defaults sensibly; override per target as needed.
-#
-# This bundle ships a SINGLE canonical target, ``dqx-app-demo``. It uses Mode B
-# (reuse an existing warehouse): a literal ``sql_warehouse_id`` and no
-# ``sql_warehouses`` block. To add a Mode A (bundle-managed warehouse) target
-# instead, declare a local ``sql_warehouses.dqx_sql_warehouse`` block and point
-# ``sql_warehouse_id`` at ``${resources.sql_warehouses.dqx_sql_warehouse.id}``.
-# See DEPLOYMENT.md → "Choosing a SQL warehouse mode" for the full comparison.
-#
-# To disable Lakebase, remove the ``database_instances.lakebase`` block and the
-# ``dqx-lakebase`` app resource binding, then set ``lakebase_instance_name: "-"``
-# (OLTP tables fall back to Delta via the ``MigrationRunner`` path).
-#
-# One-button Postgres: a ``postgres_roles`` block makes the app SP's
-# CREATE-schema privilege on ``databricks_postgres`` bundle-managed. It requires
-# Databricks CLI >= 1.4.0 and is for FRESH workspaces; ``dqx-app-demo`` omits it
-# because its app SP's Postgres role already exists (see the note on the target
-# below). The full block is documented in DEPLOYMENT.md.
-targets:
-  # The single canonical target for this workspace. Marked default so a bare
-  # ``bundle deploy`` (no ``-t``) resolves to it.
-  dev:
-    default: true
-    workspace:
-      profile: <your-profile>
-    variables:
-      catalog_name: <your-catalog>
-      dqx_service_principal_application_id: <your-service-principal-application-id>
-      # Mode B: literal ID of an existing warehouse (bundle never manages it).
-      sql_warehouse_id: "<existing-warehouse-id>"
-      lakebase_instance_name: <existing-lakebase-instance>
-    presets:
-      trigger_pause_status: PAUSED
+# Deploy targets are defined in the untracked ``target.dev.yml`` (see the
+# ``include`` above and ``target.dev.yml.example``).
