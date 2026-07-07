@@ -2,7 +2,6 @@ import SidebarLayout from "@/components/layout/SidebarLayout";
 import { createFileRoute, Link, useLocation } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
-import { usePermissions } from "@/hooks/use-permissions";
 import {
   ClipboardCheck,
   History,
@@ -11,7 +10,7 @@ import {
   ExternalLink,
   Library,
   Table2,
-  Database,
+  Boxes,
   Upload,
 } from "lucide-react";
 import {
@@ -27,7 +26,6 @@ export const Route = createFileRoute("/_sidebar")({
 
 function Layout() {
   const location = useLocation();
-  const { canRunRules } = usePermissions();
   const { t } = useTranslation();
 
   // The old "Create Rules" expandable group (Single-table rules,
@@ -52,7 +50,7 @@ function Layout() {
             {/* Rules Registry — reusable, versioned, governed rule
                 definitions (Phase 2). Target sidebar per the design
                 spec (§10): Rules Registry · Monitored Tables · Import
-                Rules · Drafts & Review — separator — Run Rules · Runs
+                Rules · Drafts & Review — separator — Data Products · Runs
                 History · Insights. */}
             <SidebarMenuItem>
               <Link
@@ -88,25 +86,29 @@ function Layout() {
               </Link>
             </SidebarMenuItem>
 
-            {/* Run Rules — only visible to users with the RUNNER role
-                (admins are implicit runners). Authors/approvers without
-                an explicit RUNNER mapping cannot see this entry. */}
-            {canRunRules && (
+            {/* Data Products — group monitored tables into governed,
+                versioned, schedulable bundles (Phase 11). Visible to all
+                roles, same as Monitored Tables — run actions inside the
+                product itself are gated to RUNNER (admins implicit).
+                Replaces the old runner-only "Run Rules" entry; ``/runs``
+                now redirects here (Phase-5 redirect pattern) so old
+                bookmarks don't 404. */}
             <SidebarMenuItem>
               <Link
-                to="/runs"
+                to="/data-products"
                 className={cn(
                   "flex items-center gap-2 p-2 rounded-lg",
-                  location.pathname.startsWith("/runs")
+                  location.pathname.startsWith("/data-products") ||
+                    (location.pathname.startsWith("/runs") &&
+                      !location.pathname.startsWith("/runs-history"))
                     ? "bg-sidebar-accent text-sidebar-accent-foreground"
                     : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
                 )}
               >
-                <Database size={16} />
-                <span>{t("sidebar.runRules")}</span>
+                <Boxes size={16} />
+                <span>{t("sidebar.dataProducts")}</span>
               </Link>
             </SidebarMenuItem>
-            )}
 
             {/* Import Rules — bulk DQX YAML import or data-contract-driven
                 generation. ``/rules/from-contract`` still resolves (it
