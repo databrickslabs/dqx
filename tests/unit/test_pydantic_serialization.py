@@ -15,6 +15,7 @@ from unittest.mock import create_autospec
 
 import pytest
 from pydantic import ValidationError
+from pydantic_core import ErrorDetails
 from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.check_funcs import is_not_null
@@ -312,6 +313,23 @@ def test_checks_validator_reports_criticality_and_argument_errors_together():
     assert any("No arguments provided for function 'is_not_null'" in e for e in status.errors)
 
 
+def test_checks_validator_reports_criticality_and_malformed_check_block_together():
+    """A bad criticality must surface even when the 'check' block itself is malformed.
+
+    Regression for the parity gap where a field-level failure (here, a missing 'function') skips
+    the model validator that checks criticality, so only the check-block error was reported. The
+    pre-migration validator always reported criticality regardless of the check block.
+    """
+    check = {
+        "criticality": "bogus",
+        "check": {"arguments": {"column": "a"}},  # missing required 'function'
+    }
+    status = ChecksValidator.validate_checks([check])
+    assert status.has_errors
+    assert any("Invalid 'criticality' value: 'bogus'" in e for e in status.errors)
+    assert any("'function' field is missing in the 'check' block" in e for e in status.errors)
+
+
 def test_checks_validator_missing_check_field():
     """ChecksValidator must report missing 'check' field."""
     status = ChecksValidator.validate_checks([{"criticality": "error"}])
@@ -432,7 +450,7 @@ def test_project_to_check_schema_strips_storage_columns():
 # ---------------------------------------------------------------------------
 
 
-def _first_error_for_loc(check: dict, loc: tuple) -> dict:
+def _first_error_for_loc(check: dict, loc: tuple) -> ErrorDetails:
     """Return the first Pydantic error whose loc matches, validating with the standard context."""
     try:
         CheckSpec.model_validate(check, context={"raw_check": check})
@@ -517,6 +535,36 @@ def test_checks_validator_unknown_function_reported_when_enabled():
     status = ChecksValidator.validate_checks(checks)
     assert status.has_errors
     assert any("is not defined" in e for e in status.errors)
+
+
+def test_checks_validator_argument_type_check_is_strict():
+    """Argument type validation must be strict — a stringy int must not be coerced through.
+
+    The TypeAdapter-based check runs in strict mode, so "5" does not silently satisfy an int
+    parameter (which lax pydantic coercion would allow); a real int does.
+    """
+    bad = [{"check": {"function": "is_older_than_n_days", "arguments": {"column": "a", "days": "5"}}}]
+    status = ChecksValidator.validate_checks(bad)
+    assert status.has_errors
+    assert any("Argument 'days' should be of type 'int'" in e for e in status.errors), status.errors
+
+    good = [{"check": {"function": "is_older_than_n_days", "arguments": {"column": "a", "days": 5}}}]
+    assert not ChecksValidator.validate_checks(good).has_errors
+
+
+def test_check_spec_validate_check_binds_tolerance_context():
+    """CheckSpec.validate_check must bind the semantic-validation context.
+
+    Regression for the footgun where a bare *model_validate* ignored the tolerance flag and
+    rejected every unknown function. Going through *validate_check* honours it.
+    """
+    check = {"check": {"function": "totally_unknown_func", "arguments": {}}}
+    # Tolerated when the context flag routes through validate_check.
+    spec = CheckSpec.validate_check(check, None, False)
+    assert spec.check.function == "totally_unknown_func"
+    # Enforced by default.
+    with pytest.raises(ValidationError):
+        CheckSpec.validate_check(check)
 
 
 # ---------------------------------------------------------------------------

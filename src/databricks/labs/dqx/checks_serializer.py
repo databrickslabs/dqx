@@ -270,7 +270,7 @@ class ChecksDeserializer:
         Raises:
             InvalidCheckError: If any dictionary is invalid or unsupported.
         """
-        status, specs = ChecksValidator._validate_and_parse(checks, self.custom_checks)
+        status, specs = ChecksValidator.validate_and_parse(checks, self.custom_checks)
         if status.has_errors:
             raise InvalidCheckError(str(status))
 

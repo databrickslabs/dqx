@@ -2,16 +2,45 @@ import logging
 import functools as ft
 import inspect
 from collections.abc import Callable
-from types import UnionType
 from typing import Any, get_origin, get_args
 
-from pydantic import BaseModel, ConfigDict, ValidationError, ValidationInfo, field_validator, model_validator
-from pydantic_core import ErrorDetails
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    PydanticSchemaGenerationError,
+    TypeAdapter,
+    ValidationError,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
+from pydantic_core import ErrorDetails, SchemaError
 
 from databricks.labs.dqx.checks_resolver import resolve_check_function
 from databricks.labs.dqx.rule import Criticality
 
 logger = logging.getLogger(__name__)
+
+
+@ft.lru_cache(maxsize=None)
+def _cached_signature(func: Callable) -> inspect.Signature:
+    """Return the (cached) signature of a check function.
+
+    Keyed on the resolved *func*, so *inspect.signature* runs once per distinct function across a
+    whole validation pass rather than once per check.
+    """
+    return inspect.signature(func)
+
+
+@ft.lru_cache(maxsize=None)
+def _type_adapter(annotation: Any) -> TypeAdapter[Any]:
+    """Build (and cache) a strict *TypeAdapter* for a check-function parameter annotation.
+
+    Cached on the annotation so each distinct parameter type builds its validation schema once.
+    *arbitrary_types_allowed* lets pydantic fall back to *isinstance* for non-pydantic types such
+    as *pyspark.sql.Column*.
+    """
+    return TypeAdapter(annotation, config=ConfigDict(arbitrary_types_allowed=True))
 
 
 class CheckBlock(BaseModel):
@@ -47,7 +76,12 @@ class CheckSpec(BaseModel):
     (required 'check' key, known field types, for_each_column shape) is done by Pydantic field
     validation. Semantic validation — criticality enum value, function resolution and signature-
     based argument validation — runs in *_validate_semantics* (a *model_validator*) so a bare
-    *CheckSpec.model_validate(check, context=...)* fully validates a check with no second pass.
+    *CheckSpec.validate_check(check, ...)* fully validates a check with no second pass.
+
+    Pydantic skips *model_validator(mode="after")* when any field fails, so a malformed 'check'
+    block would suppress the sibling *criticality* error raised there. The pre-migration validator
+    always reported criticality regardless of the check block, so *ChecksValidator.validate_and_parse*
+    reproduces that check (via *criticality_errors*) on the field-failure path to preserve parity.
 
     The *model_validate* call accepts a *context* dict with:
         - *raw_check*: the original check dict, included verbatim in error messages for context.
@@ -84,7 +118,8 @@ class CheckSpec(BaseModel):
         not resolve a function to validate arguments against. When the check block is well-formed,
         a bad *criticality* value and argument errors are collected together and raised as a single
         *ValueError*, so a single validation pass reports as many problems as the hand-rolled
-        validator did.
+        validator did. On the field-failure path this validator does not run, so
+        *ChecksValidator.validate_and_parse* supplements the criticality check to preserve parity.
 
         Args:
             info: Pydantic validation info; *info.context* carries *raw_check* and the custom-
@@ -103,7 +138,7 @@ class CheckSpec(BaseModel):
         custom_check_functions = context.get("custom_check_functions")
         validate_custom_check_functions = context.get("validate_custom_check_functions", True)
 
-        messages = self._criticality_errors(check_repr)
+        messages = self.criticality_errors(check_repr)
         messages += self._function_and_argument_errors(
             check_repr, custom_check_functions, validate_custom_check_functions
         )
@@ -111,13 +146,27 @@ class CheckSpec(BaseModel):
             raise ValueError("\n".join(messages))
         return self
 
-    def _criticality_errors(self, check: dict) -> list[str]:
-        """Return the criticality-value error message (as a one-item list) or an empty list."""
+    @classmethod
+    def criticality_errors(cls, check: dict) -> list[str]:
+        """Return the criticality-value error (as a one-item list) or an empty list.
+
+        Reads the criticality from the raw *check* dict so it can run both inside
+        *_validate_semantics* and standalone (from *ChecksValidator.validate_and_parse*) when a
+        field error has skipped the model validator. Non-string criticality values are left to the
+        field-level type error and skipped here, so they are not reported twice.
+
+        Args:
+            check: The check dict to read *criticality* from and include in the message.
+
+        Returns:
+            A single-element list with the error message, or an empty list when valid.
+        """
+        criticality = check.get("criticality", Criticality.ERROR.value)
         valid = {c.value for c in Criticality}
-        if self.criticality in valid:
+        if not isinstance(criticality, str) or criticality in valid:
             return []
         return [
-            f"Invalid 'criticality' value: '{self.criticality}'. "
+            f"Invalid 'criticality' value: '{criticality}'. "
             f"Expected '{Criticality.WARN.value}' or '{Criticality.ERROR.value}'. "
             f"Check details: {check}"
         ]
@@ -153,12 +202,7 @@ class CheckSpec(BaseModel):
         Returns:
             A list of error messages if any validation fails, otherwise an empty list.
         """
-
-        @ft.lru_cache(None)
-        def cached_signature(check_func):
-            return inspect.signature(check_func)
-
-        func_parameters = cached_signature(func).parameters
+        func_parameters = _cached_signature(func).parameters
 
         effective_arguments = dict(self.check.arguments)  # copy to avoid modifying the original
         for_each_column = self.check.for_each_column or []
@@ -205,7 +249,7 @@ class CheckSpec(BaseModel):
                 if get_origin(expected_type) is list:
                     expected_type_args = get_args(expected_type)
                     errors.extend(CheckSpec._validate_func_list_args(arg, func, check, expected_type_args, value))
-                elif not CheckSpec._check_type(value, expected_type):
+                elif not CheckSpec._matches_type(value, expected_type):
                     expected_type_name = getattr(expected_type, "__name__", str(expected_type))
                     errors.append(
                         f"Argument '{arg}' should be of type '{expected_type_name}' for function '{func.__name__}' "
@@ -245,57 +289,33 @@ class CheckSpec(BaseModel):
         return errors
 
     @staticmethod
-    def _check_type(value, expected_type) -> bool:
-        origin = get_origin(expected_type)
-        args = get_args(expected_type)
+    def _matches_type(value: object, expected_type: Any) -> bool:
+        """Return whether *value* satisfies *expected_type* under strict validation.
 
+        Delegates runtime type checking to *pydantic.TypeAdapter* in strict mode (no lax coercion,
+        so a stringy *"5"* does not pass an *int* parameter) rather than a hand-rolled type walker,
+        keeping argument validation consistent with how *CheckSpec* validates its own fields.
+        Annotations pydantic cannot build a schema for are treated as satisfied, mirroring the
+        previous leniency toward unrecognised annotations.
+
+        Args:
+            value: The argument value supplied in the check metadata.
+            expected_type: The parameter annotation to validate against.
+
+        Returns:
+            True if *value* is valid for *expected_type* (or the type cannot be schematised).
+        """
         if expected_type is inspect.Parameter.empty:
             return True  # no type hint, assume valid
-
-        if origin is UnionType:
-            # Handle Optional[X] as Union[X, NoneType]
-            return CheckSpec._check_union_type(args, value)
-
-        if origin is list:
-            return CheckSpec._check_list_type(args, value)
-
-        if origin is dict:
-            return CheckSpec._check_dict_type(args, value)
-
-        if origin is tuple:
-            return CheckSpec._check_tuple_type(args, value)
-
-        if origin:
-            return isinstance(value, origin)
-        return isinstance(value, expected_type)
-
-    @staticmethod
-    def _check_union_type(args, value):
-        return any(CheckSpec._check_type(value, arg) for arg in args)
-
-    @staticmethod
-    def _check_list_type(args, value):
-        if not isinstance(value, list):
+        try:
+            adapter = _type_adapter(expected_type)
+        except (PydanticSchemaGenerationError, SchemaError):
+            return True  # annotation pydantic cannot schematise; stay lenient as before
+        try:
+            adapter.validate_python(value, strict=True)
+        except ValidationError:
             return False
-        if not args:
-            return True  # no inner type to check
-        return all(CheckSpec._check_type(item, args[0]) for item in value)
-
-    @staticmethod
-    def _check_dict_type(args, value):
-        if not isinstance(value, dict):
-            return False
-        if not args or len(args) != 2:
-            return True
-        return all(CheckSpec._check_type(k, args[0]) and CheckSpec._check_type(v, args[1]) for k, v in value.items())
-
-    @staticmethod
-    def _check_tuple_type(args, value):
-        if not isinstance(value, tuple):
-            return False
-        if len(args) == 2 and args[1] is Ellipsis:
-            return all(CheckSpec._check_type(item, args[0]) for item in value)
-        return len(value) == len(args) and all(CheckSpec._check_type(item, arg) for item, arg in zip(value, args))
+        return True
 
     @staticmethod
     def _validate_func_list_args(
@@ -328,6 +348,41 @@ class CheckSpec(BaseModel):
                     f"for function '{func.__name__}' in the 'arguments' block: {check}"
                 )
         return errors
+
+    @classmethod
+    def validate_check(
+        cls,
+        check: dict,
+        custom_check_functions: dict[str, Callable] | None = None,
+        validate_custom_check_functions: bool = True,
+    ) -> "CheckSpec":
+        """Validate and parse a single check dict, binding the semantic-validation context.
+
+        This is the supported entry point: it wires up the *context* that *_validate_semantics* (and
+        the *criticality_errors* check it runs) rely on, so callers cannot accidentally invoke *model_validate*
+        without it (which would run strict function validation against the projected model and
+        ignore the *validate_custom_check_functions* tolerance flag).
+
+        Args:
+            check: The check metadata dict to validate.
+            custom_check_functions: Optional mapping of custom function names to callables.
+            validate_custom_check_functions: If False, unknown/unregistered functions are tolerated
+                (used by the LLM and profiler paths).
+
+        Returns:
+            The validated *CheckSpec*.
+
+        Raises:
+            ValidationError: If the check fails structural or semantic validation.
+        """
+        return cls.model_validate(
+            check,
+            context={
+                "raw_check": check,
+                "custom_check_functions": custom_check_functions,
+                "validate_custom_check_functions": validate_custom_check_functions,
+            },
+        )
 
 
 class ChecksValidationStatus(BaseModel):
@@ -372,12 +427,13 @@ class ChecksValidator:
     """
     Validates declarative quality rules (checks).
 
-    All validation lives on the *CheckSpec* Pydantic model: structural shape via field validation,
-    and semantic checks (criticality enum value, function resolution, signature-based argument
-    validation) via its *model_validator*. This class is a thin orchestration layer that runs
-    *CheckSpec.model_validate* per check and translates any Pydantic *ValidationError* into the
-    human-readable messages callers and tests expect. *_validate_and_parse* additionally returns the
-    parsed specs so callers (e.g. the deserializer) reuse them instead of parsing a second time.
+    All validation lives on the *CheckSpec* Pydantic model: structural shape and the criticality
+    value via field validation, and the remaining semantic checks (function resolution, signature-
+    based argument validation) via its *model_validator*. This class is a thin orchestration layer
+    that runs *CheckSpec.validate_check* per check and translates any Pydantic *ValidationError*
+    into the human-readable messages callers and tests expect. *validate_and_parse* additionally
+    returns the parsed specs so callers (e.g. the deserializer) reuse them instead of parsing a
+    second time.
     """
 
     @staticmethod
@@ -397,18 +453,18 @@ class ChecksValidator:
         Returns:
             A *ChecksValidationStatus* accumulating all errors found.
         """
-        status, _ = ChecksValidator._validate_and_parse(checks, custom_check_functions, validate_custom_check_functions)
+        status, _ = ChecksValidator.validate_and_parse(checks, custom_check_functions, validate_custom_check_functions)
         return status
 
     @staticmethod
-    def _validate_and_parse(
+    def validate_and_parse(
         checks: list[dict],
         custom_check_functions: dict[str, Callable] | None = None,
         validate_custom_check_functions: bool = True,
     ) -> tuple[ChecksValidationStatus, list[CheckSpec | None]]:
         """Validate checks and return both the status and the parsed specs.
 
-        Each check is validated exactly once via *CheckSpec.model_validate*. On success the parsed
+        Each check is validated exactly once via *CheckSpec.validate_check*. On success the parsed
         *CheckSpec* is returned so callers can build rules from the typed representation without a
         second parse; on failure *None* is returned in its place and the errors are accumulated.
 
@@ -431,20 +487,35 @@ class ChecksValidator:
                 specs.append(None)
                 continue
             try:
-                spec = CheckSpec.model_validate(
-                    check,
-                    context={
-                        "raw_check": check,
-                        "custom_check_functions": custom_check_functions,
-                        "validate_custom_check_functions": validate_custom_check_functions,
-                    },
-                )
+                spec = CheckSpec.validate_check(check, custom_check_functions, validate_custom_check_functions)
                 specs.append(spec)
             except ValidationError as exc:
                 specs.append(None)
-                status.add_errors(ChecksValidator._translate_validation_error(exc, check))
+                messages = ChecksValidator._translate_validation_error(exc, check)
+                # A field-level failure (e.g. a malformed 'check' block) skips the model validator
+                # that checks criticality. The pre-migration validator always reported criticality
+                # regardless of the check block, so supplement it here to preserve that parity.
+                if ChecksValidator._model_validator_skipped(exc):
+                    messages = CheckSpec.criticality_errors(check) + messages
+                status.add_errors(messages)
 
         return status, specs
+
+    @staticmethod
+    def _model_validator_skipped(exc: ValidationError) -> bool:
+        """Return True if a field-level error prevented the *_validate_semantics* model validator.
+
+        Field errors carry a non-empty *loc*; the model validator raises a root *value_error* with
+        an empty *loc*. So the presence of any error with a *loc* means a field failed and the
+        model validator (which checks criticality) did not run.
+
+        Args:
+            exc: The Pydantic validation error raised for a single check.
+
+        Returns:
+            True if the model validator was skipped due to a field-level error.
+        """
+        return any(error["loc"] for error in exc.errors())
 
     @staticmethod
     def _translate_validation_error(exc: ValidationError, check: dict) -> list[str]:
