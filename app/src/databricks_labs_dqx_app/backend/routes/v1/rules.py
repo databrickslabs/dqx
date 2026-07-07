@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from databricks_labs_dqx_app.backend.common.authorization import UserRole
 from databricks_labs_dqx_app.backend.dependencies import (
     CurrentUserRole,
+    get_monitored_table_version_service,
     get_obo_ws,
     get_rules_catalog_service,
     get_user_catalog_names,
@@ -21,6 +22,7 @@ from databricks_labs_dqx_app.backend.models import (
     SaveRulesIn,
     SetStatusIn,
 )
+from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
 from databricks_labs_dqx_app.backend.services.rules_catalog_service import RulesCatalogService
 
 router = APIRouter()
@@ -30,6 +32,23 @@ _AUTHORS_AND_ABOVE = [UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTH
 _APPROVERS_ONLY = [UserRole.ADMIN, UserRole.RULE_APPROVER]
 
 _SQL_CHECK_PREFIX = "__sql_check__/"
+
+
+def _refreeze_binding_for_rule(version_svc: MonitoredTableVersionService, rule_id: str) -> None:
+    """Best-effort re-freeze of the binding owning materialized check *rule_id*.
+
+    Data Products Task 2 re-freeze hook (design spec §3.2): a per-rule
+    approval or rejection in Drafts & Review changes a binding's approved
+    rule set WITHOUT a table re-approval, so the binding's current version
+    snapshot is rewritten in place (``refrozen_at`` stamped). No-op for a
+    directly-authored (non-registry) rule with no ``applied_rule_id``, or a
+    binding still at version 0. A hook failure must never turn a successful
+    per-rule transition into a 5xx, so failures are logged and swallowed.
+    """
+    try:
+        version_svc.refreeze_for_quality_rule(rule_id)
+    except Exception:  # a bookkeeping refreeze must not fail the approve/reject
+        logger.warning("Re-freeze after status change for rule %s failed", rule_id, exc_info=True)
 
 
 def _catalog_of(fqn: str) -> str:
@@ -372,6 +391,7 @@ def revoke_submission(
 def approve_rules(
     rule_id: str,
     svc: Annotated[RulesCatalogService, Depends(get_rules_catalog_service)],
+    version_svc: Annotated[MonitoredTableVersionService, Depends(get_monitored_table_version_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
     body: SetStatusIn | None = None,
 ) -> RuleCatalogEntryOut:
@@ -381,6 +401,7 @@ def approve_rules(
         user_email = user.user_name or "unknown"
         expected_version = body.expected_version if body else None
         entry = svc.set_status(rule_id, "approved", user_email, expected_version)
+        _refreeze_binding_for_rule(version_svc, rule_id)
         return _entry_to_out(entry)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -417,6 +438,7 @@ def backfill_rule_ids(
 def reject_rules(
     rule_id: str,
     svc: Annotated[RulesCatalogService, Depends(get_rules_catalog_service)],
+    version_svc: Annotated[MonitoredTableVersionService, Depends(get_monitored_table_version_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
     body: SetStatusIn | None = None,
 ) -> RuleCatalogEntryOut:
@@ -426,6 +448,7 @@ def reject_rules(
         user_email = user.user_name or "unknown"
         expected_version = body.expected_version if body else None
         entry = svc.set_status(rule_id, "rejected", user_email, expected_version)
+        _refreeze_binding_for_rule(version_svc, rule_id)
         return _entry_to_out(entry)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

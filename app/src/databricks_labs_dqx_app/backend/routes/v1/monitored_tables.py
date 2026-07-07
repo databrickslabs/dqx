@@ -17,6 +17,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_apply_rules_service,
     get_materializer,
     get_monitored_table_service,
+    get_monitored_table_version_service,
     get_obo_ws,
     get_rule_suggester,
     get_rules_catalog_service,
@@ -33,6 +34,7 @@ from databricks_labs_dqx_app.backend.models import (
     MonitoredTableProfileOut,
     MonitoredTableReviewOut,
     MonitoredTableSummaryOut,
+    MonitoredTableVersionOut,
     RegisterMonitoredTableIn,
     SaveAppliedRulesIn,
     SetAppliedRulePinIn,
@@ -51,6 +53,7 @@ from databricks_labs_dqx_app.backend.services.monitored_table_service import (
     MonitoredTableService,
     MonitoredTableSummary,
 )
+from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
 from databricks_labs_dqx_app.backend.services.rule_suggester import RuleSuggester
 from databricks_labs_dqx_app.backend.services.rules_catalog_service import RulesCatalogService
 
@@ -234,6 +237,36 @@ def get_monitored_table_profile(
     except Exception as e:
         logger.error(f"Failed to get profile for monitored table {binding_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to get profile: {e}")
+
+
+# ------------------------------------------------------------------
+# Frozen version snapshots (Data Products Task 2)
+# ------------------------------------------------------------------
+
+
+@router.get(
+    "/{binding_id}/versions",
+    response_model=list[MonitoredTableVersionOut],
+    operation_id="listMonitoredTableVersions",
+    dependencies=[require_role(*_ALL_ROLES)],
+)
+def list_monitored_table_versions(
+    binding_id: str,
+    version_svc: Annotated[MonitoredTableVersionService, Depends(get_monitored_table_version_service)],
+) -> list[MonitoredTableVersionOut]:
+    """List a monitored table's frozen approved-rule-set version snapshots (newest first).
+
+    Metadata only — ``checks_json`` is omitted; the frozen checks for a
+    specific version are resolved separately at run time. Backs the
+    version-pin dropdown on the monitored-table Run action and the product
+    member pin picker.
+    """
+    try:
+        versions = version_svc.list_versions(binding_id)
+        return [MonitoredTableVersionOut.from_domain(v) for v in versions]
+    except Exception as e:
+        logger.error(f"Failed to list versions for monitored table {binding_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to list monitored table versions: {e}")
 
 
 # ------------------------------------------------------------------
@@ -537,6 +570,7 @@ def approve_monitored_table(
     binding_id: str,
     monitored_tables_svc: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
     rules_catalog: Annotated[RulesCatalogService, Depends(get_rules_catalog_service)],
+    version_svc: Annotated[MonitoredTableVersionService, Depends(get_monitored_table_version_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
 ) -> MonitoredTableReviewOut:
     """Approve a monitored table — approving every ``pending_approval`` check mapped to it.
@@ -545,6 +579,12 @@ def approve_monitored_table(
     identical to a hand-approval, then rolls the binding up to ``approved``.
     From here the scheduler picks the checks up (it runs only ``approved``
     ``dq_quality_rules`` rows).
+
+    Table approval is the ONLY event that bumps the monitored-table version:
+    after the binding rolls up to ``approved`` the newly-approved rule set is
+    frozen as the next version (design spec §3.2) via
+    :meth:`MonitoredTableVersionService.freeze_new_version`, and the new
+    version is returned in the response.
 
     Only a binding currently ``pending_approval`` can be approved — mirrors
     the per-rule transition guard (``RulesCatalogService.VALID_TRANSITIONS``)
@@ -575,7 +615,12 @@ def approve_monitored_table(
         table = monitored_tables_svc.set_status(
             binding_id, _rollup_binding_status(monitored_tables_svc, binding_id), user_email
         )
-        return MonitoredTableReviewOut(table=MonitoredTableOut.from_domain(table), affected_check_count=approved)
+        new_version = version_svc.freeze_new_version(binding_id, user_email)
+        return MonitoredTableReviewOut(
+            table=MonitoredTableOut.from_domain(table),
+            affected_check_count=approved,
+            new_version=new_version,
+        )
     except HTTPException:
         raise
     except RuntimeError as e:

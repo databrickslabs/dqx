@@ -24,7 +24,7 @@ from databricks_labs_dqx_app.backend.models import (
     SetAppliedRuleSeverityOverrideIn,
 )
 from databricks_labs_dqx_app.backend.common.authorization import UserRole
-from databricks_labs_dqx_app.backend.registry_models import AppliedRule, MonitoredTable
+from databricks_labs_dqx_app.backend.registry_models import AppliedRule, MonitoredTable, MonitoredTableVersion
 from databricks_labs_dqx_app.backend.routes.v1 import monitored_tables as mt_routes
 from databricks_labs_dqx_app.backend.routes.v1.monitored_tables import (
     apply_rule_to_table,
@@ -33,6 +33,7 @@ from databricks_labs_dqx_app.backend.routes.v1.monitored_tables import (
     delete_monitored_table,
     get_monitored_table,
     get_monitored_table_profile,
+    list_monitored_table_versions,
     list_monitored_tables,
     register_monitored_table,
     reject_monitored_table,
@@ -486,6 +487,32 @@ class TestSubmitMonitoredTable:
         assert excinfo.value.status_code == 404
 
 
+class TestListMonitoredTableVersions:
+    def test_maps_domain_versions_to_dto_newest_first(self):
+        version_svc = MagicMock()
+        version_svc.list_versions.return_value = [
+            MonitoredTableVersion(id="v2", binding_id="b1", version=2, state_json={"applied_rules": []}),
+            MonitoredTableVersion(id="v1", binding_id="b1", version=1),
+        ]
+        result = list_monitored_table_versions("b1", version_svc=version_svc)
+        assert [v.version for v in result] == [2, 1]
+        # checks_json is never surfaced by this listing endpoint.
+        assert not hasattr(result[0], "checks_json")
+        version_svc.list_versions.assert_called_once_with("b1")
+
+    def test_empty_when_never_approved(self):
+        version_svc = MagicMock()
+        version_svc.list_versions.return_value = []
+        assert list_monitored_table_versions("b1", version_svc=version_svc) == []
+
+    def test_service_error_raises_500(self):
+        version_svc = MagicMock()
+        version_svc.list_versions.side_effect = RuntimeError("boom")
+        with pytest.raises(HTTPException) as excinfo:
+            list_monitored_table_versions("b1", version_svc=version_svc)
+        assert excinfo.value.status_code == 500
+
+
 class TestApproveMonitoredTable:
     def test_approves_pending_checks_and_rolls_up(self):
         svc = MagicMock()
@@ -496,34 +523,59 @@ class TestApproveMonitoredTable:
         ]
         svc.set_status.return_value = _table(status="approved")
         rules_catalog = MagicMock()
+        version_svc = MagicMock()
+        version_svc.freeze_new_version.return_value = 1
         result = approve_monitored_table(
-            "b1", monitored_tables_svc=svc, rules_catalog=rules_catalog, obo_ws=_mock_obo_ws()
+            "b1", monitored_tables_svc=svc, rules_catalog=rules_catalog, version_svc=version_svc, obo_ws=_mock_obo_ws()
         )
         assert result.table.status == "approved"
         assert result.affected_check_count == 2
         rules_catalog.set_status.assert_any_call("r1", "approved", "alice@x")
         svc.set_status.assert_called_once_with("b1", "approved", "alice@x")
 
+    def test_approve_freezes_a_new_version_and_returns_it(self):
+        """Table approval bumps + freezes the version; the response carries it."""
+        svc = MagicMock()
+        svc.get.return_value = MonitoredTableDetail(table=_table(status="pending_approval"), applied_rules=[])
+        svc.list_materialized_rule_statuses.side_effect = [
+            [("r1", "pending_approval")],
+            [("r1", "approved")],
+        ]
+        svc.set_status.return_value = _table(status="approved")
+        version_svc = MagicMock()
+        version_svc.freeze_new_version.return_value = 2  # 1 -> 2 bump
+        result = approve_monitored_table(
+            "b1", monitored_tables_svc=svc, rules_catalog=MagicMock(), version_svc=version_svc, obo_ws=_mock_obo_ws()
+        )
+        version_svc.freeze_new_version.assert_called_once_with("b1", "alice@x")
+        assert result.new_version == 2
+
     def test_missing_binding_raises_404(self):
         svc = MagicMock()
         svc.get.return_value = None
+        version_svc = MagicMock()
         with pytest.raises(HTTPException) as excinfo:
-            approve_monitored_table("b1", monitored_tables_svc=svc, rules_catalog=MagicMock(), obo_ws=_mock_obo_ws())
+            approve_monitored_table(
+                "b1", monitored_tables_svc=svc, rules_catalog=MagicMock(), version_svc=version_svc, obo_ws=_mock_obo_ws()
+            )
         assert excinfo.value.status_code == 404
         svc.set_status.assert_not_called()
+        version_svc.freeze_new_version.assert_not_called()
 
     def test_approve_on_draft_binding_raises_409_and_state_unchanged(self):
         svc = MagicMock()
         svc.get.return_value = MonitoredTableDetail(table=_table(status="draft"), applied_rules=[])
         rules_catalog = MagicMock()
+        version_svc = MagicMock()
         with pytest.raises(HTTPException) as excinfo:
             approve_monitored_table(
-                "b1", monitored_tables_svc=svc, rules_catalog=rules_catalog, obo_ws=_mock_obo_ws()
+                "b1", monitored_tables_svc=svc, rules_catalog=rules_catalog, version_svc=version_svc, obo_ws=_mock_obo_ws()
             )
         assert excinfo.value.status_code == 409
-        # Neither the checks nor the binding's own status should be touched.
+        # Neither the checks, the binding's own status, nor the version should be touched.
         rules_catalog.set_status.assert_not_called()
         svc.set_status.assert_not_called()
+        version_svc.freeze_new_version.assert_not_called()
 
 
 class TestRejectMonitoredTable:

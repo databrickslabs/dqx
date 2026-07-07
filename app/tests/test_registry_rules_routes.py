@@ -53,6 +53,18 @@ def _mock_obo_ws(user_email: str = "alice@x") -> MagicMock:
     return obo
 
 
+def _no_auto_upgrade() -> MagicMock:
+    """App-settings mock with auto-upgrade OFF (the default posture).
+
+    Keeps the Data Products Task 2 re-freeze hook dormant for the base
+    approve-registry-rule cases so they assert the pre-existing publish
+    behaviour unchanged; the auto-upgrade ON path has its own test.
+    """
+    app_settings = MagicMock()
+    app_settings.get_auto_upgrade_without_approval.return_value = False
+    return app_settings
+
+
 class TestListAndGet:
     def test_list_maps_domain_rules_to_dto(self):
         svc = MagicMock()
@@ -205,7 +217,7 @@ class TestLifecycleRoutes:
         embeddings = MagicMock()
         materializer = MagicMock()
         result = approve_registry_rule(
-            "r1", svc=svc, embeddings=embeddings, materializer=materializer, obo_ws=_mock_obo_ws()
+            "r1", svc=svc, embeddings=embeddings, materializer=materializer, version_svc=MagicMock(), app_settings=_no_auto_upgrade(), obo_ws=_mock_obo_ws()
         )
         assert result.status == "approved"
         assert result.version == 1
@@ -216,7 +228,7 @@ class TestLifecycleRoutes:
         svc.approve.return_value = published
         embeddings = MagicMock()
         materializer = MagicMock()
-        approve_registry_rule("r1", svc=svc, embeddings=embeddings, materializer=materializer, obo_ws=_mock_obo_ws())
+        approve_registry_rule("r1", svc=svc, embeddings=embeddings, materializer=materializer, version_svc=MagicMock(), app_settings=_no_auto_upgrade(), obo_ws=_mock_obo_ws())
         embeddings.embed_and_store.assert_called_once_with(published)
 
     def test_approve_propagates_unexpected_embedding_errors_as_500(self):
@@ -230,7 +242,7 @@ class TestLifecycleRoutes:
         materializer = MagicMock()
         with pytest.raises(HTTPException) as excinfo:
             approve_registry_rule(
-                "r1", svc=svc, embeddings=embeddings, materializer=materializer, obo_ws=_mock_obo_ws()
+                "r1", svc=svc, embeddings=embeddings, materializer=materializer, version_svc=MagicMock(), app_settings=_no_auto_upgrade(), obo_ws=_mock_obo_ws()
             )
         assert excinfo.value.status_code == 500
 
@@ -243,7 +255,7 @@ class TestLifecycleRoutes:
         svc.approve.return_value = published
         embeddings = MagicMock()
         materializer = MagicMock()
-        approve_registry_rule("r1", svc=svc, embeddings=embeddings, materializer=materializer, obo_ws=_mock_obo_ws())
+        approve_registry_rule("r1", svc=svc, embeddings=embeddings, materializer=materializer, version_svc=MagicMock(), app_settings=_no_auto_upgrade(), obo_ws=_mock_obo_ws())
         materializer.rematerialize_for_rule.assert_called_once_with("r1")
 
     def test_approve_propagates_unexpected_materializer_errors_as_500(self):
@@ -254,7 +266,7 @@ class TestLifecycleRoutes:
         materializer.rematerialize_for_rule.side_effect = TypeError("boom")
         with pytest.raises(HTTPException) as excinfo:
             approve_registry_rule(
-                "r1", svc=svc, embeddings=embeddings, materializer=materializer, obo_ws=_mock_obo_ws()
+                "r1", svc=svc, embeddings=embeddings, materializer=materializer, version_svc=MagicMock(), app_settings=_no_auto_upgrade(), obo_ws=_mock_obo_ws()
             )
         assert excinfo.value.status_code == 500
 
@@ -283,7 +295,7 @@ class TestLifecycleRoutes:
         materializer = MagicMock()
         with pytest.raises(HTTPException) as excinfo:
             approve_registry_rule(
-                "r1", svc=svc, embeddings=embeddings, materializer=materializer, obo_ws=_mock_obo_ws()
+                "r1", svc=svc, embeddings=embeddings, materializer=materializer, version_svc=MagicMock(), app_settings=_no_auto_upgrade(), obo_ws=_mock_obo_ws()
             )
         assert excinfo.value.status_code == 404
 

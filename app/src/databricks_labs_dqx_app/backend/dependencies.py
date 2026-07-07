@@ -31,6 +31,7 @@ from .services.registry_service import RegistryService
 from .services.monitored_table_service import MonitoredTableService
 from .services.apply_rules_service import ApplyRulesService
 from .services.materializer import Materializer
+from .services.monitored_table_versions import MonitoredTableVersionService
 from .services.rule_embeddings import RuleEmbeddingsService
 from .services.rule_retriever import RuleRetriever, VectorSearchRetriever
 from .services.rule_suggester import RuleSuggester
@@ -319,6 +320,20 @@ async def get_materializer(
 ) -> Materializer:
     """Create a Materializer wired to the registry, monitored-table, and settings services."""
     return Materializer(sql=sql, registry=registry, monitored_tables=monitored_tables, app_settings=app_settings)
+
+
+async def get_monitored_table_version_service(
+    sql: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
+    monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
+    rules_catalog: Annotated[RulesCatalogService, Depends(get_rules_catalog_service)],
+) -> MonitoredTableVersionService:
+    """Create a MonitoredTableVersionService routed at the OLTP executor.
+
+    Reads the binding's approved rows via ``RulesCatalogService`` and the
+    applied-rule linkage via ``MonitoredTableService`` to freeze/re-freeze
+    ``dq_monitored_table_versions`` snapshots.
+    """
+    return MonitoredTableVersionService(sql=sql, monitored_tables=monitored_tables, rules_catalog=rules_catalog)
 
 
 async def get_rule_embeddings_service(
@@ -610,6 +625,7 @@ __all__ = [
     "get_monitored_table_service",
     "get_apply_rules_service",
     "get_materializer",
+    "get_monitored_table_version_service",
     "get_discovery_service",
     "get_view_service",
     "get_job_service",

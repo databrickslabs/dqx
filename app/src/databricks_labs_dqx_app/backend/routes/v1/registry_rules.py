@@ -15,8 +15,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from databricks_labs_dqx_app.backend.common.authorization import UserRole
 from databricks_labs_dqx_app.backend.dependencies import (
+    get_app_settings_service,
     get_apply_rules_service,
     get_materializer,
+    get_monitored_table_version_service,
     get_obo_ws,
     get_registry_service,
     get_rule_embeddings_service,
@@ -32,8 +34,10 @@ from databricks_labs_dqx_app.backend.models import (
     RegistryRuleVersionOut,
     UpdateRegistryRuleIn,
 )
+from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.services.apply_rules_service import ApplyRulesService
 from databricks_labs_dqx_app.backend.services.materializer import Materializer
+from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
 from databricks_labs_dqx_app.backend.services.rule_embeddings import RuleEmbeddingsService
 
@@ -266,6 +270,8 @@ def approve_registry_rule(
     svc: Annotated[RegistryService, Depends(get_registry_service)],
     embeddings: Annotated[RuleEmbeddingsService, Depends(get_rule_embeddings_service)],
     materializer: Annotated[Materializer, Depends(get_materializer)],
+    version_svc: Annotated[MonitoredTableVersionService, Depends(get_monitored_table_version_service)],
+    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
 ) -> RegistryRuleOut:
     """Approve (publish) a pending registry rule — bumps version and freezes a snapshot.
@@ -282,12 +288,33 @@ def approve_registry_rule(
     new version — see ``Materializer.rematerialize_for_rule``. PINNED
     applications are untouched by a publish; they only change via a
     direct edit.
+
+    Data Products Task 2 re-freeze hook (design spec §3.2 (a)): when
+    ``auto_upgrade_without_approval`` is ON, a follower's approved
+    ``dq_quality_rules`` row silently picks up the new content and STAYS
+    approved, changing the binding's approved rule set without a table
+    re-approval — so each re-materialized binding's current version snapshot
+    is re-frozen in place. When auto-upgrade is OFF the changed rows drop to
+    ``pending_approval`` (leaving the binding in a "Modified since vN" state,
+    NOT a re-freeze), so the hook is skipped entirely. Best-effort: a
+    re-freeze failure never turns a successful publish into a 5xx.
     """
     try:
         user_email = _current_user_email(obo_ws)
         rule = svc.approve(rule_id, user_email)
         embeddings.embed_and_store(rule)
-        materializer.rematerialize_for_rule(rule_id)
+        rematerialized = materializer.rematerialize_for_rule(rule_id)
+        if app_settings.get_auto_upgrade_without_approval():
+            for binding_id in rematerialized:
+                try:
+                    version_svc.refreeze_current(binding_id)
+                except Exception:  # a bookkeeping refreeze must not fail the publish
+                    logger.warning(
+                        "Auto-upgrade re-freeze for binding %s after publishing rule %s failed",
+                        binding_id,
+                        rule_id,
+                        exc_info=True,
+                    )
         return RegistryRuleOut.from_domain(rule)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

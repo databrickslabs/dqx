@@ -342,34 +342,50 @@ class Materializer:
         self._cleanup_orphans(applied_ids=applied_ids, written_ids=written_ids)
         return sorted(written_ids)
 
-    def _materialize_applied_rule(
-        self, table_fqn: str, applied: AppliedRule, auto_upgrade: bool
-    ) -> set[str]:
+    def _iter_rendered_checks(
+        self, table_fqn: str, applied: AppliedRule
+    ) -> list[tuple[str, str, dict[str, Any]]] | None:
+        """Resolve + render an applied rule's mapping groups WITHOUT writing anything.
+
+        The single shared rendering path used by both
+        :meth:`_materialize_applied_rule` (which then upserts the rows) and
+        :meth:`render_binding_checks` (which only collects the check dicts) —
+        so the draft-run render is byte-identical to what materialization
+        would persist.
+
+        Returns ``None`` when the applied rule can't be resolved at all
+        (missing registry rule / no ``applied.id`` / unpublished version /
+        missing version snapshot) — the caller must then leave any existing
+        materialized rows untouched, matching the pre-refactor behaviour where
+        these early returns skipped ``_delete_stale_groups``. Otherwise returns
+        the ``(row_id, row_table_fqn, check_dict)`` tuples in mapping-group
+        order — possibly EMPTY when every group failed to render, which the
+        materializer treats as "this application now renders no rows" and
+        cleans up accordingly.
+        """
         registry_rule = self._registry.get_rule(applied.rule_id)
         if registry_rule is None or not applied.id:
             logger.warning("Skipping applied rule %s: registry rule %s not found", applied.id, applied.rule_id)
-            return set()
+            return None
 
         version_number = applied.pinned_version or registry_rule.version
         if version_number <= 0:
             logger.warning("Skipping applied rule %s: rule %s has no published version", applied.id, applied.rule_id)
-            return set()
+            return None
 
         version_snapshot = self._registry.get_version(applied.rule_id, version_number)
         if version_snapshot is None:
             logger.warning(
                 "Skipping applied rule %s: version %d of rule %s not found", applied.id, version_number, applied.rule_id
             )
-            return set()
+            return None
 
         effective_severity = (
             applied.severity_override
             or get_rule_severity(version_snapshot.user_metadata)
             or _DEFAULT_SEVERITY
         )
-        pinned = applied.pinned_version is not None
-        expected_ids: set[str] = set()
-
+        rendered: list[tuple[str, str, dict[str, Any]]] = []
         for idx, group in enumerate(applied.column_mapping):
             row_id = f"{applied.id}-{idx}"
             try:
@@ -387,6 +403,23 @@ class Materializer:
                 logger.warning("Failed to render applied rule %s group %d", applied.id, idx, exc_info=True)
                 continue
             row_table_fqn = self._resolve_table_fqn(table_fqn, is_tableless, registry_rule, version_snapshot)
+            rendered.append((row_id, row_table_fqn, check))
+        return rendered
+
+    def _materialize_applied_rule(
+        self, table_fqn: str, applied: AppliedRule, auto_upgrade: bool
+    ) -> set[str]:
+        rendered = self._iter_rendered_checks(table_fqn, applied)
+        if rendered is None:
+            return set()
+
+        pinned = applied.pinned_version is not None
+        expected_ids: set[str] = set()
+        for row_id, row_table_fqn, check in rendered:
+            # Every rendered row of one applied rule shares the resolved
+            # version; recover it from the provenance stamp render_check writes
+            # so the upsert keeps its original numeric ``version`` column.
+            version_number = int(check["user_metadata"]["registry_version"])
             self._upsert_materialized_row(
                 row_id=row_id,
                 table_fqn=row_table_fqn,
@@ -513,6 +546,41 @@ class Materializer:
     @staticmethod
     def _opt_str(value: str | None) -> str:
         return f"'{escape_sql_string(value)}'" if value else "NULL"
+
+    def render_binding_checks(self, binding_id: str) -> list[dict[str, Any]]:
+        """Render the binding's CURRENT persisted applied-rules state to check dicts.
+
+        Read-only draft-run source (design spec §4.1, ``source == draft``):
+        renders every applied rule under *binding_id* through the SAME
+        :meth:`_iter_rendered_checks` path materialization uses, but writes
+        NOTHING to ``dq_quality_rules``. The returned list is exactly the
+        shape the runner consumes (same as
+        ``RulesCatalogService.get_approved_checks_for_table`` output), so a
+        draft run of a monitored table executes its live authored state
+        without waiting for approval/materialization.
+
+        Reflects the PERSISTED applied-rule state only — staged-but-unsaved
+        editor edits are not included (the UI must save first). For an
+        approved binding with no pending edits this equals the frozen
+        snapshot / materialized output.
+
+        Raises:
+            MaterializationError: *binding_id* does not exist.
+        """
+        detail = self._monitored_tables.get(binding_id)
+        if detail is None:
+            raise MaterializationError(f"Monitored table not found: {binding_id}")
+
+        checks: list[dict[str, Any]] = []
+        for summary in detail.applied_rules:
+            applied = summary.applied_rule
+            if not applied.id:
+                continue
+            rendered = self._iter_rendered_checks(detail.table.table_fqn, applied)
+            if rendered is None:
+                continue
+            checks.extend(check for _row_id, _row_fqn, check in rendered)
+        return checks
 
     def rematerialize_for_rule(self, rule_id: str) -> list[str]:
         """Re-materialize every binding with a FOLLOWING (unpinned) application of *rule_id*.

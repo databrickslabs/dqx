@@ -15,6 +15,7 @@ from .registry_models import AppliedRule as AppliedRuleDomain
 from .registry_models import ColumnMappingGroup
 from .registry_models import MonitoredTable as MonitoredTableDomain
 from .registry_models import MonitoredTableStatus as MonitoredTableStatusDomain
+from .registry_models import MonitoredTableVersion as MonitoredTableVersionDomain
 from .services.monitored_table_service import (
     AppliedRuleSummary,
     BulkRegisterResult,
@@ -570,6 +571,39 @@ class MonitoredTableReviewOut(BaseModel):
 
     table: MonitoredTableOut
     affected_check_count: int = 0
+    new_version: int | None = Field(
+        default=None,
+        description="On approve: the newly frozen monitored-table version. None for submit/reject.",
+    )
+
+
+class MonitoredTableVersionOut(BaseModel):
+    """A ``dq_monitored_table_versions`` row (metadata only; ``checks_json`` omitted).
+
+    Backs ``listMonitoredTableVersions`` — the frozen-checks payload is
+    resolved separately at run time, so this listing carries only the audit
+    + display metadata (``state_json``) the version picker needs.
+    """
+
+    id: str | None = None
+    binding_id: str
+    version: int
+    state_json: dict[str, Any] = Field(default_factory=dict)
+    created_by: str | None = None
+    created_at: str | None = None
+    refrozen_at: str | None = None
+
+    @classmethod
+    def from_domain(cls, version: "MonitoredTableVersionDomain") -> "MonitoredTableVersionOut":
+        return cls(
+            id=version.id,
+            binding_id=version.binding_id,
+            version=version.version,
+            state_json=version.state_json,
+            created_by=version.created_by,
+            created_at=version.created_at.isoformat() if version.created_at else None,
+            refrozen_at=version.refrozen_at.isoformat() if version.refrozen_at else None,
+        )
 
 
 class MonitoredTableSummaryOut(BaseModel):

@@ -881,3 +881,74 @@ def _extract_json_literal(sql_text: str) -> dict:
     start = sql_text.index("parse_json('") + len("parse_json('")
     end = sql_text.index("')", start)
     return json.loads(sql_text[start:end])
+
+
+class TestRenderBindingChecks:
+    """``render_binding_checks`` — the read-only draft-run source (design spec §4.1).
+
+    Renders the binding's CURRENT persisted applied-rules state through the
+    SAME path materialization uses, but writes NOTHING to
+    ``dq_quality_rules``. For an approved binding with no pending edits the
+    render equals the materialized output.
+    """
+
+    def test_render_equals_materialized_check_and_writes_nothing(
+        self, materializer, sql, registry, monitored_tables
+    ):
+        applied = AppliedRule(
+            id="ar1", binding_id="b1", rule_id="r1", column_mapping=[{"column": "customer_id"}], mapping_hash="h"
+        )
+        monitored_tables.get.return_value = _detail(applied)
+        registry.get_rule.return_value = _published_rule()
+        registry.get_version.return_value = _version_snapshot()
+
+        checks = materializer.render_binding_checks("b1")
+
+        # Byte-identical to what render_check (hence materialization) produces.
+        expected, _ = render_check(
+            mode="dqx_native",
+            version=_version_snapshot(),
+            group={"column": "customer_id"},
+            effective_severity="High",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+        )
+        assert checks == [expected]
+        # Read-only: no INSERT/UPDATE/DELETE against dq_quality_rules.
+        sql.execute.assert_not_called()
+
+    def test_renders_every_mapping_group_across_applied_rules(
+        self, materializer, sql, registry, monitored_tables
+    ):
+        applied = AppliedRule(
+            id="ar1",
+            binding_id="b1",
+            rule_id="r1",
+            column_mapping=[{"column": "a"}, {"column": "b"}],
+            mapping_hash="h",
+        )
+        monitored_tables.get.return_value = _detail(applied)
+        registry.get_rule.return_value = _published_rule()
+        registry.get_version.return_value = _version_snapshot()
+
+        checks = materializer.render_binding_checks("b1")
+        assert [c["check"]["arguments"]["column"] for c in checks] == ["a", "b"]
+        sql.execute.assert_not_called()
+
+    def test_raises_for_missing_binding(self, materializer, monitored_tables):
+        monitored_tables.get.return_value = None
+        with pytest.raises(MaterializationError):
+            materializer.render_binding_checks("missing")
+
+    def test_unresolvable_applied_rule_contributes_nothing(
+        self, materializer, sql, registry, monitored_tables
+    ):
+        applied = AppliedRule(
+            id="ar1", binding_id="b1", rule_id="r1", column_mapping=[{"column": "customer_id"}], mapping_hash="h"
+        )
+        monitored_tables.get.return_value = _detail(applied)
+        registry.get_rule.return_value = None  # registry rule vanished
+        assert materializer.render_binding_checks("b1") == []
+        sql.execute.assert_not_called()

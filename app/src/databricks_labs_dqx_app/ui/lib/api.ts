@@ -1134,6 +1134,11 @@ export interface MonitoredTableProfileOut {
 }
 
 /**
+ * On approve: the newly frozen monitored-table version. None for submit/reject.
+ */
+export type MonitoredTableReviewOutNewVersion = number | null;
+
+/**
  * Response for the submit/approve/reject monitored-table lifecycle routes.
 
 ``table`` carries the binding with its new roll-up status; ``affected_check_count``
@@ -1143,6 +1148,8 @@ transition (submitted, approved, or rejected respectively).
 export interface MonitoredTableReviewOut {
   table: MonitoredTableOut;
   affected_check_count?: number;
+  /** On approve: the newly frozen monitored-table version. None for submit/reject. */
+  new_version?: MonitoredTableReviewOutNewVersion;
 }
 
 /**
@@ -1152,6 +1159,33 @@ export interface MonitoredTableSummaryOut {
   table: MonitoredTableOut;
   applied_rule_count?: number;
   check_count?: number;
+}
+
+export type MonitoredTableVersionOutId = string | null;
+
+export type MonitoredTableVersionOutStateJson = { [key: string]: unknown };
+
+export type MonitoredTableVersionOutCreatedBy = string | null;
+
+export type MonitoredTableVersionOutCreatedAt = string | null;
+
+export type MonitoredTableVersionOutRefrozenAt = string | null;
+
+/**
+ * A ``dq_monitored_table_versions`` row (metadata only; ``checks_json`` omitted).
+
+Backs ``listMonitoredTableVersions`` — the frozen-checks payload is
+resolved separately at run time, so this listing carries only the audit
++ display metadata (``state_json``) the version picker needs.
+ */
+export interface MonitoredTableVersionOut {
+  id?: MonitoredTableVersionOutId;
+  binding_id: string;
+  version: number;
+  state_json?: MonitoredTableVersionOutStateJson;
+  created_by?: MonitoredTableVersionOutCreatedBy;
+  created_at?: MonitoredTableVersionOutCreatedAt;
+  refrozen_at?: MonitoredTableVersionOutRefrozenAt;
 }
 
 export type NameFamilyName = string | null;
@@ -9323,6 +9357,16 @@ rule (design spec §5) so their ``dq_quality_rules`` copies pick up the
 new version — see ``Materializer.rematerialize_for_rule``. PINNED
 applications are untouched by a publish; they only change via a
 direct edit.
+
+Data Products Task 2 re-freeze hook (design spec §3.2 (a)): when
+``auto_upgrade_without_approval`` is ON, a follower's approved
+``dq_quality_rules`` row silently picks up the new content and STAYS
+approved, changing the binding's approved rule set without a table
+re-approval — so each re-materialized binding's current version snapshot
+is re-frozen in place. When auto-upgrade is OFF the changed rows drop to
+``pending_approval`` (leaving the binding in a "Modified since vN" state,
+NOT a re-freeze), so the hook is skipped entirely. Best-effort: a
+re-freeze failure never turns a successful publish into a 5xx.
  * @summary Approve Registry Rule
  */
 export const approveRegistryRule = (
@@ -10274,6 +10318,158 @@ export function useGetMonitoredTableProfileSuspense<TData = Awaited<ReturnType<t
 
 
 /**
+ * List a monitored table's frozen approved-rule-set version snapshots (newest first).
+
+Metadata only — ``checks_json`` is omitted; the frozen checks for a
+specific version are resolved separately at run time. Backs the
+version-pin dropdown on the monitored-table Run action and the product
+member pin picker.
+ * @summary List Monitored Table Versions
+ */
+export const listMonitoredTableVersions = (
+    bindingId: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<MonitoredTableVersionOut[]>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/monitored-tables/${bindingId}/versions`,options
+    );
+  }
+
+
+
+
+export const getListMonitoredTableVersionsQueryKey = (bindingId?: string,) => {
+    return [
+    `/api/v1/monitored-tables/${bindingId}/versions`
+    ] as const;
+    }
+
+    
+export const getListMonitoredTableVersionsQueryOptions = <TData = Awaited<ReturnType<typeof listMonitoredTableVersions>>, TError = AxiosError<HTTPValidationError>>(bindingId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMonitoredTableVersions>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListMonitoredTableVersionsQueryKey(bindingId);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listMonitoredTableVersions>>> = ({ signal }) => listMonitoredTableVersions(bindingId, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, enabled: !!(bindingId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listMonitoredTableVersions>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListMonitoredTableVersionsQueryResult = NonNullable<Awaited<ReturnType<typeof listMonitoredTableVersions>>>
+export type ListMonitoredTableVersionsQueryError = AxiosError<HTTPValidationError>
+
+
+export function useListMonitoredTableVersions<TData = Awaited<ReturnType<typeof listMonitoredTableVersions>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMonitoredTableVersions>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listMonitoredTableVersions>>,
+          TError,
+          Awaited<ReturnType<typeof listMonitoredTableVersions>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListMonitoredTableVersions<TData = Awaited<ReturnType<typeof listMonitoredTableVersions>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMonitoredTableVersions>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listMonitoredTableVersions>>,
+          TError,
+          Awaited<ReturnType<typeof listMonitoredTableVersions>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListMonitoredTableVersions<TData = Awaited<ReturnType<typeof listMonitoredTableVersions>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMonitoredTableVersions>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List Monitored Table Versions
+ */
+
+export function useListMonitoredTableVersions<TData = Awaited<ReturnType<typeof listMonitoredTableVersions>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMonitoredTableVersions>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListMonitoredTableVersionsQueryOptions(bindingId,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getListMonitoredTableVersionsSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof listMonitoredTableVersions>>, TError = AxiosError<HTTPValidationError>>(bindingId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listMonitoredTableVersions>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListMonitoredTableVersionsQueryKey(bindingId);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listMonitoredTableVersions>>> = ({ signal }) => listMonitoredTableVersions(bindingId, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof listMonitoredTableVersions>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListMonitoredTableVersionsSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof listMonitoredTableVersions>>>
+export type ListMonitoredTableVersionsSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useListMonitoredTableVersionsSuspense<TData = Awaited<ReturnType<typeof listMonitoredTableVersions>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string, options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listMonitoredTableVersions>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListMonitoredTableVersionsSuspense<TData = Awaited<ReturnType<typeof listMonitoredTableVersions>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listMonitoredTableVersions>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListMonitoredTableVersionsSuspense<TData = Awaited<ReturnType<typeof listMonitoredTableVersions>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listMonitoredTableVersions>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List Monitored Table Versions
+ */
+
+export function useListMonitoredTableVersionsSuspense<TData = Awaited<ReturnType<typeof listMonitoredTableVersions>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listMonitoredTableVersions>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListMonitoredTableVersionsSuspenseQueryOptions(bindingId,options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
  * Apply a published registry rule to a monitored table's column mapping.
  * @summary Apply Rule To Table
  */
@@ -10686,6 +10882,12 @@ Reuses the per-rule approve transition so each check's audit trail is
 identical to a hand-approval, then rolls the binding up to ``approved``.
 From here the scheduler picks the checks up (it runs only ``approved``
 ``dq_quality_rules`` rows).
+
+Table approval is the ONLY event that bumps the monitored-table version:
+after the binding rolls up to ``approved`` the newly-approved rule set is
+frozen as the next version (design spec §3.2) via
+:meth:`MonitoredTableVersionService.freeze_new_version`, and the new
+version is returned in the response.
 
 Only a binding currently ``pending_approval`` can be approved — mirrors
 the per-rule transition guard (``RulesCatalogService.VALID_TRANSITIONS``)
