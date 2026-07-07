@@ -35,9 +35,7 @@ make app-test                 # backend pytest
 make app-start-dev            # uvicorn (:9002) + Vite (:9001), foreground
 make app-stop-dev             # pkill the two dev servers
 make app-regen-api            # dump OpenAPI + run orval (after backend model changes)
-make app-deploy   PROFILE=<p> TARGET=<t>   # build + bundle deploy + grants + bundle run
-make app-bind     PROFILE=<p> TARGET=<t>   # one-time: adopt pre-existing storage into bundle state
-make app-grant-permissions PROFILE=<p> TARGET=<t>  # rerun post_deploy_grants.sh
+make app-deploy   PROFILE=<p> TARGET=<t>   # build + bundle deploy (creates resources + native UC grants) + bundle run
 make lock-app-dependencies    # refresh app/uv.lock + app/yarn.lock
 ```
 

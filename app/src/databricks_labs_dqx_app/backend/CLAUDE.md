@@ -137,7 +137,7 @@ Use `ConfigSerializer` from the DQX library to load/save workspace configs. Neve
 - **Databricks Connect** ~15.4 (Spark sessions)
 - **DQX library** (imported as `databricks-labs-dqx[llm]`)
 - **Uvicorn** (ASGI server)
-- **Python 3.11+**
+- **Python 3.12+**
 
 ## Commands
 
@@ -180,9 +180,9 @@ choice is driven entirely by `databricks.yml`:
 | Backend | Tables | Why |
 |---------|--------|-----|
 | **Delta Lake** (always) | `dq_validation_runs`, `dq_profiling_results`, `dq_quarantine_records`, `dq_metrics` | Spark task runner writes these; high-volume append-mostly; columnar reads. |
-| **Lakebase Postgres** *(default — opt-out via `lakebase_instance_name=""`)* | `dq_app_settings`, `dq_role_mappings`, `dq_quality_rules`, `dq_quality_rules_history`, `dq_comments`, `dq_schedule_configs`, `dq_schedule_configs_history`, `dq_schedule_runs` | Low-latency point reads/writes from FastAPI request handlers; row-level upserts; primary-key/foreign-key semantics. |
+| **Lakebase Postgres** *(default — opt-out via `lakebase_endpoint="-"`)* | `dq_app_settings`, `dq_role_mappings`, `dq_quality_rules`, `dq_quality_rules_history`, `dq_comments`, `dq_schedule_configs`, `dq_schedule_configs_history`, `dq_schedule_runs` | Low-latency point reads/writes from FastAPI request handlers; row-level upserts; primary-key/foreign-key semantics. |
 
-When Lakebase is **disabled** (no `lakebase_instance_name` set), the OLTP
+When Lakebase is **disabled** (no `lakebase_endpoint` set), the OLTP
 tables fall back to Delta — `MigrationRunner` runs both
 `v1: Delta analytical baseline` *and* `v2: Delta OLTP fallback`. When
 Lakebase is **enabled**, only `v1` runs on Delta and `PgMigrationRunner`
@@ -250,17 +250,20 @@ Stateful resources declared in `databricks.yml` with
 * `resources.schemas.main_schema` — `dqx_studio` schema
 * `resources.schemas.tmp_schema` — `dqx_studio_tmp` schema
 * `resources.volumes.wheels` — wheels volume
-* `resources.database_instances.lakebase` — Lakebase Postgres instance
-  (autoscaling by default per [Lakebase Autoscaling](https://docs.databricks.com/aws/en/oltp/upgrade-to-autoscaling))
+* `resources.postgres_projects.dqx_studio` — Lakebase Postgres project
+  (autoscaling + scale-to-zero per [Lakebase Autoscaling](https://docs.databricks.com/aws/en/oltp/upgrade-to-autoscaling)),
+  paired with `resources.postgres_roles.app_sp` (the app SP's Postgres role)
 
 The app connects to the always-present `databricks_postgres` admin
-database on the Lakebase instance — that's the default value of
-`lakebase_database_name` and the value the app→database binding
-wires up. On first start, the app creates its own `dqx_studio`
-Postgres schema inside `databricks_postgres` and runs migrations
-against it. Multiple apps can therefore share the same
-`databricks_postgres` on one Lakebase instance safely; each gets its
-own schema namespace.
+database on the Lakebase project via the `DQX_LAKEBASE_ENDPOINT`
+endpoint path (`projects/<project>/branches/<branch>/endpoints/primary`) —
+`databricks_postgres` is the default value of `lakebase_database_name`.
+The endpoint drives both host resolution (`postgres.get_endpoint`) and
+OAuth credential issuance (`postgres.generate_database_credential`). On
+first start, the app creates its own `dqx_studio` Postgres schema inside
+`databricks_postgres` and runs migrations against it. Multiple apps can
+therefore share the same `databricks_postgres` on one Lakebase project
+safely; each gets its own schema namespace.
 
 The bundle deliberately does NOT use `database_catalogs`. That DAB
 resource is the only way to *create* a custom logical Postgres
@@ -277,14 +280,14 @@ is silent data loss. To intentionally tear one down: remove the flag,
 run `databricks bundle deployment unbind <key>`, then destroy. The
 app's `dqx_studio` Postgres schema lives below the resource layer
 DABs models, so `prevent_destroy` doesn't apply to it directly; the
-instance-level guard is what protects it.
+project-level guard is what protects it.
 
-For workspaces where the schemas, volume, or Lakebase instance were
-provisioned out-of-band (e.g. by the legacy bootstrap script),
-one-time binding is required: `make app-bind PROFILE=... TARGET=...`.
-After bind, `bundle deploy` adopts the existing resources instead of
-trying to CREATE them.
-
-Privileges on UC objects for the auto-created app SP are still applied
-by `scripts/post_deploy_grants.sh` after each deploy — the app SP's
-UUID isn't known at bundle-write time.
+UC privileges for the app SP and task-runner SP are declared
+**natively** as `grants:` on the schema/volume resources (via
+`${resources.apps.dqx-studio.service_principal_client_id}` and
+`${var.dqx_service_principal_application_id}`), so `bundle deploy`
+applies them — there is no post-deploy grant script. The one manual
+step is `USE CATALOG` on the pre-existing (user-selected) catalog,
+which the bundle can't grant because it doesn't manage the catalog;
+grant it once per catalog as a documented prerequisite (see
+`DEPLOYMENT.md`).
