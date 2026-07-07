@@ -34,6 +34,7 @@ from .services.materializer import Materializer
 from .services.monitored_table_versions import MonitoredTableVersionService
 from .services.run_sets import RunSetService
 from .services.binding_run_service import BindingRunService
+from .services.data_product_service import DataProductService
 from .services.rule_embeddings import RuleEmbeddingsService
 from .services.rule_retriever import RuleRetriever, VectorSearchRetriever
 from .services.rule_suggester import RuleSuggester
@@ -501,6 +502,27 @@ async def get_binding_run_service(
     )
 
 
+async def get_data_product_service(
+    sql: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
+    monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
+    run_set_service: Annotated[RunSetService, Depends(get_run_set_service)],
+    binding_run_service: Annotated[BindingRunService, Depends(get_binding_run_service)],
+) -> DataProductService:
+    """Create a DataProductService routed at the OLTP executor.
+
+    Reuses the monitored-table listing (for per-member rules/checks counts
+    and live status), the run-set service (for the shared run set + last-run
+    lookups), and ``BindingRunService`` (for per-member run submission) —
+    the same collaborators Task 3 wired for the single-table run endpoint.
+    """
+    return DataProductService(
+        sql=sql,
+        monitored_tables=monitored_tables,
+        run_set_service=run_set_service,
+        binding_run_service=binding_run_service,
+    )
+
+
 async def get_sql_connector(
     token: Annotated[str | None, Header(alias="X-Forwarded-Access-Token")] = None,
 ) -> "SQLConnector":
@@ -672,6 +694,7 @@ __all__ = [
     "get_monitored_table_version_service",
     "get_run_set_service",
     "get_binding_run_service",
+    "get_data_product_service",
     "get_discovery_service",
     "get_view_service",
     "get_job_service",

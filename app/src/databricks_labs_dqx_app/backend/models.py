@@ -18,6 +18,14 @@ from .registry_models import MonitoredTableStatus as MonitoredTableStatusDomain
 from .registry_models import MonitoredTableVersion as MonitoredTableVersionDomain
 from .registry_models import RunSetSource as RegistryRunSetSource
 from .registry_models import RunSetTrigger as RegistryRunSetTrigger
+from .registry_models import DataProductStatus as RegistryDataProductStatus
+from .services.data_product_service import (
+    DataProductDetail,
+    DataProductMemberDetail,
+    DataProductRunResult,
+    DataProductRunSubmission,
+)
+from .services.data_product_service import display_status as data_product_display_status
 from .services.monitored_table_service import (
     AppliedRuleSummary,
     BulkRegisterResult,
@@ -968,6 +976,167 @@ class RunSetDetailOut(BaseModel):
     created_at: str | None = None
     status: str = Field(description="Aggregated across members: running > failed > canceled > success")
     members: list[RunSetMemberDetailOut] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Data Products Task 4 — products CRUD, publish, member management, run fan-out
+# ---------------------------------------------------------------------------
+
+
+class CreateDataProductIn(BaseModel):
+    """Body of ``POST /data-products`` (``createDataProduct``)."""
+
+    name: str
+    description: str | None = None
+    steward: str | None = Field(default=None, description="Defaults to the creator's email when omitted")
+
+
+class UpdateDataProductIn(BaseModel):
+    """Body of ``PATCH /data-products/{id}`` (``updateDataProduct``).
+
+    Every field is optional; the route uses ``model_dump(exclude_unset=True)``
+    so an omitted field is left untouched while an explicit ``null`` (e.g.
+    clearing the schedule) is honored. ANY successful PATCH flips
+    ``published`` -> ``draft`` without bumping ``version`` (design spec §3.3).
+    """
+
+    name: str | None = None
+    description: str | None = None
+    steward: str | None = None
+    schedule_cron: str | None = None
+    schedule_tz: str | None = None
+
+
+class AddDataProductMemberIn(BaseModel):
+    """Body of ``POST /data-products/{id}/members`` (``addDataProductMember``).
+
+    Upserts by ``binding_id`` — calling again for a binding already a member
+    updates its pin in place rather than duplicating a row.
+    """
+
+    binding_id: str
+    pinned_version: int | None = Field(default=None, description="None = follow latest approved")
+
+
+class RunDataProductIn(BaseModel):
+    """Body of ``POST /data-products/{id}/run`` (``runDataProduct``)."""
+
+    source: RegistryRunSetSource = Field(
+        description="'approved' resolves pinned/latest frozen snapshots; 'draft' renders every member's live state"
+    )
+
+
+class DataProductMemberOut(BaseModel):
+    """A ``dq_data_product_members`` row joined with its binding's live state."""
+
+    id: str
+    binding_id: str
+    table_fqn: str
+    binding_status: str
+    binding_version: int
+    pinned_version: int | None = Field(default=None, description="None = follow latest approved")
+    rules_count: int
+    checks_count: int
+    runnable: bool = Field(description="binding status == 'approved' AND binding_version > 0")
+
+    @classmethod
+    def from_domain(cls, member: DataProductMemberDetail) -> "DataProductMemberOut":
+        return cls(
+            id=member.id,
+            binding_id=member.binding_id,
+            table_fqn=member.table_fqn,
+            binding_status=member.binding_status,
+            binding_version=member.binding_version,
+            pinned_version=member.pinned_version,
+            rules_count=member.rules_count,
+            checks_count=member.checks_count,
+            runnable=member.runnable,
+        )
+
+
+class DataProductOut(BaseModel):
+    """A ``dq_data_products`` row plus resolved members and list-view counters."""
+
+    product_id: str
+    name: str
+    description: str | None = None
+    steward: str | None = None
+    schedule_cron: str | None = None
+    schedule_tz: str | None = None
+    status: RegistryDataProductStatus
+    version: int
+    display_status: str = Field(description="'published' | 'modified' | 'draft' — dqlake display logic")
+    members: list[DataProductMemberOut] = Field(default_factory=list)
+    member_count: int = 0
+    runnable_count: int = 0
+    last_run_at: str | None = None
+    created_by: str | None = None
+    created_at: str | None = None
+    updated_by: str | None = None
+    updated_at: str | None = None
+
+    @classmethod
+    def from_domain(cls, detail: DataProductDetail) -> "DataProductOut":
+        product = detail.product
+        return cls(
+            product_id=product.product_id,
+            name=product.name,
+            description=product.description,
+            steward=product.steward,
+            schedule_cron=product.schedule_cron,
+            schedule_tz=product.schedule_tz,
+            status=product.status,
+            version=product.version,
+            display_status=data_product_display_status(product),
+            members=[DataProductMemberOut.from_domain(m) for m in detail.members],
+            member_count=detail.member_count,
+            runnable_count=detail.runnable_count,
+            last_run_at=detail.last_run_at.isoformat() if detail.last_run_at else None,
+            created_by=product.created_by,
+            created_at=product.created_at.isoformat() if product.created_at else None,
+            updated_by=product.updated_by,
+            updated_at=product.updated_at.isoformat() if product.updated_at else None,
+        )
+
+
+class DataProductRunSubmissionOut(BaseModel):
+    """One successfully submitted member run inside ``runDataProduct``'s response."""
+
+    binding_id: str
+    table_fqn: str
+    run_id: str
+    job_run_id: int
+    view_fqn: str
+    binding_version: int | None = Field(default=None, description="None for draft-source submissions")
+
+    @classmethod
+    def from_domain(cls, submission: DataProductRunSubmission) -> "DataProductRunSubmissionOut":
+        return cls(
+            binding_id=submission.binding_id,
+            table_fqn=submission.table_fqn,
+            run_id=submission.run_id,
+            job_run_id=submission.job_run_id,
+            view_fqn=submission.view_fqn,
+            binding_version=submission.binding_version,
+        )
+
+
+class RunDataProductOut(BaseModel):
+    """Response of ``POST /data-products/{id}/run``."""
+
+    run_set_id: str
+    submitted: list[DataProductRunSubmissionOut] = Field(default_factory=list)
+    skipped: list[str] = Field(
+        default_factory=list, description="'{table_fqn}: {reason}' entries for members that were skipped or failed"
+    )
+
+    @classmethod
+    def from_domain(cls, result: DataProductRunResult) -> "RunDataProductOut":
+        return cls(
+            run_set_id=result.run_set_id,
+            submitted=[DataProductRunSubmissionOut.from_domain(s) for s in result.submitted],
+            skipped=result.skipped,
+        )
 
 
 # ---------------------------------------------------------------------------

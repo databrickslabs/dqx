@@ -43,6 +43,23 @@ export interface AddCommentIn {
 }
 
 /**
+ * None = follow latest approved
+ */
+export type AddDataProductMemberInPinnedVersion = number | null;
+
+/**
+ * Body of ``POST /data-products/{id}/members`` (``addDataProductMember``).
+
+Upserts by ``binding_id`` — calling again for a binding already a member
+updates its pin in place rather than duplicating a row.
+ */
+export interface AddDataProductMemberIn {
+  binding_id: string;
+  /** None = follow latest approved */
+  pinned_version?: AddDataProductMemberInPinnedVersion;
+}
+
+/**
  * Optional fully qualified table name for schema context
  */
 export type AiGenerateRuleInTableFqn = string | null;
@@ -570,6 +587,23 @@ export interface ContractSchemaRulesOut {
   rules: ContractSchemaRulesOutRulesItem[];
 }
 
+export type CreateDataProductInDescription = string | null;
+
+/**
+ * Defaults to the creator's email when omitted
+ */
+export type CreateDataProductInSteward = string | null;
+
+/**
+ * Body of ``POST /data-products`` (``createDataProduct``).
+ */
+export interface CreateDataProductIn {
+  name: string;
+  description?: CreateDataProductInDescription;
+  /** Defaults to the creator's email when omitted */
+  steward?: CreateDataProductInSteward;
+}
+
 /**
  * Authoring type: dqx_native | lowcode | sql
  */
@@ -656,6 +690,97 @@ export interface CustomMetricsIn {
 
 export interface CustomMetricsOut {
   metrics: string[];
+}
+
+/**
+ * None = follow latest approved
+ */
+export type DataProductMemberOutPinnedVersion = number | null;
+
+/**
+ * A ``dq_data_product_members`` row joined with its binding's live state.
+ */
+export interface DataProductMemberOut {
+  id: string;
+  binding_id: string;
+  table_fqn: string;
+  binding_status: string;
+  binding_version: number;
+  /** None = follow latest approved */
+  pinned_version?: DataProductMemberOutPinnedVersion;
+  rules_count: number;
+  checks_count: number;
+  /** binding status == 'approved' AND binding_version > 0 */
+  runnable: boolean;
+}
+
+export type DataProductOutDescription = string | null;
+
+export type DataProductOutSteward = string | null;
+
+export type DataProductOutScheduleCron = string | null;
+
+export type DataProductOutScheduleTz = string | null;
+
+export type DataProductOutStatus = typeof DataProductOutStatus[keyof typeof DataProductOutStatus];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const DataProductOutStatus = {
+  draft: 'draft',
+  published: 'published',
+} as const;
+
+export type DataProductOutLastRunAt = string | null;
+
+export type DataProductOutCreatedBy = string | null;
+
+export type DataProductOutCreatedAt = string | null;
+
+export type DataProductOutUpdatedBy = string | null;
+
+export type DataProductOutUpdatedAt = string | null;
+
+/**
+ * A ``dq_data_products`` row plus resolved members and list-view counters.
+ */
+export interface DataProductOut {
+  product_id: string;
+  name: string;
+  description?: DataProductOutDescription;
+  steward?: DataProductOutSteward;
+  schedule_cron?: DataProductOutScheduleCron;
+  schedule_tz?: DataProductOutScheduleTz;
+  status: DataProductOutStatus;
+  version: number;
+  /** 'published' | 'modified' | 'draft' — dqlake display logic */
+  display_status: string;
+  members?: DataProductMemberOut[];
+  member_count?: number;
+  runnable_count?: number;
+  last_run_at?: DataProductOutLastRunAt;
+  created_by?: DataProductOutCreatedBy;
+  created_at?: DataProductOutCreatedAt;
+  updated_by?: DataProductOutUpdatedBy;
+  updated_at?: DataProductOutUpdatedAt;
+}
+
+/**
+ * None for draft-source submissions
+ */
+export type DataProductRunSubmissionOutBindingVersion = number | null;
+
+/**
+ * One successfully submitted member run inside ``runDataProduct``'s response.
+ */
+export interface DataProductRunSubmissionOut {
+  binding_id: string;
+  table_fqn: string;
+  run_id: string;
+  job_run_id: number;
+  view_fqn: string;
+  /** None for draft-source submissions */
+  binding_version?: DataProductRunSubmissionOutBindingVersion;
 }
 
 export type DesiredAppliedRuleInColumnMappingItem = {[key: string]: string};
@@ -1779,6 +1904,36 @@ export interface RunConfigOut {
 }
 
 /**
+ * 'approved' resolves pinned/latest frozen snapshots; 'draft' renders every member's live state
+ */
+export type RunDataProductInSource = typeof RunDataProductInSource[keyof typeof RunDataProductInSource];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const RunDataProductInSource = {
+  approved: 'approved',
+  draft: 'draft',
+} as const;
+
+/**
+ * Body of ``POST /data-products/{id}/run`` (``runDataProduct``).
+ */
+export interface RunDataProductIn {
+  /** 'approved' resolves pinned/latest frozen snapshots; 'draft' renders every member's live state */
+  source: RunDataProductInSource;
+}
+
+/**
+ * Response of ``POST /data-products/{id}/run``.
+ */
+export interface RunDataProductOut {
+  run_set_id: string;
+  submitted?: DataProductRunSubmissionOut[];
+  /** '{table_fqn}: {reason}' entries for members that were skipped or failed */
+  skipped?: string[];
+}
+
+/**
  * 'approved' resolves a frozen snapshot; 'draft' renders live state
  */
 export type RunMonitoredTableInSource = typeof RunMonitoredTableInSource[keyof typeof RunMonitoredTableInSource];
@@ -2184,6 +2339,32 @@ export interface TimezoneIn {
 
 export interface TimezoneOut {
   timezone: string;
+}
+
+export type UpdateDataProductInName = string | null;
+
+export type UpdateDataProductInDescription = string | null;
+
+export type UpdateDataProductInSteward = string | null;
+
+export type UpdateDataProductInScheduleCron = string | null;
+
+export type UpdateDataProductInScheduleTz = string | null;
+
+/**
+ * Body of ``PATCH /data-products/{id}`` (``updateDataProduct``).
+
+Every field is optional; the route uses ``model_dump(exclude_unset=True)``
+so an omitted field is left untouched while an explicit ``null`` (e.g.
+clearing the schedule) is honored. ANY successful PATCH flips
+``published`` -> ``draft`` without bumping ``version`` (design spec §3.3).
+ */
+export interface UpdateDataProductIn {
+  name?: UpdateDataProductInName;
+  description?: UpdateDataProductInDescription;
+  steward?: UpdateDataProductInSteward;
+  schedule_cron?: UpdateDataProductInScheduleCron;
+  schedule_tz?: UpdateDataProductInScheduleTz;
 }
 
 export type UpdateRegistryRuleInMode = 'dqx_native' | 'lowcode' | 'sql' | null;
@@ -2623,6 +2804,8 @@ product_id: string;
  */
 limit?: number;
 };
+
+export type DeleteDataProduct200 = {[key: string]: string};
 
 /**
  * @summary Version
@@ -14853,3 +15036,743 @@ export function useGetRunSetSuspense<TData = Awaited<ReturnType<typeof getRunSet
 
   return query;
 }
+
+
+
+
+
+/**
+ * List every data product with resolved members and list-view counters.
+ * @summary List Data Products
+ */
+export const listDataProducts = (
+     options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<DataProductOut[]>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/data-products`,options
+    );
+  }
+
+
+
+
+export const getListDataProductsQueryKey = () => {
+    return [
+    `/api/v1/data-products`
+    ] as const;
+    }
+
+    
+export const getListDataProductsQueryOptions = <TData = Awaited<ReturnType<typeof listDataProducts>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDataProducts>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListDataProductsQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listDataProducts>>> = ({ signal }) => listDataProducts({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listDataProducts>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListDataProductsQueryResult = NonNullable<Awaited<ReturnType<typeof listDataProducts>>>
+export type ListDataProductsQueryError = AxiosError<HTTPValidationError>
+
+
+export function useListDataProducts<TData = Awaited<ReturnType<typeof listDataProducts>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDataProducts>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listDataProducts>>,
+          TError,
+          Awaited<ReturnType<typeof listDataProducts>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListDataProducts<TData = Awaited<ReturnType<typeof listDataProducts>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDataProducts>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listDataProducts>>,
+          TError,
+          Awaited<ReturnType<typeof listDataProducts>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListDataProducts<TData = Awaited<ReturnType<typeof listDataProducts>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDataProducts>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List Data Products
+ */
+
+export function useListDataProducts<TData = Awaited<ReturnType<typeof listDataProducts>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDataProducts>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListDataProductsQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getListDataProductsSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof listDataProducts>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listDataProducts>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListDataProductsQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listDataProducts>>> = ({ signal }) => listDataProducts({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof listDataProducts>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListDataProductsSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof listDataProducts>>>
+export type ListDataProductsSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useListDataProductsSuspense<TData = Awaited<ReturnType<typeof listDataProducts>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listDataProducts>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListDataProductsSuspense<TData = Awaited<ReturnType<typeof listDataProducts>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listDataProducts>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListDataProductsSuspense<TData = Awaited<ReturnType<typeof listDataProducts>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listDataProducts>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List Data Products
+ */
+
+export function useListDataProductsSuspense<TData = Awaited<ReturnType<typeof listDataProducts>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listDataProducts>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListDataProductsSuspenseQueryOptions(options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Create a new data product (status ``draft``, no approver gate).
+ * @summary Create Data Product
+ */
+export const createDataProduct = (
+    createDataProductIn: CreateDataProductIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<DataProductOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/data-products`,
+      createDataProductIn,options
+    );
+  }
+
+
+
+export const getCreateDataProductMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createDataProduct>>, TError,{data: CreateDataProductIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof createDataProduct>>, TError,{data: CreateDataProductIn}, TContext> => {
+
+const mutationKey = ['createDataProduct'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createDataProduct>>, {data: CreateDataProductIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createDataProduct(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateDataProductMutationResult = NonNullable<Awaited<ReturnType<typeof createDataProduct>>>
+    export type CreateDataProductMutationBody = CreateDataProductIn
+    export type CreateDataProductMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Create Data Product
+ */
+export const useCreateDataProduct = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createDataProduct>>, TError,{data: CreateDataProductIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof createDataProduct>>,
+        TError,
+        {data: CreateDataProductIn},
+        TContext
+      > => {
+
+      const mutationOptions = getCreateDataProductMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Get a single data product with its resolved members.
+ * @summary Get Data Product
+ */
+export const getDataProduct = (
+    productId: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<DataProductOut>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/data-products/${productId}`,options
+    );
+  }
+
+
+
+
+export const getGetDataProductQueryKey = (productId?: string,) => {
+    return [
+    `/api/v1/data-products/${productId}`
+    ] as const;
+    }
+
+    
+export const getGetDataProductQueryOptions = <TData = Awaited<ReturnType<typeof getDataProduct>>, TError = AxiosError<HTTPValidationError>>(productId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDataProduct>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetDataProductQueryKey(productId);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getDataProduct>>> = ({ signal }) => getDataProduct(productId, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, enabled: !!(productId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getDataProduct>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetDataProductQueryResult = NonNullable<Awaited<ReturnType<typeof getDataProduct>>>
+export type GetDataProductQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetDataProduct<TData = Awaited<ReturnType<typeof getDataProduct>>, TError = AxiosError<HTTPValidationError>>(
+ productId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDataProduct>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getDataProduct>>,
+          TError,
+          Awaited<ReturnType<typeof getDataProduct>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetDataProduct<TData = Awaited<ReturnType<typeof getDataProduct>>, TError = AxiosError<HTTPValidationError>>(
+ productId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDataProduct>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getDataProduct>>,
+          TError,
+          Awaited<ReturnType<typeof getDataProduct>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetDataProduct<TData = Awaited<ReturnType<typeof getDataProduct>>, TError = AxiosError<HTTPValidationError>>(
+ productId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDataProduct>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Data Product
+ */
+
+export function useGetDataProduct<TData = Awaited<ReturnType<typeof getDataProduct>>, TError = AxiosError<HTTPValidationError>>(
+ productId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDataProduct>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetDataProductQueryOptions(productId,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getGetDataProductSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getDataProduct>>, TError = AxiosError<HTTPValidationError>>(productId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getDataProduct>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetDataProductQueryKey(productId);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getDataProduct>>> = ({ signal }) => getDataProduct(productId, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof getDataProduct>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetDataProductSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof getDataProduct>>>
+export type GetDataProductSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetDataProductSuspense<TData = Awaited<ReturnType<typeof getDataProduct>>, TError = AxiosError<HTTPValidationError>>(
+ productId: string, options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getDataProduct>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetDataProductSuspense<TData = Awaited<ReturnType<typeof getDataProduct>>, TError = AxiosError<HTTPValidationError>>(
+ productId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getDataProduct>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetDataProductSuspense<TData = Awaited<ReturnType<typeof getDataProduct>>, TError = AxiosError<HTTPValidationError>>(
+ productId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getDataProduct>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Data Product
+ */
+
+export function useGetDataProductSuspense<TData = Awaited<ReturnType<typeof getDataProduct>>, TError = AxiosError<HTTPValidationError>>(
+ productId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getDataProduct>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetDataProductSuspenseQueryOptions(productId,options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Apply a partial update. Any successful update flips ``published`` -> ``draft``.
+ * @summary Update Data Product
+ */
+export const updateDataProduct = (
+    productId: string,
+    updateDataProductIn: UpdateDataProductIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<DataProductOut>> => {
+    
+    
+    return axios.default.patch(
+      `/api/v1/data-products/${productId}`,
+      updateDataProductIn,options
+    );
+  }
+
+
+
+export const getUpdateDataProductMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateDataProduct>>, TError,{productId: string;data: UpdateDataProductIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof updateDataProduct>>, TError,{productId: string;data: UpdateDataProductIn}, TContext> => {
+
+const mutationKey = ['updateDataProduct'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateDataProduct>>, {productId: string;data: UpdateDataProductIn}> = (props) => {
+          const {productId,data} = props ?? {};
+
+          return  updateDataProduct(productId,data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateDataProductMutationResult = NonNullable<Awaited<ReturnType<typeof updateDataProduct>>>
+    export type UpdateDataProductMutationBody = UpdateDataProductIn
+    export type UpdateDataProductMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Update Data Product
+ */
+export const useUpdateDataProduct = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateDataProduct>>, TError,{productId: string;data: UpdateDataProductIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof updateDataProduct>>,
+        TError,
+        {productId: string;data: UpdateDataProductIn},
+        TContext
+      > => {
+
+      const mutationOptions = getUpdateDataProductMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Delete a data product and its members.
+ * @summary Delete Data Product
+ */
+export const deleteDataProduct = (
+    productId: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<DeleteDataProduct200>> => {
+    
+    
+    return axios.default.delete(
+      `/api/v1/data-products/${productId}`,options
+    );
+  }
+
+
+
+export const getDeleteDataProductMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteDataProduct>>, TError,{productId: string}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteDataProduct>>, TError,{productId: string}, TContext> => {
+
+const mutationKey = ['deleteDataProduct'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteDataProduct>>, {productId: string}> = (props) => {
+          const {productId} = props ?? {};
+
+          return  deleteDataProduct(productId,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteDataProductMutationResult = NonNullable<Awaited<ReturnType<typeof deleteDataProduct>>>
+    
+    export type DeleteDataProductMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Delete Data Product
+ */
+export const useDeleteDataProduct = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteDataProduct>>, TError,{productId: string}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof deleteDataProduct>>,
+        TError,
+        {productId: string},
+        TContext
+      > => {
+
+      const mutationOptions = getDeleteDataProductMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Add (or update the pin of) a member. Upserts by ``binding_id``.
+ * @summary Add Data Product Member
+ */
+export const addDataProductMember = (
+    productId: string,
+    addDataProductMemberIn: AddDataProductMemberIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<DataProductOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/data-products/${productId}/members`,
+      addDataProductMemberIn,options
+    );
+  }
+
+
+
+export const getAddDataProductMemberMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof addDataProductMember>>, TError,{productId: string;data: AddDataProductMemberIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof addDataProductMember>>, TError,{productId: string;data: AddDataProductMemberIn}, TContext> => {
+
+const mutationKey = ['addDataProductMember'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof addDataProductMember>>, {productId: string;data: AddDataProductMemberIn}> = (props) => {
+          const {productId,data} = props ?? {};
+
+          return  addDataProductMember(productId,data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type AddDataProductMemberMutationResult = NonNullable<Awaited<ReturnType<typeof addDataProductMember>>>
+    export type AddDataProductMemberMutationBody = AddDataProductMemberIn
+    export type AddDataProductMemberMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Add Data Product Member
+ */
+export const useAddDataProductMember = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof addDataProductMember>>, TError,{productId: string;data: AddDataProductMemberIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof addDataProductMember>>,
+        TError,
+        {productId: string;data: AddDataProductMemberIn},
+        TContext
+      > => {
+
+      const mutationOptions = getAddDataProductMemberMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Remove a member from a data product.
+ * @summary Remove Data Product Member
+ */
+export const removeDataProductMember = (
+    productId: string,
+    memberId: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<DataProductOut>> => {
+    
+    
+    return axios.default.delete(
+      `/api/v1/data-products/${productId}/members/${memberId}`,options
+    );
+  }
+
+
+
+export const getRemoveDataProductMemberMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof removeDataProductMember>>, TError,{productId: string;memberId: string}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof removeDataProductMember>>, TError,{productId: string;memberId: string}, TContext> => {
+
+const mutationKey = ['removeDataProductMember'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof removeDataProductMember>>, {productId: string;memberId: string}> = (props) => {
+          const {productId,memberId} = props ?? {};
+
+          return  removeDataProductMember(productId,memberId,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RemoveDataProductMemberMutationResult = NonNullable<Awaited<ReturnType<typeof removeDataProductMember>>>
+    
+    export type RemoveDataProductMemberMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Remove Data Product Member
+ */
+export const useRemoveDataProductMember = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof removeDataProductMember>>, TError,{productId: string;memberId: string}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof removeDataProductMember>>,
+        TError,
+        {productId: string;memberId: string},
+        TContext
+      > => {
+
+      const mutationOptions = getRemoveDataProductMemberMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Publish a data product — bumps ``version`` by 1 and sets ``status='published'``.
+ * @summary Publish Data Product
+ */
+export const publishDataProduct = (
+    productId: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<DataProductOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/data-products/${productId}/publish`,undefined,options
+    );
+  }
+
+
+
+export const getPublishDataProductMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof publishDataProduct>>, TError,{productId: string}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof publishDataProduct>>, TError,{productId: string}, TContext> => {
+
+const mutationKey = ['publishDataProduct'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof publishDataProduct>>, {productId: string}> = (props) => {
+          const {productId} = props ?? {};
+
+          return  publishDataProduct(productId,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PublishDataProductMutationResult = NonNullable<Awaited<ReturnType<typeof publishDataProduct>>>
+    
+    export type PublishDataProductMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Publish Data Product
+ */
+export const usePublishDataProduct = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof publishDataProduct>>, TError,{productId: string}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof publishDataProduct>>,
+        TError,
+        {productId: string},
+        TContext
+      > => {
+
+      const mutationOptions = getPublishDataProductMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Run every runnable member of a data product through a shared run set.
+ * @summary Run Data Product
+ */
+export const runDataProduct = (
+    productId: string,
+    runDataProductIn: RunDataProductIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<RunDataProductOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/data-products/${productId}/run`,
+      runDataProductIn,options
+    );
+  }
+
+
+
+export const getRunDataProductMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof runDataProduct>>, TError,{productId: string;data: RunDataProductIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof runDataProduct>>, TError,{productId: string;data: RunDataProductIn}, TContext> => {
+
+const mutationKey = ['runDataProduct'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof runDataProduct>>, {productId: string;data: RunDataProductIn}> = (props) => {
+          const {productId,data} = props ?? {};
+
+          return  runDataProduct(productId,data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RunDataProductMutationResult = NonNullable<Awaited<ReturnType<typeof runDataProduct>>>
+    export type RunDataProductMutationBody = RunDataProductIn
+    export type RunDataProductMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Run Data Product
+ */
+export const useRunDataProduct = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof runDataProduct>>, TError,{productId: string;data: RunDataProductIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof runDataProduct>>,
+        TError,
+        {productId: string;data: RunDataProductIn},
+        TContext
+      > => {
+
+      const mutationOptions = getRunDataProductMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
