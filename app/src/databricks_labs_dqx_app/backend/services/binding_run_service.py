@@ -170,11 +170,20 @@ class BindingRunService:
         # inserts that row — runs BEFORE the run set is minted/joined and
         # BEFORE the member is added. If it throws, no run-set state has
         # been written yet, so there is nothing to roll back beyond the
-        # temp view. If the LATER run-set create/add_member step throws,
-        # the validation-run row already exists standalone (not part of
-        # any run set) — that is an accepted, lesser-severity gap (the
-        # invariant is member => validation row, not the reverse) and
-        # requires no cleanup of ``dq_validation_runs`` itself. The one
+        # temp view.
+        #
+        # The view-drop cleanup scope ends at ``record_dryrun_started``:
+        # once that call succeeds, the job run is LIVE and tracked (it is
+        # actively reading ``view_fqn``), so nothing after this point may
+        # drop the view — doing so would fail a healthy, already-submitted
+        # job run out from under it. If the LATER run-set create/add_member
+        # step throws, the validation-run row already exists standalone
+        # (not part of any run set) — that is an accepted, lesser-severity
+        # gap (the invariant is member => validation row, not the reverse)
+        # and requires no cleanup of ``dq_validation_runs`` or the view. We
+        # deliberately re-raise (rather than log-and-continue) so the
+        # caller is told the run-set bookkeeping failed, even though the
+        # submission itself succeeded and the job keeps running. The one
         # additional dangling state introduced by minting our own run set
         # is a run set left with zero members if ``add_member`` then
         # fails; that is cleaned up explicitly below via ``delete_empty``,
@@ -209,34 +218,34 @@ class BindingRunService:
                 sample_size=sample_size,
                 job_run_id=job_run_id,
             )
-
-            minted_run_set = run_set_id is None
-            resolved_run_set_id = run_set_id or self._run_set_service.create(
-                product_id=None,
-                product_version=None,
-                source=source,
-                trigger=trigger,
-                created_by=user_email,
-            )
-            try:
-                self._run_set_service.add_member(resolved_run_set_id, run_id, binding_id, binding_version)
-            except Exception:
-                if minted_run_set:
-                    try:
-                        self._run_set_service.delete_empty(resolved_run_set_id)
-                    except Exception as cleanup_err:
-                        logger.warning(
-                            "Failed to roll back empty run set %s after add_member failure for %s: %s",
-                            resolved_run_set_id,
-                            binding_id,
-                            cleanup_err,
-                        )
-                raise
         except Exception:
             try:
                 self._view_service.drop_view(view_fqn)
             except Exception as cleanup_err:
                 logger.warning("Failed to drop temp view %s after submit failure for %s: %s", view_fqn, binding_id, cleanup_err)
+            raise
+
+        minted_run_set = run_set_id is None
+        resolved_run_set_id = run_set_id or self._run_set_service.create(
+            product_id=None,
+            product_version=None,
+            source=source,
+            trigger=trigger,
+            created_by=user_email,
+        )
+        try:
+            self._run_set_service.add_member(resolved_run_set_id, run_id, binding_id, binding_version)
+        except Exception:
+            if minted_run_set:
+                try:
+                    self._run_set_service.delete_empty(resolved_run_set_id)
+                except Exception as cleanup_err:
+                    logger.warning(
+                        "Failed to roll back empty run set %s after add_member failure for %s: %s",
+                        resolved_run_set_id,
+                        binding_id,
+                        cleanup_err,
+                    )
             raise
 
         return BindingRunResult(

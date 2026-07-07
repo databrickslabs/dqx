@@ -288,7 +288,9 @@ class TestFailClosedOrdering:
         # exists — but no run-set member was (or could be) written.
         job_service.record_dryrun_started.assert_called_once()
         run_set_service.add_member.assert_not_called()
-        view_service.drop_view.assert_called_once_with("dqx_studio_tmp.tmp_view_1")
+        # The job run is already live and reading the view; a run-set
+        # bookkeeping failure must NOT drop it out from under that run.
+        view_service.drop_view.assert_not_called()
 
     def test_add_member_failure_rolls_back_minted_run_set(
         self, service, monitored_tables, version_service, job_service, run_set_service, view_service
@@ -307,7 +309,9 @@ class TestFailClosedOrdering:
         job_service.record_dryrun_started.assert_called_once()
         run_set_service.create.assert_called_once()
         run_set_service.delete_empty.assert_called_once_with("rs-new")
-        view_service.drop_view.assert_called_once_with("dqx_studio_tmp.tmp_view_1")
+        # The job run is already live and reading the view; a run-set
+        # bookkeeping failure must NOT drop it out from under that run.
+        view_service.drop_view.assert_not_called()
 
     def test_add_member_failure_on_caller_supplied_run_set_does_not_delete_it(
         self, service, monitored_tables, version_service, job_service, run_set_service, view_service
@@ -326,7 +330,9 @@ class TestFailClosedOrdering:
         # binding's add_member failed.
         run_set_service.create.assert_not_called()
         run_set_service.delete_empty.assert_not_called()
-        view_service.drop_view.assert_called_once_with("dqx_studio_tmp.tmp_view_1")
+        # The job run is already live and reading the view; a run-set
+        # bookkeeping failure must NOT drop it out from under that run.
+        view_service.drop_view.assert_not_called()
 
 
 class TestSyntheticCrossTableDispatch:

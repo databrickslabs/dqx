@@ -1803,6 +1803,11 @@ export interface RunMonitoredTableIn {
   source: RunMonitoredTableInSource;
   /** Pin to a specific approved snapshot version. Ignored when source='draft'. */
   version?: RunMonitoredTableInVersion;
+  /**
+   * Number of rows to sample
+   * @maximum 10000
+   */
+  sample_size?: number;
 }
 
 /**
