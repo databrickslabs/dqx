@@ -56,16 +56,12 @@ jobs:
       - name: Pre-build DQX wheel
         uses: ./.github/actions/prebuild-wheel
 
-      - name: Prepare code coverage configuration for MCP tests
-        run: |
-          cat > tests/integration_mcp/.coveragerc << EOF
-          [run]
-          source =
-              ../../mcp-server/server
-              ../../mcp-server/runner/src/dqx_mcp_runner
-          relative_files = true
-          parallel = true
-          EOF
+      # No code-coverage upload here on purpose. Unlike the anomaly/integration suites — whose code
+      # runs *in the pytest process* (databricks-connect) so `coverage` can measure it — this suite
+      # drives the MCP server in the deployed Databricks App and the runner in a job, both *remote*.
+      # Nothing under coverage runs locally, so an upload would only report those modules at 0% and
+      # drag the PR's Codecov numbers down. This mirrors the sibling DQX Studio app (`make app-test`),
+      # which likewise runs its tests in CI without a Codecov upload.
 
       # Required for the DAB (Databricks Asset Bundle) deploy the MCP suite runs (ci_deploy.sh).
       # The CLI lands on PATH (via GITHUB_PATH) for the acceptance action's test subprocess.
@@ -86,14 +82,3 @@ jobs:
           # *deploying identity* (resolved via `databricks current-user me`), so run_as == the job's
           # creator and needs no servicePrincipal.user grant. A real deploy would instead pass a
           # dedicated least-privilege SP via DQX_MCP_RUNNER_SERVICE_PRINCIPAL_ID.
-          COVERAGE_FILE: ${{ github.workspace }}/.coverage  # make sure the coverage report is preserved
-
-      - name: Merge coverage reports and convert them to XML
-        run: make combine-coverage
-
-      - name: Publish test coverage
-        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
-        with:
-          use_oidc: true
-          files: coverage-combined.xml
-          flags: mcp
