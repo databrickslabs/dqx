@@ -168,6 +168,168 @@ class TestMonitoredTableStatusConvergePostgres:
         assert "CHECK (status IN ('draft','pending_approval','approved','rejected'))" in sql
 
 
+class TestDataProductsPostgres:
+    """Task 1 (Data Products plan): PG v6 appends the versioned-monitored-table
+    snapshot, data-product grouping, and run-set tables. See
+    docs/superpowers/plans/2026-07-07-data-products.md Task 1 and
+    docs/superpowers/specs/2026-07-07-data-products-design.md §3.
+    """
+
+    def _v6(self):
+        return next(m for m in PG_MIGRATIONS if m.version == 6)
+
+    def test_appended_after_baseline(self):
+        assert self._v6().version > 1
+
+    def test_monitored_tables_gains_version_column(self):
+        sql = self._v6().sql
+        assert "ADD COLUMN IF NOT EXISTS version" in sql
+        assert "dq_monitored_tables" in sql
+
+    def test_monitored_table_versions_table(self):
+        sql = self._v6().sql
+        assert "dq_monitored_table_versions" in sql
+        for col in (
+            "id",
+            "binding_id",
+            "version",
+            "checks_json",
+            "state_json",
+            "created_by",
+            "created_at",
+            "refrozen_at",
+        ):
+            assert col in sql
+        assert "UNIQUE (binding_id, version)" in sql
+
+    def test_data_products_table(self):
+        sql = self._v6().sql
+        assert "dq_data_products" in sql
+        for col in (
+            "product_id",
+            "name",
+            "description",
+            "steward",
+            "schedule_cron",
+            "schedule_tz",
+            "status",
+            "version",
+            "created_by",
+            "created_at",
+            "updated_by",
+            "updated_at",
+        ):
+            assert col in sql
+        assert "UNIQUE (name)" in sql
+        assert "CHECK (status IN ('draft','published'))" in sql
+
+    def test_data_product_members_table(self):
+        sql = self._v6().sql
+        assert "dq_data_product_members" in sql
+        for col in ("id", "product_id", "binding_id", "pinned_version"):
+            assert col in sql
+        assert "UNIQUE (product_id, binding_id)" in sql
+
+    def test_run_sets_table(self):
+        sql = self._v6().sql
+        assert "dq_run_sets" in sql
+        for col in ("run_set_id", "product_id", "product_version", "source", "created_by", "created_at"):
+            assert col in sql
+        assert "trigger" in sql
+        assert "CHECK (source IN ('approved','draft'))" in sql
+        assert "'manual'" in sql and "'scheduled'" in sql
+
+    def test_run_set_members_table(self):
+        sql = self._v6().sql
+        assert "dq_run_set_members" in sql
+        for col in ("id", "run_set_id", "run_id", "binding_id", "binding_version"):
+            assert col in sql
+
+    def test_no_earlier_migration_touched(self):
+        # Greenfield-append constraint: the pre-existing baseline/converge
+        # migrations must be untouched by this task.
+        baseline = next(m for m in PG_MIGRATIONS if m.version == 1)
+        assert "dq_data_products" not in baseline.sql
+        assert "dq_monitored_table_versions" not in baseline.sql
+
+
+class TestDataProductsDelta:
+    """Delta v10 mirror of PG v6 — see TestDataProductsPostgres."""
+
+    def _v10(self):
+        return next(m for m in MIGRATIONS if m.version == 10)
+
+    def test_appended_after_oltp_baseline(self):
+        assert self._v10().version > 2
+
+    def test_is_oltp_fallback(self):
+        # All five new tables + the version column follow the same
+        # oltp_fallback placement as dq_monitored_tables itself.
+        assert getattr(self._v10(), "oltp_fallback", False) is True
+
+    def test_monitored_tables_gains_version_column(self):
+        sql = self._v10().sql_template
+        assert "dq_monitored_tables" in sql
+        assert "ADD COLUMN version" in sql
+
+    def test_monitored_table_versions_table(self):
+        sql = self._v10().sql_template
+        assert "dq_monitored_table_versions" in sql
+        for col in (
+            "binding_id",
+            "version",
+            "checks_json",
+            "state_json",
+            "created_by",
+            "created_at",
+            "refrozen_at",
+        ):
+            assert col in sql
+
+    def test_data_products_table(self):
+        sql = self._v10().sql_template
+        assert "dq_data_products" in sql
+        for col in (
+            "product_id",
+            "name",
+            "description",
+            "steward",
+            "schedule_cron",
+            "schedule_tz",
+            "status",
+            "version",
+            "created_by",
+            "created_at",
+            "updated_by",
+            "updated_at",
+        ):
+            assert col in sql
+        assert "CHECK (status IN ('draft','published'))" in sql
+
+    def test_data_product_members_table(self):
+        sql = self._v10().sql_template
+        assert "dq_data_product_members" in sql
+        for col in ("product_id", "binding_id", "pinned_version"):
+            assert col in sql
+
+    def test_run_sets_table(self):
+        sql = self._v10().sql_template
+        assert "dq_run_sets" in sql
+        for col in ("run_set_id", "product_id", "product_version", "source", "created_by", "created_at"):
+            assert col in sql
+        assert "trigger" in sql
+        assert "CHECK (source IN ('approved','draft'))" in sql
+
+    def test_run_set_members_table(self):
+        sql = self._v10().sql_template
+        assert "dq_run_set_members" in sql
+        for col in ("run_set_id", "run_id", "binding_id", "binding_version"):
+            assert col in sql
+
+    def test_no_earlier_migration_touched(self):
+        assert "dq_data_products" not in _V2_OLTP_FALLBACK
+
+
 class TestMonitoredTableStatusConvergeDelta:
     """P16-H: the Delta mirror of the converge migration. Marked
     ``oltp_fallback=True`` so it only runs on Delta when Lakebase is disabled.

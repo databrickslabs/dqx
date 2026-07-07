@@ -292,3 +292,130 @@ class TestReservedTagHelpers:
         result = module.set_reserved_tag(original, module.RESERVED_SEVERITY_KEY, "High")
         assert original == {"team": "checkout"}
         assert result == {"team": "checkout", "severity": "High"}
+
+
+# ---------------------------------------------------------------------------
+# Data Products domain models (Task 1 of
+# docs/superpowers/plans/2026-07-07-data-products.md)
+# ---------------------------------------------------------------------------
+
+
+class TestMonitoredTableVersionField:
+    @pytest.fixture
+    def MonitoredTable(self):
+        from databricks_labs_dqx_app.backend.registry_models import MonitoredTable
+
+        return MonitoredTable
+
+    def test_defaults_to_zero(self, MonitoredTable):
+        table = MonitoredTable(binding_id="b1", table_fqn="cat.schema.tbl")
+        assert table.version == 0
+
+    def test_accepts_explicit_version(self, MonitoredTable):
+        table = MonitoredTable(binding_id="b1", table_fqn="cat.schema.tbl", version=3)
+        assert table.version == 3
+
+
+class TestMonitoredTableVersion:
+    @pytest.fixture
+    def MonitoredTableVersion(self):
+        from databricks_labs_dqx_app.backend.registry_models import MonitoredTableVersion
+
+        return MonitoredTableVersion
+
+    def test_defaults(self, MonitoredTableVersion):
+        snapshot = MonitoredTableVersion(binding_id="b1", version=1)
+        assert snapshot.id is None
+        assert snapshot.checks_json == []
+        assert snapshot.state_json == {}
+        assert snapshot.refrozen_at is None
+
+    def test_carries_frozen_checks(self, MonitoredTableVersion):
+        checks = [{"function": "is_not_null", "arguments": {"column": "id"}}]
+        snapshot = MonitoredTableVersion(binding_id="b1", version=1, checks_json=checks)
+        assert snapshot.checks_json == checks
+
+
+class TestDataProduct:
+    @pytest.fixture
+    def DataProduct(self):
+        from databricks_labs_dqx_app.backend.registry_models import DataProduct
+
+        return DataProduct
+
+    def test_defaults(self, DataProduct):
+        product = DataProduct(product_id="p1", name="Customer 360")
+        assert product.status == "draft"
+        assert product.version == 0
+        assert product.schedule_cron is None
+
+    def test_rejects_invalid_status(self, DataProduct):
+        with pytest.raises(ValidationError):
+            DataProduct(product_id="p1", name="x", status="archived")
+
+    @pytest.mark.parametrize("status", ["draft", "published"])
+    def test_accepts_both_statuses(self, DataProduct, status):
+        assert DataProduct(product_id="p1", name="x", status=status).status == status
+
+
+class TestDataProductMember:
+    @pytest.fixture
+    def DataProductMember(self):
+        from databricks_labs_dqx_app.backend.registry_models import DataProductMember
+
+        return DataProductMember
+
+    def test_pinned_version_defaults_to_none(self, DataProductMember):
+        member = DataProductMember(product_id="p1", binding_id="b1")
+        assert member.pinned_version is None
+
+    def test_accepts_pinned_version(self, DataProductMember):
+        member = DataProductMember(product_id="p1", binding_id="b1", pinned_version=2)
+        assert member.pinned_version == 2
+
+
+class TestRunSet:
+    @pytest.fixture
+    def RunSet(self):
+        from databricks_labs_dqx_app.backend.registry_models import RunSet
+
+        return RunSet
+
+    @pytest.mark.parametrize("source", ["approved", "draft"])
+    def test_accepts_valid_sources(self, RunSet, source):
+        run_set = RunSet(run_set_id="rs1", source=source, trigger="manual")
+        assert run_set.source == source
+
+    def test_rejects_invalid_source(self, RunSet):
+        with pytest.raises(ValidationError):
+            RunSet(run_set_id="rs1", source="bogus", trigger="manual")
+
+    @pytest.mark.parametrize("trigger", ["manual", "scheduled"])
+    def test_accepts_valid_triggers(self, RunSet, trigger):
+        run_set = RunSet(run_set_id="rs1", source="approved", trigger=trigger)
+        assert run_set.trigger == trigger
+
+    def test_rejects_invalid_trigger(self, RunSet):
+        with pytest.raises(ValidationError):
+            RunSet(run_set_id="rs1", source="approved", trigger="bogus")
+
+    def test_product_fields_default_to_none(self, RunSet):
+        run_set = RunSet(run_set_id="rs1", source="draft", trigger="scheduled")
+        assert run_set.product_id is None
+        assert run_set.product_version is None
+
+
+class TestRunSetMember:
+    @pytest.fixture
+    def RunSetMember(self):
+        from databricks_labs_dqx_app.backend.registry_models import RunSetMember
+
+        return RunSetMember
+
+    def test_binding_version_defaults_to_none(self, RunSetMember):
+        member = RunSetMember(run_set_id="rs1", run_id="run1", binding_id="b1")
+        assert member.binding_version is None
+
+    def test_accepts_binding_version(self, RunSetMember):
+        member = RunSetMember(run_set_id="rs1", run_id="run1", binding_id="b1", binding_version=4)
+        assert member.binding_version == 4

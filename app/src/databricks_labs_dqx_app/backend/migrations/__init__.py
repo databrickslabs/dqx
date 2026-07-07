@@ -764,6 +764,111 @@ _V9_MONITORED_TABLES_STATUS_CONVERGE = (
 )
 
 
+# Data Products (docs/superpowers/plans/2026-07-07-data-products.md Task 1;
+# design spec §3). Delta mirror of Postgres v6 in
+# :mod:`backend.migrations.postgres`. Marked ``oltp_fallback=True`` — all
+# five new tables plus the ``dq_monitored_tables.version`` column follow the
+# same placement as ``dq_monitored_tables`` itself, so this only runs
+# against Delta when Lakebase is disabled.
+#
+# ``dq_monitored_tables.version`` is added as a plain nullable
+# ``ADD COLUMN`` (not ``NOT NULL DEFAULT 0`` inline) because Delta's
+# ``ADD COLUMN ... DEFAULT`` requires the column-defaults table feature to
+# be explicitly enabled and isn't guaranteed available on every Databricks
+# SQL warehouse version this app targets — the same conservatism the module
+# docstring documents for ``ADD COLUMN IF NOT EXISTS``. The three-statement
+# sequence (add nullable -> backfill existing rows -> CHECK NOT NULL) is
+# idempotent-safe under this runner's per-statement error-swallowing:
+# a re-run's ``ADD COLUMN`` raises a already-exists fragment (swallowed),
+# the ``UPDATE`` matches zero rows once converged, and the ``ADD
+# CONSTRAINT`` raises the same already-exists fragment on a second run.
+#
+# No UNIQUE constraint support on Delta (as with every other OLTP-shaped
+# table in this baseline) — ``dq_monitored_table_versions(binding_id,
+# version)``, ``dq_data_products.name``, and
+# ``dq_data_product_members(product_id, binding_id)`` uniqueness is
+# service-enforced here, exactly like ``dq_applied_rules.mapping_hash``
+# above. ``"trigger"``/``trigger`` on ``dq_run_sets`` needs no backtick
+# quoting in Spark SQL (unlike Postgres) — it is not a reserved identifier
+# there.
+_V10_DATA_PRODUCTS = (
+    f"ALTER TABLE {_PLACEHOLDER}.dq_monitored_tables ADD COLUMN version INT;"
+    f"UPDATE {_PLACEHOLDER}.dq_monitored_tables SET version = 0 WHERE version IS NULL;"
+    f"ALTER TABLE {_PLACEHOLDER}.dq_monitored_tables "
+    f"  ADD CONSTRAINT chk_dq_monitored_tables_version_not_null CHECK (version IS NOT NULL);"
+    #
+    # dq_monitored_table_versions — frozen approved rule-set snapshot per
+    # binding version (design spec §3.2); see the Postgres v6 comment for
+    # the checks_json/state_json/refrozen_at semantics.
+    f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_monitored_table_versions ("
+    "  id           STRING NOT NULL,"
+    "  binding_id   STRING NOT NULL,"
+    "  version      INT NOT NULL,"
+    "  checks_json  VARIANT NOT NULL,"
+    "  state_json   VARIANT,"
+    "  created_by   STRING,"
+    "  created_at   TIMESTAMP,"
+    "  refrozen_at  TIMESTAMP,"
+    "  CONSTRAINT pk_dq_monitored_table_versions PRIMARY KEY (id) RELY"
+    ") CLUSTER BY (binding_id, version);"
+    #
+    # dq_data_products — the grouping GUID (design spec §3.3).
+    f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_data_products ("
+    "  product_id     STRING NOT NULL,"
+    "  name           STRING NOT NULL,"
+    "  description    STRING,"
+    "  steward        STRING,"
+    "  schedule_cron  STRING,"
+    "  schedule_tz    STRING,"
+    "  status         STRING NOT NULL,"
+    "  version        INT NOT NULL,"
+    "  created_by     STRING,"
+    "  created_at     TIMESTAMP,"
+    "  updated_by     STRING,"
+    "  updated_at     TIMESTAMP,"
+    "  CONSTRAINT pk_dq_data_products PRIMARY KEY (product_id) RELY"
+    ") CLUSTER BY (name);"
+    f"ALTER TABLE {_PLACEHOLDER}.dq_data_products "
+    f"  ADD CONSTRAINT chk_dq_data_products_status "
+    f"  CHECK (status IN ('draft','published'));"
+    #
+    # dq_data_product_members — table membership within a product (design
+    # spec §3.4).
+    f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_data_product_members ("
+    "  id              STRING NOT NULL,"
+    "  product_id      STRING NOT NULL,"
+    "  binding_id      STRING NOT NULL,"
+    "  pinned_version  INT,"
+    "  CONSTRAINT pk_dq_data_product_members PRIMARY KEY (id) RELY"
+    ") CLUSTER BY (product_id, binding_id);"
+    #
+    # dq_run_sets / dq_run_set_members — every run submission mints a run
+    # set (design spec §3.5).
+    f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_run_sets ("
+    "  run_set_id       STRING NOT NULL,"
+    "  product_id       STRING,"
+    "  product_version  INT,"
+    "  source           STRING NOT NULL,"
+    "  trigger          STRING NOT NULL,"
+    "  created_by       STRING,"
+    "  created_at       TIMESTAMP,"
+    "  CONSTRAINT pk_dq_run_sets PRIMARY KEY (run_set_id) RELY"
+    ") CLUSTER BY (product_id, created_at);"
+    f"ALTER TABLE {_PLACEHOLDER}.dq_run_sets "
+    f"  ADD CONSTRAINT chk_dq_run_sets_source CHECK (source IN ('approved','draft'));"
+    f"ALTER TABLE {_PLACEHOLDER}.dq_run_sets "
+    f"  ADD CONSTRAINT chk_dq_run_sets_trigger CHECK (trigger IN ('manual','scheduled'));"
+    f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_run_set_members ("
+    "  id                STRING NOT NULL,"
+    "  run_set_id        STRING NOT NULL,"
+    "  run_id            STRING NOT NULL,"
+    "  binding_id        STRING NOT NULL,"
+    "  binding_version   INT,"
+    "  CONSTRAINT pk_dq_run_set_members PRIMARY KEY (id) RELY"
+    ") CLUSTER BY (run_set_id)"
+)
+
+
 # OLTP fallback migration is identified by ``oltp_fallback=True`` so
 # the runner can skip it when Lakebase is enabled. Keeping the flag on
 # the migration itself (rather than e.g. a hard-coded version number)
@@ -836,6 +941,16 @@ MIGRATIONS: list[Migration] = [
         description="Converge dq_monitored_tables status to the 4-state review set "
         "(draft/pending_approval/approved/rejected) — used only when Lakebase is disabled",
         sql_template=_V9_MONITORED_TABLES_STATUS_CONVERGE,
+        oltp_fallback=True,
+    ),
+    DeltaMigration(
+        version=10,
+        description=(
+            "Data Products: versioned monitored-table snapshots, product groupings, and run "
+            "sets (docs/superpowers/plans/2026-07-07-data-products.md Task 1) — "
+            "used only when Lakebase is disabled"
+        ),
+        sql_template=_V10_DATA_PRODUCTS,
         oltp_fallback=True,
     ),
 ]

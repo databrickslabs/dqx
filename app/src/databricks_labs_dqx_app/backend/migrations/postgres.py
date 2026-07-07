@@ -520,6 +520,129 @@ PG_MIGRATIONS: list[PgMigration] = [
             "    CHECK (status IN ('draft','pending_approval','approved','rejected'));"
         ),
     ),
+    PgMigration(
+        version=6,
+        description=(
+            "Data Products: versioned monitored-table snapshots, product groupings, and run "
+            "sets (docs/superpowers/plans/2026-07-07-data-products.md Task 1)"
+        ),
+        sql=(
+            # ----------------------------------------------------------
+            # dq_monitored_tables.version — bumped on table approval (see
+            # design spec §3.1/§4.1); 0 means "never approved" and gates
+            # certain execution paths (e.g. "follow latest approved" runs
+            # require version > 0). ``IF NOT EXISTS`` is native Postgres
+            # syntax (unlike Delta) so a re-run of this migration against
+            # an already-converged DB is a true no-op.
+            # ----------------------------------------------------------
+            f"ALTER TABLE {_S}.dq_monitored_tables "
+            "  ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 0;"
+            # ----------------------------------------------------------
+            # dq_monitored_table_versions — frozen approved rule-set
+            # snapshot per binding version (design spec §3.2).
+            # ``checks_json`` is the exact shape the runner consumes
+            # (same as ``get_approved_checks_for_table`` output);
+            # ``state_json`` is display-only metadata (applied-rule
+            # registry ids/versions/pins/severities/mappings at freeze
+            # time). ``refrozen_at`` is set when vN's content is
+            # rewritten in place without a version bump (auto-upgrade or
+            # a per-rule approval/rejection affecting this binding).
+            # ----------------------------------------------------------
+            f"CREATE TABLE IF NOT EXISTS {_S}.dq_monitored_table_versions ("
+            "  id           TEXT PRIMARY KEY,"
+            "  binding_id   TEXT NOT NULL,"
+            "  version      INTEGER NOT NULL,"
+            "  checks_json  JSONB NOT NULL,"
+            "  state_json   JSONB,"
+            "  created_by   TEXT,"
+            "  created_at   TIMESTAMPTZ,"
+            "  refrozen_at  TIMESTAMPTZ,"
+            "  CONSTRAINT uq_dq_monitored_table_versions_binding_version "
+            "    UNIQUE (binding_id, version)"
+            ");"
+            f"CREATE INDEX IF NOT EXISTS idx_dq_monitored_table_versions_binding_id "
+            f"  ON {_S}.dq_monitored_table_versions (binding_id);"
+            # ----------------------------------------------------------
+            # dq_data_products — the grouping GUID (design spec §3.3). No
+            # approver gate: members are already approval-gated via their
+            # own binding lifecycle. ``version`` is bumped ONLY on
+            # Publish; member/metadata edits flip published->draft
+            # ("Modified since publish" display state) without touching
+            # it.
+            # ----------------------------------------------------------
+            f"CREATE TABLE IF NOT EXISTS {_S}.dq_data_products ("
+            "  product_id     TEXT PRIMARY KEY,"
+            "  name           TEXT NOT NULL,"
+            "  description    TEXT,"
+            "  steward        TEXT,"
+            "  schedule_cron  TEXT,"
+            "  schedule_tz    TEXT,"
+            "  status         TEXT NOT NULL,"
+            "  version        INTEGER NOT NULL DEFAULT 0,"
+            "  created_by     TEXT,"
+            "  created_at     TIMESTAMPTZ,"
+            "  updated_by     TEXT,"
+            "  updated_at     TIMESTAMPTZ,"
+            "  CONSTRAINT uq_dq_data_products_name UNIQUE (name),"
+            "  CONSTRAINT chk_dq_data_products_status CHECK (status IN ('draft','published'))"
+            ");"
+            # ----------------------------------------------------------
+            # dq_data_product_members — table membership within a
+            # product (design spec §3.4). ``pinned_version`` NULL means
+            # "follow latest approved"; a concrete version REALLY
+            # executes that frozen ``dq_monitored_table_versions``
+            # snapshot (a deliberate upgrade over dqlake's display-only
+            # pin). ``binding_id`` references ``dq_monitored_tables``
+            # (service-enforced, no FK — matching every other
+            # cross-table reference in this schema).
+            # ----------------------------------------------------------
+            f"CREATE TABLE IF NOT EXISTS {_S}.dq_data_product_members ("
+            "  id              TEXT PRIMARY KEY,"
+            "  product_id      TEXT NOT NULL,"
+            "  binding_id      TEXT NOT NULL,"
+            "  pinned_version  INTEGER,"
+            "  CONSTRAINT uq_dq_data_product_members_product_binding "
+            "    UNIQUE (product_id, binding_id)"
+            ");"
+            f"CREATE INDEX IF NOT EXISTS idx_dq_data_product_members_product_id "
+            f"  ON {_S}.dq_data_product_members (product_id);"
+            # ----------------------------------------------------------
+            # dq_run_sets / dq_run_set_members — every run submission
+            # (product, single table, scheduled product) mints a run set
+            # (design spec §3.5). ``product_id``/``product_version`` are
+            # nullable — null for single-table runs. ``"trigger"`` is
+            # quoted throughout (both the CREATE and its CHECK) because
+            # it is a reserved SQL keyword, matching this schema's
+            # existing convention of quoting ``"check"`` on
+            # ``dq_quality_rules``. ``binding_version`` on
+            # ``dq_run_set_members`` is nullable — null for draft-source
+            # runs where no frozen snapshot was used.
+            # ----------------------------------------------------------
+            f"CREATE TABLE IF NOT EXISTS {_S}.dq_run_sets ("
+            "  run_set_id       TEXT PRIMARY KEY,"
+            "  product_id       TEXT,"
+            "  product_version  INTEGER,"
+            "  source           TEXT NOT NULL,"
+            '  "trigger"        TEXT NOT NULL,'
+            "  created_by       TEXT,"
+            "  created_at       TIMESTAMPTZ,"
+            "  CONSTRAINT chk_dq_run_sets_source CHECK (source IN ('approved','draft')),"
+            "  CONSTRAINT chk_dq_run_sets_trigger "
+            "    CHECK (\"trigger\" IN ('manual','scheduled'))"
+            ");"
+            f"CREATE INDEX IF NOT EXISTS idx_dq_run_sets_product_id "
+            f"  ON {_S}.dq_run_sets (product_id);"
+            f"CREATE TABLE IF NOT EXISTS {_S}.dq_run_set_members ("
+            "  id                TEXT PRIMARY KEY,"
+            "  run_set_id        TEXT NOT NULL,"
+            "  run_id            TEXT NOT NULL,"
+            "  binding_id        TEXT NOT NULL,"
+            "  binding_version   INTEGER"
+            ");"
+            f"CREATE INDEX IF NOT EXISTS idx_dq_run_set_members_run_set_id "
+            f"  ON {_S}.dq_run_set_members (run_set_id);"
+        ),
+    ),
 ]
 
 

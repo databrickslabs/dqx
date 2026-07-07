@@ -196,6 +196,7 @@ class MonitoredTable(BaseModel):
     table_fqn: str
     steward: str | None = None
     status: MonitoredTableStatus = "draft"
+    version: int = Field(default=0, description="0 = never approved; bumped on each table approval")
     last_profiled_at: datetime | None = None
     created_by: str | None = None
     created_at: datetime | None = None
@@ -257,6 +258,112 @@ def compute_mapping_hash(column_mapping: list[ColumnMappingGroup]) -> str:
     normalized_groups = sorted(tuple(sorted(group.items())) for group in column_mapping)
     combined = json.dumps(normalized_groups, sort_keys=True)
     return hashlib.sha256(combined.encode()).hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# Data Products — versioned monitored-table snapshots, product groupings,
+# and run sets (docs/superpowers/plans/2026-07-07-data-products.md Task 1;
+# design spec docs/superpowers/specs/2026-07-07-data-products-design.md §3).
+# ---------------------------------------------------------------------------
+
+DataProductStatus = Literal["draft", "published"]
+RunSetSource = Literal["approved", "draft"]
+RunSetTrigger = Literal["manual", "scheduled"]
+
+
+class MonitoredTableVersion(BaseModel):
+    """Domain model for a ``dq_monitored_table_versions`` row.
+
+    A FROZEN snapshot of a monitored table's approved rule set (design spec
+    §3.2). ``checks_json`` is the exact list of DQX check dicts the runner
+    consumes (same shape as ``RulesCatalogService.get_approved_checks_for_table``
+    output); ``state_json`` is display-only metadata (applied rules with
+    registry ids/versions/pins/severities/mappings at freeze time).
+    ``refrozen_at`` is set when this version's content is rewritten in place
+    without a version bump (auto-upgrade or a per-rule approval/rejection
+    affecting this binding) — never mutated at initial freeze time.
+    """
+
+    id: str | None = Field(default=None, description="None until persisted")
+    binding_id: str
+    version: int
+    checks_json: list[dict[str, Any]] = Field(default_factory=list)
+    state_json: dict[str, Any] = Field(default_factory=dict)
+    created_by: str | None = None
+    created_at: datetime | None = None
+    refrozen_at: datetime | None = Field(default=None, description="Set on re-freeze without a version bump")
+
+
+class DataProduct(BaseModel):
+    """Domain model for a ``dq_data_products`` row — the grouping GUID.
+
+    No approver gate: members are already approval-gated via their own
+    binding lifecycle. ``version`` is bumped ONLY on Publish; member or
+    metadata edits flip ``published`` -> ``draft`` ("Modified since
+    publish" display state) without touching it.
+    """
+
+    product_id: str
+    name: str
+    description: str | None = None
+    steward: str | None = None
+    schedule_cron: str | None = None
+    schedule_tz: str | None = None
+    status: DataProductStatus = "draft"
+    version: int = Field(default=0, description="0 until first publish; bumped ONLY on publish")
+    created_by: str | None = None
+    created_at: datetime | None = None
+    updated_by: str | None = None
+    updated_at: datetime | None = None
+
+
+class DataProductMember(BaseModel):
+    """Domain model for a ``dq_data_product_members`` row.
+
+    ``pinned_version`` ``None`` means "follow latest approved" for this
+    binding; a concrete version number REALLY executes that frozen
+    ``dq_monitored_table_versions`` snapshot (a deliberate upgrade over
+    dqlake's display-only pin). ``binding_id`` references
+    ``dq_monitored_tables`` (service-enforced, no FK — matching every other
+    cross-table reference in this schema).
+    """
+
+    id: str | None = Field(default=None, description="None until persisted")
+    product_id: str
+    binding_id: str
+    pinned_version: int | None = Field(default=None, description="None = follow latest approved")
+
+
+class RunSet(BaseModel):
+    """Domain model for a ``dq_run_sets`` row.
+
+    Every run submission (product, single table, scheduled product) mints
+    one run set — a run set of one for single-table runs. ``product_id`` /
+    ``product_version`` are ``None`` for single-table runs.
+    """
+
+    run_set_id: str
+    product_id: str | None = None
+    product_version: int | None = None
+    source: RunSetSource
+    trigger: RunSetTrigger
+    created_by: str | None = None
+    created_at: datetime | None = None
+
+
+class RunSetMember(BaseModel):
+    """Domain model for a ``dq_run_set_members`` row.
+
+    ``binding_version`` records the frozen snapshot version actually run
+    for this member — ``None`` for draft-source runs where no frozen
+    snapshot was used.
+    """
+
+    id: str | None = Field(default=None, description="None until persisted")
+    run_set_id: str
+    run_id: str
+    binding_id: str
+    binding_version: int | None = Field(default=None, description="None for draft-source runs")
 
 
 # ---------------------------------------------------------------------------
