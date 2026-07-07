@@ -13,12 +13,12 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import {
   useDeleteDataProduct,
-  useListRunSets,
   useRunDataProduct,
   RunDataProductInSource,
   type DataProductOut,
 } from "@/lib/api";
 import { usePermissions } from "@/hooks/use-permissions";
+import { useProductRunSets } from "@/hooks/use-product-run-sets";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -47,24 +47,6 @@ interface Props {
   editState: EditProductState;
 }
 
-/** Poll `listRunSets` for this product every 4s (paused while the tab is
- *  hidden) and report whether any run set has an in-flight (RUNNING)
- *  member — this drives the Run now/Run draft busy state without a
- *  dedicated activity endpoint. */
-function useActiveRunSet(productId: string) {
-  const { data: runSets } = useListRunSets(
-    { product_id: productId, limit: 10 },
-    {
-      query: {
-        select: (d) => d.data,
-        refetchInterval: 4000,
-        refetchIntervalInBackground: false,
-      },
-    },
-  );
-  return (runSets ?? []).some((rs) => rs.status === "running");
-}
-
 export function ProductHeader({ product, canEdit, editState }: Props) {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -80,7 +62,9 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
   // catching the new RUNNING run set, so the button doesn't flash back to
   // "Run now" for a moment after submission.
   const [justSubmitted, setJustSubmitted] = useState(false);
-  const hasActive = useActiveRunSet(product.product_id);
+  // Shares its `listRunSets` query with `ProductRunsTab` (identical params)
+  // so the two don't each poll the endpoint independently.
+  const { hasActive } = useProductRunSets(product.product_id, { extraPoll: justSubmitted });
   useEffect(() => {
     if (hasActive) setJustSubmitted(false);
   }, [hasActive]);

@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/table";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ChevronDown, ChevronUp, Loader2 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { StatusBadge } from "@/components/RegistryRuleBadges";
 import { cn } from "@/lib/utils";
 import { useColumnLayout, type ColumnLayoutDef } from "@/components/data-table/column-layout";
@@ -26,6 +27,7 @@ export type MonitoredTablesSortKey =
   | "checksCount"
   | "rulesCount"
   | "dqScore"
+  | "version"
   | "lastRun"
   | "owner"
   | "steward"
@@ -83,6 +85,18 @@ function TruncatedCell({
         </TooltipContent>
       )}
     </Tooltip>
+  );
+}
+
+/** The binding's approved snapshot version badge ("vN"), or an em dash at
+ *  v0 (never approved) — Data Products Task 1/2's `version` column. */
+function VersionCell({ version }: { version: number }) {
+  const { t } = useTranslation();
+  if (version <= 0) return <span className="text-muted-foreground">—</span>;
+  return (
+    <Badge variant="secondary" className="font-mono text-[10px]">
+      {t("monitoredTables.versionBadge", { version })}
+    </Badge>
   );
 }
 
@@ -187,6 +201,17 @@ const COLUMNS: Record<MonitoredTablesSortKey, ColumnDef> = {
     renderHeader: (label) => label,
     renderCell: () => <span className="text-muted-foreground">—</span>,
   },
+  version: {
+    // The binding's approved snapshot version (Data Products Task 1/2):
+    // 0 = never approved, rendered as an em dash rather than "v0".
+    labelKey: "monitoredTables.colVersion",
+    toggleable: true,
+    defaultVisible: true,
+    defaultWidth: 90,
+    sortable: true,
+    renderHeader: (label) => label,
+    renderCell: (r) => <VersionCell version={r.table.version ?? 0} />,
+  },
   lastRun: {
     labelKey: "monitoredTables.colLastRun",
     toggleable: true,
@@ -235,6 +260,7 @@ const DEFAULT_ORDER: MonitoredTablesSortKey[] = [
   "rulesCount",
   "checksCount",
   "dqScore",
+  "version",
   "lastRun",
   "owner",
   "steward",
@@ -263,6 +289,8 @@ export function getMonitoredTablesSortValue(
       return r.applied_rule_count ?? 0;
     case "dqScore":
       return -1;
+    case "version":
+      return r.table.version ?? 0;
     case "lastRun":
       return r.table.last_profiled_at ?? "";
     case "owner":

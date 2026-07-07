@@ -27,6 +27,7 @@ import { ProductHeader } from "@/components/data-products/ProductHeader";
 import { ProductAboutTab } from "@/components/data-products/ProductAboutTab";
 import { ProductSharingTab } from "@/components/data-products/ProductSharingTab";
 import { ProductTablesTab } from "@/components/data-products/ProductTablesTab";
+import { ProductRunsTab } from "@/components/data-products/ProductRunsTab";
 import { ProductSchedulingTab } from "@/components/data-products/ProductSchedulingTab";
 import { useEditProductState } from "@/components/data-products/useEditProductState";
 
@@ -103,16 +104,6 @@ function TabBoundary({ label, children }: { label: string; children: React.React
   );
 }
 
-/** Simple centered placeholder for tabs whose real content lands in a later
- *  task (Tables: Task 8, Schedule: Task 9, Runs: Task 10). */
-function ComingSoonTab() {
-  const { t } = useTranslation();
-  return (
-    <div className="flex items-center justify-center py-16 max-w-5xl">
-      <p className="text-sm text-muted-foreground">{t("dataProducts.tabPlaceholder")}</p>
-    </div>
-  );
-}
 
 function DataProductDetailPage() {
   const { t } = useTranslation();
@@ -167,7 +158,7 @@ function DataProductDetailPage() {
             ),
             runs: (
               <TabBoundary label={t("dataProducts.tabRuns")}>
-                <ComingSoonTab />
+                <ProductRunsTab product={product} />
               </TabBoundary>
             ),
             scheduling: (

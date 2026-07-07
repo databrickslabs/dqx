@@ -1017,7 +1017,9 @@
     "successBadge": "Éxito",
     "successOption": "Éxito",
     "validationRuns": "Ejecuciones de validación",
-    "wasCanceled": "Esta ejecución fue cancelada."
+    "wasCanceled": "Esta ejecución fue cancelada.",
+    "runSetFilterChip": "Filtrado por el conjunto de ejecuciones {{runSetId}}…",
+    "runSetFilterClearAria": "Quitar filtro de conjunto de ejecuciones"
   },
   "aiAssistant": {
     "title": "Generar reglas",
@@ -1760,7 +1762,20 @@
     "relativeMinutesAgo": "hace {{count}}m",
     "relativeHoursAgo": "hace {{count}}h",
     "relativeDaysAgo": "hace {{count}}d",
-    "severityNoneLabel": "Ninguna"
+    "severityNoneLabel": "Ninguna",
+    "versionBadge": "v{{version}}",
+    "modifiedSinceVersion": "Modificado desde v{{version}}",
+    "runNowButton": "Ejecutar ahora (v{{version}})",
+    "runNowButtonNoVersion": "Ejecutar ahora",
+    "runNowDisabledHint": "Aprueba primero los controles de esta tabla y luego ejecuta su versión aprobada.",
+    "runMenuAria": "Elige una versión para ejecutar",
+    "runVersionOption": "v{{version}}",
+    "runDraftAction": "Ejecutar borrador",
+    "runActionGroupAria": "Ejecutar los controles de esta tabla",
+    "toastRunStarted": "Ejecución iniciada.",
+    "toastRunStartedViewAction": "Ver en Historial de ejecuciones",
+    "toastRunFailed": "Error al iniciar la ejecución.",
+    "colVersion": "Versión"
   },
   "dataProducts": {
     "title": "Productos de Datos",
@@ -1884,6 +1899,32 @@
     "pinLatest": "Más reciente",
     "pinLatestVersioned": "Más reciente (v{{version}})",
     "pinUseLatest": "Usar la más reciente (v{{version}})",
-    "pinStaleTooltip": "Hay una versión más reciente disponible (v{{latest}}). Este miembro está fijado en v{{pinned}} y ejecuta exactamente esa versión congelada."
+    "pinStaleTooltip": "Hay una versión más reciente disponible (v{{latest}}). Este miembro está fijado en v{{pinned}} y ejecuta exactamente esa versión congelada.",
+    "runsColSource": "Origen",
+    "runsColTrigger": "Disparador",
+    "runsColStarted": "Iniciado",
+    "runsColDuration": "Duración",
+    "runsColMembers": "Tablas",
+    "runsColStatus": "Estado",
+    "runsSourceApproved": "Aprobado",
+    "runsSourceDraft": "Borrador",
+    "runsTriggerManual": "Manual",
+    "runsTriggerScheduled": "Programado",
+    "runsStatusRunning": "En ejecución",
+    "runsStatusFailed": "Fallido",
+    "runsStatusCanceled": "Cancelado",
+    "runsStatusSuccess": "Correcto",
+    "runsStatusUnknown": "Desconocido",
+    "runsEmpty": "Aún no hay ejecuciones. Haz clic en \"Ejecutar ahora\" para iniciar una.",
+    "runsEmptyNotRunnable": "Agrega una tabla aprobada y versionada, luego ejecuta este producto de datos para ver los resultados aquí.",
+    "runsCollapseAria": "Contraer tablas",
+    "runsExpandAria": "Expandir tablas",
+    "runsShowingRange": "Mostrando {{from}}–{{to}} de {{total}}",
+    "runsPrevPageAria": "Página anterior",
+    "runsNextPageAria": "Página siguiente",
+    "runsLoadingMembers": "Cargando tablas…",
+    "runsNoMembers": "No hay detalles de tabla disponibles.",
+    "runsDraftBadge": "Borrador",
+    "runsViewInHistory": "Ver en Historial de ejecuciones"
   }
 }

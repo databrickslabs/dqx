@@ -1017,7 +1017,9 @@
     "reviewFilterButton": "Review",
     "reviewFilterTitle": "Filter by review status",
     "reviewNoStatuses": "No statuses configured yet. Define them in Configuration.",
-    "reviewClearSelection": "Clear selection"
+    "reviewClearSelection": "Clear selection",
+    "runSetFilterChip": "Filtered to run set {{runSetId}}…",
+    "runSetFilterClearAria": "Clear run set filter"
   },
   "aiAssistant": {
     "title": "Generate rules",
@@ -1760,7 +1762,20 @@
     "relativeMinutesAgo": "{{count}}m ago",
     "relativeHoursAgo": "{{count}}h ago",
     "relativeDaysAgo": "{{count}}d ago",
-    "severityNoneLabel": "None"
+    "severityNoneLabel": "None",
+    "versionBadge": "v{{version}}",
+    "modifiedSinceVersion": "Modified since v{{version}}",
+    "runNowButton": "Run now (v{{version}})",
+    "runNowButtonNoVersion": "Run now",
+    "runNowDisabledHint": "Approve this table's checks first, then run its approved version.",
+    "runMenuAria": "Choose a version to run",
+    "runVersionOption": "v{{version}}",
+    "runDraftAction": "Run draft",
+    "runActionGroupAria": "Run this table's checks",
+    "toastRunStarted": "Run started.",
+    "toastRunStartedViewAction": "View in Runs History",
+    "toastRunFailed": "Failed to start run.",
+    "colVersion": "Version"
   },
   "dataProducts": {
     "title": "Data Products",
@@ -1884,6 +1899,32 @@
     "pinLatest": "Latest",
     "pinLatestVersioned": "Latest (v{{version}})",
     "pinUseLatest": "Use latest (v{{version}})",
-    "pinStaleTooltip": "Newer version available (v{{latest}}). This member is pinned to v{{pinned}} and runs that exact frozen version."
+    "pinStaleTooltip": "Newer version available (v{{latest}}). This member is pinned to v{{pinned}} and runs that exact frozen version.",
+    "runsColSource": "Source",
+    "runsColTrigger": "Trigger",
+    "runsColStarted": "Started",
+    "runsColDuration": "Duration",
+    "runsColMembers": "Tables",
+    "runsColStatus": "Status",
+    "runsSourceApproved": "Approved",
+    "runsSourceDraft": "Draft",
+    "runsTriggerManual": "Manual",
+    "runsTriggerScheduled": "Scheduled",
+    "runsStatusRunning": "Running",
+    "runsStatusFailed": "Failed",
+    "runsStatusCanceled": "Canceled",
+    "runsStatusSuccess": "Success",
+    "runsStatusUnknown": "Unknown",
+    "runsEmpty": "No runs yet. Click \"Run now\" to start one.",
+    "runsEmptyNotRunnable": "Add a table that's approved and versioned, then run this product to see results here.",
+    "runsCollapseAria": "Collapse tables",
+    "runsExpandAria": "Expand tables",
+    "runsShowingRange": "Showing {{from}}–{{to}} of {{total}}",
+    "runsPrevPageAria": "Previous page",
+    "runsNextPageAria": "Next page",
+    "runsLoadingMembers": "Loading tables…",
+    "runsNoMembers": "No table detail available.",
+    "runsDraftBadge": "Draft",
+    "runsViewInHistory": "View in Runs History"
   }
 }

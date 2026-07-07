@@ -40,12 +40,14 @@ import {
   ArrowLeft,
   BarChart3,
   CheckCircle2,
+  ChevronDown,
   ClipboardList,
   Clock,
   Columns3,
   Info,
   KeyRound,
   Loader2,
+  Play,
   Plus,
   RefreshCw,
   RotateCcw,
@@ -68,11 +70,21 @@ import {
   useListRegistryRules,
   useGetTableColumns,
   useGetRules,
+  useListMonitoredTableVersions,
+  useRunMonitoredTable,
   type AppliedRuleOut,
   type ColumnOut,
   type MonitoredTableOut,
+  type MonitoredTableVersionOut,
   type RegistryRuleOut,
 } from "@/lib/api";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { StatusBadge } from "@/components/RegistryRuleBadges";
 import { useLabelDefinitions } from "@/lib/api-custom";
 import { usePermissions } from "@/hooks/use-permissions";
@@ -314,32 +326,36 @@ function MonitoredTableDetailPage() {
             <div className="flex items-center gap-2 flex-wrap">
               <h1 className="text-2xl font-semibold tracking-tight leading-none font-mono">{table.table_fqn}</h1>
               <StatusBadge status={table.status} />
+              <VersionBadge table={table} />
             </div>
             {table.steward && (
               <p className="text-sm text-muted-foreground mt-1">{t("monitoredTables.colSteward")}: {table.steward}</p>
             )}
           </div>
-          {perms.canCreateRules && (
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                onClick={handleSaveAsDraft}
-                disabled={!isDirty || lifecycleBusy}
-                className="gap-2"
-              >
-                {saveMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
-                {t("monitoredTables.saveAsDraftButton")}
-              </Button>
-              <Button onClick={handleSubmit} disabled={lifecycleBusy} className="gap-2">
-                {saveMutation.isPending || submitMutation.isPending ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <UploadCloud className="h-4 w-4" />
-                )}
-                {submitMutation.isPending ? t("monitoredTables.submitting") : t("monitoredTables.submitButton")}
-              </Button>
-            </div>
-          )}
+          <div className="flex items-center gap-2">
+            {perms.canRunRules && <RunTableAction bindingId={bindingId} table={table} />}
+            {perms.canCreateRules && (
+              <>
+                <Button
+                  variant="outline"
+                  onClick={handleSaveAsDraft}
+                  disabled={!isDirty || lifecycleBusy}
+                  className="gap-2"
+                >
+                  {saveMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+                  {t("monitoredTables.saveAsDraftButton")}
+                </Button>
+                <Button onClick={handleSubmit} disabled={lifecycleBusy} className="gap-2">
+                  {saveMutation.isPending || submitMutation.isPending ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <UploadCloud className="h-4 w-4" />
+                  )}
+                  {submitMutation.isPending ? t("monitoredTables.submitting") : t("monitoredTables.submitButton")}
+                </Button>
+              </>
+            )}
+          </div>
         </div>
 
         {table.status === "pending_approval" && (
@@ -456,6 +472,110 @@ function MonitoredTableDetailPage() {
         </AlertDialogContent>
       </AlertDialog>
     </FadeIn>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Header: version badge + Run split-action
+// ---------------------------------------------------------------------------
+
+/** `vN` when the table's latest freeze is currently approved; "Modified
+ *  since vN" when a later draft/pending edit sits on top of an older
+ *  approved snapshot; nothing at v0 (never approved). */
+function VersionBadge({ table }: { table: MonitoredTableOut }) {
+  const { t } = useTranslation();
+  const version = table.version ?? 0;
+  if (version === 0) return null;
+  if (table.status === "approved") {
+    return (
+      <Badge variant="secondary" className="font-mono text-[10px]">
+        {t("monitoredTables.versionBadge", { version })}
+      </Badge>
+    );
+  }
+  return (
+    <Badge variant="outline" className="text-[10px] border-amber-500 text-amber-600">
+      {t("monitoredTables.modifiedSinceVersion", { version })}
+    </Badge>
+  );
+}
+
+/** Split-button Run action, RUNNER-gated (`usePermissions().canRunRules`,
+ *  checked by the caller). Primary click runs the latest approved snapshot
+ *  ("Run now (vN)"), disabled with a tooltip at v0. The attached dropdown
+ *  offers each approved version plus "Run draft" — the only option at v0. */
+function RunTableAction({ bindingId, table }: { bindingId: string; table: MonitoredTableOut }) {
+  const { t } = useTranslation();
+  const navigate = useNavigate();
+  const versionsQuery = useListMonitoredTableVersions(bindingId);
+  const versions = versionsQuery.data?.data ?? [];
+  const runMutation = useRunMonitoredTable();
+  const hasApproved = (table.version ?? 0) > 0;
+
+  const handleRun = (source: "approved" | "draft", version?: number) => {
+    runMutation.mutate(
+      { bindingId, data: { source, version } },
+      {
+        onSuccess: (resp) => {
+          toast.success(t("monitoredTables.toastRunStarted"), {
+            action: {
+              label: t("monitoredTables.toastRunStartedViewAction"),
+              onClick: () =>
+                void navigate({ to: "/runs-history", search: { runSetId: resp.data.run_set_id } }),
+            },
+          });
+        },
+        onError: (err: unknown) => {
+          toast.error(extractApiError(err, t("monitoredTables.toastRunFailed")), { duration: 6000 });
+        },
+      },
+    );
+  };
+
+  return (
+    <div className="inline-flex" role="group" aria-label={t("monitoredTables.runActionGroupAria")}>
+      <TooltipProvider delayDuration={200}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className={cn(!hasApproved && "cursor-not-allowed")}>
+              <Button
+                onClick={() => handleRun("approved")}
+                disabled={!hasApproved || runMutation.isPending}
+                className="gap-2 rounded-r-none"
+              >
+                {runMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+                {hasApproved
+                  ? t("monitoredTables.runNowButton", { version: table.version })
+                  : t("monitoredTables.runNowButtonNoVersion")}
+              </Button>
+            </span>
+          </TooltipTrigger>
+          {!hasApproved && (
+            <TooltipContent side="bottom">{t("monitoredTables.runNowDisabledHint")}</TooltipContent>
+          )}
+        </Tooltip>
+      </TooltipProvider>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            className="rounded-l-none border-l border-primary-foreground/20 px-2"
+            disabled={runMutation.isPending}
+            aria-label={t("monitoredTables.runMenuAria")}
+          >
+            <ChevronDown className="h-4 w-4" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          {versions.map((v: MonitoredTableVersionOut) => (
+            <DropdownMenuItem key={v.version} onSelect={() => handleRun("approved", v.version)}>
+              {t("monitoredTables.runVersionOption", { version: v.version })}
+            </DropdownMenuItem>
+          ))}
+          {versions.length > 0 && <DropdownMenuSeparator />}
+          <DropdownMenuItem onSelect={() => handleRun("draft")}>{t("monitoredTables.runDraftAction")}</DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
   );
 }
 

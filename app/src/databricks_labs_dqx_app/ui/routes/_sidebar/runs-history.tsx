@@ -1,6 +1,7 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate, useSearch } from "@tanstack/react-router";
 import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
 import {
+  useGetRunSet,
   useListRules,
   type User as UserType,
 } from "@/lib/api";
@@ -38,6 +39,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  X,
 } from "lucide-react";
 import {
   Select,
@@ -65,6 +67,13 @@ import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 
 export const Route = createFileRoute("/_sidebar/runs-history")({
+  // Additive only (design spec Task 10): an optional `?runSetId=` deep link
+  // from the Data Products Runs tab / monitored-table Run action toast
+  // pre-filters the table to that run set's member runs. Every other part
+  // of this page's contract is untouched.
+  validateSearch: (search: Record<string, unknown>): { runSetId?: string } => ({
+    runSetId: typeof search.runSetId === "string" ? search.runSetId : undefined,
+  }),
   component: RunsHistoryPage,
 });
 
@@ -331,8 +340,25 @@ type RunsSortKey = "table" | "type" | "status" | "requested_by" | "total" | "val
 
 function RunHistoryContent() {
   const { t } = useTranslation();
+  const navigate = useNavigate();
+  const { runSetId } = useSearch({ from: "/_sidebar/runs-history" });
   const { data: currentUser } = useCurrentUserSuspense(selector<UserType>());
   const currentUserEmail = currentUser?.user_name ?? "";
+
+  // Run-set filter (Task 10, additive) — resolves the run set's member
+  // run_ids via `getRunSet` (Task 3) and narrows the table to those rows.
+  // Not a Suspense query: an unresolved/failed lookup just means the filter
+  // doesn't narrow anything yet rather than blowing up the whole page.
+  const runSetQuery = useGetRunSet(runSetId ?? "", {
+    query: { enabled: !!runSetId, select: (d) => d.data },
+  });
+  const runSetFilterIds = useMemo(() => {
+    if (!runSetId) return null;
+    const members = runSetQuery.data?.members ?? [];
+    return new Set(members.map((m) => m.run_id));
+  }, [runSetId, runSetQuery.data]);
+  const clearRunSetFilter = () =>
+    void navigate({ to: "/runs-history", search: (prev) => ({ ...prev, runSetId: undefined }) });
 
   const { sortKey: rSortKey, sortDir: rSortDir, handleSort: handleRunsSort } = useSort<RunsSortKey>("run_date");
 
@@ -440,6 +466,7 @@ function RunHistoryContent() {
 
   const runs = useMemo(() => {
     const filtered = allRuns.filter((run) => {
+      if (runSetFilterIds && !runSetFilterIds.has(run.run_id)) return false;
       const isSqlCheck = run.source_table_fqn.startsWith(_SQL_CHECK_PREFIX);
       if (catalogFilter !== "all") {
         if (catalogFilter === "Cross-table rules") {
@@ -523,7 +550,7 @@ function RunHistoryContent() {
       }
       return cmp * dir;
     });
-  }, [allRuns, catalogFilter, schemaFilter, tableFilter, tableSearch, statusFilter, runTypeFilter, failedOnly, myRunsOnly, currentUserEmail, rSortKey, rSortDir, labelFilter, reviewStatusFilter]);
+  }, [allRuns, runSetFilterIds, catalogFilter, schemaFilter, tableFilter, tableSearch, statusFilter, runTypeFilter, failedOnly, myRunsOnly, currentUserEmail, rSortKey, rSortDir, labelFilter, reviewStatusFilter]);
 
   // Distinct labels seen across all runs' checks. Drives the LabelFilter
   // dropdown content for this page.
@@ -573,7 +600,7 @@ function RunHistoryContent() {
     setTableFilter("all");
   };
 
-  const hasActiveFilters = catalogFilter !== "all" || schemaFilter !== "all" || tableFilter !== "all" || tableSearch !== "" || statusFilter !== "all" || runTypeFilter !== "all" || failedOnly || myRunsOnly || labelFilter.size > 0 || reviewStatusFilter.size > 0;
+  const hasActiveFilters = !!runSetId || catalogFilter !== "all" || schemaFilter !== "all" || tableFilter !== "all" || tableSearch !== "" || statusFilter !== "all" || runTypeFilter !== "all" || failedOnly || myRunsOnly || labelFilter.size > 0 || reviewStatusFilter.size > 0;
 
   const PAGE_SIZE = 25;
   const [currentPage, setCurrentPage] = useState(1);
@@ -583,7 +610,7 @@ function RunHistoryContent() {
     [runs, currentPage],
   );
 
-  useEffect(() => { setCurrentPage(1); }, [catalogFilter, schemaFilter, tableFilter, tableSearch, statusFilter, runTypeFilter, failedOnly, myRunsOnly, rSortKey, rSortDir]);
+  useEffect(() => { setCurrentPage(1); }, [catalogFilter, schemaFilter, tableFilter, tableSearch, statusFilter, runTypeFilter, failedOnly, myRunsOnly, rSortKey, rSortDir, runSetId]);
 
   return (
     <div className="space-y-4 h-full overflow-y-auto">
@@ -599,6 +626,22 @@ function RunHistoryContent() {
           {t("common.refresh")}
         </Button>
       </div>
+
+      {runSetId && (
+        <div className="flex items-center gap-2">
+          <Badge variant="secondary" className="gap-1.5 font-normal">
+            {t("runsHistory.runSetFilterChip", { runSetId: runSetId.slice(0, 8) })}
+            <button
+              type="button"
+              onClick={clearRunSetFilter}
+              aria-label={t("runsHistory.runSetFilterClearAria")}
+              className="inline-flex items-center justify-center rounded-full hover:bg-muted-foreground/20"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </Badge>
+        </div>
+      )}
 
       <Card>
         <CardHeader className="pb-3">
@@ -727,6 +770,7 @@ function RunHistoryContent() {
                   setMyRunsOnly(false);
                   setLabelFilter(new Set());
                   setReviewStatusFilter(new Set());
+                  if (runSetId) clearRunSetFilter();
                 }}
               >
                 {t("common.clearFilters")}

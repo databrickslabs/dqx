@@ -1017,7 +1017,9 @@
     "successBadge": "Sucesso",
     "successOption": "Sucesso",
     "validationRuns": "Execuções de validação",
-    "wasCanceled": "Esta execução foi cancelada."
+    "wasCanceled": "Esta execução foi cancelada.",
+    "runSetFilterChip": "Filtrado pelo conjunto de execuções {{runSetId}}…",
+    "runSetFilterClearAria": "Limpar filtro de conjunto de execuções"
   },
   "aiAssistant": {
     "title": "Gerar regras",
@@ -1760,7 +1762,20 @@
     "relativeMinutesAgo": "há {{count}}m",
     "relativeHoursAgo": "há {{count}}h",
     "relativeDaysAgo": "há {{count}}d",
-    "severityNoneLabel": "Nenhuma"
+    "severityNoneLabel": "Nenhuma",
+    "versionBadge": "v{{version}}",
+    "modifiedSinceVersion": "Modificado desde v{{version}}",
+    "runNowButton": "Executar agora (v{{version}})",
+    "runNowButtonNoVersion": "Executar agora",
+    "runNowDisabledHint": "Aprove as verificações desta tabela primeiro e depois execute sua versão aprovada.",
+    "runMenuAria": "Escolha uma versão para executar",
+    "runVersionOption": "v{{version}}",
+    "runDraftAction": "Executar rascunho",
+    "runActionGroupAria": "Executar as verificações desta tabela",
+    "toastRunStarted": "Execução iniciada.",
+    "toastRunStartedViewAction": "Ver no Histórico de Execuções",
+    "toastRunFailed": "Falha ao iniciar a execução.",
+    "colVersion": "Versão"
   },
   "dataProducts": {
     "title": "Produtos de Dados",
@@ -1884,6 +1899,32 @@
     "pinLatest": "Mais recente",
     "pinLatestVersioned": "Mais recente (v{{version}})",
     "pinUseLatest": "Usar a mais recente (v{{version}})",
-    "pinStaleTooltip": "Há uma versão mais recente disponível (v{{latest}}). Este membro está fixado na v{{pinned}} e executa exatamente essa versão congelada."
+    "pinStaleTooltip": "Há uma versão mais recente disponível (v{{latest}}). Este membro está fixado na v{{pinned}} e executa exatamente essa versão congelada.",
+    "runsColSource": "Origem",
+    "runsColTrigger": "Gatilho",
+    "runsColStarted": "Iniciado",
+    "runsColDuration": "Duração",
+    "runsColMembers": "Tabelas",
+    "runsColStatus": "Status",
+    "runsSourceApproved": "Aprovado",
+    "runsSourceDraft": "Rascunho",
+    "runsTriggerManual": "Manual",
+    "runsTriggerScheduled": "Agendado",
+    "runsStatusRunning": "Em execução",
+    "runsStatusFailed": "Falhou",
+    "runsStatusCanceled": "Cancelado",
+    "runsStatusSuccess": "Sucesso",
+    "runsStatusUnknown": "Desconhecido",
+    "runsEmpty": "Ainda não há execuções. Clique em \"Executar agora\" para iniciar uma.",
+    "runsEmptyNotRunnable": "Adicione uma tabela aprovada e versionada e depois execute este produto de dados para ver os resultados aqui.",
+    "runsCollapseAria": "Recolher tabelas",
+    "runsExpandAria": "Expandir tabelas",
+    "runsShowingRange": "Mostrando {{from}}–{{to}} de {{total}}",
+    "runsPrevPageAria": "Página anterior",
+    "runsNextPageAria": "Próxima página",
+    "runsLoadingMembers": "Carregando tabelas…",
+    "runsNoMembers": "Nenhum detalhe de tabela disponível.",
+    "runsDraftBadge": "Rascunho",
+    "runsViewInHistory": "Ver no Histórico de Execuções"
   }
 }
