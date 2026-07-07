@@ -81,7 +81,13 @@ import {
 } from "@/lib/api";
 import { useAiAvailability, aiUnavailableReason } from "@/hooks/use-ai-availability";
 import { AI_BUTTON_BG, AI_BANNER_BG, AI_BANNER_BORDER, AI_GRADIENT_URL } from "@/lib/ai-style";
-import { orderSeverityValuesForDisplay, colorFor, ColorDot, type LabelColorDefinition } from "@/components/RegistryRuleBadges";
+import {
+  orderSeverityValuesForDisplay,
+  colorFor,
+  ColorDot,
+  SeverityBadge,
+  type LabelColorDefinition,
+} from "@/components/RegistryRuleBadges";
 import {
   COLUMN_KINDS,
   deriveSlotsAndParameters,
@@ -1470,21 +1476,28 @@ export function RegistryRuleFormDialog({
           <HelpTooltip text={t("rulesRegistry.severityTooltip")} />
         </div>
         <div className="flex items-center gap-2 group">
-          <Select value={severity || undefined} onValueChange={setSeverity} disabled={readOnly}>
-            <SelectTrigger className="h-8 w-full max-w-xs text-xs">
-              <SelectValue placeholder={t("rulesRegistry.selectSeverity")} />
-            </SelectTrigger>
-            <SelectContent>
-              {severityValues.map((v) => (
-                <SelectItem key={v} value={v} className="text-xs">
-                  <span className="flex items-center gap-1.5">
-                    <ColorDot color={colorFor(labelDefinitions as LabelColorDefinition[], RESERVED_SEVERITY_KEY, v)} />
-                    {v}
-                  </span>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          {readOnly ? (
+            <SeverityBadge
+              severity={severity}
+              color={colorFor(labelDefinitions as LabelColorDefinition[], RESERVED_SEVERITY_KEY, severity)}
+            />
+          ) : (
+            <Select value={severity || undefined} onValueChange={setSeverity}>
+              <SelectTrigger className="h-8 w-full max-w-xs text-xs">
+                <SelectValue placeholder={t("rulesRegistry.selectSeverity")} />
+              </SelectTrigger>
+              <SelectContent>
+                {severityValues.map((v) => (
+                  <SelectItem key={v} value={v} className="text-xs">
+                    <span className="flex items-center gap-1.5">
+                      <ColorDot color={colorFor(labelDefinitions as LabelColorDefinition[], RESERVED_SEVERITY_KEY, v)} />
+                      {v}
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
           {showFieldSuggest && severityValues.length > 0 && (
             <AiSuggestIcon
               field="severity"

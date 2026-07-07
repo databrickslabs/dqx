@@ -18,6 +18,14 @@ from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, validat
 
 logger = logging.getLogger(__name__)
 
+# Reserved prefix used internally by ``SchedulerService`` for Data Products
+# schedule tracker keys (``f"product:{product_id}"`` — see scheduler_service.py
+# Task 5). User-authored schedule names are now allowed to contain ``:``
+# (see ``validate_schedule_name``), so without this guard a user could save a
+# schedule literally named ``product:<uuid>`` and silently hijack — or be
+# overwritten by — a Data Product's tracker row in ``dq_schedule_runs``.
+PRODUCT_SCHEDULE_PREFIX = "product:"
+
 
 @dataclass
 class ScheduleConfigEntry:
@@ -81,6 +89,11 @@ class ScheduleConfigService:
           ON CONFLICT).
         """
         validate_schedule_name(name)
+        if name.startswith(PRODUCT_SCHEDULE_PREFIX):
+            raise ValueError(
+                f"Invalid schedule name: '{name}'. Names starting with "
+                f"'{PRODUCT_SCHEDULE_PREFIX}' are reserved for Data Products schedules."
+            )
         config_json = json.dumps(config)
 
         now = RawSql("now()")

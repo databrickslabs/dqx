@@ -1775,7 +1775,8 @@
     "toastRunStarted": "Esecuzione avviata.",
     "toastRunStartedViewAction": "Vedi nella Cronologia esecuzioni",
     "toastRunFailed": "Impossibile avviare l'esecuzione.",
-    "colVersion": "Versione"
+    "colVersion": "Versione",
+    "jumpToColumnTitle": "Vai alla colonna"
   },
   "dataProducts": {
     "title": "Prodotti Dati",

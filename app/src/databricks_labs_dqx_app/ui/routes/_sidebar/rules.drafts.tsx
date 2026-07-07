@@ -6,6 +6,7 @@ import {
   labelToken,
 } from "@/lib/format-utils";
 import { LabelFilter, LabelsBadges, labelsMatchFilter } from "@/components/Labels";
+import { SeverityBadge } from "@/components/RegistryRuleBadges";
 import { useTranslation } from "react-i18next";
 
 const SQL_CHECK_PREFIX = "__sql_check__/";
@@ -385,11 +386,7 @@ function RegistryApprovalsSection({
                           )}
                         </td>
                         <td className="p-3">
-                          {severity ? (
-                            <Badge variant="outline" className="text-[10px] font-normal">{severity}</Badge>
-                          ) : (
-                            <span className="text-muted-foreground/50 text-xs">—</span>
-                          )}
+                          <SeverityBadge severity={severity ?? ""} />
                         </td>
                         <td className="p-3 text-xs text-muted-foreground whitespace-nowrap" title={author}>
                           {author || "—"}

@@ -1775,7 +1775,8 @@
     "toastRunStarted": "Run started.",
     "toastRunStartedViewAction": "View in Runs History",
     "toastRunFailed": "Failed to start run.",
-    "colVersion": "Version"
+    "colVersion": "Version",
+    "jumpToColumnTitle": "Jump to column"
   },
   "dataProducts": {
     "title": "Data Products",
