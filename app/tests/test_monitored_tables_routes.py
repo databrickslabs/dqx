@@ -38,11 +38,20 @@ from databricks_labs_dqx_app.backend.routes.v1.monitored_tables import (
     register_monitored_table,
     reject_monitored_table,
     remove_applied_rule,
+    run_monitored_table,
     save_applied_rules,
     set_applied_rule_pin,
     set_applied_rule_severity_override,
     submit_monitored_table,
     suggest_rules_for_table,
+)
+from databricks_labs_dqx_app.backend.models import RunMonitoredTableIn
+from databricks_labs_dqx_app.backend.services.binding_run_service import (
+    BindingNotFoundError,
+    BindingRunError,
+    BindingRunResult,
+    MissingSnapshotError,
+    NeverApprovedError,
 )
 from databricks_labs_dqx_app.backend.services.apply_rules_service import (
     MappingIncompleteError,
@@ -681,3 +690,84 @@ class TestSuggestRulesForTable:
         assert result.available is False
         assert result.reason == "Vector Search is not configured."
         assert result.suggestions == []
+
+
+class TestRunMonitoredTable:
+    """``POST /monitored-tables/{binding_id}/run`` — resolution matrix + RBAC gate."""
+
+    def test_gated_by_require_runner_not_a_primary_role(self):
+        """The route must use the orthogonal RUNNER gate (matching batch_run_from_catalog),
+        not a plain ``require_role(...)`` primary-role check — non-runner authors/approvers
+        must still be rejected even though they'd pass every ``require_role`` check.
+        """
+        for route in mt_routes.router.routes:
+            if getattr(route, "operation_id", None) != "runMonitoredTable":
+                continue
+            qualnames = {getattr(dep.dependency, "__qualname__", "") for dep in route.dependencies}
+            assert any("require_runner" in q for q in qualnames)
+            return
+        raise AssertionError("No route found for operation_id=runMonitoredTable")
+
+    def test_success_maps_result_to_response_model(self):
+        svc = MagicMock()
+        svc.run_binding.return_value = BindingRunResult(
+            run_set_id="rs-1", run_id="run-1", job_run_id=42, view_fqn="dqx_studio_tmp.tmp_1"
+        )
+        result = run_monitored_table(
+            "b1",
+            body=RunMonitoredTableIn(source="approved", version=None),
+            obo_ws=_mock_obo_ws(),
+            run_svc=svc,
+        )
+        assert result.run_set_id == "rs-1"
+        assert result.run_id == "run-1"
+        assert result.job_run_id == 42
+        assert result.view_fqn == "dqx_studio_tmp.tmp_1"
+        svc.run_binding.assert_called_once_with(
+            "b1", source="approved", version=None, user_email="alice@x", trigger="manual"
+        )
+
+    def test_binding_not_found_maps_to_404(self):
+        svc = MagicMock()
+        svc.run_binding.side_effect = BindingNotFoundError("Monitored table not found: b1")
+        with pytest.raises(HTTPException) as excinfo:
+            run_monitored_table(
+                "b1", body=RunMonitoredTableIn(source="draft"), obo_ws=_mock_obo_ws(), run_svc=svc
+            )
+        assert excinfo.value.status_code == 404
+
+    def test_never_approved_maps_to_409(self):
+        svc = MagicMock()
+        svc.run_binding.side_effect = NeverApprovedError("never approved")
+        with pytest.raises(HTTPException) as excinfo:
+            run_monitored_table(
+                "b1", body=RunMonitoredTableIn(source="approved"), obo_ws=_mock_obo_ws(), run_svc=svc
+            )
+        assert excinfo.value.status_code == 409
+
+    def test_missing_snapshot_maps_to_422(self):
+        svc = MagicMock()
+        svc.run_binding.side_effect = MissingSnapshotError("no snapshot")
+        with pytest.raises(HTTPException) as excinfo:
+            run_monitored_table(
+                "b1", body=RunMonitoredTableIn(source="approved", version=9), obo_ws=_mock_obo_ws(), run_svc=svc
+            )
+        assert excinfo.value.status_code == 422
+
+    def test_generic_binding_run_error_maps_to_400(self):
+        svc = MagicMock()
+        svc.run_binding.side_effect = BindingRunError("missing sql_query")
+        with pytest.raises(HTTPException) as excinfo:
+            run_monitored_table(
+                "b1", body=RunMonitoredTableIn(source="approved", version=1), obo_ws=_mock_obo_ws(), run_svc=svc
+            )
+        assert excinfo.value.status_code == 400
+
+    def test_unexpected_error_maps_to_500(self):
+        svc = MagicMock()
+        svc.run_binding.side_effect = RuntimeError("boom")
+        with pytest.raises(HTTPException) as excinfo:
+            run_monitored_table(
+                "b1", body=RunMonitoredTableIn(source="draft"), obo_ws=_mock_obo_ws(), run_svc=svc
+            )
+        assert excinfo.value.status_code == 500

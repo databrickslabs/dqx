@@ -126,7 +126,7 @@ class MonitoredTableService:
         updated_at = self._sql.ts_text("updated_at")
         last_profiled_at = self._sql.ts_text("last_profiled_at")
         return (
-            f"binding_id, table_fqn, steward, status, {last_profiled_at} AS last_profiled_at, "
+            f"binding_id, table_fqn, steward, status, version, {last_profiled_at} AS last_profiled_at, "
             f"created_by, {created_at} AS created_at, updated_by, {updated_at} AS updated_at"
         )
 
@@ -586,11 +586,12 @@ class MonitoredTableService:
             table_fqn=row[1],
             steward=row[2],
             status=self._parse_status(row[3], binding_id=binding_id),
-            last_profiled_at=self._parse_timestamp(row[4]),
-            created_by=row[5],
-            created_at=self._parse_timestamp(row[6]),
-            updated_by=row[7],
-            updated_at=self._parse_timestamp(row[8]),
+            version=int(row[4]) if row[4] not in (None, "") else 0,
+            last_profiled_at=self._parse_timestamp(row[5]),
+            created_by=row[6],
+            created_at=self._parse_timestamp(row[7]),
+            updated_by=row[8],
+            updated_at=self._parse_timestamp(row[9]),
         )
 
     def _row_to_applied_rule(self, row: list[str]) -> AppliedRule:

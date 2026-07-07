@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from databricks_labs_dqx_app.backend.common.authorization import UserRole
 from databricks_labs_dqx_app.backend.dependencies import (
     get_apply_rules_service,
+    get_binding_run_service,
     get_materializer,
     get_monitored_table_service,
     get_monitored_table_version_service,
@@ -22,6 +23,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_rule_suggester,
     get_rules_catalog_service,
     require_role,
+    require_runner,
 )
 from databricks_labs_dqx_app.backend.logger import logger
 from databricks_labs_dqx_app.backend.models import (
@@ -36,6 +38,8 @@ from databricks_labs_dqx_app.backend.models import (
     MonitoredTableSummaryOut,
     MonitoredTableVersionOut,
     RegisterMonitoredTableIn,
+    RunMonitoredTableIn,
+    RunMonitoredTableOut,
     SaveAppliedRulesIn,
     SetAppliedRulePinIn,
     SetAppliedRuleSeverityOverrideIn,
@@ -46,6 +50,13 @@ from databricks_labs_dqx_app.backend.services.apply_rules_service import (
     DesiredAppliedRule,
     MappingIncompleteError,
     RuleNotPublishedError,
+)
+from databricks_labs_dqx_app.backend.services.binding_run_service import (
+    BindingNotFoundError,
+    BindingRunError,
+    BindingRunService,
+    MissingSnapshotError,
+    NeverApprovedError,
 )
 from databricks_labs_dqx_app.backend.services.materializer import MaterializationError, Materializer
 from databricks_labs_dqx_app.backend.services.monitored_table_service import (
@@ -267,6 +278,58 @@ def list_monitored_table_versions(
     except Exception as e:
         logger.error(f"Failed to list versions for monitored table {binding_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to list monitored table versions: {e}")
+
+
+@router.post(
+    "/{binding_id}/run",
+    response_model=RunMonitoredTableOut,
+    operation_id="runMonitoredTable",
+    # Same orthogonal RUNNER gate as the existing Run Rules batch endpoint
+    # (``routes/v1/dryrun.py:batch_run_from_catalog``) — a runner mapping
+    # (or admin) is required regardless of the caller's primary role.
+    dependencies=[require_runner()],
+)
+def run_monitored_table(
+    binding_id: str,
+    body: RunMonitoredTableIn,
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    run_svc: Annotated[BindingRunService, Depends(get_binding_run_service)],
+) -> RunMonitoredTableOut:
+    """Run a monitored table's approved (latest or pinned) or draft checks.
+
+    Resolves checks per design spec §4.1: ``source='draft'`` renders the
+    binding's current persisted applied-rules state; ``source='approved'``
+    with *version* pins a frozen snapshot, and with no *version* uses the
+    binding's latest approved snapshot (409 if the table has never been
+    approved). Submits through the same job path as the existing Run
+    Rules batch endpoint and mints a run set of one.
+    """
+    try:
+        user_email = _current_user_email(obo_ws)
+        result = run_svc.run_binding(
+            binding_id,
+            source=body.source,
+            version=body.version,
+            user_email=user_email,
+            trigger="manual",
+        )
+        return RunMonitoredTableOut(
+            run_set_id=result.run_set_id,
+            run_id=result.run_id,
+            job_run_id=result.job_run_id,
+            view_fqn=result.view_fqn,
+        )
+    except BindingNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except NeverApprovedError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except MissingSnapshotError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except BindingRunError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to run monitored table {binding_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to run monitored table: {e}")
 
 
 # ------------------------------------------------------------------

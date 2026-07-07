@@ -60,6 +60,7 @@ def _table_row(
     table_fqn: str = "cat.schema.tbl",
     steward: str | None = "alice@x",
     status: str = "draft",
+    version: int = 0,
     last_profiled_at: str | None = None,
 ) -> list[str]:
     return [
@@ -67,6 +68,7 @@ def _table_row(
         table_fqn,
         steward,
         status,
+        version,
         last_profiled_at,
         "alice@x",
         "2026-07-02T00:00:00+00:00",

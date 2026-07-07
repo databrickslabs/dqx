@@ -1779,6 +1779,43 @@ export interface RunConfigOut {
 }
 
 /**
+ * 'approved' resolves a frozen snapshot; 'draft' renders live state
+ */
+export type RunMonitoredTableInSource = typeof RunMonitoredTableInSource[keyof typeof RunMonitoredTableInSource];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const RunMonitoredTableInSource = {
+  approved: 'approved',
+  draft: 'draft',
+} as const;
+
+/**
+ * Pin to a specific approved snapshot version. Ignored when source='draft'.
+ */
+export type RunMonitoredTableInVersion = number | null;
+
+/**
+ * Body of ``POST /monitored-tables/{binding_id}/run`` (``runMonitoredTable``).
+ */
+export interface RunMonitoredTableIn {
+  /** 'approved' resolves a frozen snapshot; 'draft' renders live state */
+  source: RunMonitoredTableInSource;
+  /** Pin to a specific approved snapshot version. Ignored when source='draft'. */
+  version?: RunMonitoredTableInVersion;
+}
+
+/**
+ * Response of ``POST /monitored-tables/{binding_id}/run``.
+ */
+export interface RunMonitoredTableOut {
+  run_set_id: string;
+  run_id: string;
+  job_run_id: number;
+  view_fqn: string;
+}
+
+/**
  * One catalogue entry. ``is_default`` flags the value auto-surfaced for unreviewed runs.
  */
 export interface RunReviewStatusOption {
@@ -1794,6 +1831,126 @@ export interface RunReviewStatusesIn {
 
 export interface RunReviewStatusesOut {
   statuses: RunReviewStatusOption[];
+}
+
+export type RunSetDetailOutProductId = string | null;
+
+export type RunSetDetailOutProductVersion = number | null;
+
+export type RunSetDetailOutSource = typeof RunSetDetailOutSource[keyof typeof RunSetDetailOutSource];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const RunSetDetailOutSource = {
+  approved: 'approved',
+  draft: 'draft',
+} as const;
+
+export type RunSetDetailOutTrigger = typeof RunSetDetailOutTrigger[keyof typeof RunSetDetailOutTrigger];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const RunSetDetailOutTrigger = {
+  manual: 'manual',
+  scheduled: 'scheduled',
+} as const;
+
+export type RunSetDetailOutCreatedBy = string | null;
+
+export type RunSetDetailOutCreatedAt = string | null;
+
+/**
+ * Response of ``GET /run-sets/{run_set_id}`` (``getRunSet``).
+ */
+export interface RunSetDetailOut {
+  run_set_id: string;
+  product_id?: RunSetDetailOutProductId;
+  product_version?: RunSetDetailOutProductVersion;
+  source: RunSetDetailOutSource;
+  trigger: RunSetDetailOutTrigger;
+  created_by?: RunSetDetailOutCreatedBy;
+  created_at?: RunSetDetailOutCreatedAt;
+  /** Aggregated across members: running > failed > canceled > success */
+  status: string;
+  members?: RunSetMemberDetailOut[];
+}
+
+export type RunSetMemberDetailOutTableFqn = string | null;
+
+/**
+ * None for draft-source members
+ */
+export type RunSetMemberDetailOutBindingVersion = number | null;
+
+export type RunSetMemberDetailOutStatus = string | null;
+
+export type RunSetMemberDetailOutTotalRows = number | null;
+
+export type RunSetMemberDetailOutValidRows = number | null;
+
+export type RunSetMemberDetailOutInvalidRows = number | null;
+
+export type RunSetMemberDetailOutErrorRows = number | null;
+
+export type RunSetMemberDetailOutWarningRows = number | null;
+
+/**
+ * A single member row inside ``GET /run-sets/{run_set_id}`` (``getRunSet``).
+ */
+export interface RunSetMemberDetailOut {
+  run_id: string;
+  binding_id: string;
+  table_fqn?: RunSetMemberDetailOutTableFqn;
+  /** None for draft-source members */
+  binding_version?: RunSetMemberDetailOutBindingVersion;
+  status?: RunSetMemberDetailOutStatus;
+  total_rows?: RunSetMemberDetailOutTotalRows;
+  valid_rows?: RunSetMemberDetailOutValidRows;
+  invalid_rows?: RunSetMemberDetailOutInvalidRows;
+  error_rows?: RunSetMemberDetailOutErrorRows;
+  warning_rows?: RunSetMemberDetailOutWarningRows;
+}
+
+export type RunSetSummaryOutProductId = string | null;
+
+export type RunSetSummaryOutProductVersion = number | null;
+
+export type RunSetSummaryOutSource = typeof RunSetSummaryOutSource[keyof typeof RunSetSummaryOutSource];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const RunSetSummaryOutSource = {
+  approved: 'approved',
+  draft: 'draft',
+} as const;
+
+export type RunSetSummaryOutTrigger = typeof RunSetSummaryOutTrigger[keyof typeof RunSetSummaryOutTrigger];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const RunSetSummaryOutTrigger = {
+  manual: 'manual',
+  scheduled: 'scheduled',
+} as const;
+
+export type RunSetSummaryOutCreatedBy = string | null;
+
+export type RunSetSummaryOutCreatedAt = string | null;
+
+/**
+ * A ``dq_run_sets`` row + aggregated status, as returned by ``listRunSets``.
+ */
+export interface RunSetSummaryOut {
+  run_set_id: string;
+  product_id?: RunSetSummaryOutProductId;
+  product_version?: RunSetSummaryOutProductVersion;
+  source: RunSetSummaryOutSource;
+  trigger: RunSetSummaryOutTrigger;
+  created_by?: RunSetSummaryOutCreatedBy;
+  created_at?: RunSetSummaryOutCreatedAt;
+  member_count: number;
+  /** Aggregated across members: running > failed > canceled > success */
+  status: string;
 }
 
 export type RunStatusOutResultState = string | null;
@@ -2446,6 +2603,17 @@ check_name?: string | null;
 export type GetMetricsTrendParams = {
 /**
  * @minimum 1
+ * @maximum 200
+ */
+limit?: number;
+};
+
+export type ListRunSetsParams = {
+/**
+ * Data product to list run sets for
+ */
+product_id: string;
+/**
  * @maximum 200
  */
 limit?: number;
@@ -10470,6 +10638,77 @@ export function useListMonitoredTableVersionsSuspense<TData = Awaited<ReturnType
 
 
 /**
+ * Run a monitored table's approved (latest or pinned) or draft checks.
+
+Resolves checks per design spec §4.1: ``source='draft'`` renders the
+binding's current persisted applied-rules state; ``source='approved'``
+with *version* pins a frozen snapshot, and with no *version* uses the
+binding's latest approved snapshot (409 if the table has never been
+approved). Submits through the same job path as the existing Run
+Rules batch endpoint and mints a run set of one.
+ * @summary Run Monitored Table
+ */
+export const runMonitoredTable = (
+    bindingId: string,
+    runMonitoredTableIn: RunMonitoredTableIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<RunMonitoredTableOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/monitored-tables/${bindingId}/run`,
+      runMonitoredTableIn,options
+    );
+  }
+
+
+
+export const getRunMonitoredTableMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof runMonitoredTable>>, TError,{bindingId: string;data: RunMonitoredTableIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof runMonitoredTable>>, TError,{bindingId: string;data: RunMonitoredTableIn}, TContext> => {
+
+const mutationKey = ['runMonitoredTable'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof runMonitoredTable>>, {bindingId: string;data: RunMonitoredTableIn}> = (props) => {
+          const {bindingId,data} = props ?? {};
+
+          return  runMonitoredTable(bindingId,data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RunMonitoredTableMutationResult = NonNullable<Awaited<ReturnType<typeof runMonitoredTable>>>
+    export type RunMonitoredTableMutationBody = RunMonitoredTableIn
+    export type RunMonitoredTableMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Run Monitored Table
+ */
+export const useRunMonitoredTable = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof runMonitoredTable>>, TError,{bindingId: string;data: RunMonitoredTableIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof runMonitoredTable>>,
+        TError,
+        {bindingId: string;data: RunMonitoredTableIn},
+        TContext
+      > => {
+
+      const mutationOptions = getRunMonitoredTableMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
  * Apply a published registry rule to a monitored table's column mapping.
  * @summary Apply Rule To Table
  */
@@ -14306,6 +14545,302 @@ export function useGetRunReviewStatusHistorySuspense<TData = Awaited<ReturnType<
  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getGetRunReviewStatusHistorySuspenseQueryOptions(runId,options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * List the run sets triggered for a data product, newest first.
+ * @summary List Run Sets
+ */
+export const listRunSets = (
+    params: ListRunSetsParams, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<RunSetSummaryOut[]>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/run-sets`,{
+    ...options,
+        params: {...params, ...options?.params},}
+    );
+  }
+
+
+
+
+export const getListRunSetsQueryKey = (params?: ListRunSetsParams,) => {
+    return [
+    `/api/v1/run-sets`, ...(params ? [params]: [])
+    ] as const;
+    }
+
+    
+export const getListRunSetsQueryOptions = <TData = Awaited<ReturnType<typeof listRunSets>>, TError = AxiosError<HTTPValidationError>>(params: ListRunSetsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listRunSets>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListRunSetsQueryKey(params);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listRunSets>>> = ({ signal }) => listRunSets(params, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listRunSets>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListRunSetsQueryResult = NonNullable<Awaited<ReturnType<typeof listRunSets>>>
+export type ListRunSetsQueryError = AxiosError<HTTPValidationError>
+
+
+export function useListRunSets<TData = Awaited<ReturnType<typeof listRunSets>>, TError = AxiosError<HTTPValidationError>>(
+ params: ListRunSetsParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listRunSets>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listRunSets>>,
+          TError,
+          Awaited<ReturnType<typeof listRunSets>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListRunSets<TData = Awaited<ReturnType<typeof listRunSets>>, TError = AxiosError<HTTPValidationError>>(
+ params: ListRunSetsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listRunSets>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listRunSets>>,
+          TError,
+          Awaited<ReturnType<typeof listRunSets>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListRunSets<TData = Awaited<ReturnType<typeof listRunSets>>, TError = AxiosError<HTTPValidationError>>(
+ params: ListRunSetsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listRunSets>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List Run Sets
+ */
+
+export function useListRunSets<TData = Awaited<ReturnType<typeof listRunSets>>, TError = AxiosError<HTTPValidationError>>(
+ params: ListRunSetsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listRunSets>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListRunSetsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getListRunSetsSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof listRunSets>>, TError = AxiosError<HTTPValidationError>>(params: ListRunSetsParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listRunSets>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListRunSetsQueryKey(params);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listRunSets>>> = ({ signal }) => listRunSets(params, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof listRunSets>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListRunSetsSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof listRunSets>>>
+export type ListRunSetsSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useListRunSetsSuspense<TData = Awaited<ReturnType<typeof listRunSets>>, TError = AxiosError<HTTPValidationError>>(
+ params: ListRunSetsParams, options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listRunSets>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListRunSetsSuspense<TData = Awaited<ReturnType<typeof listRunSets>>, TError = AxiosError<HTTPValidationError>>(
+ params: ListRunSetsParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listRunSets>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListRunSetsSuspense<TData = Awaited<ReturnType<typeof listRunSets>>, TError = AxiosError<HTTPValidationError>>(
+ params: ListRunSetsParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listRunSets>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List Run Sets
+ */
+
+export function useListRunSetsSuspense<TData = Awaited<ReturnType<typeof listRunSets>>, TError = AxiosError<HTTPValidationError>>(
+ params: ListRunSetsParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listRunSets>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListRunSetsSuspenseQueryOptions(params,options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Get a run set and its resolved members (table, version, status, counts).
+ * @summary Get Run Set
+ */
+export const getRunSet = (
+    runSetId: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<RunSetDetailOut>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/run-sets/${runSetId}`,options
+    );
+  }
+
+
+
+
+export const getGetRunSetQueryKey = (runSetId?: string,) => {
+    return [
+    `/api/v1/run-sets/${runSetId}`
+    ] as const;
+    }
+
+    
+export const getGetRunSetQueryOptions = <TData = Awaited<ReturnType<typeof getRunSet>>, TError = AxiosError<HTTPValidationError>>(runSetId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRunSet>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetRunSetQueryKey(runSetId);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getRunSet>>> = ({ signal }) => getRunSet(runSetId, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, enabled: !!(runSetId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getRunSet>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetRunSetQueryResult = NonNullable<Awaited<ReturnType<typeof getRunSet>>>
+export type GetRunSetQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetRunSet<TData = Awaited<ReturnType<typeof getRunSet>>, TError = AxiosError<HTTPValidationError>>(
+ runSetId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRunSet>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getRunSet>>,
+          TError,
+          Awaited<ReturnType<typeof getRunSet>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetRunSet<TData = Awaited<ReturnType<typeof getRunSet>>, TError = AxiosError<HTTPValidationError>>(
+ runSetId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRunSet>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getRunSet>>,
+          TError,
+          Awaited<ReturnType<typeof getRunSet>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetRunSet<TData = Awaited<ReturnType<typeof getRunSet>>, TError = AxiosError<HTTPValidationError>>(
+ runSetId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRunSet>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Run Set
+ */
+
+export function useGetRunSet<TData = Awaited<ReturnType<typeof getRunSet>>, TError = AxiosError<HTTPValidationError>>(
+ runSetId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRunSet>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetRunSetQueryOptions(runSetId,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getGetRunSetSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getRunSet>>, TError = AxiosError<HTTPValidationError>>(runSetId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getRunSet>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetRunSetQueryKey(runSetId);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getRunSet>>> = ({ signal }) => getRunSet(runSetId, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof getRunSet>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetRunSetSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof getRunSet>>>
+export type GetRunSetSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetRunSetSuspense<TData = Awaited<ReturnType<typeof getRunSet>>, TError = AxiosError<HTTPValidationError>>(
+ runSetId: string, options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getRunSet>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetRunSetSuspense<TData = Awaited<ReturnType<typeof getRunSet>>, TError = AxiosError<HTTPValidationError>>(
+ runSetId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getRunSet>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetRunSetSuspense<TData = Awaited<ReturnType<typeof getRunSet>>, TError = AxiosError<HTTPValidationError>>(
+ runSetId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getRunSet>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Run Set
+ */
+
+export function useGetRunSetSuspense<TData = Awaited<ReturnType<typeof getRunSet>>, TError = AxiosError<HTTPValidationError>>(
+ runSetId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getRunSet>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetRunSetSuspenseQueryOptions(runSetId,options)
 
   const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 

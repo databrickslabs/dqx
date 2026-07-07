@@ -16,6 +16,8 @@ from .registry_models import ColumnMappingGroup
 from .registry_models import MonitoredTable as MonitoredTableDomain
 from .registry_models import MonitoredTableStatus as MonitoredTableStatusDomain
 from .registry_models import MonitoredTableVersion as MonitoredTableVersionDomain
+from .registry_models import RunSetSource as RegistryRunSetSource
+from .registry_models import RunSetTrigger as RegistryRunSetTrigger
 from .services.monitored_table_service import (
     AppliedRuleSummary,
     BulkRegisterResult,
@@ -898,6 +900,73 @@ class ValidationRunSummaryOut(BaseModel):
     review_status_is_default: bool = False
     review_status_updated_by: str | None = None
     review_status_updated_at: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Data Products Task 3 — run sets + monitored-table run endpoint
+# ---------------------------------------------------------------------------
+
+
+class RunMonitoredTableIn(BaseModel):
+    """Body of ``POST /monitored-tables/{binding_id}/run`` (``runMonitoredTable``)."""
+
+    source: RegistryRunSetSource = Field(description="'approved' resolves a frozen snapshot; 'draft' renders live state")
+    version: int | None = Field(
+        default=None,
+        description="Pin to a specific approved snapshot version. Ignored when source='draft'.",
+    )
+
+
+class RunMonitoredTableOut(BaseModel):
+    """Response of ``POST /monitored-tables/{binding_id}/run``."""
+
+    run_set_id: str
+    run_id: str
+    job_run_id: int
+    view_fqn: str
+
+
+class RunSetMemberDetailOut(BaseModel):
+    """A single member row inside ``GET /run-sets/{run_set_id}`` (``getRunSet``)."""
+
+    run_id: str
+    binding_id: str
+    table_fqn: str | None = None
+    binding_version: int | None = Field(default=None, description="None for draft-source members")
+    status: str | None = None
+    total_rows: int | None = None
+    valid_rows: int | None = None
+    invalid_rows: int | None = None
+    error_rows: int | None = None
+    warning_rows: int | None = None
+
+
+class RunSetSummaryOut(BaseModel):
+    """A ``dq_run_sets`` row + aggregated status, as returned by ``listRunSets``."""
+
+    run_set_id: str
+    product_id: str | None = None
+    product_version: int | None = None
+    source: RegistryRunSetSource
+    trigger: RegistryRunSetTrigger
+    created_by: str | None = None
+    created_at: str | None = None
+    member_count: int
+    status: str = Field(description="Aggregated across members: running > failed > canceled > success")
+
+
+class RunSetDetailOut(BaseModel):
+    """Response of ``GET /run-sets/{run_set_id}`` (``getRunSet``)."""
+
+    run_set_id: str
+    product_id: str | None = None
+    product_version: int | None = None
+    source: RegistryRunSetSource
+    trigger: RegistryRunSetTrigger
+    created_by: str | None = None
+    created_at: str | None = None
+    status: str = Field(description="Aggregated across members: running > failed > canceled > success")
+    members: list[RunSetMemberDetailOut] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------

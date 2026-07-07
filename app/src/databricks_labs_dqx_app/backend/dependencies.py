@@ -32,6 +32,8 @@ from .services.monitored_table_service import MonitoredTableService
 from .services.apply_rules_service import ApplyRulesService
 from .services.materializer import Materializer
 from .services.monitored_table_versions import MonitoredTableVersionService
+from .services.run_sets import RunSetService
+from .services.binding_run_service import BindingRunService
 from .services.rule_embeddings import RuleEmbeddingsService
 from .services.rule_retriever import RuleRetriever, VectorSearchRetriever
 from .services.rule_suggester import RuleSuggester
@@ -457,6 +459,48 @@ async def get_job_service(
     return JobService(ws=sp_ws, job_id=conf.job_id, sql=sql)
 
 
+async def get_run_set_service(
+    sql: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
+    validation_sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+) -> RunSetService:
+    """Create a RunSetService.
+
+    ``dq_run_sets``/``dq_run_set_members`` are routed at the OLTP executor;
+    ``dq_validation_runs`` (joined in Python for aggregated status) always
+    lives in Delta regardless of whether Lakebase is enabled.
+    """
+    return RunSetService(oltp_sql=sql, validation_sql=validation_sql)
+
+
+async def get_binding_run_service(
+    monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
+    version_service: Annotated[MonitoredTableVersionService, Depends(get_monitored_table_version_service)],
+    materializer: Annotated[Materializer, Depends(get_materializer)],
+    view_service: Annotated[ViewService, Depends(get_view_service)],
+    job_service: Annotated[JobService, Depends(get_job_service)],
+    run_set_service: Annotated[RunSetService, Depends(get_run_set_service)],
+    settings_service: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    sp_sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+) -> BindingRunService:
+    """Create a BindingRunService wired to the existing dryrun submission path.
+
+    Copies the exact call sequence
+    ``routes/v1/dryrun.py:batch_run_from_catalog`` uses (view creation,
+    ``JobService.submit_run``, ``record_dryrun_started``) — see the module
+    docstring on ``services/binding_run_service.py``.
+    """
+    return BindingRunService(
+        monitored_tables=monitored_tables,
+        version_service=version_service,
+        materializer=materializer,
+        view_service=view_service,
+        job_service=job_service,
+        run_set_service=run_set_service,
+        settings_service=settings_service,
+        runs_table=sp_sql.fqn("dq_validation_runs"),
+    )
+
+
 async def get_sql_connector(
     token: Annotated[str | None, Header(alias="X-Forwarded-Access-Token")] = None,
 ) -> "SQLConnector":
@@ -626,6 +670,8 @@ __all__ = [
     "get_apply_rules_service",
     "get_materializer",
     "get_monitored_table_version_service",
+    "get_run_set_service",
+    "get_binding_run_service",
     "get_discovery_service",
     "get_view_service",
     "get_job_service",
