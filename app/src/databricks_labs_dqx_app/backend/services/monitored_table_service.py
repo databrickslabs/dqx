@@ -235,9 +235,10 @@ class MonitoredTableService:
     def _insert(self, binding: MonitoredTable) -> None:
         sql = (
             f"INSERT INTO {self._table} "
-            "(binding_id, table_fqn, steward, status, created_by, created_at, updated_by, updated_at) VALUES "
+            "(binding_id, table_fqn, steward, status, version, created_by, created_at, updated_by, updated_at) "
+            "VALUES "
             f"('{escape_sql_string(binding.binding_id)}', '{escape_sql_string(binding.table_fqn)}', "
-            f"{self._opt_str(binding.steward)}, '{escape_sql_string(binding.status)}', "
+            f"{self._opt_str(binding.steward)}, '{escape_sql_string(binding.status)}', 0, "
             f"{self._opt_str(binding.created_by)}, now(), {self._opt_str(binding.updated_by)}, now())"
         )
         self._sql.execute(sql)
