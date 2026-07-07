@@ -21,7 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { AlertCircle, Boxes, Plus, RotateCcw, Search } from "lucide-react";
+import { AlertCircle, Boxes, Loader2, Plus, RotateCcw, Search } from "lucide-react";
 import { useListDataProducts, type DataProductOut } from "@/lib/api";
 import { usePermissions } from "@/hooks/use-permissions";
 
@@ -79,7 +79,7 @@ function DataProductsPage() {
   // so a newly created product appears without a manual page reload —
   // ported from dqlake's `DataProductsTable`, which needs the same
   // override for the same navigation pattern.
-  const { data } = useListDataProducts({ query: { refetchOnMount: "always" } });
+  const { data, isLoading } = useListDataProducts({ query: { refetchOnMount: "always" } });
   const products = useMemo(() => data?.data ?? [], [data]);
 
   const [stewardFilter, setStewardFilter] = useState<string>(ALL);
@@ -204,16 +204,23 @@ function DataProductsPage() {
             </>
           }
           emptyState={
-            <div className="flex flex-col items-center justify-center text-center">
-              <Boxes className="h-10 w-10 text-muted-foreground/30 mb-3" />
-              <p className="text-sm text-muted-foreground">
-                {hasActiveFilters
-                  ? t("dataProducts.emptyState")
-                  : perms.canCreateRules
-                    ? t("dataProducts.emptyStateNoProductsCta")
-                    : t("dataProducts.emptyStateNoProducts")}
-              </p>
-            </div>
+            isLoading ? (
+              <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground py-4">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                {t("common.loading")}
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center text-center">
+                <Boxes className="h-10 w-10 text-muted-foreground/30 mb-3" />
+                <p className="text-sm text-muted-foreground">
+                  {hasActiveFilters
+                    ? t("dataProducts.emptyState")
+                    : perms.canCreateRules
+                      ? t("dataProducts.emptyStateNoProductsCta")
+                      : t("dataProducts.emptyStateNoProducts")}
+                </p>
+              </div>
+            )
           }
         />
 

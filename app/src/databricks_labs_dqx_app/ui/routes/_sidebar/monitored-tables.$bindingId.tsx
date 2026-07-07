@@ -59,6 +59,8 @@ import {
 import {
   useGetMonitoredTableSuspense,
   getGetMonitoredTableQueryKey,
+  getListMonitoredTablesQueryKey,
+  getListDataProductsQueryKey,
   useGetMonitoredTableProfile,
   getGetMonitoredTableProfileQueryKey,
   useSubmitProfileRun,
@@ -210,6 +212,18 @@ function MonitoredTableDetailPage() {
     [queryClient, bindingId],
   );
 
+  // Applying/submitting/approving rules on this binding changes its
+  // server-derived rules/checks counts, which the Monitored Tables list
+  // (`checksCount`/`rulesCount` columns) and any Data Product whose member
+  // counts derive from this binding's summary both read from separate
+  // queries. Those queries aren't invalidated by `invalidateDetail`, so
+  // without this the counts stay stale until a manual reload (A2). Invalidate
+  // them alongside the detail on every lifecycle success.
+  const invalidateCountConsumers = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: getListMonitoredTablesQueryKey() });
+    queryClient.invalidateQueries({ queryKey: getListDataProductsQueryKey() });
+  }, [queryClient]);
+
   // ---------------------------------------------------------------------
   // Staged editor (P16-F) — every add/mapping-edit/severity-override/pin/
   // removal on the Apply Rules tab mutates `stagedRows` ONLY (no network).
@@ -233,7 +247,16 @@ function MonitoredTableDetailPage() {
   }, [bindingId, appliedRules]);
 
   const isDirty = desiredApplicationsKey(stagedRows) !== desiredApplicationsKey(baseline);
-  const { blocker } = useUnsavedGuard({ hasUnsavedChanges: isDirty });
+  // Bypasses the nav guard right after a successful save/submit/approve so an
+  // in-flight invalidate+refetch (which briefly leaves the page mid-settle)
+  // can't fire a spurious "unsaved changes" prompt when the user JUST saved
+  // (B10). Set on each lifecycle success; cleared once the editor is clean
+  // again so a genuine later edit still engages the guard.
+  const justSavedRef = useRef(false);
+  useEffect(() => {
+    if (!isDirty) justSavedRef.current = false;
+  }, [isDirty]);
+  const { blocker } = useUnsavedGuard({ hasUnsavedChanges: isDirty, bypassRef: justSavedRef });
 
   const saveMutation = useSaveAppliedRules();
   const submitMutation = useSubmitMonitoredTable();
@@ -251,8 +274,10 @@ function MonitoredTableDetailPage() {
         const normalized = normalizeStagedRows(resp.data);
         setStagedRows(normalized);
         setBaseline(normalized);
+        justSavedRef.current = true;
         toast.success(t("monitoredTables.toastSavedDraft"));
         invalidateDetail();
+        invalidateCountConsumers();
       },
       (err: unknown) => {
         toast.error(extractApiError(err, t("monitoredTables.toastSaveFailed")), { duration: 6000 });
@@ -275,8 +300,10 @@ function MonitoredTableDetailPage() {
     persistFirst
       .then(() => submitMutation.mutateAsync({ bindingId }))
       .then(() => {
+        justSavedRef.current = true;
         toast.success(t("monitoredTables.toastSubmitted"));
         invalidateDetail();
+        invalidateCountConsumers();
       })
       .catch((err: unknown) => {
         toast.error(extractApiError(err, t("monitoredTables.toastSubmitFailed")), { duration: 6000 });
@@ -288,6 +315,7 @@ function MonitoredTableDetailPage() {
       () => {
         toast.success(t("monitoredTables.toastApproved"));
         invalidateDetail();
+        invalidateCountConsumers();
       },
       (err: unknown) => {
         toast.error(extractApiError(err, t("monitoredTables.toastApproveFailed")), { duration: 6000 });
@@ -300,6 +328,7 @@ function MonitoredTableDetailPage() {
       () => {
         toast.success(t("monitoredTables.toastRejected"));
         invalidateDetail();
+        invalidateCountConsumers();
       },
       (err: unknown) => {
         toast.error(extractApiError(err, t("monitoredTables.toastRejectFailed")), { duration: 6000 });
@@ -946,7 +975,12 @@ function ApplyRulesTab({
     [labelDefinitions],
   );
 
-  const { data: registryData } = useListRegistryRules({ status: "approved" });
+  const {
+    data: registryData,
+    isLoading: registryLoading,
+    isError: registryError,
+    refetch: refetchRegistry,
+  } = useListRegistryRules({ status: "approved" });
   const publishedRules = useMemo(() => registryData?.data ?? [], [registryData]);
   const ruleById = useMemo(() => {
     const m = new Map<string, RegistryRuleOut>();
@@ -1286,6 +1320,9 @@ function ApplyRulesTab({
         onAdd={stageNewRows}
         onApplied={() => {}}
         initialColumn={addColumnContext}
+        rulesLoading={registryLoading}
+        rulesError={registryError}
+        onRetryRules={() => void refetchRegistry()}
       />
 
       <AiSuggestionDialog

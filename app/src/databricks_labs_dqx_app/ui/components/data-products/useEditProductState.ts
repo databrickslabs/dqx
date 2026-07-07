@@ -8,7 +8,7 @@
  * `ProductSchedulingTab`), and steward is a plain string field rather than
  * a principal-search result.
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
@@ -151,6 +151,20 @@ export function useEditProductState(product: DataProductOut) {
   // backoff instead of ticking.
   const canSave = isDirty && !scheduleCronInvalid;
 
+  // Bypasses the unsaved-changes nav guard right after a successful save.
+  // The local buffer (name/description/steward/schedule/members) is only
+  // reconciled against the server via an async invalidate+refetch, so between
+  // a save resolving and that refetch settling, `isDirty` is transiently TRUE
+  // (buffer != still-stale query data) even though the user JUST saved and
+  // has nothing to lose. Without this, navigating in that window fires a
+  // spurious "unsaved changes" prompt (B10). Set on save success; cleared once
+  // the buffer settles clean again (below), so a genuine later edit still
+  // engages the guard.
+  const bypassGuardRef = useRef(false);
+  useEffect(() => {
+    if (!isDirty) bypassGuardRef.current = false;
+  }, [isDirty]);
+
   // --- Mutations ---
   // Suppress the global mutation onError toast — errors are surfaced locally.
   const updateMut = useUpdateDataProduct({ mutation: { onError: () => {} } });
@@ -238,6 +252,7 @@ export function useEditProductState(product: DataProductOut) {
   const handleSaveDraft = useCallback(async (): Promise<boolean> => {
     try {
       await persist();
+      bypassGuardRef.current = true;
       invalidate();
       toast.success(t("dataProducts.toastSavedDraft"));
       return true;
@@ -251,6 +266,7 @@ export function useEditProductState(product: DataProductOut) {
     try {
       await persist();
       await publishMut.mutateAsync({ productId: product.product_id });
+      bypassGuardRef.current = true;
       invalidate();
       toast.success(t("dataProducts.toastSavedAndPublished"));
       return true;
@@ -263,6 +279,7 @@ export function useEditProductState(product: DataProductOut) {
   const handlePublish = useCallback(async (): Promise<boolean> => {
     try {
       await publishMut.mutateAsync({ productId: product.product_id });
+      bypassGuardRef.current = true;
       invalidate();
       toast.success(t("dataProducts.toastPublished"));
       return true;
@@ -297,6 +314,7 @@ export function useEditProductState(product: DataProductOut) {
 
     isDirty,
     canSave,
+    bypassGuardRef,
     handleSaveDraft,
     handleSaveAndPublish,
     handlePublish,

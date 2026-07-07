@@ -33,7 +33,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { AlertCircle, Boxes, Plus, RotateCcw, Search, Trash2 } from "lucide-react";
+import { AlertCircle, Boxes, Loader2, Plus, RotateCcw, Search, Trash2 } from "lucide-react";
 import {
   useListMonitoredTables,
   getListMonitoredTablesQueryKey,
@@ -129,7 +129,7 @@ function MonitoredTablesPage() {
     [statusFilter, stewardFilter, catalogFilter, schemaFilter, nameSearch],
   );
 
-  const { data } = useListMonitoredTables(queryParams);
+  const { data, isLoading } = useListMonitoredTables(queryParams);
   const tables = useMemo(() => data?.data ?? [], [data]);
 
   // Cascading: schema options restricted to whatever catalog is selected —
@@ -337,16 +337,23 @@ function MonitoredTablesPage() {
               : undefined
           }
           emptyState={
-            <div className="flex flex-col items-center justify-center text-center">
-              <Boxes className="h-10 w-10 text-muted-foreground/30 mb-3" />
-              <p className="text-sm text-muted-foreground">
-                {hasActiveFilters
-                  ? t("monitoredTables.emptyState")
-                  : perms.canCreateRules
-                    ? t("monitoredTables.emptyStateNoTablesCta")
-                    : t("monitoredTables.emptyStateNoTables")}
-              </p>
-            </div>
+            isLoading ? (
+              <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground py-4">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                {t("common.loading")}
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center text-center">
+                <Boxes className="h-10 w-10 text-muted-foreground/30 mb-3" />
+                <p className="text-sm text-muted-foreground">
+                  {hasActiveFilters
+                    ? t("monitoredTables.emptyState")
+                    : perms.canCreateRules
+                      ? t("monitoredTables.emptyStateNoTablesCta")
+                      : t("monitoredTables.emptyStateNoTables")}
+                </p>
+              </div>
+            )
           }
         />
 

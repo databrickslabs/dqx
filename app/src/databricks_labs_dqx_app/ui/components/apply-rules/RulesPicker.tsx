@@ -22,7 +22,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Search, Sparkles } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Loader2, RotateCcw, Search, Sparkles } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -264,9 +264,19 @@ export interface RulesPickerProps {
   selectedIds: Set<string>;
   /** Fired when a row's checkbox (or the row itself) is toggled. */
   onToggle: (rule: RegistryRuleOut) => void;
+  /** The published-rules query is still loading (no data yet). Shown as a
+   *  loading row rather than the misleading "no rules" empty state. */
+  isLoading?: boolean;
+  /** The published-rules query errored (e.g. a transient auth blip). Shown as
+   *  an explicit failure + retry rather than a false "no rules match" — the
+   *  root cause of A3, where an empty `rules` from a failed fetch read as
+   *  "zero rules available" for a column that actually has valid rules. */
+  isError?: boolean;
+  /** Refetch the published-rules query (wired to the error-state retry). */
+  onRetry?: () => void;
 }
 
-export function RulesPicker({ rules, labelDefinitions, selectedIds, onToggle }: RulesPickerProps) {
+export function RulesPicker({ rules, labelDefinitions, selectedIds, onToggle, isLoading, isError, onRetry }: RulesPickerProps) {
   const { t } = useTranslation();
   const ctx = useMemo(() => ({ labelDefinitions }), [labelDefinitions]);
   const [search, setSearch] = useState("");
@@ -432,7 +442,24 @@ export function RulesPicker({ rules, labelDefinitions, selectedIds, onToggle }: 
             {sorted.length === 0 && (
               <TableRow>
                 <TableCell colSpan={visibleColCount + 1} className="text-center text-muted-foreground py-8">
-                  {t("monitoredTables.noPublishedRules")}
+                  {isLoading ? (
+                    <span className="inline-flex items-center gap-2">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      {t("common.loading")}
+                    </span>
+                  ) : isError ? (
+                    <span className="inline-flex items-center gap-2">
+                      {t("common.loadFailed")}
+                      {onRetry && (
+                        <Button variant="outline" size="sm" className="gap-1.5 h-7" onClick={onRetry}>
+                          <RotateCcw className="h-3 w-3" />
+                          {t("common.retry")}
+                        </Button>
+                      )}
+                    </span>
+                  ) : (
+                    t("monitoredTables.noPublishedRules")
+                  )}
                 </TableCell>
               </TableRow>
             )}

@@ -1872,6 +1872,7 @@
     "toastPublished": "Publicado.",
     "toastRunStarted": "Ejecución iniciada.",
     "toastRunFailed": "No se pudo iniciar la ejecución.",
+    "toastRunNoneStarted": "No se pudo iniciar la ejecución: no se pudo lanzar ningún miembro.",
     "toastDeleted": "Producto de datos eliminado.",
     "toastDeleteFailed": "No se pudo eliminar el producto de datos.",
     "addTablesButton": "Agregar tablas",

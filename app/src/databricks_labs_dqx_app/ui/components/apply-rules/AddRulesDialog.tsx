@@ -44,6 +44,13 @@ interface AddRulesDialogProps {
   /** Appends one locally-staged row per selected rule to the tab's staged
    *  row list. Pure local-state mutation — no network call. */
   onAdd: (rows: ReturnType<typeof newStagedRow>[]) => void;
+  /** Loading/error state of the published-rules query, so the picker can tell
+   *  "still loading / fetch failed" apart from "genuinely no approved rules"
+   *  instead of always showing a misleading empty state (A3). */
+  rulesLoading?: boolean;
+  rulesError?: boolean;
+  /** Retry the published-rules fetch (wired to the picker's error state). */
+  onRetryRules?: () => void;
   /**
    * When opened from the by-column lens's per-column "+ Add rule" CTA, this
    * carries the clicked column's name so the dialog can show a hint about
@@ -62,6 +69,9 @@ export function AddRulesDialog({
   onApplied,
   onAdd,
   initialColumn = null,
+  rulesLoading,
+  rulesError,
+  onRetryRules,
 }: AddRulesDialogProps) {
   const { t } = useTranslation();
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -131,6 +141,9 @@ export function AddRulesDialog({
             labelDefinitions={labelDefinitions}
             selectedIds={selectedIds}
             onToggle={toggleRule}
+            isLoading={rulesLoading}
+            isError={rulesError}
+            onRetry={onRetryRules}
           />
           <p className="text-xs text-muted-foreground">
             <Trans

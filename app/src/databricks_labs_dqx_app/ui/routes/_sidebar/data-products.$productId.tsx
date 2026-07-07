@@ -119,7 +119,10 @@ function DataProductDetailPage() {
   const canEdit = perms.canEditRules;
 
   const editState = useEditProductState(product);
-  const { blocker } = useUnsavedGuard({ hasUnsavedChanges: editState.isDirty });
+  const { blocker } = useUnsavedGuard({
+    hasUnsavedChanges: editState.isDirty,
+    bypassRef: editState.bypassGuardRef,
+  });
 
   // The URL is the single source of truth for the active tab — no local
   // state. An absent/invalid ?tab= falls back to "about".

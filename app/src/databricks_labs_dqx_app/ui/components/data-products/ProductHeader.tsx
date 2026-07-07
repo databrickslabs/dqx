@@ -69,6 +69,17 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
     if (hasActive) setJustSubmitted(false);
   }, [hasActive]);
 
+  // Safety net: a submit can return 200 without ever producing an active run
+  // set (e.g. the backend accepted the request but every member failed to
+  // launch, so the run set was rolled back). Without this, `justSubmitted`
+  // would keep the button on "Running…" forever. Clear it if no active run
+  // set confirms within 30s so the button always returns to a terminal state.
+  useEffect(() => {
+    if (!justSubmitted) return;
+    const id = window.setTimeout(() => setJustSubmitted(false), 30_000);
+    return () => window.clearTimeout(id);
+  }, [justSubmitted]);
+
   const runPending = busyRun || hasActive || justSubmitted;
 
   // Publish-only state: a saved draft with no in-memory edits and a prior
@@ -83,7 +94,17 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
   const handleRun = async (source: (typeof RunDataProductInSource)[keyof typeof RunDataProductInSource]) => {
     setBusyRun(true);
     try {
-      await runMut.mutateAsync({ productId: product.product_id, data: { source } });
+      const resp = await runMut.mutateAsync({ productId: product.product_id, data: { source } });
+      // The run endpoint returns 200 even when EVERY member failed to launch
+      // (their failures collected into `skipped`, `submitted` left empty, and
+      // the empty run set rolled back). That is not a started run, so treat an
+      // empty `submitted` as a failure: surface it and do NOT enter the
+      // "Running…" bridge state, which would otherwise stick forever since no
+      // active run set will ever confirm it.
+      if ((resp.data.submitted?.length ?? 0) === 0) {
+        toast.error(t("dataProducts.toastRunNoneStarted"), { duration: 6000 });
+        return;
+      }
       setJustSubmitted(true);
       toast.success(t("dataProducts.toastRunStarted"));
     } catch (e) {
