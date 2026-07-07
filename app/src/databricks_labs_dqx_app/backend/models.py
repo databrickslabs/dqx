@@ -550,6 +550,7 @@ class MonitoredTableOut(BaseModel):
     table_fqn: str
     steward: str | None = None
     status: MonitoredTableStatusDomain
+    version: int = Field(default=0, description="0 = never approved; bumped on each table approval")
     last_profiled_at: str | None = None
     created_by: str | None = None
     created_at: str | None = None
@@ -563,6 +564,7 @@ class MonitoredTableOut(BaseModel):
             table_fqn=table.table_fqn,
             steward=table.steward,
             status=table.status,
+            version=table.version,
             last_profiled_at=table.last_profiled_at.isoformat() if table.last_profiled_at else None,
             created_by=table.created_by,
             created_at=table.created_at.isoformat() if table.created_at else None,

@@ -1222,6 +1222,8 @@ export interface MonitoredTableOut {
   table_fqn: string;
   steward?: MonitoredTableOutSteward;
   status: MonitoredTableOutStatus;
+  /** 0 = never approved; bumped on each table approval */
+  version?: number;
   last_profiled_at?: MonitoredTableOutLastProfiledAt;
   created_by?: MonitoredTableOutCreatedBy;
   created_at?: MonitoredTableOutCreatedAt;

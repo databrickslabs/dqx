@@ -26,6 +26,7 @@ import { ProductTabsShell, PRODUCT_TAB_KEYS, type ProductTabKey } from "@/compon
 import { ProductHeader } from "@/components/data-products/ProductHeader";
 import { ProductAboutTab } from "@/components/data-products/ProductAboutTab";
 import { ProductSharingTab } from "@/components/data-products/ProductSharingTab";
+import { ProductTablesTab } from "@/components/data-products/ProductTablesTab";
 import { useEditProductState } from "@/components/data-products/useEditProductState";
 
 export const Route = createFileRoute("/_sidebar/data-products/$productId")({
@@ -160,7 +161,7 @@ function DataProductDetailPage() {
             ),
             tables: (
               <TabBoundary label={t("dataProducts.tabTables")}>
-                <ComingSoonTab />
+                <ProductTablesTab editState={editState} canEdit={canEdit} />
               </TabBoundary>
             ),
             runs: (
