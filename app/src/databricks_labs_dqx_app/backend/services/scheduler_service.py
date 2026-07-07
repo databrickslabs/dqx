@@ -509,10 +509,38 @@ class SchedulerService:
         next_run = tracker.get("next_run_at") if tracker else None
 
         if next_run is None:
-            computed = self._compute_next_cron_run(cron_expr, now - timedelta(seconds=1), tz_name)
             last_run = tracker.get("last_run_at") if tracker else None
             last_id = tracker.get("last_run_id") if tracker else None
             last_dt = self._parse_ts(last_run) if last_run else None
+            try:
+                computed = self._compute_next_cron_run(cron_expr, now - timedelta(seconds=1), tz_name)
+            except Exception:
+                # A malformed ``schedule_cron`` must not raise here: this
+                # branch runs on every tick until a tracker row exists, so
+                # an unguarded raise means a full stack trace logged
+                # forever with next_run_at never advancing. Seed a backoff
+                # tracker instead, mirroring
+                # :meth:`_advance_product_after_failure`'s fallback, so the
+                # schedule retries on the :data:`_FAILURE_BACKOFF` cadence.
+                # Only the first encounter (no tracker row yet) gets a full
+                # exception log; subsequent ticks just warn to avoid spam.
+                if tracker is None:
+                    logger.exception(
+                        "Product schedule '%s': could not compute initial next_run_at for cron '%s'; "
+                        "seeding backoff tracker",
+                        schedule_name,
+                        cron_expr,
+                    )
+                else:
+                    logger.warning(
+                        "Product schedule '%s': could not compute next_run_at for cron '%s'; "
+                        "seeding backoff tracker",
+                        schedule_name,
+                        cron_expr,
+                    )
+                computed = now + _FAILURE_BACKOFF
+                self._upsert_tracker(schedule_name, last_dt, computed, last_id, "pending")
+                return
             self._upsert_tracker(schedule_name, last_dt, computed, last_id, "pending")
             if computed <= now:
                 next_run = computed.isoformat()

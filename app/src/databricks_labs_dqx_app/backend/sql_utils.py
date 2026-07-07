@@ -74,13 +74,13 @@ def quote_fqn(fqn: str) -> str:
 def validate_schedule_name(name: str) -> str:
     """Validate that a schedule name contains only safe characters.
 
-    Raises ValueError if the name doesn't match ``^[a-zA-Z0-9_-]{1,64}$``.
+    Raises ValueError if the name doesn't match ``^[a-zA-Z0-9_:-]{1,64}$``.
     Returns the validated name unchanged.
     """
     if not _SCHEDULE_NAME_RE.match(name):
         raise ValueError(
             f"Invalid schedule name: '{name}'. "
-            "Must be 1–64 characters using only letters, digits, underscores, or hyphens."
+            "Must be 1–64 characters using only letters, digits, underscores, hyphens, or colons."
         )
     return name
 

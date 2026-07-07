@@ -16,6 +16,7 @@ integration tests; here we keep the surface narrow and deterministic.
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 from unittest.mock import create_autospec
 
@@ -37,6 +38,28 @@ from databricks_labs_dqx_app.backend.services.scheduler_service import (
     _TMP_VIEW_NAME_RE,
     SchedulerService,
 )
+from databricks_labs_dqx_app.backend.services.scheduler_service import logger as scheduler_logger
+
+
+@pytest.fixture
+def scheduler_caplog(caplog):
+    """``caplog`` wired up for the scheduler's logger.
+
+    ``scheduler_logger`` is built via ``get_logger("scheduler")``, which
+    sets ``propagate = False`` (to avoid duplicate console output) and
+    attaches its own ``StreamHandler``. That means records never reach the
+    root logger, so plain ``caplog.at_level(...)`` (which only attaches to
+    root by default) sees nothing. Attaching ``caplog.handler`` directly to
+    ``scheduler_logger`` sidesteps ``propagate`` entirely.
+    """
+    previous_level = scheduler_logger.level
+    scheduler_logger.addHandler(caplog.handler)
+    scheduler_logger.setLevel(logging.WARNING)
+    try:
+        yield caplog
+    finally:
+        scheduler_logger.removeHandler(caplog.handler)
+        scheduler_logger.setLevel(previous_level)
 
 
 # ---------------------------------------------------------------------------
@@ -509,6 +532,44 @@ class TestComputeNextCronRun:
         with pytest.raises(ValueError):
             SchedulerService._compute_next_cron_run("0 9 * *", datetime.now(timezone.utc), None)
 
+    def test_leap_day_from_non_leap_year_rolls_to_next_leap_year(self):
+        # "0 0 29 2 *" only has a real date in leap years. Starting from a
+        # non-leap year must skip 2026/2027 (no Feb 29) and land on the
+        # next leap year (2028) — and must terminate rather than looping
+        # forever hunting for a day that doesn't exist in most years.
+        after = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        result = SchedulerService._compute_next_cron_run("0 0 29 2 *", after, None)
+        assert result == datetime(2028, 2, 29, 0, 0, tzinfo=timezone.utc)
+
+    def test_dst_spring_forward_gap_time_fires_once_without_hanging(self):
+        # America/New_York DST starts 2026-03-08 at 02:00 local (clocks
+        # jump to 03:00), so the wall-clock time 02:30 never occurs that
+        # day. The evaluator must still terminate and produce a single,
+        # deterministic UTC instant instead of hanging or raising.
+        after = datetime(2026, 3, 8, 5, 30, tzinfo=timezone.utc)  # 00:30 EST, before the gap
+        result = SchedulerService._compute_next_cron_run("30 2 * * *", after, "America/New_York")
+        assert result == datetime(2026, 3, 8, 7, 30, tzinfo=timezone.utc)
+
+        # Firing again from that instant must advance to the *next* day
+        # (now in EDT, UTC-4) rather than re-firing the same gap gets hit
+        # a second time.
+        next_result = SchedulerService._compute_next_cron_run("30 2 * * *", result, "America/New_York")
+        assert next_result == datetime(2026, 3, 9, 6, 30, tzinfo=timezone.utc)
+
+    def test_dst_fall_back_ambiguous_time_fires_once(self):
+        # America/New_York DST ends 2026-11-01 at 02:00 local (clocks fall
+        # back to 01:00), so wall-clock 01:30 occurs twice that day (once
+        # in EDT, once in EST). The evaluator must fire exactly once for
+        # that day, not twice.
+        after = datetime(2026, 10, 31, 20, 0, tzinfo=timezone.utc)
+        result = SchedulerService._compute_next_cron_run("30 1 * * *", after, "America/New_York")
+        assert result.date().isoformat() == "2026-11-01"
+
+        next_result = SchedulerService._compute_next_cron_run("30 1 * * *", result, "America/New_York")
+        # The next occurrence must be the following day, not another
+        # 01:30 instance on the same ambiguous day.
+        assert next_result.date().isoformat() == "2026-11-02"
+
 
 # ---------------------------------------------------------------------------
 # Product ticks — _tick_one_product / _tick_products (Data Products Task 5)
@@ -603,6 +664,87 @@ class TestTickOneProduct:
         value_cols = mocks.oltp.upsert.call_args.kwargs["value_cols"]
         assert value_cols["status"] == "failed"
         assert "2026-05-02T09:00:00+00:00" in value_cols["next_run_at"].expr
+
+    def test_missed_tick_catch_up_fires_once_and_advances_from_now(self, make_scheduler):
+        # next_run_at is 6 days overdue (e.g. the scheduler was down). A
+        # single catch-up run must fire — not one per missed day — and the
+        # new next_run_at must be computed from *now*, not replayed forward
+        # from the stale next_run_at.
+        svc, mocks, dp_service = _make_product_scheduler(make_scheduler)
+        mocks.oltp.query.return_value = [_tracker_row("product:prod1", "2026-04-25T09:00:00+00:00")]
+        dp_service.run.return_value = DataProductRunResult(run_set_id="rs1", submitted=[], skipped=[])
+        now = datetime(2026, 5, 1, 9, 0, 5, tzinfo=timezone.utc)
+
+        svc._tick_one_product({"product_id": "prod1", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC"}, now)
+
+        dp_service.run.assert_called_once()
+        mocks.oltp.upsert.assert_called_once()
+        value_cols = mocks.oltp.upsert.call_args.kwargs["value_cols"]
+        assert value_cols["status"] == "success"
+        # Advances from *now* (2026-05-01) to tomorrow, not from the stale
+        # next_run_at (2026-04-25) forward one day at a time.
+        assert "2026-05-02T09:00:00+00:00" in value_cols["next_run_at"].expr
+
+
+class TestTickOneProductMalformedCronBackoff:
+    """Regression coverage for the eternal-log-spam bug (LOW fix #1).
+
+    Before the fix, a published product with a malformed ``schedule_cron``
+    and no tracker row yet would raise inside ``_tick_one_product`` before
+    any tracker was seeded, so the identical unguarded exception was
+    re-raised (and logged as a full stack trace) on *every* tick forever,
+    with ``next_run_at`` never advancing. The fix seeds a backoff tracker
+    (mirroring ``_advance_product_after_failure``) so the schedule retries
+    on the ``_FAILURE_BACKOFF`` cadence, warns instead of dumping a full
+    traceback on repeat encounters, and never raises.
+    """
+
+    def test_first_encounter_seeds_backoff_tracker_with_exception_log(self, make_scheduler, scheduler_caplog):
+        svc, mocks, dp_service = _make_product_scheduler(make_scheduler)
+        mocks.oltp.query.return_value = []  # no tracker row exists yet
+        now = datetime(2026, 5, 1, 9, 0, 0, tzinfo=timezone.utc)
+
+        svc._tick_one_product({"product_id": "prod1", "schedule_cron": "not a cron", "schedule_tz": "UTC"}, now)
+
+        dp_service.run.assert_not_called()
+        mocks.oltp.upsert.assert_called_once()
+        value_cols = mocks.oltp.upsert.call_args.kwargs["value_cols"]
+        assert value_cols["status"] == "pending"
+        expected_backoff = (now + _FAILURE_BACKOFF).isoformat()
+        assert expected_backoff in value_cols["next_run_at"].expr
+        # First-ever encounter gets a full exception log (stack trace),
+        # not just a bare warning — this is the "log once" half of the fix.
+        assert any(r.levelname == "ERROR" and r.exc_info for r in scheduler_caplog.records)
+
+    def test_repeat_encounter_warns_without_full_exception_spam(self, make_scheduler, scheduler_caplog):
+        svc, mocks, dp_service = _make_product_scheduler(make_scheduler)
+        # A tracker row already exists (seeded by a prior failed attempt)
+        # but next_run_at is still unset because the cron is still broken.
+        mocks.oltp.query.return_value = [("product:prod1", None, None, None, "pending")]
+        now = datetime(2026, 5, 1, 9, 0, 0, tzinfo=timezone.utc)
+
+        svc._tick_one_product({"product_id": "prod1", "schedule_cron": "not a cron", "schedule_tz": "UTC"}, now)
+
+        dp_service.run.assert_not_called()
+        mocks.oltp.upsert.assert_called_once()
+        expected_backoff = (now + _FAILURE_BACKOFF).isoformat()
+        value_cols = mocks.oltp.upsert.call_args.kwargs["value_cols"]
+        assert expected_backoff in value_cols["next_run_at"].expr
+        # No full-traceback log spam once a tracker already exists —
+        # this is the crux of the eternal-log-spam fix.
+        assert not any(r.levelname == "ERROR" for r in scheduler_caplog.records)
+        assert any(r.levelname == "WARNING" for r in scheduler_caplog.records)
+
+    def test_tick_never_raises_for_malformed_cron(self, make_scheduler):
+        svc, mocks, dp_service = _make_product_scheduler(make_scheduler)
+        mocks.oltp.query.return_value = []
+        now = datetime(2026, 5, 1, 9, 0, 0, tzinfo=timezone.utc)
+
+        # Must not raise — this is the core regression: an unguarded raise
+        # here previously propagated up through _tick_products every tick.
+        svc._tick_one_product({"product_id": "prod1", "schedule_cron": "garbage", "schedule_tz": "UTC"}, now)
+
+        mocks.oltp.upsert.assert_called_once()
 
 
 class TestTickProducts:
