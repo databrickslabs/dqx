@@ -24,6 +24,7 @@ import {
   getTag,
   colorFor,
   TagBadge,
+  SeverityBadge,
   StatusBadge,
   ModeBadge,
   type LabelColorDefinition,
@@ -249,7 +250,7 @@ const COLUMNS: Record<ColumnKey, ColumnDef> = {
     renderHeader: (label) => label,
     renderCell: (r, ctx) => {
       const severity = getTag(r, RESERVED_SEVERITY_KEY);
-      return <TagBadge label={severity} color={colorFor(ctx.labelDefinitions, RESERVED_SEVERITY_KEY, severity)} />;
+      return <SeverityBadge severity={severity} color={colorFor(ctx.labelDefinitions, RESERVED_SEVERITY_KEY, severity)} />;
     },
   },
   actions: {

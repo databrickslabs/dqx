@@ -97,7 +97,7 @@
     "howItWorks": "① Define reusable rules in the Rules Registry → ② Apply them to your Monitored Tables.",
     "highlights": {
       "uc": "Unity Catalog integration",
-      "ai": "AI-powered rule generation",
+      "ai": "Natural-language rule generation",
       "schedule": "Scheduled rule execution",
       "rbac": "Role-based approval workflow"
     }
@@ -113,7 +113,7 @@
     "errorSuffix": "\n\nPlease refresh the page or contact your administrator if the problem persists."
   },
   "navbar": {
-    "aiAssistant": "AI Rules Assistant",
+    "aiAssistant": "Generate rules",
     "toggleTheme": "Toggle theme"
   },
   "footer": {
@@ -1237,11 +1237,11 @@
     "reviewClearSelection": "Clear selection"
   },
   "aiAssistant": {
-    "title": "AI Rules Assistant",
-    "description": "Generate data quality rules using AI"
+    "title": "Generate rules",
+    "description": "Describe your data quality requirements in plain language to generate rule definitions."
   },
   "aiCheckGenerator": {
-    "title": "AI-Assisted Rules Generation",
+    "title": "Generate rules",
     "subtitle": "Describe your data quality needs",
     "usingContextFrom": "Using context from: {{name}}",
     "generatedChecks": "Generated Checks",
@@ -1255,7 +1255,7 @@
     "kbdHint": "to generate or",
     "kbdHintSuffix": "for a new line",
     "enterDescriptionFirst": "Please enter a description of your data quality requirements",
-    "checksGenerated": "Checks generated successfully!",
+    "checksGenerated": "Checks generated.",
     "failedGenerate": "Failed to generate checks. Please try again.",
     "yamlCopied": "YAML copied to clipboard"
   },
@@ -1869,7 +1869,6 @@
     "addRuleDialogDescription": "Pick one or more published registry rules to apply to this table.",
     "removeMappingGroupTitle": "Removes mapping group {{count}}",
     "applyToAnotherColumnButton": "+ Apply to another column",
-    "addMappingInlineTitle": "Map this rule to a column",
     "searchRulesPlaceholder": "Search published rules…",
     "noPublishedRules": "No published rules match your search.",
     "rulesPickerRuleCount_one": "{{count}} rule",
@@ -1893,7 +1892,6 @@
     "columnPickerCountFamily": "Showing {{shown}} of {{total}} · family: {{family}}",
     "applyButton": "Apply rule",
     "applying": "Applying…",
-    "mappingIncomplete": "Map every slot to a column before applying.",
     "toastAppliedCount_one": "Rule applied.",
     "toastAppliedCount_other": "{{count}} rules applied.",
     "resultsTitle": "Results",
@@ -2003,6 +2001,7 @@
     "moreOptionsLabel": "More options",
     "removeRuleFromMonitorMenuItem": "Remove rule from monitor",
     "collapseLabel": "Collapse",
-    "expandLabel": "Expand"
+    "expandLabel": "Expand",
+    "severityNoneLabel": "None"
   }
 }

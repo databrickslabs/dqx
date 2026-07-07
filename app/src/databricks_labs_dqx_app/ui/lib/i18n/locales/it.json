@@ -97,7 +97,7 @@
     "howItWorks": "① Definisci regole riutilizzabili nel Registro delle Regole → ② Applicale alle tue Tabelle Monitorate.",
     "highlights": {
       "uc": "Integrazione Unity Catalog",
-      "ai": "Generazione regole con IA",
+      "ai": "Generazione di regole in linguaggio naturale",
       "schedule": "Esecuzione regole pianificata",
       "rbac": "Flusso di approvazione basato su ruoli"
     }
@@ -113,7 +113,7 @@
     "errorSuffix": "\n\nRicarica la pagina o contatta l'amministratore se il problema persiste."
   },
   "navbar": {
-    "aiAssistant": "Assistente Regole IA",
+    "aiAssistant": "Genera regole",
     "toggleTheme": "Cambia tema"
   },
   "footer": {
@@ -1237,11 +1237,11 @@
     "wasCanceled": "Questa esecuzione è stata annullata."
   },
   "aiAssistant": {
-    "title": "Assistente Regole IA",
-    "description": "Genera regole di qualità dei dati usando l'IA"
+    "title": "Genera regole",
+    "description": "Descrivi i tuoi requisiti di qualità dei dati in linguaggio naturale per generare le definizioni delle regole."
   },
   "aiCheckGenerator": {
-    "title": "Generazione Regole Assistita da IA",
+    "title": "Genera regole",
     "subtitle": "Descrivi le tue esigenze di qualità dei dati",
     "usingContextFrom": "Utilizzo contesto da: {{name}}",
     "generatedChecks": "Controlli Generati",
@@ -1255,7 +1255,7 @@
     "kbdHint": "per generare o",
     "kbdHintSuffix": "per andare a capo",
     "enterDescriptionFirst": "Inserisci una descrizione dei tuoi requisiti di qualità dei dati",
-    "checksGenerated": "Controlli generati con successo!",
+    "checksGenerated": "Controlli generati.",
     "failedGenerate": "Impossibile generare controlli. Riprova.",
     "yamlCopied": "YAML copiato negli appunti"
   },
@@ -1869,7 +1869,6 @@
     "addRuleDialogDescription": "Scegli una o più regole pubblicate dal registro da applicare a questa tabella.",
     "removeMappingGroupTitle": "Rimuove il gruppo di mapping {{count}}",
     "applyToAnotherColumnButton": "+ Applica a un'altra colonna",
-    "addMappingInlineTitle": "Mappa questa regola su una colonna",
     "searchRulesPlaceholder": "Cerca regole pubblicate…",
     "noPublishedRules": "Nessuna regola pubblicata corrisponde alla tua ricerca.",
     "rulesPickerRuleCount_one": "{{count}} regola",
@@ -1893,7 +1892,6 @@
     "columnPickerCountFamily": "Visualizzate {{shown}} di {{total}} · famiglia: {{family}}",
     "applyButton": "Applica regola",
     "applying": "Applicazione in corso…",
-    "mappingIncomplete": "Mappa ogni slot a una colonna prima di applicare.",
     "toastAppliedCount_one": "Regola applicata.",
     "toastAppliedCount_other": "{{count}} regole applicate.",
     "resultsTitle": "Risultati",
@@ -2003,6 +2001,7 @@
     "moreOptionsLabel": "Altre opzioni",
     "removeRuleFromMonitorMenuItem": "Rimuovi regola dal monitoraggio",
     "collapseLabel": "Comprimi",
-    "expandLabel": "Espandi"
+    "expandLabel": "Espandi",
+    "severityNoneLabel": "Nessuna"
   }
 }

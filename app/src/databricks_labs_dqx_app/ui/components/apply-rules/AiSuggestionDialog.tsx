@@ -32,6 +32,7 @@ import type { LabelDefinition } from "@/lib/api-custom";
 import { aiUnavailableReason } from "@/hooks/use-ai-availability";
 import { AI_BANNER_BORDER, AI_BUTTON_BG, AI_ICON_COLOR, AI_TEXT_GRADIENT } from "@/lib/ai-style";
 import { MappingChips } from "./MappingChips";
+import { SeverityBadge } from "@/components/RegistryRuleBadges";
 import { RESERVED_DIMENSION_KEY, RESERVED_SEVERITY_KEY, TagBadge, colorFor, newStagedRow } from "./shared";
 
 interface SuggestRulesState {
@@ -206,9 +207,7 @@ export function AiSuggestionDialog({
                       {s.dimension && (
                         <TagBadge label={s.dimension} color={colorFor(labelDefinitions, RESERVED_DIMENSION_KEY, s.dimension)} />
                       )}
-                      {s.severity && (
-                        <TagBadge label={s.severity} color={colorFor(labelDefinitions, RESERVED_SEVERITY_KEY, s.severity)} />
-                      )}
+                      <SeverityBadge severity={s.severity ?? ""} color={colorFor(labelDefinitions, RESERVED_SEVERITY_KEY, s.severity ?? "")} />
                     </div>
                     {s.explanation && (
                       <p className="text-xs text-muted-foreground">{s.explanation}</p>

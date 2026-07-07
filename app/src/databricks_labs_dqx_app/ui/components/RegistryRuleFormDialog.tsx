@@ -104,7 +104,14 @@ type Polarity = "pass" | "fail";
 // editor's page-based structure.
 export type PageTab = "about" | "sharing" | "implementation" | "test" | "history";
 
-const SQL_DDL_DML_PATTERN = /\b(DROP|DELETE|INSERT|UPDATE|ALTER|TRUNCATE|CREATE|GRANT|REVOKE|MERGE)\b/i;
+// Mirrors the backend's `forbidden_statements` list verbatim — see
+// `is_sql_query_safe()` in `src/databricks/labs/dqx/utils.py`, the source of
+// truth. This is a client-side UX guard only (fast, no round-trip); the
+// backend re-validates on save and is the actual security boundary. Keep
+// this list in lock-step with the backend one — a mismatch lets the user
+// save a draft here that then 422s server-side.
+const SQL_DDL_DML_PATTERN =
+  /\b(DELETE|INSERT|UPDATE|DROP|TRUNCATE|ALTER|CREATE|REPLACE|GRANT|REVOKE|MERGE|USE|REFRESH|ANALYZE|OPTIMIZE|ZORDER)\b/i;
 
 function validateSqlPredicate(predicate: string, t: (key: string) => string): string | null {
   if (!predicate.trim()) return null;
@@ -1978,6 +1985,29 @@ export function RegistryRuleFormDialog({
     );
   };
 
+  // Low-code mode is a not-yet-implemented placeholder (`structurallyValid`
+  // is unconditionally `false` for it), so `missingDraftFieldLabels` stays
+  // empty and `withMissingFieldsTooltip` renders no tooltip at all — the
+  // disabled Save button just looks broken with no explanation. Use plain,
+  // self-contained copy (the same text as the in-form "coming soon" note)
+  // instead of routing it through the "Fill in the following…" wrapper,
+  // which doesn't make sense when there's no field to fill in.
+  const withPlainTooltip = (button: ReactNode, show: boolean, textKey: string) => {
+    if (!show) return button;
+    return (
+      <TooltipProvider delayDuration={200}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span tabIndex={0} className="inline-flex">
+              {button}
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>{t(textKey)}</TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    );
+  };
+
   const footerButtons = (
     <>
       <Button variant="outline" onClick={closeAndReset} disabled={saving}>
@@ -1991,41 +2021,53 @@ export function RegistryRuleFormDialog({
               with no real change), matching dqlake's steward editor.
               Draft saves only need structural validity (`canSaveDraft`);
               the completeness bar applies to the submit buttons below. */}
-          {withMissingFieldsTooltip(
-            <Button
-              variant="secondary"
-              onClick={() => handleSave(false)}
-              disabled={saving || !isDirty || !canSaveDraft}
-              className="gap-2"
-            >
-              {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-              {t("rulesRegistry.saveDraft")}
-            </Button>,
-            !canSaveDraft,
-            missingDraftFieldLabels,
-            "rulesRegistry.canSaveMissingFieldsTooltip",
+          {withPlainTooltip(
+            withMissingFieldsTooltip(
+              <Button
+                variant="secondary"
+                onClick={() => handleSave(false)}
+                disabled={saving || !isDirty || !canSaveDraft}
+                className="gap-2"
+              >
+                {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                {t("rulesRegistry.saveDraft")}
+              </Button>,
+              !canSaveDraft,
+              missingDraftFieldLabels,
+              "rulesRegistry.canSaveMissingFieldsTooltip",
+            ),
+            mode === "lowcode" && !canSaveDraft,
+            "rulesRegistry.lowcodeComingSoon",
           )}
           {isEditing && !isDirty ? (
             // The draft is already persisted and unchanged — submit it
             // for approval directly rather than issuing a redundant save.
-            withMissingFieldsTooltip(
-              <Button onClick={handleSubmitOnly} disabled={saving || !canSubmit} className="gap-2">
-                {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                {t("rulesRegistry.actionSubmit")}
-              </Button>,
-              !canSubmit,
-              missingSubmitFieldLabels,
-              "rulesRegistry.canSubmitMissingFieldsTooltip",
+            withPlainTooltip(
+              withMissingFieldsTooltip(
+                <Button onClick={handleSubmitOnly} disabled={saving || !canSubmit} className="gap-2">
+                  {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                  {t("rulesRegistry.actionSubmit")}
+                </Button>,
+                !canSubmit,
+                missingSubmitFieldLabels,
+                "rulesRegistry.canSubmitMissingFieldsTooltip",
+              ),
+              mode === "lowcode" && !canSubmit,
+              "rulesRegistry.lowcodeComingSoon",
             )
           ) : (
-            withMissingFieldsTooltip(
-              <Button onClick={() => handleSave(true)} disabled={saving || !isDirty || !canSubmit} className="gap-2">
-                {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                {t("rulesRegistry.saveAndSubmit")}
-              </Button>,
-              !canSubmit,
-              missingSubmitFieldLabels,
-              "rulesRegistry.canSubmitMissingFieldsTooltip",
+            withPlainTooltip(
+              withMissingFieldsTooltip(
+                <Button onClick={() => handleSave(true)} disabled={saving || !isDirty || !canSubmit} className="gap-2">
+                  {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                  {t("rulesRegistry.saveAndSubmit")}
+                </Button>,
+                !canSubmit,
+                missingSubmitFieldLabels,
+                "rulesRegistry.canSubmitMissingFieldsTooltip",
+              ),
+              mode === "lowcode" && !canSubmit,
+              "rulesRegistry.lowcodeComingSoon",
             )
           )}
         </>

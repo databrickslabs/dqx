@@ -12,13 +12,14 @@
 // preview list, which has no staged row to edit) to fall back to
 // non-interactive display chips.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Loader2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import type { AppliedRuleOutColumnMappingItem, ColumnOut, RuleSlot } from "@/lib/api";
-import { ColumnDropdownList, columnsForSlot } from "./ColumnPicker";
+import { ColumnDropdownList, MultiColumnPicker, columnsForSlot } from "./ColumnPicker";
 
 const PALETTE = [
   "bg-emerald-500/10 text-emerald-700 border-emerald-500/30 dark:text-emerald-400",
@@ -190,6 +191,118 @@ function EditableChip({
   );
 }
 
+/**
+ * One slot's placeholder chip in the "add a new mapping group" flow —
+ * renders directly inline in that slot's row (not a separate form/dialog
+ * below the component). Mirrors `EditableChip`'s Popover, but starts
+ * auto-opened when this slot is the next one needing a value, so the
+ * picker for slot N+1 pops open immediately once slot N is picked — no
+ * extra click to "open" it, matching the single-slot case where pressing
+ * "+ Apply to another column" opens the picker directly.
+ */
+function PendingSlotChip({
+  slot,
+  columns,
+  excludeColumns,
+  value,
+  autoOpen,
+  colorClass,
+  onSelect,
+  onCancel,
+}: {
+  slot: RuleSlot;
+  columns: ColumnOut[];
+  excludeColumns: string[];
+  value?: string;
+  autoOpen: boolean;
+  colorClass: string;
+  onSelect: (colName: string) => void;
+  /** Rendered only on the flow's cancel affordance (last slot row). */
+  onCancel?: () => void;
+}) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(autoOpen);
+  // `autoOpen` flips true when this becomes the next slot awaiting a value
+  // (the previous slot in the sequence just got picked) — react to that
+  // transition and pop the picker open without another click.
+  useEffect(() => {
+    if (autoOpen) setOpen(true);
+  }, [autoOpen]);
+  const matches = columnsForSlot(columns, slot, excludeColumns);
+  return (
+    <span
+      className={cn("inline-flex items-center gap-1 rounded border border-dashed px-2 py-0.5 text-xs font-mono", colorClass)}
+    >
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            className={cn("cursor-pointer hover:underline focus:outline-none", !value && "text-muted-foreground font-sans")}
+          >
+            {value || t("monitoredTables.selectColumnPlaceholder")}
+          </button>
+        </PopoverTrigger>
+        <PopoverContent className="w-80 p-0" align="start">
+          <ColumnDropdownList
+            slot={slot}
+            matches={matches}
+            totalAll={columns.length}
+            onSelect={(colName) => {
+              onSelect(colName);
+              setOpen(false);
+            }}
+          />
+        </PopoverContent>
+      </Popover>
+      {onCancel && (
+        <button
+          type="button"
+          onClick={onCancel}
+          title={t("common.cancel")}
+          aria-label={t("common.cancel")}
+          className="ml-0.5 opacity-60 hover:opacity-100 focus:outline-none leading-none"
+        >
+          &times;
+        </button>
+      )}
+    </span>
+  );
+}
+
+/**
+ * `cardinality: "many"` variant of `PendingSlotChip` — a slot bound to
+ * several columns at once can't auto-advance on a single click (there's no
+ * signal for "the multi-select is done"), so it keeps one explicit confirm
+ * step. This is a legacy, uncommon slot shape (see
+ * `lib/registry-rule-conversion.ts`); every `cardinality: "one"` slot (the
+ * common case, including single-slot rules) gets the fully one-click flow
+ * above.
+ */
+function PendingManySlotChip({
+  slot,
+  columns,
+  excludeColumns,
+  onCommit,
+}: {
+  slot: RuleSlot;
+  columns: ColumnOut[];
+  excludeColumns: string[];
+  onCommit: (colNames: string[]) => void;
+}) {
+  const { t } = useTranslation();
+  const [selected, setSelected] = useState<string[]>([]);
+  return (
+    <div className="flex flex-col gap-1.5 w-full max-w-xs">
+      <MultiColumnPicker slot={slot} columns={columns} value={selected} onChange={setSelected} excludeColumns={excludeColumns} />
+      <div className="flex justify-end">
+        <Button size="sm" variant="secondary" disabled={selected.length === 0} onClick={() => onCommit(selected)}>
+          {t("monitoredTables.applyButton")}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 interface MappingChipsProps {
   /** One mapping GROUP per materialized check: slot-name -> column-name. */
   columnMapping: AppliedRuleOutColumnMappingItem[];
@@ -215,11 +328,27 @@ interface MappingChipsProps {
    *  affordance shows a spinner and is disabled while the request is
    *  in flight. */
   busyGroupIdx?: number | null;
-  /** Opens the "apply this rule to another column" flow, which stages a new
-   *  mapping group (and therefore a new applied-check entry) for this rule.
-   *  Rendered as a dashed "+ Apply to another column" button below the last
-   *  slot row, matching dqlake's affordance. Omit to hide it. */
+  /** Starts the "apply this rule to another column" flow. Rendered as a
+   *  dashed "+ Apply to another column" button on the last slot row. Omit
+   *  to hide it (also omit while a flow is already in progress — see
+   *  `pendingValues`). */
   onAddGroup?: () => void;
+  /** Values chosen so far for an in-progress "add mapping group" flow,
+   *  keyed by slot name (comma-joined for `cardinality: "many"` slots,
+   *  matching `column_mapping`'s own storage shape). Presence (even `{}`)
+   *  means the flow is active: each slot row renders an inline placeholder
+   *  chip instead of the "+ Apply to another column" button, the next
+   *  not-yet-filled slot's picker auto-opens, and once every slot has a
+   *  value the caller's `onPendingSelect` handler is expected to commit the
+   *  group (via `onAddMapping`) and clear this back to `undefined`. */
+  pendingValues?: Record<string, string>;
+  /** Commits a value for one slot of the in-progress group described by
+   *  `pendingValues`. Purely reports "slot X now has value Y" — the caller
+   *  owns deciding when the group is complete and staging it. */
+  onPendingSelect?: (slotName: string, colName: string) => void;
+  /** Aborts an in-progress "add mapping group" flow. Rendered as a small
+   *  "x" on the last slot row's pending chip. */
+  onCancelAdd?: () => void;
   className?: string;
 }
 
@@ -232,10 +361,14 @@ export function MappingChips({
   onRemoveGroup,
   busyGroupIdx = null,
   onAddGroup,
+  pendingValues,
+  onPendingSelect,
+  onCancelAdd,
   className,
 }: MappingChipsProps) {
   const { t } = useTranslation();
-  if (columnMapping.length === 0 && !onAddGroup) return null;
+  const addingGroup = pendingValues !== undefined;
+  if (columnMapping.length === 0 && !onAddGroup && !addingGroup) return null;
 
   // No declared slots (e.g. aggregate rule) — fall back to the flat
   // per-group rendering used before slots were threaded through.
@@ -264,6 +397,11 @@ export function MappingChips({
   // from a chip's own picker candidates (minus its own current value, see
   // `EditableChip`) so the same column can't be picked twice across groups.
   const usedColumns = columnMapping.flatMap((group) => slotNames.map((s) => group[s]).filter((v): v is string => Boolean(v)));
+  // The next slot in declaration order still missing a value in the
+  // in-progress group — its picker auto-opens as soon as it becomes this,
+  // so filling one `cardinality: "one"` slot immediately reveals the next
+  // one's column list with no extra click to open it.
+  const activePendingSlot = addingGroup ? slots.find((s) => !pendingValues?.[s.name])?.name : undefined;
 
   return (
     <div className={cn("space-y-2", className)}>
@@ -288,7 +426,7 @@ export function MappingChips({
               </div>
               <span className="text-muted-foreground text-xs justify-self-center self-center">&rarr;</span>
               <div className="flex flex-wrap items-center gap-1.5">
-                {filled.length === 0 && !onAddGroup ? (
+                {filled.length === 0 && !onAddGroup && !addingGroup ? (
                   <span className="text-xs text-muted-foreground italic">
                     {t("monitoredTables.noColumnMapped")}
                   </span>
@@ -321,8 +459,48 @@ export function MappingChips({
                   )
                 )}
 
+                {/* In-progress "add mapping group" flow: one placeholder
+                    chip per slot, rendered inline in that slot's own row —
+                    no separate form/dialog. `cardinality: "one"` slots (the
+                    common case, including every single-slot rule) commit
+                    and auto-advance to the next slot's picker on a single
+                    click; `cardinality: "many"` keeps one explicit confirm
+                    step since a multi-select has no "I'm done" signal. */}
+                {addingGroup &&
+                  onPendingSelect &&
+                  (() => {
+                    // Exclude columns already picked for *other* slots in
+                    // this same in-progress group — same column can't fill
+                    // two slots of one mapping group.
+                    const pendingSiblingColumns = Object.entries(pendingValues ?? {})
+                      .filter(([slotName]) => slotName !== slot.name)
+                      .flatMap(([, v]) => v.split(","));
+                    const excludeColumns = [...usedColumns, ...pendingSiblingColumns];
+                    return slot.cardinality === "many" ? (
+                      <PendingManySlotChip
+                        key="pending"
+                        slot={slot}
+                        columns={columns}
+                        excludeColumns={excludeColumns}
+                        onCommit={(colNames) => onPendingSelect(slot.name, colNames.join(","))}
+                      />
+                    ) : (
+                      <PendingSlotChip
+                        key="pending"
+                        slot={slot}
+                        columns={columns}
+                        excludeColumns={excludeColumns}
+                        value={pendingValues?.[slot.name]}
+                        autoOpen={slot.name === activePendingSlot}
+                        colorClass={paletteAt(columnMapping.length)}
+                        onSelect={(colName) => onPendingSelect(slot.name, colName)}
+                        onCancel={isLastSlot ? onCancelAdd : undefined}
+                      />
+                    );
+                  })()}
+
                 {/* + Apply to another column: only on the last slot row */}
-                {onAddGroup && isLastSlot && (
+                {onAddGroup && isLastSlot && !addingGroup && (
                   <button
                     type="button"
                     onClick={onAddGroup}

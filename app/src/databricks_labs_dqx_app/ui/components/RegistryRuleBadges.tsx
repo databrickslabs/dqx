@@ -84,6 +84,28 @@ export function TagBadge({ label, color }: { label: string; color?: string }) {
   );
 }
 
+/**
+ * Severity-specific variant of `TagBadge`. Severity is the one tag with a
+ * meaningful "genuinely unset" state a steward needs to notice (unlike
+ * dimension, an unset severity means checks fire with no configured
+ * priority) — so instead of `TagBadge`'s silent "—" it renders an explicit,
+ * localized "None" badge. Used wherever a rule's severity is listed
+ * read-only (registry table/picker columns, AI-suggestion preview); the
+ * editable severity-override dropdown on an applied-rule card has its own
+ * equivalent handling since it's not a plain badge.
+ */
+export function SeverityBadge({ severity, color }: { severity: string; color?: string }) {
+  const { t } = useTranslation();
+  if (!severity) {
+    return (
+      <Badge variant="outline" className="gap-1 text-[10px] font-normal text-muted-foreground">
+        {t("monitoredTables.severityNoneLabel")}
+      </Badge>
+    );
+  }
+  return <TagBadge label={severity} color={color} />;
+}
+
 export function StatusBadge({ status }: { status: string }) {
   const { t } = useTranslation();
   switch (status) {

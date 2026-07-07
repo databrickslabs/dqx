@@ -12,7 +12,6 @@ import { useTranslation } from "react-i18next";
 import { Link } from "@tanstack/react-router";
 import { Check, ChevronDown, Loader2, MoreVertical } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -23,9 +22,8 @@ import { cn } from "@/lib/utils";
 import type { AppliedRuleOut, ColumnOut, RegistryRuleOut, RuleParameter, RuleSlot } from "@/lib/api";
 import type { LabelDefinition } from "@/lib/api-custom";
 import { paramValueToRaw } from "@/lib/registry-rule-conversion";
-import { MultiColumnPicker, SingleColumnPicker } from "./ColumnPicker";
 import { MappingChips } from "./MappingChips";
-import { RESERVED_DIMENSION_KEY, RESERVED_SEVERITY_KEY, TagBadge, colorFor, getUsedColumnsForRule } from "./shared";
+import { RESERVED_DIMENSION_KEY, RESERVED_SEVERITY_KEY, TagBadge, colorFor } from "./shared";
 
 // ---------------------------------------------------------------------------
 // Completeness status — derives whether every applied mapping group fills
@@ -247,23 +245,28 @@ function SeverityDropdown({
 }) {
   const { t } = useTranslation();
   const isOverridden = severity !== ruleSeverity && Boolean(severity);
-  const label = severity;
+  // A genuinely-unset severity (no rule-level default AND no override) used
+  // to render as a bare colored dot with no text next to it — indecipherable
+  // in the UI. Fall back to a localized "None" label, and skip the dot
+  // entirely in that case (there's no color to represent), matching
+  // `SeverityBadge`'s read-only rendering elsewhere.
+  const label = severity || t("monitoredTables.severityNoneLabel");
   const color = colorFor(labelDefinitions, RESERVED_SEVERITY_KEY, severity);
 
-  const dot = (
+  const dot = severity ? (
     <span
       className="inline-block w-2 h-2 rounded-full shrink-0"
       style={{ background: color ?? "#888" }}
       aria-hidden
     />
-  );
+  ) : null;
 
   if (readonly) {
     return (
       // Same fixed-width treatment as the version-pin badge — keeps both
       // badges aligned regardless of severity label length or override state.
       <div className="inline-flex items-center justify-end min-w-[110px] shrink-0">
-        <Badge variant="outline" className="text-[10px] gap-1.5">
+        <Badge variant="outline" className={cn("text-[10px] gap-1.5", !severity && "text-muted-foreground")}>
           {dot}
           {label}
           {isOverridden && <span className="text-muted-foreground ml-0.5">*</span>}
@@ -314,114 +317,18 @@ function SeverityDropdown({
 }
 
 // ---------------------------------------------------------------------------
-// Inline "add mapping" form — replaces the old AddRulesDialog mapping step
-// (RuleMappingCard). Rendered inside an already-open RuleConfigCard, either
-// because the user clicked MappingChips's "+ Apply to another column"
-// button, or automatically right after the rule was newly staged with an
-// empty column_mapping (see monitored-tables.$bindingId.tsx's auto-expand
-// after Add). Submitting stages a new fully-covering mapping group onto the
-// tab's local row list via `onAddGroup` (P16-F) — nothing here writes to
-// the network.
-// ---------------------------------------------------------------------------
-
-function FamilyBadge({ family }: { family: string }) {
-  if (!family) return null;
-  return (
-    <span className="inline-block rounded bg-muted/60 border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground font-medium uppercase tracking-wide shrink-0">
-      {family}
-    </span>
-  );
-}
-
-interface InlineAddMappingFormProps {
-  slots: RuleSlot[];
-  columns: ColumnOut[];
-  excludeColumns: string[];
-  onCancel: () => void;
-  /** Appends *group* as a new mapping group for this rule — pure local
-   *  state mutation on the tab's staged rows, no network call. */
-  onAddGroup: (group: Record<string, string>) => void;
-}
-
-function InlineAddMappingForm({ slots, columns, excludeColumns, onCancel, onAddGroup }: InlineAddMappingFormProps) {
-  const { t } = useTranslation();
-  const [draft, setDraft] = useState<Record<string, string | string[]>>({});
-
-  const draftComplete = slots.every((slot) => {
-    const v = draft[slot.name];
-    if (slot.cardinality === "many") return Array.isArray(v) && v.length > 0;
-    return typeof v === "string" && v.length > 0;
-  });
-
-  const handleConfirm = () => {
-    if (!draftComplete) return;
-    const group: Record<string, string> = {};
-    for (const slot of slots) {
-      const v = draft[slot.name];
-      group[slot.name] = Array.isArray(v) ? v.join(",") : (v as string);
-    }
-    onAddGroup(group);
-  };
-
-  return (
-    <div className="rounded border border-dashed p-3 space-y-3 bg-muted/20">
-      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-        {t("monitoredTables.addMappingInlineTitle")}
-      </p>
-      <div className="space-y-2">
-        {slots.map((slot, slotIdx) => {
-          const many = slot.cardinality === "many";
-          return (
-            <div key={slot.name} className="grid grid-cols-[160px_24px_1fr] items-center gap-3">
-              <div className="flex items-center gap-2 min-w-0">
-                <span className="font-mono text-xs truncate">{`{{${slot.name}}}`}</span>
-                <FamilyBadge family={slot.family} />
-              </div>
-              <span className="text-muted-foreground text-xs justify-self-center self-center" aria-hidden>
-                &rarr;
-              </span>
-              {many ? (
-                <MultiColumnPicker
-                  slot={slot}
-                  columns={columns}
-                  value={(draft[slot.name] as string[] | undefined) ?? []}
-                  onChange={(next) => setDraft((d) => ({ ...d, [slot.name]: next }))}
-                  excludeColumns={excludeColumns}
-                />
-              ) : (
-                <SingleColumnPicker
-                  slot={slot}
-                  columns={columns}
-                  value={draft[slot.name] as string | undefined}
-                  onChange={(v) => setDraft((d) => ({ ...d, [slot.name]: v }))}
-                  excludeColumns={excludeColumns}
-                  // Auto-open the first slot's picker so the steward lands
-                  // straight in it — mirrors dqlake's auto-open of a freshly
-                  // added mapping-group's placeholder chip right after
-                  // "+ Apply to another column" is clicked.
-                  autoOpen={slotIdx === 0}
-                />
-              )}
-            </div>
-          );
-        })}
-      </div>
-      {!draftComplete && <p className="text-xs text-amber-600">{t("monitoredTables.mappingIncomplete")}</p>}
-      <div className="flex items-center justify-end gap-2">
-        <Button variant="outline" size="sm" onClick={onCancel}>
-          {t("common.cancel")}
-        </Button>
-        <Button size="sm" onClick={handleConfirm} disabled={!draftComplete}>
-          {t("monitoredTables.applyButton")}
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // Main card
 // ---------------------------------------------------------------------------
+//
+// "Add mapping group" flow: MappingChips renders the in-progress group's
+// placeholder chips inline in each slot row itself (see its `pendingValues`
+// prop) — there's no separate form/dialog component here. This card only
+// owns the `pendingGroup` draft state: `null` means no flow is active;
+// `{}` (or partially filled) means one is in progress. `onPendingSelect`
+// below folds a newly-picked slot value into the draft and, once every
+// slot has a value, stages the completed group via `onAddMapping` and
+// clears the draft — MappingChips just re-renders from the (now real)
+// `columnMapping` prop at that point.
 
 interface RuleConfigCardProps {
   /** Merged display rule for this rule_id — see `mergeRuleRowGroup`: its
@@ -478,7 +385,10 @@ export function RuleConfigCard({
   const { t } = useTranslation();
   const [isOpen, setIsOpen] = useState(Boolean(forceOpen));
   const [logicOpen, setLogicOpen] = useState(false);
-  const [addingMapping, setAddingMapping] = useState(false);
+  // `null` = no "add mapping group" flow in progress; an object (possibly
+  // `{}`) = one is, with the values picked so far keyed by slot name. See
+  // the comment above the component for how this drives `MappingChips`.
+  const [pendingGroup, setPendingGroup] = useState<Record<string, string> | null>(null);
 
   const dimension = rule.rule_dimension || "";
   const ruleSeverity = rule.rule_severity || "";
@@ -494,15 +404,36 @@ export function RuleConfigCard({
   // right after "Add rules", re-render this card with forceOpen=true (see
   // monitored-tables.$bindingId.tsx) — keep it in sync if it flips after
   // mount instead of only honoring it at initial state. When the rule has
-  // no mapping groups yet, also auto-open the inline mapping form so the
-  // user lands directly on it instead of needing an extra click on
-  // "+ Apply to another column".
+  // no mapping groups yet, also start the "add mapping group" flow so the
+  // user lands directly on the first slot's column picker instead of
+  // needing an extra click on "+ Apply to another column".
   useEffect(() => {
     if (forceOpen) {
       setIsOpen(true);
-      if (needsFirstMapping) setAddingMapping(true);
+      if (needsFirstMapping) setPendingGroup({});
     }
   }, [forceOpen, needsFirstMapping]);
+
+  // Folds a newly-picked slot value into the in-progress group. Once every
+  // slot has a value the group is complete: stage it via `onAddMapping`
+  // (pure local `stagedRows` mutation, no network call) and end the flow —
+  // `MappingChips` picks the new group up from the real `columnMapping`
+  // prop on the next render.
+  //
+  // Deliberately reads `pendingGroup` from the closure rather than using
+  // `setPendingGroup`'s updater-function form: React 18 Strict Mode
+  // double-invokes updater functions in development to catch impurities,
+  // which would call the `onAddMapping` side effect twice.
+  const handlePendingSelect = (slotName: string, colName: string) => {
+    const next = { ...(pendingGroup ?? {}), [slotName]: colName };
+    const complete = slots.every((slot) => Boolean(next[slot.name]));
+    if (complete) {
+      onAddMapping(next);
+      setPendingGroup(null);
+    } else {
+      setPendingGroup(next);
+    }
+  };
 
   return (
     <div
@@ -628,20 +559,11 @@ export function RuleConfigCard({
               onJumpToColumn={onJumpToColumn}
               onChangeGroup={canEdit ? onChangeMapping : undefined}
               onRemoveGroup={canEdit ? onRemoveMapping : undefined}
-              onAddGroup={canEdit && !addingMapping ? () => setAddingMapping(true) : undefined}
+              onAddGroup={canEdit && pendingGroup === null ? () => setPendingGroup({}) : undefined}
+              pendingValues={canEdit ? (pendingGroup ?? undefined) : undefined}
+              onPendingSelect={canEdit ? handlePendingSelect : undefined}
+              onCancelAdd={() => setPendingGroup(null)}
             />
-            {canEdit && addingMapping && (
-              <InlineAddMappingForm
-                slots={slots}
-                columns={columns}
-                excludeColumns={getUsedColumnsForRule(rule)}
-                onCancel={() => setAddingMapping(false)}
-                onAddGroup={(group) => {
-                  setAddingMapping(false);
-                  onAddMapping(group);
-                }}
-              />
-            )}
           </div>
         </div>
       </div>
