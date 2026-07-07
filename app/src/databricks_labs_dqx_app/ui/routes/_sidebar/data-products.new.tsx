@@ -8,53 +8,21 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ArrowLeft } from "lucide-react";
 import { useCreateDataProduct } from "@/lib/api";
 import { usePermissions } from "@/hooks/use-permissions";
+import { ProductTabsShell, type ProductTabKey } from "@/components/data-products/ProductTabsShell";
 
 export const Route = createFileRoute("/_sidebar/data-products/new")({
   component: NewDataProductPage,
 });
 
-/**
- * Simplified stand-in for dqlake's `ProductTabsShell` — only the visual tab
- * strip is ported here (grouping: About | Sharing, Tables | Runs ‖
- * Schedule, matching the design spec's tab layout minus the cut History
- * tab). Task 7 replaces this with the real shared `ProductTabsShell`
- * component once the detail page needs it too; every non-About tab is
- * locked (`aria-disabled`) since none of that state exists until the
- * product is created.
- */
-function LockedTabStrip() {
-  const { t } = useTranslation();
-  return (
-    <Tabs value="about">
-      <div className="w-full max-w-5xl flex items-center justify-between">
-        <TabsList className="inline-flex items-center h-auto p-1">
-          <TabsTrigger value="about">{t("dataProducts.tabAbout")}</TabsTrigger>
-          <span className="text-muted-foreground/40 select-none px-1" aria-hidden>|</span>
-          <TabsTrigger value="sharing" disabled aria-disabled className="opacity-50 cursor-not-allowed">
-            {t("dataProducts.tabSharing")}
-          </TabsTrigger>
-          <TabsTrigger value="tables" disabled aria-disabled className="opacity-50 cursor-not-allowed">
-            {t("dataProducts.tabTables")}
-          </TabsTrigger>
-          <span className="text-muted-foreground/40 select-none px-1" aria-hidden>|</span>
-          <TabsTrigger value="runs" disabled aria-disabled className="opacity-50 cursor-not-allowed">
-            {t("dataProducts.tabRuns")}
-          </TabsTrigger>
-        </TabsList>
-        <TabsList className="inline-flex items-center h-auto p-1">
-          <TabsTrigger value="scheduling" disabled aria-disabled className="opacity-50 cursor-not-allowed">
-            {t("dataProducts.tabSchedule")}
-          </TabsTrigger>
-        </TabsList>
-      </div>
-      <TabsContent value="about" className="mt-6" />
-    </Tabs>
-  );
-}
+// Every tab besides About is locked until the product exists — there's no
+// binding/schedule/run state to show yet. Reuses the real (Task 7)
+// `ProductTabsShell` rather than a bespoke stand-in, matching dqlake's
+// `new.tsx` pattern of disabling tabs via `disabledTabs` instead of
+// re-approximating the strip.
+const NEW_PRODUCT_DISABLED_TABS = new Set<ProductTabKey>(["sharing", "tables", "runs", "scheduling"]);
 
 function extractApiError(err: unknown, fallback: string): string {
   const axErr = err as { response?: { data?: { detail?: string } } };
@@ -114,7 +82,9 @@ function NewDataProductPage() {
           </div>
         </div>
 
-        <LockedTabStrip />
+        <ProductTabsShell activeTab="about" onTabChange={() => {}} disabledTabs={NEW_PRODUCT_DISABLED_TABS}>
+          {{ about: null }}
+        </ProductTabsShell>
 
         <div className="space-y-6 py-4 max-w-xl">
           <div className="flex flex-col gap-3">
