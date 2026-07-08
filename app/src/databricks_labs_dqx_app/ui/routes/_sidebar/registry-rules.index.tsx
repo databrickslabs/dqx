@@ -154,11 +154,13 @@ function RegistryRulesPage() {
   // Non-suspense on purpose: the `tag` server param is a free-text input, so
   // a suspense query would re-suspend (flashing the whole page skeleton and
   // dropping input focus) on every keystroke. The trade-off is that a failed
-  // list fetch resolves to `data === undefined` rather than throwing to the
-  // route's ErrorBoundary — which historically rendered as a misleading empty
-  // "no rules" table with no hint that anything went wrong. We surface
-  // `isError` explicitly below so a fetch failure shows the retry UI instead.
-  const { data, isError, refetch } = useListRegistryRules(serverParams);
+  // or still-loading list fetch resolves to `data === undefined` rather than
+  // suspending/throwing — which historically rendered as a misleading empty
+  // "No rules yet" table (P19 bug #3: with a cold cache the empty state
+  // showed for the entire fetch, reading as "my rules are gone").
+  // `isPending` (true only while there is no cached data) renders a skeleton
+  // and `isError` renders the retry UI instead.
+  const { data, isPending, isError, refetch } = useListRegistryRules(serverParams);
   const serverFilteredRules = useMemo(() => data?.data ?? [], [data]);
 
   const stewardValues = useMemo(() => {
@@ -527,6 +529,8 @@ function RegistryRulesPage() {
 
         {isError ? (
           <RegistryRulesError resetErrorBoundary={() => void refetch()} />
+        ) : isPending ? (
+          <Skeleton className="h-64 w-full" />
         ) : (
           <>
             <RulesTable

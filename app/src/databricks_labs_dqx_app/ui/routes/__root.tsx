@@ -50,7 +50,16 @@ export const Route = createRootRouteWithContext<{
       <AIAssistantProvider>
         <Outlet />
       </AIAssistantProvider>
-      <Toaster richColors />
+      {/* Toasts must NOT default to bottom-right: every editor page puts its
+          sticky Save/Submit footer there, and a freshly-fired toast (e.g.
+          "Rule created" + an 8s dedup warning) renders exactly on top of
+          those buttons. Sonner pauses auto-dismiss on hover/focus, so the
+          moment the pointer is over the stack the toast never expires and
+          every Save click silently lands on the toast instead of the button
+          — the recurring "I can't edit/save a rule" report (P19 #2).
+          Top-center overlaps nothing interactive (logo is top-left, nav
+          actions top-right). */}
+      <Toaster richColors position="top-center" />
       {import.meta.env.DEV && (
         <TanStackRouterDevtools position="bottom-right" />
       )}
