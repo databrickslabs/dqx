@@ -8,6 +8,9 @@ to any other service.
 from __future__ import annotations
 
 import logging
+import time
+from collections.abc import Callable
+from typing import Protocol
 
 from databricks_labs_dqx_app.backend.config import AppConfig
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
@@ -101,7 +104,7 @@ def has_terminal_result(
     """
     table = f"{app_conf.catalog}.{app_conf.schema_name}.{table_name}"
     er = escape_sql_string(run_id)
-    stmt = f"SELECT status FROM {table} " f"WHERE run_id = '{er}' AND status != 'RUNNING' " f"LIMIT 1"  # noqa: S608
+    stmt = f"SELECT status FROM {table} WHERE run_id = '{er}' AND status != 'RUNNING' LIMIT 1"  # noqa: S608
     try:
         rows = sql.query(stmt)
         if rows and rows[0]:
@@ -163,3 +166,147 @@ def _get_run_fields(
     except Exception:
         pass
     return None
+
+
+# ---------------------------------------------------------------------------
+# Reconciliation of stale RUNNING placeholder rows
+# ---------------------------------------------------------------------------
+#
+# A run's lifecycle is: the app inserts a RUNNING placeholder (as the SP, which
+# always has write access) and the task runner later overwrites it with a
+# terminal row. When the task dies *before* writing its terminal result — an
+# import error, an OOM, an externally-killed run, or (as observed in
+# fe-sandbox) a PERMISSION_DENIED that also blocks the runner's own
+# error-result write — the placeholder is never flipped and Runs History shows
+# the run stuck on RUNNING forever, so failed runs never surface as FAILED.
+#
+# The per-run status poll (``get_dry_run_status``) already reconciles, but only
+# for runs a client is actively polling. The listing endpoint reconciles here
+# so the correction is authoritative and independent of any open browser tab.
+
+
+class _JobStatusLike(Protocol):
+    """Structural type for the ``RunStatus`` returned by ``JobService.get_run_status``."""
+
+    state: str
+    result_state: str | None
+    message: str | None
+
+
+# Lifecycle states that mean the Databricks job run has stopped for good.
+_TERMINAL_LIFECYCLE_STATES = frozenset({"TERMINATED", "INTERNAL_ERROR", "SKIPPED"})
+
+# Bound the Jobs-API fan-out per list request; rows arrive newest-first so the
+# most relevant RUNNING rows are reconciled first.
+_MAX_RECONCILE_PER_CALL = 25
+
+# Short-lived cache of job-run status keyed by job_run_id, so repeated Runs
+# History polls (the page refetches every few seconds) don't hammer the Jobs
+# API for the same genuinely-running run. {job_run_id: (status, expires_at)}.
+_STATUS_CACHE_TTL_SECONDS = 30.0
+_status_cache: dict[int, tuple[_JobStatusLike, float]] = {}
+
+
+def _cached_job_status(job_run_id: int, status_fn: Callable[[int], _JobStatusLike]) -> _JobStatusLike:
+    """Return the job-run status, memoised for ``_STATUS_CACHE_TTL_SECONDS``."""
+    now = time.monotonic()
+    entry = _status_cache.get(job_run_id)
+    if entry is not None and entry[1] > now:
+        return entry[0]
+    status = status_fn(job_run_id)
+    _status_cache[job_run_id] = (status, now + _STATUS_CACHE_TTL_SECONDS)
+    # Opportunistically evict expired entries so the cache can't grow unbounded
+    # in a long-lived worker.
+    if len(_status_cache) > 512:
+        for key in [k for k, (_, exp) in _status_cache.items() if exp <= now]:
+            _status_cache.pop(key, None)
+    return status
+
+
+def _get_running_job_run_ids(
+    sql: SqlExecutor,
+    app_conf: AppConfig,
+    table_name: str,
+    run_ids: list[str],
+) -> dict[str, int]:
+    """Return ``{run_id: job_run_id}`` for still-RUNNING rows among *run_ids*.
+
+    One batched query (rather than one per run) keeps reconciliation cheap.
+    Rows without a job_run_id are omitted — they cannot be reconciled against
+    the Jobs API.
+    """
+    if not run_ids:
+        return {}
+    table = f"{app_conf.catalog}.{app_conf.schema_name}.{table_name}"
+    in_list = ", ".join(f"'{escape_sql_string(r)}'" for r in run_ids)
+    stmt = (  # noqa: S608
+        f"SELECT run_id, CAST(job_run_id AS STRING) FROM {table} "
+        f"WHERE status = 'RUNNING' AND job_run_id IS NOT NULL "
+        f"AND run_id IN ({in_list})"
+    )
+    mapping: dict[str, int] = {}
+    try:
+        for row in sql.query(stmt) or []:
+            if row and len(row) >= 2 and row[0] and row[1]:
+                try:
+                    mapping[row[0]] = int(row[1])
+                except (TypeError, ValueError):
+                    continue
+    except Exception as exc:
+        logger.warning("Failed to look up job_run_ids for RUNNING rows: %s", exc)
+    return mapping
+
+
+def reconcile_running_rows(
+    sql: SqlExecutor,
+    app_conf: AppConfig,
+    table_name: str,
+    rows: list[dict[str, str | None]],
+    status_fn: Callable[[int], _JobStatusLike],
+) -> None:
+    """Flip stale RUNNING placeholder rows to their terminal status in place.
+
+    For each RUNNING row that carries a *job_run_id*, query the Databricks Jobs
+    API (bounded to :data:`_MAX_RECONCILE_PER_CALL` rows, memoised for
+    :data:`_STATUS_CACHE_TTL_SECONDS`). When the job run has terminated,
+    persist the corrected status to the Delta row and mutate the supplied dict
+    so the caller's response reflects the true outcome immediately.
+
+    A SUCCESS terminal state is intentionally *not* written back: on success
+    the task runner owns the terminal row (with metrics), and forcing a bare
+    SUCCESS here would surface a metric-less run. This mirrors
+    ``get_dry_run_status``. Everything is best-effort — any failure is logged
+    and the row is left untouched so listing never breaks.
+    """
+    running_ids = [rid for r in rows if r.get("status") == "RUNNING" and (rid := r.get("run_id"))]
+    if not running_ids:
+        return
+    job_run_ids = _get_running_job_run_ids(sql, app_conf, table_name, running_ids[:_MAX_RECONCILE_PER_CALL])
+    if not job_run_ids:
+        return
+
+    for row in rows:
+        run_id = row.get("run_id")
+        if row.get("status") != "RUNNING" or not run_id:
+            continue
+        job_run_id = job_run_ids.get(run_id)
+        if job_run_id is None:
+            continue
+        try:
+            status = _cached_job_status(job_run_id, status_fn)
+        except Exception as exc:
+            logger.warning("reconcile: failed to fetch job status for run %s: %s", run_id, exc)
+            continue
+
+        if status.state not in _TERMINAL_LIFECYCLE_STATES:
+            continue
+        if status.result_state == "SUCCESS":
+            # Runner owns the terminal SUCCESS row; don't clobber it.
+            continue
+
+        new_status = "CANCELED" if status.result_state == "CANCELED" else "FAILED"
+        error_message = status.message or f"Run finished with state: {status.state}"
+        update_run_status(sql, app_conf, table_name, run_id, status=new_status, error_message=error_message)
+        row["status"] = new_status
+        if not row.get("error_message"):
+            row["error_message"] = error_message

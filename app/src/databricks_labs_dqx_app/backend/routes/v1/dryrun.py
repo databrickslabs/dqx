@@ -40,7 +40,12 @@ from databricks_labs_dqx_app.backend.models import (
     ValidationRunSummaryOut,
 )
 from databricks_labs_dqx_app.backend.services.job_service import JobService
-from databricks_labs_dqx_app.backend.run_status_manager import get_run_metadata, has_terminal_result, update_run_status
+from databricks_labs_dqx_app.backend.run_status_manager import (
+    get_run_metadata,
+    has_terminal_result,
+    reconcile_running_rows,
+    update_run_status,
+)
 from databricks_labs_dqx_app.backend.services.review_status_service import ReviewStatusService
 from databricks_labs_dqx_app.backend.services.rules_catalog_service import RulesCatalogService
 from databricks_labs_dqx_app.backend.services.view_service import ViewService
@@ -82,6 +87,7 @@ async def list_validation_runs(
     review_svc: Annotated[ReviewStatusService, Depends(get_review_status_service)],
     app_conf: Annotated[AppConfig, Depends(get_conf)],
     user_catalogs: Annotated[frozenset[str], Depends(get_user_catalog_names)],
+    sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
     review_status: Annotated[
         list[str] | None,
         Query(
@@ -99,6 +105,16 @@ async def list_validation_runs(
     try:
         table = f"{app_conf.catalog}.{app_conf.schema_name}.dq_validation_runs"
         rows = job_svc.list_dryrun_rows(table)
+
+        # Reconcile stale RUNNING placeholders whose task died before writing a
+        # terminal result (e.g. a runner crash or a PERMISSION_DENIED that also
+        # blocked its error-result write). Without this the run is stuck on
+        # RUNNING forever and never surfaces as FAILED in Runs History. Mutates
+        # ``rows`` in place; best-effort so listing never breaks.
+        try:
+            reconcile_running_rows(sql, app_conf, _DRYRUN_TABLE, rows, job_svc.get_run_status)
+        except Exception as exc:
+            logger.warning("Failed to reconcile RUNNING validation runs: %s", exc)
 
         # First-pass filter on UC visibility — we don't want to bulk-fetch
         # review statuses for runs the caller can't see anyway. Build the

@@ -7,15 +7,26 @@ future regression in escaping or column ordering is caught early).
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+from unittest.mock import Mock
 
+import pytest
+
+from databricks_labs_dqx_app.backend import run_status_manager
 from databricks_labs_dqx_app.backend.run_status_manager import (
     RunMetadata,
     get_run_metadata,
     get_run_owner,
     get_run_view_fqn,
     has_terminal_result,
+    reconcile_running_rows,
     update_run_status,
 )
+
+
+def _status(state: str, result_state: str | None = None, message: str | None = None) -> SimpleNamespace:
+    """Build a ``RunStatus``-shaped stand-in for the Jobs-API status."""
+    return SimpleNamespace(state=state, result_state=result_state, message=message)
 
 
 # ---------------------------------------------------------------------------
@@ -188,3 +199,123 @@ class TestRunMetadataDataclass:
         assert md.view_fqn is None
         assert md.requesting_user is None
         assert md.job_run_id is None
+
+
+# ---------------------------------------------------------------------------
+# reconcile_running_rows
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _clear_status_cache():
+    """Reset the module-level job-status cache so tests don't leak into each other."""
+    run_status_manager._status_cache.clear()
+    yield
+    run_status_manager._status_cache.clear()
+
+
+class TestReconcileRunningRows:
+    def test_terminal_failure_flips_row_and_persists(self, sql_executor_mock, app_config):
+        # _get_running_job_run_ids returns the run_id -> job_run_id mapping.
+        sql_executor_mock.query.return_value = [["r1", "111"]]
+        rows: list[dict[str, str | None]] = [{"run_id": "r1", "status": "RUNNING", "error_message": None}]
+        status_fn = Mock(return_value=_status("INTERNAL_ERROR", "FAILED", "boom"))
+
+        reconcile_running_rows(sql_executor_mock, app_config, "dq_validation_runs", rows, status_fn)
+
+        assert rows[0]["status"] == "FAILED"
+        assert rows[0]["error_message"] == "boom"
+        # The correction is persisted to the Delta row via an UPDATE.
+        sql_executor_mock.execute.assert_called_once()
+        upd = sql_executor_mock.execute.call_args.args[0]
+        assert "status = 'FAILED'" in upd
+        assert "WHERE run_id = 'r1'" in upd
+
+    def test_canceled_result_maps_to_canceled(self, sql_executor_mock, app_config):
+        sql_executor_mock.query.return_value = [["r1", "111"]]
+        rows: list[dict[str, str | None]] = [{"run_id": "r1", "status": "RUNNING"}]
+        status_fn = Mock(return_value=_status("TERMINATED", "CANCELED", "stopped"))
+
+        reconcile_running_rows(sql_executor_mock, app_config, "dq_validation_runs", rows, status_fn)
+
+        assert rows[0]["status"] == "CANCELED"
+
+    def test_success_is_not_written_back(self, sql_executor_mock, app_config):
+        # The runner owns the terminal SUCCESS row (with metrics); don't clobber.
+        sql_executor_mock.query.return_value = [["r1", "111"]]
+        rows: list[dict[str, str | None]] = [{"run_id": "r1", "status": "RUNNING"}]
+        status_fn = Mock(return_value=_status("TERMINATED", "SUCCESS"))
+
+        reconcile_running_rows(sql_executor_mock, app_config, "dq_validation_runs", rows, status_fn)
+
+        assert rows[0]["status"] == "RUNNING"
+        sql_executor_mock.execute.assert_not_called()
+
+    def test_still_running_job_is_left_alone(self, sql_executor_mock, app_config):
+        sql_executor_mock.query.return_value = [["r1", "111"]]
+        rows: list[dict[str, str | None]] = [{"run_id": "r1", "status": "RUNNING"}]
+        status_fn = Mock(return_value=_status("RUNNING", None))
+
+        reconcile_running_rows(sql_executor_mock, app_config, "dq_validation_runs", rows, status_fn)
+
+        assert rows[0]["status"] == "RUNNING"
+        sql_executor_mock.execute.assert_not_called()
+
+    def test_row_without_job_run_id_is_skipped(self, sql_executor_mock, app_config):
+        # Mapping is empty -> no job_run_id to reconcile against; status_fn never called.
+        sql_executor_mock.query.return_value = []
+        rows: list[dict[str, str | None]] = [{"run_id": "r1", "status": "RUNNING"}]
+        status_fn = Mock()
+
+        reconcile_running_rows(sql_executor_mock, app_config, "dq_validation_runs", rows, status_fn)
+
+        status_fn.assert_not_called()
+        assert rows[0]["status"] == "RUNNING"
+
+    def test_no_running_rows_short_circuits(self, sql_executor_mock, app_config):
+        rows: list[dict[str, str | None]] = [{"run_id": "r1", "status": "SUCCESS"}]
+        status_fn = Mock()
+
+        reconcile_running_rows(sql_executor_mock, app_config, "dq_validation_runs", rows, status_fn)
+
+        # Never even looks up job_run_ids when nothing is RUNNING.
+        sql_executor_mock.query.assert_not_called()
+        status_fn.assert_not_called()
+
+    def test_status_fn_error_is_swallowed(self, sql_executor_mock, app_config):
+        sql_executor_mock.query.return_value = [["r1", "111"]]
+        rows: list[dict[str, str | None]] = [{"run_id": "r1", "status": "RUNNING"}]
+        status_fn = Mock(side_effect=RuntimeError("jobs api down"))
+
+        # Must not raise; row stays RUNNING.
+        reconcile_running_rows(sql_executor_mock, app_config, "dq_validation_runs", rows, status_fn)
+
+        assert rows[0]["status"] == "RUNNING"
+
+    def test_status_is_cached_across_calls(self, sql_executor_mock, app_config):
+        sql_executor_mock.query.return_value = [["r1", "111"]]
+        status_fn = Mock(return_value=_status("RUNNING", None))
+
+        # Two separate list requests for the same still-running job.
+        reconcile_running_rows(
+            sql_executor_mock, app_config, "dq_validation_runs", [{"run_id": "r1", "status": "RUNNING"}], status_fn
+        )
+        reconcile_running_rows(
+            sql_executor_mock, app_config, "dq_validation_runs", [{"run_id": "r1", "status": "RUNNING"}], status_fn
+        )
+
+        # The Jobs API is hit only once thanks to the TTL cache.
+        status_fn.assert_called_once()
+
+    def test_reconcile_is_bounded(self, sql_executor_mock, app_config):
+        # More RUNNING rows than the per-call cap: only the cap is looked up.
+        cap = run_status_manager._MAX_RECONCILE_PER_CALL
+        rows: list[dict[str, str | None]] = [{"run_id": f"r{i}", "status": "RUNNING"} for i in range(cap + 10)]
+        sql_executor_mock.query.return_value = []
+        status_fn = Mock()
+
+        reconcile_running_rows(sql_executor_mock, app_config, "dq_validation_runs", rows, status_fn)
+
+        in_clause = sql_executor_mock.query.call_args.args[0]
+        # Exactly the cap number of run_ids appear in the IN (...) lookup.
+        assert in_clause.count("'r") == cap
