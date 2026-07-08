@@ -2185,7 +2185,7 @@ export function RegistryRuleFormDialog({
           disabled={aiBusy}
           maxLength={4000}
           aria-label={t("rulesRegistry.aiBuildPlaceholder")}
-          className="min-h-[36px] resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 px-0 py-1.5 text-sm overflow-hidden"
+          className="min-h-[36px] resize-none border-0 bg-transparent dark:bg-transparent shadow-none focus-visible:ring-0 px-0 py-1.5 text-sm overflow-hidden"
         />
         {aiDescription === "" && (
           <span
