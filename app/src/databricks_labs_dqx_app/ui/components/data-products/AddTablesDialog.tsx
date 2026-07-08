@@ -135,7 +135,23 @@ export function AddTablesDialog({ existingMembers, open, onOpenChange, onAdd }: 
   const { t } = useTranslation();
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="!max-w-[min(90vw,1100px)] w-[min(90vw,1100px)] max-h-[85vh] flex flex-col gap-4 p-6">
+      <DialogContent
+        className="!max-w-[min(90vw,1100px)] w-[min(90vw,1100px)] max-h-[85vh] flex flex-col gap-4 p-6"
+        onInteractOutside={(e) => {
+          // The per-table "Version to track" pin (MemberVersionPin) is a
+          // Radix DropdownMenu whose menu renders in a popper portal that is
+          // a sibling of — not a descendant of — this dialog's content. A
+          // click on a menu item can therefore register as an interaction
+          // *outside* the dialog and dismiss the whole dialog instead of
+          // just closing the pin menu. Ignore any outside-interaction that
+          // originates inside a Radix popper portal (menu/select/popover) so
+          // picking a version only updates the pin and leaves the dialog open.
+          const target = e.detail.originalEvent.target as Element | null;
+          if (target?.closest("[data-radix-popper-content-wrapper],[role=menu]")) {
+            e.preventDefault();
+          }
+        }}
+      >
         <QueryErrorResetBoundary>
           {({ reset }) => (
             <ErrorBoundary

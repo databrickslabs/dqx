@@ -125,8 +125,14 @@ export function AddRulesDialog({
         {/* DialogContent's own p-6 already insets the whole body, but the
             picker's table fills 100% of that body width — this extra px-2
             gives the table itself a little more breathing room from the
-            dialog edges than the rest of the (narrower) dialog content. */}
-        <div className="space-y-3 px-2">
+            dialog edges than the rest of the (narrower) dialog content.
+            `min-w-0` is essential: DialogContent is a CSS grid, and without
+            it this grid item's auto min-width lets the RulesPicker table's
+            intrinsic width grow the grid track past the dialog's 900px,
+            pushing the whole body (header included) off the right edge.
+            Capping the item at min-width:0 keeps the track at the dialog
+            width and lets the table scroll inside its own container. */}
+        <div className="min-w-0 space-y-3 px-2">
           {initialColumn && (
             <p className="text-xs text-muted-foreground">
               {t("monitoredTables.addRuleForColumnHint", { column: initialColumn.name })}

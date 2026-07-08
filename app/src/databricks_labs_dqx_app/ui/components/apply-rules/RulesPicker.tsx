@@ -338,7 +338,7 @@ export function RulesPicker({ rules, labelDefinitions, selectedIds, onToggle, is
   const visibleColCount = visibleKeys.length;
 
   return (
-    <div className="space-y-3">
+    <div className="min-w-0 space-y-3">
       <div className="flex items-center gap-2 flex-wrap">
         <div className="relative max-w-xs">
           <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />

@@ -251,7 +251,7 @@ export function MultiSelectPopover({
                 min-height of their own content size, which would otherwise
                 stop the list from ever shrinking below its unscrolled height
                 even inside a bounded parent. */}
-            <CommandList className="min-h-0 max-h-[300px] flex-1 p-1">
+            <CommandList className="dq-scroll-visible min-h-0 max-h-[300px] flex-1 p-1">
               {isLoading ? (
                 <div className="flex items-center justify-center py-6">
                   <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />

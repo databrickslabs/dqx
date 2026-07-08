@@ -135,21 +135,19 @@ export function useTableScopePicker(enabled: boolean): TableScopePickerState {
     [rawTableOptions, monitoredFqns, t],
   );
 
-  // Memoized for the same reason as `resolvedSchemaScopes` above: a fresh
-  // array on every render (via `.map`) would give consumers an unstable
-  // reference even when nothing selection-relevant changed.
-  //
-  // The "no explicit table selection" fallback must exclude already-monitored
-  // (disabled) tables — they can't be explicitly selected either, so falling
-  // back to the full unfiltered list would overstate the resulting "Add N
-  // tables" count and submit tables that are already monitored (the backend
-  // dedups them as skipped, but the count shown to the user would be wrong).
+  // Nothing is registered unless the user has *explicitly* ticked tables.
+  // Earlier this fell back to "every table under the resolved schema scope"
+  // when no table was ticked, so picking a catalog (or a schema) silently
+  // implied all of its tables — the user reported this as surprising and
+  // wants an empty start with explicit ticks only. The catalog/schema picks
+  // still drive which table *options* load below; they just no longer
+  // pre-select anything. Defensively drop any FQN that has since become
+  // monitored (it can't be ticked, but a stale selection shouldn't leak
+  // into the submit set). Memoized so consumers get a stable reference when
+  // the selection hasn't changed.
   const effectiveFqns = useMemo(
-    () =>
-      selectedTables.length > 0
-        ? selectedTables
-        : tableOptions.filter((o) => !("disabled" in o && o.disabled)).map((o) => o.value),
-    [selectedTables, tableOptions],
+    () => selectedTables.filter((fqn) => !monitoredFqns.has(fqn)),
+    [selectedTables, monitoredFqns],
   );
 
   const reset = useCallback(() => {
@@ -239,7 +237,12 @@ export function TableScopePickerFields({ state }: { state: TableScopePickerState
         options={state.tableOptions}
         selected={state.selectedTables}
         onChange={state.setSelectedTables}
-        isLoading={state.tablesLoading}
+        // Tables can't resolve until their parent schemas have, so when the
+        // catalog selection changes both dropdowns reload together: the
+        // tables control stays disabled (spinner) while EITHER schemas or
+        // tables are still fetching, then re-enables once its own results
+        // land — schemas re-enable independently as soon as they arrive.
+        isLoading={state.schemasLoading || state.tablesLoading}
         disabled={state.selectedCatalogs.length === 0}
         disabledHint={t("monitoredTables.wizard.selectCatalogFirst")}
         emptyText={t("monitoredTables.wizard.emptyTables")}

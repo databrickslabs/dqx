@@ -188,6 +188,44 @@
 }
 
 /* ---------------------------------------------------------------------
+ * Always-visible dropdown scrollbar
+ *
+ * The catalog/schema/table pickers in the "Monitor table(s)" and
+ * "Apply rules" dialogs can list hundreds of rows. The default themed
+ * scrollbar is deliberately faint (`--border` thumb, thin), which — for
+ * a list that IS scrollable — read as "there's nothing more here / this
+ * is stuck" to users (repeated report). This class gives that specific
+ * list a permanently reserved, higher-contrast scrollbar so the scroll
+ * affordance is unmistakable, and `overscroll-behavior: contain` keeps a
+ * trackpad flick inside the list instead of chaining to the dialog/page
+ * once it hits an edge. Applied to the picker's single scroll container
+ * only (see MultiSelectPopover) so the rest of the app keeps the subtle
+ * default. */
+.dq-scroll-visible {
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: var(--muted-foreground) var(--muted);
+  overscroll-behavior: contain;
+}
+.dq-scroll-visible::-webkit-scrollbar {
+  width: 12px;
+}
+.dq-scroll-visible::-webkit-scrollbar-track {
+  background: var(--muted);
+  border-radius: 9999px;
+}
+.dq-scroll-visible::-webkit-scrollbar-thumb {
+  background-color: var(--muted-foreground);
+  border-radius: 9999px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+.dq-scroll-visible::-webkit-scrollbar-thumb:hover {
+  background-color: var(--foreground);
+  background-clip: padding-box;
+}
+
+/* ---------------------------------------------------------------------
  * AI styling helpers
  *
  * Shared violet → fuchsia → pink gradient treatment for AI-driven surfaces
