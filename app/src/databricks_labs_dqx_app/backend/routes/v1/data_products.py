@@ -201,7 +201,7 @@ def add_data_product_member(
         detail = svc.get(product_id)
         assert detail is not None  # just added a member to it
         return DataProductOut.from_domain(detail)
-    except LookupError as e:
+    except (LookupError, RuntimeError) as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         logger.error(f"Failed to add member to data product {product_id}: {e}", exc_info=True)

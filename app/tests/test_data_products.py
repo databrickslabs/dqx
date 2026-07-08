@@ -444,6 +444,28 @@ class TestMembers:
         update_sql = next(c[0][0] for c in sql.execute.call_args_list if f"UPDATE {_MEMBERS}" in c[0][0])
         assert "pinned_version = NULL" in update_sql
 
+    def test_add_member_invalid_binding_id_raises(self, service, sql, monitored_tables):
+        sql.query.side_effect = [
+            [_product_row(product_id="p1")],
+            [],  # no existing member row — triggers the binding validation
+        ]
+        # Simulate binding_id not found in monitored_tables
+        monitored_tables.get.return_value = None
+        with pytest.raises(RuntimeError, match="Monitored table not found"):
+            service.add_member("p1", "invalid_binding", None, "bob@x")
+
+    def test_add_member_valid_binding_id_succeeds(self, service, sql, monitored_tables, app_settings):
+        # Ensure binding_id exists in monitored_tables
+        monitored_tables.get.return_value = _monitored_table_detail(binding_id="b1", version=2)
+        app_settings.get_default_auto_upgrade.return_value = True
+        sql.query.side_effect = [
+            [_product_row(product_id="p1", status="draft")],
+            [],  # no existing member row
+        ]
+        member = service.add_member("p1", "b1", 2, "bob@x")
+        assert member.binding_id == "b1"
+        assert member.pinned_version == 2
+
     def test_remove_member_success_flips_to_draft(self, service, sql):
         sql.query.side_effect = [
             [_product_row(product_id="p1", status="published")],

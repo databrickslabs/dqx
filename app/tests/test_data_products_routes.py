@@ -227,6 +227,13 @@ class TestMembers:
             add_data_product_member("p1", body=AddDataProductMemberIn(binding_id="b1"), svc=svc, obo_ws=_mock_obo_ws())
         assert excinfo.value.status_code == 404
 
+    def test_add_member_invalid_binding_id_raises_404(self):
+        svc = MagicMock()
+        svc.add_member.side_effect = RuntimeError("Monitored table not found: invalid_binding")
+        with pytest.raises(HTTPException) as excinfo:
+            add_data_product_member("p1", body=AddDataProductMemberIn(binding_id="invalid_binding"), svc=svc, obo_ws=_mock_obo_ws())
+        assert excinfo.value.status_code == 404
+
     def test_remove_member_success(self):
         svc = MagicMock()
         svc.get.return_value = _detail(product_id="p1")

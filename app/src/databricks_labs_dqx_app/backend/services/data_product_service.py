@@ -312,6 +312,7 @@ class DataProductService:
 
         Raises:
             LookupError: *product_id* does not exist.
+            RuntimeError: *binding_id* does not exist (when adding a new member).
         """
         if self._fetch_product(product_id) is None:
             raise LookupError(f"Data product not found: {product_id}")
@@ -328,6 +329,8 @@ class DataProductService:
                 f"WHERE id = '{escape_sql_string(member_id)}'"
             )
         else:
+            # New member: validate the binding exists before inserting
+            self._require_binding_exists(binding_id)
             member_id = uuid4().hex
             if pinned_version is None:
                 binding_detail = self._monitored_tables.get(binding_id)
@@ -672,6 +675,15 @@ class DataProductService:
             "product_id, name, description, steward, schedule_cron, schedule_tz, status, version, "
             f"created_by, {created_at} AS created_at, updated_by, {updated_at} AS updated_at"
         )
+
+    def _require_binding_exists(self, binding_id: str) -> None:
+        """Validate that a monitored table binding exists.
+
+        Raises:
+            RuntimeError: *binding_id* does not exist.
+        """
+        if self._monitored_tables.get(binding_id) is None:
+            raise RuntimeError(f"Monitored table not found: {binding_id}")
 
     def _fetch_product(self, product_id: str) -> DataProduct | None:
         e = escape_sql_string(product_id)
