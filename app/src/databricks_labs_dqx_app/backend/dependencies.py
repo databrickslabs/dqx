@@ -40,6 +40,8 @@ from .services.rule_retriever import CosineRuleRetriever, RuleRetriever
 from .services.rule_suggester import RuleSuggester
 from .services.rules_catalog_service import RulesCatalogService
 from .services.comments_service import CommentsService
+from .services.compute_service import ComputeService, resolve_warehouse_id
+from .services.table_data_service import TableDataService
 from .services.review_status_service import ReviewStatusService
 from .services.schedule_config_service import ScheduleConfigService
 from .services.vector_store import VectorStoreProvisioner
@@ -429,6 +431,40 @@ async def get_comments_service(
     return CommentsService(sql=sql)
 
 
+async def get_compute_service(
+    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
+    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+) -> ComputeService:
+    """Create a ComputeService (SP-scoped listing + warehouse access checks, P22-B)."""
+    return ComputeService(sp_ws=sp_ws, app_settings=app_settings)
+
+
+async def get_preview_sql_executor(
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+) -> SqlExecutor:
+    """OBO SqlExecutor for View Data ad-hoc reads, honouring the configured warehouse.
+
+    The admin-configured SQL warehouse (``dq_app_settings``) wins; otherwise we
+    fall back to the bundle-bound ``DATABRICKS_WAREHOUSE_ID`` env var (today's
+    behaviour). Runs as the caller so Unity Catalog permissions are enforced.
+    """
+    return SqlExecutor(
+        ws=obo_ws,
+        warehouse_id=resolve_warehouse_id(app_settings),
+        catalog=conf.catalog,
+        schema=conf.tmp_schema_name,
+    )
+
+
+async def get_table_data_service(
+    sql: Annotated[SqlExecutor, Depends(get_preview_sql_executor)],
+    gateway: Annotated[AIGateway, Depends(get_ai_gateway)],
+) -> TableDataService:
+    """Create a TableDataService for the monitored-table View Data tab (P22-B)."""
+    return TableDataService(sql=sql, ai_gateway=gateway)
+
+
 async def get_review_status_service(
     sql: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
     settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
@@ -718,6 +754,9 @@ __all__ = [
     "get_sql_connector",
     "get_user_role",
     "get_comments_service",
+    "get_compute_service",
+    "get_preview_sql_executor",
+    "get_table_data_service",
     "get_review_status_service",
     "get_schedule_config_service",
     "require_role",

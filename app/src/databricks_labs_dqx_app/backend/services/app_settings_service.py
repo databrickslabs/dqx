@@ -785,6 +785,85 @@ class AppSettingsService:
         self.save_setting(self._VS_INDEX_NAME_KEY, cleaned, user_email=user_email)
         return cleaned
 
+    # ------------------------------------------------------------------
+    # Compute settings (P22-B) — the SQL warehouse used for app-side
+    # ad-hoc SQL (View Data preview, discovery-style reads) and the jobs
+    # compute used for the task-runner submission path. Both mirror
+    # dqlake's Settings "jobs" section.
+    #
+    #   * ``sql_warehouse_id`` — a bare warehouse id. When unset (no row,
+    #     or an empty value) callers fall back to the bundle-bound
+    #     ``DATABRICKS_WAREHOUSE_ID`` env var, i.e. today's behaviour.
+    #     :meth:`get_sql_warehouse_id` returns ``None`` in that case so
+    #     the resolver (:func:`resolve_warehouse_id`) can apply the env
+    #     fallback in one place.
+    #   * ``jobs_compute_v1`` — a small JSON object describing the compute
+    #     the task-runner job should use. ``{"kind": "serverless"}``
+    #     (default) or ``{"kind": "existing_cluster", "cluster_id": "..."}``.
+    #     Persisted + surfaced now; the submission-side wiring is a
+    #     documented follow-up because ``job_service.py`` is frozen (see the
+    #     route docstring in ``routes/v1/compute.py``).
+    # ------------------------------------------------------------------
+
+    _SQL_WAREHOUSE_ID_KEY = "sql_warehouse_id"
+    _JOBS_COMPUTE_KEY = "jobs_compute_v1"
+
+    JOBS_COMPUTE_SERVERLESS = "serverless"
+    JOBS_COMPUTE_EXISTING_CLUSTER = "existing_cluster"
+
+    def get_sql_warehouse_id(self) -> str | None:
+        """Return the configured SQL warehouse id, or ``None`` when unset.
+
+        ``None`` means "no admin override" — the caller should fall back
+        to the ``DATABRICKS_WAREHOUSE_ID`` env var. An empty/whitespace
+        stored value is treated the same as unset.
+        """
+        raw = self.get_setting(self._SQL_WAREHOUSE_ID_KEY)
+        if raw is None or not raw.strip():
+            return None
+        return raw.strip()
+
+    def save_sql_warehouse_id(self, warehouse_id: str, *, user_email: str | None = None) -> str:
+        """Persist the SQL warehouse id (trimmed). An empty value clears the override."""
+        cleaned = (warehouse_id or "").strip()
+        self.save_setting(self._SQL_WAREHOUSE_ID_KEY, cleaned, user_email=user_email)
+        return cleaned
+
+    def get_jobs_compute(self) -> dict:
+        """Return the configured jobs-compute selection.
+
+        Defaults to ``{"kind": "serverless"}`` when unset or malformed so
+        callers always get a well-formed object. An ``existing_cluster``
+        selection carries a non-empty ``cluster_id``; anything else
+        collapses back to serverless.
+        """
+        raw = self.get_setting(self._JOBS_COMPUTE_KEY)
+        if not raw:
+            return {"kind": self.JOBS_COMPUTE_SERVERLESS}
+        try:
+            parsed = json.loads(raw)
+        except (TypeError, json.JSONDecodeError):
+            logger.warning("jobs_compute_v1 setting is not valid JSON; defaulting to serverless")
+            return {"kind": self.JOBS_COMPUTE_SERVERLESS}
+        if not isinstance(parsed, dict):
+            return {"kind": self.JOBS_COMPUTE_SERVERLESS}
+        return self._normalise_jobs_compute(parsed)
+
+    def save_jobs_compute(self, compute: dict, *, user_email: str | None = None) -> dict:
+        """Persist the jobs-compute selection. Returns the normalised value."""
+        normalised = self._normalise_jobs_compute(compute if isinstance(compute, dict) else {})
+        self.save_setting(self._JOBS_COMPUTE_KEY, json.dumps(normalised), user_email=user_email)
+        return normalised
+
+    @classmethod
+    def _normalise_jobs_compute(cls, compute: dict) -> dict:
+        kind = compute.get("kind")
+        if kind == cls.JOBS_COMPUTE_EXISTING_CLUSTER:
+            cluster_id = compute.get("cluster_id")
+            if isinstance(cluster_id, str) and cluster_id.strip():
+                return {"kind": cls.JOBS_COMPUTE_EXISTING_CLUSTER, "cluster_id": cluster_id.strip()}
+        return {"kind": cls.JOBS_COMPUTE_SERVERLESS}
+
     @staticmethod
     def _normalise_status_entry(item: dict) -> dict:
         value = (item.get("value") or "").strip() if isinstance(item.get("value"), str) else ""

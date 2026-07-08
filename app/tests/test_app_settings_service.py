@@ -260,3 +260,72 @@ class TestResolvePinnedVersionForNewAttachment:
         sql_executor_mock.query.return_value = [["false"]]
 
         assert svc.resolve_pinned_version_for_new_attachment(None, 3) == 3
+
+
+class TestSqlWarehouseSetting:
+    """Compute settings (P22-B) — the app-side SQL warehouse override."""
+
+    def test_defaults_to_none_when_unset(self, settings_service):
+        svc, sql_executor_mock = settings_service
+        sql_executor_mock.query.return_value = []
+
+        assert svc.get_sql_warehouse_id() is None
+
+    def test_empty_stored_value_is_treated_as_unset(self, settings_service):
+        svc, sql_executor_mock = settings_service
+        sql_executor_mock.query.return_value = [["   "]]
+
+        assert svc.get_sql_warehouse_id() is None
+
+    def test_save_and_round_trip(self, settings_service):
+        svc, sql_executor_mock = settings_service
+
+        saved = svc.save_sql_warehouse_id("  wh-123  ", user_email="admin@x")
+
+        assert saved == "wh-123"
+        _, kwargs = sql_executor_mock.upsert.call_args
+        assert kwargs["key_cols"] == {"setting_key": "sql_warehouse_id"}
+        assert kwargs["value_cols"]["setting_value"] == "wh-123"
+
+        sql_executor_mock.query.return_value = [["wh-123"]]
+        assert svc.get_sql_warehouse_id() == "wh-123"
+
+
+class TestJobsComputeSetting:
+    """Compute settings (P22-B) — the task-runner jobs compute selection."""
+
+    def test_defaults_to_serverless_when_unset(self, settings_service):
+        svc, sql_executor_mock = settings_service
+        sql_executor_mock.query.return_value = []
+
+        assert svc.get_jobs_compute() == {"kind": "serverless"}
+
+    def test_malformed_json_defaults_to_serverless(self, settings_service):
+        svc, sql_executor_mock = settings_service
+        sql_executor_mock.query.return_value = [["not json"]]
+
+        assert svc.get_jobs_compute() == {"kind": "serverless"}
+
+    def test_save_and_round_trip_existing_cluster(self, settings_service):
+        svc, sql_executor_mock = settings_service
+
+        saved = svc.save_jobs_compute({"kind": "existing_cluster", "cluster_id": " c-1 "}, user_email="admin@x")
+
+        assert saved == {"kind": "existing_cluster", "cluster_id": "c-1"}
+        _, kwargs = sql_executor_mock.upsert.call_args
+        assert kwargs["key_cols"] == {"setting_key": "jobs_compute_v1"}
+
+        sql_executor_mock.query.return_value = [['{"kind": "existing_cluster", "cluster_id": "c-1"}']]
+        assert svc.get_jobs_compute() == {"kind": "existing_cluster", "cluster_id": "c-1"}
+
+    def test_existing_cluster_without_id_collapses_to_serverless(self, settings_service):
+        svc, _ = settings_service
+
+        saved = svc.save_jobs_compute({"kind": "existing_cluster"}, user_email="admin@x")
+
+        assert saved == {"kind": "serverless"}
+
+    def test_unknown_kind_collapses_to_serverless(self, settings_service):
+        svc, _ = settings_service
+
+        assert svc.save_jobs_compute({"kind": "bogus"}) == {"kind": "serverless"}
