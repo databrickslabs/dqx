@@ -59,9 +59,6 @@ import {
 } from "lucide-react";
 import {
   useGetMonitoredTableSuspense,
-  getGetMonitoredTableQueryKey,
-  getListMonitoredTablesQueryKey,
-  getListDataProductsQueryKey,
   useGetMonitoredTableProfile,
   getGetMonitoredTableProfileQueryKey,
   useSubmitProfileRun,
@@ -90,6 +87,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { StatusBadge } from "@/components/RegistryRuleBadges";
+import { invalidateAfterMonitoredTableChange } from "@/lib/monitored-table-invalidation";
 import { useLabelDefinitions } from "@/lib/api-custom";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useJobPolling } from "@/hooks/use-job-polling";
@@ -220,22 +218,18 @@ function MonitoredTableDetailPage() {
     return parts[parts.length - 1] || table.table_fqn;
   }, [table.table_fqn]);
 
-  const invalidateDetail = useCallback(
-    () => queryClient.invalidateQueries({ queryKey: getGetMonitoredTableQueryKey(bindingId) }),
+  // Applying/submitting/approving/rejecting rules on this binding changes
+  // its own detail state as well as server-derived rules/checks counts read
+  // by the Monitored Tables list (`checksCount`/`rulesCount` columns) and
+  // any Data Product whose member counts derive from this binding's
+  // summary. Those live in separate queries that a plain detail refetch
+  // wouldn't touch, so without this the counts stay stale until a manual
+  // reload (A2). Shared with the overview page's row-level approve/reject —
+  // see `lib/monitored-table-invalidation.ts`.
+  const invalidateLifecycleQueries = useCallback(
+    () => invalidateAfterMonitoredTableChange(queryClient, bindingId),
     [queryClient, bindingId],
   );
-
-  // Applying/submitting/approving rules on this binding changes its
-  // server-derived rules/checks counts, which the Monitored Tables list
-  // (`checksCount`/`rulesCount` columns) and any Data Product whose member
-  // counts derive from this binding's summary both read from separate
-  // queries. Those queries aren't invalidated by `invalidateDetail`, so
-  // without this the counts stay stale until a manual reload (A2). Invalidate
-  // them alongside the detail on every lifecycle success.
-  const invalidateCountConsumers = useCallback(() => {
-    queryClient.invalidateQueries({ queryKey: getListMonitoredTablesQueryKey() });
-    queryClient.invalidateQueries({ queryKey: getListDataProductsQueryKey() });
-  }, [queryClient]);
 
   // ---------------------------------------------------------------------
   // Staged editor (P16-F) — every add/mapping-edit/severity-override/pin/
@@ -290,8 +284,7 @@ function MonitoredTableDetailPage() {
         setBaseline(normalized);
         justSavedRef.current = true;
         toast.success(t("monitoredTables.toastSavedDraft"));
-        invalidateDetail();
-        invalidateCountConsumers();
+        invalidateLifecycleQueries();
       },
       (err: unknown) => {
         toast.error(extractApiError(err, t("monitoredTables.toastSaveFailed")), { duration: 6000 });
@@ -316,8 +309,7 @@ function MonitoredTableDetailPage() {
       .then(() => {
         justSavedRef.current = true;
         toast.success(t("monitoredTables.toastSubmitted"));
-        invalidateDetail();
-        invalidateCountConsumers();
+        invalidateLifecycleQueries();
       })
       .catch((err: unknown) => {
         toast.error(extractApiError(err, t("monitoredTables.toastSubmitFailed")), { duration: 6000 });
@@ -328,8 +320,7 @@ function MonitoredTableDetailPage() {
     approveMutation.mutateAsync({ bindingId }).then(
       () => {
         toast.success(t("monitoredTables.toastApproved"));
-        invalidateDetail();
-        invalidateCountConsumers();
+        invalidateLifecycleQueries();
       },
       (err: unknown) => {
         toast.error(extractApiError(err, t("monitoredTables.toastApproveFailed")), { duration: 6000 });
@@ -341,8 +332,7 @@ function MonitoredTableDetailPage() {
     rejectMutation.mutateAsync({ bindingId }).then(
       () => {
         toast.success(t("monitoredTables.toastRejected"));
-        invalidateDetail();
-        invalidateCountConsumers();
+        invalidateLifecycleQueries();
       },
       (err: unknown) => {
         toast.error(extractApiError(err, t("monitoredTables.toastRejectFailed")), { duration: 6000 });

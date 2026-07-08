@@ -36,13 +36,12 @@ import {
 import { AlertCircle, CheckCircle2, Loader2, Plus, RotateCcw, Search, Table2, Trash2, XCircle } from "lucide-react";
 import {
   useListMonitoredTables,
-  getListMonitoredTablesQueryKey,
-  getListDataProductsQueryKey,
   useDeleteMonitoredTable,
   useApproveMonitoredTable,
   useRejectMonitoredTable,
   type MonitoredTableSummaryOut,
 } from "@/lib/api";
+import { invalidateAfterMonitoredTableChange } from "@/lib/monitored-table-invalidation";
 import { usePermissions } from "@/hooks/use-permissions";
 import { cn } from "@/lib/utils";
 
@@ -207,22 +206,10 @@ function MonitoredTablesPage() {
     [],
   );
 
-  const invalidate = useCallback(
-    () => queryClient.invalidateQueries({ queryKey: getListMonitoredTablesQueryKey() }),
-    [queryClient],
-  );
-
-  // Approving/rejecting can change a table's applied-rule/check counts,
-  // which Data Products' member-table summaries also read — invalidate both
-  // surfaces, mirroring the detail page's `invalidateCountConsumers`.
-  const invalidateAfterApprovalChange = useCallback(() => {
-    invalidate();
-    queryClient.invalidateQueries({ queryKey: getListDataProductsQueryKey() });
-  }, [invalidate, queryClient]);
-
   const deleteMutation = useDeleteMonitoredTable();
   const approveMutation = useApproveMonitoredTable();
   const rejectMutation = useRejectMonitoredTable();
+  const [rejectTarget, setRejectTarget] = useState<MonitoredTableSummaryOut | null>(null);
 
   // Shared runner for the row-level approve/reject actions — mirrors the
   // Rules Registry list page's `runAction` (registry-rules.index.tsx).
@@ -233,14 +220,14 @@ function MonitoredTablesPage() {
       mutate()
         .then(() => {
           toast.success(successMsg);
-          invalidateAfterApprovalChange();
+          invalidateAfterMonitoredTableChange(queryClient, bindingId);
         })
         .catch((err: unknown) => {
           toast.error(extractApiError(err, errorMsg), { duration: 6000 });
         })
         .finally(() => setPendingId(null));
     },
-    [pendingId, invalidateAfterApprovalChange],
+    [pendingId, queryClient],
   );
 
   const handleApprove = (summary: MonitoredTableSummaryOut) =>
@@ -251,13 +238,21 @@ function MonitoredTablesPage() {
       t("monitoredTables.toastApproveFailed"),
     );
 
-  const handleReject = (summary: MonitoredTableSummaryOut) =>
+  // Reject is destructive (moves the table out of the approval queue) so it
+  // is gated behind a confirm dialog, mirroring the detail page's
+  // `rejectConfirmOpen` — the actual mutation only fires from
+  // `confirmReject` once the user confirms.
+  const confirmReject = () => {
+    if (!rejectTarget) return;
+    const summary = rejectTarget;
+    setRejectTarget(null);
     runRowAction(
       summary.table.binding_id,
       () => rejectMutation.mutateAsync({ bindingId: summary.table.binding_id }),
       t("monitoredTables.toastRejected"),
       t("monitoredTables.toastRejectFailed"),
     );
+  };
 
   const confirmDelete = () => {
     if (!deleteTarget?.table.binding_id) return;
@@ -269,7 +264,7 @@ function MonitoredTablesPage() {
       {
         onSuccess: () => {
           toast.success(t("monitoredTables.toastDeleted"));
-          invalidate();
+          invalidateAfterMonitoredTableChange(queryClient, bindingId);
         },
         onError: (err) => {
           toast.error(extractApiError(err, t("monitoredTables.toastDeleteFailed")), {
@@ -394,7 +389,7 @@ function MonitoredTablesPage() {
                           size="sm"
                           className="h-7 w-7 p-0 text-destructive"
                           title={t("monitoredTables.rejectAction")}
-                          onClick={() => handleReject(summary)}
+                          onClick={() => setRejectTarget(summary)}
                         >
                           <XCircle className="h-3.5 w-3.5" />
                         </Button>
@@ -449,6 +444,26 @@ function MonitoredTablesPage() {
           <Pagination page={page} totalItems={tables.length} pageSize={PAGE_SIZE} onPageChange={setPage} />
         )}
       </div>
+
+      {/* Reject is destructive — gate it behind a confirm dialog, mirroring
+          the detail page's `rejectConfirmOpen` (monitored-tables.$bindingId.tsx),
+          reusing the same copy/i18n keys. */}
+      <AlertDialog open={rejectTarget !== null} onOpenChange={(open) => !open && setRejectTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("monitoredTables.rejectConfirmTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("monitoredTables.rejectConfirmDescription", { table: rejectTarget?.table.table_fqn ?? "" })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction className={cn("bg-destructive text-white hover:bg-destructive/90")} onClick={confirmReject}>
+              {t("monitoredTables.rejectAction")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={deleteTarget !== null} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <AlertDialogContent>
