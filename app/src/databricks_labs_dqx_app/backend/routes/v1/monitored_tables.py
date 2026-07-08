@@ -40,6 +40,7 @@ from databricks_labs_dqx_app.backend.models import (
     RegisterMonitoredTableIn,
     RunMonitoredTableIn,
     RunMonitoredTableOut,
+    UpdateMonitoredTableScheduleIn,
     SaveAppliedRulesIn,
     SetAppliedRulePinIn,
     SetAppliedRuleSeverityOverrideIn,
@@ -214,6 +215,36 @@ def delete_monitored_table(
     except Exception as e:
         logger.error(f"Failed to delete monitored table {binding_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to delete monitored table: {e}")
+
+
+@router.patch(
+    "/{binding_id}/schedule",
+    response_model=MonitoredTableOut,
+    operation_id="updateMonitoredTableSchedule",
+    dependencies=[require_role(*_AUTHORS_AND_ABOVE)],
+)
+def update_monitored_table_schedule(
+    binding_id: str,
+    body: UpdateMonitoredTableScheduleIn,
+    svc: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+) -> MonitoredTableOut:
+    """Set or clear a monitored table's run schedule (P21 item 14).
+
+    Orthogonal to the review lifecycle — does NOT flip the binding's status.
+    An approved table with a cron fires on the in-app scheduler.
+    """
+    try:
+        user_email = _current_user_email(obo_ws)
+        table = svc.update_schedule(binding_id, body.schedule_cron, body.schedule_tz, user_email)
+        return MonitoredTableOut.from_domain(table)
+    except RuntimeError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to update monitored table schedule {binding_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to update monitored table schedule: {e}")
 
 
 # ------------------------------------------------------------------

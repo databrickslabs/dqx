@@ -26,6 +26,8 @@ class TestDqMonitoredTablesPostgres:
             "table_fqn",
             "steward",
             "status",
+            "schedule_cron",
+            "schedule_tz",
             "last_profiled_at",
             "created_by",
             "created_at",
@@ -94,6 +96,8 @@ class TestDqMonitoredTablesDelta:
             "table_fqn",
             "steward",
             "status",
+            "schedule_cron",
+            "schedule_tz",
             "last_profiled_at",
             "created_by",
             "created_at",
@@ -360,6 +364,66 @@ class TestMonitoredTableStatusConvergeDelta:
     def test_readds_four_state_constraint(self):
         sql = self._converge().sql_template
         assert "CHECK (status IN ('draft','pending_approval','approved','rejected'))" in sql
+
+
+class TestMonitoredTableScheduleConvergePostgres:
+    """P21 item 14: appended PG migration adding schedule_cron/schedule_tz to
+    ``dq_monitored_tables``. The v1 baseline now declares both columns, so this
+    only converges DBs already deployed without them (editing v1 in place can
+    never reach an already-migrated DB).
+    """
+
+    def _converge(self):
+        candidates = [
+            m
+            for m in PG_MIGRATIONS
+            if m.version > 1 and "dq_monitored_tables ADD COLUMN IF NOT EXISTS schedule_cron" in m.sql
+        ]
+        assert len(candidates) == 1, "exactly one appended PG schedule-column migration expected"
+        return candidates[0]
+
+    def test_appended_after_baseline(self):
+        assert self._converge().version > 1
+
+    def test_adds_both_columns_idempotently(self):
+        sql = self._converge().sql
+        assert "ADD COLUMN IF NOT EXISTS schedule_cron" in sql
+        assert "ADD COLUMN IF NOT EXISTS schedule_tz" in sql
+
+    def test_baseline_also_declares_columns(self):
+        baseline = next(m for m in PG_MIGRATIONS if m.version == 1)
+        assert "schedule_cron" in baseline.sql
+        assert "schedule_tz" in baseline.sql
+
+
+class TestMonitoredTableScheduleConvergeDelta:
+    """P21 item 14: the Delta mirror of the schedule-column migration. Marked
+    ``oltp_fallback=True`` so it only runs on Delta when Lakebase is disabled.
+    """
+
+    def _converge(self):
+        candidates = [
+            m
+            for m in MIGRATIONS
+            if m.version > 2 and "dq_monitored_tables ADD COLUMN schedule_cron" in m.sql_template
+        ]
+        assert len(candidates) == 1, "exactly one appended Delta schedule-column migration expected"
+        return candidates[0]
+
+    def test_appended_after_oltp_baseline(self):
+        assert self._converge().version > 2
+
+    def test_is_oltp_fallback(self):
+        assert getattr(self._converge(), "oltp_fallback", False) is True
+
+    def test_adds_both_columns(self):
+        sql = self._converge().sql_template
+        assert "ADD COLUMN schedule_cron" in sql
+        assert "ADD COLUMN schedule_tz" in sql
+
+    def test_baseline_also_declares_columns(self):
+        assert "schedule_cron" in _V2_OLTP_FALLBACK
+        assert "schedule_tz" in _V2_OLTP_FALLBACK
 
 
 class TestDataProductStatusConvergePostgres:

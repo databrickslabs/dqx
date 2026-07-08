@@ -22,6 +22,11 @@ from unittest.mock import create_autospec
 
 import pytest
 
+from databricks_labs_dqx_app.backend.services.binding_run_service import (
+    BindingRunError,
+    BindingRunResult,
+    BindingRunService,
+)
 from databricks_labs_dqx_app.backend.services.data_product_service import (
     DataProductRunResult,
     DataProductRunSubmission,
@@ -793,6 +798,128 @@ class TestTickProducts:
         svc._tick_products(datetime.now(timezone.utc))  # must not raise
 
         assert calls == ["bad", "good"]
+
+
+# ---------------------------------------------------------------------------
+# Monitored-table ticks — _tick_one_table / _tick_monitored_tables (P21 item 14)
+# ---------------------------------------------------------------------------
+
+
+def _make_table_scheduler(make_scheduler, *, br_service=None):
+    br_service = br_service if br_service is not None else create_autospec(BindingRunService, instance=True)
+    svc, mocks = make_scheduler(catalog="main", schema="dqx", tmp_schema="dqx_tmp", binding_run_service=br_service)
+    return svc, mocks, br_service
+
+
+def _binding_run_result() -> BindingRunResult:
+    return BindingRunResult(run_set_id="rs1", run_id="r1", job_run_id=1, view_fqn="c.tmp.v1")
+
+
+class TestTickOneTable:
+    def test_due_table_fires_once_and_advances_bookkeeping(self, make_scheduler):
+        svc, mocks, br_service = _make_table_scheduler(make_scheduler)
+        mocks.oltp.query.return_value = [_tracker_row("table:b1", "2026-05-01T09:00:00+00:00")]
+        br_service.run_binding.return_value = _binding_run_result()
+        now = datetime(2026, 5, 1, 9, 0, 5, tzinfo=timezone.utc)
+
+        svc._tick_one_table({"binding_id": "b1", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC"}, now)
+
+        br_service.run_binding.assert_called_once_with(
+            "b1", source="approved", version=None, user_email="scheduler", trigger="scheduled"
+        )
+        mocks.oltp.upsert.assert_called_once()
+        kwargs = mocks.oltp.upsert.call_args.kwargs
+        assert kwargs["key_cols"] == {"schedule_name": "table:b1"}
+        value_cols = kwargs["value_cols"]
+        assert value_cols["status"] == "success"
+        assert "2026-05-02T09:00:00+00:00" in value_cols["next_run_at"].expr
+
+    def test_not_due_table_is_skipped(self, make_scheduler):
+        svc, mocks, br_service = _make_table_scheduler(make_scheduler)
+        mocks.oltp.query.return_value = [_tracker_row("table:b1", "2026-05-02T09:00:00+00:00")]
+        now = datetime(2026, 5, 1, 9, 0, 5, tzinfo=timezone.utc)
+
+        svc._tick_one_table({"binding_id": "b1", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC"}, now)
+
+        br_service.run_binding.assert_not_called()
+        mocks.oltp.upsert.assert_not_called()
+
+    def test_first_tick_seeds_tracker_without_firing_when_not_yet_due(self, make_scheduler):
+        svc, mocks, br_service = _make_table_scheduler(make_scheduler)
+        mocks.oltp.query.return_value = []
+        now = datetime(2026, 5, 1, 8, 0, 0, tzinfo=timezone.utc)
+
+        svc._tick_one_table({"binding_id": "b1", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC"}, now)
+
+        br_service.run_binding.assert_not_called()
+        mocks.oltp.upsert.assert_called_once()
+        value_cols = mocks.oltp.upsert.call_args.kwargs["value_cols"]
+        assert value_cols["status"] == "pending"
+        assert "2026-05-01T09:00:00+00:00" in value_cols["next_run_at"].expr
+
+    def test_binding_run_error_records_failed_status_not_an_exception(self, make_scheduler):
+        svc, mocks, br_service = _make_table_scheduler(make_scheduler)
+        mocks.oltp.query.return_value = [_tracker_row("table:b1", "2026-05-01T09:00:00+00:00")]
+        br_service.run_binding.side_effect = BindingRunError("never approved")
+        now = datetime(2026, 5, 1, 9, 0, 5, tzinfo=timezone.utc)
+
+        svc._tick_one_table({"binding_id": "b1", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC"}, now)
+
+        mocks.oltp.upsert.assert_called_once()
+        value_cols = mocks.oltp.upsert.call_args.kwargs["value_cols"]
+        assert value_cols["status"] == "failed"
+        assert "2026-05-02T09:00:00+00:00" in value_cols["next_run_at"].expr
+
+    def test_run_failure_records_failed_status_and_advances(self, make_scheduler):
+        svc, mocks, br_service = _make_table_scheduler(make_scheduler)
+        mocks.oltp.query.return_value = [_tracker_row("table:b1", "2026-05-01T09:00:00+00:00")]
+        br_service.run_binding.side_effect = RuntimeError("job submission failed")
+        now = datetime(2026, 5, 1, 9, 0, 5, tzinfo=timezone.utc)
+
+        svc._tick_one_table({"binding_id": "b1", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC"}, now)
+
+        mocks.oltp.upsert.assert_called_once()
+        value_cols = mocks.oltp.upsert.call_args.kwargs["value_cols"]
+        assert value_cols["status"] == "failed"
+
+    def test_malformed_cron_seeds_backoff_and_never_raises(self, make_scheduler):
+        svc, mocks, br_service = _make_table_scheduler(make_scheduler)
+        mocks.oltp.query.return_value = []
+        now = datetime(2026, 5, 1, 9, 0, 0, tzinfo=timezone.utc)
+
+        svc._tick_one_table({"binding_id": "b1", "schedule_cron": "not a cron", "schedule_tz": "UTC"}, now)
+
+        br_service.run_binding.assert_not_called()
+        mocks.oltp.upsert.assert_called_once()
+        value_cols = mocks.oltp.upsert.call_args.kwargs["value_cols"]
+        assert value_cols["status"] == "pending"
+        assert (now + _FAILURE_BACKOFF).isoformat() in value_cols["next_run_at"].expr
+
+
+class TestTickMonitoredTables:
+    def test_noop_without_binding_run_service(self, make_scheduler):
+        svc, mocks = make_scheduler(catalog="main", schema="dqx", tmp_schema="dqx_tmp")
+        svc._tick_monitored_tables(datetime.now(timezone.utc))
+        mocks.oltp.query.assert_not_called()
+
+    def test_query_predicate_filters_by_cron_and_approved_status(self, make_scheduler):
+        svc, mocks, _br = _make_table_scheduler(make_scheduler)
+        mocks.oltp.query.return_value = []
+
+        svc._tick_monitored_tables(datetime.now(timezone.utc))
+
+        sql = mocks.oltp.query.call_args.args[0]
+        assert "dq_monitored_tables" in sql
+        assert "schedule_cron IS NOT NULL" in sql
+        assert "status = 'approved'" in sql
+
+    def test_missing_table_is_tolerated(self, make_scheduler):
+        svc, mocks, br_service = _make_table_scheduler(make_scheduler)
+        mocks.oltp.query.side_effect = RuntimeError("TABLE_OR_VIEW_NOT_FOUND")
+
+        svc._tick_monitored_tables(datetime.now(timezone.utc))  # must not raise
+
+        br_service.run_binding.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

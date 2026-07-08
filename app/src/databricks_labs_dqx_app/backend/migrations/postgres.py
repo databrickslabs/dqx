@@ -337,6 +337,13 @@ PG_MIGRATIONS: list[PgMigration] = [
             "  table_fqn        TEXT NOT NULL,"
             "  steward          TEXT,"
             "  status           TEXT NOT NULL,"
+            # Optional per-table schedule (P21 item 14): a 5-field POSIX cron +
+            # IANA timezone. When set AND the binding is approved, the in-app
+            # scheduler fires ``BindingRunService.run_binding(source='approved',
+            # trigger='scheduled')`` on the cron cadence — mirroring the
+            # ``dq_data_products`` schedule columns.
+            "  schedule_cron    TEXT,"
+            "  schedule_tz      TEXT,"
             "  last_profiled_at TIMESTAMPTZ,"
             "  created_by       TEXT,"
             "  created_at       TIMESTAMPTZ,"
@@ -705,6 +712,25 @@ PG_MIGRATIONS: list[PgMigration] = [
             f"ALTER TABLE {_S}.dq_data_products "
             "  ADD CONSTRAINT chk_dq_data_products_status "
             "    CHECK (status IN ('draft','pending_approval','approved','rejected'));"
+        ),
+    ),
+    PgMigration(
+        version=9,
+        description="Monitored tables become schedulable: add schedule_cron/schedule_tz (P21 item 14)",
+        sql=(
+            # ----------------------------------------------------------
+            # Monitored-table schedule columns (P21 item 14). The v1
+            # baseline above now declares both columns, so this is a
+            # NO-OP on fresh installs. It exists purely to converge
+            # databases already deployed WITHOUT them (v1 is already
+            # recorded in ``dq_migrations`` there, so editing v1 in place
+            # could never reach them — the same edit-in-place trap that
+            # v5 and v8 above had to correct after the fact). ``IF NOT
+            # EXISTS`` is native Postgres syntax, so a re-run against an
+            # already-converged DB is a true no-op.
+            # ----------------------------------------------------------
+            f"ALTER TABLE {_S}.dq_monitored_tables ADD COLUMN IF NOT EXISTS schedule_cron TEXT;"
+            f"ALTER TABLE {_S}.dq_monitored_tables ADD COLUMN IF NOT EXISTS schedule_tz TEXT;"
         ),
     ),
 ]

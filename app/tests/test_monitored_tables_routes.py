@@ -44,8 +44,9 @@ from databricks_labs_dqx_app.backend.routes.v1.monitored_tables import (
     set_applied_rule_severity_override,
     submit_monitored_table,
     suggest_rules_for_table,
+    update_monitored_table_schedule,
 )
-from databricks_labs_dqx_app.backend.models import RunMonitoredTableIn
+from databricks_labs_dqx_app.backend.models import RunMonitoredTableIn, UpdateMonitoredTableScheduleIn
 from databricks_labs_dqx_app.backend.services.binding_run_service import (
     BindingNotFoundError,
     BindingRunError,
@@ -190,6 +191,36 @@ class TestDelete:
         svc.delete.side_effect = RuntimeError("Monitored table not found: b1")
         with pytest.raises(HTTPException) as excinfo:
             delete_monitored_table("b1", svc=svc, obo_ws=_mock_obo_ws())
+        assert excinfo.value.status_code == 404
+
+
+class TestUpdateSchedule:
+    def test_sets_schedule(self):
+        svc = MagicMock()
+        table = _table(status="approved")
+        table.schedule_cron = "0 6 * * *"
+        table.schedule_tz = "UTC"
+        svc.update_schedule.return_value = table
+        body = UpdateMonitoredTableScheduleIn(schedule_cron="0 6 * * *", schedule_tz="UTC")
+        result = update_monitored_table_schedule("b1", body=body, svc=svc, obo_ws=_mock_obo_ws())
+        assert result.schedule_cron == "0 6 * * *"
+        assert result.schedule_tz == "UTC"
+        svc.update_schedule.assert_called_once_with("b1", "0 6 * * *", "UTC", "alice@x")
+
+    def test_clears_schedule(self):
+        svc = MagicMock()
+        svc.update_schedule.return_value = _table(status="approved")
+        body = UpdateMonitoredTableScheduleIn(schedule_cron=None, schedule_tz=None)
+        result = update_monitored_table_schedule("b1", body=body, svc=svc, obo_ws=_mock_obo_ws())
+        assert result.schedule_cron is None
+        svc.update_schedule.assert_called_once_with("b1", None, None, "alice@x")
+
+    def test_missing_raises_404(self):
+        svc = MagicMock()
+        svc.update_schedule.side_effect = RuntimeError("Monitored table not found: b1")
+        body = UpdateMonitoredTableScheduleIn(schedule_cron="0 6 * * *", schedule_tz="UTC")
+        with pytest.raises(HTTPException) as excinfo:
+            update_monitored_table_schedule("b1", body=body, svc=svc, obo_ws=_mock_obo_ws())
         assert excinfo.value.status_code == 404
 
 

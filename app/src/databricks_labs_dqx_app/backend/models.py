@@ -422,6 +422,17 @@ class RegisterMonitoredTableIn(BaseModel):
     steward: str | None = Field(default=None, description="Owning steward's email/username")
 
 
+class UpdateMonitoredTableScheduleIn(BaseModel):
+    """Request body for setting/clearing a monitored table's run schedule (P21 item 14).
+
+    ``schedule_cron=None`` clears the schedule. When a cron is present the caller
+    should supply ``schedule_tz`` (defaults to UTC service-side when omitted).
+    """
+
+    schedule_cron: str | None = Field(default=None, description="5-field POSIX cron; None clears the schedule")
+    schedule_tz: str | None = Field(default=None, description="IANA zone the cron is evaluated in; None = UTC")
+
+
 class BulkRegisterMonitoredTablesIn(BaseModel):
     """Request body for bulk-registering many tables under Rules Registry governance."""
 
@@ -566,6 +577,8 @@ class MonitoredTableOut(BaseModel):
     steward: str | None = None
     status: MonitoredTableStatusDomain
     version: int = Field(default=0, description="0 = never approved; bumped on each table approval")
+    schedule_cron: str | None = Field(default=None, description="5-field POSIX cron; None = not scheduled")
+    schedule_tz: str | None = Field(default=None, description="IANA zone the cron runs in; None = UTC")
     last_profiled_at: str | None = None
     created_by: str | None = None
     created_at: str | None = None
@@ -580,6 +593,8 @@ class MonitoredTableOut(BaseModel):
             steward=table.steward,
             status=table.status,
             version=table.version,
+            schedule_cron=table.schedule_cron,
+            schedule_tz=table.schedule_tz,
             last_profiled_at=table.last_profiled_at.isoformat() if table.last_profiled_at else None,
             created_by=table.created_by,
             created_at=table.created_at.isoformat() if table.created_at else None,

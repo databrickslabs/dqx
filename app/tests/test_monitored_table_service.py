@@ -61,6 +61,8 @@ def _table_row(
     steward: str | None = "alice@x",
     status: str = "draft",
     version: int = 0,
+    schedule_cron: str | None = None,
+    schedule_tz: str | None = None,
     last_profiled_at: str | None = None,
 ) -> list[str]:
     return [
@@ -69,6 +71,8 @@ def _table_row(
         steward,
         status,
         version,
+        schedule_cron,
+        schedule_tz,
         last_profiled_at,
         "alice@x",
         "2026-07-02T00:00:00+00:00",
@@ -336,6 +340,39 @@ class TestSetStatus:
         sql.query.return_value = []
         with pytest.raises(RuntimeError):
             svc.set_status("missing", "approved", "alice@x")
+        sql.execute.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# update_schedule (P21 item 14)
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateSchedule:
+    def test_sets_schedule_without_touching_status(self, svc, sql):
+        sql.query.return_value = [_table_row(binding_id="b1", status="approved")]
+        table = svc.update_schedule("b1", "0 6 * * *", "UTC", "alice@x")
+        assert table.schedule_cron == "0 6 * * *"
+        assert table.schedule_tz == "UTC"
+        update_sql = sql.execute.call_args[0][0]
+        assert "schedule_cron = '0 6 * * *'" in update_sql
+        assert "schedule_tz = 'UTC'" in update_sql
+        # Schedule is orthogonal to the review lifecycle — status is untouched.
+        assert "status =" not in update_sql
+
+    def test_clearing_cron_also_nulls_timezone(self, svc, sql):
+        sql.query.return_value = [_table_row(binding_id="b1", status="approved", schedule_cron="0 6 * * *")]
+        table = svc.update_schedule("b1", None, "UTC", "alice@x")
+        assert table.schedule_cron is None
+        assert table.schedule_tz is None
+        update_sql = sql.execute.call_args[0][0]
+        assert "schedule_cron = NULL" in update_sql
+        assert "schedule_tz = NULL" in update_sql
+
+    def test_raises_when_missing(self, svc, sql):
+        sql.query.return_value = []
+        with pytest.raises(RuntimeError):
+            svc.update_schedule("missing", "0 6 * * *", "UTC", "alice@x")
         sql.execute.assert_not_called()
 
 

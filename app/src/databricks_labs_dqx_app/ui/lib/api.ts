@@ -1213,6 +1213,16 @@ export const MonitoredTableOutStatus = {
   rejected: 'rejected',
 } as const;
 
+/**
+ * 5-field POSIX cron; None = not scheduled
+ */
+export type MonitoredTableOutScheduleCron = string | null;
+
+/**
+ * IANA zone the cron runs in; None = UTC
+ */
+export type MonitoredTableOutScheduleTz = string | null;
+
 export type MonitoredTableOutLastProfiledAt = string | null;
 
 export type MonitoredTableOutCreatedBy = string | null;
@@ -1233,6 +1243,10 @@ export interface MonitoredTableOut {
   status: MonitoredTableOutStatus;
   /** 0 = never approved; bumped on each table approval */
   version?: number;
+  /** 5-field POSIX cron; None = not scheduled */
+  schedule_cron?: MonitoredTableOutScheduleCron;
+  /** IANA zone the cron runs in; None = UTC */
+  schedule_tz?: MonitoredTableOutScheduleTz;
   last_profiled_at?: MonitoredTableOutLastProfiledAt;
   created_by?: MonitoredTableOutCreatedBy;
   created_at?: MonitoredTableOutCreatedAt;
@@ -2397,6 +2411,29 @@ export interface UpdateDataProductIn {
   steward?: UpdateDataProductInSteward;
   schedule_cron?: UpdateDataProductInScheduleCron;
   schedule_tz?: UpdateDataProductInScheduleTz;
+}
+
+/**
+ * 5-field POSIX cron; None clears the schedule
+ */
+export type UpdateMonitoredTableScheduleInScheduleCron = string | null;
+
+/**
+ * IANA zone the cron is evaluated in; None = UTC
+ */
+export type UpdateMonitoredTableScheduleInScheduleTz = string | null;
+
+/**
+ * Request body for setting/clearing a monitored table's run schedule (P21 item 14).
+
+``schedule_cron=None`` clears the schedule. When a cron is present the caller
+should supply ``schedule_tz`` (defaults to UTC service-side when omitted).
+ */
+export interface UpdateMonitoredTableScheduleIn {
+  /** 5-field POSIX cron; None clears the schedule */
+  schedule_cron?: UpdateMonitoredTableScheduleInScheduleCron;
+  /** IANA zone the cron is evaluated in; None = UTC */
+  schedule_tz?: UpdateMonitoredTableScheduleInScheduleTz;
 }
 
 export type UpdateRegistryRuleInMode = 'dqx_native' | 'lowcode' | 'sql' | null;
@@ -10711,6 +10748,73 @@ export const useBulkRegisterMonitoredTables = <TError = AxiosError<HTTPValidatio
     }
     
 /**
+ * Set or clear a monitored table's run schedule (P21 item 14).
+
+Orthogonal to the review lifecycle — does NOT flip the binding's status.
+An approved table with a cron fires on the in-app scheduler.
+ * @summary Update Monitored Table Schedule
+ */
+export const updateMonitoredTableSchedule = (
+    bindingId: string,
+    updateMonitoredTableScheduleIn: UpdateMonitoredTableScheduleIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<MonitoredTableOut>> => {
+    
+    
+    return axios.default.patch(
+      `/api/v1/monitored-tables/${bindingId}/schedule`,
+      updateMonitoredTableScheduleIn,options
+    );
+  }
+
+
+
+export const getUpdateMonitoredTableScheduleMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateMonitoredTableSchedule>>, TError,{bindingId: string;data: UpdateMonitoredTableScheduleIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof updateMonitoredTableSchedule>>, TError,{bindingId: string;data: UpdateMonitoredTableScheduleIn}, TContext> => {
+
+const mutationKey = ['updateMonitoredTableSchedule'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateMonitoredTableSchedule>>, {bindingId: string;data: UpdateMonitoredTableScheduleIn}> = (props) => {
+          const {bindingId,data} = props ?? {};
+
+          return  updateMonitoredTableSchedule(bindingId,data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateMonitoredTableScheduleMutationResult = NonNullable<Awaited<ReturnType<typeof updateMonitoredTableSchedule>>>
+    export type UpdateMonitoredTableScheduleMutationBody = UpdateMonitoredTableScheduleIn
+    export type UpdateMonitoredTableScheduleMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Update Monitored Table Schedule
+ */
+export const useUpdateMonitoredTableSchedule = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateMonitoredTableSchedule>>, TError,{bindingId: string;data: UpdateMonitoredTableScheduleIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof updateMonitoredTableSchedule>>,
+        TError,
+        {bindingId: string;data: UpdateMonitoredTableScheduleIn},
+        TContext
+      > => {
+
+      const mutationOptions = getUpdateMonitoredTableScheduleMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
  * Return the most recent profiling result for this monitored table's underlying table.
  * @summary Get Monitored Table Profile
  */
@@ -15583,7 +15687,7 @@ export function useGetDataProductSuspense<TData = Awaited<ReturnType<typeof getD
 
 
 /**
- * Apply a partial update. Any successful update flips ``published`` -> ``draft``.
+ * Apply a partial update. Any successful update flips the space back to ``draft``.
  * @summary Update Data Product
  */
 export const updateDataProduct = (
@@ -15837,6 +15941,9 @@ export const useRemoveDataProductMember = <TError = AxiosError<HTTPValidationErr
     
 /**
  * Submit a Table Space for review — moves ``draft``/``rejected`` -> ``pending_approval``.
+
+409 if the space is already ``approved`` with no changes since publish
+(:meth:`DataProductService.submit`).
  * @summary Submit Data Product
  */
 export const submitDataProduct = (

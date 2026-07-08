@@ -585,6 +585,11 @@ _V2_OLTP_FALLBACK = (
     "  table_fqn STRING NOT NULL,"
     "  steward STRING,"
     "  status STRING NOT NULL,"
+    # Optional per-table schedule (P21 item 14) — a 5-field POSIX cron +
+    # IANA timezone. Approved tables with a cron fire on the in-app
+    # scheduler, mirroring ``dq_data_products``'s schedule columns below.
+    "  schedule_cron STRING,"
+    "  schedule_tz STRING,"
     "  last_profiled_at TIMESTAMP,"
     "  created_by STRING,"
     "  created_at TIMESTAMP,"
@@ -927,6 +932,26 @@ _V12_DATA_PRODUCTS_STATUS_CONVERGE = (
 )
 
 
+# Monitored tables become schedulable (P21 item 14). The v2 OLTP-fallback
+# baseline above now declares ``schedule_cron``/``schedule_tz`` on
+# ``dq_monitored_tables``, so this is a NO-OP on fresh installs; it exists
+# purely to converge Delta-OLTP databases already deployed WITHOUT the
+# columns (v2 is already recorded in ``dq_migrations`` there, so editing v2
+# in place could never reach them — the same edit-in-place trap corrected by
+# v9/v12). Two plain ``ADD COLUMN`` statements (not ``ADD COLUMN IF NOT
+# EXISTS`` — unsupported on some warehouse versions); on an already-converged
+# DB each raises ``COLUMN_ALREADY_EXISTS`` which
+# ``_IDEMPOTENT_ERROR_FRAGMENTS`` swallows.
+#
+# Marked ``oltp_fallback=True``: ``dq_monitored_tables`` lives in Lakebase
+# when enabled (the Postgres mirror is v9 in ``backend.migrations.postgres``),
+# so this only runs against Delta when Lakebase is disabled.
+_V13_MONITORED_TABLES_SCHEDULE = (
+    f"ALTER TABLE {_PLACEHOLDER}.dq_monitored_tables ADD COLUMN schedule_cron STRING;"
+    f"ALTER TABLE {_PLACEHOLDER}.dq_monitored_tables ADD COLUMN schedule_tz STRING"
+)
+
+
 # OLTP fallback migration is identified by ``oltp_fallback=True`` so
 # the runner can skip it when Lakebase is enabled. Keeping the flag on
 # the migration itself (rather than e.g. a hard-coded version number)
@@ -1023,6 +1048,13 @@ MIGRATIONS: list[Migration] = [
         description="Converge dq_data_products status to the 4-state review set "
         "(draft/pending_approval/approved/rejected) — used only when Lakebase is disabled",
         sql_template=_V12_DATA_PRODUCTS_STATUS_CONVERGE,
+        oltp_fallback=True,
+    ),
+    DeltaMigration(
+        version=13,
+        description="Monitored tables become schedulable: add schedule_cron/schedule_tz (P21 item 14) "
+        "— used only when Lakebase is disabled",
+        sql_template=_V13_MONITORED_TABLES_SCHEDULE,
         oltp_fallback=True,
     ),
 ]

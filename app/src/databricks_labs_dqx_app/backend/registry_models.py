@@ -216,6 +216,11 @@ class MonitoredTable(BaseModel):
     steward: str | None = None
     status: MonitoredTableStatus = "draft"
     version: int = Field(default=0, description="0 = never approved; bumped on each table approval")
+    schedule_cron: str | None = Field(
+        default=None,
+        description="5-field POSIX cron; None = not scheduled. Approved tables with a cron fire on the scheduler.",
+    )
+    schedule_tz: str | None = Field(default=None, description="IANA zone the cron is evaluated in; None = UTC")
     last_profiled_at: datetime | None = None
     created_by: str | None = None
     created_at: datetime | None = None

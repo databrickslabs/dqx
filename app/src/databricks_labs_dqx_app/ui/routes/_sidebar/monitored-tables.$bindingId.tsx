@@ -112,8 +112,9 @@ import {
 } from "@/components/apply-rules/shared";
 import { orderSeverityValuesForDisplay } from "@/components/RegistryRuleBadges";
 import { ProfileColumnList } from "@/components/bindings/ProfileColumnList";
+import { MonitoredTableSchedulingTab } from "@/components/monitored-tables/MonitoredTableSchedulingTab";
 
-const DETAIL_TAB_KEYS = ["about", "profile", "apply-rules", "results"] as const;
+const DETAIL_TAB_KEYS = ["about", "profile", "apply-rules", "results", "schedule"] as const;
 type DetailTab = (typeof DETAIL_TAB_KEYS)[number];
 
 /** Client-side deadline for the AI suggest-rules request (prefetch + manual
@@ -276,20 +277,28 @@ function MonitoredTableDetailPage() {
     [saveMutation, bindingId, stagedRows],
   );
 
+  // Persist staged applied-rule edits. Returns true on success. Shared by the
+  // Save-as-draft button and the "Run draft" flow (item 15), which must SAVE
+  // any pending edits before running so the draft run reflects them.
+  const saveDraft = useCallback(async (): Promise<boolean> => {
+    try {
+      const resp = await persistStagedRows();
+      const normalized = normalizeStagedRows(resp.data);
+      setStagedRows(normalized);
+      setBaseline(normalized);
+      justSavedRef.current = true;
+      invalidateLifecycleQueries();
+      return true;
+    } catch (err: unknown) {
+      toast.error(extractApiError(err, t("monitoredTables.toastSaveFailed")), { duration: 6000 });
+      return false;
+    }
+  }, [persistStagedRows, invalidateLifecycleQueries, t]);
+
   const handleSaveAsDraft = () => {
-    persistStagedRows().then(
-      (resp) => {
-        const normalized = normalizeStagedRows(resp.data);
-        setStagedRows(normalized);
-        setBaseline(normalized);
-        justSavedRef.current = true;
-        toast.success(t("monitoredTables.toastSavedDraft"));
-        invalidateLifecycleQueries();
-      },
-      (err: unknown) => {
-        toast.error(extractApiError(err, t("monitoredTables.toastSaveFailed")), { duration: 6000 });
-      },
-    );
+    void saveDraft().then((ok) => {
+      if (ok) toast.success(t("monitoredTables.toastSavedDraft"));
+    });
   };
 
   // Submit for review: persist any staged edits first (so the materializer
@@ -457,7 +466,14 @@ function MonitoredTableDetailPage() {
             {/* Run now sits to the right of Submit for review — matches
                 dqlake's binding header ordering (Save, Publish, then Run;
                 item 12). */}
-            {perms.canRunRules && <RunTableAction bindingId={bindingId} table={table} />}
+            {perms.canRunRules && (
+              <RunTableAction
+                bindingId={bindingId}
+                table={table}
+                isDirty={isDirty}
+                onSaveDraft={saveDraft}
+              />
+            )}
           </div>
         </div>
 
@@ -523,6 +539,10 @@ function MonitoredTableDetailPage() {
               <ClipboardList className="h-3.5 w-3.5" />
               {t("monitoredTables.tabResults")}
             </TabsTrigger>
+            <TabsTrigger value="schedule" className="gap-1.5">
+              <Clock className="h-3.5 w-3.5" />
+              {t("monitoredTables.tabSchedule")}
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="about">
@@ -545,6 +565,10 @@ function MonitoredTableDetailPage() {
 
           <TabsContent value="results">
             <ResultsTab tableFqn={table.table_fqn} status={table.status} />
+          </TabsContent>
+
+          <TabsContent value="schedule">
+            <MonitoredTableSchedulingTab table={table} canEdit={perms.canCreateRules} />
           </TabsContent>
         </Tabs>
       </div>
@@ -598,14 +622,33 @@ function VersionBadge({ table }: { table: MonitoredTableOut }) {
 /** Split-button Run action, RUNNER-gated (`usePermissions().canRunRules`,
  *  checked by the caller). Primary click runs the latest approved snapshot
  *  ("Run now (vN)"), disabled with a tooltip at v0. The attached dropdown
- *  offers each approved version plus "Run draft" — the only option at v0. */
-function RunTableAction({ bindingId, table }: { bindingId: string; table: MonitoredTableOut }) {
+ *  offers "Run draft" at the TOP (item 15) followed by each approved version.
+ *  "Run draft" is only enabled when the binding is a draft OR has pending
+ *  applied-rule edits; in the latter case those edits are SAVED first (so the
+ *  draft run reflects them), and a save failure is surfaced without running.
+ *  Otherwise it is disabled with a tooltip, matching the app's split-button
+ *  convention. */
+function RunTableAction({
+  bindingId,
+  table,
+  isDirty,
+  onSaveDraft,
+}: {
+  bindingId: string;
+  table: MonitoredTableOut;
+  isDirty: boolean;
+  onSaveDraft: () => Promise<boolean>;
+}) {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const versionsQuery = useListMonitoredTableVersions(bindingId);
   const versions = versionsQuery.data?.data ?? [];
   const runMutation = useRunMonitoredTable();
   const hasApproved = (table.version ?? 0) > 0;
+  // Run draft is available only when there is a draft to run: either the
+  // binding itself is in draft, or there are unsaved applied-rule edits that
+  // Save-as-draft would persist (item 15).
+  const canRunDraft = table.status === "draft" || isDirty;
 
   const handleRun = (source: "approved" | "draft", version?: number) => {
     runMutation.mutate(
@@ -625,6 +668,16 @@ function RunTableAction({ bindingId, table }: { bindingId: string; table: Monito
         },
       },
     );
+  };
+
+  // Save any pending edits first (so the draft run reflects them), then run.
+  // A save failure is surfaced by `onSaveDraft` and we do NOT run.
+  const handleRunDraft = async () => {
+    if (isDirty) {
+      const ok = await onSaveDraft();
+      if (!ok) return;
+    }
+    handleRun("draft");
   };
 
   return (
@@ -661,13 +714,33 @@ function RunTableAction({ bindingId, table }: { bindingId: string; table: Monito
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
+          {/* Run draft at the TOP (item 15), disabled+tooltip when unavailable. */}
+          <TooltipProvider delayDuration={200}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className={cn(!canRunDraft && "cursor-not-allowed")}>
+                  <DropdownMenuItem
+                    disabled={!canRunDraft || runMutation.isPending}
+                    onSelect={(e) => {
+                      e.preventDefault();
+                      void handleRunDraft();
+                    }}
+                  >
+                    {t("monitoredTables.runDraftAction")}
+                  </DropdownMenuItem>
+                </span>
+              </TooltipTrigger>
+              {!canRunDraft && (
+                <TooltipContent side="left">{t("monitoredTables.runDraftDisabledHint")}</TooltipContent>
+              )}
+            </Tooltip>
+          </TooltipProvider>
+          {versions.length > 0 && <DropdownMenuSeparator />}
           {versions.map((v: MonitoredTableVersionOut) => (
             <DropdownMenuItem key={v.version} onSelect={() => handleRun("approved", v.version)}>
               {t("monitoredTables.runVersionOption", { version: v.version })}
             </DropdownMenuItem>
           ))}
-          {versions.length > 0 && <DropdownMenuSeparator />}
-          <DropdownMenuItem onSelect={() => handleRun("draft")}>{t("monitoredTables.runDraftAction")}</DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
     </div>

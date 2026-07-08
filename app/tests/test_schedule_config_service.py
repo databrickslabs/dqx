@@ -15,6 +15,7 @@ import pytest
 
 from databricks_labs_dqx_app.backend.services.schedule_config_service import (
     PRODUCT_SCHEDULE_PREFIX,
+    TABLE_SCHEDULE_PREFIX,
     ScheduleConfigService,
 )
 
@@ -55,4 +56,26 @@ class TestSaveRejectsReservedProductPrefix:
 
     def test_allows_name_containing_product_not_as_prefix(self, schedule_config_service, sql_executor_mock):
         schedule_config_service.save("my-product:x", {"k": "v"}, "alice@example.com")
+        sql_executor_mock.upsert_with_audit.assert_called_once()
+
+
+class TestSaveRejectsReservedTablePrefix:
+    """The ``table:<binding_id>`` namespace is reserved for monitored-table
+    schedules (P21 item 14), exactly like ``product:``."""
+
+    def test_rejects_name_with_table_prefix(self, schedule_config_service):
+        with pytest.raises(ValueError, match=TABLE_SCHEDULE_PREFIX):
+            schedule_config_service.save("table:some-binding", {}, "alice@example.com")
+
+    def test_rejects_bare_table_prefix(self, schedule_config_service):
+        with pytest.raises(ValueError, match=TABLE_SCHEDULE_PREFIX):
+            schedule_config_service.save("table:", {}, "alice@example.com")
+
+    def test_does_not_write_when_name_is_rejected(self, schedule_config_service, sql_executor_mock):
+        with pytest.raises(ValueError):
+            schedule_config_service.save("table:some-binding", {}, "alice@example.com")
+        sql_executor_mock.upsert_with_audit.assert_not_called()
+
+    def test_allows_name_containing_table_not_as_prefix(self, schedule_config_service, sql_executor_mock):
+        schedule_config_service.save("my-table:x", {"k": "v"}, "alice@example.com")
         sql_executor_mock.upsert_with_audit.assert_called_once()

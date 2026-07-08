@@ -126,7 +126,8 @@ class MonitoredTableService:
         updated_at = self._sql.ts_text("updated_at")
         last_profiled_at = self._sql.ts_text("last_profiled_at")
         return (
-            f"binding_id, table_fqn, steward, status, version, {last_profiled_at} AS last_profiled_at, "
+            f"binding_id, table_fqn, steward, status, version, schedule_cron, schedule_tz, "
+            f"{last_profiled_at} AS last_profiled_at, "
             f"created_by, {created_at} AS created_at, updated_by, {updated_at} AS updated_at"
         )
 
@@ -426,6 +427,53 @@ class MonitoredTableService:
         )
         return table
 
+    def update_schedule(
+        self,
+        binding_id: str,
+        schedule_cron: str | None,
+        schedule_tz: str | None,
+        user_email: str,
+    ) -> MonitoredTable:
+        """Set (or clear) the binding's run schedule (P21 item 14).
+
+        Schedule is operational config that is orthogonal to the rule-review
+        lifecycle, so — unlike a Table Space edit — this deliberately does NOT
+        flip the binding's ``status`` back to ``draft``: an approved table stays
+        approved (and thus schedulable) after its cadence changes. Only the
+        ``schedule_*`` columns and the ``updated_*`` audit fields move.
+
+        Pass ``schedule_cron=None`` to remove the schedule; ``schedule_tz`` is
+        forced to NULL alongside it so a cleared schedule never leaves a dangling
+        timezone.
+
+        Raises:
+            RuntimeError: *binding_id* does not exist.
+        """
+        table = self._get(binding_id)
+        if table is None:
+            raise RuntimeError(f"Monitored table not found: {binding_id}")
+        cron = schedule_cron or None
+        tz = schedule_tz if cron is not None else None
+        e = escape_sql_string(binding_id)
+        self._sql.execute(
+            f"UPDATE {self._table} SET schedule_cron = {self._opt_str(cron)}, "
+            f"schedule_tz = {self._opt_str(tz)}, "
+            f"updated_by = {self._opt_str(user_email)}, updated_at = now() "
+            f"WHERE binding_id = '{e}'"
+        )
+        table.schedule_cron = cron
+        table.schedule_tz = tz
+        table.updated_by = user_email
+        logger.info(
+            "Updated monitored table %s (binding_id=%s) schedule (cron=%s, tz=%s, by %s)",
+            table.table_fqn,
+            binding_id,
+            cron,
+            tz,
+            user_email,
+        )
+        return table
+
     def list_materialized_rule_statuses(self, binding_id: str) -> list[tuple[str, str]]:
         """Return ``(rule_id, status)`` for every ``dq_quality_rules`` row this binding materialized.
 
@@ -588,11 +636,13 @@ class MonitoredTableService:
             steward=row[2],
             status=self._parse_status(row[3], binding_id=binding_id),
             version=int(row[4]) if row[4] not in (None, "") else 0,
-            last_profiled_at=self._parse_timestamp(row[5]),
-            created_by=row[6],
-            created_at=self._parse_timestamp(row[7]),
-            updated_by=row[8],
-            updated_at=self._parse_timestamp(row[9]),
+            schedule_cron=row[5] or None,
+            schedule_tz=row[6] or None,
+            last_profiled_at=self._parse_timestamp(row[7]),
+            created_by=row[8],
+            created_at=self._parse_timestamp(row[9]),
+            updated_by=row[10],
+            updated_at=self._parse_timestamp(row[11]),
         )
 
     def _row_to_applied_rule(self, row: list[str]) -> AppliedRule:

@@ -18,13 +18,17 @@ from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, validat
 
 logger = logging.getLogger(__name__)
 
-# Reserved prefix used internally by ``SchedulerService`` for Data Products
-# schedule tracker keys (``f"product:{product_id}"`` — see scheduler_service.py
-# Task 5). User-authored schedule names are now allowed to contain ``:``
-# (see ``validate_schedule_name``), so without this guard a user could save a
-# schedule literally named ``product:<uuid>`` and silently hijack — or be
-# overwritten by — a Data Product's tracker row in ``dq_schedule_runs``.
+# Reserved prefixes used internally by ``SchedulerService`` for namespaced
+# schedule tracker keys: ``f"product:{product_id}"`` for Data Products (Task 5)
+# and ``f"table:{binding_id}"`` for monitored-table schedules (P21 item 14) —
+# see scheduler_service.py. User-authored schedule names are now allowed to
+# contain ``:`` (see ``validate_schedule_name``), so without these guards a
+# user could save a schedule literally named ``product:<uuid>`` /
+# ``table:<uuid>`` and silently hijack — or be overwritten by — a product's or
+# table's tracker row in ``dq_schedule_runs``.
 PRODUCT_SCHEDULE_PREFIX = "product:"
+TABLE_SCHEDULE_PREFIX = "table:"
+_RESERVED_SCHEDULE_PREFIXES = (PRODUCT_SCHEDULE_PREFIX, TABLE_SCHEDULE_PREFIX)
 
 
 @dataclass
@@ -89,11 +93,12 @@ class ScheduleConfigService:
           ON CONFLICT).
         """
         validate_schedule_name(name)
-        if name.startswith(PRODUCT_SCHEDULE_PREFIX):
-            raise ValueError(
-                f"Invalid schedule name: '{name}'. Names starting with "
-                f"'{PRODUCT_SCHEDULE_PREFIX}' are reserved for Data Products schedules."
-            )
+        for prefix in _RESERVED_SCHEDULE_PREFIXES:
+            if name.startswith(prefix):
+                raise ValueError(
+                    f"Invalid schedule name: '{name}'. Names starting with "
+                    f"'{prefix}' are reserved for internal schedules."
+                )
         config_json = json.dumps(config)
 
         now = RawSql("now()")

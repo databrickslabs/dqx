@@ -39,6 +39,7 @@ from .migrations import MigrationRunner
 from .migrations.postgres import PgMigrationRunner
 from .routes import api_router
 from .services.app_settings_service import AppSettingsService
+from .services.binding_run_service import BindingRunService
 from .services.data_product_service import DataProductService
 from .services.registry_service import RegistryService
 from .services.rule_embeddings import RuleEmbeddingsService
@@ -220,8 +221,8 @@ async def _build_scheduler_data_product_service(
     sp_ws: WorkspaceClient,
     sp_sql: SqlExecutor,
     oltp: OltpExecutorProtocol,
-) -> DataProductService:
-    """Wire a ``DataProductService`` for the in-app scheduler's product ticks (Task 5).
+) -> tuple[DataProductService, BindingRunService]:
+    """Wire the scheduler's product-tick + table-tick collaborators (Task 5 / P21 item 14).
 
     Mirrors the FastAPI dependency chain in ``dependencies.py``
     (``get_data_product_service`` and its transitive collaborators) but
@@ -256,13 +257,14 @@ async def _build_scheduler_data_product_service(
         settings_service=app_settings,
         sp_sql=sp_sql,
     )
-    return await get_data_product_service(
+    data_product_service = await get_data_product_service(
         sql=oltp,
         monitored_tables=monitored_tables,
         run_set_service=run_set_service,
         binding_run_service=binding_run_service,
         version_service=version_service,
     )
+    return data_product_service, binding_run_service
 
 
 def _maybe_start_vector_store_provisioning(
@@ -521,19 +523,22 @@ async def lifespan(app: FastAPI):
         try:
             oltp_for_scheduler = pg_executor if pg_executor is not None else sp_sql
             try:
-                data_product_service = await _build_scheduler_data_product_service(
+                data_product_service, binding_run_service = await _build_scheduler_data_product_service(
                     sp_ws, sp_sql, oltp_for_scheduler
                 )
             except Exception as dp_e:
                 # Best-effort: the scope-config scheduling path must still
-                # start even if Data Products' collaborator chain can't be
-                # wired (e.g. a table from an unapplied migration). The
-                # scheduler simply skips product ticks in that case — see
-                # ``SchedulerService._tick_products``.
+                # start even if the Data Products / monitored-table
+                # collaborator chain can't be wired (e.g. a table from an
+                # unapplied migration). The scheduler simply skips product
+                # and table ticks in that case — see
+                # ``SchedulerService._tick_products`` /
+                # ``_tick_monitored_tables``.
                 logger.warning(
-                    "Could not wire DataProductService for scheduler product ticks: %s", dp_e, exc_info=True
+                    "Could not wire scheduler product/table tick collaborators: %s", dp_e, exc_info=True
                 )
                 data_product_service = None
+                binding_run_service = None
 
             _scheduler = SchedulerService(
                 ws=sp_ws,
@@ -546,6 +551,7 @@ async def lifespan(app: FastAPI):
                 job_id=conf.job_id,
                 oltp_sql=pg_executor,
                 data_product_service=data_product_service,
+                binding_run_service=binding_run_service,
             )
             set_scheduler(_scheduler)
             _scheduler.start()

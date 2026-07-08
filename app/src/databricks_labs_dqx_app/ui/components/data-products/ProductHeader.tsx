@@ -45,6 +45,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { CheckCircle2, Clock, History, Loader2, MoreVertical, Play, Save, Send, Trash2, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { EditProductState } from "@/components/data-products/useEditProductState";
@@ -293,7 +294,6 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
   const lifecycleBusy = approveMut.isPending || rejectMut.isPending || editState.submitPending;
 
   const runnableCount = product.runnable_count ?? 0;
-  const memberCount = product.member_count ?? 0;
 
   const invalidateLifecycle = () => {
     queryClient.invalidateQueries({ queryKey: getGetDataProductQueryKey(product.product_id) });
@@ -348,6 +348,21 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
     } finally {
       setBusyRun(false);
     }
+  };
+
+  // Run draft is available only when there is a draft to run: either the
+  // space is a draft, or there are pending edits Save-as-draft would persist
+  // (item 15). It also needs at least one member. When there are pending
+  // edits, they are SAVED first (so the draft run reflects them) and a save
+  // failure is surfaced without running.
+  const canRunDraft = (product.status === "draft" || editState.isDirty) && editState.members.length > 0;
+
+  const handleRunDraft = async () => {
+    if (editState.isDirty) {
+      const ok = await editState.handleSaveDraft();
+      if (!ok) return;
+    }
+    await handleRun(RunDataProductInSource.draft);
   };
 
   const handleDelete = async () => {
@@ -460,20 +475,37 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
+            {/* Run draft at the TOP (item 15): only when the space is a draft
+                or has pending edits; those edits are saved first. Disabled +
+                tooltip otherwise, matching the app's convention. */}
+            {canRun && (
+              <TooltipProvider delayDuration={200}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className={cn(!canRunDraft && "cursor-not-allowed")}>
+                      <DropdownMenuItem
+                        onSelect={(e) => {
+                          e.preventDefault();
+                          void handleRunDraft();
+                        }}
+                        disabled={runPending || !canRunDraft}
+                        className="gap-2"
+                      >
+                        <Play className="h-3.5 w-3.5" />
+                        {t("dataProducts.runDraftAction")}
+                      </DropdownMenuItem>
+                    </span>
+                  </TooltipTrigger>
+                  {!canRunDraft && (
+                    <TooltipContent side="left">{t("dataProducts.runDraftDisabledHint")}</TooltipContent>
+                  )}
+                </Tooltip>
+              </TooltipProvider>
+            )}
             <DropdownMenuItem onSelect={goToRuns} className="gap-2">
               <History className="h-3.5 w-3.5" />
               {t("dataProducts.tabRuns")}
             </DropdownMenuItem>
-            {canRun && (
-              <DropdownMenuItem
-                onSelect={() => void handleRun(RunDataProductInSource.draft)}
-                disabled={runPending || memberCount === 0}
-                className="gap-2"
-              >
-                <Play className="h-3.5 w-3.5" />
-                {t("dataProducts.runDraftAction")}
-              </DropdownMenuItem>
-            )}
             {canEdit && <DropdownMenuSeparator />}
             {canEdit && (
               <DropdownMenuItem

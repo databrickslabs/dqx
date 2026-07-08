@@ -32,6 +32,10 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from databricks.sdk import WorkspaceClient
 
 from databricks_labs_dqx_app.backend.logger import get_logger
+from databricks_labs_dqx_app.backend.services.binding_run_service import (
+    BindingRunError,
+    BindingRunService,
+)
 from databricks_labs_dqx_app.backend.services.data_product_service import (
     DataProductService,
     NoRunnableMembersError,
@@ -164,6 +168,7 @@ class SchedulerService:
         job_id: str,
         oltp_sql: OltpExecutorProtocol | None = None,
         data_product_service: DataProductService | None = None,
+        binding_run_service: BindingRunService | None = None,
     ) -> None:
         """Construct the scheduler.
 
@@ -186,6 +191,12 @@ class SchedulerService:
             scope-config path), :meth:`_tick_products` is a no-op —
             the scope-config scheduling path is entirely unaffected
             either way.
+        binding_run_service:
+            Optional collaborator that submits a single monitored
+            table's run (P21 item 14). When ``None``,
+            :meth:`_tick_monitored_tables` is a no-op — a THIRD,
+            independent due-ness source that never touches state the
+            scope-config or product paths read.
         """
         self._ws = ws
         self._job_id = job_id
@@ -214,7 +225,9 @@ class SchedulerService:
         self._settings_table = self._oltp_sql.fqn("dq_app_settings")
         self._rules_table = self._oltp_sql.fqn("dq_quality_rules")
         self._products_table = self._oltp_sql.fqn("dq_data_products")
+        self._monitored_tables_table = self._oltp_sql.fqn("dq_monitored_tables")
         self._data_product_service = data_product_service
+        self._binding_run_service = binding_run_service
 
         # Orphan-tmp-view GC: fires every Saturday at 01:00 UTC. Held in
         # process memory rather than persisted — a missed Saturday (e.g.
@@ -388,6 +401,14 @@ class SchedulerService:
             await asyncio.to_thread(self._tick_products, now)
         except Exception:
             logger.exception("Scheduler failed processing Data Product schedules")
+
+        # Third, independent due-ness source (P21 item 14): approved
+        # monitored tables carrying a cron. Fully isolated inside
+        # :meth:`_tick_monitored_tables` like the product tick above.
+        try:
+            await asyncio.to_thread(self._tick_monitored_tables, now)
+        except Exception:
+            logger.exception("Scheduler failed processing monitored-table schedules")
 
     def _advance_after_failure(self, name: str, cfg: dict[str, Any], now: datetime, run_id: str) -> None:
         """Persist a failed run and push ``next_run_at`` forward after a trigger failure.
@@ -611,6 +632,180 @@ class SchedulerService:
             self._upsert_tracker(schedule_name, now, new_next, run_id, "failed")
         except Exception:
             logger.exception("Product schedule '%s': failed to persist tracker after a failure", schedule_name)
+
+    # ------------------------------------------------------------------
+    # Monitored-table ticks (P21 item 14)
+    # ------------------------------------------------------------------
+    #
+    # A THIRD, independent due-ness source alongside the scope-config and
+    # product loops. Bookkeeping reuses the same ``dq_schedule_runs`` table
+    # and helpers, keyed by ``schedule_name = f"table:{binding_id}"`` so
+    # table schedules can never collide with product (``product:``) or
+    # user-authored scope-config schedules — the ``table:`` prefix is
+    # reserved in ``schedule_config_service`` exactly like ``product:``.
+    # Cron evaluation reuses :meth:`_compute_next_cron_run` (same 5-field
+    # POSIX dialect + per-table ``schedule_tz`` the product path uses).
+
+    def _tick_monitored_tables(self, now: datetime) -> None:
+        """Check every approved, cron-scheduled monitored table and trigger due ones.
+
+        No-op when the scheduler was constructed without a
+        :class:`BindingRunService` (legacy deployments, or unit tests that
+        only exercise the other paths) — safe to call unconditionally from
+        :meth:`_tick`.
+        """
+        if self._binding_run_service is None:
+            return
+
+        tables = self._load_scheduled_tables()
+        if not tables:
+            return
+
+        logger.info("Scheduler tick: found %d scheduled monitored table(s)", len(tables))
+
+        for table in tables:
+            try:
+                self._tick_one_table(table, now)
+            except Exception:
+                logger.exception(
+                    "Scheduler failed processing table schedule 'table:%s'", table["binding_id"]
+                )
+
+    def _load_scheduled_tables(self) -> list[dict[str, Any]]:
+        """Return approved monitored tables with a non-null ``schedule_cron``.
+
+        Best-effort like :meth:`_load_scheduled_products`: a missing
+        ``dq_monitored_tables`` table (a deployment predating the schedule
+        columns, or a migration that hasn't run yet) yields an empty list
+        rather than raising.
+        """
+        try:
+            sql = (
+                f"SELECT binding_id, schedule_cron, schedule_tz FROM {self._monitored_tables_table} "
+                f"WHERE schedule_cron IS NOT NULL AND status = 'approved'"
+            )
+            rows = self._oltp_sql.query(sql)
+        except Exception:
+            logger.debug("dq_monitored_tables schedule columns not available; skipping", exc_info=True)
+            return []
+        return [
+            {"binding_id": row[0], "schedule_cron": row[1], "schedule_tz": row[2]}
+            for row in rows
+            if row and row[0] and row[1]
+        ]
+
+    def _tick_one_table(self, table: dict[str, Any], now: datetime) -> None:
+        """Check due-ness for one monitored table and fire its run if due.
+
+        Mirrors :meth:`_tick_one_product` exactly (seed-without-firing on the
+        first tick, single catch-up on a missed window, malformed-cron backoff
+        that never turns into an every-tick retry loop), differing only in the
+        collaborator it fires (``BindingRunService.run_binding`` for one table
+        rather than a product fan-out).
+        """
+        binding_id = table["binding_id"]
+        cron_expr = table["schedule_cron"]
+        tz_name = table.get("schedule_tz")
+        schedule_name = f"table:{binding_id}"
+
+        tracker = self._get_tracker(schedule_name)
+        next_run = tracker.get("next_run_at") if tracker else None
+
+        if next_run is None:
+            last_run = tracker.get("last_run_at") if tracker else None
+            last_id = tracker.get("last_run_id") if tracker else None
+            last_dt = self._parse_ts(last_run) if last_run else None
+            try:
+                computed = self._compute_next_cron_run(cron_expr, now - timedelta(seconds=1), tz_name)
+            except Exception:
+                # Mirror the product path: a malformed cron must seed a
+                # backoff tracker instead of raising on every tick.
+                if tracker is None:
+                    logger.exception(
+                        "Table schedule '%s': could not compute initial next_run_at for cron '%s'; "
+                        "seeding backoff tracker",
+                        schedule_name,
+                        cron_expr,
+                    )
+                else:
+                    logger.warning(
+                        "Table schedule '%s': could not compute next_run_at for cron '%s'; "
+                        "seeding backoff tracker",
+                        schedule_name,
+                        cron_expr,
+                    )
+                computed = now + _FAILURE_BACKOFF
+                self._upsert_tracker(schedule_name, last_dt, computed, last_id, "pending")
+                return
+            self._upsert_tracker(schedule_name, last_dt, computed, last_id, "pending")
+            if computed <= now:
+                next_run = computed.isoformat()
+            else:
+                return
+
+        next_run_dt = self._parse_ts(next_run) if isinstance(next_run, str) else next_run
+        if next_run_dt is None or next_run_dt > now:
+            return
+
+        run_id = uuid4().hex[:16]
+        logger.info(
+            "Table schedule '%s' is due (next_run_at=%s), triggering run %s", schedule_name, next_run, run_id
+        )
+
+        assert self._binding_run_service is not None  # guarded by _tick_monitored_tables
+        try:
+            result = self._binding_run_service.run_binding(
+                binding_id,
+                source="approved",
+                version=None,
+                user_email="scheduler",
+                trigger="scheduled",
+            )
+            logger.info(
+                "Table schedule '%s': submitted run %s (run_set %s)",
+                schedule_name,
+                result.run_id,
+                result.run_set_id,
+            )
+            new_next = self._compute_next_cron_run(cron_expr, now, tz_name)
+            self._upsert_tracker(schedule_name, now, new_next, run_id, "success")
+        except BindingRunError as e:
+            # An expected, deterministic domain failure (never approved,
+            # missing snapshot, empty checks) — record and advance rather than
+            # hard-retrying every tick, mirroring the product NoRunnableMembers
+            # path.
+            logger.warning("Table schedule '%s': not runnable: %s", schedule_name, e)
+            self._advance_table_after_failure(schedule_name, cron_expr, tz_name, now, run_id)
+        except Exception:
+            logger.exception("Table schedule '%s' run %s failed to trigger", schedule_name, run_id)
+            self._advance_table_after_failure(schedule_name, cron_expr, tz_name, now, run_id)
+
+    def _advance_table_after_failure(
+        self,
+        schedule_name: str,
+        cron_expr: str,
+        tz_name: str | None,
+        now: datetime,
+        run_id: str,
+    ) -> None:
+        """Persist a failed run and push ``next_run_at`` forward after a table trigger failure.
+
+        Mirrors :meth:`_advance_product_after_failure`: falls back to
+        :data:`_FAILURE_BACKOFF` if the next-occurrence computation fails so the
+        schedule still moves off "due" instead of re-firing every tick.
+        """
+        try:
+            new_next = self._compute_next_cron_run(cron_expr, now, tz_name)
+        except Exception:
+            logger.exception(
+                "Table schedule '%s': could not compute next_run_at after a failure; using backoff",
+                schedule_name,
+            )
+            new_next = now + _FAILURE_BACKOFF
+        try:
+            self._upsert_tracker(schedule_name, now, new_next, run_id, "failed")
+        except Exception:
+            logger.exception("Table schedule '%s': failed to persist tracker after a failure", schedule_name)
 
     @staticmethod
     def _resolve_cron_token(token: str, names: dict[str, int] | None) -> int:
