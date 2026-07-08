@@ -27,7 +27,7 @@ import {
 import { cn } from "@/lib/utils";
 import type { ColumnOut, RuleSlot } from "@/lib/api";
 
-export type ColumnFamily = "numeric" | "text" | "temporal" | "boolean" | "any";
+export type ColumnFamily = "numeric" | "text" | "temporal" | "boolean" | "array" | "any";
 
 export function familyForType(typeName: string): ColumnFamily {
   const t = typeName.toUpperCase();
@@ -35,6 +35,7 @@ export function familyForType(typeName: string): ColumnFamily {
   if (/^(STRING|VARCHAR|CHAR)/.test(t)) return "text";
   if (/^(DATE|TIMESTAMP)/.test(t)) return "temporal";
   if (t === "BOOLEAN") return "boolean";
+  if (t.startsWith("ARRAY")) return "array";
   return "any";
 }
 

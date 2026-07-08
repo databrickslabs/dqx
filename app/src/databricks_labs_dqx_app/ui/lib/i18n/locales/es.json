@@ -1377,6 +1377,9 @@
     "polarityFailOption": "FALLA",
     "polarityAriaLabel": "Si el predicado identifica filas aprobadas o reprobadas",
     "thenTheRow": "Entonces la fila",
+    "conditionLabel": "Condición",
+    "ifCondition": "Si",
+    "polaritySwitcherUnsupported": "No compatible con esta regla",
     "nameLabel": "Nombre",
     "namePlaceholder": "ej.: El importe del pedido es positivo",
     "stewardLabel": "Responsable",
@@ -1518,7 +1521,9 @@
     "slotFamilyText": "Texto",
     "slotFamilyTemporal": "Fecha / hora",
     "slotFamilyBoolean": "Booleano",
-    "slotFamilyAny": "Cualquiera"
+    "slotFamilyArray": "Array",
+    "slotFamilyAny": "Cualquiera",
+    "slotFamilyLockedTooltip": "Esta comprobación solo funciona con un tipo de columna, por lo que su familia es fija."
   },
   "monitoredTables": {
     "breadcrumb": "Tablas monitorizadas",

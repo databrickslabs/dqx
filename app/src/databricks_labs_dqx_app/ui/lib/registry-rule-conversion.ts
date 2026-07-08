@@ -36,6 +36,21 @@ import type {
 import { RESERVED_NAME_KEY, RESERVED_SEVERITY_KEY, getTag } from "@/components/RegistryRuleBadges";
 
 export const COLUMN_KINDS = new Set(["column", "columns"]);
+
+/**
+ * The `negate` argument is NOT rendered as a raw boolean parameter row for a
+ * `dqx_native` rule (item 11). Instead it is surfaced as the PASS/FAIL
+ * polarity switcher and injected at materialization time from the rule's
+ * `polarity` (see `materializer.render_check`), so it must be dropped from the
+ * derived parameter list here to avoid a duplicate/conflicting control.
+ */
+const POLARITY_PARAM = "negate";
+
+/** Whether *fn* accepts a `negate` argument — drives whether the native
+ * polarity switcher is enabled (item 11). */
+export function fnSupportsNegate(fn: ApiCheckFunctionDef | undefined): boolean {
+  return (fn?.params ?? []).some((p) => p.name === POLARITY_PARAM);
+}
 export const PARAM_KIND_TO_TYPE: Record<string, RuleParameterType> = {
   boolean: "boolean",
   number: "number",
@@ -68,6 +83,8 @@ export function deriveSlotsAndParameters(fn: ApiCheckFunctionDef | undefined): {
   let position = 0;
   let columnIndex = 1;
   for (const p of fn.params ?? []) {
+    // `negate` is surfaced as the polarity switcher, never a parameter row.
+    if (p.name === POLARITY_PARAM) continue;
     if (COLUMN_KINDS.has(p.kind)) {
       // Every column-kind parameter is seeded with ONE `column_N`-named
       // slot bound one-to-one to a real column (`cardinality: "one"`) —
@@ -81,8 +98,13 @@ export function deriveSlotsAndParameters(fn: ApiCheckFunctionDef | undefined): {
       // `RegistryRuleFormDialog`) — each slot maps one real column, and
       // together they populate the function's list argument.
       slots.push({
+        // Seed the slot's family from the check's implied family (item 10).
+        // The backend classifies a column parameter's family from the check's
+        // semantics (e.g. regex_match -> text, is_older_than_n_days ->
+        // temporal); a polymorphic/unknown check reports "any". In native mode
+        // this family is locked (not author-editable) — see SlotsPanel.
         name: `column_${columnIndex++}`,
-        family: "any",
+        family: (p.family as RuleSlot["family"] | null | undefined) ?? "any",
         position: position++,
         cardinality: "one",
         arg_key: p.name,
@@ -197,6 +219,12 @@ export function buildDqxCheckJson(rule: RegistryRuleOut): Record<string, unknown
     const args: Record<string, unknown> = { ...(body.arguments as Record<string, unknown> | undefined) };
     for (const p of parameters) {
       if (p.value !== null && p.value !== undefined) args[p.name] = p.value;
+    }
+    // A native check that supports `negate` carries its polarity as the
+    // injected `negate` argument (item 11) — mirror what
+    // `materializer.render_check` writes so the JSON preview is faithful.
+    if (rule.polarity !== null && rule.polarity !== undefined) {
+      args.negate = rule.polarity === "fail";
     }
     checkInner = { function: String(body.function ?? ""), arguments: args };
   } else {
@@ -361,9 +389,16 @@ export function parseDqxCheckJson(
     return { ...p, value: parseParamValue(p.type, rawStr) };
   });
 
+  // A native check that supports `negate` maps the arg back onto polarity
+  // (item 11); one that doesn't carries no polarity at all.
+  const nativePolarity: "pass" | "fail" | null = fnSupportsNegate(fn)
+    ? args.negate === true
+      ? "fail"
+      : "pass"
+    : null;
   return {
     mode: "dqx_native",
-    polarity: null,
+    polarity: nativePolarity,
     definition: {
       body: { function: functionName, arguments: nativeArguments(slots, fn) },
       slots,

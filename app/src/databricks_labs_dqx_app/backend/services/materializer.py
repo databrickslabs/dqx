@@ -205,6 +205,15 @@ def render_check(
         arguments = _substitute_arguments(
             dict(body.get("arguments", {})), group, definition.slots, definition.parameters
         )
+        # A native check that accepts a ``negate`` argument surfaces it in the
+        # authoring UI as the PASS/FAIL polarity switcher rather than a raw
+        # boolean parameter (item 11). Polarity is therefore the single source
+        # of truth for negation: a non-null ``polarity`` on a native rule means
+        # "this function supports negate" and we inject the boolean here.
+        # ``polarity is None`` for native checks WITHOUT a ``negate`` argument,
+        # so this leaves those untouched — no spurious ``negate`` key.
+        if version.polarity is not None:
+            arguments["negate"] = version.polarity == "fail"
         check_inner: dict[str, Any] = {"function": function, "arguments": arguments}
     elif mode in ("sql", "lowcode"):
         negate = version.polarity == "fail"

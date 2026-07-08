@@ -1410,6 +1410,15 @@ class CheckFunctionParam(BaseModel):
         default="",
         description="Verbatim Python type annotation (best-effort string repr)",
     )
+    family: str | None = Field(
+        default=None,
+        description=(
+            "For a column-kind parameter ('column' / 'columns'), the slot family the "
+            "check's semantics imply ('numeric', 'text', 'temporal', 'boolean', 'array', "
+            "or 'any'). A specific (non-'any') family is locked in the authoring UI and "
+            "narrows the apply-time column picker. None for non-column parameters."
+        ),
+    )
 
 
 class CheckFunctionDef(BaseModel):

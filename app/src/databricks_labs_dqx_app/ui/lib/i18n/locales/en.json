@@ -1377,6 +1377,9 @@
     "polarityFailOption": "FAILS",
     "polarityAriaLabel": "Whether the predicate identifies passing or failing rows",
     "thenTheRow": "Then the row",
+    "conditionLabel": "Condition",
+    "ifCondition": "If",
+    "polaritySwitcherUnsupported": "Not supported by this rule",
     "nameLabel": "Name",
     "namePlaceholder": "e.g. Order amount is positive",
     "stewardLabel": "Steward",
@@ -1518,7 +1521,9 @@
     "slotFamilyText": "Text",
     "slotFamilyTemporal": "Date / time",
     "slotFamilyBoolean": "Boolean",
-    "slotFamilyAny": "Any"
+    "slotFamilyArray": "Array",
+    "slotFamilyAny": "Any",
+    "slotFamilyLockedTooltip": "This check only works on one column type, so its family is fixed."
   },
   "monitoredTables": {
     "breadcrumb": "Monitored Tables",

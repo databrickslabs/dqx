@@ -453,6 +453,11 @@ export interface CheckFunctionDef {
 export type CheckFunctionParamDefault = string | null;
 
 /**
+ * For a column-kind parameter ('column' / 'columns'), the slot family the check's semantics imply ('numeric', 'text', 'temporal', 'boolean', 'array', or 'any'). A specific (non-'any') family is locked in the authoring UI and narrows the apply-time column picker. None for non-column parameters.
+ */
+export type CheckFunctionParamFamily = string | null;
+
+/**
  * A single parameter on a DQX check function as exposed to the UI.
 
 The shape is intentionally permissive: ``kind`` is a coarse,
@@ -471,6 +476,8 @@ export interface CheckFunctionParam {
   default?: CheckFunctionParamDefault;
   /** Verbatim Python type annotation (best-effort string repr) */
   annotation?: string;
+  /** For a column-kind parameter ('column' / 'columns'), the slot family the check's semantics imply ('numeric', 'text', 'temporal', 'boolean', 'array', or 'any'). A specific (non-'any') family is locked in the authoring UI and narrows the apply-time column picker. None for non-column parameters. */
+  family?: CheckFunctionParamFamily;
 }
 
 /**
@@ -1808,6 +1815,7 @@ export const RuleSlotFamily = {
   text: 'text',
   temporal: 'temporal',
   boolean: 'boolean',
+  array: 'array',
   any: 'any',
 } as const;
 

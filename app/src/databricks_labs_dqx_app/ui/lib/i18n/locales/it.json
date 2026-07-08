@@ -1377,6 +1377,9 @@
     "polarityFailOption": "FALLISCE",
     "polarityAriaLabel": "Se il predicato identifica righe superate o fallite",
     "thenTheRow": "Allora la riga",
+    "conditionLabel": "Condizione",
+    "ifCondition": "Se",
+    "polaritySwitcherUnsupported": "Non supportato da questa regola",
     "nameLabel": "Nome",
     "namePlaceholder": "es. L'importo dell'ordine è positivo",
     "stewardLabel": "Responsabile",
@@ -1518,7 +1521,9 @@
     "slotFamilyText": "Testo",
     "slotFamilyTemporal": "Data / ora",
     "slotFamilyBoolean": "Booleano",
-    "slotFamilyAny": "Qualsiasi"
+    "slotFamilyArray": "Array",
+    "slotFamilyAny": "Qualsiasi",
+    "slotFamilyLockedTooltip": "Questo controllo funziona solo su un tipo di colonna, quindi la sua famiglia è fissa."
   },
   "monitoredTables": {
     "breadcrumb": "Tabelle monitorate",

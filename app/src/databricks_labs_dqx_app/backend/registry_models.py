@@ -33,7 +33,7 @@ RuleStatus = Literal["draft", "pending_approval", "approved", "rejected", "depre
 Polarity = Literal["pass", "fail"]
 AuthorKind = Literal["human", "ai_generated", "ai_assisted"]
 
-SlotFamily = Literal["numeric", "text", "temporal", "boolean", "any"]
+SlotFamily = Literal["numeric", "text", "temporal", "boolean", "array", "any"]
 SlotCardinality = Literal["one", "many"]
 
 ParamType = Literal["number", "string", "list", "boolean", "regex", "ref_table", "ref_column"]

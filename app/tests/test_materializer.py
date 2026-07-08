@@ -341,6 +341,72 @@ class TestRenderCheckMessageExpr:
         assert "message_expr" not in check
 
 
+class TestRenderCheckNativeNegate:
+    """Item 11 — a native check's PASS/FAIL polarity injects ``negate``."""
+
+    def _regex_definition(self) -> RuleDefinition:
+        return RuleDefinition.model_validate(
+            {
+                "body": {"function": "regex_match", "arguments": {"column": "{{column}}"}},
+                "slots": [{"name": "column", "family": "text", "position": 0, "cardinality": "one"}],
+                "parameters": [{"name": "regex", "type": "string", "value": "^[0-9]+$"}],
+            }
+        )
+
+    def test_pass_polarity_injects_negate_false(self):
+        version = RuleVersion(
+            rule_id="r1", version=1, definition=self._regex_definition(), polarity="pass", user_metadata={}
+        )
+        check, is_tableless = render_check(
+            mode="dqx_native",
+            version=version,
+            group={"column": "code"},
+            effective_severity="Medium",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+        )
+        assert is_tableless is False
+        assert check["check"]["function"] == "regex_match"
+        assert check["check"]["arguments"]["negate"] is False
+        assert check["check"]["arguments"]["regex"] == "^[0-9]+$"
+
+    def test_fail_polarity_injects_negate_true(self):
+        version = RuleVersion(
+            rule_id="r1", version=1, definition=self._regex_definition(), polarity="fail", user_metadata={}
+        )
+        check, _ = render_check(
+            mode="dqx_native",
+            version=version,
+            group={"column": "code"},
+            effective_severity="Medium",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+        )
+        assert check["check"]["arguments"]["negate"] is True
+
+    def test_no_polarity_leaves_negate_absent(self):
+        """A native check WITHOUT negate support (polarity None) never gets a
+        spurious ``negate`` key — the runner would reject it as an unknown arg."""
+        version = RuleVersion(
+            rule_id="r1", version=1, definition=_is_not_null_definition(), polarity=None, user_metadata={}
+        )
+        check, _ = render_check(
+            mode="dqx_native",
+            version=version,
+            group={"column": "customer_id"},
+            effective_severity="Medium",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+        )
+        assert "negate" not in check["check"]["arguments"]
+
+
 class TestRenderCheckSqlMode:
     def _sql_definition(self, body: dict, slot_name: str = "column") -> RuleDefinition:
         return RuleDefinition.model_validate(

@@ -104,6 +104,7 @@ import {
 import {
   COLUMN_KINDS,
   deriveSlotsAndParameters,
+  fnSupportsNegate,
   listColumnArgKey,
   nativeArguments,
   parseParamValue,
@@ -319,6 +320,18 @@ function SectionHeader({
   );
 }
 
+/**
+ * All-caps grey connective word ("IF" / "THEN THE ROW") that frames the
+ * Implementation section as a readable sentence — dqlake's
+ * `PredicatePolaritySwitch` / `ImplementationTab` visual language (item 12),
+ * applied uniformly across native / SQL / low-code modes.
+ */
+function FramingWord({ children }: { children: ReactNode }) {
+  return (
+    <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">{children}</span>
+  );
+}
+
 /** Reference-table picker for a `ref_table` DQX-native argument (foreign_key, has_valid_schema, …). */
 function ReferenceTableField({
   value,
@@ -413,7 +426,7 @@ function ReferenceColumnsField({
   );
 }
 
-const SLOT_FAMILIES: RuleSlotFamilyType[] = ["any", "numeric", "text", "temporal", "boolean"];
+const SLOT_FAMILIES: RuleSlotFamilyType[] = ["any", "numeric", "text", "temporal", "boolean", "array"];
 const SLOT_NAME_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 
 function nextSlotName(existing: string[]): string {
@@ -445,6 +458,7 @@ function SlotsPanel({
   disabled,
   allowAddRemove = true,
   expandableArgKey,
+  lockFamily = false,
 }: {
   value: RuleSlot[];
   onChange: (next: RuleSlot[]) => void;
@@ -453,6 +467,9 @@ function SlotsPanel({
   allowAddRemove?: boolean;
   /** dqx_native only: `arg_key` of the one column parameter that accepts a LIST of columns — see {@link listColumnArgKey}. Slots sharing it form an expandable group. */
   expandableArgKey?: string;
+  /** dqx_native only (item 10): the slot family is fixed by the check's
+   * semantics and shown read-only rather than as an editable Select. */
+  lockFamily?: boolean;
 }) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState<number | null>(null);
@@ -477,6 +494,7 @@ function SlotsPanel({
       text: t("rulesRegistry.slotFamilyText"),
       temporal: t("rulesRegistry.slotFamilyTemporal"),
       boolean: t("rulesRegistry.slotFamilyBoolean"),
+      array: t("rulesRegistry.slotFamilyArray"),
       any: t("rulesRegistry.slotFamilyAny"),
     })[f];
 
@@ -586,18 +604,30 @@ function SlotsPanel({
                   </div>
                   <div className="space-y-1">
                     <Label className="text-[11px] text-muted-foreground">{t("rulesRegistry.slotsPanelFamilyLabel")}</Label>
-                    <Select value={slot.family} onValueChange={(v) => setAt(i, { family: v as RuleSlotFamilyType })}>
-                      <SelectTrigger className="h-8 text-xs w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {SLOT_FAMILIES.map((f) => (
-                          <SelectItem key={f} value={f} className="text-xs">
-                            {familyLabel(f)}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    {lockFamily ? (
+                      // Native mode (item 10): the check's semantics fix the
+                      // family, so it's shown read-only with a hint rather than
+                      // an editable Select.
+                      <div className="flex h-8 items-center gap-1.5">
+                        <Badge variant="outline" className="text-[10px] font-medium">
+                          {familyLabel(slot.family)}
+                        </Badge>
+                        <HelpTooltip text={t("rulesRegistry.slotFamilyLockedTooltip")} />
+                      </div>
+                    ) : (
+                      <Select value={slot.family} onValueChange={(v) => setAt(i, { family: v as RuleSlotFamilyType })}>
+                        <SelectTrigger className="h-8 text-xs w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {SLOT_FAMILIES.map((f) => (
+                            <SelectItem key={f} value={f} className="text-xs">
+                              {familyLabel(f)}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    )}
                   </div>
                 </div>
               )}
@@ -984,6 +1014,16 @@ export function RegistryRuleFormDialog({
     () => checkFunctions.find((f) => f.name === functionName),
     [checkFunctions, functionName],
   );
+  // A native check that accepts `negate` surfaces the PASS/FAIL polarity
+  // switcher as an ENABLED control (item 11); one that doesn't shows it frozen
+  // (disabled) at its inherent polarity — every DQX check flags the NEGATION
+  // of its named assertion (see check_funcs.make_condition), so a
+  // non-negatable check's rows PASS when the named condition holds, i.e. the
+  // disabled switcher rests at "pass".
+  const nativeSupportsNegate = mode === "dqx_native" && fnSupportsNegate(selectedFn);
+  // Whether the polarity value should be persisted for this rule: always for
+  // SQL / Low-Code, and for a native check only when it supports `negate`.
+  const polarityIsMeaningful = mode === "sql" || mode === "lowcode" || nativeSupportsNegate;
   // Pure derivation of the selected function's signature — the canonical
   // slot SET (arity + default names) and non-column parameters. Used to
   // (re-)seed `nativeSlots` whenever the function changes, and directly for
@@ -1122,10 +1162,10 @@ export function RegistryRuleFormDialog({
   const missingDraftFieldLabels: string[] = [];
   if (!name.trim() || nameError) missingDraftFieldLabels.push(t("rulesRegistry.nameLabel"));
   if (mode === "dqx_native") {
-    if (!functionName.trim()) missingDraftFieldLabels.push(t("rulesRegistry.functionLabel"));
+    if (!functionName.trim()) missingDraftFieldLabels.push(t("rulesRegistry.conditionLabel"));
     if (!slotsHaveValidNames(nativeSlots)) missingDraftFieldLabels.push(t("rulesRegistry.columnSlotsLabel"));
   } else if (mode === "sql") {
-    if (!sqlPredicate.trim() || sqlError) missingDraftFieldLabels.push(t("rulesRegistry.sqlPredicateLabel"));
+    if (!sqlPredicate.trim() || sqlError) missingDraftFieldLabels.push(t("rulesRegistry.conditionLabel"));
     if (!slotsHaveValidNames(sqlSlots)) missingDraftFieldLabels.push(t("rulesRegistry.columnSlotsLabel"));
   } else if (mode === "lowcode") {
     if (!lowcodePredicate) missingDraftFieldLabels.push(t("rulesRegistry.lowcodeConditionsLabel"));
@@ -1386,7 +1426,7 @@ export function RegistryRuleFormDialog({
         const payload: UpdateRegistryRuleIn = {
           mode,
           definition,
-          polarity: mode === "sql" || mode === "lowcode" ? polarity : null,
+          polarity: polarityIsMeaningful ? polarity : null,
           user_metadata: userMetadata,
           steward: steward.trim() || null,
           // Persist AI provenance stamped during this edit-in-place session
@@ -1401,7 +1441,7 @@ export function RegistryRuleFormDialog({
         const payload: CreateRegistryRuleIn = {
           mode,
           definition,
-          polarity: mode === "sql" || mode === "lowcode" ? polarity : null,
+          polarity: polarityIsMeaningful ? polarity : null,
           user_metadata: userMetadata,
           steward: steward.trim() || null,
           author_kind: authorKind ?? "human",
@@ -1746,21 +1786,30 @@ export function RegistryRuleFormDialog({
           disabled={readOnly}
           allowAddRemove={mode !== "dqx_native"}
           expandableArgKey={mode === "dqx_native" ? nativeExpandableArgKey : undefined}
+          lockFamily={mode === "dqx_native"}
         />
       )}
 
       {mode === "lowcode" && (
         <div className="space-y-3">
-          <LowcodeBuilder
-            ast={lowcodeAst}
-            onChange={setLowcodeAst}
-            declaredColumns={lowcodeColumns}
-            readOnly={readOnly}
-          />
+          <div className="space-y-1.5">
+            <Label className="text-xs">{t("rulesRegistry.conditionLabel")}</Label>
+            <div className="flex items-start gap-2">
+              <div className="pt-2">
+                <FramingWord>{t("rulesRegistry.ifCondition")}</FramingWord>
+              </div>
+              <div className="min-w-0 flex-1">
+                <LowcodeBuilder
+                  ast={lowcodeAst}
+                  onChange={setLowcodeAst}
+                  declaredColumns={lowcodeColumns}
+                  readOnly={readOnly}
+                />
+              </div>
+            </div>
+          </div>
           <div className="flex flex-wrap items-center gap-3">
-            <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-              {t("rulesRegistry.thenTheRow")}
-            </span>
+            <FramingWord>{t("rulesRegistry.thenTheRow")}</FramingWord>
             <PredicatePolaritySwitch value={polarity} onChange={setPolarity} disabled={readOnly} />
           </div>
           {/* Advanced — group-by + joins, folded into the compiled SQL that
@@ -1793,9 +1842,12 @@ export function RegistryRuleFormDialog({
         <div className="space-y-3">
           <div className="space-y-1.5">
             <Label className="text-xs">
-              {t("rulesRegistry.functionLabel")} <span className="text-destructive">*</span>
+              {t("rulesRegistry.conditionLabel")} <span className="text-destructive">*</span>
             </Label>
-            <FunctionCombobox
+            <div className="flex items-center gap-2">
+              <FramingWord>{t("rulesRegistry.ifCondition")}</FramingWord>
+              <div className="min-w-0 flex-1">
+                <FunctionCombobox
               value={functionName}
               functions={checkFunctions}
               onChange={(fn) => {
@@ -1814,6 +1866,11 @@ export function RegistryRuleFormDialog({
                 }
                 setFunctionName(fn);
                 setParamRawValues({});
+                // A freshly selected native function resets polarity to its
+                // default ("pass" = the check's named assertion passing); the
+                // switcher is only editable when the new function supports
+                // `negate` (item 11).
+                setPolarity("pass");
                 // Arity is fixed by the function signature — switching
                 // functions must fully replace the slot set (e.g.
                 // is_not_null's 1 slot -> is_unique's many-cardinality
@@ -1822,7 +1879,9 @@ export function RegistryRuleFormDialog({
                 setNativeSlots(deriveSlotsAndParameters(nextFn).slots);
               }}
               disabled={readOnly}
-            />
+                />
+              </div>
+            </div>
           </div>
           {derivedParams.length > 0 && (
             <div className="space-y-2 border-l pl-5 ml-3">
@@ -1902,6 +1961,21 @@ export function RegistryRuleFormDialog({
           {functionName === "" && (
             <p className="text-[11px] text-muted-foreground italic">{t("rulesRegistry.nativeHint")}</p>
           )}
+          {/* THEN THE ROW polarity switcher (item 11 + 12). Enabled only when
+              the selected check accepts `negate`; otherwise frozen at "pass"
+              (its inherent polarity) with an explanatory tooltip. Hidden until
+              a function is chosen so the empty-state hint reads cleanly. */}
+          {functionName !== "" && (
+            <div className="flex flex-wrap items-center gap-3">
+              <FramingWord>{t("rulesRegistry.thenTheRow")}</FramingWord>
+              <PredicatePolaritySwitch
+                value={nativeSupportsNegate ? polarity : "pass"}
+                onChange={setPolarity}
+                disabled={readOnly || !nativeSupportsNegate}
+                disabledReason={!nativeSupportsNegate ? t("rulesRegistry.polaritySwitcherUnsupported") : undefined}
+              />
+            </div>
+          )}
         </div>
       )}
 
@@ -1909,17 +1983,22 @@ export function RegistryRuleFormDialog({
         <div className="space-y-3">
           <div className="space-y-1.5">
             <Label className="text-xs">
-              {t("rulesRegistry.sqlPredicateLabel")} <span className="text-destructive">*</span>
+              {t("rulesRegistry.conditionLabel")} <span className="text-destructive">*</span>
             </Label>
             <PredicateEditorExplainer />
-            <div className={sqlError ? "rounded-md ring-1 ring-red-400" : ""}>
-              <PredicateEditor
-                value={sqlPredicate}
-                onChange={setSqlPredicate}
-                declaredColumns={sqlSlots}
-                placeholder={t("rulesRegistry.sqlPredicatePlaceholder")}
-                disabled={readOnly}
-              />
+            <div className="flex items-start gap-2">
+              <div className="pt-2">
+                <FramingWord>{t("rulesRegistry.ifCondition")}</FramingWord>
+              </div>
+              <div className={cn("min-w-0 flex-1", sqlError && "rounded-md ring-1 ring-red-400")}>
+                <PredicateEditor
+                  value={sqlPredicate}
+                  onChange={setSqlPredicate}
+                  declaredColumns={sqlSlots}
+                  placeholder={t("rulesRegistry.sqlPredicatePlaceholder")}
+                  disabled={readOnly}
+                />
+              </div>
             </div>
             {sqlError && (
               <p className="text-[10px] text-red-500 flex items-center gap-1">
@@ -1929,14 +2008,8 @@ export function RegistryRuleFormDialog({
             )}
           </div>
           <div className="flex flex-wrap items-center gap-3">
-            <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-              {t("rulesRegistry.thenTheRow")}
-            </span>
-            <PredicatePolaritySwitch
-              value={polarity}
-              onChange={setPolarity}
-              disabled={readOnly}
-            />
+            <FramingWord>{t("rulesRegistry.thenTheRow")}</FramingWord>
+            <PredicatePolaritySwitch value={polarity} onChange={setPolarity} disabled={readOnly} />
           </div>
           {/* DQX's SQL registry rule has no separate GROUP BY / JOINs fields —
               the entire query lives in one predicate string (see

@@ -13,6 +13,7 @@ export function familyForSparkType(typeName: string): RuleSlotFamily {
   if (/^(string|varchar|char)/.test(normalized)) return "text";
   if (/^(date|timestamp)/.test(normalized)) return "temporal";
   if (normalized === "boolean") return "boolean";
+  if (normalized.startsWith("array")) return "array";
   return "any";
 }
 

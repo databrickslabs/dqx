@@ -1,4 +1,5 @@
 import { useTranslation } from "react-i18next";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
 /** DQX-native polarity value — `"pass"` when a TRUE predicate means the row
@@ -9,19 +10,26 @@ export type Polarity = "pass" | "fail";
 /**
  * Sliding two-way toggle ported from dqlake's `PredicatePolaritySwitch` —
  * "row PASSES" / "row FAILS". Unlike a plain on/off `Switch`, both states
- * are always visible as labeled segments; clicking the segment opposite the
- * current selection inverts it (clicking the already-active segment is a
- * no-op), and a sliding highlight glides between the two rather than
- * cross-fading.
+ * are always visible as labeled segments; the sliding highlight glides between
+ * the two (and cross-fades its colour) rather than jumping. Clicking ANYWHERE
+ * on the pill inverts the current value (item 13) — you don't have to hit the
+ * opposite segment.
+ *
+ * When `disabled` and a `disabledReason` is supplied, the whole control is
+ * wrapped in a tooltip explaining why it can't be changed (item 11 — a native
+ * check with no `negate` argument shows the switcher frozen at its inherent
+ * polarity with "Not supported by this rule").
  */
 export function PredicatePolaritySwitch({
   value,
   onChange,
   disabled,
+  disabledReason,
 }: {
   value: Polarity;
   onChange: (next: Polarity) => void;
   disabled?: boolean;
+  disabledReason?: string;
 }) {
   const { t } = useTranslation();
   const options: { value: Polarity; label: string; activeTone: string; hoverTone: string }[] = [
@@ -40,19 +48,21 @@ export function PredicatePolaritySwitch({
   ];
   const activeIndex = options.findIndex((o) => o.value === value);
   const active = options[activeIndex] ?? options[0];
+  const invert = () => onChange(value === "pass" ? "fail" : "pass");
 
-  return (
+  const control = (
     <div
       className="relative inline-grid grid-cols-2 items-stretch rounded-full border bg-muted/30 p-1 text-xs"
       role="radiogroup"
       aria-label={t("rulesRegistry.polarityAriaLabel")}
     >
       {/* Sliding indicator, translated between slots so a polarity flip
-          glides rather than cross-fades. */}
+          glides; `transition-all` also cross-fades its colour (emerald <->
+          rose) rather than snapping (item 13). */}
       <span
         aria-hidden
         className={cn(
-          "absolute top-1 bottom-1 left-1 w-[calc(50%-4px)] rounded-full transition-transform duration-200 ease-out",
+          "absolute top-1 bottom-1 left-1 w-[calc(50%-4px)] rounded-full transition-all duration-200 ease-out",
           active.activeTone,
         )}
         style={{ transform: `translateX(${activeIndex === 1 ? "100%" : "0%"})` }}
@@ -66,16 +76,13 @@ export function PredicatePolaritySwitch({
             role="radio"
             aria-checked={on}
             disabled={disabled}
-            onClick={() => {
-              // Clicking either segment sets it directly, which for a
-              // two-valued toggle is equivalent to inverting whenever the
-              // opposite segment is clicked.
-              if (!on) onChange(opt.value);
-            }}
+            // Clicking anywhere on the pill inverts — both segments flip to the
+            // opposite value, so the whole control behaves as one toggle.
+            onClick={invert}
             className={cn(
               "relative z-10 rounded-full px-3 py-1 font-medium transition-colors duration-200 ease-out",
               on ? "text-foreground" : "text-muted-foreground",
-              !on && opt.hoverTone,
+              !on && !disabled && opt.hoverTone,
               "disabled:cursor-not-allowed disabled:opacity-50",
             )}
           >
@@ -85,4 +92,20 @@ export function PredicatePolaritySwitch({
       })}
     </div>
   );
+
+  if (disabled && disabledReason) {
+    return (
+      <TooltipProvider delayDuration={200}>
+        <Tooltip>
+          {/* `span` wrapper keeps the tooltip working over disabled buttons,
+              which don't emit pointer events themselves. */}
+          <TooltipTrigger asChild>
+            <span className="inline-flex cursor-not-allowed">{control}</span>
+          </TooltipTrigger>
+          <TooltipContent>{disabledReason}</TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    );
+  }
+  return control;
 }
