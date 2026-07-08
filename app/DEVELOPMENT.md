@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- **Python 3.12+**
+- **Python 3.11+** (the deployed app runs on the Databricks Apps container's system Python)
 - **Node.js 18+** (provides `npm`) — install via `brew install node`, [nvm](https://github.com/nvm-sh/nvm), or [nodejs.org](https://nodejs.org/en/download) — and **yarn** classic v1 (`npm install -g yarn`, used for the committed `app/yarn.lock`; `bun.lock` / `package-lock.json` are gitignored)
 - **bun** — used by `make app-check` to run `tsc -b` (TypeScript incremental compile). Install via `curl -fsSL https://bun.sh/install | bash` or `brew install oven-sh/bun/bun`.
 - **uv** — Python package manager

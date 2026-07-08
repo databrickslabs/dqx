@@ -3,7 +3,14 @@ name = "databricks-labs-dqx-app"
 version = "0.15.0"
 description = "DQX Studio for Data Quality eXtended (DQX), a Python library for data quality monitoring"
 readme = "README.md"
-requires-python = ">=3.12"
+# Floor is 3.11 (not 3.12): the deployed app installs its wheel into the
+# Databricks Apps platform venv and runs under the container's SYSTEM Python
+# via plain uvicorn (no ``uv run`` re-resolution at startup). That system
+# Python is 3.11, so the wheel's Requires-Python must admit 3.11 or the
+# platform ``pip install`` refuses it. The backend uses no 3.12-only syntax
+# (ruff/basedpyright already target py311), and every locked dependency
+# supports 3.11.
+requires-python = ">=3.11"
 dependencies = [
     "fastapi~=0.119",
     "pydantic-settings~=2.11",

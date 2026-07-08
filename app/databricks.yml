@@ -85,11 +85,11 @@ variables:
       # Single worker so the in-process SchedulerService (gated by a file lock)
       # doesn't fight itself across workers. The in-memory CacheFactory is per
       # worker (TTL, non-authoritative) so adding workers is otherwise safe.
-      # ``uv run`` resolves the app's locked environment at container start.
+      # Plain ``uvicorn`` (NOT ``uv run``): the platform ``[BUILD]`` phase has
+      # already pip-installed the fully-pinned ``.build/requirements.txt`` into
+      # the app venv, so there is NO dependency resolution at container start
+      # (the container's egress to the internal package proxies is unreliable).
       command:
-        - "uv"
-        - "run"
-        - "--no-dev"
         - "uvicorn"
         - "databricks_labs_dqx_app.backend.app:app"
         - "--workers"
@@ -125,18 +125,16 @@ sync:
 
 artifacts:
   default:
-    # build_app.py assembles the app as a SOURCE tree under .build/ (pyproject +
-    # uv.lock + src + requirements.txt=``uv``) AND vendors the locally-built DQX
-    # library wheel under .build/wheels/, repointing the deploy tree's
-    # pyproject/uv.lock at it. The Rules Registry integration imports DQX symbols
-    # not in the published release, so the app must ship the local library build
-    # rather than the registry wheel. We also build the task-runner wheel here
-    # (it's not published); its dqx dep is pinned to the same local wheel in the
-    # job environment below.
-    build: >
-      uv run python scripts/build_app.py &&
-      rm -rf .build/tasks &&
-      uv build tasks/ --wheel --out-dir .build/tasks/
+    # build_app.py produces, under .build/: the application wheel, the
+    # vendored local DQX library wheel (.build/wheels/ — the Rules Registry
+    # integration imports symbols absent from the published release, so the
+    # app must ship the local library build), the (unpublished) task-runner
+    # wheel (.build/tasks/), and a requirements.txt whose first two lines
+    # reference those local wheels followed by the fully-pinned transitive
+    # closure exported from app/uv.lock. The Apps [BUILD] phase pip-installs
+    # requirements.txt and the app starts with plain uvicorn (no runtime
+    # dependency resolution — see var.app_config.command).
+    build: uv run python scripts/build_app.py
 
 resources:
   apps:

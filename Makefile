@@ -107,7 +107,7 @@ docs-clean: ## Remove docs build, .docusaurus, and generated API reference
 app-install: ## Install app frontend dependencies (yarn --frozen-lockfile)
 	yarn --cwd app install --frozen-lockfile
 
-app-build: ## Build app: openapi → orval → vite (CI parity)
+app-build: ## Build app: openapi → orval → vite → wheels + requirements.txt (CI parity)
 	cd app && $(UV_RUN) python scripts/build_app.py
 
 # Start the local dev loop (foreground). ``scripts/dev.py`` spawns
