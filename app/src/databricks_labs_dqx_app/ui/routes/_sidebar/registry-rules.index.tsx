@@ -53,6 +53,7 @@ import {
 } from "@/lib/api";
 import { useLabelDefinitions } from "@/lib/api-custom";
 import { usePermissions } from "@/hooks/use-permissions";
+import { invalidateAfterRegistryRuleApprovalChange } from "@/lib/registry-rule-invalidation";
 import { cn } from "@/lib/utils";
 import { Pagination } from "@/components/Pagination";
 import { RulesTable, getRulesTableSortValue, type RulesTableSortKey } from "@/components/rules/RulesTable";
@@ -232,6 +233,15 @@ function RegistryRulesPage() {
     [queryClient],
   );
 
+  // Approve/reject can re-materialize monitored tables the rule is applied
+  // to server-side, so those two actions invalidate the wider
+  // monitored-tables surface in addition to the registry rules list — see
+  // helper doc for why we can't target specific binding IDs here.
+  const invalidateAfterApprovalChange = useCallback(
+    () => invalidateAfterRegistryRuleApprovalChange(queryClient),
+    [queryClient],
+  );
+
   const applyFilter = useCallback(
     (setter: (v: string) => void) => (v: string) => {
       setter(v);
@@ -256,13 +266,14 @@ function RegistryRulesPage() {
       mutate: () => Promise<unknown>,
       successMsg: string,
       errorMsg: string,
+      onSuccessInvalidate: () => void = invalidate,
     ) => {
       if (pendingRuleId) return;
       setPendingRuleId(ruleId);
       mutate()
         .then(() => {
           toast.success(successMsg);
-          invalidate();
+          onSuccessInvalidate();
         })
         .catch((err: unknown) => {
           const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
@@ -286,6 +297,7 @@ function RegistryRulesPage() {
       () => approveMutation.mutateAsync({ ruleId: rule.rule_id }),
       t("rulesRegistry.toastApproved"),
       t("rulesRegistry.toastApproveFailed"),
+      invalidateAfterApprovalChange,
     );
   const handleReject = (rule: RegistryRuleOut) =>
     runAction(
@@ -293,6 +305,7 @@ function RegistryRulesPage() {
       () => rejectMutation.mutateAsync({ ruleId: rule.rule_id }),
       t("rulesRegistry.toastRejected"),
       t("rulesRegistry.toastRejectFailed"),
+      invalidateAfterApprovalChange,
     );
   const handleDeprecate = (rule: RegistryRuleOut) =>
     runAction(

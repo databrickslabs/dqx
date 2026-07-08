@@ -45,11 +45,6 @@ import { CheckCircle2, Clock, Loader2, MoreVertical, Play, Save, Send, Trash2, X
 import { cn } from "@/lib/utils";
 import type { EditProductState } from "@/components/data-products/useEditProductState";
 
-function extractMonitoredTableApiError(err: unknown, fallback: string): string {
-  const axErr = err as { response?: { data?: { detail?: string } } };
-  return axErr?.response?.data?.detail ?? fallback;
-}
-
 /**
  * Products have no approver gate of their own (draft/publish only, by
  * design — spec §3.3): "approve/reject the product's pending changes"
@@ -78,6 +73,10 @@ function ReviewPendingChangesButton({
   const rejectMutation = useRejectMonitoredTable();
   const [busyBindingId, setBusyBindingId] = useState<string | null>(null);
   const [rejectTarget, setRejectTarget] = useState<DataProductMemberOut | null>(null);
+  // Controlled so the popover can stay open (showing an empty state) after
+  // the last pending member resolves, instead of the trigger button — and
+  // the popover along with it — vanishing out from under the user mid-review.
+  const [popoverOpen, setPopoverOpen] = useState(false);
 
   const invalidateAfterAction = (bindingId: string) => {
     queryClient.invalidateQueries({ queryKey: getGetMonitoredTableQueryKey(bindingId) });
@@ -97,7 +96,7 @@ function ReviewPendingChangesButton({
           invalidateAfterAction(member.binding_id);
         },
         onError: (err) => {
-          toast.error(extractMonitoredTableApiError(err, t("monitoredTables.toastApproveFailed")), {
+          toast.error(extractApiError(err, t("monitoredTables.toastApproveFailed")), {
             duration: 6000,
           });
         },
@@ -119,7 +118,7 @@ function ReviewPendingChangesButton({
           invalidateAfterAction(member.binding_id);
         },
         onError: (err) => {
-          toast.error(extractMonitoredTableApiError(err, t("monitoredTables.toastRejectFailed")), {
+          toast.error(extractApiError(err, t("monitoredTables.toastRejectFailed")), {
             duration: 6000,
           });
         },
@@ -128,11 +127,15 @@ function ReviewPendingChangesButton({
     );
   };
 
-  if (pendingMembers.length === 0) return null;
+  // Hide only when the popover is closed and there's nothing to review —
+  // if it's open (even with zero pending members left, right after the
+  // last one resolved) we keep the trigger mounted so the popover doesn't
+  // get yanked out from under the user; see the empty state below.
+  if (pendingMembers.length === 0 && !popoverOpen) return null;
 
   return (
     <>
-      <Popover>
+      <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
         <PopoverTrigger asChild>
           <Button
             variant="outline"
@@ -140,7 +143,9 @@ function ReviewPendingChangesButton({
             className="gap-2 text-amber-700 border-amber-400 hover:bg-amber-50 dark:text-amber-300 dark:hover:bg-amber-950"
           >
             <Clock className="h-4 w-4" />
-            {t("dataProducts.reviewChangesButton", { count: pendingMembers.length })}
+            {pendingMembers.length > 0
+              ? t("dataProducts.reviewChangesButton", { count: pendingMembers.length })
+              : t("dataProducts.reviewChangesEmptyState")}
           </Button>
         </PopoverTrigger>
         <PopoverContent align="end" className="w-96">
@@ -148,6 +153,11 @@ function ReviewPendingChangesButton({
             <p className="text-sm font-medium">{t("dataProducts.reviewChangesTitle")}</p>
             <p className="text-xs text-muted-foreground">{t("dataProducts.reviewChangesDescription")}</p>
           </div>
+          {pendingMembers.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-4 text-center">
+              {t("dataProducts.reviewChangesEmptyState")}
+            </p>
+          ) : (
           <div className="space-y-1 max-h-72 overflow-y-auto">
             {pendingMembers.map((member) => {
               const busy = busyBindingId === member.binding_id;
@@ -193,6 +203,7 @@ function ReviewPendingChangesButton({
               );
             })}
           </div>
+          )}
         </PopoverContent>
       </Popover>
 

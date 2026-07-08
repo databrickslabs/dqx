@@ -1923,6 +1923,7 @@
     "reviewChangesButton_other": "Review {{count}} pending changes",
     "reviewChangesTitle": "Pending member table changes",
     "reviewChangesDescription": "These member tables have submitted checks awaiting approval. Approve or reject each directly, or open the table for full context.",
+    "reviewChangesEmptyState": "All changes reviewed.",
     "reviewChangesToastApproved": "Approved pending changes for \"{{table}}\".",
     "reviewChangesToastRejected": "Rejected pending changes for \"{{table}}\".",
     "saveAsDraftButton": "Save as draft",

@@ -39,7 +39,6 @@ import {
 import {
   useGetRegistryRuleSuspense,
   getGetRegistryRuleQueryKey,
-  getListRegistryRulesQueryKey,
   useDeleteRegistryRule,
   useCreateRegistryRule,
   useApproveRegistryRule,
@@ -56,6 +55,7 @@ import {
 import { ApplyRuleModal } from "@/components/registry-rules/ApplyRuleModal";
 import { RegistryRuleJsonDialog } from "@/components/registry-rules/RegistryRuleJsonDialog";
 import { StatusBadge, getTag, RESERVED_NAME_KEY } from "@/components/RegistryRuleBadges";
+import { invalidateAfterRegistryRuleApprovalChange } from "@/lib/registry-rule-invalidation";
 import { cn } from "@/lib/utils";
 
 function extractApiError(err: unknown, fallback: string): string {
@@ -135,11 +135,13 @@ function RegistryRuleDetailPage() {
     [queryClient, ruleId],
   );
 
-  // Feeds the Rules Registry list page and the Drafts & Review queue — both
-  // key off the same base `/api/v1/registry-rules` path (with different
-  // params), so a param-less invalidate matches every variant.
-  const invalidateLists = useCallback(
-    () => queryClient.invalidateQueries({ queryKey: getListRegistryRulesQueryKey() }),
+  // Approving/rejecting can re-materialize monitored tables the rule is
+  // applied to server-side, so this invalidates the registry rules list
+  // (which also feeds the Drafts & Review queue), the monitored-tables
+  // list, and every monitored-table detail/versions query — see helper
+  // doc for why we can't target specific binding IDs here.
+  const invalidateAfterLifecycleChange = useCallback(
+    () => invalidateAfterRegistryRuleApprovalChange(queryClient),
     [queryClient],
   );
 
@@ -178,14 +180,14 @@ function RegistryRuleDetailPage() {
         onSuccess: () => {
           toast.success(t("rulesRegistry.toastApproved"));
           invalidateDetail();
-          invalidateLists();
+          invalidateAfterLifecycleChange();
         },
         onError: (err) => {
           toast.error(extractApiError(err, t("rulesRegistry.toastApproveFailed")), { duration: 6000 });
         },
       },
     );
-  }, [approveMutation, ruleId, t, invalidateDetail, invalidateLists]);
+  }, [approveMutation, ruleId, t, invalidateDetail, invalidateAfterLifecycleChange]);
 
   const handleConfirmReject = useCallback(() => {
     setRejectConfirmOpen(false);
@@ -195,14 +197,14 @@ function RegistryRuleDetailPage() {
         onSuccess: () => {
           toast.success(t("rulesRegistry.toastRejected"));
           invalidateDetail();
-          invalidateLists();
+          invalidateAfterLifecycleChange();
         },
         onError: (err) => {
           toast.error(extractApiError(err, t("rulesRegistry.toastRejectFailed")), { duration: 6000 });
         },
       },
     );
-  }, [rejectMutation, ruleId, t, invalidateDetail, invalidateLists]);
+  }, [rejectMutation, ruleId, t, invalidateDetail, invalidateAfterLifecycleChange]);
 
   const handleActiveTabChange = useCallback(
     (nextTab: PageTab) => {

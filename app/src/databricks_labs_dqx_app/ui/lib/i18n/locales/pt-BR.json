@@ -1923,6 +1923,7 @@
     "reviewChangesButton_other": "Revisar {{count}} alterações pendentes",
     "reviewChangesTitle": "Alterações pendentes nas tabelas membro",
     "reviewChangesDescription": "Estas tabelas membro têm verificações enviadas aguardando aprovação. Aprove ou rejeite cada uma diretamente, ou abra a tabela para ver o contexto completo.",
+    "reviewChangesEmptyState": "Todas as alterações foram revisadas.",
     "reviewChangesToastApproved": "Alterações pendentes de \"{{table}}\" aprovadas.",
     "reviewChangesToastRejected": "Alterações pendentes de \"{{table}}\" rejeitadas.",
     "saveAsDraftButton": "Salvar como rascunho",

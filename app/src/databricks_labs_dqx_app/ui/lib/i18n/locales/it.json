@@ -1923,6 +1923,7 @@
     "reviewChangesButton_other": "Rivedi {{count}} modifiche in sospeso",
     "reviewChangesTitle": "Modifiche in sospeso nelle tabelle membro",
     "reviewChangesDescription": "Queste tabelle membro hanno controlli inviati in attesa di approvazione. Approva o rifiuta ciascuna direttamente, oppure apri la tabella per il contesto completo.",
+    "reviewChangesEmptyState": "Tutte le modifiche sono state revisionate.",
     "reviewChangesToastApproved": "Modifiche in sospeso approvate per \"{{table}}\".",
     "reviewChangesToastRejected": "Modifiche in sospeso rifiutate per \"{{table}}\".",
     "saveAsDraftButton": "Salva come bozza",

@@ -79,7 +79,6 @@ import {
   useListRules,
   getListRulesQueryKey,
   useListRegistryRules,
-  getListRegistryRulesQueryKey,
   useApproveRegistryRule,
   useRejectRegistryRule,
   type RuleCatalogEntryOut,
@@ -94,6 +93,7 @@ import {
   deleteRuleById,
   backfillRuleIds,
 } from "@/lib/api-custom";
+import { invalidateAfterRegistryRuleApprovalChange } from "@/lib/registry-rule-invalidation";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useCurrentUserSuspense } from "@/hooks/use-suspense-queries";
 import selector from "@/lib/selector";
@@ -276,8 +276,13 @@ function RegistryApprovalsSection({
   const { data, isLoading, error } = useListRegistryRules({ status: "pending_approval" });
   const rules: RegistryRuleOut[] = useMemo(() => data?.data ?? [], [data]);
 
+  // Approving/rejecting can re-materialize monitored tables the rule is
+  // applied to server-side, so this invalidates the registry rules list
+  // (which also feeds this very queue), the monitored-tables list, and
+  // every monitored-table detail/versions query — see helper doc for why
+  // we can't target specific binding IDs here.
   const invalidate = useCallback(
-    () => queryClient.invalidateQueries({ queryKey: getListRegistryRulesQueryKey() }),
+    () => invalidateAfterRegistryRuleApprovalChange(queryClient),
     [queryClient],
   );
 
