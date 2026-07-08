@@ -24,12 +24,26 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { AlertCircle, Braces, MoreVertical, Pencil, RotateCcw, Table2, Trash2 } from "lucide-react";
+import {
+  AlertCircle,
+  Braces,
+  CheckCircle2,
+  Loader2,
+  MoreVertical,
+  Pencil,
+  RotateCcw,
+  Table2,
+  Trash2,
+  XCircle,
+} from "lucide-react";
 import {
   useGetRegistryRuleSuspense,
   getGetRegistryRuleQueryKey,
+  getListRegistryRulesQueryKey,
   useDeleteRegistryRule,
   useCreateRegistryRule,
+  useApproveRegistryRule,
+  useRejectRegistryRule,
   type CreateRegistryRuleIn,
 } from "@/lib/api";
 import { useLabelDefinitions } from "@/lib/api-custom";
@@ -108,6 +122,7 @@ function RegistryRuleDetailPage() {
   const labelDefinitions = useMemo(() => labelDefsData?.definitions ?? [], [labelDefsData]);
 
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [rejectConfirmOpen, setRejectConfirmOpen] = useState(false);
   const [applyModalOpen, setApplyModalOpen] = useState(false);
   const [jsonDialogOpen, setJsonDialogOpen] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
@@ -118,6 +133,14 @@ function RegistryRuleDetailPage() {
   const invalidateDetail = useCallback(
     () => queryClient.invalidateQueries({ queryKey: getGetRegistryRuleQueryKey(ruleId) }),
     [queryClient, ruleId],
+  );
+
+  // Feeds the Rules Registry list page and the Drafts & Review queue — both
+  // key off the same base `/api/v1/registry-rules` path (with different
+  // params), so a param-less invalidate matches every variant.
+  const invalidateLists = useCallback(
+    () => queryClient.invalidateQueries({ queryKey: getListRegistryRulesQueryKey() }),
+    [queryClient],
   );
 
   const backToList = useCallback(
@@ -143,6 +166,43 @@ function RegistryRuleDetailPage() {
       },
     );
   }, [deleteMutation, ruleId, t, backToList]);
+
+  const approveMutation = useApproveRegistryRule();
+  const rejectMutation = useRejectRegistryRule();
+  const lifecycleBusy = approveMutation.isPending || rejectMutation.isPending;
+
+  const handleApprove = useCallback(() => {
+    approveMutation.mutate(
+      { ruleId },
+      {
+        onSuccess: () => {
+          toast.success(t("rulesRegistry.toastApproved"));
+          invalidateDetail();
+          invalidateLists();
+        },
+        onError: (err) => {
+          toast.error(extractApiError(err, t("rulesRegistry.toastApproveFailed")), { duration: 6000 });
+        },
+      },
+    );
+  }, [approveMutation, ruleId, t, invalidateDetail, invalidateLists]);
+
+  const handleConfirmReject = useCallback(() => {
+    setRejectConfirmOpen(false);
+    rejectMutation.mutate(
+      { ruleId },
+      {
+        onSuccess: () => {
+          toast.success(t("rulesRegistry.toastRejected"));
+          invalidateDetail();
+          invalidateLists();
+        },
+        onError: (err) => {
+          toast.error(extractApiError(err, t("rulesRegistry.toastRejectFailed")), { duration: 6000 });
+        },
+      },
+    );
+  }, [rejectMutation, ruleId, t, invalidateDetail, invalidateLists]);
 
   const handleActiveTabChange = useCallback(
     (nextTab: PageTab) => {
@@ -173,6 +233,10 @@ function RegistryRuleDetailPage() {
   // published rules) is a heavier action than the list page's draft-only
   // delete, which stays scoped to canCreateRules.
   const canDelete = perms.canApproveRules;
+  // Surfaces the same Approve/Reject actions the Drafts & Review queue
+  // offers, right in the detail header, so an approver doesn't have to
+  // leave the rule's page to act on it.
+  const canApproveReject = rule.status === "pending_approval" && perms.canApproveRules;
   // Apply requires a published rule — the backend rejects a non-approved
   // rule with 409 (RuleNotPublishedError) — plus create-rule permission.
   const canApply = perms.canCreateRules && rule.status === "approved";
@@ -219,6 +283,38 @@ function RegistryRuleDetailPage() {
             <StatusBadge status={rule.status} />
           </div>
           <div className="flex items-center gap-2 ml-auto">
+            {canApproveReject && (
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-2 h-8 text-emerald-600 border-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950"
+                  onClick={handleApprove}
+                  disabled={lifecycleBusy}
+                >
+                  {approveMutation.isPending ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                  )}
+                  {t("rulesRegistry.actionApprove")}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-2 h-8 text-red-600 border-red-400 hover:bg-red-50 dark:hover:bg-red-950"
+                  onClick={() => setRejectConfirmOpen(true)}
+                  disabled={lifecycleBusy}
+                >
+                  {rejectMutation.isPending ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <XCircle className="h-3.5 w-3.5" />
+                  )}
+                  {t("rulesRegistry.actionReject")}
+                </Button>
+              </>
+            )}
             {canEditAsNewDraft && (
               <Button
                 variant="outline"
@@ -333,6 +429,26 @@ function RegistryRuleDetailPage() {
               onClick={handleConfirmDelete}
             >
               {t("rulesRegistry.actionDelete")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={rejectConfirmOpen} onOpenChange={setRejectConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("rulesRegistry.rejectConfirmTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("rulesRegistry.rejectConfirmDescription", { name })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              className={cn("bg-destructive text-white hover:bg-destructive/90")}
+              onClick={handleConfirmReject}
+            >
+              {t("rulesRegistry.actionReject")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

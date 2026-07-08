@@ -264,6 +264,7 @@ function MonitoredTableDetailPage() {
   const submitMutation = useSubmitMonitoredTable();
   const approveMutation = useApproveMonitoredTable();
   const rejectMutation = useRejectMonitoredTable();
+  const [rejectConfirmOpen, setRejectConfirmOpen] = useState(false);
 
   const persistStagedRows = useCallback(
     () => saveMutation.mutateAsync({ bindingId, data: { applications: buildDesiredApplications(stagedRows) } }),
@@ -365,6 +366,38 @@ function MonitoredTableDetailPage() {
           </div>
           <div className="flex items-center gap-2">
             {perms.canRunRules && <RunTableAction bindingId={bindingId} table={table} />}
+            {table.status === "pending_approval" && perms.canApproveRules && (
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={lifecycleBusy}
+                  onClick={handleApprove}
+                  className="gap-1.5 text-emerald-600 border-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950"
+                >
+                  {approveMutation.isPending ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                  )}
+                  {t("monitoredTables.approveAction")}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={lifecycleBusy}
+                  onClick={() => setRejectConfirmOpen(true)}
+                  className="gap-1.5 text-red-600 border-red-400 hover:bg-red-50 dark:hover:bg-red-950"
+                >
+                  {rejectMutation.isPending ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <XCircle className="h-3.5 w-3.5" />
+                  )}
+                  {t("monitoredTables.rejectAction")}
+                </Button>
+              </>
+            )}
             {perms.canCreateRules && (
               <>
                 <Button
@@ -392,45 +425,14 @@ function MonitoredTableDetailPage() {
         {table.status === "pending_approval" && (
           <div className="flex items-start gap-3 p-3 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-700">
             <Clock className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
-            <div className="space-y-1.5 flex-1">
+            <div className="space-y-1">
               <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
                 {t("monitoredTables.pendingBannerTitle")}
               </p>
               <p className="text-sm text-amber-800/90 dark:text-amber-300/90">
                 {t("monitoredTables.pendingBannerBody")}
               </p>
-              {perms.canApproveRules ? (
-                <div className="flex items-center gap-2 pt-1">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={lifecycleBusy}
-                    onClick={handleApprove}
-                    className="gap-1.5 h-7 text-xs text-green-600 border-green-400 hover:bg-green-100 dark:hover:bg-green-900"
-                  >
-                    {approveMutation.isPending ? (
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                    ) : (
-                      <CheckCircle2 className="h-3 w-3" />
-                    )}
-                    {t("monitoredTables.approveAction")}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={lifecycleBusy}
-                    onClick={handleReject}
-                    className="gap-1.5 h-7 text-xs text-red-600 border-red-400 hover:bg-red-100 dark:hover:bg-red-900"
-                  >
-                    {rejectMutation.isPending ? (
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                    ) : (
-                      <XCircle className="h-3 w-3" />
-                    )}
-                    {t("monitoredTables.rejectAction")}
-                  </Button>
-                </div>
-              ) : (
+              {!perms.canApproveRules && (
                 <p className="text-xs text-amber-700/80 dark:text-amber-300/70 italic">
                   {t("monitoredTables.awaitingApproval")}
                 </p>
@@ -438,6 +440,29 @@ function MonitoredTableDetailPage() {
             </div>
           </div>
         )}
+
+        <AlertDialog open={rejectConfirmOpen} onOpenChange={setRejectConfirmOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>{t("monitoredTables.rejectConfirmTitle")}</AlertDialogTitle>
+              <AlertDialogDescription>
+                {t("monitoredTables.rejectConfirmDescription", { table: table.table_fqn })}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-destructive text-white hover:bg-destructive/90"
+                onClick={() => {
+                  setRejectConfirmOpen(false);
+                  handleReject();
+                }}
+              >
+                {t("monitoredTables.rejectAction")}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
         <Tabs value={activeTab} onValueChange={handleTabChange}>
           <TabsList>

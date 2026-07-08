@@ -7,15 +7,23 @@
  * "Run draft" moved into the ⋮ menu per the design spec since Runs is now a
  * visible tab (dqlake tucks the whole Runs surface there instead).
  */
-import { useEffect, useState } from "react";
-import { useNavigate } from "@tanstack/react-router";
+import { useEffect, useMemo, useState } from "react";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
+import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
   useDeleteDataProduct,
   useRunDataProduct,
+  useApproveMonitoredTable,
+  useRejectMonitoredTable,
   RunDataProductInSource,
+  getGetDataProductQueryKey,
+  getListDataProductsQueryKey,
+  getGetMonitoredTableQueryKey,
+  getListMonitoredTablesQueryKey,
   type DataProductOut,
+  type DataProductMemberOut,
 } from "@/lib/api";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useProductRunSets } from "@/hooks/use-product-run-sets";
@@ -32,9 +40,184 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { Loader2, MoreVertical, Play, Save, Send, Trash2 } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { CheckCircle2, Clock, Loader2, MoreVertical, Play, Save, Send, Trash2, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { EditProductState } from "@/components/data-products/useEditProductState";
+
+function extractMonitoredTableApiError(err: unknown, fallback: string): string {
+  const axErr = err as { response?: { data?: { detail?: string } } };
+  return axErr?.response?.data?.detail ?? fallback;
+}
+
+/**
+ * Products have no approver gate of their own (draft/publish only, by
+ * design — spec §3.3): "approve/reject the product's pending changes"
+ * really means approving/rejecting the pending MATERIALIZED checks on its
+ * member monitored tables. This surfaces that as a single top-right
+ * affordance — consistent with the Approve/Reject buttons now on the
+ * Registry Rule and Monitored Table detail headers — instead of forcing the
+ * approver to open each pending member individually.
+ */
+function ReviewPendingChangesButton({
+  productId,
+  members,
+}: {
+  productId: string;
+  members: DataProductMemberOut[];
+}) {
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
+
+  const pendingMembers = useMemo(
+    () => members.filter((m) => m.binding_status === "pending_approval"),
+    [members],
+  );
+
+  const approveMutation = useApproveMonitoredTable();
+  const rejectMutation = useRejectMonitoredTable();
+  const [busyBindingId, setBusyBindingId] = useState<string | null>(null);
+  const [rejectTarget, setRejectTarget] = useState<DataProductMemberOut | null>(null);
+
+  const invalidateAfterAction = (bindingId: string) => {
+    queryClient.invalidateQueries({ queryKey: getGetMonitoredTableQueryKey(bindingId) });
+    queryClient.invalidateQueries({ queryKey: getListMonitoredTablesQueryKey() });
+    queryClient.invalidateQueries({ queryKey: getGetDataProductQueryKey(productId) });
+    queryClient.invalidateQueries({ queryKey: getListDataProductsQueryKey() });
+  };
+
+  const handleApprove = (member: DataProductMemberOut) => {
+    if (busyBindingId) return;
+    setBusyBindingId(member.binding_id);
+    approveMutation.mutate(
+      { bindingId: member.binding_id },
+      {
+        onSuccess: () => {
+          toast.success(t("dataProducts.reviewChangesToastApproved", { table: member.table_fqn }));
+          invalidateAfterAction(member.binding_id);
+        },
+        onError: (err) => {
+          toast.error(extractMonitoredTableApiError(err, t("monitoredTables.toastApproveFailed")), {
+            duration: 6000,
+          });
+        },
+        onSettled: () => setBusyBindingId(null),
+      },
+    );
+  };
+
+  const handleConfirmReject = () => {
+    const member = rejectTarget;
+    if (!member) return;
+    setRejectTarget(null);
+    setBusyBindingId(member.binding_id);
+    rejectMutation.mutate(
+      { bindingId: member.binding_id },
+      {
+        onSuccess: () => {
+          toast.success(t("dataProducts.reviewChangesToastRejected", { table: member.table_fqn }));
+          invalidateAfterAction(member.binding_id);
+        },
+        onError: (err) => {
+          toast.error(extractMonitoredTableApiError(err, t("monitoredTables.toastRejectFailed")), {
+            duration: 6000,
+          });
+        },
+        onSettled: () => setBusyBindingId(null),
+      },
+    );
+  };
+
+  if (pendingMembers.length === 0) return null;
+
+  return (
+    <>
+      <Popover>
+        <PopoverTrigger asChild>
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-2 text-amber-700 border-amber-400 hover:bg-amber-50 dark:text-amber-300 dark:hover:bg-amber-950"
+          >
+            <Clock className="h-4 w-4" />
+            {t("dataProducts.reviewChangesButton", { count: pendingMembers.length })}
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent align="end" className="w-96">
+          <div className="space-y-1 mb-2">
+            <p className="text-sm font-medium">{t("dataProducts.reviewChangesTitle")}</p>
+            <p className="text-xs text-muted-foreground">{t("dataProducts.reviewChangesDescription")}</p>
+          </div>
+          <div className="space-y-1 max-h-72 overflow-y-auto">
+            {pendingMembers.map((member) => {
+              const busy = busyBindingId === member.binding_id;
+              return (
+                <div
+                  key={member.binding_id}
+                  className="flex items-center justify-between gap-2 rounded-md border p-2"
+                >
+                  <Link
+                    to="/monitored-tables/$bindingId"
+                    params={{ bindingId: member.binding_id }}
+                    search={{ tab: "results" }}
+                    className="font-mono text-xs truncate hover:underline"
+                    title={member.table_fqn}
+                  >
+                    {member.table_fqn}
+                  </Link>
+                  {busy ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground shrink-0" />
+                  ) : (
+                    <div className="flex items-center gap-1 shrink-0">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 w-7 p-0 text-emerald-600"
+                        title={t("monitoredTables.approveAction")}
+                        onClick={() => handleApprove(member)}
+                      >
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 w-7 p-0 text-destructive"
+                        title={t("monitoredTables.rejectAction")}
+                        onClick={() => setRejectTarget(member)}
+                      >
+                        <XCircle className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </PopoverContent>
+      </Popover>
+
+      <AlertDialog open={!!rejectTarget} onOpenChange={(open) => !open && setRejectTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("monitoredTables.rejectConfirmTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("monitoredTables.rejectConfirmDescription", { table: rejectTarget?.table_fqn ?? "" })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-white hover:bg-destructive/90"
+              onClick={handleConfirmReject}
+            >
+              {t("monitoredTables.rejectAction")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
+  );
+}
 
 function extractApiError(err: unknown, fallback: string): string {
   const axErr = err as { response?: { data?: { detail?: string } } };
@@ -135,6 +318,10 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
         </div>
       </div>
       <div className="flex gap-2 items-center">
+        {perms.canApproveRules && (
+          <ReviewPendingChangesButton productId={product.product_id} members={editState.members} />
+        )}
+
         {canEdit && (
           <Button
             onClick={() => void editState.handleSaveDraft()}
