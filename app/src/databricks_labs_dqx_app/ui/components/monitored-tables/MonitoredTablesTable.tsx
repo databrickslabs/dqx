@@ -16,6 +16,7 @@ import { cn } from "@/lib/utils";
 import { useColumnLayout, type ColumnLayoutDef } from "@/components/data-table/column-layout";
 import { EditColumnsDropdown } from "@/components/data-table/EditColumnsDropdown";
 import { RelativeTimeCell } from "@/components/data-table/RelativeTimeCell";
+import { STICKY_ACTIONS_HEAD_CLASS, STICKY_ACTIONS_CELL_CLASS } from "@/components/data-table/sticky-actions";
 import type { MonitoredTableSummaryOut } from "@/lib/api";
 
 /** Column keys that carry a comparable value and can drive client sort. */
@@ -223,10 +224,16 @@ const COLUMNS: Record<MonitoredTablesSortKey, ColumnDef> = {
     labelKey: "monitoredTables.colStatus",
     toggleable: true,
     defaultVisible: true,
-    defaultWidth: 110,
+    // Matches RulesTable's Status column width — 110px clipped longer
+    // labels like "Pending approval" (item 6).
+    defaultWidth: 140,
     sortable: true,
     renderHeader: (label) => label,
-    renderCell: (r) => <StatusBadge status={r.table.status} />,
+    renderCell: (r) => (
+      <span className="flex flex-wrap items-center gap-1">
+        <StatusBadge status={r.table.status} />
+      </span>
+    ),
   },
 };
 
@@ -410,7 +417,10 @@ export function MonitoredTablesTable({
                 );
               })}
               {hasActions && (
-                <TableHead className="text-right text-xs font-medium px-2" style={{ width: 96 }}>
+                <TableHead
+                  className={cn("text-right text-xs font-medium px-2", STICKY_ACTIONS_HEAD_CLASS)}
+                  style={{ width: 96 }}
+                >
                   {t("monitoredTables.colActions")}
                 </TableHead>
               )}
@@ -421,7 +431,7 @@ export function MonitoredTablesTable({
               const bindingId = r.table.binding_id;
               const busy = pendingBindingId === bindingId;
               return (
-                <TableRow key={bindingId} className="cursor-pointer" onClick={() => onRowClick(r)}>
+                <TableRow key={bindingId} className="group cursor-pointer" onClick={() => onRowClick(r)}>
                   {visibleKeys.map((k) => {
                     const width = colWidths[k] ?? COLUMNS[k].defaultWidth;
                     return (
@@ -442,7 +452,7 @@ export function MonitoredTablesTable({
                   {hasActions && (
                     <TableCell
                       style={{ width: 96 }}
-                      className="text-right p-2"
+                      className={cn("text-right p-2", STICKY_ACTIONS_CELL_CLASS)}
                       onClick={(e) => e.stopPropagation()}
                     >
                       {busy ? (

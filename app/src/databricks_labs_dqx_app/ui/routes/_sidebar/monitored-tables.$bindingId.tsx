@@ -213,6 +213,12 @@ function MonitoredTableDetailPage() {
   const detail = data.data;
   const table = detail.table;
   const appliedRules = useMemo(() => detail.applied_rules ?? [], [detail.applied_rules]);
+  // Header titles on the bare table name (item 9) — the full FQN stays
+  // available via the breadcrumb and the header tooltip.
+  const tableName = useMemo(() => {
+    const parts = table.table_fqn.split(".");
+    return parts[parts.length - 1] || table.table_fqn;
+  }, [table.table_fqn]);
 
   const invalidateDetail = useCallback(
     () => queryClient.invalidateQueries({ queryKey: getGetMonitoredTableQueryKey(bindingId) }),
@@ -350,6 +356,11 @@ function MonitoredTableDetailPage() {
     approveMutation.isPending ||
     rejectMutation.isPending;
 
+  // Nothing to resubmit: Save-as-draft is already disabled (no staged
+  // edits) and this version is already approved, so "Submit for review"
+  // would just be a no-op re-approval request (item 11).
+  const submitDisabledNoChanges = !isDirty && table.status === "approved";
+
   return (
     <FadeIn>
       <div className="space-y-6">
@@ -361,7 +372,22 @@ function MonitoredTableDetailPage() {
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-2xl font-semibold tracking-tight leading-none font-mono">{table.table_fqn}</h1>
+              {/* Header shows only the table name — the full catalog.schema.table
+                  FQN is still available via the breadcrumb above and this
+                  tooltip, matching dqlake's binding header (which titles on
+                  `binding.table_name` alone; item 9). */}
+              <TooltipProvider delayDuration={200}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <h1 className="text-2xl font-semibold tracking-tight leading-none font-mono cursor-default">
+                      {tableName}
+                    </h1>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" className="font-mono">
+                    {table.table_fqn}
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
               <StatusBadge status={table.status} />
               <VersionBadge table={table} />
             </div>
@@ -370,7 +396,6 @@ function MonitoredTableDetailPage() {
             )}
           </div>
           <div className="flex items-center gap-2">
-            {perms.canRunRules && <RunTableAction bindingId={bindingId} table={table} />}
             {table.status === "pending_approval" && perms.canApproveRules && (
               <>
                 <Button
@@ -414,16 +439,35 @@ function MonitoredTableDetailPage() {
                   {saveMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
                   {t("monitoredTables.saveAsDraftButton")}
                 </Button>
-                <Button onClick={handleSubmit} disabled={lifecycleBusy} className="gap-2">
-                  {saveMutation.isPending || submitMutation.isPending ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <UploadCloud className="h-4 w-4" />
-                  )}
-                  {submitMutation.isPending ? t("monitoredTables.submitting") : t("monitoredTables.submitButton")}
-                </Button>
+                <TooltipProvider delayDuration={200}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className={cn(submitDisabledNoChanges && "cursor-not-allowed")}>
+                        <Button
+                          onClick={handleSubmit}
+                          disabled={lifecycleBusy || submitDisabledNoChanges}
+                          className="gap-2"
+                        >
+                          {saveMutation.isPending || submitMutation.isPending ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <UploadCloud className="h-4 w-4" />
+                          )}
+                          {submitMutation.isPending ? t("monitoredTables.submitting") : t("monitoredTables.submitButton")}
+                        </Button>
+                      </span>
+                    </TooltipTrigger>
+                    {submitDisabledNoChanges && (
+                      <TooltipContent side="bottom">{t("monitoredTables.submitDisabledNoChangesHint")}</TooltipContent>
+                    )}
+                  </Tooltip>
+                </TooltipProvider>
               </>
             )}
+            {/* Run now sits to the right of Submit for review — matches
+                dqlake's binding header ordering (Save, Publish, then Run;
+                item 12). */}
+            {perms.canRunRules && <RunTableAction bindingId={bindingId} table={table} />}
           </div>
         </div>
 

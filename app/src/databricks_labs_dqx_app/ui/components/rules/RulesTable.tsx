@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
 import { useColumnLayout, type ColumnLayoutDef } from "@/components/data-table/column-layout";
 import { EditColumnsDropdown } from "@/components/data-table/EditColumnsDropdown";
 import { RelativeTimeCell } from "@/components/data-table/RelativeTimeCell";
+import { STICKY_ACTIONS_HEAD_CLASS, STICKY_ACTIONS_CELL_CLASS } from "@/components/data-table/sticky-actions";
 import { AI_GRADIENT_URL } from "@/lib/ai-style";
 import { AuthorKindIcon } from "./AuthorKindIcon";
 import {
@@ -436,8 +437,9 @@ export function RulesTable({
                       def.sortable && "cursor-pointer select-none",
                       // Pinned right, frozen under horizontal scroll — same
                       // treatment as the Drafts & Review table's Actions
-                      // column (routes/_sidebar/rules.drafts.tsx).
-                      k === "actions" && "sticky right-0 z-10 bg-muted/50 border-l",
+                      // column (routes/_sidebar/rules.drafts.tsx), shared
+                      // with MonitoredTablesTable via sticky-actions.ts.
+                      k === "actions" && STICKY_ACTIONS_HEAD_CLASS,
                     )}
                     style={{ width, minWidth: width, maxWidth: width }}
                     onClick={def.sortable ? () => handleHeaderClick(k) : undefined}
@@ -484,7 +486,7 @@ export function RulesTable({
                       // Review table (routes/_sidebar/rules.drafts.tsx).
                       className={cn(
                         "overflow-hidden p-2 align-middle",
-                        k === "actions" && "sticky right-0 z-10 bg-background border-l group-hover:bg-muted/50",
+                        k === "actions" && STICKY_ACTIONS_CELL_CLASS,
                       )}
                       onClick={k === "actions" ? (e) => e.stopPropagation() : undefined}
                     >

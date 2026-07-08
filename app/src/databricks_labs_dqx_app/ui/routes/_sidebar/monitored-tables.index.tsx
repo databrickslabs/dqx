@@ -33,11 +33,14 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { AlertCircle, Loader2, Plus, RotateCcw, Search, Table2, Trash2 } from "lucide-react";
+import { AlertCircle, CheckCircle2, Loader2, Plus, RotateCcw, Search, Table2, Trash2, XCircle } from "lucide-react";
 import {
   useListMonitoredTables,
   getListMonitoredTablesQueryKey,
+  getListDataProductsQueryKey,
   useDeleteMonitoredTable,
+  useApproveMonitoredTable,
+  useRejectMonitoredTable,
   type MonitoredTableSummaryOut,
 } from "@/lib/api";
 import { usePermissions } from "@/hooks/use-permissions";
@@ -209,7 +212,52 @@ function MonitoredTablesPage() {
     [queryClient],
   );
 
+  // Approving/rejecting can change a table's applied-rule/check counts,
+  // which Data Products' member-table summaries also read — invalidate both
+  // surfaces, mirroring the detail page's `invalidateCountConsumers`.
+  const invalidateAfterApprovalChange = useCallback(() => {
+    invalidate();
+    queryClient.invalidateQueries({ queryKey: getListDataProductsQueryKey() });
+  }, [invalidate, queryClient]);
+
   const deleteMutation = useDeleteMonitoredTable();
+  const approveMutation = useApproveMonitoredTable();
+  const rejectMutation = useRejectMonitoredTable();
+
+  // Shared runner for the row-level approve/reject actions — mirrors the
+  // Rules Registry list page's `runAction` (registry-rules.index.tsx).
+  const runRowAction = useCallback(
+    (bindingId: string, mutate: () => Promise<unknown>, successMsg: string, errorMsg: string) => {
+      if (pendingId) return;
+      setPendingId(bindingId);
+      mutate()
+        .then(() => {
+          toast.success(successMsg);
+          invalidateAfterApprovalChange();
+        })
+        .catch((err: unknown) => {
+          toast.error(extractApiError(err, errorMsg), { duration: 6000 });
+        })
+        .finally(() => setPendingId(null));
+    },
+    [pendingId, invalidateAfterApprovalChange],
+  );
+
+  const handleApprove = (summary: MonitoredTableSummaryOut) =>
+    runRowAction(
+      summary.table.binding_id,
+      () => approveMutation.mutateAsync({ bindingId: summary.table.binding_id }),
+      t("monitoredTables.toastApproved"),
+      t("monitoredTables.toastApproveFailed"),
+    );
+
+  const handleReject = (summary: MonitoredTableSummaryOut) =>
+    runRowAction(
+      summary.table.binding_id,
+      () => rejectMutation.mutateAsync({ bindingId: summary.table.binding_id }),
+      t("monitoredTables.toastRejected"),
+      t("monitoredTables.toastRejectFailed"),
+    );
 
   const confirmDelete = () => {
     if (!deleteTarget?.table.binding_id) return;
@@ -322,17 +370,48 @@ function MonitoredTablesPage() {
             </>
           }
           renderActions={
-            perms.canCreateRules
+            // Actions column stays visible for anyone who can approve OR
+            // create/delete — an approver-only user still needs to see the
+            // approve/reject buttons even without create/delete rights, and
+            // vice versa. Mirrors RulesTable's per-status action gating
+            // (registry-rules.index.tsx#renderActionsCell).
+            perms.canApproveRules || perms.canCreateRules
               ? (summary) => (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 w-7 p-0 text-destructive"
-                    title={t("monitoredTables.actionDelete")}
-                    onClick={() => setDeleteTarget(summary)}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
+                  <div className="flex items-center justify-end gap-1">
+                    {summary.table.status === "pending_approval" && perms.canApproveRules && (
+                      <>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 w-7 p-0 text-emerald-600"
+                          title={t("monitoredTables.approveAction")}
+                          onClick={() => handleApprove(summary)}
+                        >
+                          <CheckCircle2 className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 w-7 p-0 text-destructive"
+                          title={t("monitoredTables.rejectAction")}
+                          onClick={() => handleReject(summary)}
+                        >
+                          <XCircle className="h-3.5 w-3.5" />
+                        </Button>
+                      </>
+                    )}
+                    {perms.canCreateRules && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 w-7 p-0 text-destructive"
+                        title={t("monitoredTables.actionDelete")}
+                        onClick={() => setDeleteTarget(summary)}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
+                  </div>
                 )
               : undefined
           }
