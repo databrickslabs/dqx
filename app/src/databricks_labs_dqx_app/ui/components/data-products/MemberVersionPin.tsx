@@ -67,7 +67,7 @@ export function MemberVersionPin({ bindingVersion, pinnedVersion, onPinChange }:
       <TooltipTrigger asChild>
         <span className="inline-flex">{badge}</span>
       </TooltipTrigger>
-      <TooltipContent side="top" className="max-w-xs text-center">
+      <TooltipContent side="top" className="max-w-xs">
         {t("dataProducts.pinStaleTooltip", { latest: bindingVersion, pinned: pinnedVersion })}
       </TooltipContent>
     </Tooltip>

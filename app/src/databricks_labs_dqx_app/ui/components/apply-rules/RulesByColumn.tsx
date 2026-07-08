@@ -161,41 +161,45 @@ function ColumnCard({ column, family, entries, isOpen, onToggle, canEdit, onAddR
         )}
       >
         <div className="overflow-hidden">
-          {isOpen && (
-            <div className="px-4 py-3 border-t space-y-2">
-              {entries.map((entry, i) => (
-                <button
-                  key={`${entry.ruleId}-${entry.slot}-${entry.mappingIndex}-${i}`}
-                  type="button"
-                  onClick={() => onJumpToRule?.(entry.ruleId)}
-                  className="flex items-center gap-2.5 w-full text-left rounded px-1 -mx-1 py-0.5 hover:bg-muted/50 transition-colors"
-                >
-                  <span
-                    className={cn(
-                      "w-2.5 h-2.5 rounded-full border shrink-0",
-                      paletteAt(entry.mappingIndex),
-                    )}
-                  />
-                  <span className="text-sm font-medium truncate flex-1">{entry.ruleName}</span>
-                  <span className="font-mono text-xs text-muted-foreground shrink-0">{`{{${entry.slot}}}`}</span>
-                </button>
-              ))}
+          {/* Always rendered (never gated by `isOpen`) — the grid-rows
+              transition above needs the content present in both directions
+              to animate the collapse, not just the expand (item 25). An
+              `{isOpen && ...}` guard here would unmount the content the
+              instant the track starts shrinking, so there'd be nothing left
+              to visually collapse. */}
+          <div className="px-4 py-3 border-t space-y-2">
+            {entries.map((entry, i) => (
+              <button
+                key={`${entry.ruleId}-${entry.slot}-${entry.mappingIndex}-${i}`}
+                type="button"
+                onClick={() => onJumpToRule?.(entry.ruleId)}
+                className="flex items-center gap-2.5 w-full text-left rounded px-1 -mx-1 py-0.5 hover:bg-muted/50 transition-colors"
+              >
+                <span
+                  className={cn(
+                    "w-2.5 h-2.5 rounded-full border shrink-0",
+                    paletteAt(entry.mappingIndex),
+                  )}
+                />
+                <span className="text-sm font-medium truncate flex-1">{entry.ruleName}</span>
+                <span className="font-mono text-xs text-muted-foreground shrink-0">{`{{${entry.slot}}}`}</span>
+              </button>
+            ))}
 
-              {canEdit && onAddRule && (
-                <div className="pt-1">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 text-xs text-muted-foreground hover:text-foreground px-2"
-                    onClick={() => onAddRule({ name: column.name, family })}
-                  >
-                    <Plus className="h-3.5 w-3.5 mr-1" />
-                    {t("monitoredTables.addRuleButton")}
-                  </Button>
-                </div>
-              )}
-            </div>
-          )}
+            {canEdit && onAddRule && (
+              <div className="pt-1">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 text-xs text-muted-foreground hover:text-foreground px-2"
+                  onClick={() => onAddRule({ name: column.name, family })}
+                >
+                  <Plus className="h-3.5 w-3.5 mr-1" />
+                  {t("monitoredTables.addRuleButton")}
+                </Button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>

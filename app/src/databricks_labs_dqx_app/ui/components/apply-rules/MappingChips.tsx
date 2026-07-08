@@ -135,43 +135,75 @@ function EditableChip({
   // technically "in use" — only exclude *other* groups' columns from the
   // candidate list.
   const matches = columnsForSlot(columns, slot, excludeColumns.filter((c) => c !== label));
-  return (
-    <span className={cn("inline-flex items-center gap-1 rounded border px-2 py-0.5 text-xs font-mono", colorClass)}>
-      <Popover open={open} onOpenChange={setOpen}>
-        <PopoverTrigger asChild>
-          <button
-            type="button"
-            onClick={(e) => e.stopPropagation()}
-            className="cursor-pointer hover:underline focus:outline-none"
-          >
-            {label}
-          </button>
-        </PopoverTrigger>
-        <PopoverContent className="w-80 p-0" align="start" onClick={(e) => e.stopPropagation()}>
-          <ColumnDropdownList
-            slot={slot}
-            matches={matches}
-            totalAll={columns.length}
-            onSelect={(colName) => {
-              onChange(colName);
-              setOpen(false);
-            }}
-          />
-        </PopoverContent>
-      </Popover>
-      {onJump && (
+
+  const picker = (
+    <PopoverContent className="w-80 p-0" align="start" onClick={(e) => e.stopPropagation()}>
+      <ColumnDropdownList
+        slot={slot}
+        matches={matches}
+        totalAll={columns.length}
+        onSelect={(colName) => {
+          onChange(colName);
+          setOpen(false);
+        }}
+      />
+    </PopoverContent>
+  );
+
+  // When `onJump` is available (the by-rule lens, wired to switch to the
+  // by-column lens), the label itself is the jump action — mirroring
+  // dqlake's `FilledChipWithPicker`. The change-column picker moves to a
+  // small "▾" affordance next to it instead of a separate "open" arrow
+  // icon (item 24). Without `onJump` (e.g. no by-column lens to jump to),
+  // the label falls back to the legacy behavior of opening the picker
+  // directly.
+  const labelButton = onJump ? (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        onJump();
+      }}
+      className="cursor-pointer hover:underline focus:outline-none"
+      title={t("monitoredTables.jumpToColumnTitle")}
+      aria-label={t("monitoredTables.jumpToColumnLabel", { column: label })}
+    >
+      {label}
+    </button>
+  ) : (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
         <button
           type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onJump();
-          }}
-          title={t("monitoredTables.jumpToColumnTitle")}
-          aria-label={t("monitoredTables.jumpToColumnTitle")}
-          className="opacity-60 hover:opacity-100 focus:outline-none leading-none"
+          onClick={(e) => e.stopPropagation()}
+          className="cursor-pointer hover:underline focus:outline-none"
+          aria-label={t("monitoredTables.changeColumnLabel", { column: label })}
         >
-          &#x2197;
+          {label}
         </button>
+      </PopoverTrigger>
+      {picker}
+    </Popover>
+  );
+
+  return (
+    <span className={cn("inline-flex items-center gap-1 rounded border px-2 py-0.5 text-xs font-mono", colorClass)}>
+      {labelButton}
+      {onJump && (
+        <Popover open={open} onOpenChange={setOpen}>
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              onClick={(e) => e.stopPropagation()}
+              title={t("monitoredTables.changeColumnTitle")}
+              aria-label={t("monitoredTables.changeColumnLabel", { column: label })}
+              className="opacity-60 hover:opacity-100 focus:outline-none leading-none px-0.5"
+            >
+              &#x25BE;
+            </button>
+          </PopoverTrigger>
+          {picker}
+        </Popover>
       )}
       {onRemove && (
         <button

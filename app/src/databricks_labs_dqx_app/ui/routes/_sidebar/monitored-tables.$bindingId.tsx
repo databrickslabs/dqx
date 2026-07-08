@@ -34,6 +34,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { HelpTooltip } from "@/components/HelpTooltip";
 import {
   AlertCircle,
   AlertTriangle,
@@ -1161,19 +1162,16 @@ function ApplyRulesTab({
     <div className="space-y-4 pt-4">
       <div className="flex items-center gap-3 flex-wrap">
         {stagedRows.length > 0 && (
-          <TooltipProvider delayDuration={200}>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span className="text-sm font-semibold cursor-help">
-                  {t("monitoredTables.checksCount", { count: totalChecks })}{" "}
-                  {t("monitoredTables.viaRulesCount", { count: mergedRules.length })}
-                </span>
-              </TooltipTrigger>
-              <TooltipContent side="bottom" className="max-w-xs text-center">
-                {t("monitoredTables.checksViaRulesTooltip")}
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
+          <div className="flex items-center gap-1">
+            <span className="text-sm font-semibold">
+              {t("monitoredTables.checksCount", { count: totalChecks })}{" "}
+              {t("monitoredTables.viaRulesCount", { count: mergedRules.length })}
+            </span>
+            {/* Explicit "?" trigger (mirrors dqlake's ScoreBox help icon and
+                the app's own HelpTooltip pattern) instead of relying on the
+                text itself being hoverable — item 26. */}
+            <HelpTooltip text={t("monitoredTables.checksViaRulesTooltip")} />
+          </div>
         )}
 
         {incompleteCount > 0 && (
@@ -1225,7 +1223,16 @@ function ApplyRulesTab({
         )}
 
         <div className="ml-auto flex items-center gap-2">
-          <div className="flex items-center gap-1 border rounded-md p-0.5">
+          {/* Sliding-pill segmented switch — same animated-indicator approach
+              as PredicatePolaritySwitch (item 27): a `<span>` glides between
+              the two equal-width slots instead of each button just snapping
+              its own background on/off. */}
+          <div className="relative inline-grid grid-cols-2 items-stretch rounded-md border bg-muted/30 p-0.5">
+            <span
+              aria-hidden
+              className="absolute top-0.5 bottom-0.5 left-0.5 w-[calc(50%-2px)] rounded bg-primary transition-transform duration-200 ease-out"
+              style={{ transform: `translateX(${lens === "by-column" ? "100%" : "0%"})` }}
+            />
             {(
               [
                 { key: "by-rule", label: t("monitoredTables.lensByRule") },
@@ -1236,8 +1243,8 @@ function ApplyRulesTab({
                 key={mode.key}
                 type="button"
                 onClick={() => setLens(mode.key)}
-                className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-                  lens === mode.key ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"
+                className={`relative z-10 px-3 py-1.5 rounded text-xs font-medium transition-colors duration-200 ease-out ${
+                  lens === mode.key ? "text-primary-foreground" : "text-muted-foreground hover:text-foreground"
                 }`}
               >
                 {mode.label}
@@ -1320,6 +1327,10 @@ function ApplyRulesTab({
                   setFilter("all");
                   setSearch("");
                   setLens("by-column");
+                  // Expand the target column's card too — not just switch
+                  // views (item 24: state handoff between the by-rule and
+                  // by-column lenses).
+                  setOpenColumnName(colName);
                   setTimeout(() => {
                     document.getElementById(`column-card-${colName}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
                   }, 50);

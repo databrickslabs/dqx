@@ -27,7 +27,8 @@ import { JoinsBuilder } from "@/components/rules/lowcode/JoinsBuilder";
 import { isV2Ast } from "@/lib/lowcodeAst";
 import { slotFamilyToLowcode, type LowcodeColumnRef } from "@/lib/lowcodeCompile";
 import { MappingChips } from "./MappingChips";
-import { RESERVED_DIMENSION_KEY, RESERVED_SEVERITY_KEY, TagBadge, colorFor } from "./shared";
+import { RESERVED_DESCRIPTION_KEY } from "@/components/RegistryRuleBadges";
+import { RESERVED_DIMENSION_KEY, RESERVED_SEVERITY_KEY, TagBadge, colorFor, getTag } from "./shared";
 
 // ---------------------------------------------------------------------------
 // Completeness status — derives whether every applied mapping group fills
@@ -245,10 +246,11 @@ function VersionPinDropdown({
 
   if (readonly) {
     return (
-      // Fixed min-width (matches dqlake's badge sizing) so the pin badge
-      // doesn't reflow the card header when its label length changes.
-      <div className="inline-flex items-center justify-end min-w-[140px] shrink-0">
-        <Badge variant="outline" className="font-mono text-[10px]">
+      // FIXED width (not min-width) — regardless of "v1" vs "v12" or
+      // "Latest" vs "Pinned", this badge never reflows the card header or
+      // shifts the severity badge next to it (item 22).
+      <div className="inline-flex items-center justify-center w-[104px] shrink-0">
+        <Badge variant="outline" className="font-mono text-[10px] w-full justify-center truncate">
           v{currentVersion} &middot; {label}
         </Badge>
       </div>
@@ -256,11 +258,11 @@ function VersionPinDropdown({
   }
 
   return (
-    <div className="inline-flex items-center justify-end min-w-[140px] shrink-0">
+    <div className="inline-flex items-center justify-center w-[104px] shrink-0">
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <button type="button" onClick={(e) => e.stopPropagation()} className="focus:outline-none">
-            <Badge variant="outline" className="font-mono text-[10px] cursor-pointer hover:bg-muted/60">
+          <button type="button" onClick={(e) => e.stopPropagation()} className="w-full focus:outline-none">
+            <Badge variant="outline" className="font-mono text-[10px] w-full justify-center truncate cursor-pointer hover:bg-muted/60">
               v{currentVersion} &middot; {label} &#x25BE;
             </Badge>
           </button>
@@ -323,10 +325,14 @@ function SeverityDropdown({
 
   if (readonly) {
     return (
-      // Same fixed-width treatment as the version-pin badge — keeps both
-      // badges aligned regardless of severity label length or override state.
-      <div className="inline-flex items-center justify-end min-w-[110px] shrink-0">
-        <Badge variant="outline" className={cn("text-[10px] gap-1.5", !severity && "text-muted-foreground")}>
+      // Same FIXED-width treatment as the version-pin badge, sized to fit
+      // the longest severity label (e.g. "Critical") plus the override
+      // marker — keeps both badges aligned regardless of content (item 22).
+      <div className="inline-flex items-center justify-center w-[104px] shrink-0">
+        <Badge
+          variant="outline"
+          className={cn("text-[10px] gap-1.5 w-full justify-center truncate", !severity && "text-muted-foreground")}
+        >
           {dot}
           {label}
           {isOverridden && <span className="text-muted-foreground ml-0.5">*</span>}
@@ -336,11 +342,11 @@ function SeverityDropdown({
   }
 
   return (
-    <div className="inline-flex items-center justify-end min-w-[110px] shrink-0">
+    <div className="inline-flex items-center justify-center w-[104px] shrink-0">
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <button type="button" onClick={(e) => e.stopPropagation()} className="focus:outline-none">
-            <Badge variant="outline" className="text-[10px] cursor-pointer hover:bg-muted/60 gap-1.5">
+          <button type="button" onClick={(e) => e.stopPropagation()} className="w-full focus:outline-none">
+            <Badge variant="outline" className="text-[10px] w-full justify-center truncate cursor-pointer hover:bg-muted/60 gap-1.5">
               {dot}
               {label}
               {isOverridden && <span className="text-muted-foreground ml-0.5">*</span>} &#x25BE;
@@ -451,6 +457,7 @@ export function RuleConfigCard({
   const [pendingGroup, setPendingGroup] = useState<Record<string, string> | null>(null);
 
   const dimension = rule.rule_dimension || "";
+  const description = registryRule ? getTag(registryRule, RESERVED_DESCRIPTION_KEY) : "";
   const ruleSeverity = rule.rule_severity || "";
   const effectiveSeverity = rule.severity_override ?? ruleSeverity;
   const slots = registryRule?.definition.slots ?? [];
@@ -514,18 +521,30 @@ export function RuleConfigCard({
           {incomplete && <span className="h-2.5 w-2.5 rounded-full bg-yellow-500 shrink-0" aria-hidden />}
 
           <div className="min-w-0 flex-1">
-            <Link
-              to="/registry-rules/$ruleId"
-              params={{ ruleId: rule.rule_id }}
-              target="_blank"
-              onClick={(e) => e.stopPropagation()}
-              className="font-semibold text-sm leading-snug hover:underline focus:underline focus:outline-none"
-            >
-              {rule.rule_name || rule.rule_id}
-            </Link>
-            <div className="flex flex-wrap gap-1 mt-1">
-              <TagBadge label={dimension} color={colorFor(labelDefinitions, RESERVED_DIMENSION_KEY, dimension)} />
+            {/* Name (left) + dimension tag (right) on one line, description
+                in italics below — matches dqlake's RuleConfigCard layout. */}
+            <div className="flex items-center justify-between gap-2">
+              <Link
+                to="/registry-rules/$ruleId"
+                params={{ ruleId: rule.rule_id }}
+                target="_blank"
+                onClick={(e) => e.stopPropagation()}
+                className="font-semibold text-sm leading-snug hover:underline focus:underline focus:outline-none truncate"
+              >
+                {rule.rule_name || rule.rule_id}
+              </Link>
+              {dimension && (
+                <TagBadge
+                  label={dimension}
+                  color={colorFor(labelDefinitions, RESERVED_DIMENSION_KEY, dimension)}
+                />
+              )}
             </div>
+            {description && (
+              <div className="text-xs italic text-muted-foreground truncate max-w-[560px] leading-snug">
+                {description}
+              </div>
+            )}
             {incomplete && (
               <div className="text-xs text-yellow-600 dark:text-yellow-500 leading-snug mt-0.5">
                 &#x26A0;{" "}
@@ -538,7 +557,12 @@ export function RuleConfigCard({
           </div>
         </button>
 
-        <div className="flex items-center gap-1.5 shrink-0">
+        {/* Version + severity tags — FIXED equal widths (see the two
+            dropdown components above) so neither reflows with content, a
+            small gap between them (closer together) and an extra left
+            margin shifting the pair slightly right, away from the name
+            column (item 22). */}
+        <div className="flex items-center gap-1 shrink-0 ml-2">
           {busy ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
           ) : (

@@ -162,7 +162,13 @@ export function AiSuggestionDialog({
             <p className="text-sm font-medium text-muted-foreground">
               {t("monitoredTables.suggestRulesUnavailableTitle")}
             </p>
+            {/* Honest state-reason plumbing (P19-B) stays: the specific
+                reason the backend reported, if any, still surfaces — this
+                is only a copy re-skin (item 28), not a behavior change. */}
             {state.reason && <p className="text-xs text-muted-foreground/70 max-w-sm">{state.reason}</p>}
+            <p className="text-xs text-muted-foreground/70 max-w-sm">
+              {t("monitoredTables.suggestRulesUnavailableFallback")}
+            </p>
           </div>
         ) : state && state.suggestions.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-10 gap-2 text-center">
