@@ -438,6 +438,23 @@ class TestColumnResolution:
         # DECIMAL classifies to the numeric family and reaches the judge payload.
         assert "numeric" in user_prompt
 
+    async def test_array_column_type_family_reaches_the_judge(self, monitored_tables, registry, apply_rules):
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = None
+        registry.get_rule.return_value = _rule("r1", ["column"])
+        retriever = FakeRetriever(candidates=[RetrievedRule(rule_id="r1", score=0.9)])
+        gateway = _gateway({"suggestions": []})
+        discovery = _discovery([_column("tags", "ARRAY<STRING>")])
+        suggester = _suggester(monitored_tables, registry, apply_rules, retriever, gateway, discovery)
+
+        await suggester.suggest("b1", "user@x")
+
+        _, kwargs = gateway.query.call_args
+        user_prompt = kwargs["messages"][1]["content"]
+        assert "tags" in user_prompt
+        # ARRAY classifies to the array family and reaches the judge payload.
+        assert "array" in user_prompt
+
     async def test_falls_back_to_profile_when_uc_read_fails(self, monitored_tables, registry, apply_rules):
         monitored_tables.get.return_value = _binding_detail()
         monitored_tables.get_latest_profile.return_value = _profile({"legacy_col": {}})

@@ -50,7 +50,7 @@ DEFAULT_TOP_K = 8
 
 # Maps a Unity Catalog column type (leading token, upper-cased) to the slot
 # ``family`` vocabulary the registry uses (see ``registry_models.SlotFamily``:
-# numeric / text / temporal / boolean / any). Mirrors dqlake's family mapping
+# numeric / text / temporal / boolean / array / any). Mirrors dqlake's family mapping
 # so the judge can align a slot's declared family with a column's real type.
 _TYPE_FAMILY: dict[str, str] = {
     "TINYINT": "numeric",
@@ -69,6 +69,7 @@ _TYPE_FAMILY: dict[str, str] = {
     "TIMESTAMP": "temporal",
     "TIMESTAMP_NTZ": "temporal",
     "BOOLEAN": "boolean",
+    "ARRAY": "array",
 }
 
 
@@ -91,9 +92,10 @@ _JUDGE_SYSTEM_PROMPT = (
     "filled with a distinct existing column before you suggest it — never suggest a partial mapping. Only "
     "suggest a rule when it is a good structural AND semantic match: a slot's family should match the column's "
     "family (a numeric-family slot maps to a numeric column; a temporal-family slot to a date/timestamp column; "
-    "an 'any'-family slot may map to any column), and the column's name/comment should be consistent with what "
-    "the rule checks. A close name match between a slot and a column (e.g. slot 'email' → column 'vendor_email') "
-    "is supporting evidence. Never invent a column name that is not in the provided column list.\n"
+    "an array-family slot to an array column; an 'any'-family slot may map to any column), and the column's "
+    "name/comment should be consistent with what the rule checks. A close name match between a slot and a "
+    "column (e.g. slot 'email' → column 'vendor_email') is supporting evidence. Never invent a column name "
+    "that is not in the provided column list.\n"
     "Return STRICT JSON only, no prose, of the exact form: "
     '{"suggestions": [{"rule_id": "...", "mapping": {"slot_name": "column_name"}, '
     '"explanation": "short grounded reason"}]}. '
