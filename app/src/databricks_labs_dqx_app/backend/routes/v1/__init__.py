@@ -24,6 +24,8 @@ from .run_sets import router as run_sets_router
 from .data_products import router as data_products_router
 from .compute import router as compute_router
 from .table_data import router as table_data_router
+from .principals import router as principals_router
+from .permissions import router as permissions_router
 
 v1_router = APIRouter()
 v1_router.include_router(me_router, tags=["meta"])
@@ -50,3 +52,5 @@ v1_router.include_router(run_sets_router, prefix="/run-sets", tags=["run-sets"])
 v1_router.include_router(data_products_router, prefix="/data-products", tags=["data-products"])
 v1_router.include_router(compute_router, prefix="/compute", tags=["compute"])
 v1_router.include_router(table_data_router, prefix="/table-data", tags=["table-data"])
+v1_router.include_router(principals_router, prefix="/principals", tags=["principals"])
+v1_router.include_router(permissions_router, prefix="/permissions", tags=["permissions"])

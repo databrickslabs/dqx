@@ -733,6 +733,86 @@ PG_MIGRATIONS: list[PgMigration] = [
             f"ALTER TABLE {_S}.dq_monitored_tables ADD COLUMN IF NOT EXISTS schedule_tz TEXT;"
         ),
     ),
+    PgMigration(
+        version=10,
+        description=(
+            "UC-style object permissions: per-object grants to workspace principals "
+            "(dq_object_grants + dq_object_grants_history) — P22-D item 10"
+        ),
+        sql=(
+            # ----------------------------------------------------------
+            # dq_object_grants — one row per (object, principal) holding
+            # the set of app-level privileges that principal has on that
+            # securable object, mirroring Unity Catalog's grants model.
+            #
+            # ``object_type`` is one of the three securables the Rules
+            # Registry exposes; ``object_id`` is the corresponding entity
+            # id (``dq_rules.rule_id`` / ``dq_monitored_tables.binding_id``
+            # / ``dq_data_products.product_id``). No FK constraint — this
+            # matches every other cross-table reference in this schema
+            # (service-enforced), and lets a grant be written before the
+            # object is fully committed without ordering hazards.
+            #
+            # ``principal_id`` is the workspace SCIM id of a user/group
+            # (from the principal picker) OR the sentinel ``'__all__'``
+            # for the all-principals baseline grant. ``privileges`` is a
+            # comma-joined, normalized privilege set (``SELECT``,
+            # ``MODIFY``, ``APPLY``, or the single token ``ALL_PRIVILEGES``
+            # which expands at check-time — UC semantics: the stored form
+            # is ``ALL PRIVILEGES``, not its components). Stored as TEXT
+            # (not JSONB/array) so the identical DDL/read path works on the
+            # Delta OLTP fallback.
+            #
+            # ``inherit`` (default FALSE) is the per-grant inheritance
+            # toggle: when TRUE, the grant flows down the object hierarchy
+            # (data_product -> member monitored_table -> that table's
+            # applied-rule scope). Resolution walks parents at check-time
+            # (see PermissionsService.effective_privileges).
+            # ----------------------------------------------------------
+            f"CREATE TABLE IF NOT EXISTS {_S}.dq_object_grants ("
+            "  grant_id       TEXT PRIMARY KEY,"
+            "  object_type    TEXT NOT NULL,"
+            "  object_id      TEXT NOT NULL,"
+            "  principal_id   TEXT NOT NULL,"
+            "  principal_type TEXT NOT NULL,"
+            "  principal_name TEXT,"
+            "  privileges     TEXT NOT NULL,"
+            "  inherit        BOOLEAN NOT NULL DEFAULT FALSE,"
+            "  grantor        TEXT,"
+            "  created_at     TIMESTAMPTZ,"
+            "  updated_at     TIMESTAMPTZ,"
+            "  CONSTRAINT uq_dq_object_grants_object_principal "
+            "    UNIQUE (object_type, object_id, principal_id),"
+            "  CONSTRAINT chk_dq_object_grants_object_type "
+            "    CHECK (object_type IN ('registry_rule','monitored_table','data_product')),"
+            "  CONSTRAINT chk_dq_object_grants_principal_type "
+            "    CHECK (principal_type IN ('user','group','all'))"
+            ");"
+            # The dominant read path is "all grants for this object"
+            # (Permissions tab load + every enforcement check), so a
+            # composite index on (object_type, object_id) covers it.
+            f"CREATE INDEX IF NOT EXISTS idx_dq_object_grants_object "
+            f"  ON {_S}.dq_object_grants (object_type, object_id);"
+            # ----------------------------------------------------------
+            # dq_object_grants_history — append-only audit trail for grant
+            # changes (mirrors dq_role_mappings_history's shape/rationale).
+            # ----------------------------------------------------------
+            f"CREATE TABLE IF NOT EXISTS {_S}.dq_object_grants_history ("
+            "  history_id     BIGSERIAL PRIMARY KEY,"
+            "  object_type    TEXT NOT NULL,"
+            "  object_id      TEXT NOT NULL,"
+            "  principal_id   TEXT NOT NULL,"
+            "  principal_name TEXT,"
+            "  privileges     TEXT,"
+            "  inherit        BOOLEAN,"
+            "  action         TEXT NOT NULL,"
+            "  changed_by     TEXT,"
+            "  changed_at     TIMESTAMPTZ"
+            ");"
+            f"CREATE INDEX IF NOT EXISTS idx_dq_object_grants_history_object_changed_at "
+            f"  ON {_S}.dq_object_grants_history (object_type, object_id, changed_at DESC);"
+        ),
+    ),
 ]
 
 

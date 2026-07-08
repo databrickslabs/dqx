@@ -176,28 +176,28 @@ class TestUpdate:
     def test_update_only_passes_explicitly_set_fields(self):
         svc = MagicMock()
         svc.get.return_value = _detail(product_id="p1")
-        update_data_product("p1", body=UpdateDataProductIn(description="new desc"), svc=svc, obo_ws=_mock_obo_ws())
+        update_data_product("p1", body=UpdateDataProductIn(description="new desc"), svc=svc, obo_ws=_mock_obo_ws(), role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock())
         svc.update.assert_called_once_with("p1", {"description": "new desc"}, "alice@x")
 
     def test_update_missing_raises_404(self):
         svc = MagicMock()
         svc.update.side_effect = LookupError("Data product not found: p1")
         with pytest.raises(HTTPException) as excinfo:
-            update_data_product("p1", body=UpdateDataProductIn(), svc=svc, obo_ws=_mock_obo_ws())
+            update_data_product("p1", body=UpdateDataProductIn(), svc=svc, obo_ws=_mock_obo_ws(), role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock())
         assert excinfo.value.status_code == 404
 
     def test_update_duplicate_name_raises_409(self):
         svc = MagicMock()
         svc.update.side_effect = DuplicateDataProductNameError("boom")
         with pytest.raises(HTTPException) as excinfo:
-            update_data_product("p1", body=UpdateDataProductIn(name="Taken"), svc=svc, obo_ws=_mock_obo_ws())
+            update_data_product("p1", body=UpdateDataProductIn(name="Taken"), svc=svc, obo_ws=_mock_obo_ws(), role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock())
         assert excinfo.value.status_code == 409
 
 
 class TestDelete:
     def test_delete_success(self):
         svc = MagicMock()
-        result = delete_data_product("p1", svc=svc)
+        result = delete_data_product("p1", svc=svc, obo_ws=_mock_obo_ws(), role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock())
         assert result["status"] == "deleted"
         svc.delete.assert_called_once_with("p1")
 
@@ -205,7 +205,7 @@ class TestDelete:
         svc = MagicMock()
         svc.delete.side_effect = LookupError("Data product not found: p1")
         with pytest.raises(HTTPException) as excinfo:
-            delete_data_product("p1", svc=svc)
+            delete_data_product("p1", svc=svc, obo_ws=_mock_obo_ws(), role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock())
         assert excinfo.value.status_code == 404
 
 
@@ -216,7 +216,7 @@ class TestMembers:
         svc.get.return_value = _detail(product_id="p1")
         result = add_data_product_member(
             "p1", body=AddDataProductMemberIn(binding_id="b1", pinned_version=2), svc=svc, obo_ws=_mock_obo_ws()
-        )
+        , role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock())
         assert result.product_id == "p1"
         svc.add_member.assert_called_once_with("p1", "b1", 2, "alice@x")
 
@@ -224,20 +224,20 @@ class TestMembers:
         svc = MagicMock()
         svc.add_member.side_effect = LookupError("Data product not found: p1")
         with pytest.raises(HTTPException) as excinfo:
-            add_data_product_member("p1", body=AddDataProductMemberIn(binding_id="b1"), svc=svc, obo_ws=_mock_obo_ws())
+            add_data_product_member("p1", body=AddDataProductMemberIn(binding_id="b1"), svc=svc, obo_ws=_mock_obo_ws(), role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock())
         assert excinfo.value.status_code == 404
 
     def test_add_member_invalid_binding_id_raises_404(self):
         svc = MagicMock()
         svc.add_member.side_effect = RuntimeError("Monitored table not found: invalid_binding")
         with pytest.raises(HTTPException) as excinfo:
-            add_data_product_member("p1", body=AddDataProductMemberIn(binding_id="invalid_binding"), svc=svc, obo_ws=_mock_obo_ws())
+            add_data_product_member("p1", body=AddDataProductMemberIn(binding_id="invalid_binding"), svc=svc, obo_ws=_mock_obo_ws(), role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock())
         assert excinfo.value.status_code == 404
 
     def test_remove_member_success(self):
         svc = MagicMock()
         svc.get.return_value = _detail(product_id="p1")
-        result = remove_data_product_member("p1", "m1", svc=svc, obo_ws=_mock_obo_ws())
+        result = remove_data_product_member("p1", "m1", svc=svc, obo_ws=_mock_obo_ws(), role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock())
         assert result.product_id == "p1"
         svc.remove_member.assert_called_once_with("p1", "m1", "alice@x")
 
@@ -245,7 +245,7 @@ class TestMembers:
         svc = MagicMock()
         svc.remove_member.side_effect = LookupError("Data product member not found: m1")
         with pytest.raises(HTTPException) as excinfo:
-            remove_data_product_member("p1", "m1", svc=svc, obo_ws=_mock_obo_ws())
+            remove_data_product_member("p1", "m1", svc=svc, obo_ws=_mock_obo_ws(), role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock())
         assert excinfo.value.status_code == 404
 
 

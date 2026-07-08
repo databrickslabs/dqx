@@ -909,6 +909,19 @@ export interface DryRunSubmitOut {
   table_fqn?: DryRunSubmitOutTableFqn;
 }
 
+/**
+ * The caller's effective privileges on a single object (drives UI gating).
+ */
+export interface EffectivePermissionsOut {
+  object_type: string;
+  object_id: string;
+  privileges?: string[];
+  can_modify?: boolean;
+  can_apply?: boolean;
+  can_manage_grants?: boolean;
+  is_owner?: boolean;
+}
+
 export type EmbeddedDashboardInTitle = string | null;
 
 /**
@@ -1398,6 +1411,74 @@ export interface Name {
   given_name?: NameGivenName;
 }
 
+/**
+ * Human-readable principal name
+ */
+export type ObjectGrantOutPrincipalName = string | null;
+
+/**
+ * Who granted this
+ */
+export type ObjectGrantOutGrantor = string | null;
+
+/**
+ * When the grant was last set (ISO8601)
+ */
+export type ObjectGrantOutUpdatedAt = string | null;
+
+/**
+ * Parent object type an inherited grant came from
+ */
+export type ObjectGrantOutInheritedFromType = string | null;
+
+/**
+ * Parent object id an inherited grant came from
+ */
+export type ObjectGrantOutInheritedFromId = string | null;
+
+/**
+ * One principal's grant on a securable object (direct or inherited).
+ */
+export interface ObjectGrantOut {
+  /** Workspace SCIM id, or '__all__' for the all-principals baseline grant */
+  principal_id: string;
+  /** 'user', 'group', or 'all' */
+  principal_type: string;
+  /** Human-readable principal name */
+  principal_name?: ObjectGrantOutPrincipalName;
+  /** Granted privileges (SELECT/MODIFY/APPLY or ALL_PRIVILEGES) */
+  privileges?: string[];
+  /** Whether this grant flows down to child objects */
+  inherit?: boolean;
+  /** Who granted this */
+  grantor?: ObjectGrantOutGrantor;
+  /** When the grant was last set (ISO8601) */
+  updated_at?: ObjectGrantOutUpdatedAt;
+  /** True when surfaced from a parent object via inheritance */
+  inherited?: boolean;
+  /** Parent object type an inherited grant came from */
+  inherited_from_type?: ObjectGrantOutInheritedFromType;
+  /** Parent object id an inherited grant came from */
+  inherited_from_id?: ObjectGrantOutInheritedFromId;
+}
+
+/**
+ * Response for the Permissions tab: grants + baseline + caller capability.
+ */
+export interface ObjectGrantsOut {
+  /** Securable object type */
+  object_type: string;
+  /** Securable object id */
+  object_id: string;
+  grants?: ObjectGrantOut[];
+  /** Privileges every principal holds by default (shown as the 'All users' baseline row) */
+  baseline_privileges?: string[];
+  /** Whether the caller may add/remove grants on this object */
+  can_manage?: boolean;
+  /** Admin default for the per-grant inheritance toggle on new grants */
+  default_inherit?: boolean;
+}
+
 export type OutputConfigOptions = {[key: string]: string};
 
 export type OutputConfigTrigger = {[key: string]: string | boolean};
@@ -1413,6 +1494,33 @@ export interface OutputConfig {
   trigger?: OutputConfigTrigger;
   partition_by?: string[];
   cluster_by?: string[];
+}
+
+/**
+ * Admin setting: default state of the per-grant inheritance toggle.
+ */
+export interface PermissionsDefaultInheritOut {
+  /** When true, new grants default to inheriting down the hierarchy */
+  enabled: boolean;
+}
+
+/**
+ * Secondary label (username or member count)
+ */
+export type PrincipalSearchOutSecondary = string | null;
+
+/**
+ * A workspace principal (user or group) returned by the principal picker.
+ */
+export interface PrincipalSearchOut {
+  /** 'user' or 'group' */
+  kind: string;
+  /** Workspace SCIM id of the principal */
+  workspace_principal_id: string;
+  /** Human-readable name for display */
+  display_name: string;
+  /** Secondary label (username or member count) */
+  secondary?: PrincipalSearchOutSecondary;
 }
 
 export type ProfileResultsOutRowsProfiled = number | null;
@@ -2361,6 +2469,34 @@ export interface SetAppliedRuleSeverityOverrideIn {
   severity?: SetAppliedRuleSeverityOverrideInSeverity;
 }
 
+/**
+ * Human-readable principal name
+ */
+export type SetObjectGrantInPrincipalName = string | null;
+
+/**
+ * Create-or-replace one principal's grant on a securable object.
+ */
+export interface SetObjectGrantIn {
+  /** Workspace SCIM id, or '__all__' for the baseline grant */
+  principal_id: string;
+  /** 'user', 'group', or 'all' */
+  principal_type: string;
+  /** Human-readable principal name */
+  principal_name?: SetObjectGrantInPrincipalName;
+  /** Privileges to grant (empty removes the grant) */
+  privileges?: string[];
+  /** Whether the grant flows down to child objects */
+  inherit?: boolean;
+}
+
+/**
+ * Request body for updating the default-inheritance admin setting.
+ */
+export interface SetPermissionsDefaultInheritIn {
+  enabled: boolean;
+}
+
 export interface SetReviewStatusIn {
   status: string;
 }
@@ -3000,6 +3136,19 @@ export type GetWarehouseAccessParams = {
  * Warehouse id to check
  */
 warehouse_id: string;
+};
+
+export type SearchPrincipalsParams = {
+/**
+ * @minLength 1
+ * @maxLength 128
+ */
+q: string;
+/**
+ * @minimum 1
+ * @maximum 50
+ */
+limit?: number;
 };
 
 /**
@@ -9921,6 +10070,9 @@ Editable for ``draft`` rules and for ``approved`` rules (the edit-in-place
 revision path — the edits stay inert behind the frozen vN snapshot until
 the rule is re-submitted and re-approved as vN+1). Rejected with 400 for
 any other status.
+
+Object-permission enforcement: requires ``MODIFY`` on the rule (direct,
+inherited, or via ownership) unless the caller is an admin/approver.
  * @summary Update Registry Rule
  */
 export const updateRegistryRule = (
@@ -9989,6 +10141,9 @@ export const useUpdateRegistryRule = <TError = AxiosError<HTTPValidationError>,
 Blocked (409) when the rule is currently applied to one or more
 monitored tables — remove every application first via the Apply Rules
 flow, then delete.
+
+Object-permission enforcement: requires ``MODIFY`` on the rule unless the
+caller is an admin/approver.
  * @summary Delete Registry Rule
  */
 export const deleteRegistryRule = (
@@ -10956,6 +11111,9 @@ export function useGetMonitoredTableSuspense<TData = Awaited<ReturnType<typeof g
 /**
  * Delete a monitored table binding and its applied rules.
 
+Requires ``MODIFY`` on the monitored table (direct/inherited/owner) unless
+the caller is an admin/approver.
+
 TODO(Phase 3C): once the materializer exists, block/handle
 de-materialization of any ``dq_quality_rules`` rows tied to this
 binding's applications before allowing deletion.
@@ -11089,8 +11247,9 @@ export const useBulkRegisterMonitoredTables = <TError = AxiosError<HTTPValidatio
 /**
  * Set or clear a monitored table's run schedule (P21 item 14).
 
-Orthogonal to the review lifecycle — does NOT flip the binding's status.
-An approved table with a cron fires on the in-app scheduler.
+Requires ``MODIFY`` on the monitored table unless the caller is an
+admin/approver. Orthogonal to the review lifecycle — does NOT flip the
+binding's status. An approved table with a cron fires on the in-app scheduler.
  * @summary Update Monitored Table Schedule
  */
 export const updateMonitoredTableSchedule = (
@@ -11525,6 +11684,10 @@ export const useRunMonitoredTable = <TError = AxiosError<HTTPValidationError>,
     
 /**
  * Apply a published registry rule to a monitored table's column mapping.
+
+Applying a rule mutates the monitored table's rule set, so it requires
+``APPLY`` on the monitored table (in the day-one baseline) unless the
+caller is an admin/approver.
  * @summary Apply Rule To Table
  */
 export const applyRuleToTable = (
@@ -11590,11 +11753,12 @@ export const useApplyRuleToTable = <TError = AxiosError<HTTPValidationError>,
 /**
  * Reconcile the FULL desired set of applied rules for a monitored table in one batch.
 
-Backs the staged Apply Rules editor: the frontend stages every add /
-mapping-edit / severity-override / pin / removal locally and calls this
-once on Save-as-draft or Publish instead of firing an immediate write per
-edit. Does NOT materialize — materialization stays gated behind the
-existing publish route.
+Requires ``APPLY`` on the monitored table unless the caller is an
+admin/approver. Backs the staged Apply Rules editor: the frontend stages
+every add / mapping-edit / severity-override / pin / removal locally and
+calls this once on Save-as-draft or Publish instead of firing an immediate
+write per edit. Does NOT materialize — materialization stays gated behind
+the existing publish route.
  * @summary Save Applied Rules
  */
 export const saveAppliedRules = (
@@ -11659,6 +11823,8 @@ export const useSaveAppliedRules = <TError = AxiosError<HTTPValidationError>,
     
 /**
  * Remove an applied rule and every ``dq_quality_rules`` row it materialized.
+
+Requires ``APPLY`` on the monitored table unless the caller is an admin/approver.
  * @summary Remove Applied Rule
  */
 export const removeAppliedRule = (
@@ -11722,6 +11888,8 @@ export const useRemoveAppliedRule = <TError = AxiosError<HTTPValidationError>,
     
 /**
  * Pin (or, with ``pinned_version=None``, unpin) an applied rule's version.
+
+Requires ``APPLY`` on the monitored table unless the caller is an admin/approver.
  * @summary Set Applied Rule Pin
  */
 export const setAppliedRulePin = (
@@ -11787,6 +11955,8 @@ export const useSetAppliedRulePin = <TError = AxiosError<HTTPValidationError>,
     
 /**
  * Set (or, with ``severity=None``, clear) an applied rule's severity override.
+
+Requires ``APPLY`` on the monitored table unless the caller is an admin/approver.
  * @summary Set Applied Rule Severity Override
  */
 export const setAppliedRuleSeverityOverride = (
@@ -16027,6 +16197,9 @@ export function useGetDataProductSuspense<TData = Awaited<ReturnType<typeof getD
 
 /**
  * Apply a partial update. Any successful update flips the space back to ``draft``.
+
+Requires ``MODIFY`` on the table space (direct/inherited/owner) unless the
+caller is an admin/approver.
  * @summary Update Data Product
  */
 export const updateDataProduct = (
@@ -16091,6 +16264,8 @@ export const useUpdateDataProduct = <TError = AxiosError<HTTPValidationError>,
     
 /**
  * Delete a data product and its members.
+
+Requires ``MODIFY`` on the table space unless the caller is an admin/approver.
  * @summary Delete Data Product
  */
 export const deleteDataProduct = (
@@ -16153,6 +16328,10 @@ export const useDeleteDataProduct = <TError = AxiosError<HTTPValidationError>,
     
 /**
  * Add (or update the pin of) a member. Upserts by ``binding_id``.
+
+Adding a table to a space mutates the space, so it requires ``APPLY`` on
+the table space (in the day-one baseline; tightenable via a grant) unless
+the caller is an admin/approver.
  * @summary Add Data Product Member
  */
 export const addDataProductMember = (
@@ -16217,6 +16396,8 @@ export const useAddDataProductMember = <TError = AxiosError<HTTPValidationError>
     
 /**
  * Remove a member from a data product.
+
+Requires ``APPLY`` on the table space unless the caller is an admin/approver.
  * @summary Remove Data Product Member
  */
 export const removeDataProductMember = (
@@ -17379,3 +17560,811 @@ export const useQueryTableData = <TError = AxiosError<HTTPValidationError>,
 
       return useMutation(mutationOptions, queryClient);
     }
+    
+/**
+ * Search workspace users and groups by name prefix.
+
+Returns up to ``limit`` matches (users first, then groups). Results are
+cached per (workspace, query, limit) for a short TTL. SCIM errors are
+swallowed so a partial result (e.g. users but not groups) is still useful.
+ * @summary Search Principals
+ */
+export const searchPrincipals = (
+    params: SearchPrincipalsParams, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<PrincipalSearchOut[]>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/principals/search`,{
+    ...options,
+        params: {...params, ...options?.params},}
+    );
+  }
+
+
+
+
+export const getSearchPrincipalsQueryKey = (params?: SearchPrincipalsParams,) => {
+    return [
+    `/api/v1/principals/search`, ...(params ? [params]: [])
+    ] as const;
+    }
+
+    
+export const getSearchPrincipalsQueryOptions = <TData = Awaited<ReturnType<typeof searchPrincipals>>, TError = AxiosError<HTTPValidationError>>(params: SearchPrincipalsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof searchPrincipals>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getSearchPrincipalsQueryKey(params);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof searchPrincipals>>> = ({ signal }) => searchPrincipals(params, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof searchPrincipals>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type SearchPrincipalsQueryResult = NonNullable<Awaited<ReturnType<typeof searchPrincipals>>>
+export type SearchPrincipalsQueryError = AxiosError<HTTPValidationError>
+
+
+export function useSearchPrincipals<TData = Awaited<ReturnType<typeof searchPrincipals>>, TError = AxiosError<HTTPValidationError>>(
+ params: SearchPrincipalsParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof searchPrincipals>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof searchPrincipals>>,
+          TError,
+          Awaited<ReturnType<typeof searchPrincipals>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useSearchPrincipals<TData = Awaited<ReturnType<typeof searchPrincipals>>, TError = AxiosError<HTTPValidationError>>(
+ params: SearchPrincipalsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof searchPrincipals>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof searchPrincipals>>,
+          TError,
+          Awaited<ReturnType<typeof searchPrincipals>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useSearchPrincipals<TData = Awaited<ReturnType<typeof searchPrincipals>>, TError = AxiosError<HTTPValidationError>>(
+ params: SearchPrincipalsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof searchPrincipals>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Search Principals
+ */
+
+export function useSearchPrincipals<TData = Awaited<ReturnType<typeof searchPrincipals>>, TError = AxiosError<HTTPValidationError>>(
+ params: SearchPrincipalsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof searchPrincipals>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getSearchPrincipalsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getSearchPrincipalsSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof searchPrincipals>>, TError = AxiosError<HTTPValidationError>>(params: SearchPrincipalsParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof searchPrincipals>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getSearchPrincipalsQueryKey(params);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof searchPrincipals>>> = ({ signal }) => searchPrincipals(params, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof searchPrincipals>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type SearchPrincipalsSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof searchPrincipals>>>
+export type SearchPrincipalsSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useSearchPrincipalsSuspense<TData = Awaited<ReturnType<typeof searchPrincipals>>, TError = AxiosError<HTTPValidationError>>(
+ params: SearchPrincipalsParams, options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof searchPrincipals>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useSearchPrincipalsSuspense<TData = Awaited<ReturnType<typeof searchPrincipals>>, TError = AxiosError<HTTPValidationError>>(
+ params: SearchPrincipalsParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof searchPrincipals>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useSearchPrincipalsSuspense<TData = Awaited<ReturnType<typeof searchPrincipals>>, TError = AxiosError<HTTPValidationError>>(
+ params: SearchPrincipalsParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof searchPrincipals>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Search Principals
+ */
+
+export function useSearchPrincipalsSuspense<TData = Awaited<ReturnType<typeof searchPrincipals>>, TError = AxiosError<HTTPValidationError>>(
+ params: SearchPrincipalsParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof searchPrincipals>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getSearchPrincipalsSuspenseQueryOptions(params,options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Return the admin default for the per-grant inheritance toggle.
+ * @summary Get Default Inherit
+ */
+export const getPermissionsDefaultInherit = (
+     options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<PermissionsDefaultInheritOut>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/permissions/default-inherit`,options
+    );
+  }
+
+
+
+
+export const getGetPermissionsDefaultInheritQueryKey = () => {
+    return [
+    `/api/v1/permissions/default-inherit`
+    ] as const;
+    }
+
+    
+export const getGetPermissionsDefaultInheritQueryOptions = <TData = Awaited<ReturnType<typeof getPermissionsDefaultInherit>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPermissionsDefaultInherit>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetPermissionsDefaultInheritQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getPermissionsDefaultInherit>>> = ({ signal }) => getPermissionsDefaultInherit({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getPermissionsDefaultInherit>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetPermissionsDefaultInheritQueryResult = NonNullable<Awaited<ReturnType<typeof getPermissionsDefaultInherit>>>
+export type GetPermissionsDefaultInheritQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetPermissionsDefaultInherit<TData = Awaited<ReturnType<typeof getPermissionsDefaultInherit>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPermissionsDefaultInherit>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getPermissionsDefaultInherit>>,
+          TError,
+          Awaited<ReturnType<typeof getPermissionsDefaultInherit>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetPermissionsDefaultInherit<TData = Awaited<ReturnType<typeof getPermissionsDefaultInherit>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPermissionsDefaultInherit>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getPermissionsDefaultInherit>>,
+          TError,
+          Awaited<ReturnType<typeof getPermissionsDefaultInherit>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetPermissionsDefaultInherit<TData = Awaited<ReturnType<typeof getPermissionsDefaultInherit>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPermissionsDefaultInherit>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Default Inherit
+ */
+
+export function useGetPermissionsDefaultInherit<TData = Awaited<ReturnType<typeof getPermissionsDefaultInherit>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPermissionsDefaultInherit>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetPermissionsDefaultInheritQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getGetPermissionsDefaultInheritSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getPermissionsDefaultInherit>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getPermissionsDefaultInherit>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetPermissionsDefaultInheritQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getPermissionsDefaultInherit>>> = ({ signal }) => getPermissionsDefaultInherit({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof getPermissionsDefaultInherit>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetPermissionsDefaultInheritSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof getPermissionsDefaultInherit>>>
+export type GetPermissionsDefaultInheritSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetPermissionsDefaultInheritSuspense<TData = Awaited<ReturnType<typeof getPermissionsDefaultInherit>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getPermissionsDefaultInherit>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetPermissionsDefaultInheritSuspense<TData = Awaited<ReturnType<typeof getPermissionsDefaultInherit>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getPermissionsDefaultInherit>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetPermissionsDefaultInheritSuspense<TData = Awaited<ReturnType<typeof getPermissionsDefaultInherit>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getPermissionsDefaultInherit>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Default Inherit
+ */
+
+export function useGetPermissionsDefaultInheritSuspense<TData = Awaited<ReturnType<typeof getPermissionsDefaultInherit>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getPermissionsDefaultInherit>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetPermissionsDefaultInheritSuspenseQueryOptions(options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Set the admin default for the per-grant inheritance toggle (admin only).
+ * @summary Set Default Inherit
+ */
+export const setPermissionsDefaultInherit = (
+    setPermissionsDefaultInheritIn: SetPermissionsDefaultInheritIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<PermissionsDefaultInheritOut>> => {
+    
+    
+    return axios.default.put(
+      `/api/v1/permissions/default-inherit`,
+      setPermissionsDefaultInheritIn,options
+    );
+  }
+
+
+
+export const getSetPermissionsDefaultInheritMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setPermissionsDefaultInherit>>, TError,{data: SetPermissionsDefaultInheritIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof setPermissionsDefaultInherit>>, TError,{data: SetPermissionsDefaultInheritIn}, TContext> => {
+
+const mutationKey = ['setPermissionsDefaultInherit'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setPermissionsDefaultInherit>>, {data: SetPermissionsDefaultInheritIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  setPermissionsDefaultInherit(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetPermissionsDefaultInheritMutationResult = NonNullable<Awaited<ReturnType<typeof setPermissionsDefaultInherit>>>
+    export type SetPermissionsDefaultInheritMutationBody = SetPermissionsDefaultInheritIn
+    export type SetPermissionsDefaultInheritMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Set Default Inherit
+ */
+export const useSetPermissionsDefaultInherit = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setPermissionsDefaultInherit>>, TError,{data: SetPermissionsDefaultInheritIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof setPermissionsDefaultInherit>>,
+        TError,
+        {data: SetPermissionsDefaultInheritIn},
+        TContext
+      > => {
+
+      const mutationOptions = getSetPermissionsDefaultInheritMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * List the grants on an object (direct + inherited) with baseline + capability.
+ * @summary List Object Grants
+ */
+export const listObjectGrants = (
+    objectType: string,
+    objectId: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<ObjectGrantsOut>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/permissions/${objectType}/${objectId}/grants`,options
+    );
+  }
+
+
+
+
+export const getListObjectGrantsQueryKey = (objectType?: string,
+    objectId?: string,) => {
+    return [
+    `/api/v1/permissions/${objectType}/${objectId}/grants`
+    ] as const;
+    }
+
+    
+export const getListObjectGrantsQueryOptions = <TData = Awaited<ReturnType<typeof listObjectGrants>>, TError = AxiosError<HTTPValidationError>>(objectType: string,
+    objectId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listObjectGrants>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListObjectGrantsQueryKey(objectType,objectId);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listObjectGrants>>> = ({ signal }) => listObjectGrants(objectType,objectId, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, enabled: !!(objectType && objectId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listObjectGrants>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListObjectGrantsQueryResult = NonNullable<Awaited<ReturnType<typeof listObjectGrants>>>
+export type ListObjectGrantsQueryError = AxiosError<HTTPValidationError>
+
+
+export function useListObjectGrants<TData = Awaited<ReturnType<typeof listObjectGrants>>, TError = AxiosError<HTTPValidationError>>(
+ objectType: string,
+    objectId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listObjectGrants>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listObjectGrants>>,
+          TError,
+          Awaited<ReturnType<typeof listObjectGrants>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListObjectGrants<TData = Awaited<ReturnType<typeof listObjectGrants>>, TError = AxiosError<HTTPValidationError>>(
+ objectType: string,
+    objectId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listObjectGrants>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listObjectGrants>>,
+          TError,
+          Awaited<ReturnType<typeof listObjectGrants>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListObjectGrants<TData = Awaited<ReturnType<typeof listObjectGrants>>, TError = AxiosError<HTTPValidationError>>(
+ objectType: string,
+    objectId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listObjectGrants>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List Object Grants
+ */
+
+export function useListObjectGrants<TData = Awaited<ReturnType<typeof listObjectGrants>>, TError = AxiosError<HTTPValidationError>>(
+ objectType: string,
+    objectId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listObjectGrants>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListObjectGrantsQueryOptions(objectType,objectId,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getListObjectGrantsSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof listObjectGrants>>, TError = AxiosError<HTTPValidationError>>(objectType: string,
+    objectId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listObjectGrants>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListObjectGrantsQueryKey(objectType,objectId);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listObjectGrants>>> = ({ signal }) => listObjectGrants(objectType,objectId, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof listObjectGrants>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListObjectGrantsSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof listObjectGrants>>>
+export type ListObjectGrantsSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useListObjectGrantsSuspense<TData = Awaited<ReturnType<typeof listObjectGrants>>, TError = AxiosError<HTTPValidationError>>(
+ objectType: string,
+    objectId: string, options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listObjectGrants>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListObjectGrantsSuspense<TData = Awaited<ReturnType<typeof listObjectGrants>>, TError = AxiosError<HTTPValidationError>>(
+ objectType: string,
+    objectId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listObjectGrants>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListObjectGrantsSuspense<TData = Awaited<ReturnType<typeof listObjectGrants>>, TError = AxiosError<HTTPValidationError>>(
+ objectType: string,
+    objectId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listObjectGrants>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List Object Grants
+ */
+
+export function useListObjectGrantsSuspense<TData = Awaited<ReturnType<typeof listObjectGrants>>, TError = AxiosError<HTTPValidationError>>(
+ objectType: string,
+    objectId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listObjectGrants>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListObjectGrantsSuspenseQueryOptions(objectType,objectId,options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Create or replace one principal's grant on an object.
+
+Requires the caller to own the object or hold an admin/approver role.
+ * @summary Set Object Grant
+ */
+export const setObjectGrant = (
+    objectType: string,
+    objectId: string,
+    setObjectGrantIn: SetObjectGrantIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<ObjectGrantsOut>> => {
+    
+    
+    return axios.default.put(
+      `/api/v1/permissions/${objectType}/${objectId}/grants`,
+      setObjectGrantIn,options
+    );
+  }
+
+
+
+export const getSetObjectGrantMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setObjectGrant>>, TError,{objectType: string;objectId: string;data: SetObjectGrantIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof setObjectGrant>>, TError,{objectType: string;objectId: string;data: SetObjectGrantIn}, TContext> => {
+
+const mutationKey = ['setObjectGrant'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setObjectGrant>>, {objectType: string;objectId: string;data: SetObjectGrantIn}> = (props) => {
+          const {objectType,objectId,data} = props ?? {};
+
+          return  setObjectGrant(objectType,objectId,data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetObjectGrantMutationResult = NonNullable<Awaited<ReturnType<typeof setObjectGrant>>>
+    export type SetObjectGrantMutationBody = SetObjectGrantIn
+    export type SetObjectGrantMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Set Object Grant
+ */
+export const useSetObjectGrant = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setObjectGrant>>, TError,{objectType: string;objectId: string;data: SetObjectGrantIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof setObjectGrant>>,
+        TError,
+        {objectType: string;objectId: string;data: SetObjectGrantIn},
+        TContext
+      > => {
+
+      const mutationOptions = getSetObjectGrantMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Remove a principal's grant from an object (owner/admin/approver only).
+ * @summary Remove Object Grant
+ */
+export const removeObjectGrant = (
+    objectType: string,
+    objectId: string,
+    principalId: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<ObjectGrantsOut>> => {
+    
+    
+    return axios.default.delete(
+      `/api/v1/permissions/${objectType}/${objectId}/grants/${principalId}`,options
+    );
+  }
+
+
+
+export const getRemoveObjectGrantMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof removeObjectGrant>>, TError,{objectType: string;objectId: string;principalId: string}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof removeObjectGrant>>, TError,{objectType: string;objectId: string;principalId: string}, TContext> => {
+
+const mutationKey = ['removeObjectGrant'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof removeObjectGrant>>, {objectType: string;objectId: string;principalId: string}> = (props) => {
+          const {objectType,objectId,principalId} = props ?? {};
+
+          return  removeObjectGrant(objectType,objectId,principalId,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RemoveObjectGrantMutationResult = NonNullable<Awaited<ReturnType<typeof removeObjectGrant>>>
+    
+    export type RemoveObjectGrantMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Remove Object Grant
+ */
+export const useRemoveObjectGrant = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof removeObjectGrant>>, TError,{objectType: string;objectId: string;principalId: string}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof removeObjectGrant>>,
+        TError,
+        {objectType: string;objectId: string;principalId: string},
+        TContext
+      > => {
+
+      const mutationOptions = getRemoveObjectGrantMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Return the caller's effective privileges on an object (drives UI gating).
+ * @summary Get Effective Permissions
+ */
+export const getEffectivePermissions = (
+    objectType: string,
+    objectId: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<EffectivePermissionsOut>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/permissions/${objectType}/${objectId}/effective`,options
+    );
+  }
+
+
+
+
+export const getGetEffectivePermissionsQueryKey = (objectType?: string,
+    objectId?: string,) => {
+    return [
+    `/api/v1/permissions/${objectType}/${objectId}/effective`
+    ] as const;
+    }
+
+    
+export const getGetEffectivePermissionsQueryOptions = <TData = Awaited<ReturnType<typeof getEffectivePermissions>>, TError = AxiosError<HTTPValidationError>>(objectType: string,
+    objectId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getEffectivePermissions>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetEffectivePermissionsQueryKey(objectType,objectId);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getEffectivePermissions>>> = ({ signal }) => getEffectivePermissions(objectType,objectId, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, enabled: !!(objectType && objectId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getEffectivePermissions>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetEffectivePermissionsQueryResult = NonNullable<Awaited<ReturnType<typeof getEffectivePermissions>>>
+export type GetEffectivePermissionsQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetEffectivePermissions<TData = Awaited<ReturnType<typeof getEffectivePermissions>>, TError = AxiosError<HTTPValidationError>>(
+ objectType: string,
+    objectId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getEffectivePermissions>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getEffectivePermissions>>,
+          TError,
+          Awaited<ReturnType<typeof getEffectivePermissions>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetEffectivePermissions<TData = Awaited<ReturnType<typeof getEffectivePermissions>>, TError = AxiosError<HTTPValidationError>>(
+ objectType: string,
+    objectId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getEffectivePermissions>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getEffectivePermissions>>,
+          TError,
+          Awaited<ReturnType<typeof getEffectivePermissions>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetEffectivePermissions<TData = Awaited<ReturnType<typeof getEffectivePermissions>>, TError = AxiosError<HTTPValidationError>>(
+ objectType: string,
+    objectId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getEffectivePermissions>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Effective Permissions
+ */
+
+export function useGetEffectivePermissions<TData = Awaited<ReturnType<typeof getEffectivePermissions>>, TError = AxiosError<HTTPValidationError>>(
+ objectType: string,
+    objectId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getEffectivePermissions>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetEffectivePermissionsQueryOptions(objectType,objectId,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getGetEffectivePermissionsSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getEffectivePermissions>>, TError = AxiosError<HTTPValidationError>>(objectType: string,
+    objectId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getEffectivePermissions>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetEffectivePermissionsQueryKey(objectType,objectId);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getEffectivePermissions>>> = ({ signal }) => getEffectivePermissions(objectType,objectId, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof getEffectivePermissions>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetEffectivePermissionsSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof getEffectivePermissions>>>
+export type GetEffectivePermissionsSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetEffectivePermissionsSuspense<TData = Awaited<ReturnType<typeof getEffectivePermissions>>, TError = AxiosError<HTTPValidationError>>(
+ objectType: string,
+    objectId: string, options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getEffectivePermissions>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetEffectivePermissionsSuspense<TData = Awaited<ReturnType<typeof getEffectivePermissions>>, TError = AxiosError<HTTPValidationError>>(
+ objectType: string,
+    objectId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getEffectivePermissions>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetEffectivePermissionsSuspense<TData = Awaited<ReturnType<typeof getEffectivePermissions>>, TError = AxiosError<HTTPValidationError>>(
+ objectType: string,
+    objectId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getEffectivePermissions>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Effective Permissions
+ */
+
+export function useGetEffectivePermissionsSuspense<TData = Awaited<ReturnType<typeof getEffectivePermissions>>, TError = AxiosError<HTTPValidationError>>(
+ objectType: string,
+    objectId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getEffectivePermissions>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetEffectivePermissionsSuspenseQueryOptions(objectType,objectId,options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}

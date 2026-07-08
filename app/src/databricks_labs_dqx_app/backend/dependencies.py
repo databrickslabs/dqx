@@ -27,6 +27,7 @@ from .services.contract_rules_service import ContractRulesService
 from .services.discovery import DiscoveryService
 from .services.job_service import JobService
 from .services.role_service import RoleService
+from .services.permissions_service import PermissionsService
 from .services.registry_service import RegistryService
 from .services.monitored_table_service import MonitoredTableService
 from .services.apply_rules_service import ApplyRulesService
@@ -233,6 +234,14 @@ async def get_role_service(
 ) -> RoleService:
     """Create a RoleService routed at the OLTP executor."""
     return RoleService(sql=sql)
+
+
+async def get_permissions_service(
+    sql: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
+    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+) -> PermissionsService:
+    """Create a PermissionsService (object-grant CRUD + enforcement)."""
+    return PermissionsService(sql=sql, app_settings=app_settings)
 
 
 async def get_ai_gateway(
@@ -650,6 +659,37 @@ def require_role(*roles: UserRole):
 
 
 CurrentUserRole = Annotated[UserRole, Depends(get_user_role)]
+
+
+async def get_current_principal_ids(
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+) -> frozenset[str]:
+    """Resolve the caller's principal identity set for object-grant matching.
+
+    Returns the caller's own SCIM id plus every group they belong to — by
+    both id (``ComplexValue.value``) and display name — so a grant to a
+    group (stored by SCIM id from the principal picker) matches regardless
+    of how the group was referenced. One ``me()`` call; degrades to an
+    empty set on failure (object grants then fall back to baseline + role
+    bypass, never a hard 5xx).
+    """
+    try:
+        me = await asyncio.to_thread(obo_ws.current_user.me)
+        ids: set[str] = set()
+        if me.id:
+            ids.add(me.id)
+        for g in me.groups or []:
+            if g.value:
+                ids.add(g.value)
+            if g.display:
+                ids.add(g.display)
+        return frozenset(ids)
+    except Exception as exc:
+        logger.warning(f"Principal-id resolution failed, falling back to empty set: {exc}", exc_info=True)
+        return frozenset()
+
+
+CurrentPrincipalIds = Annotated[frozenset[str], Depends(get_current_principal_ids)]
 
 
 # ---------------------------------------------------------------------------

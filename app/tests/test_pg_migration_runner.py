@@ -262,8 +262,8 @@ class TestMigrationsInjection:
     def test_injected_list_is_used_in_place_of_default(self):
         """An explicit ``migrations=`` list must shadow ``PG_MIGRATIONS``."""
         fake = [
-            PgMigration(version=10, description="injected v10", sql="CREATE TABLE {schema}.t10 (id int);"),
-            PgMigration(version=11, description="injected v11", sql="CREATE TABLE {schema}.t11 (id int);"),
+            PgMigration(version=9001, description="injected v9001", sql="CREATE TABLE {schema}.t9001 (id int);"),
+            PgMigration(version=9002, description="injected v9002", sql="CREATE TABLE {schema}.t9002 (id int);"),
         ]
         exec_mock = _make_executor(applied_versions=())
         runner = PgMigrationRunner(exec_mock, migrations=fake)
@@ -277,8 +277,8 @@ class TestMigrationsInjection:
         # ``params`` tuple rather than substring-searching the SQL.
         assert len(inserts) == len(fake)
         bound_versions = _insert_meta_versions(cur)
-        assert 10 in bound_versions
-        assert 11 in bound_versions
+        assert 9001 in bound_versions
+        assert 9002 in bound_versions
         production_versions = {m.version for m in PG_MIGRATIONS}
         assert not (set(bound_versions) & production_versions), (
             "Injected runner leaked production-catalogue versions: " f"{set(bound_versions) & production_versions}"

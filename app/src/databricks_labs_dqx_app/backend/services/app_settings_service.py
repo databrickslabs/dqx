@@ -231,6 +231,30 @@ class AppSettingsService:
         return enabled
 
     # ------------------------------------------------------------------
+    # Object permissions — default per-grant inheritance (P22-D item 10).
+    #
+    # Governs the DEFAULT state of the per-grant "inherit to child objects"
+    # toggle in the Permissions tab. Defaults to ``False`` (each new grant is
+    # scoped to just its object unless the granter opts in). An admin can flip
+    # this to ``True`` so new grants inherit down the hierarchy by default —
+    # convenient for teams that manage access at the table-space level.
+    # ------------------------------------------------------------------
+
+    _PERMISSIONS_DEFAULT_INHERIT_KEY = "permissions_default_inherit"
+
+    def get_permissions_default_inherit(self) -> bool:
+        """Return the admin default for the per-grant inheritance toggle (default ``False``)."""
+        raw = self.get_setting(self._PERMISSIONS_DEFAULT_INHERIT_KEY)
+        return raw is not None and raw.strip().lower() == "true"
+
+    def save_permissions_default_inherit(self, enabled: bool, *, user_email: str | None = None) -> bool:
+        """Persist the default per-grant inheritance setting. Returns the saved value."""
+        self.save_setting(
+            self._PERMISSIONS_DEFAULT_INHERIT_KEY, "true" if enabled else "false", user_email=user_email
+        )
+        return enabled
+
+    # ------------------------------------------------------------------
     # Rules Registry — default-auto-upgrade (P21-G). Distinct from
     # ``auto_upgrade_without_approval`` above:
     #   * ``auto_upgrade_without_approval`` governs RE-APPROVAL — whether a

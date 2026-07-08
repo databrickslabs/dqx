@@ -15,12 +15,17 @@ from databricks.sdk import WorkspaceClient
 from fastapi import APIRouter, Depends, HTTPException
 
 from databricks_labs_dqx_app.backend.common.authorization import UserRole
+from databricks_labs_dqx_app.backend.common.permissions import ObjectType, Privilege
 from databricks_labs_dqx_app.backend.dependencies import (
+    CurrentPrincipalIds,
+    CurrentUserRole,
     get_data_product_service,
     get_obo_ws,
+    get_permissions_service,
     require_role,
     require_runner,
 )
+from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
 from databricks_labs_dqx_app.backend.logger import logger
 from databricks_labs_dqx_app.backend.models import (
     AddDataProductMemberIn,
@@ -137,10 +142,21 @@ def update_data_product(
     body: UpdateDataProductIn,
     svc: Annotated[DataProductService, Depends(get_data_product_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    role: CurrentUserRole,
+    principal_ids: CurrentPrincipalIds,
+    perms: Annotated[PermissionsService, Depends(get_permissions_service)],
 ) -> DataProductOut:
-    """Apply a partial update. Any successful update flips the space back to ``draft``."""
+    """Apply a partial update. Any successful update flips the space back to ``draft``.
+
+    Requires ``MODIFY`` on the table space (direct/inherited/owner) unless the
+    caller is an admin/approver.
+    """
+    user_email = _current_user_email(obo_ws)
+    perms.require_object(
+        ObjectType.DATA_PRODUCT.value, product_id, Privilege.MODIFY,
+        role=role, principal_ids=set(principal_ids), principal_email=user_email,
+    )
     try:
-        user_email = _current_user_email(obo_ws)
         updates = body.model_dump(exclude_unset=True)
         svc.update(product_id, updates, user_email)
         detail = svc.get(product_id)
@@ -165,8 +181,19 @@ def update_data_product(
 def delete_data_product(
     product_id: str,
     svc: Annotated[DataProductService, Depends(get_data_product_service)],
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    role: CurrentUserRole,
+    principal_ids: CurrentPrincipalIds,
+    perms: Annotated[PermissionsService, Depends(get_permissions_service)],
 ) -> dict[str, str]:
-    """Delete a data product and its members."""
+    """Delete a data product and its members.
+
+    Requires ``MODIFY`` on the table space unless the caller is an admin/approver.
+    """
+    perms.require_object(
+        ObjectType.DATA_PRODUCT.value, product_id, Privilege.MODIFY,
+        role=role, principal_ids=set(principal_ids), principal_email=_current_user_email(obo_ws),
+    )
     try:
         svc.delete(product_id)
         return {"status": "deleted", "product_id": product_id}
@@ -193,10 +220,22 @@ def add_data_product_member(
     body: AddDataProductMemberIn,
     svc: Annotated[DataProductService, Depends(get_data_product_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    role: CurrentUserRole,
+    principal_ids: CurrentPrincipalIds,
+    perms: Annotated[PermissionsService, Depends(get_permissions_service)],
 ) -> DataProductOut:
-    """Add (or update the pin of) a member. Upserts by ``binding_id``."""
+    """Add (or update the pin of) a member. Upserts by ``binding_id``.
+
+    Adding a table to a space mutates the space, so it requires ``APPLY`` on
+    the table space (in the day-one baseline; tightenable via a grant) unless
+    the caller is an admin/approver.
+    """
+    user_email = _current_user_email(obo_ws)
+    perms.require_object(
+        ObjectType.DATA_PRODUCT.value, product_id, Privilege.APPLY,
+        role=role, principal_ids=set(principal_ids), principal_email=user_email,
+    )
     try:
-        user_email = _current_user_email(obo_ws)
         svc.add_member(product_id, body.binding_id, body.pinned_version, user_email)
         detail = svc.get(product_id)
         assert detail is not None  # just added a member to it
@@ -219,10 +258,20 @@ def remove_data_product_member(
     member_id: str,
     svc: Annotated[DataProductService, Depends(get_data_product_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    role: CurrentUserRole,
+    principal_ids: CurrentPrincipalIds,
+    perms: Annotated[PermissionsService, Depends(get_permissions_service)],
 ) -> DataProductOut:
-    """Remove a member from a data product."""
+    """Remove a member from a data product.
+
+    Requires ``APPLY`` on the table space unless the caller is an admin/approver.
+    """
+    user_email = _current_user_email(obo_ws)
+    perms.require_object(
+        ObjectType.DATA_PRODUCT.value, product_id, Privilege.APPLY,
+        role=role, principal_ids=set(principal_ids), principal_email=user_email,
+    )
     try:
-        user_email = _current_user_email(obo_ws)
         svc.remove_member(product_id, member_id, user_email)
         detail = svc.get(product_id)
         assert detail is not None  # just removed a member from it

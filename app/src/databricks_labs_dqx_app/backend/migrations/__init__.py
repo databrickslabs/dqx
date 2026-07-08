@@ -879,6 +879,46 @@ _V10_DATA_PRODUCTS = (
 )
 
 
+# UC-style object permissions — Delta OLTP fallback for ``dq_object_grants``
+# (+ history). Mirrors the Postgres v10 migration; TEXT ``privileges`` and a
+# BOOLEAN ``inherit`` keep the DDL portable across both backends. Only present
+# on Delta when Lakebase is disabled (``oltp_fallback=True``). See the Postgres
+# v10 comment for the full column semantics.
+_V14_OBJECT_GRANTS = (
+    f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_object_grants ("
+    "  grant_id       STRING NOT NULL,"
+    "  object_type    STRING NOT NULL,"
+    "  object_id      STRING NOT NULL,"
+    "  principal_id   STRING NOT NULL,"
+    "  principal_type STRING NOT NULL,"
+    "  principal_name STRING,"
+    "  privileges     STRING NOT NULL,"
+    "  inherit        BOOLEAN NOT NULL,"
+    "  grantor        STRING,"
+    "  created_at     TIMESTAMP,"
+    "  updated_at     TIMESTAMP,"
+    "  CONSTRAINT pk_dq_object_grants PRIMARY KEY (grant_id) RELY"
+    ") CLUSTER BY (object_type, object_id);"
+    f"ALTER TABLE {_PLACEHOLDER}.dq_object_grants "
+    f"  ADD CONSTRAINT chk_dq_object_grants_object_type "
+    f"  CHECK (object_type IN ('registry_rule','monitored_table','data_product'));"
+    f"ALTER TABLE {_PLACEHOLDER}.dq_object_grants "
+    f"  ADD CONSTRAINT chk_dq_object_grants_principal_type "
+    f"  CHECK (principal_type IN ('user','group','all'));"
+    f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_object_grants_history ("
+    "  object_type    STRING NOT NULL,"
+    "  object_id      STRING NOT NULL,"
+    "  principal_id   STRING NOT NULL,"
+    "  principal_name STRING,"
+    "  privileges     STRING,"
+    "  inherit        BOOLEAN,"
+    "  action         STRING NOT NULL,"
+    "  changed_by     STRING,"
+    "  changed_at     TIMESTAMP NOT NULL"
+    ") CLUSTER BY (object_type, object_id, changed_at)"
+)
+
+
 # Freeze ``mode`` into every ``dq_rule_versions`` snapshot (P20 major fix).
 # The v2 OLTP-fallback baseline above now declares the column, so this is a
 # no-op on fresh Delta-OLTP installs; it exists to converge databases already
@@ -1055,6 +1095,13 @@ MIGRATIONS: list[Migration] = [
         description="Monitored tables become schedulable: add schedule_cron/schedule_tz (P21 item 14) "
         "— used only when Lakebase is disabled",
         sql_template=_V13_MONITORED_TABLES_SCHEDULE,
+        oltp_fallback=True,
+    ),
+    DeltaMigration(
+        version=14,
+        description="UC-style object permissions (dq_object_grants + history) — P22-D item 10, "
+        "used only when Lakebase is disabled",
+        sql_template=_V14_OBJECT_GRANTS,
         oltp_fallback=True,
     ),
 ]

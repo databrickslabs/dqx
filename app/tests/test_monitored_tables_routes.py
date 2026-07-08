@@ -182,7 +182,7 @@ class TestBulkRegister:
 class TestDelete:
     def test_delete_success(self):
         svc = MagicMock()
-        result = delete_monitored_table("b1", svc=svc, obo_ws=_mock_obo_ws())
+        result = delete_monitored_table("b1", svc=svc, obo_ws=_mock_obo_ws(), role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock())
         assert result == {"status": "deleted", "binding_id": "b1"}
         svc.delete.assert_called_once_with("b1", "alice@x")
 
@@ -190,7 +190,7 @@ class TestDelete:
         svc = MagicMock()
         svc.delete.side_effect = RuntimeError("Monitored table not found: b1")
         with pytest.raises(HTTPException) as excinfo:
-            delete_monitored_table("b1", svc=svc, obo_ws=_mock_obo_ws())
+            delete_monitored_table("b1", svc=svc, obo_ws=_mock_obo_ws(), role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock())
         assert excinfo.value.status_code == 404
 
 
@@ -202,7 +202,7 @@ class TestUpdateSchedule:
         table.schedule_tz = "UTC"
         svc.update_schedule.return_value = table
         body = UpdateMonitoredTableScheduleIn(schedule_cron="0 6 * * *", schedule_tz="UTC")
-        result = update_monitored_table_schedule("b1", body=body, svc=svc, obo_ws=_mock_obo_ws())
+        result = update_monitored_table_schedule("b1", body=body, svc=svc, obo_ws=_mock_obo_ws(), role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock())
         assert result.schedule_cron == "0 6 * * *"
         assert result.schedule_tz == "UTC"
         svc.update_schedule.assert_called_once_with("b1", "0 6 * * *", "UTC", "alice@x")
@@ -211,7 +211,7 @@ class TestUpdateSchedule:
         svc = MagicMock()
         svc.update_schedule.return_value = _table(status="approved")
         body = UpdateMonitoredTableScheduleIn(schedule_cron=None, schedule_tz=None)
-        result = update_monitored_table_schedule("b1", body=body, svc=svc, obo_ws=_mock_obo_ws())
+        result = update_monitored_table_schedule("b1", body=body, svc=svc, obo_ws=_mock_obo_ws(), role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock())
         assert result.schedule_cron is None
         svc.update_schedule.assert_called_once_with("b1", None, None, "alice@x")
 
@@ -220,7 +220,7 @@ class TestUpdateSchedule:
         svc.update_schedule.side_effect = RuntimeError("Monitored table not found: b1")
         body = UpdateMonitoredTableScheduleIn(schedule_cron="0 6 * * *", schedule_tz="UTC")
         with pytest.raises(HTTPException) as excinfo:
-            update_monitored_table_schedule("b1", body=body, svc=svc, obo_ws=_mock_obo_ws())
+            update_monitored_table_schedule("b1", body=body, svc=svc, obo_ws=_mock_obo_ws(), role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock())
         assert excinfo.value.status_code == 404
 
 
@@ -258,7 +258,7 @@ class TestApplyRuleToTable:
         applied = AppliedRule(id="ar1", binding_id="b1", rule_id="r1", column_mapping=[{"column": "id"}])
         svc.apply_rule.return_value = applied
         body = ApplyRuleIn(rule_id="r1", column_mapping=[{"column": "id"}])
-        result = apply_rule_to_table("b1", body=body, svc=svc, obo_ws=_mock_obo_ws())
+        result = apply_rule_to_table("b1", body=body, svc=svc, obo_ws=_mock_obo_ws(), role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock())
         assert result.id == "ar1"
         svc.apply_rule.assert_called_once_with(
             "b1", "r1", [{"column": "id"}], "alice@x", pinned_version=None, severity_override=None, tags={}
@@ -269,7 +269,7 @@ class TestApplyRuleToTable:
         svc.apply_rule.side_effect = MappingIncompleteError("missing slot")
         body = ApplyRuleIn(rule_id="r1", column_mapping=[{}])
         with pytest.raises(HTTPException) as excinfo:
-            apply_rule_to_table("b1", body=body, svc=svc, obo_ws=_mock_obo_ws())
+            apply_rule_to_table("b1", body=body, svc=svc, obo_ws=_mock_obo_ws(), role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock())
         assert excinfo.value.status_code == 422
 
     def test_unpublished_rule_raises_409(self):
@@ -277,7 +277,7 @@ class TestApplyRuleToTable:
         svc.apply_rule.side_effect = RuleNotPublishedError("not published")
         body = ApplyRuleIn(rule_id="r1", column_mapping=[{"column": "id"}])
         with pytest.raises(HTTPException) as excinfo:
-            apply_rule_to_table("b1", body=body, svc=svc, obo_ws=_mock_obo_ws())
+            apply_rule_to_table("b1", body=body, svc=svc, obo_ws=_mock_obo_ws(), role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock())
         assert excinfo.value.status_code == 409
 
     def test_missing_binding_or_rule_raises_404(self):
@@ -285,7 +285,7 @@ class TestApplyRuleToTable:
         svc.apply_rule.side_effect = RuntimeError("Monitored table not found: b1")
         body = ApplyRuleIn(rule_id="r1", column_mapping=[{"column": "id"}])
         with pytest.raises(HTTPException) as excinfo:
-            apply_rule_to_table("b1", body=body, svc=svc, obo_ws=_mock_obo_ws())
+            apply_rule_to_table("b1", body=body, svc=svc, obo_ws=_mock_obo_ws(), role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock())
         assert excinfo.value.status_code == 404
 
 
@@ -297,7 +297,7 @@ class TestSaveAppliedRules:
         body = SaveAppliedRulesIn(
             applications=[DesiredAppliedRuleIn(rule_id="r1", column_mapping=[{"column": "id"}])]
         )
-        result = save_applied_rules("b1", body=body, svc=svc, obo_ws=_mock_obo_ws())
+        result = save_applied_rules("b1", body=body, svc=svc, obo_ws=_mock_obo_ws(), role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock())
         assert [r.id for r in result] == ["ar1"]
         (called_binding_id, called_desired, called_user_email), _kwargs = svc.save_applied_rules.call_args
         assert called_binding_id == "b1"
@@ -309,7 +309,7 @@ class TestSaveAppliedRules:
         svc = MagicMock()
         svc.save_applied_rules.return_value = []
         body = SaveAppliedRulesIn(applications=[])
-        result = save_applied_rules("b1", body=body, svc=svc, obo_ws=_mock_obo_ws())
+        result = save_applied_rules("b1", body=body, svc=svc, obo_ws=_mock_obo_ws(), role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock())
         assert result == []
         svc.save_applied_rules.assert_called_once_with("b1", [], "alice@x")
 
@@ -318,7 +318,7 @@ class TestSaveAppliedRules:
         svc.save_applied_rules.side_effect = MappingIncompleteError("missing slot")
         body = SaveAppliedRulesIn(applications=[DesiredAppliedRuleIn(rule_id="r1", column_mapping=[{}])])
         with pytest.raises(HTTPException) as excinfo:
-            save_applied_rules("b1", body=body, svc=svc, obo_ws=_mock_obo_ws())
+            save_applied_rules("b1", body=body, svc=svc, obo_ws=_mock_obo_ws(), role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock())
         assert excinfo.value.status_code == 422
 
     def test_unpublished_rule_raises_409(self):
@@ -328,7 +328,7 @@ class TestSaveAppliedRules:
             applications=[DesiredAppliedRuleIn(rule_id="r1", column_mapping=[{"column": "id"}])]
         )
         with pytest.raises(HTTPException) as excinfo:
-            save_applied_rules("b1", body=body, svc=svc, obo_ws=_mock_obo_ws())
+            save_applied_rules("b1", body=body, svc=svc, obo_ws=_mock_obo_ws(), role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock())
         assert excinfo.value.status_code == 409
 
     def test_missing_binding_or_rule_raises_404(self):
@@ -338,14 +338,14 @@ class TestSaveAppliedRules:
             applications=[DesiredAppliedRuleIn(rule_id="r1", column_mapping=[{"column": "id"}])]
         )
         with pytest.raises(HTTPException) as excinfo:
-            save_applied_rules("b1", body=body, svc=svc, obo_ws=_mock_obo_ws())
+            save_applied_rules("b1", body=body, svc=svc, obo_ws=_mock_obo_ws(), role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock())
         assert excinfo.value.status_code == 404
 
 
 class TestRemoveAppliedRule:
     def test_remove_success(self):
         svc = MagicMock()
-        result = remove_applied_rule("b1", "ar1", svc=svc)
+        result = remove_applied_rule("b1", "ar1", svc=svc, obo_ws=_mock_obo_ws(), role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock())
         assert result == {"status": "removed", "binding_id": "b1", "applied_rule_id": "ar1"}
         svc.remove_applied.assert_called_once_with("ar1")
 
@@ -353,7 +353,7 @@ class TestRemoveAppliedRule:
         svc = MagicMock()
         svc.remove_applied.side_effect = RuntimeError("Applied rule not found: ar1")
         with pytest.raises(HTTPException) as excinfo:
-            remove_applied_rule("b1", "ar1", svc=svc)
+            remove_applied_rule("b1", "ar1", svc=svc, obo_ws=_mock_obo_ws(), role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock())
         assert excinfo.value.status_code == 404
 
 
@@ -361,7 +361,7 @@ class TestSetAppliedRulePin:
     def test_sets_pin(self):
         svc = MagicMock()
         svc.set_pin.return_value = AppliedRule(id="ar1", binding_id="b1", rule_id="r1", pinned_version=2)
-        result = set_applied_rule_pin("b1", "ar1", body=SetAppliedRulePinIn(pinned_version=2), svc=svc)
+        result = set_applied_rule_pin("b1", "ar1", body=SetAppliedRulePinIn(pinned_version=2), svc=svc, obo_ws=_mock_obo_ws(), role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock())
         assert result.pinned_version == 2
         svc.set_pin.assert_called_once_with("ar1", 2)
 
@@ -369,7 +369,7 @@ class TestSetAppliedRulePin:
         svc = MagicMock()
         svc.set_pin.side_effect = RuntimeError("Applied rule not found: ar1")
         with pytest.raises(HTTPException) as excinfo:
-            set_applied_rule_pin("b1", "ar1", body=SetAppliedRulePinIn(pinned_version=1), svc=svc)
+            set_applied_rule_pin("b1", "ar1", body=SetAppliedRulePinIn(pinned_version=1), svc=svc, obo_ws=_mock_obo_ws(), role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock())
         assert excinfo.value.status_code == 404
 
 
@@ -381,7 +381,7 @@ class TestSetAppliedRuleSeverityOverride:
         )
         result = set_applied_rule_severity_override(
             "b1", "ar1", body=SetAppliedRuleSeverityOverrideIn(severity="Critical"), svc=svc
-        )
+        , obo_ws=_mock_obo_ws(), role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock())
         assert result.severity_override == "Critical"
         svc.set_severity_override.assert_called_once_with("ar1", "Critical")
 
@@ -391,7 +391,7 @@ class TestSetAppliedRuleSeverityOverride:
         with pytest.raises(HTTPException) as excinfo:
             set_applied_rule_severity_override(
                 "b1", "ar1", body=SetAppliedRuleSeverityOverrideIn(severity="Low"), svc=svc
-            )
+            , obo_ws=_mock_obo_ws(), role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock())
         assert excinfo.value.status_code == 404
 
 

@@ -13,18 +13,23 @@ from databricks.sdk import WorkspaceClient
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from databricks_labs_dqx_app.backend.common.authorization import UserRole
+from databricks_labs_dqx_app.backend.common.permissions import ObjectType, Privilege
 from databricks_labs_dqx_app.backend.dependencies import (
+    CurrentPrincipalIds,
+    CurrentUserRole,
     get_apply_rules_service,
     get_binding_run_service,
     get_materializer,
     get_monitored_table_service,
     get_monitored_table_version_service,
     get_obo_ws,
+    get_permissions_service,
     get_rule_suggester,
     get_rules_catalog_service,
     require_role,
     require_runner,
 )
+from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
 from databricks_labs_dqx_app.backend.logger import logger
 from databricks_labs_dqx_app.backend.models import (
     AppliedRuleOut,
@@ -199,15 +204,25 @@ def delete_monitored_table(
     binding_id: str,
     svc: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    role: CurrentUserRole,
+    principal_ids: CurrentPrincipalIds,
+    perms: Annotated[PermissionsService, Depends(get_permissions_service)],
 ) -> dict[str, str]:
     """Delete a monitored table binding and its applied rules.
+
+    Requires ``MODIFY`` on the monitored table (direct/inherited/owner) unless
+    the caller is an admin/approver.
 
     TODO(Phase 3C): once the materializer exists, block/handle
     de-materialization of any ``dq_quality_rules`` rows tied to this
     binding's applications before allowing deletion.
     """
+    user_email = _current_user_email(obo_ws)
+    perms.require_object(
+        ObjectType.MONITORED_TABLE.value, binding_id, Privilege.MODIFY,
+        role=role, principal_ids=set(principal_ids), principal_email=user_email,
+    )
     try:
-        user_email = _current_user_email(obo_ws)
         svc.delete(binding_id, user_email)
         return {"status": "deleted", "binding_id": binding_id}
     except RuntimeError as e:
@@ -228,14 +243,22 @@ def update_monitored_table_schedule(
     body: UpdateMonitoredTableScheduleIn,
     svc: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    role: CurrentUserRole,
+    principal_ids: CurrentPrincipalIds,
+    perms: Annotated[PermissionsService, Depends(get_permissions_service)],
 ) -> MonitoredTableOut:
     """Set or clear a monitored table's run schedule (P21 item 14).
 
-    Orthogonal to the review lifecycle — does NOT flip the binding's status.
-    An approved table with a cron fires on the in-app scheduler.
+    Requires ``MODIFY`` on the monitored table unless the caller is an
+    admin/approver. Orthogonal to the review lifecycle — does NOT flip the
+    binding's status. An approved table with a cron fires on the in-app scheduler.
     """
+    user_email = _current_user_email(obo_ws)
+    perms.require_object(
+        ObjectType.MONITORED_TABLE.value, binding_id, Privilege.MODIFY,
+        role=role, principal_ids=set(principal_ids), principal_email=user_email,
+    )
     try:
-        user_email = _current_user_email(obo_ws)
         table = svc.update_schedule(binding_id, body.schedule_cron, body.schedule_tz, user_email)
         return MonitoredTableOut.from_domain(table)
     except RuntimeError as e:
@@ -380,10 +403,22 @@ def apply_rule_to_table(
     body: ApplyRuleIn,
     svc: Annotated[ApplyRulesService, Depends(get_apply_rules_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    role: CurrentUserRole,
+    principal_ids: CurrentPrincipalIds,
+    perms: Annotated[PermissionsService, Depends(get_permissions_service)],
 ) -> AppliedRuleOut:
-    """Apply a published registry rule to a monitored table's column mapping."""
+    """Apply a published registry rule to a monitored table's column mapping.
+
+    Applying a rule mutates the monitored table's rule set, so it requires
+    ``APPLY`` on the monitored table (in the day-one baseline) unless the
+    caller is an admin/approver.
+    """
+    user_email = _current_user_email(obo_ws)
+    perms.require_object(
+        ObjectType.MONITORED_TABLE.value, binding_id, Privilege.APPLY,
+        role=role, principal_ids=set(principal_ids), principal_email=user_email,
+    )
     try:
-        user_email = _current_user_email(obo_ws)
         applied = svc.apply_rule(
             binding_id,
             body.rule_id,
@@ -416,17 +451,25 @@ def save_applied_rules(
     body: SaveAppliedRulesIn,
     svc: Annotated[ApplyRulesService, Depends(get_apply_rules_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    role: CurrentUserRole,
+    principal_ids: CurrentPrincipalIds,
+    perms: Annotated[PermissionsService, Depends(get_permissions_service)],
 ) -> list[AppliedRuleOut]:
     """Reconcile the FULL desired set of applied rules for a monitored table in one batch.
 
-    Backs the staged Apply Rules editor: the frontend stages every add /
-    mapping-edit / severity-override / pin / removal locally and calls this
-    once on Save-as-draft or Publish instead of firing an immediate write per
-    edit. Does NOT materialize — materialization stays gated behind the
-    existing publish route.
+    Requires ``APPLY`` on the monitored table unless the caller is an
+    admin/approver. Backs the staged Apply Rules editor: the frontend stages
+    every add / mapping-edit / severity-override / pin / removal locally and
+    calls this once on Save-as-draft or Publish instead of firing an immediate
+    write per edit. Does NOT materialize — materialization stays gated behind
+    the existing publish route.
     """
+    user_email = _current_user_email(obo_ws)
+    perms.require_object(
+        ObjectType.MONITORED_TABLE.value, binding_id, Privilege.APPLY,
+        role=role, principal_ids=set(principal_ids), principal_email=user_email,
+    )
     try:
-        user_email = _current_user_email(obo_ws)
         desired = [
             DesiredAppliedRule(
                 rule_id=entry.rule_id,
@@ -459,8 +502,19 @@ def remove_applied_rule(
     binding_id: str,
     applied_rule_id: str,
     svc: Annotated[ApplyRulesService, Depends(get_apply_rules_service)],
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    role: CurrentUserRole,
+    principal_ids: CurrentPrincipalIds,
+    perms: Annotated[PermissionsService, Depends(get_permissions_service)],
 ) -> dict[str, str]:
-    """Remove an applied rule and every ``dq_quality_rules`` row it materialized."""
+    """Remove an applied rule and every ``dq_quality_rules`` row it materialized.
+
+    Requires ``APPLY`` on the monitored table unless the caller is an admin/approver.
+    """
+    perms.require_object(
+        ObjectType.MONITORED_TABLE.value, binding_id, Privilege.APPLY,
+        role=role, principal_ids=set(principal_ids), principal_email=_current_user_email(obo_ws),
+    )
     try:
         svc.remove_applied(applied_rule_id)
         return {"status": "removed", "binding_id": binding_id, "applied_rule_id": applied_rule_id}
@@ -482,8 +536,19 @@ def set_applied_rule_pin(
     applied_rule_id: str,
     body: SetAppliedRulePinIn,
     svc: Annotated[ApplyRulesService, Depends(get_apply_rules_service)],
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    role: CurrentUserRole,
+    principal_ids: CurrentPrincipalIds,
+    perms: Annotated[PermissionsService, Depends(get_permissions_service)],
 ) -> AppliedRuleOut:
-    """Pin (or, with ``pinned_version=None``, unpin) an applied rule's version."""
+    """Pin (or, with ``pinned_version=None``, unpin) an applied rule's version.
+
+    Requires ``APPLY`` on the monitored table unless the caller is an admin/approver.
+    """
+    perms.require_object(
+        ObjectType.MONITORED_TABLE.value, binding_id, Privilege.APPLY,
+        role=role, principal_ids=set(principal_ids), principal_email=_current_user_email(obo_ws),
+    )
     try:
         applied = svc.set_pin(applied_rule_id, body.pinned_version)
         return AppliedRuleOut.from_domain(applied)
@@ -505,8 +570,19 @@ def set_applied_rule_severity_override(
     applied_rule_id: str,
     body: SetAppliedRuleSeverityOverrideIn,
     svc: Annotated[ApplyRulesService, Depends(get_apply_rules_service)],
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    role: CurrentUserRole,
+    principal_ids: CurrentPrincipalIds,
+    perms: Annotated[PermissionsService, Depends(get_permissions_service)],
 ) -> AppliedRuleOut:
-    """Set (or, with ``severity=None``, clear) an applied rule's severity override."""
+    """Set (or, with ``severity=None``, clear) an applied rule's severity override.
+
+    Requires ``APPLY`` on the monitored table unless the caller is an admin/approver.
+    """
+    perms.require_object(
+        ObjectType.MONITORED_TABLE.value, binding_id, Privilege.APPLY,
+        role=role, principal_ids=set(principal_ids), principal_email=_current_user_email(obo_ws),
+    )
     try:
         applied = svc.set_severity_override(applied_rule_id, body.severity)
         return AppliedRuleOut.from_domain(applied)

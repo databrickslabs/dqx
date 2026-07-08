@@ -14,6 +14,7 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi import HTTPException
 
+from databricks_labs_dqx_app.backend.common.authorization import UserRole
 from databricks_labs_dqx_app.backend.models import CreateRegistryRuleIn, UpdateRegistryRuleIn
 from databricks_labs_dqx_app.backend.registry_models import RegistryRule, RuleDefinition
 from databricks_labs_dqx_app.backend.routes.v1.registry_rules import (
@@ -128,7 +129,7 @@ class TestCreateAndUpdate:
         svc = MagicMock()
         svc.update_draft.return_value = _rule(status="draft")
         body = UpdateRegistryRuleIn(user_metadata={"name": "x"})
-        update_registry_rule("r1", body=body, svc=svc, user_email="carol@x")
+        update_registry_rule("r1", body=body, svc=svc, user_email="carol@x", role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock())
         assert svc.update_draft.call_args.kwargs["user_email"] == "carol@x"
 
     def test_create_rejects_unsafe_sql_with_400(self):
@@ -156,7 +157,7 @@ class TestCreateAndUpdate:
         svc.update_draft.side_effect = ValueError("only draft rules can be edited")
         body = UpdateRegistryRuleIn(user_metadata={"name": "x"})
         with pytest.raises(HTTPException) as excinfo:
-            update_registry_rule("r1", body=body, svc=svc, user_email="alice@x")
+            update_registry_rule("r1", body=body, svc=svc, user_email="alice@x", role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock())
         assert excinfo.value.status_code == 400
 
     def test_update_missing_rule_raises_404(self):
@@ -164,21 +165,21 @@ class TestCreateAndUpdate:
         svc.update_draft.side_effect = RuntimeError("Registry rule not found: r1")
         body = UpdateRegistryRuleIn(user_metadata={"name": "x"})
         with pytest.raises(HTTPException) as excinfo:
-            update_registry_rule("r1", body=body, svc=svc, user_email="alice@x")
+            update_registry_rule("r1", body=body, svc=svc, user_email="alice@x", role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock())
         assert excinfo.value.status_code == 404
 
     def test_update_passes_author_kind_through_to_service(self):
         svc = MagicMock()
         svc.update_draft.return_value = _rule(status="draft")
         body = UpdateRegistryRuleIn(user_metadata={"name": "x"}, author_kind="ai_assisted")
-        update_registry_rule("r1", body=body, svc=svc, user_email="alice@x")
+        update_registry_rule("r1", body=body, svc=svc, user_email="alice@x", role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock())
         assert svc.update_draft.call_args.kwargs["author_kind"] == "ai_assisted"
 
     def test_update_without_author_kind_passes_none(self):
         svc = MagicMock()
         svc.update_draft.return_value = _rule(status="draft")
         body = UpdateRegistryRuleIn(user_metadata={"name": "x"})
-        update_registry_rule("r1", body=body, svc=svc, user_email="alice@x")
+        update_registry_rule("r1", body=body, svc=svc, user_email="alice@x", role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock())
         assert svc.update_draft.call_args.kwargs["author_kind"] is None
 
     def test_update_rejects_unsafe_sql_with_400(self):
@@ -198,7 +199,7 @@ class TestCreateAndUpdate:
             ),
         )
         with pytest.raises(HTTPException) as excinfo:
-            update_registry_rule("r1", body=body, svc=svc, user_email="alice@x")
+            update_registry_rule("r1", body=body, svc=svc, user_email="alice@x", role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock())
         assert excinfo.value.status_code == 400
 
 
@@ -207,7 +208,7 @@ class TestDelete:
         svc = MagicMock()
         apply_rules = MagicMock()
         apply_rules.count_applications_for_rule.return_value = 0
-        result = delete_registry_rule("r1", svc=svc, apply_rules=apply_rules, user_email="alice@x")
+        result = delete_registry_rule("r1", svc=svc, apply_rules=apply_rules, user_email="alice@x", role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock())
         assert result == {"status": "deleted", "rule_id": "r1"}
         svc.delete.assert_called_once_with("r1", "alice@x")
 
@@ -217,7 +218,7 @@ class TestDelete:
         apply_rules.count_applications_for_rule.return_value = 0
         svc.delete.side_effect = RuntimeError("Registry rule not found: r1")
         with pytest.raises(HTTPException) as excinfo:
-            delete_registry_rule("r1", svc=svc, apply_rules=apply_rules, user_email="alice@x")
+            delete_registry_rule("r1", svc=svc, apply_rules=apply_rules, user_email="alice@x", role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock())
         assert excinfo.value.status_code == 404
 
     def test_delete_applied_rule_raises_409(self):
@@ -225,7 +226,7 @@ class TestDelete:
         apply_rules = MagicMock()
         apply_rules.count_applications_for_rule.return_value = 2
         with pytest.raises(HTTPException) as excinfo:
-            delete_registry_rule("r1", svc=svc, apply_rules=apply_rules, user_email="alice@x")
+            delete_registry_rule("r1", svc=svc, apply_rules=apply_rules, user_email="alice@x", role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock())
         assert excinfo.value.status_code == 409
         svc.delete.assert_not_called()
 

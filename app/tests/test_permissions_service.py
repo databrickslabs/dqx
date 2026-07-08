@@ -1,0 +1,398 @@
+"""Tests for ``PermissionsService`` — grant CRUD, inheritance resolution, and
+the enforcement matrix (baseline defaults, ownership, role bypass).
+
+Resolution/enforcement tests run against a small in-memory fake executor
+(:class:`_FakeOltp`) that answers the two SELECT shapes the service emits
+(grants-for-object, members-for-binding). CRUD tests use a spec-bound mock
+and assert on the emitted SQL.
+"""
+
+from __future__ import annotations
+
+import re
+from unittest.mock import MagicMock, create_autospec
+
+import pytest
+from fastapi import HTTPException
+
+from databricks_labs_dqx_app.backend.common.authorization import UserRole
+from databricks_labs_dqx_app.backend.common.permissions import (
+    PRINCIPAL_ALL,
+    ObjectType,
+    Privilege,
+)
+from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
+from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
+from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
+
+
+class _FakeOltp:
+    """Minimal OLTP executor supporting the service's SELECT shapes.
+
+    Grants are preloaded as raw rows keyed by (object_type, object_id) in the
+    exact column order ``list_grants`` selects. Members map binding_id ->
+    [product_id]. Only ``query`` is interpreted; ``execute`` is a no-op.
+    """
+
+    def __init__(self) -> None:
+        self.grants: dict[tuple[str, str], list[list[object]]] = {}
+        self.members: dict[str, list[str]] = {}
+
+    def fqn(self, table: str) -> str:
+        return table
+
+    def ts_text(self, col: str) -> str:
+        return col
+
+    def execute(self, sql: str, *, timeout_seconds: int = 120) -> None:
+        return None
+
+    def query(self, sql: str, *, timeout_seconds: int = 120) -> list[list[object]]:
+        if "dq_data_product_members" in sql:
+            m = re.search(r"binding_id = '([^']*)'", sql)
+            binding_id = m.group(1) if m else ""
+            return [[pid] for pid in self.members.get(binding_id, [])]
+        ot = re.search(r"object_type = '([^']*)'", sql)
+        oid = re.search(r"object_id = '([^']*)'", sql)
+        key = (ot.group(1) if ot else "", oid.group(1) if oid else "")
+        return list(self.grants.get(key, []))
+
+    def add_grant(
+        self,
+        object_type: str,
+        object_id: str,
+        principal_id: str,
+        privileges: str,
+        *,
+        inherit: bool = False,
+        principal_type: str = "user",
+        principal_name: str = "someone",
+    ) -> None:
+        row = [
+            object_type,
+            object_id,
+            principal_id,
+            principal_type,
+            principal_name,
+            privileges,
+            "true" if inherit else "false",
+            "grantor@x.com",
+            None,
+        ]
+        self.grants.setdefault((object_type, object_id), []).append(row)
+
+
+@pytest.fixture
+def app_settings_mock() -> MagicMock:
+    return create_autospec(AppSettingsService, instance=True)
+
+
+@pytest.fixture
+def fake() -> _FakeOltp:
+    return _FakeOltp()
+
+
+@pytest.fixture
+def svc(fake, app_settings_mock) -> PermissionsService:
+    return PermissionsService(sql=fake, app_settings=app_settings_mock)
+
+
+# ---------------------------------------------------------------------------
+# Baseline defaults
+# ---------------------------------------------------------------------------
+
+
+def test_baseline_grants_select_and_apply_to_everyone(svc):
+    eff = svc.effective_privileges("registry_rule", "r1", principal_ids=set())
+    assert Privilege.SELECT in eff
+    assert Privilege.APPLY in eff
+    assert Privilege.MODIFY not in eff
+
+
+def test_author_cannot_modify_without_grant(svc):
+    # RULE_AUTHOR, no grant, not owner -> MODIFY denied (feature gates MODIFY).
+    with pytest.raises(HTTPException) as exc:
+        svc.require(
+            "registry_rule",
+            "r1",
+            Privilege.MODIFY,
+            role=UserRole.RULE_AUTHOR,
+            principal_ids={"u1"},
+            owner_email="other@x.com",
+            principal_email="me@x.com",
+        )
+    assert exc.value.status_code == 403
+
+
+def test_apply_allowed_by_baseline_for_author(svc):
+    # No exception: APPLY is in the day-one baseline.
+    svc.require(
+        "monitored_table",
+        "b1",
+        Privilege.APPLY,
+        role=UserRole.RULE_AUTHOR,
+        principal_ids={"u1"},
+        owner_email="other@x.com",
+        principal_email="me@x.com",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Direct grants
+# ---------------------------------------------------------------------------
+
+
+def test_direct_grant_confers_modify(svc, fake):
+    fake.add_grant("registry_rule", "r1", "u1", "MODIFY")
+    assert svc.has_privilege(
+        "registry_rule",
+        "r1",
+        Privilege.MODIFY,
+        role=UserRole.RULE_AUTHOR,
+        principal_ids={"u1"},
+        owner_email="other@x.com",
+        principal_email="me@x.com",
+    )
+
+
+def test_grant_to_group_matches_via_principal_ids(svc, fake):
+    fake.add_grant("registry_rule", "r1", "grp1", "MODIFY", principal_type="group")
+    assert svc.has_privilege(
+        "registry_rule",
+        "r1",
+        Privilege.MODIFY,
+        role=UserRole.RULE_AUTHOR,
+        principal_ids={"u1", "grp1"},
+        owner_email="other@x.com",
+        principal_email="me@x.com",
+    )
+
+
+def test_all_principals_grant_applies_to_everyone(svc, fake):
+    fake.add_grant("data_product", "p1", PRINCIPAL_ALL, "MODIFY", principal_type="all")
+    assert svc.has_privilege(
+        "data_product",
+        "p1",
+        Privilege.MODIFY,
+        role=UserRole.RULE_AUTHOR,
+        principal_ids={"whoever"},
+        owner_email="other@x.com",
+        principal_email="me@x.com",
+    )
+
+
+def test_all_privileges_grant_expands(svc, fake):
+    fake.add_grant("registry_rule", "r1", "u1", "ALL_PRIVILEGES")
+    eff = svc.effective_privileges("registry_rule", "r1", principal_ids={"u1"})
+    assert eff == {Privilege.SELECT, Privilege.MODIFY, Privilege.APPLY}
+
+
+# ---------------------------------------------------------------------------
+# Role bypass + ownership
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("role", [UserRole.ADMIN, UserRole.RULE_APPROVER])
+def test_admin_and_approver_bypass_object_grants(svc, role):
+    assert svc.has_privilege(
+        "registry_rule",
+        "r1",
+        Privilege.MODIFY,
+        role=role,
+        principal_ids=set(),
+        owner_email="other@x.com",
+        principal_email="me@x.com",
+    )
+
+
+def test_owner_has_all_privileges(svc):
+    eff = svc.effective_privileges(
+        "registry_rule",
+        "r1",
+        principal_ids=set(),
+        owner_email="me@x.com",
+        principal_email="ME@x.com",  # case-insensitive
+    )
+    assert Privilege.MODIFY in eff
+
+
+# ---------------------------------------------------------------------------
+# Inheritance
+# ---------------------------------------------------------------------------
+
+
+def test_inherited_grant_flows_from_product_to_member_table(svc, fake):
+    fake.members["b1"] = ["p1"]
+    fake.add_grant("data_product", "p1", "u1", "MODIFY", inherit=True)
+    assert svc.has_privilege(
+        "monitored_table",
+        "b1",
+        Privilege.MODIFY,
+        role=UserRole.RULE_AUTHOR,
+        principal_ids={"u1"},
+        owner_email="other@x.com",
+        principal_email="me@x.com",
+    )
+
+
+def test_non_inheriting_product_grant_does_not_flow(svc, fake):
+    fake.members["b1"] = ["p1"]
+    fake.add_grant("data_product", "p1", "u1", "MODIFY", inherit=False)
+    assert not svc.has_privilege(
+        "monitored_table",
+        "b1",
+        Privilege.MODIFY,
+        role=UserRole.RULE_AUTHOR,
+        principal_ids={"u1"},
+        owner_email="other@x.com",
+        principal_email="me@x.com",
+    )
+
+
+def test_list_effective_grants_flags_inherited(svc, fake):
+    fake.members["b1"] = ["p1"]
+    fake.add_grant("data_product", "p1", "u1", "MODIFY", inherit=True)
+    eff = svc.list_effective_grants("monitored_table", "b1")
+    assert len(eff) == 1
+    assert eff[0].inherited_from_type == "data_product"
+    assert eff[0].inherited_from_id == "p1"
+
+
+def test_direct_grant_shadows_inherited_for_same_principal(svc, fake):
+    fake.members["b1"] = ["p1"]
+    fake.add_grant("data_product", "p1", "u1", "SELECT", inherit=True)
+    fake.add_grant("monitored_table", "b1", "u1", "MODIFY")
+    eff = svc.list_effective_grants("monitored_table", "b1")
+    # Only the direct grant surfaces for u1 (inherited one is shadowed).
+    assert len(eff) == 1
+    assert eff[0].inherited_from_type is None
+    assert eff[0].privileges == {Privilege.MODIFY}
+
+
+# ---------------------------------------------------------------------------
+# can_manage_grants
+# ---------------------------------------------------------------------------
+
+
+def test_manage_grants_requires_owner_or_admin(svc, fake):
+    fake.add_grant("registry_rule", "r1", "u1", "ALL_PRIVILEGES")
+    # ALL PRIVILEGES alone does NOT confer manage (UC: MANAGE is separate).
+    assert not svc.can_manage_grants(
+        "registry_rule",
+        "r1",
+        role=UserRole.RULE_AUTHOR,
+        principal_ids={"u1"},
+        owner_email="other@x.com",
+        principal_email="me@x.com",
+    )
+    # Owner can manage.
+    assert svc.can_manage_grants(
+        "registry_rule",
+        "r1",
+        role=UserRole.RULE_AUTHOR,
+        principal_ids={"u1"},
+        owner_email="me@x.com",
+        principal_email="me@x.com",
+    )
+    # Admin can manage.
+    assert svc.can_manage_grants(
+        "registry_rule", "r1", role=UserRole.ADMIN, principal_ids=set(), owner_email=None, principal_email=None
+    )
+
+
+# ---------------------------------------------------------------------------
+# CRUD (emitted SQL)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def mock_sql() -> MagicMock:
+    m = create_autospec(SqlExecutor, instance=True)
+    m.fqn.side_effect = lambda t: t
+    m.ts_text.side_effect = lambda c: c
+    m.query.return_value = []
+    return m
+
+
+def test_set_grant_deletes_then_inserts(mock_sql, app_settings_mock):
+    svc = PermissionsService(sql=mock_sql, app_settings=app_settings_mock)
+    svc.set_grant(
+        "registry_rule",
+        "r1",
+        "u1",
+        principal_type="user",
+        principal_name="Alice",
+        privileges={Privilege.SELECT, Privilege.MODIFY},
+        inherit=True,
+        grantor="admin@x.com",
+    )
+    executed = " ".join(str(c.args[0]) for c in mock_sql.execute.call_args_list)
+    assert "DELETE FROM dq_object_grants" in executed
+    assert "INSERT INTO dq_object_grants" in executed
+    assert "SELECT,MODIFY" in executed
+    assert "TRUE" in executed
+    # History row written.
+    assert "dq_object_grants_history" in executed
+
+
+def test_set_grant_full_set_stored_as_all_privileges(mock_sql, app_settings_mock):
+    svc = PermissionsService(sql=mock_sql, app_settings=app_settings_mock)
+    svc.set_grant(
+        "data_product",
+        "p1",
+        "u1",
+        principal_type="user",
+        principal_name="Alice",
+        privileges={Privilege.SELECT, Privilege.MODIFY, Privilege.APPLY},
+        inherit=False,
+        grantor="admin@x.com",
+    )
+    executed = " ".join(str(c.args[0]) for c in mock_sql.execute.call_args_list)
+    assert "ALL_PRIVILEGES" in executed
+
+
+def test_set_grant_empty_privileges_removes(mock_sql, app_settings_mock):
+    svc = PermissionsService(sql=mock_sql, app_settings=app_settings_mock)
+    svc.set_grant(
+        "data_product",
+        "p1",
+        "u1",
+        principal_type="user",
+        principal_name="Alice",
+        privileges=set(),
+        inherit=False,
+        grantor="admin@x.com",
+    )
+    executed = " ".join(str(c.args[0]) for c in mock_sql.execute.call_args_list)
+    assert "DELETE FROM dq_object_grants" in executed
+    assert "INSERT INTO dq_object_grants " not in executed
+
+
+def test_set_grant_rejects_bad_object_type(mock_sql, app_settings_mock):
+    svc = PermissionsService(sql=mock_sql, app_settings=app_settings_mock)
+    with pytest.raises(HTTPException) as exc:
+        svc.set_grant(
+            "bogus",
+            "x",
+            "u1",
+            principal_type="user",
+            principal_name="Alice",
+            privileges={Privilege.MODIFY},
+            inherit=False,
+            grantor="admin@x.com",
+        )
+    assert exc.value.status_code == 400
+
+
+def test_default_inherit_delegates_to_app_settings(mock_sql, app_settings_mock):
+    app_settings_mock.get_permissions_default_inherit.return_value = True
+    svc = PermissionsService(sql=mock_sql, app_settings=app_settings_mock)
+    assert svc.get_default_inherit() is True
+    svc.set_default_inherit(False, user_email="admin@x.com")
+    app_settings_mock.save_permissions_default_inherit.assert_called_once()
+
+
+def test_object_type_enum_values():
+    assert ObjectType.REGISTRY_RULE.value == "registry_rule"
+    assert ObjectType.MONITORED_TABLE.value == "monitored_table"
+    assert ObjectType.DATA_PRODUCT.value == "data_product"

@@ -13,15 +13,20 @@ from databricks.labs.dqx.errors import UnsafeSqlQueryError
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from databricks_labs_dqx_app.backend.common.authorization import CurrentUser, UserRole
+from databricks_labs_dqx_app.backend.common.permissions import ObjectType, Privilege
 from databricks_labs_dqx_app.backend.dependencies import (
+    CurrentPrincipalIds,
+    CurrentUserRole,
     get_app_settings_service,
     get_apply_rules_service,
     get_materializer,
     get_monitored_table_version_service,
+    get_permissions_service,
     get_registry_service,
     get_rule_embeddings_service,
     require_role,
 )
+from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
 from databricks_labs_dqx_app.backend.logger import logger
 from databricks_labs_dqx_app.backend.models import (
     BackfillRuleEmbeddingsOut,
@@ -170,6 +175,9 @@ def update_registry_rule(
     body: UpdateRegistryRuleIn,
     svc: Annotated[RegistryService, Depends(get_registry_service)],
     user_email: CurrentUser,
+    role: CurrentUserRole,
+    principal_ids: CurrentPrincipalIds,
+    perms: Annotated[PermissionsService, Depends(get_permissions_service)],
 ) -> RegistryRuleOut:
     """Update a registry rule's live definition/tags in place.
 
@@ -177,7 +185,18 @@ def update_registry_rule(
     revision path — the edits stay inert behind the frozen vN snapshot until
     the rule is re-submitted and re-approved as vN+1). Rejected with 400 for
     any other status.
+
+    Object-permission enforcement: requires ``MODIFY`` on the rule (direct,
+    inherited, or via ownership) unless the caller is an admin/approver.
     """
+    perms.require_object(
+        ObjectType.REGISTRY_RULE.value,
+        rule_id,
+        Privilege.MODIFY,
+        role=role,
+        principal_ids=set(principal_ids),
+        principal_email=user_email,
+    )
     try:
         rule = svc.update_draft(
             rule_id,
@@ -216,13 +235,27 @@ def delete_registry_rule(
     svc: Annotated[RegistryService, Depends(get_registry_service)],
     apply_rules: Annotated[ApplyRulesService, Depends(get_apply_rules_service)],
     user_email: CurrentUser,
+    role: CurrentUserRole,
+    principal_ids: CurrentPrincipalIds,
+    perms: Annotated[PermissionsService, Depends(get_permissions_service)],
 ) -> dict[str, str]:
     """Delete a registry rule.
 
     Blocked (409) when the rule is currently applied to one or more
     monitored tables — remove every application first via the Apply Rules
     flow, then delete.
+
+    Object-permission enforcement: requires ``MODIFY`` on the rule unless the
+    caller is an admin/approver.
     """
+    perms.require_object(
+        ObjectType.REGISTRY_RULE.value,
+        rule_id,
+        Privilege.MODIFY,
+        role=role,
+        principal_ids=set(principal_ids),
+        principal_email=user_email,
+    )
     try:
         applied_count = apply_rules.count_applications_for_rule(rule_id)
         if applied_count > 0:

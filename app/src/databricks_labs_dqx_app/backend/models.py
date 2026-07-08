@@ -1472,3 +1472,79 @@ class CheckFunctionsOut(BaseModel):
     """Response wrapper for ``GET /api/v1/check-functions``."""
 
     functions: list[CheckFunctionDef] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Object permissions (UC-style grants) — P22-D item 10
+# ---------------------------------------------------------------------------
+
+
+class PrincipalSearchOut(BaseModel):
+    """A workspace principal (user or group) returned by the principal picker."""
+
+    kind: str = Field(description="'user' or 'group'")
+    workspace_principal_id: str = Field(description="Workspace SCIM id of the principal")
+    display_name: str = Field(description="Human-readable name for display")
+    secondary: str | None = Field(default=None, description="Secondary label (username or member count)")
+
+
+class ObjectGrantOut(BaseModel):
+    """One principal's grant on a securable object (direct or inherited)."""
+
+    principal_id: str = Field(description="Workspace SCIM id, or '__all__' for the all-principals baseline grant")
+    principal_type: str = Field(description="'user', 'group', or 'all'")
+    principal_name: str | None = Field(default=None, description="Human-readable principal name")
+    privileges: list[str] = Field(default_factory=list, description="Granted privileges (SELECT/MODIFY/APPLY or ALL_PRIVILEGES)")
+    inherit: bool = Field(default=False, description="Whether this grant flows down to child objects")
+    grantor: str | None = Field(default=None, description="Who granted this")
+    updated_at: str | None = Field(default=None, description="When the grant was last set (ISO8601)")
+    inherited: bool = Field(default=False, description="True when surfaced from a parent object via inheritance")
+    inherited_from_type: str | None = Field(default=None, description="Parent object type an inherited grant came from")
+    inherited_from_id: str | None = Field(default=None, description="Parent object id an inherited grant came from")
+
+
+class ObjectGrantsOut(BaseModel):
+    """Response for the Permissions tab: grants + baseline + caller capability."""
+
+    object_type: str = Field(description="Securable object type")
+    object_id: str = Field(description="Securable object id")
+    grants: list[ObjectGrantOut] = Field(default_factory=list)
+    baseline_privileges: list[str] = Field(
+        default_factory=list, description="Privileges every principal holds by default (shown as the 'All users' baseline row)"
+    )
+    can_manage: bool = Field(default=False, description="Whether the caller may add/remove grants on this object")
+    default_inherit: bool = Field(default=False, description="Admin default for the per-grant inheritance toggle on new grants")
+
+
+class SetObjectGrantIn(BaseModel):
+    """Create-or-replace one principal's grant on a securable object."""
+
+    principal_id: str = Field(description="Workspace SCIM id, or '__all__' for the baseline grant")
+    principal_type: str = Field(description="'user', 'group', or 'all'")
+    principal_name: str | None = Field(default=None, description="Human-readable principal name")
+    privileges: list[str] = Field(default_factory=list, description="Privileges to grant (empty removes the grant)")
+    inherit: bool = Field(default=False, description="Whether the grant flows down to child objects")
+
+
+class EffectivePermissionsOut(BaseModel):
+    """The caller's effective privileges on a single object (drives UI gating)."""
+
+    object_type: str
+    object_id: str
+    privileges: list[str] = Field(default_factory=list)
+    can_modify: bool = Field(default=False)
+    can_apply: bool = Field(default=False)
+    can_manage_grants: bool = Field(default=False)
+    is_owner: bool = Field(default=False)
+
+
+class PermissionsDefaultInheritOut(BaseModel):
+    """Admin setting: default state of the per-grant inheritance toggle."""
+
+    enabled: bool = Field(description="When true, new grants default to inheriting down the hierarchy")
+
+
+class SetPermissionsDefaultInheritIn(BaseModel):
+    """Request body for updating the default-inheritance admin setting."""
+
+    enabled: bool
