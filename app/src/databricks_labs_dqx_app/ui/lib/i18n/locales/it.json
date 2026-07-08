@@ -223,7 +223,14 @@
     "computeSaved": "Impostazioni di calcolo salvate.",
     "computeSaveFailed": "Impossibile salvare le impostazioni di calcolo.",
     "computeGrantSucceeded": "Accesso concesso.",
-    "computeGrantFailed": "Impossibile concedere l'accesso."
+    "computeGrantFailed": "Impossibile concedere l'accesso.",
+    "permissionsDefaultInheritTitle": "Ereditarietà delle autorizzazioni",
+    "permissionsDefaultInheritHelp": "Imposta il valore predefinito per l'interruttore di ereditarietà per concessione. Se attivo, una nuova concessione su uno spazio di tabelle si propaga per impostazione predefinita alle tabelle membro. Le singole concessioni possono comunque sovrascrivere questa impostazione.",
+    "permissionsDefaultInheritLabel": "Eredita le nuove concessioni per impostazione predefinita",
+    "permissionsDefaultInheritHint": "Si applica alle concessioni create dopo questa modifica; le concessioni esistenti non vengono modificate.",
+    "permissionsDefaultInheritSaved": "Impostazione di ereditarietà salvata.",
+    "permissionsDefaultInheritFailedSave": "Impossibile salvare l'impostazione di ereditarietà.",
+    "permissionsDefaultInheritAdminOnlyHint": "Solo gli amministratori possono modificare questa impostazione."
   },
   "discovery": {
     "breadcrumb": "Esplorazione",
@@ -1569,7 +1576,8 @@
     "slotFamilyBoolean": "Booleano",
     "slotFamilyArray": "Array",
     "slotFamilyAny": "Qualsiasi",
-    "slotFamilyLockedTooltip": "Questo controllo funziona solo su un tipo di colonna, quindi la sua famiglia è fissa."
+    "slotFamilyLockedTooltip": "Questo controllo funziona solo su un tipo di colonna, quindi la sua famiglia è fissa.",
+    "tabPermissions": "Autorizzazioni"
   },
   "monitoredTables": {
     "breadcrumb": "Tabelle monitorate",
@@ -1923,7 +1931,8 @@
       "generatedSqlLabel": "SQL generato",
       "backToSample": "Torna al campione",
       "noRows": "Nessuna riga da mostrare."
-    }
+    },
+    "tabPermissions": "Autorizzazioni"
   },
   "dataProducts": {
     "title": "Spazi Tabelle",
@@ -2095,6 +2104,51 @@
     "toastRejected": "Spazio tabelle rifiutato.",
     "toastRejectFailed": "Impossibile rifiutare lo spazio tabelle.",
     "toastSubmitted": "Inviato per revisione.",
-    "toastSubmitFailed": "Impossibile inviare per revisione."
+    "toastSubmitFailed": "Impossibile inviare per revisione.",
+    "tabPermissions": "Autorizzazioni"
+  },
+  "permissions": {
+    "title": "Autorizzazioni",
+    "stewardLabel": "Responsabile",
+    "stewardHelp": "Il responsabile gestisce la qualità dei dati di questo oggetto e revisiona le modifiche.",
+    "stewardNone": "Nessun responsabile impostato.",
+    "principal": "Entità",
+    "privileges": "Privilegi",
+    "view": "Visualizza",
+    "modify": "Modifica",
+    "apply": "Applica",
+    "viewHint": "Leggi questo oggetto",
+    "modifyHint": "Modifica configurazione e logica",
+    "applyHint": "Applica a tabelle o spazi",
+    "allPrivileges": "TUTTI I PRIVILEGI",
+    "inheritance": "Ereditarietà",
+    "inherits": "Eredita",
+    "inheritedFrom": "Ereditato da {{type}}",
+    "grantedBy": "Concesso da",
+    "allUsers": "Tutti gli utenti",
+    "defaultNote": "(predefinito)",
+    "addPermission": "Aggiungi autorizzazione",
+    "editPermission": "Modifica autorizzazione",
+    "removePermission": "Rimuovi autorizzazione",
+    "inheritToggleLabel": "Eredita agli oggetti figli",
+    "inheritToggleHint": "Se attivo, questa concessione si propaga alle tabelle membro.",
+    "searchPlaceholder": "Cerca utenti o gruppi…",
+    "selectPrincipal": "Seleziona un'entità…",
+    "noGrants": "Nessuna autorizzazione concessa.",
+    "save": "Salva",
+    "cancel": "Annulla",
+    "suggested": "Suggerito",
+    "suggestedNote": "Proprietario della tabella",
+    "clearSelection": "Cancella selezione",
+    "startTyping": "Inizia a digitare per cercare.",
+    "typeMore": "Digita almeno {{count}} caratteri.",
+    "searching": "Ricerca in corso…",
+    "noResults": "Nessun risultato trovato.",
+    "user": "Utente",
+    "group": "Gruppo",
+    "grantSaved": "Autorizzazione salvata.",
+    "grantSaveFailed": "Impossibile salvare l'autorizzazione.",
+    "grantRemoved": "Autorizzazione rimossa.",
+    "grantRemoveFailed": "Impossibile rimuovere l'autorizzazione."
   }
 }

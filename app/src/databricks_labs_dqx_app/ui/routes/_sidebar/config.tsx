@@ -4,7 +4,7 @@ import { ErrorBoundary } from "react-error-boundary";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
-import { AlertCircle, AlertTriangle, CheckCircle2, Circle, Clock, Cpu, Database, Globe, LayoutDashboard, Loader2, Lock, Search, Tags, Plus, Trash2, X, ExternalLink, RotateCcw, ShieldCheck, Sparkles } from "lucide-react";
+import { AlertCircle, AlertTriangle, CheckCircle2, Circle, Clock, Cpu, Database, Globe, KeyRound, LayoutDashboard, Loader2, Lock, Search, Tags, Plus, Trash2, X, ExternalLink, RotateCcw, ShieldCheck, Sparkles } from "lucide-react";
 import { FadeIn } from "@/components/anim/FadeIn";
 import { ShinyText } from "@/components/anim/ShinyText";
 import { RoleManagement } from "@/components/RoleManagement";
@@ -62,6 +62,9 @@ import {
   useGetComputeSettings,
   useSaveComputeSettings,
   getGetComputeSettingsQueryKey,
+  useGetPermissionsDefaultInherit,
+  useSetPermissionsDefaultInherit,
+  getGetPermissionsDefaultInheritQueryKey,
   useListComputeWarehouses,
   useListComputeClusters,
   useGetWarehouseAccess,
@@ -2018,6 +2021,73 @@ function RulesRegistrySettingsCard() {
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Permissions — admin default for the per-grant inheritance toggle. When on,
+// a new grant on a table space defaults to flowing down to its member tables.
+// Individual grants can still override this per-grant in the Permissions tab.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function PermissionsSettingsCard() {
+  const { t } = useTranslation();
+  const { data, isLoading } = useGetPermissionsDefaultInherit({ query: { select: (d) => d.data } });
+  const queryClient = useQueryClient();
+  const saveMutation = useSetPermissionsDefaultInherit();
+  const { isAdmin } = usePermissions();
+
+  if (isLoading || !data) return <Skeleton className="h-40 w-full" />;
+
+  const save = (enabled: boolean) => {
+    saveMutation.mutate(
+      { data: { enabled } },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getGetPermissionsDefaultInheritQueryKey() });
+          toast.success(t("config.permissionsDefaultInheritSaved"));
+        },
+        onError: (err: unknown) => {
+          const axErr = err as AxiosError<{ detail?: string }>;
+          toast.error(axErr?.response?.data?.detail ?? t("config.permissionsDefaultInheritFailedSave"));
+        },
+      },
+    );
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <KeyRound className="h-5 w-5" />
+          {t("config.permissionsDefaultInheritTitle")}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          {t("config.permissionsDefaultInheritHelp")}
+        </p>
+
+        <div className="flex items-center justify-between rounded-md border p-3">
+          <div className="space-y-0.5 pr-4">
+            <Label htmlFor="permissions-default-inherit" className="text-sm">
+              {t("config.permissionsDefaultInheritLabel")}
+            </Label>
+            <p className="text-[11px] text-muted-foreground">{t("config.permissionsDefaultInheritHint")}</p>
+          </div>
+          <Switch
+            id="permissions-default-inherit"
+            checked={data.enabled}
+            onCheckedChange={(checked) => save(checked)}
+            disabled={!isAdmin || saveMutation.isPending}
+          />
+        </div>
+
+        {!isAdmin && (
+          <span className="text-xs text-muted-foreground">{t("config.permissionsDefaultInheritAdminOnlyHint")}</span>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function ComputeSettingsCard() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -2310,6 +2380,13 @@ function ConfigPage() {
               <ErrorBoundary onReset={reset} FallbackComponent={SectionError}>
                 <Suspense fallback={<Skeleton className="h-40 w-full" />}>
                   <RulesRegistrySettingsCard />
+                </Suspense>
+              </ErrorBoundary>
+            </FadeIn>
+            <FadeIn delay={0.185}>
+              <ErrorBoundary onReset={reset} FallbackComponent={SectionError}>
+                <Suspense fallback={<Skeleton className="h-40 w-full" />}>
+                  <PermissionsSettingsCard />
                 </Suspense>
               </ErrorBoundary>
             </FadeIn>

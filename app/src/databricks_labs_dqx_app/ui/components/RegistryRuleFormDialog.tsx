@@ -46,13 +46,14 @@ import {
   History as HistoryIcon,
   Info,
   Loader2,
+  Shield,
   Sparkles,
-  Users,
   Wrench,
   X,
 } from "lucide-react";
 import { LabelsEditor } from "@/components/Labels";
 import { HelpTooltip } from "@/components/HelpTooltip";
+import { PermissionsTab } from "@/components/permissions/PermissionsTab";
 import { CatalogBrowser } from "@/components/CatalogBrowser";
 import { PredicatePolaritySwitch } from "@/components/rules/PredicatePolaritySwitch";
 import { PredicateEditorExplainer } from "@/components/rules/PredicateEditorExplainer";
@@ -122,7 +123,7 @@ type Polarity = "pass" | "fail";
 // Top-level page tabs. Persisted to the URL (`?tab=`) by the routed detail
 // page so browser back/forward moves between them, mirroring the old dqx
 // editor's page-based structure.
-export type PageTab = "about" | "sharing" | "implementation" | "test" | "history";
+export type PageTab = "about" | "permissions" | "implementation" | "test" | "history";
 
 // Mirrors the backend's `forbidden_statements` list verbatim — see
 // `is_sql_query_safe()` in `src/databricks/labs/dqx/utils.py`, the source of
@@ -1551,8 +1552,8 @@ export function RegistryRuleFormDialog({
   // then Default Severity before Dimension — each picker shows the same
   // colored dot dqlake renders next to the selected value (sourced from the
   // label definition's configured value_colors, same data DQX already uses
-  // for badges elsewhere). Steward now lives on its own Sharing tab (see
-  // sharingTabContent below), matching dqlake's About/Sharing split.
+  // for badges elsewhere). Steward now lives on its own Permissions tab (see
+  // permissionsTabContent below), alongside the UC-style grants surface.
   const aboutTabContent = (
     <div className="space-y-4 pt-2">
       <div className="space-y-1.5">
@@ -1699,26 +1700,20 @@ export function RegistryRuleFormDialog({
     </div>
   );
 
-  // Sharing tab — mirrors dqlake's About/Sharing split by moving Steward out
-  // of About onto its own tab. dqlake's Sharing tab also has a "Shared with"
-  // audience picker backed by a principal-search API and a visibility model
-  // DQX's registry schema doesn't have (rules aren't scoped to specific
-  // users/groups here) — that half is intentionally not fabricated.
-  const sharingTabContent = (
-    <div className="space-y-4 pt-2">
-      <div className="space-y-1.5">
-        <div className="flex items-center gap-1.5">
-          <Label className="text-xs">{t("rulesRegistry.stewardLabel")}</Label>
-          <HelpTooltip text={t("rulesRegistry.sharingStewardHelp")} />
-        </div>
-        <Input
-          className="h-8 w-full max-w-xs text-xs"
-          value={steward}
-          onChange={(e) => setSteward(e.target.value)}
-          disabled={readOnly}
-          placeholder={t("rulesRegistry.stewardPlaceholder")}
-        />
-      </div>
+  // Permissions tab — a UC-style permissions surface (steward + per-principal
+  // grants). The grants table needs a saved object id, so for a not-yet-created
+  // rule (create mode) `PermissionsTab` renders the steward picker only and
+  // omits the grants section (guarded on `objectId`).
+  const permissionsTabContent = (
+    <div className="pt-2">
+      <PermissionsTab
+        objectType="registry_rule"
+        objectId={sourceRule?.rule_id ?? ""}
+        showSteward
+        canEditSteward={!readOnly}
+        steward={steward}
+        onStewardChange={setSteward}
+      />
     </div>
   );
 
@@ -2235,9 +2230,9 @@ export function RegistryRuleFormDialog({
               <Info className="h-3.5 w-3.5" />
               {t("rulesRegistry.tabAbout")}
             </TabsTrigger>
-            <TabsTrigger value="sharing" className="gap-1.5">
-              <Users className="h-3.5 w-3.5" />
-              {t("rulesRegistry.tabSharing")}
+            <TabsTrigger value="permissions" className="gap-1.5">
+              <Shield className="h-3.5 w-3.5" />
+              {t("rulesRegistry.tabPermissions")}
             </TabsTrigger>
             <TabsTrigger value="implementation" className="gap-1.5">
               <Wrench className="h-3.5 w-3.5" />
@@ -2256,7 +2251,7 @@ export function RegistryRuleFormDialog({
           </TabsList>
         </div>
         <TabsContent value="about" className="pt-4">{aboutTabContent}</TabsContent>
-        <TabsContent value="sharing" className="pt-4">{sharingTabContent}</TabsContent>
+        <TabsContent value="permissions" className="pt-4">{permissionsTabContent}</TabsContent>
         <TabsContent value="implementation" className="pt-4">{implementationTabContent}</TabsContent>
         <TabsContent value="test" className="pt-4">{testTabContent}</TabsContent>
         <TabsContent value="history" className="pt-4">{historyTabContent}</TabsContent>

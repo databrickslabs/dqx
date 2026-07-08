@@ -223,7 +223,14 @@
     "computeSaved": "Configurações de computação salvas.",
     "computeSaveFailed": "Não foi possível salvar as configurações de computação.",
     "computeGrantSucceeded": "Acesso concedido.",
-    "computeGrantFailed": "Não foi possível conceder o acesso."
+    "computeGrantFailed": "Não foi possível conceder o acesso.",
+    "permissionsDefaultInheritTitle": "Herança de permissões",
+    "permissionsDefaultInheritHelp": "Define o padrão para o botão de herança por concessão. Quando ativado, uma nova concessão em um espaço de tabelas se propaga por padrão para as tabelas membros. Concessões individuais ainda podem substituir isso.",
+    "permissionsDefaultInheritLabel": "Herdar novas concessões por padrão",
+    "permissionsDefaultInheritHint": "Aplica-se às concessões criadas após esta alteração; as concessões existentes não são afetadas.",
+    "permissionsDefaultInheritSaved": "Padrão de herança salvo.",
+    "permissionsDefaultInheritFailedSave": "Falha ao salvar o padrão de herança.",
+    "permissionsDefaultInheritAdminOnlyHint": "Somente administradores podem alterar esta configuração."
   },
   "discovery": {
     "breadcrumb": "Descoberta",
@@ -1569,7 +1576,8 @@
     "slotFamilyBoolean": "Booleano",
     "slotFamilyArray": "Array",
     "slotFamilyAny": "Qualquer",
-    "slotFamilyLockedTooltip": "Esta verificação funciona apenas em um tipo de coluna, portanto sua família é fixa."
+    "slotFamilyLockedTooltip": "Esta verificação funciona apenas em um tipo de coluna, portanto sua família é fixa.",
+    "tabPermissions": "Permissões"
   },
   "monitoredTables": {
     "breadcrumb": "Tabelas Monitoradas",
@@ -1923,7 +1931,8 @@
       "generatedSqlLabel": "SQL gerado",
       "backToSample": "Voltar à amostra",
       "noRows": "Nenhuma linha para exibir."
-    }
+    },
+    "tabPermissions": "Permissões"
   },
   "dataProducts": {
     "title": "Espaços de Tabelas",
@@ -2095,6 +2104,51 @@
     "toastRejected": "Espaço de tabelas rejeitado.",
     "toastRejectFailed": "Falha ao rejeitar o espaço de tabelas.",
     "toastSubmitted": "Enviado para revisão.",
-    "toastSubmitFailed": "Falha ao enviar para revisão."
+    "toastSubmitFailed": "Falha ao enviar para revisão.",
+    "tabPermissions": "Permissões"
+  },
+  "permissions": {
+    "title": "Permissões",
+    "stewardLabel": "Responsável",
+    "stewardHelp": "O responsável cuida da qualidade de dados deste objeto e revisa as alterações.",
+    "stewardNone": "Nenhum responsável definido.",
+    "principal": "Entidade",
+    "privileges": "Privilégios",
+    "view": "Visualizar",
+    "modify": "Modificar",
+    "apply": "Aplicar",
+    "viewHint": "Ler este objeto",
+    "modifyHint": "Editar configuração e lógica",
+    "applyHint": "Aplicar a tabelas ou espaços",
+    "allPrivileges": "TODOS OS PRIVILÉGIOS",
+    "inheritance": "Herança",
+    "inherits": "Herda",
+    "inheritedFrom": "Herdado de {{type}}",
+    "grantedBy": "Concedido por",
+    "allUsers": "Todos os usuários",
+    "defaultNote": "(padrão)",
+    "addPermission": "Adicionar permissão",
+    "editPermission": "Editar permissão",
+    "removePermission": "Remover permissão",
+    "inheritToggleLabel": "Herdar para objetos filhos",
+    "inheritToggleHint": "Quando ativado, esta concessão se propaga para as tabelas membros.",
+    "searchPlaceholder": "Pesquisar usuários ou grupos…",
+    "selectPrincipal": "Selecione uma entidade…",
+    "noGrants": "Nenhuma permissão concedida ainda.",
+    "save": "Salvar",
+    "cancel": "Cancelar",
+    "suggested": "Sugerido",
+    "suggestedNote": "Proprietário da tabela",
+    "clearSelection": "Limpar seleção",
+    "startTyping": "Comece a digitar para pesquisar.",
+    "typeMore": "Digite pelo menos {{count}} caracteres.",
+    "searching": "Pesquisando…",
+    "noResults": "Nenhum resultado encontrado.",
+    "user": "Usuário",
+    "group": "Grupo",
+    "grantSaved": "Permissão salva.",
+    "grantSaveFailed": "Falha ao salvar a permissão.",
+    "grantRemoved": "Permissão removida.",
+    "grantRemoveFailed": "Falha ao remover a permissão."
   }
 }

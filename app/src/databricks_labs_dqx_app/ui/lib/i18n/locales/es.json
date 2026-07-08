@@ -223,7 +223,14 @@
     "computeSaved": "Configuración de cómputo guardada.",
     "computeSaveFailed": "No se pudo guardar la configuración de cómputo.",
     "computeGrantSucceeded": "Acceso concedido.",
-    "computeGrantFailed": "No se pudo conceder el acceso."
+    "computeGrantFailed": "No se pudo conceder el acceso.",
+    "permissionsDefaultInheritTitle": "Herencia de permisos",
+    "permissionsDefaultInheritHelp": "Establece el valor predeterminado del interruptor de herencia por concesión. Cuando está activado, una nueva concesión en un espacio de tablas se propaga de forma predeterminada a sus tablas miembro. Las concesiones individuales pueden anular esto.",
+    "permissionsDefaultInheritLabel": "Heredar nuevas concesiones de forma predeterminada",
+    "permissionsDefaultInheritHint": "Se aplica a las concesiones creadas después de este cambio; las concesiones existentes no se ven afectadas.",
+    "permissionsDefaultInheritSaved": "Valor predeterminado de herencia guardado.",
+    "permissionsDefaultInheritFailedSave": "No se pudo guardar el valor predeterminado de herencia.",
+    "permissionsDefaultInheritAdminOnlyHint": "Solo los administradores pueden cambiar esta configuración."
   },
   "discovery": {
     "breadcrumb": "Descubrimiento",
@@ -1569,7 +1576,8 @@
     "slotFamilyBoolean": "Booleano",
     "slotFamilyArray": "Array",
     "slotFamilyAny": "Cualquiera",
-    "slotFamilyLockedTooltip": "Esta comprobación solo funciona con un tipo de columna, por lo que su familia es fija."
+    "slotFamilyLockedTooltip": "Esta comprobación solo funciona con un tipo de columna, por lo que su familia es fija.",
+    "tabPermissions": "Permisos"
   },
   "monitoredTables": {
     "breadcrumb": "Tablas monitorizadas",
@@ -1923,7 +1931,8 @@
       "generatedSqlLabel": "SQL generado",
       "backToSample": "Volver a la muestra",
       "noRows": "No hay filas para mostrar."
-    }
+    },
+    "tabPermissions": "Permisos"
   },
   "dataProducts": {
     "title": "Espacios de Tablas",
@@ -2095,6 +2104,51 @@
     "toastRejected": "Espacio de tablas rechazado.",
     "toastRejectFailed": "No se pudo rechazar el espacio de tablas.",
     "toastSubmitted": "Enviado a revisión.",
-    "toastSubmitFailed": "No se pudo enviar a revisión."
+    "toastSubmitFailed": "No se pudo enviar a revisión.",
+    "tabPermissions": "Permisos"
+  },
+  "permissions": {
+    "title": "Permisos",
+    "stewardLabel": "Responsable",
+    "stewardHelp": "El responsable gestiona la calidad de datos de este objeto y revisa los cambios.",
+    "stewardNone": "No hay responsable definido.",
+    "principal": "Entidad",
+    "privileges": "Privilegios",
+    "view": "Ver",
+    "modify": "Modificar",
+    "apply": "Aplicar",
+    "viewHint": "Leer este objeto",
+    "modifyHint": "Editar configuración y lógica",
+    "applyHint": "Aplicar a tablas o espacios",
+    "allPrivileges": "TODOS LOS PRIVILEGIOS",
+    "inheritance": "Herencia",
+    "inherits": "Hereda",
+    "inheritedFrom": "Heredado de {{type}}",
+    "grantedBy": "Concedido por",
+    "allUsers": "Todos los usuarios",
+    "defaultNote": "(predeterminado)",
+    "addPermission": "Agregar permiso",
+    "editPermission": "Editar permiso",
+    "removePermission": "Quitar permiso",
+    "inheritToggleLabel": "Heredar a objetos secundarios",
+    "inheritToggleHint": "Cuando está activado, esta concesión se propaga a las tablas miembro.",
+    "searchPlaceholder": "Buscar usuarios o grupos…",
+    "selectPrincipal": "Selecciona una entidad…",
+    "noGrants": "Aún no se han concedido permisos.",
+    "save": "Guardar",
+    "cancel": "Cancelar",
+    "suggested": "Sugerido",
+    "suggestedNote": "Propietario de la tabla",
+    "clearSelection": "Borrar selección",
+    "startTyping": "Empieza a escribir para buscar.",
+    "typeMore": "Escribe al menos {{count}} caracteres.",
+    "searching": "Buscando…",
+    "noResults": "No se encontraron resultados.",
+    "user": "Usuario",
+    "group": "Grupo",
+    "grantSaved": "Permiso guardado.",
+    "grantSaveFailed": "No se pudo guardar el permiso.",
+    "grantRemoved": "Permiso eliminado.",
+    "grantRemoveFailed": "No se pudo eliminar el permiso."
   }
 }

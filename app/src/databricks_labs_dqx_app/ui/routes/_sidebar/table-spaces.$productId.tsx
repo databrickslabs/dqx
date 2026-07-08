@@ -25,7 +25,7 @@ import {
 import { ProductTabsShell, PRODUCT_TAB_KEYS, type ProductTabKey } from "@/components/data-products/ProductTabsShell";
 import { ProductHeader } from "@/components/data-products/ProductHeader";
 import { ProductAboutTab } from "@/components/data-products/ProductAboutTab";
-import { ProductSharingTab } from "@/components/data-products/ProductSharingTab";
+import { PermissionsTab } from "@/components/permissions/PermissionsTab";
 import { ProductTablesTab } from "@/components/data-products/ProductTablesTab";
 import { ProductRunsTab } from "@/components/data-products/ProductRunsTab";
 import { ProductSchedulingTab } from "@/components/data-products/ProductSchedulingTab";
@@ -149,9 +149,16 @@ function DataProductDetailPage() {
                 <ProductAboutTab editState={editState} canEdit={canEdit} />
               </TabBoundary>
             ),
-            sharing: (
-              <TabBoundary label={t("dataProducts.tabSharing")}>
-                <ProductSharingTab editState={editState} canEdit={canEdit} />
+            permissions: (
+              <TabBoundary label={t("dataProducts.tabPermissions")}>
+                <PermissionsTab
+                  objectType="data_product"
+                  objectId={productId}
+                  showSteward
+                  canEditSteward={canEdit}
+                  steward={editState.steward}
+                  onStewardChange={editState.setSteward}
+                />
               </TabBoundary>
             ),
             tables: (

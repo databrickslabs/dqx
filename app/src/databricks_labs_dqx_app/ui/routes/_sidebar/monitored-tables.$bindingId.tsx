@@ -92,6 +92,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { StatusBadge } from "@/components/RegistryRuleBadges";
+import { PermissionsTab } from "@/components/permissions/PermissionsTab";
 import { invalidateAfterMonitoredTableChange } from "@/lib/monitored-table-invalidation";
 import { useLabelDefinitions } from "@/lib/api-custom";
 import { usePermissions } from "@/hooks/use-permissions";
@@ -119,7 +120,7 @@ import { orderSeverityValuesForDisplay } from "@/components/RegistryRuleBadges";
 import { ProfileColumnList } from "@/components/bindings/ProfileColumnList";
 import { MonitoredTableSchedulingTab } from "@/components/monitored-tables/MonitoredTableSchedulingTab";
 
-const DETAIL_TAB_KEYS = ["about", "view-data", "profile", "apply-rules", "results", "schedule"] as const;
+const DETAIL_TAB_KEYS = ["about", "permissions", "view-data", "profile", "apply-rules", "results", "schedule"] as const;
 type DetailTab = (typeof DETAIL_TAB_KEYS)[number];
 
 /** Client-side deadline for the AI suggest-rules request (prefetch + manual
@@ -543,6 +544,10 @@ function MonitoredTableDetailPage() {
               <Info className="h-3.5 w-3.5" />
               {t("monitoredTables.tabAbout")}
             </TabsTrigger>
+            <TabsTrigger value="permissions" className="gap-1.5">
+              <KeyRound className="h-3.5 w-3.5" />
+              {t("monitoredTables.tabPermissions")}
+            </TabsTrigger>
             <TabsTrigger value="view-data" className="gap-1.5">
               <Database className="h-3.5 w-3.5" />
               {t("monitoredTables.tabViewData")}
@@ -569,6 +574,16 @@ function MonitoredTableDetailPage() {
 
           <TabsContent value="about">
             <AboutTab table={table} onColumnClick={handleColumnDeepLink} />
+          </TabsContent>
+
+          <TabsContent value="permissions">
+            <PermissionsTab
+              objectType="monitored_table"
+              objectId={bindingId}
+              showSteward
+              canEditSteward={false}
+              steward={table.steward ?? ""}
+            />
           </TabsContent>
 
           <TabsContent value="view-data">

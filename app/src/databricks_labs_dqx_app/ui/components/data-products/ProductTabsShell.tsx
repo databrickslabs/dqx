@@ -12,17 +12,17 @@
  */
 import { useTranslation } from "react-i18next";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { CalendarClock, History, Info, Share2, Table2, type LucideIcon } from "lucide-react";
+import { CalendarClock, History, Info, KeyRound, Table2, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-export type ProductTabKey = "about" | "sharing" | "tables" | "runs" | "scheduling";
+export type ProductTabKey = "about" | "permissions" | "tables" | "runs" | "scheduling";
 
 // Same icon-strip treatment as the Monitored Tables detail tab bar
 // (routes/_sidebar/monitored-tables.$bindingId.tsx) — gap-1.5 + h-3.5 w-3.5
 // icons ahead of the label.
 const TAB_ICONS: Record<ProductTabKey, LucideIcon> = {
   about: Info,
-  sharing: Share2,
+  permissions: KeyRound,
   tables: Table2,
   runs: History,
   scheduling: CalendarClock,
@@ -38,7 +38,7 @@ interface Props {
 
 /** All valid tab keys, in display order. The detail route validates the
  *  `?tab=` search param against this list. */
-export const PRODUCT_TAB_KEYS: ProductTabKey[] = ["about", "sharing", "tables", "runs", "scheduling"];
+export const PRODUCT_TAB_KEYS: ProductTabKey[] = ["about", "permissions", "tables", "runs", "scheduling"];
 
 function Separator() {
   return (
@@ -53,7 +53,7 @@ function Separator() {
 // Runs is intentionally absent from the strip — it lives in the header ⋮
 // menu (P21 item 29) and is still reachable by `?tab=runs`.
 const GROUP_A: ProductTabKey[] = ["about"];
-const GROUP_B: ProductTabKey[] = ["sharing", "tables"];
+const GROUP_B: ProductTabKey[] = ["permissions", "tables"];
 const RIGHT_TABS: ProductTabKey[] = ["scheduling"];
 
 function TabTrigger({ tabKey, label, disabled }: { tabKey: ProductTabKey; label: string; disabled: boolean }) {
@@ -76,7 +76,7 @@ export function ProductTabsShell({ activeTab, onTabChange, disabledTabs = new Se
   const labelFor = (key: ProductTabKey): string =>
     ({
       about: t("dataProducts.tabAbout"),
-      sharing: t("dataProducts.tabSharing"),
+      permissions: t("dataProducts.tabPermissions"),
       tables: t("dataProducts.tabTables"),
       runs: t("dataProducts.tabRuns"),
       scheduling: t("dataProducts.tabSchedule"),

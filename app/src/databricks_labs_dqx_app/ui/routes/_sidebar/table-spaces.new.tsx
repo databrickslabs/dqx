@@ -22,7 +22,7 @@ export const Route = createFileRoute("/_sidebar/table-spaces/new")({
 // `ProductTabsShell` rather than a bespoke stand-in, matching dqlake's
 // `new.tsx` pattern of disabling tabs via `disabledTabs` instead of
 // re-approximating the strip.
-const NEW_PRODUCT_DISABLED_TABS = new Set<ProductTabKey>(["sharing", "tables", "runs", "scheduling"]);
+const NEW_PRODUCT_DISABLED_TABS = new Set<ProductTabKey>(["permissions", "tables", "runs", "scheduling"]);
 
 function extractApiError(err: unknown, fallback: string): string {
   const axErr = err as { response?: { data?: { detail?: string } } };

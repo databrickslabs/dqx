@@ -223,7 +223,14 @@
     "computeSaved": "Compute settings saved.",
     "computeSaveFailed": "Couldn't save compute settings.",
     "computeGrantSucceeded": "Access granted.",
-    "computeGrantFailed": "Couldn't grant access."
+    "computeGrantFailed": "Couldn't grant access.",
+    "permissionsDefaultInheritTitle": "Permission inheritance",
+    "permissionsDefaultInheritHelp": "Sets the default for the per-grant inheritance toggle. When on, a new grant on a table space flows down to its member tables by default. Individual grants can still override this.",
+    "permissionsDefaultInheritLabel": "Inherit new grants by default",
+    "permissionsDefaultInheritHint": "Applies to grants created after this changes; existing grants are unaffected.",
+    "permissionsDefaultInheritSaved": "Inheritance default saved.",
+    "permissionsDefaultInheritFailedSave": "Failed to save inheritance default.",
+    "permissionsDefaultInheritAdminOnlyHint": "Only admins can change this setting."
   },
   "discovery": {
     "breadcrumb": "Discovery",
@@ -1569,7 +1576,8 @@
     "slotFamilyBoolean": "Boolean",
     "slotFamilyArray": "Array",
     "slotFamilyAny": "Any",
-    "slotFamilyLockedTooltip": "This check only works on one column type, so its family is fixed."
+    "slotFamilyLockedTooltip": "This check only works on one column type, so its family is fixed.",
+    "tabPermissions": "Permissions"
   },
   "monitoredTables": {
     "breadcrumb": "Monitored Tables",
@@ -1923,7 +1931,8 @@
       "generatedSqlLabel": "Generated SQL",
       "backToSample": "Back to sample",
       "noRows": "No rows to show."
-    }
+    },
+    "tabPermissions": "Permissions"
   },
   "dataProducts": {
     "title": "Table Spaces",
@@ -2095,6 +2104,51 @@
     "toastRejected": "Table space rejected.",
     "toastRejectFailed": "Failed to reject table space.",
     "toastSubmitted": "Submitted for review.",
-    "toastSubmitFailed": "Failed to submit for review."
+    "toastSubmitFailed": "Failed to submit for review.",
+    "tabPermissions": "Permissions"
+  },
+  "permissions": {
+    "title": "Permissions",
+    "stewardLabel": "Steward",
+    "stewardHelp": "The steward owns data quality for this object and reviews changes.",
+    "stewardNone": "No steward set.",
+    "principal": "Principal",
+    "privileges": "Privileges",
+    "view": "View",
+    "modify": "Modify",
+    "apply": "Apply",
+    "viewHint": "Read this object",
+    "modifyHint": "Edit configuration and logic",
+    "applyHint": "Apply to tables or spaces",
+    "allPrivileges": "ALL PRIVILEGES",
+    "inheritance": "Inheritance",
+    "inherits": "Inherits",
+    "inheritedFrom": "Inherited from {{type}}",
+    "grantedBy": "Granted by",
+    "allUsers": "All users",
+    "defaultNote": "(default)",
+    "addPermission": "Add permission",
+    "editPermission": "Edit permission",
+    "removePermission": "Remove permission",
+    "inheritToggleLabel": "Inherit to child objects",
+    "inheritToggleHint": "When on, this grant flows down to member tables.",
+    "searchPlaceholder": "Search users or groups…",
+    "selectPrincipal": "Select a principal…",
+    "noGrants": "No permissions granted yet.",
+    "save": "Save",
+    "cancel": "Cancel",
+    "suggested": "Suggested",
+    "suggestedNote": "Table owner",
+    "clearSelection": "Clear selection",
+    "startTyping": "Start typing to search.",
+    "typeMore": "Type at least {{count}} characters.",
+    "searching": "Searching…",
+    "noResults": "No results found.",
+    "user": "User",
+    "group": "Group",
+    "grantSaved": "Permission saved.",
+    "grantSaveFailed": "Failed to save permission.",
+    "grantRemoved": "Permission removed.",
+    "grantRemoveFailed": "Failed to remove permission."
   }
 }
