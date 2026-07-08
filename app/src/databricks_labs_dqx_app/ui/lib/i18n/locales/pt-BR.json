@@ -1690,6 +1690,7 @@
     "resultsApprovalBannerCta": "Revisar em Rascunhos e Revisão",
     "invalidFqnHint": "Selecione uma tabela no navegador de catálogo.",
     "suggestRulesButton": "Sugerir regras",
+    "suggestRulesRefresh": "Atualizar",
     "suggestRulesDialogTitle": "Regras sugeridas",
     "suggestRulesDialogDescription": "Regras publicadas que correspondem às colunas desta tabela. Revise cada mapeamento antes de adicioná-lo.",
     "suggestRulesLoading": "Comparando regras com esta tabela…",

@@ -1690,6 +1690,7 @@
     "resultsApprovalBannerCta": "Revisar en Borradores y Revisión",
     "invalidFqnHint": "Selecciona una tabla en el navegador de catálogo.",
     "suggestRulesButton": "Sugerir reglas",
+    "suggestRulesRefresh": "Actualizar",
     "suggestRulesDialogTitle": "Reglas sugeridas",
     "suggestRulesDialogDescription": "Reglas publicadas que coinciden con las columnas de esta tabla. Revisa cada asignación antes de agregarla.",
     "suggestRulesLoading": "Comparando reglas con esta tabla…",

@@ -1690,6 +1690,7 @@
     "resultsApprovalBannerCta": "Rivedi in Bozze e Revisione",
     "invalidFqnHint": "Seleziona una tabella dal browser del catalogo.",
     "suggestRulesButton": "Suggerisci regole",
+    "suggestRulesRefresh": "Aggiorna",
     "suggestRulesDialogTitle": "Regole suggerite",
     "suggestRulesDialogDescription": "Regole pubblicate che corrispondono alle colonne di questa tabella. Rivedi ogni mappatura prima di aggiungerla.",
     "suggestRulesLoading": "Confronto delle regole con questa tabella…",

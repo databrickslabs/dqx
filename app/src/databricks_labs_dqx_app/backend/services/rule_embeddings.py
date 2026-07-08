@@ -182,6 +182,46 @@ class RuleEmbeddingsService:
         self._upsert_vector_search_index(rule.rule_id, text, embedding)
         return True
 
+    def iter_embeddings(self) -> list[tuple[str, list[float]]]:
+        """Load every stored ``(rule_id, vector)`` row from the OLTP corpus.
+
+        This is the source the in-app cosine retriever
+        (:class:`~databricks_labs_dqx_app.backend.services.rule_retriever.CosineRuleRetriever`)
+        scans at query time — the same ``dq_rule_embeddings`` corpus written
+        best-effort on every publish (see :meth:`embed_and_store`) and by
+        :meth:`backfill`.
+
+        Best-effort by construction: a read failure or a malformed stored
+        vector never raises — it is logged and skipped so retrieval degrades
+        to "no candidates" rather than a 500.
+
+        Returns:
+            A list of ``(rule_id, embedding)`` tuples. Rows with an empty,
+            non-list, or unparseable embedding are omitted.
+        """
+        try:
+            rows = self._sql.query_dicts(f"SELECT rule_id, embedding FROM {self._table}")  # noqa: S608
+        except Exception:
+            logger.warning("Failed to read rule embeddings corpus %s (non-fatal)", self._table, exc_info=True)
+            return []
+        out: list[tuple[str, list[float]]] = []
+        for row in rows:
+            rule_id = row.get("rule_id")
+            raw = row.get("embedding")
+            if not rule_id or not raw:
+                continue
+            try:
+                vector = json.loads(raw)
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(vector, list) or not vector:
+                continue
+            try:
+                out.append((str(rule_id), [float(x) for x in vector]))
+            except (TypeError, ValueError):
+                continue
+        return out
+
     def backfill(self, rules: list[RegistryRule]) -> int:
         """Embed every rule in *rules* (e.g. all currently-published rules).
 

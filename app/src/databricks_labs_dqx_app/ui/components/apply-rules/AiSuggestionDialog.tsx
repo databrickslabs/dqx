@@ -8,7 +8,7 @@
 // empty state via `available`/`reason` on the response, matching DQX's AI
 // kill-switch semantics (see `useAiAvailability`).
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -21,21 +21,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Loader2, Sparkles } from "lucide-react";
-import {
-  useListRegistryRules,
-  useSuggestRulesForTable,
-  type RegistryRuleOut,
-  type SuggestedRuleMappingOut,
-} from "@/lib/api";
+import { Loader2, RefreshCw, Sparkles } from "lucide-react";
+import { useListRegistryRules, type RegistryRuleOut, type SuggestedRuleMappingOut } from "@/lib/api";
 import type { LabelDefinition } from "@/lib/api-custom";
-import { aiUnavailableReason } from "@/hooks/use-ai-availability";
 import { AI_BANNER_BORDER, AI_BUTTON_BG, AI_ICON_COLOR, AI_TEXT_GRADIENT } from "@/lib/ai-style";
 import { MappingChips } from "./MappingChips";
 import { SeverityBadge } from "@/components/RegistryRuleBadges";
 import { RESERVED_DIMENSION_KEY, RESERVED_SEVERITY_KEY, TagBadge, colorFor, newStagedRow } from "./shared";
 
-interface SuggestRulesState {
+export interface SuggestRulesState {
   available: boolean;
   reason?: string;
   suggestions: SuggestedRuleMappingOut[];
@@ -46,11 +40,19 @@ interface AiSuggestionDialogProps {
   onOpenChange: (open: boolean) => void;
   bindingId: string;
   labelDefinitions: LabelDefinition[];
+  /** Prefetched suggestion result, owned by the Apply Rules tab and fired the
+   *  moment the tab is entered (dqlake behaviour) — so opening this dialog is
+   *  instant instead of waiting on the request. `null` while the first fetch
+   *  is still in flight. */
+  state: SuggestRulesState | null;
+  /** True while a (pre)fetch is in flight and no result is available yet. */
+  loading: boolean;
+  /** Manual re-run of the suggestion request (the "Refresh" affordance). */
+  onRefresh: () => void;
   /** Appends one locally-staged row per accepted suggestion. Pure
    *  local-state mutation — no network call. */
   onAdd: (rows: ReturnType<typeof newStagedRow>[]) => void;
   onApplied: () => void;
-  onAiUnavailable: (reason: string) => void;
 }
 
 export function AiSuggestionDialog({
@@ -58,12 +60,13 @@ export function AiSuggestionDialog({
   onOpenChange,
   bindingId,
   labelDefinitions,
+  state,
+  loading,
+  onRefresh,
   onAdd,
   onApplied,
-  onAiUnavailable,
 }: AiSuggestionDialogProps) {
   const { t } = useTranslation();
-  const suggestMutation = useSuggestRulesForTable();
   // Suggestions only carry `rule_id` — resolving it back to a full
   // `RegistryRuleOut` is what lets `newStagedRow` denormalize the rule's
   // name/dimension/severity tags onto the staged row the same way every
@@ -74,43 +77,14 @@ export function AiSuggestionDialog({
     for (const r of registryData?.data ?? []) map.set(r.rule_id, r);
     return map;
   }, [registryData]);
-  const [state, setState] = useState<SuggestRulesState | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
-  const fetchedForRef = useRef<string | null>(null);
-  // `mutate` is referentially stable across renders (TanStack Query
-  // guarantee); the wrapping `suggestMutation` object is NOT, so it must
-  // stay out of the effect's dependency array below — including it caused
-  // an infinite render loop (the object identity changes every render,
-  // re-triggering the effect's unconditional `setSelected(new Set())` reset
-  // branch on every render while the dialog is closed).
-  const { mutate: suggestRules } = suggestMutation;
 
+  // Default every suggestion to ON whenever a fresh result arrives (mirrors
+  // dqlake). Selection is keyed by index into the current suggestions list.
   useEffect(() => {
-    if (!open) {
-      setState(null);
-      setSelected(new Set());
-      fetchedForRef.current = null;
-      return;
-    }
-    if (fetchedForRef.current === bindingId) return;
-    fetchedForRef.current = bindingId;
-    suggestRules(
-      { bindingId },
-      {
-        onSuccess: (resp) => {
-          const suggestions = resp.data.suggestions ?? [];
-          setState({ available: resp.data.available, reason: resp.data.reason, suggestions });
-          setSelected(new Set(suggestions.map((_, i) => i)));
-        },
-        onError: (err) => {
-          const reason = aiUnavailableReason(err);
-          if (reason) onAiUnavailable(reason);
-          toast.error(t("monitoredTables.suggestRulesFetchFailed"));
-          setState({ available: false, reason: reason ?? undefined, suggestions: [] });
-        },
-      },
-    );
-  }, [open, bindingId, suggestRules, onAiUnavailable, t]);
+    const suggestions = state?.suggestions ?? [];
+    setSelected(new Set(suggestions.map((_, i) => i)));
+  }, [state]);
 
   const toggle = (idx: number) => {
     setSelected((prev) => {
@@ -153,16 +127,27 @@ export function AiSuggestionDialog({
     onOpenChange(false);
   };
 
-  const loading = suggestMutation.isPending && state === null;
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Sparkles className={`h-4 w-4 ${AI_ICON_COLOR}`} />
-            <span className={AI_TEXT_GRADIENT}>{t("monitoredTables.suggestRulesDialogTitle")}</span>
-          </DialogTitle>
+          <div className="flex items-center justify-between gap-2 pr-8">
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles className={`h-4 w-4 ${AI_ICON_COLOR}`} />
+              <span className={AI_TEXT_GRADIENT}>{t("monitoredTables.suggestRulesDialogTitle")}</span>
+            </DialogTitle>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="gap-1.5 text-muted-foreground"
+              onClick={onRefresh}
+              disabled={loading}
+              aria-label={t("monitoredTables.suggestRulesRefresh")}
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+              {t("monitoredTables.suggestRulesRefresh")}
+            </Button>
+          </div>
           <DialogDescription>{t("monitoredTables.suggestRulesDialogDescription")}</DialogDescription>
         </DialogHeader>
 

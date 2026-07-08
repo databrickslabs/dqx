@@ -36,7 +36,7 @@ from .services.run_sets import RunSetService
 from .services.binding_run_service import BindingRunService
 from .services.data_product_service import DataProductService
 from .services.rule_embeddings import RuleEmbeddingsService
-from .services.rule_retriever import RuleRetriever, VectorSearchRetriever
+from .services.rule_retriever import CosineRuleRetriever, RuleRetriever
 from .services.rule_suggester import RuleSuggester
 from .services.rules_catalog_service import RulesCatalogService
 from .services.comments_service import CommentsService
@@ -353,12 +353,16 @@ async def get_rule_embeddings_service(
 
 
 async def get_rule_retriever(
-    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
-    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
     embeddings: Annotated[RuleEmbeddingsService, Depends(get_rule_embeddings_service)],
 ) -> RuleRetriever:
-    """Create the production Vector Search-backed RuleRetriever (design spec §8 swappable seam)."""
-    return VectorSearchRetriever(sp_ws=sp_ws, app_settings=app_settings, embeddings=embeddings)
+    """Create the production in-app cosine RuleRetriever (design spec §8 swappable seam).
+
+    Cosine-over-the-OLTP-corpus (mirroring dqlake) is the default: it has no
+    Vector Search index / provisioning-readiness dependency on the retrieval
+    path, so suggestions work as soon as rules are embedded. See
+    ``services.rule_retriever.CosineRuleRetriever``.
+    """
+    return CosineRuleRetriever(embeddings=embeddings)
 
 
 async def get_vector_store_provisioner(
@@ -371,23 +375,6 @@ async def get_vector_store_provisioner(
     return VectorStoreProvisioner(sp_ws=sp_ws, app_settings=app_settings, embeddings=embeddings, registry=registry)
 
 
-async def get_rule_suggester(
-    monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
-    registry: Annotated[RegistryService, Depends(get_registry_service)],
-    apply_rules: Annotated[ApplyRulesService, Depends(get_apply_rules_service)],
-    retriever: Annotated[RuleRetriever, Depends(get_rule_retriever)],
-    ai_gateway: Annotated[AIGateway, Depends(get_ai_gateway)],
-) -> RuleSuggester:
-    """Create a RuleSuggester wired to the registry/monitored-table/apply-rules services + AI gateway."""
-    return RuleSuggester(
-        monitored_tables=monitored_tables,
-        registry=registry,
-        apply_rules=apply_rules,
-        retriever=retriever,
-        ai_gateway=ai_gateway,
-    )
-
-
 async def get_discovery_service(
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
 ) -> DiscoveryService:
@@ -395,6 +382,30 @@ async def get_discovery_service(
     me = await asyncio.to_thread(obo_ws.current_user.me)
     user_id = me.user_name or me.id or "unknown"
     return DiscoveryService(ws=obo_ws, user_id=user_id)
+
+
+async def get_rule_suggester(
+    monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
+    registry: Annotated[RegistryService, Depends(get_registry_service)],
+    apply_rules: Annotated[ApplyRulesService, Depends(get_apply_rules_service)],
+    retriever: Annotated[RuleRetriever, Depends(get_rule_retriever)],
+    ai_gateway: Annotated[AIGateway, Depends(get_ai_gateway)],
+    discovery: Annotated[DiscoveryService, Depends(get_discovery_service)],
+) -> RuleSuggester:
+    """Create a RuleSuggester wired to the registry/monitored-table/apply-rules services + AI gateway.
+
+    The OBO-scoped ``discovery`` service resolves the target table's live UC
+    columns (name/type/family/comment) for matching, so suggestions work even
+    for a table that has never been profiled in the app — mirroring dqlake.
+    """
+    return RuleSuggester(
+        monitored_tables=monitored_tables,
+        registry=registry,
+        apply_rules=apply_rules,
+        retriever=retriever,
+        ai_gateway=ai_gateway,
+        discovery=discovery,
+    )
 
 
 async def get_view_service(

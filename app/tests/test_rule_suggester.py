@@ -25,6 +25,7 @@ from databricks_labs_dqx_app.backend.services.ai_gateway import (
     AIUnavailableError,
 )
 from databricks_labs_dqx_app.backend.services.apply_rules_service import ApplyRulesService
+from databricks_labs_dqx_app.backend.services.discovery import DiscoveryService, TableColumn
 from databricks_labs_dqx_app.backend.services.monitored_table_service import (
     LatestProfile,
     MonitoredTableDetail,
@@ -38,6 +39,19 @@ from databricks_labs_dqx_app.backend.services.rule_suggester import (
     _NO_PUBLISHED_RULES_REASON,
     RuleSuggester,
 )
+
+
+def _column(name: str, type_name: str = "STRING") -> TableColumn:
+    return TableColumn(name=name, type_name=type_name, comment=None, nullable=True, position=0)
+
+
+def _discovery(columns: list[TableColumn] | None = None) -> create_autospec:
+    """Fake DiscoveryService. Defaults to returning NO UC columns so tests
+    that seed a profile exercise the profile fallback path unchanged; pass
+    ``columns`` to exercise the UC-schema-first path."""
+    svc = create_autospec(DiscoveryService, instance=True)
+    svc.get_table_columns_async.return_value = columns or []
+    return svc
 
 
 def _rule(rule_id: str, slot_names: list[str], severity: str = "High") -> RegistryRule:
@@ -117,13 +131,14 @@ def apply_rules():
     return svc
 
 
-def _suggester(monitored_tables, registry, apply_rules, retriever, gateway) -> RuleSuggester:
+def _suggester(monitored_tables, registry, apply_rules, retriever, gateway, discovery=None) -> RuleSuggester:
     return RuleSuggester(
         monitored_tables=monitored_tables,
         registry=registry,
         apply_rules=apply_rules,
         retriever=retriever,
         ai_gateway=gateway,
+        discovery=discovery if discovery is not None else _discovery(),
     )
 
 
@@ -137,15 +152,15 @@ class TestUnavailablePaths:
         assert result.available is False
         assert "missing" in result.reason
 
-    async def test_vector_search_unconfigured(self, monitored_tables, registry, apply_rules):
+    async def test_retriever_unavailable(self, monitored_tables, registry, apply_rules):
         monitored_tables.get.return_value = _binding_detail()
-        retriever = FakeRetriever(available=False, reason="Vector Search is not configured (missing: vs_index_name).")
+        retriever = FakeRetriever(available=False, reason="no embedding endpoint is configured")
         suggester = _suggester(monitored_tables, registry, apply_rules, retriever, _gateway())
 
         result = await suggester.suggest("b1", "user@x")
 
         assert result.available is False
-        assert "vs_index_name" in result.reason
+        assert "embedding endpoint" in result.reason
 
     async def test_ai_not_enabled(self, monitored_tables, registry, apply_rules):
         monitored_tables.get.return_value = _binding_detail()
@@ -383,3 +398,57 @@ class TestPostProcessing:
         result = await suggester.suggest("b1", "user@x")
 
         assert result.suggestions == []
+
+
+class TestColumnResolution:
+    """Columns resolve from the live UC schema first (dqlake behaviour), with
+    the latest profile as a fallback — so a never-profiled table still works."""
+
+    async def test_uc_columns_used_when_table_never_profiled(self, monitored_tables, registry, apply_rules):
+        # No profile at all — the OLD behaviour produced zero columns and hence
+        # zero suggestions. Now the UC schema supplies the columns.
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = None
+        rule = _rule("r1", ["column"])
+        registry.get_rule.return_value = rule
+        retriever = FakeRetriever(candidates=[RetrievedRule(rule_id="r1", score=0.9)])
+        gateway = _gateway({"suggestions": [{"rule_id": "r1", "mapping": {"column": "email"}}]})
+        discovery = _discovery([_column("id", "BIGINT"), _column("email", "STRING")])
+        suggester = _suggester(monitored_tables, registry, apply_rules, retriever, gateway, discovery)
+
+        result = await suggester.suggest("b1", "user@x")
+
+        assert len(result.suggestions) == 1
+        assert result.suggestions[0].column_mapping == {"column": "email"}
+
+    async def test_uc_column_type_family_reaches_the_judge(self, monitored_tables, registry, apply_rules):
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = None
+        registry.get_rule.return_value = _rule("r1", ["column"])
+        retriever = FakeRetriever(candidates=[RetrievedRule(rule_id="r1", score=0.9)])
+        gateway = _gateway({"suggestions": []})
+        discovery = _discovery([_column("amount", "DECIMAL(10,2)")])
+        suggester = _suggester(monitored_tables, registry, apply_rules, retriever, gateway, discovery)
+
+        await suggester.suggest("b1", "user@x")
+
+        _, kwargs = gateway.query.call_args
+        user_prompt = kwargs["messages"][1]["content"]
+        assert "amount" in user_prompt
+        # DECIMAL classifies to the numeric family and reaches the judge payload.
+        assert "numeric" in user_prompt
+
+    async def test_falls_back_to_profile_when_uc_read_fails(self, monitored_tables, registry, apply_rules):
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = _profile({"legacy_col": {}})
+        registry.get_rule.return_value = _rule("r1", ["column"])
+        retriever = FakeRetriever(candidates=[RetrievedRule(rule_id="r1", score=0.9)])
+        gateway = _gateway({"suggestions": [{"rule_id": "r1", "mapping": {"column": "legacy_col"}}]})
+        discovery = _discovery()
+        discovery.get_table_columns_async.side_effect = RuntimeError("permission denied")
+        suggester = _suggester(monitored_tables, registry, apply_rules, retriever, gateway, discovery)
+
+        result = await suggester.suggest("b1", "user@x")
+
+        assert len(result.suggestions) == 1
+        assert result.suggestions[0].column_mapping == {"column": "legacy_col"}

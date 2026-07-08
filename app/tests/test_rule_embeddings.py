@@ -259,3 +259,33 @@ class TestBackfill:
         count = svc.backfill([_rule(rule_id="r1"), _rule(rule_id="r2")])
 
         assert count == 0
+
+
+class TestIterEmbeddings:
+    def test_parses_rows_and_json_vectors(self, svc, sql_executor_mock):
+        sql_executor_mock.query_dicts.return_value = [
+            {"rule_id": "r1", "embedding": json.dumps([0.1, 0.2, 0.3])},
+            {"rule_id": "r2", "embedding": json.dumps([1.0, 0.0])},
+        ]
+
+        rows = svc.iter_embeddings()
+
+        assert rows == [("r1", [0.1, 0.2, 0.3]), ("r2", [1.0, 0.0])]
+
+    def test_skips_malformed_and_empty_vectors(self, svc, sql_executor_mock):
+        sql_executor_mock.query_dicts.return_value = [
+            {"rule_id": "ok", "embedding": json.dumps([0.5])},
+            {"rule_id": "bad_json", "embedding": "not json"},
+            {"rule_id": "empty", "embedding": json.dumps([])},
+            {"rule_id": "null", "embedding": None},
+            {"rule_id": None, "embedding": json.dumps([0.9])},
+        ]
+
+        rows = svc.iter_embeddings()
+
+        assert rows == [("ok", [0.5])]
+
+    def test_read_failure_degrades_to_empty(self, svc, sql_executor_mock):
+        sql_executor_mock.query_dicts.side_effect = RuntimeError("warehouse down")
+
+        assert svc.iter_embeddings() == []

@@ -5,9 +5,20 @@
 implementation that can turn a free-text query into a ranked list of
 candidate published rule ids satisfies it.
 
-:class:`VectorSearchRetriever` is the production implementation, backed by
-a Databricks Vector Search index over the ``dq_rule_embeddings`` corpus
-(see ``services.rule_embeddings``). It requires an admin to configure
+:class:`CosineRuleRetriever` is the **production default** (design spec §8):
+a pure-Python cosine scan over the ``dq_rule_embeddings`` OLTP corpus (see
+``services.rule_embeddings``), mirroring dqlake's retriever. It has no
+Vector Search index, endpoint, or async-provisioning dependency on the
+retrieval path — as soon as the embedding endpoint is configured and rules
+are embedded (best-effort on publish + startup backfill), suggestions work,
+with no minutes-long index build to wait on and no "index not ready"
+degradation. The rule corpus is small enough that a full in-app scan is
+inexpensive.
+
+:class:`VectorSearchRetriever` is retained as a drop-in seam for a future
+ANN backend at corpus scale, backed by a Databricks Vector Search index over
+the same ``dq_rule_embeddings`` corpus, but is **not wired by default**. It
+requires an admin to configure
 ``embedding_endpoint_name``, ``vs_endpoint_name``, and ``vs_index_name``
 (see ``AppSettingsService``) — with any of the three unset,
 :meth:`VectorSearchRetriever.is_available` reports ``False`` with a
@@ -34,6 +45,8 @@ surface an opaque "Rule retrieval failed" instead of a clear, actionable
 from __future__ import annotations
 
 import logging
+import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -45,6 +58,27 @@ from databricks_labs_dqx_app.backend.services.app_settings_service import AppSet
 from databricks_labs_dqx_app.backend.services.rule_embeddings import RuleEmbeddingsService
 
 logger = logging.getLogger(__name__)
+
+
+def cosine_similarity(a: Sequence[float], b: Sequence[float]) -> float:
+    """Cosine similarity of two equal-length vectors, in pure Python.
+
+    Returns ``0.0`` for mismatched lengths or a zero-magnitude vector
+    (rather than raising) so a single malformed stored embedding can never
+    crash a retrieval.
+    """
+    if len(a) != len(b) or not a:
+        return 0.0
+    dot = 0.0
+    norm_a = 0.0
+    norm_b = 0.0
+    for x, y in zip(a, b):
+        dot += x * y
+        norm_a += x * x
+        norm_b += y * y
+    if norm_a <= 0.0 or norm_b <= 0.0:
+        return 0.0
+    return dot / (math.sqrt(norm_a) * math.sqrt(norm_b))
 
 
 class RuleRetrievalUnavailableError(Exception):
@@ -175,3 +209,58 @@ class VectorSearchRetriever:
                     score = 0.0
             candidates.append(RetrievedRule(rule_id=rule_id, score=score))
         return candidates[:top_k]
+
+
+class CosineRuleRetriever:
+    """In-app cosine :class:`RuleRetriever` over the OLTP embeddings corpus.
+
+    This is the **production default** (design spec §8 — the ``RuleRetriever``
+    seam). It mirrors dqlake's ``CosineRuleRetriever``: embed *query_text* via
+    the same :class:`RuleEmbeddingsService` used to populate the corpus, then
+    rank the stored ``dq_rule_embeddings`` rows by cosine similarity in pure
+    Python — no Databricks Vector Search index, endpoint, or async
+    provisioning on the retrieval path.
+
+    The rule corpus is small (one row per published registry rule), so a full
+    in-app scan is inexpensive and, critically, has **no readiness gate**: as
+    soon as the embedding endpoint is configured and rules have been embedded
+    (best-effort on publish + startup backfill), suggestions work — there is no
+    minutes-long index build to wait on and no "index not ready" degradation.
+    :class:`VectorSearchRetriever` remains available as a drop-in seam for a
+    future ANN backend at corpus scale, but is not wired by default.
+
+    Availability requires only that an embedding endpoint is configured (the
+    query text must be embeddable). An empty corpus is *not* an availability
+    failure — it surfaces downstream as the suggester's "no published rules"
+    reason, exactly like dqlake.
+    """
+
+    def __init__(self, embeddings: RuleEmbeddingsService) -> None:
+        self._embeddings = embeddings
+
+    def is_available(self) -> tuple[bool, str]:
+        """Return ``(True, "")`` iff an embedding endpoint is configured."""
+        if not self._embeddings.is_configured():
+            return False, (
+                "AI rule suggestions aren't available: no embedding endpoint is configured. "
+                "Ask an admin to enable AI in Settings."
+            )
+        return True, ""
+
+    def retrieve(self, query_text: str, top_k: int) -> list[RetrievedRule]:
+        available, reason = self.is_available()
+        if not available:
+            raise RuleRetrievalUnavailableError(reason)
+
+        query_vector = self._embeddings.embed_text(query_text)
+        if query_vector is None:
+            raise RuleRetrievalUnavailableError("Embedding endpoint returned no vector for the query text.")
+
+        scored = [
+            RetrievedRule(rule_id=rule_id, score=cosine_similarity(query_vector, vector))
+            for rule_id, vector in self._embeddings.iter_embeddings()
+        ]
+        scored.sort(key=lambda candidate: candidate.score, reverse=True)
+        if top_k > 0:
+            return scored[:top_k]
+        return scored

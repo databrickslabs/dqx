@@ -74,6 +74,7 @@ import {
   useGetRules,
   useListMonitoredTableVersions,
   useRunMonitoredTable,
+  useSuggestRulesForTable,
   type AppliedRuleOut,
   type ColumnOut,
   type MonitoredTableOut,
@@ -94,10 +95,10 @@ import { useJobPolling } from "@/hooks/use-job-polling";
 import { useUnsavedGuard } from "@/hooks/use-unsaved-guard";
 import { formatDateShort } from "@/lib/format-utils";
 import { cn } from "@/lib/utils";
-import { useAiAvailability } from "@/hooks/use-ai-availability";
+import { useAiAvailability, aiUnavailableReason } from "@/hooks/use-ai-availability";
 import { AI_BUTTON_BG } from "@/lib/ai-style";
 import { AddRulesDialog } from "@/components/apply-rules/AddRulesDialog";
-import { AiSuggestionDialog } from "@/components/apply-rules/AiSuggestionDialog";
+import { AiSuggestionDialog, type SuggestRulesState } from "@/components/apply-rules/AiSuggestionDialog";
 import { RuleConfigCard, computeStatus } from "@/components/apply-rules/RuleConfigCard";
 import { RulesByColumn, type ColumnRef } from "@/components/apply-rules/RulesByColumn";
 import {
@@ -960,6 +961,46 @@ function ApplyRulesTab({
   // "+ Add rule" CTA on a column card.
   const [openColumnName, setOpenColumnName] = useState<string | null>(null);
   const aiAvailability = useAiAvailability();
+  const { available: aiAvailable, reportUnavailable } = aiAvailability;
+
+  // AI rule suggestions are PREFETCHED the moment this tab is entered (dqlake
+  // behaviour). Radix unmounts inactive `TabsContent`, so this component only
+  // mounts on tab entry — mount == enter. The result is cached in
+  // `suggestState` so opening the Suggest dialog is instant instead of waiting
+  // on the round-trip; a manual "Refresh" in the dialog re-runs it.
+  const suggestMutation = useSuggestRulesForTable();
+  const { mutate: suggestRules, isPending: suggestPending } = suggestMutation;
+  const [suggestState, setSuggestState] = useState<SuggestRulesState | null>(null);
+  const suggestPrefetchedRef = useRef(false);
+
+  const runSuggest = useCallback(() => {
+    setSuggestState(null);
+    suggestRules(
+      { bindingId },
+      {
+        onSuccess: (resp) => {
+          setSuggestState({
+            available: resp.data.available,
+            reason: resp.data.reason,
+            suggestions: resp.data.suggestions ?? [],
+          });
+        },
+        onError: (err) => {
+          const reason = aiUnavailableReason(err);
+          if (reason) reportUnavailable(reason);
+          setSuggestState({ available: false, reason: reason ?? undefined, suggestions: [] });
+        },
+      },
+    );
+  }, [bindingId, suggestRules, reportUnavailable]);
+
+  useEffect(() => {
+    if (suggestPrefetchedRef.current || !aiAvailable) return;
+    suggestPrefetchedRef.current = true;
+    runSuggest();
+  }, [aiAvailable, runSuggest]);
+
+  const suggestLoading = suggestPending && suggestState === null;
 
   // DQX materializes one staged ROW per mapping group — a rule applied to
   // several columns produces several rows sharing the same rule_id. Group
@@ -1206,7 +1247,19 @@ function ApplyRulesTab({
           {canEdit && (
             <>
               {aiAvailability.available && (
-                <Button size="sm" className={`gap-2 ${AI_BUTTON_BG}`} onClick={() => setSuggestOpen(true)}>
+                <Button
+                  size="sm"
+                  className={`gap-2 ${AI_BUTTON_BG}`}
+                  onClick={() => {
+                    // Usually already prefetched on tab entry — just open. Re-fire
+                    // only when there's nothing usable yet (prefetch skipped or
+                    // came back unavailable); an in-flight prefetch is left alone.
+                    if (!suggestPending && (suggestState === null || !suggestState.available)) {
+                      runSuggest();
+                    }
+                    setSuggestOpen(true);
+                  }}
+                >
                   <Sparkles className="h-3.5 w-3.5" />
                   {t("monitoredTables.suggestRulesButton")}
                 </Button>
@@ -1330,9 +1383,11 @@ function ApplyRulesTab({
         onOpenChange={setSuggestOpen}
         bindingId={bindingId}
         labelDefinitions={labelDefinitions}
+        state={suggestState}
+        loading={suggestLoading}
+        onRefresh={runSuggest}
         onAdd={stageNewRows}
         onApplied={() => {}}
-        onAiUnavailable={aiAvailability.reportUnavailable}
       />
 
       <AlertDialog open={removeTarget !== null} onOpenChange={(open) => !open && setRemoveTarget(null)}>

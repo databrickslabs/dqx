@@ -1690,6 +1690,7 @@
     "resultsApprovalBannerCta": "Review in Drafts & Review",
     "invalidFqnHint": "Select a table from the catalog browser.",
     "suggestRulesButton": "Suggest rules",
+    "suggestRulesRefresh": "Refresh",
     "suggestRulesDialogTitle": "Suggested rules",
     "suggestRulesDialogDescription": "Published rules that match this table's columns. Review each mapping before you add it.",
     "suggestRulesLoading": "Matching rules to this table…",

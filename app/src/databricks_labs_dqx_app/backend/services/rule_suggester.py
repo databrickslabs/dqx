@@ -17,6 +17,7 @@ declared slots before it is returned (see :meth:`RuleSuggester._post_process`).
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
@@ -38,6 +39,7 @@ from databricks_labs_dqx_app.backend.services.ai_gateway import (
     AIUnavailableError,
 )
 from databricks_labs_dqx_app.backend.services.apply_rules_service import ApplyRulesService
+from databricks_labs_dqx_app.backend.services.discovery import DiscoveryService, TableColumn
 from databricks_labs_dqx_app.backend.services.monitored_table_service import LatestProfile, MonitoredTableService
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
 from databricks_labs_dqx_app.backend.services.rule_retriever import RuleRetrievalUnavailableError, RuleRetriever
@@ -45,6 +47,35 @@ from databricks_labs_dqx_app.backend.services.rule_retriever import RuleRetrieva
 logger = logging.getLogger(__name__)
 
 DEFAULT_TOP_K = 8
+
+# Maps a Unity Catalog column type (leading token, upper-cased) to the slot
+# ``family`` vocabulary the registry uses (see ``registry_models.SlotFamily``:
+# numeric / text / temporal / boolean / any). Mirrors dqlake's family mapping
+# so the judge can align a slot's declared family with a column's real type.
+_TYPE_FAMILY: dict[str, str] = {
+    "TINYINT": "numeric",
+    "SMALLINT": "numeric",
+    "INT": "numeric",
+    "INTEGER": "numeric",
+    "BIGINT": "numeric",
+    "LONG": "numeric",
+    "FLOAT": "numeric",
+    "DOUBLE": "numeric",
+    "DECIMAL": "numeric",
+    "STRING": "text",
+    "VARCHAR": "text",
+    "CHAR": "text",
+    "DATE": "temporal",
+    "TIMESTAMP": "temporal",
+    "TIMESTAMP_NTZ": "temporal",
+    "BOOLEAN": "boolean",
+}
+
+
+def _family_for_type(type_name: str) -> str:
+    """Classify a UC column ``type_name`` into a registry slot family."""
+    head = (type_name or "").upper().split("(")[0].split("<")[0].strip()
+    return _TYPE_FAMILY.get(head, "any")
 
 # Human-readable reasons for the genuine "available, but nothing to show"
 # outcomes. Kept as constants so the exact wording is asserted by tests and
@@ -54,17 +85,35 @@ _NO_MATCH_REASON = "No published rules matched this table's columns."
 _NO_CLEAN_MAPPING_REASON = "Found related rules, but none mapped cleanly to this table's columns."
 
 _JUDGE_SYSTEM_PROMPT = (
-    "You are a conservative data-quality rule mapping assistant. Given a table's columns and a list of "
-    "candidate published rules, suggest which rules apply to which columns. Every slot of a multi-slot rule "
-    "MUST be filled with a distinct existing column before you suggest it — never suggest a partial mapping. "
-    "Only suggest a rule when you are confident it is a good structural match (e.g. a numeric-family slot maps "
-    "to a numeric column, a temporal-family slot maps to a date/timestamp column). Never invent a column name "
-    "that is not in the provided column list.\n"
+    "You are a conservative data-quality rule mapping assistant. Given a table's columns (each with a name, "
+    "type, family, and optional comment) and a list of candidate published rules (each with input slots that "
+    "declare a family), suggest which rules apply to which columns. Every slot of a multi-slot rule MUST be "
+    "filled with a distinct existing column before you suggest it — never suggest a partial mapping. Only "
+    "suggest a rule when it is a good structural AND semantic match: a slot's family should match the column's "
+    "family (a numeric-family slot maps to a numeric column; a temporal-family slot to a date/timestamp column; "
+    "an 'any'-family slot may map to any column), and the column's name/comment should be consistent with what "
+    "the rule checks. A close name match between a slot and a column (e.g. slot 'email' → column 'vendor_email') "
+    "is supporting evidence. Never invent a column name that is not in the provided column list.\n"
     "Return STRICT JSON only, no prose, of the exact form: "
     '{"suggestions": [{"rule_id": "...", "mapping": {"slot_name": "column_name"}, '
     '"explanation": "short grounded reason"}]}. '
     'If nothing is a good match, return {"suggestions": []}.'
 )
+
+
+@dataclass
+class ColumnMeta:
+    """One resolved target-table column the suggester matches rules against.
+
+    ``type`` is the raw Unity Catalog type name and ``family`` is its
+    registry slot-family classification (see :func:`_family_for_type`); both
+    are empty/``"any"`` when the column list falls back to profile names.
+    """
+
+    name: str
+    type: str = ""
+    family: str = "any"
+    comment: str | None = None
 
 
 @dataclass
@@ -105,6 +154,7 @@ class RuleSuggester:
         apply_rules: ApplyRulesService,
         retriever: RuleRetriever,
         ai_gateway: AIGateway,
+        discovery: DiscoveryService,
         top_k: int = DEFAULT_TOP_K,
     ) -> None:
         self._monitored_tables = monitored_tables
@@ -112,6 +162,7 @@ class RuleSuggester:
         self._apply_rules = apply_rules
         self._retriever = retriever
         self._ai_gateway = ai_gateway
+        self._discovery = discovery
         self._top_k = top_k
 
     async def suggest(self, binding_id: str, user_email: str) -> SuggestRulesResult:
@@ -124,7 +175,7 @@ class RuleSuggester:
 
         Returns:
             A :class:`SuggestRulesResult`. ``available=False`` (never an
-            exception) covers: unknown binding, Vector Search/embedding not
+            exception) covers: unknown binding, embedding endpoint not
             configured, AI not configured/rate-limited, retrieval failure,
             or judge failure.
         """
@@ -140,7 +191,7 @@ class RuleSuggester:
 
         table_fqn = detail.table.table_fqn
         profile = self._monitored_tables.get_latest_profile(table_fqn)
-        columns = self._profile_columns(profile)
+        columns = await self._resolve_columns(table_fqn, profile)
         query_text = self._build_query_text(table_fqn, columns)
 
         try:
@@ -190,6 +241,38 @@ class RuleSuggester:
     # Query construction
     # ------------------------------------------------------------------
 
+    async def _resolve_columns(self, table_fqn: str, profile: LatestProfile | None) -> list[ColumnMeta]:
+        """Resolve the table's columns for matching — live UC schema first.
+
+        Mirrors dqlake: read the real column set (name, type, family,
+        comment) from Unity Catalog via the caller's OBO client, so matching
+        works even for a table that has never been profiled in the app. Only
+        when the UC read yields nothing (table dropped, insufficient
+        permissions, or a non-3-part fqn) does it fall back to the latest
+        profile's column names — the previous behaviour, which silently
+        produced zero columns (and therefore zero suggestions) for any table
+        without a prior profiling run. Best-effort: never raises.
+        """
+        parts = table_fqn.split(".")
+        uc_columns: list[TableColumn] = []
+        if len(parts) == 3:
+            try:
+                uc_columns = await self._discovery.get_table_columns_async(parts[0], parts[1], parts[2])
+            except Exception:
+                logger.info("Could not read UC columns for a monitored table; falling back to profile", exc_info=True)
+        if uc_columns:
+            return [
+                ColumnMeta(
+                    name=column.name,
+                    type=column.type_name,
+                    family=_family_for_type(column.type_name),
+                    comment=column.comment,
+                )
+                for column in uc_columns
+                if column.name
+            ]
+        return [ColumnMeta(name=name) for name in self._profile_columns(profile)]
+
     @staticmethod
     def _profile_columns(profile: LatestProfile | None) -> list[str]:
         """Return the column names known for this table from its latest profile.
@@ -220,10 +303,13 @@ class RuleSuggester:
         return sorted(columns)
 
     @staticmethod
-    def _build_query_text(table_fqn: str, columns: list[str]) -> str:
+    def _build_query_text(table_fqn: str, columns: list[ColumnMeta]) -> str:
         parts = [f"table: {table_fqn}"]
-        if columns:
-            parts.append("columns: " + ", ".join(columns))
+        for column in columns:
+            line = f"- {column.name} ({column.type or 'unknown'}, {column.family})"
+            if column.comment:
+                line += f": {column.comment}"
+            parts.append(line)
         return "\n".join(parts)
 
     # ------------------------------------------------------------------
@@ -233,7 +319,7 @@ class RuleSuggester:
     async def _judge(
         self,
         candidate_rules: list[RegistryRule],
-        columns: list[str],
+        columns: list[ColumnMeta],
         table_fqn: str,
         user_email: str,
     ) -> list[dict[str, Any]]:
@@ -248,8 +334,12 @@ class RuleSuggester:
             }
             for rule in candidate_rules
         ]
+        columns_payload = [
+            {"name": column.name, "type": column.type, "family": column.family, "comment": column.comment}
+            for column in columns
+        ]
         user_prompt = json.dumps(
-            {"table": table_fqn, "columns": columns, "candidate_rules": candidates_payload},
+            {"table": table_fqn, "columns": columns_payload, "candidate_rules": candidates_payload},
             sort_keys=True,
         )
         content = await self._ai_gateway.query(
@@ -281,11 +371,11 @@ class RuleSuggester:
     def _post_process(
         judged: list[dict[str, Any]],
         candidate_rules: list[RegistryRule],
-        columns: list[str],
+        columns: list[ColumnMeta],
         already_applied: set[tuple[str, str]],
     ) -> list[RuleSuggestion]:
         rules_by_id = {rule.rule_id: rule for rule in candidate_rules}
-        column_names = set(columns)
+        column_names = {column.name for column in columns}
         seen: set[tuple[str, str]] = set()
         out: list[RuleSuggestion] = []
         for item in judged:
