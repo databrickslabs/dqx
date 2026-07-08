@@ -171,6 +171,15 @@ class RuleVersion(BaseModel):
     id: str | None = Field(default=None, description="None until persisted")
     rule_id: str
     version: int
+    mode: RuleMode | None = Field(
+        default=None,
+        description=(
+            "Authoring mode frozen at publish time (dqx_native/lowcode/sql). Frozen alongside the "
+            "definition so a later in-place mode switch on the still-editable approved rule cannot "
+            "change how this served snapshot is rendered. ``None`` only for legacy rows written "
+            "before mode was frozen — the materializer falls back to the live rule's mode for those."
+        ),
+    )
     definition: RuleDefinition
     polarity: Polarity | None = None
     user_metadata: dict[str, Any] = Field(default_factory=dict)

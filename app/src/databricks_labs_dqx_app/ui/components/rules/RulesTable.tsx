@@ -182,7 +182,7 @@ const COLUMNS: Record<ColumnKey, ColumnDef> = {
     renderCell: (r) => (
       <span className="flex flex-wrap items-center gap-1">
         <StatusBadge status={r.status} />
-        {r.modified_since_publish && <ModifiedBadge version={r.version} />}
+        {r.display_status === "modified" && <ModifiedBadge version={r.version} />}
       </span>
     ),
   },

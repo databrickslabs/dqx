@@ -161,15 +161,17 @@ class RegistryService:
         )
         sql = (
             f"SELECT rule_id, version, {definition} AS definition_json, polarity, "
-            f"{user_metadata} AS user_metadata_json FROM {self._versions_table} WHERE {pairs}"  # noqa: S608
+            f"{user_metadata} AS user_metadata_json, mode FROM {self._versions_table} WHERE {pairs}"  # noqa: S608
         )
         rows = self._sql.query(sql)
         snapshots: dict[str, RuleVersion] = {}
         for row in rows:
             # Pad the created_by/created_at columns the modified check ignores
             # with empty strings so the row matches ``_row_to_version``'s
-            # ``list[str]`` shape (empty created_at parses to None).
-            snapshot = self._row_to_version([row[0], row[1], row[2], row[3], row[4], "", ""])
+            # ``list[str]`` shape (empty created_at parses to None); ``mode``
+            # (row[5]) is carried through to its trailing position so a
+            # mode-only edit is flagged in the list view too.
+            snapshot = self._row_to_version([row[0], row[1], row[2], row[3], row[4], "", "", row[5]])
             snapshots[snapshot.rule_id] = snapshot
         for rule in rules:
             snapshot = snapshots.get(rule.rule_id)
@@ -235,7 +237,7 @@ class RegistryService:
         e_rule_id = escape_sql_string(rule_id)
         sql = (
             f"SELECT rule_id, version, {definition} AS definition_json, polarity, "
-            f"{user_metadata} AS user_metadata_json, created_by, {created_at} "
+            f"{user_metadata} AS user_metadata_json, created_by, {created_at}, mode "
             f"FROM {self._versions_table} WHERE rule_id = '{e_rule_id}' ORDER BY version DESC"  # noqa: S608
         )
         rows = self._sql.query(sql)
@@ -245,17 +247,21 @@ class RegistryService:
     def _compute_modified(rule: RegistryRule, snapshot: RuleVersion | None) -> bool:
         """Return True when *rule*'s live content differs from its current *snapshot*.
 
-        Compares the fields a publish freezes — definition (body/slots/
+        Compares the fields a publish freezes — mode, definition (body/slots/
         parameters/error_message), polarity, and ``user_metadata`` (name/
-        description/dimension/severity/free-text tags) — so a metadata-only
-        edit (e.g. bumping severity) is flagged too, not just definition
-        changes. Returns False for an unpublished rule (``version <= 0`` or no
-        snapshot): a draft is not "modified since publish", it just isn't
-        published yet.
+        description/dimension/severity/free-text tags) — so a mode switch or a
+        metadata-only edit (e.g. bumping severity) is flagged too, not just
+        definition changes. Returns False for an unpublished rule
+        (``version <= 0`` or no snapshot): a draft is not "modified since
+        publish", it just isn't published yet. A ``None`` snapshot mode (legacy
+        row written before mode was frozen) is not compared, so it never
+        falsely flags a rule as modified.
         """
         if snapshot is None or rule.version <= 0:
             return False
         if rule.polarity != snapshot.polarity:
+            return True
+        if snapshot.mode is not None and rule.mode != snapshot.mode:
             return True
         if rule.definition.model_dump(mode="json") != snapshot.definition.model_dump(mode="json"):
             return True
@@ -276,7 +282,7 @@ class RegistryService:
         e_rule_id = escape_sql_string(rule_id)
         sql = (
             f"SELECT rule_id, version, {definition} AS definition_json, polarity, "
-            f"{user_metadata} AS user_metadata_json, created_by, {created_at} "
+            f"{user_metadata} AS user_metadata_json, created_by, {created_at}, mode "
             f"FROM {self._versions_table} WHERE rule_id = '{e_rule_id}' AND version = {int(version)}"  # noqa: S608
         )
         rows = self._sql.query(sql)
@@ -512,7 +518,23 @@ class RegistryService:
         edit-in-place REVISION of an already-published rule going back through
         the gate to become vN+1). While pending, ``version`` is unchanged so
         the frozen vN snapshot keeps serving followers.
+
+        Submitting an ``approved`` rule that has NO unpublished edits is
+        rejected (``ValueError`` -> HTTP 400): re-approving it would only mint
+        an identical, empty vN+1. An approved rule must therefore be modified
+        (:meth:`_compute_modified`) before it can be resubmitted.
+
+        Raises:
+            ValueError: an ``approved`` rule with no changes since publish is
+                submitted (mapped to HTTP 400 by the route).
         """
+        rule = self._get(rule_id)
+        if rule is None:
+            raise RuntimeError(f"Registry rule not found: {rule_id}")
+        if rule.status == "approved":
+            snapshot = self._get_version(rule.rule_id, rule.version)
+            if not self._compute_modified(rule, snapshot):
+                raise ValueError("No changes to submit")
         return self._transition(rule_id, "pending_approval", user_email)
 
     def approve(self, rule_id: str, user_email: str) -> RegistryRule:
@@ -689,10 +711,10 @@ class RegistryService:
         metadata_expr = self._sql.json_literal_expr(json.dumps(rule.user_metadata))
         e_rule_id = escape_sql_string(rule.rule_id)
         e_user = escape_sql_string(user_email)
-        columns = "rule_id, version, definition, polarity, user_metadata, created_by, created_at"
+        columns = "rule_id, version, mode, definition, polarity, user_metadata, created_by, created_at"
         values = (
-            f"'{e_rule_id}', {rule.version}, {definition_expr}, {self._opt_str(rule.polarity)}, "
-            f"{metadata_expr}, '{e_user}', now()"
+            f"'{e_rule_id}', {rule.version}, '{escape_sql_string(rule.mode)}', {definition_expr}, "
+            f"{self._opt_str(rule.polarity)}, {metadata_expr}, '{e_user}', now()"
         )
         if self._sql.dialect != "postgres":
             columns = f"id, {columns}"
@@ -758,9 +780,11 @@ class RegistryService:
         rule_id = row[0]
         definition = self._parse_definition(row[2])
         user_metadata = self._parse_metadata(row[4])
+        mode_raw = row[7] if len(row) > 7 else None
         return RuleVersion(
             rule_id=rule_id,
             version=int(row[1]) if row[1] else 0,
+            mode=self._parse_optional_mode(mode_raw, rule_id=rule_id),
             definition=definition,
             polarity=self._parse_polarity(row[3], rule_id=rule_id),
             user_metadata=user_metadata,
@@ -783,6 +807,24 @@ class RegistryService:
         """
         if value not in cls._VALID_MODES:
             raise ValueError(f"Registry rule {rule_id!r} has invalid mode {value!r}; expected one of {sorted(cls._VALID_MODES)}")
+        return cast(RuleMode, value)
+
+    @classmethod
+    def _parse_optional_mode(cls, value: str | None, *, rule_id: str) -> RuleMode | None:
+        """Validate a ``dq_rule_versions.mode`` value and narrow it, tolerating NULL.
+
+        Unlike :meth:`_parse_mode` (which requires a mode on the live
+        ``dq_rules`` row), a frozen version snapshot may carry ``NULL`` mode for
+        legacy rows written before mode was frozen — those pass through as
+        ``None`` and the materializer falls back to the live rule's mode.
+        """
+        if not value:
+            return None
+        if value not in cls._VALID_MODES:
+            raise ValueError(
+                f"Registry rule {rule_id!r} version snapshot has invalid mode {value!r}; "
+                f"expected one of {sorted(cls._VALID_MODES)}"
+            )
         return cast(RuleMode, value)
 
     @classmethod

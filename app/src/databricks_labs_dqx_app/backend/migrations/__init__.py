@@ -545,6 +545,11 @@ _V2_OLTP_FALLBACK = (
     "  id STRING NOT NULL,"
     "  rule_id STRING NOT NULL,"
     "  version INT NOT NULL,"
+    # ``mode`` is frozen at publish time alongside ``definition`` so an
+    # in-place mode switch on the still-editable approved rule cannot corrupt
+    # how the served snapshot renders (nullable only for legacy rows written
+    # before the v11 converge added the column).
+    "  mode STRING,"
     "  definition VARIANT NOT NULL,"
     "  polarity STRING,"
     "  user_metadata VARIANT,"
@@ -869,6 +874,28 @@ _V10_DATA_PRODUCTS = (
 )
 
 
+# Freeze ``mode`` into every ``dq_rule_versions`` snapshot (P20 major fix).
+# The v2 OLTP-fallback baseline above now declares the column, so this is a
+# no-op on fresh Delta-OLTP installs; it exists to converge databases already
+# deployed WITHOUT it (v2 is already recorded in ``dq_migrations`` there, so
+# editing v2 in place could never reach them). Marked ``oltp_fallback=True``
+# because ``dq_rule_versions`` only lives on Delta when Lakebase is disabled.
+#
+# ``ADD COLUMN`` (not ``ADD COLUMN IF NOT EXISTS`` — unsupported on some
+# warehouse versions) relies on the runner swallowing the
+# ``COLUMN_ALREADY_EXISTS`` fragment on re-run, per the module docstring.
+# The backfill uses ``MERGE`` (Delta has no ``UPDATE ... FROM``) to copy each
+# snapshot's mode from its live ``dq_rules`` row — a served vN was authored in
+# the rule's current mode, so this reconstructs the correct frozen value; once
+# converged the ``MERGE`` matches zero NULL rows.
+_V11_RULE_VERSIONS_MODE = (
+    f"ALTER TABLE {_PLACEHOLDER}.dq_rule_versions ADD COLUMN mode STRING;"
+    f"MERGE INTO {_PLACEHOLDER}.dq_rule_versions v "
+    f"  USING {_PLACEHOLDER}.dq_rules r ON v.rule_id = r.rule_id "
+    f"  WHEN MATCHED AND v.mode IS NULL THEN UPDATE SET v.mode = r.mode"
+)
+
+
 # OLTP fallback migration is identified by ``oltp_fallback=True`` so
 # the runner can skip it when Lakebase is enabled. Keeping the flag on
 # the migration itself (rather than e.g. a hard-coded version number)
@@ -951,6 +978,13 @@ MIGRATIONS: list[Migration] = [
             "used only when Lakebase is disabled"
         ),
         sql_template=_V10_DATA_PRODUCTS,
+        oltp_fallback=True,
+    ),
+    DeltaMigration(
+        version=11,
+        description="Freeze mode on dq_rule_versions (add column + backfill from the live rule's mode) "
+        "— used only when Lakebase is disabled",
+        sql_template=_V11_RULE_VERSIONS_MODE,
         oltp_fallback=True,
     ),
 ]

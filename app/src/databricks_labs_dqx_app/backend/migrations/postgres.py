@@ -293,6 +293,11 @@ PG_MIGRATIONS: list[PgMigration] = [
             "  id            BIGSERIAL PRIMARY KEY,"
             "  rule_id       TEXT NOT NULL,"
             "  version       INTEGER NOT NULL,"
+            # ``mode`` is frozen at publish time alongside ``definition`` so an
+            # in-place mode switch on the still-editable approved rule cannot
+            # corrupt how the served snapshot renders (nullable only for legacy
+            # rows written before v7 added the column).
+            "  mode          TEXT,"
             "  definition    JSONB NOT NULL,"
             "  polarity      TEXT,"
             "  user_metadata JSONB,"
@@ -641,6 +646,28 @@ PG_MIGRATIONS: list[PgMigration] = [
             ");"
             f"CREATE INDEX IF NOT EXISTS idx_dq_run_set_members_run_set_id "
             f"  ON {_S}.dq_run_set_members (run_set_id);"
+        ),
+    ),
+    PgMigration(
+        version=7,
+        description="Freeze mode on dq_rule_versions (add column + backfill from the live rule's mode)",
+        sql=(
+            # ----------------------------------------------------------
+            # dq_rule_versions.mode — freeze the authoring mode into each
+            # publish snapshot (P20 major fix). The v1 baseline above now
+            # declares this column, so this is a NO-OP on fresh installs;
+            # it exists purely to converge databases already deployed
+            # WITHOUT the column (v1 is already recorded in dq_migrations
+            # there, so editing v1 in place could never reach them).
+            # ``IF NOT EXISTS`` is native Postgres syntax, so a re-run
+            # against an already-converged DB is a true no-op. The backfill
+            # copies each snapshot's mode from its live ``dq_rules`` row —
+            # a served vN was authored in the rule's current mode, so this
+            # reconstructs the correct frozen value for pre-existing rows.
+            # ----------------------------------------------------------
+            f"ALTER TABLE {_S}.dq_rule_versions ADD COLUMN IF NOT EXISTS mode TEXT;"
+            f"UPDATE {_S}.dq_rule_versions v SET mode = r.mode "
+            f"  FROM {_S}.dq_rules r WHERE v.rule_id = r.rule_id AND v.mode IS NULL;"
         ),
     ),
 ]

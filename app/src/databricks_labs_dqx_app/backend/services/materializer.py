@@ -404,12 +404,20 @@ class Materializer:
             or get_rule_severity(version_snapshot.user_metadata)
             or _DEFAULT_SEVERITY
         )
+        # Render with the mode FROZEN into the version snapshot, not the live
+        # rule's mode: an approved rule is editable in place (its mode can be
+        # switched, e.g. native -> sql, before the revision is re-approved as
+        # vN+1), so a follower still serving vN must render vN's frozen mode or
+        # the snapshot's body would be interpreted under the wrong mode. Legacy
+        # snapshots written before mode was frozen carry ``None`` — fall back to
+        # the live rule's mode for those.
+        rendered_mode = version_snapshot.mode or registry_rule.mode
         rendered: list[tuple[str, str, dict[str, Any]]] = []
         for idx, group in enumerate(applied.column_mapping):
             row_id = f"{applied.id}-{idx}"
             try:
                 check, is_tableless = render_check(
-                    mode=registry_rule.mode,
+                    mode=rendered_mode,
                     version=version_snapshot,
                     group=group,
                     effective_severity=effective_severity,

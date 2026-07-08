@@ -1212,3 +1212,41 @@ class TestRenderBindingChecks:
         registry.get_rule.return_value = None  # registry rule vanished
         assert materializer.render_binding_checks("b1") == []
         sql.execute.assert_not_called()
+
+    def test_render_uses_frozen_snapshot_mode_not_live_mode(
+        self, materializer, registry, monitored_tables
+    ):
+        """A follower still serving vN renders vN's FROZEN mode, even after the
+        live approved rule's mode was switched in place (P20 major fix): the
+        frozen native snapshot must render as a native check, not be
+        reinterpreted under the live rule's now-``sql`` mode."""
+        applied = AppliedRule(
+            id="ar1", binding_id="b1", rule_id="r1", column_mapping=[{"column": "amount"}], mapping_hash="h"
+        )
+        monitored_tables.get.return_value = _detail(applied)
+        live = _published_rule()
+        live.mode = "sql"  # edited in place, unpublished — must NOT drive rendering of vN
+        registry.get_rule.return_value = live
+        registry.get_version.return_value = RuleVersion(
+            rule_id="r1",
+            version=1,
+            mode="dqx_native",
+            definition=_is_not_null_definition(),
+            user_metadata={"name": "Not Null Check", "severity": "High"},
+        )
+        checks = materializer.render_binding_checks("b1")
+        assert checks[0]["check"]["function"] == "is_not_null"
+
+    def test_render_falls_back_to_live_mode_for_legacy_null_snapshot(
+        self, materializer, registry, monitored_tables
+    ):
+        """A legacy snapshot written before mode was frozen (``mode=None``)
+        falls back to the live rule's mode so it still renders."""
+        applied = AppliedRule(
+            id="ar1", binding_id="b1", rule_id="r1", column_mapping=[{"column": "amount"}], mapping_hash="h"
+        )
+        monitored_tables.get.return_value = _detail(applied)
+        registry.get_rule.return_value = _published_rule()  # live mode dqx_native
+        registry.get_version.return_value = _version_snapshot()  # mode defaults to None
+        checks = materializer.render_binding_checks("b1")
+        assert checks[0]["check"]["function"] == "is_not_null"

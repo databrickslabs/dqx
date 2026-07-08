@@ -283,7 +283,7 @@ function RegistryRuleDetailPage() {
           <div className="flex flex-wrap items-center gap-2 min-w-0">
             <h1 className="text-2xl font-semibold tracking-tight leading-none truncate">{name}</h1>
             <StatusBadge status={rule.status} />
-            {rule.modified_since_publish && <ModifiedBadge version={rule.version} />}
+            {rule.display_status === "modified" && <ModifiedBadge version={rule.version} />}
           </div>
           <div className="flex items-center gap-2 ml-auto">
             {canApproveReject && (

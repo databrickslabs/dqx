@@ -437,13 +437,31 @@ class TestLifecycle:
         assert updated.status == "pending_approval"
 
     def test_submit_approved_revision_to_pending_keeps_version(self, svc, sql):
-        """Re-submitting an edited approved rule sends it back through the
+        """Re-submitting an EDITED approved rule sends it back through the
         gate (approved -> pending_approval) WITHOUT bumping version — vN keeps
         serving until the revision is approved as vN+1."""
-        sql.query.return_value = [_row_for(self._rule("approved", version=1))]
+        published_def = RuleDefinition.model_validate(
+            {"body": {"function": "is_not_empty", "arguments": {"column": "{{column}}"}}, "slots": [], "parameters": []}
+        )
+        sql.query.side_effect = [
+            [_row_for(self._rule("approved", version=1))],  # submit._get (live, differs)
+            [_version_row("r1", 1, published_def, {})],  # submit._get_version (snapshot differs -> modified)
+            [_row_for(self._rule("approved", version=1))],  # _transition._get
+        ]
         updated = svc.submit("r1", "alice@x")
         assert updated.status == "pending_approval"
         assert updated.version == 1
+
+    def test_submit_unchanged_approved_raises_no_changes(self, svc, sql):
+        """Submitting an approved rule with NO unpublished edits is rejected
+        (would only mint an identical, empty vN+1)."""
+        live = self._rule("approved", version=1)
+        sql.query.side_effect = [
+            [_row_for(live)],  # submit._get
+            [_version_row("r1", 1, live.definition, {})],  # submit._get_version (snapshot matches live)
+        ]
+        with pytest.raises(ValueError, match="No changes to submit"):
+            svc.submit("r1", "alice@x")
 
     def test_submit_rejects_invalid_transition(self, svc, sql):
         sql.query.return_value = [_row_for(self._rule("deprecated", version=1))]
@@ -471,6 +489,22 @@ class TestLifecycle:
         assert updated.version == 1
         calls = [c.args[0] for c in sql.execute.call_args_list]
         assert any("dq_rule_versions" in c for c in calls)
+
+    def test_approve_freezes_mode_into_snapshot(self, svc, sql):
+        """Publishing freezes the rule's authoring mode into the
+        dq_rule_versions snapshot so a later in-place mode switch can't corrupt
+        the served vN's rendering."""
+        rule = self._rule("pending_approval")
+        rule.mode = "sql"
+        sql.query.return_value = [_row_for(rule)]
+        svc.approve("r1", "approver@x")
+        snapshot_insert = next(
+            c.args[0]
+            for c in sql.execute.call_args_list
+            if "INSERT INTO" in c.args[0] and "dq_rule_versions" in c.args[0]
+        )
+        assert "mode" in snapshot_insert
+        assert "'sql'" in snapshot_insert
 
     def test_reapprove_after_second_submit_bumps_to_v2(self, svc, sql):
         sql.query.return_value = [_row_for(self._rule("pending_approval", version=1))]
@@ -647,7 +681,7 @@ class TestSeedBuiltinRule:
 # ---------------------------------------------------------------------------
 
 
-def _version_row(rule_id, version, definition, user_metadata, polarity=None):
+def _version_row(rule_id, version, definition, user_metadata, polarity=None, mode="dqx_native"):
     """Build a SELECT row matching ``RegistryService._row_to_version`` order."""
     return [
         rule_id,
@@ -657,6 +691,7 @@ def _version_row(rule_id, version, definition, user_metadata, polarity=None):
         json.dumps(user_metadata),
         "author@x",
         "2026-07-02T00:00:00+00:00",
+        mode,
     ]
 
 
@@ -710,13 +745,30 @@ class TestModifiedSincePublish:
     def test_list_attaches_modified_flag(self, svc, sql):
         definition = _native_definition()
         rule = self._approved(definition, {"name": "live"})
+        # ``_attach_modified`` selects a 6-column batch row
+        # (rule_id, version, definition, polarity, user_metadata, mode).
+        attach_row = ["r1", "1", json.dumps(definition.model_dump(mode="json")), None,
+                      json.dumps({"name": "published"}), "dqx_native"]
         sql.query.side_effect = [
             [_row_for(rule)],  # list query
-            [_version_row("r1", 1, definition, {"name": "published"})],  # _attach_modified batch
+            [attach_row],  # _attach_modified batch
         ]
         rules = svc.list_rules()
         assert len(rules) == 1
         assert rules[0].modified_since_publish is True
+
+    def test_modified_when_mode_differs(self, svc, sql):
+        """A mode switch on the live approved rule (e.g. native -> sql) is
+        flagged as modified even when the definition/tags are unchanged."""
+        definition = _native_definition()
+        rule = self._approved(definition, {"name": "n"})
+        rule.mode = "sql"  # live edited in place
+        sql.query.side_effect = [
+            [_row_for(rule)],
+            [_version_row("r1", 1, definition, {"name": "n"}, mode="dqx_native")],
+        ]
+        got_rule, _ = svc.get_rule_with_version("r1")
+        assert got_rule.modified_since_publish is True
 
     def test_list_no_snapshot_query_when_all_unpublished(self, svc, sql):
         from databricks_labs_dqx_app.backend.registry_models import RegistryRule
