@@ -310,9 +310,10 @@ async def get_monitored_table_service(
 async def get_apply_rules_service(
     sql: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
     registry: Annotated[RegistryService, Depends(get_registry_service)],
+    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
 ) -> ApplyRulesService:
     """Create an ApplyRulesService routed at the OLTP executor."""
-    return ApplyRulesService(sql=sql, registry=registry)
+    return ApplyRulesService(sql=sql, registry=registry, app_settings=app_settings)
 
 
 async def get_materializer(
@@ -519,6 +520,7 @@ async def get_data_product_service(
     run_set_service: Annotated[RunSetService, Depends(get_run_set_service)],
     binding_run_service: Annotated[BindingRunService, Depends(get_binding_run_service)],
     version_service: Annotated[MonitoredTableVersionService, Depends(get_monitored_table_version_service)],
+    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
 ) -> DataProductService:
     """Create a DataProductService routed at the OLTP executor.
 
@@ -534,6 +536,7 @@ async def get_data_product_service(
         run_set_service=run_set_service,
         binding_run_service=binding_run_service,
         version_service=version_service,
+        app_settings=app_settings,
     )
 
 

@@ -194,7 +194,16 @@
     "aiSettingsSaveButton": "Guardar cambios",
     "aiSettingsSaved": "Configuración de IA guardada.",
     "aiSettingsSaveFailed": "No se pudo guardar la configuración de IA.",
-    "aiSettingsAdminOnlyHint": "Solo los administradores pueden cambiar esta configuración."
+    "aiSettingsAdminOnlyHint": "Solo los administradores pueden cambiar esta configuración.",
+    "rulesRegistrySettingsTitle": "Gobernanza del Registro de reglas",
+    "rulesRegistrySettingsDescription": "Dos controles relacionados pero distintos: uno decide cómo empieza una nueva incorporación, el otro decide qué ocurre después cuando su regla cambia.",
+    "defaultAutoUpgradeLabel": "Seguir la última versión de forma predeterminada",
+    "defaultAutoUpgradeHint": "Cuando una regla o miembro se incorpora sin una versión fijada explícita, sigue la última versión publicada. Desactívalo para fijar las nuevas incorporaciones a la versión actual — las incorporaciones existentes mantienen su fijación en cualquier caso.",
+    "autoUpgradeWithoutApprovalLabel": "Aprobar automáticamente actualizaciones en reglas que ya siguen la última versión",
+    "autoUpgradeWithoutApprovalHint": "Cuando una regla que sigue la última versión (sin fijar) se vuelve a publicar con un cambio en la comprobación, la aprueba automáticamente. Desactívalo para enviarla a revisión por tabla. Las aplicaciones fijadas nunca se ven afectadas.",
+    "rulesRegistrySettingsSaved": "Configuración del Registro de reglas guardada.",
+    "rulesRegistrySettingsFailedSave": "Error al guardar la configuración del Registro de reglas.",
+    "rulesRegistrySettingsAdminOnlyHint": "Solo los administradores pueden cambiar esta configuración."
   },
   "discovery": {
     "breadcrumb": "Descubrimiento",

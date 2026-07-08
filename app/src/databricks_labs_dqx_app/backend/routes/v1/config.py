@@ -1111,6 +1111,98 @@ async def list_serving_endpoints(
 
 
 # ----------------------------------------------------------------------
+# Rules Registry governance settings (P21-G). Two distinct admin knobs
+# that both shape "what happens as registry rules evolve", but at
+# different moments — surfaced together here so the UI can present them
+# side by side without conflating them:
+#
+#   * ``auto_upgrade_without_approval`` — governs RE-APPROVAL of an
+#     EXISTING following (unpinned) application when its rule is
+#     re-published with a materially different rendered check: silently
+#     re-approve (True) vs. fall back to ``pending_approval`` for
+#     per-table re-review (False, default).
+#   * ``default_auto_upgrade`` — governs the PIN CHOSEN AT ATTACH TIME
+#     for a brand-new rule application / data-product member that
+#     doesn't request an explicit pin: follow latest (True, default) vs.
+#     freeze to the current version (False). Existing applications are
+#     never affected by a later change to this setting — see
+#     ``AppSettingsService.resolve_pinned_version_for_new_attachment``.
+#
+# Both read at VIEWER+ (stewards should be able to see the effective
+# governance policy) and write at ADMIN-only, matching the AI Gateway
+# settings pattern above.
+# ----------------------------------------------------------------------
+
+
+class RulesRegistrySettingsOut(BaseModel):
+    """Effective Rules Registry governance settings."""
+
+    auto_upgrade_without_approval: bool = Field(
+        description="Re-approval behaviour: silently re-approve a following application's "
+        "re-rendered check (True) vs. send it back to pending_approval (False, default)."
+    )
+    default_auto_upgrade: bool = Field(
+        description="Attach-time default pin for new applications/members: follow latest "
+        "(True, default) vs. pin to the current version (False)."
+    )
+
+
+class RulesRegistrySettingsIn(BaseModel):
+    """Update payload — omitted fields are left unchanged."""
+
+    auto_upgrade_without_approval: bool | None = None
+    default_auto_upgrade: bool | None = None
+
+
+def _rules_registry_settings_out(svc: AppSettingsService) -> RulesRegistrySettingsOut:
+    return RulesRegistrySettingsOut(
+        auto_upgrade_without_approval=svc.get_auto_upgrade_without_approval(),
+        default_auto_upgrade=svc.get_default_auto_upgrade(),
+    )
+
+
+@router.get(
+    "/rules-registry-settings",
+    response_model=RulesRegistrySettingsOut,
+    operation_id="getRulesRegistrySettings",
+)
+def get_rules_registry_settings(
+    svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+) -> RulesRegistrySettingsOut:
+    """Return the current Rules Registry governance settings.
+
+    Available to any authenticated user — stewards benefit from seeing
+    the effective governance policy even though only admins can change it.
+    """
+    return _rules_registry_settings_out(svc)
+
+
+@router.put(
+    "/rules-registry-settings",
+    response_model=RulesRegistrySettingsOut,
+    operation_id="saveRulesRegistrySettings",
+    dependencies=[require_role(UserRole.ADMIN)],
+)
+def save_rules_registry_settings(
+    body: RulesRegistrySettingsIn,
+    svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    email: Annotated[str, Depends(get_user_email)],
+) -> RulesRegistrySettingsOut:
+    """Update one or both Rules Registry governance settings (admin only)."""
+    if body.auto_upgrade_without_approval is None and body.default_auto_upgrade is None:
+        raise HTTPException(
+            status_code=400,
+            detail="At least one of auto_upgrade_without_approval or default_auto_upgrade must be provided.",
+        )
+    if body.auto_upgrade_without_approval is not None:
+        svc.save_auto_upgrade_without_approval(body.auto_upgrade_without_approval, user_email=email)
+    if body.default_auto_upgrade is not None:
+        svc.save_default_auto_upgrade(body.default_auto_upgrade, user_email=email)
+    logger.info("Saved Rules Registry governance settings (by=%s)", email)
+    return _rules_registry_settings_out(svc)
+
+
+# ----------------------------------------------------------------------
 # Vector Search auto-provisioning trigger — Rules Registry Phase 7F. A
 # dedicated endpoint (rather than folding this into ``save_ai_settings``)
 # so provisioning can be retried independently of a settings save, and so

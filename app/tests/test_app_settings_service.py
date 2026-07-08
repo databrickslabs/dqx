@@ -206,3 +206,57 @@ class TestVectorSearchSettings:
 
         sql_executor_mock.query.return_value = [["my-value"]]
         assert getattr(svc, getter_name)() == "my-value"
+
+
+class TestDefaultAutoUpgrade:
+    """``default_auto_upgrade`` (P21-G) — attach-time pin default for new
+    rule applications / data-product members. Distinct from
+    ``auto_upgrade_without_approval`` (re-approval behaviour, tested
+    elsewhere via ``Materializer``)."""
+
+    def test_defaults_to_true_when_unset(self, settings_service):
+        svc, sql_executor_mock = settings_service
+        sql_executor_mock.query.return_value = []
+
+        assert svc.get_default_auto_upgrade() is True
+
+    def test_save_and_round_trip_false(self, settings_service):
+        svc, sql_executor_mock = settings_service
+
+        saved = svc.save_default_auto_upgrade(False, user_email="admin@x")
+
+        assert saved is False
+        _, kwargs = sql_executor_mock.upsert.call_args
+        assert kwargs["key_cols"] == {"setting_key": "default_auto_upgrade"}
+        assert kwargs["value_cols"]["setting_value"] == "false"
+
+        sql_executor_mock.query.return_value = [["false"]]
+        assert svc.get_default_auto_upgrade() is False
+
+    def test_save_and_round_trip_true(self, settings_service):
+        svc, sql_executor_mock = settings_service
+
+        svc.save_default_auto_upgrade(True, user_email="admin@x")
+        sql_executor_mock.query.return_value = [["true"]]
+
+        assert svc.get_default_auto_upgrade() is True
+
+
+class TestResolvePinnedVersionForNewAttachment:
+    def test_explicit_pin_wins_regardless_of_setting(self, settings_service):
+        svc, sql_executor_mock = settings_service
+        sql_executor_mock.query.return_value = [["false"]]  # auto-upgrade off
+
+        assert svc.resolve_pinned_version_for_new_attachment(7, 3) == 7
+
+    def test_unspecified_follows_latest_when_auto_upgrade_on(self, settings_service):
+        svc, sql_executor_mock = settings_service
+        sql_executor_mock.query.return_value = []  # unset -> defaults True
+
+        assert svc.resolve_pinned_version_for_new_attachment(None, 3) is None
+
+    def test_unspecified_freezes_current_version_when_auto_upgrade_off(self, settings_service):
+        svc, sql_executor_mock = settings_service
+        sql_executor_mock.query.return_value = [["false"]]
+
+        assert svc.resolve_pinned_version_for_new_attachment(None, 3) == 3

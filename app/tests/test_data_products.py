@@ -17,6 +17,7 @@ from unittest.mock import create_autospec
 import pytest
 
 from databricks_labs_dqx_app.backend.registry_models import DataProduct, MonitoredTable
+from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.services.binding_run_service import (
     BindingRunResult,
     BindingRunService,
@@ -30,6 +31,7 @@ from databricks_labs_dqx_app.backend.services.data_product_service import (
     display_status,
 )
 from databricks_labs_dqx_app.backend.services.monitored_table_service import (
+    MonitoredTableDetail,
     MonitoredTableService,
     MonitoredTableSummary,
 )
@@ -98,6 +100,12 @@ def _table_summary(
     )
 
 
+def _monitored_table_detail(binding_id: str = "b1", version: int = 2) -> MonitoredTableDetail:
+    return MonitoredTableDetail(
+        table=MonitoredTable(binding_id=binding_id, table_fqn="cat.schema.tbl", status="approved", version=version)
+    )
+
+
 @pytest.fixture
 def sql():
     return _mock_sql()
@@ -130,13 +138,26 @@ def version_service():
 
 
 @pytest.fixture
-def service(sql, monitored_tables, run_set_service, binding_run_service, version_service):
+def app_settings():
+    mock = create_autospec(AppSettingsService, instance=True)
+    # Default matches production default: new members follow latest unless
+    # the caller explicitly pins.
+    mock.get_default_auto_upgrade.return_value = True
+    mock.resolve_pinned_version_for_new_attachment.side_effect = (
+        lambda explicit, current: explicit if explicit is not None else (None if mock.get_default_auto_upgrade() else current)
+    )
+    return mock
+
+
+@pytest.fixture
+def service(sql, monitored_tables, run_set_service, binding_run_service, version_service, app_settings):
     return DataProductService(
         sql=sql,
         monitored_tables=monitored_tables,
         run_set_service=run_set_service,
         binding_run_service=binding_run_service,
         version_service=version_service,
+        app_settings=app_settings,
     )
 
 
@@ -372,6 +393,56 @@ class TestMembers:
         sql.query.return_value = []
         with pytest.raises(LookupError):
             service.add_member("missing", "b1", None, "bob@x")
+
+    def test_add_member_unspecified_pin_follows_latest_when_auto_upgrade_on(
+        self, service, sql, monitored_tables, app_settings
+    ):
+        # default_auto_upgrade ON (default): a brand-new member with no
+        # explicit pin stays unpinned (follow latest) — unchanged behaviour.
+        app_settings.get_default_auto_upgrade.return_value = True
+        monitored_tables.get.return_value = _monitored_table_detail(version=3)
+        sql.query.side_effect = [
+            [_product_row(product_id="p1")],
+            [],  # no existing member row
+        ]
+        member = service.add_member("p1", "b1", None, "bob@x")
+        assert member.pinned_version is None
+        insert_sql = next(c[0][0] for c in sql.execute.call_args_list if f"INSERT INTO {_MEMBERS}" in c[0][0])
+        assert "NULL" in insert_sql
+
+    def test_add_member_unspecified_pin_freezes_current_version_when_auto_upgrade_off(
+        self, service, sql, monitored_tables, app_settings
+    ):
+        # default_auto_upgrade OFF: a brand-new member with no explicit pin
+        # freezes to the binding's current published version at attach time.
+        app_settings.get_default_auto_upgrade.return_value = False
+        monitored_tables.get.return_value = _monitored_table_detail(version=3)
+        sql.query.side_effect = [
+            [_product_row(product_id="p1")],
+            [],  # no existing member row
+        ]
+        member = service.add_member("p1", "b1", None, "bob@x")
+        assert member.pinned_version == 3
+        insert_sql = next(c[0][0] for c in sql.execute.call_args_list if f"INSERT INTO {_MEMBERS}" in c[0][0])
+        assert ", 3)" in insert_sql
+
+    def test_add_member_existing_binding_explicit_none_unpins_regardless_of_setting(
+        self, service, sql, monitored_tables, app_settings
+    ):
+        # Attach-time-only: default_auto_upgrade must NOT be consulted when
+        # updating an EXISTING member — an explicit None here means the
+        # steward chose to unpin, not "unspecified".
+        app_settings.get_default_auto_upgrade.return_value = False
+        sql.query.side_effect = [
+            [_product_row(product_id="p1")],
+            [["m-existing"]],  # already a member
+        ]
+        member = service.add_member("p1", "b1", None, "bob@x")
+        assert member.pinned_version is None
+        monitored_tables.get.assert_not_called()
+        app_settings.resolve_pinned_version_for_new_attachment.assert_not_called()
+        update_sql = next(c[0][0] for c in sql.execute.call_args_list if f"UPDATE {_MEMBERS}" in c[0][0])
+        assert "pinned_version = NULL" in update_sql
 
     def test_remove_member_success_flips_to_draft(self, service, sql):
         sql.query.side_effect = [

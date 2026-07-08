@@ -231,6 +231,74 @@ class AppSettingsService:
         return enabled
 
     # ------------------------------------------------------------------
+    # Rules Registry — default-auto-upgrade (P21-G). Distinct from
+    # ``auto_upgrade_without_approval`` above:
+    #   * ``auto_upgrade_without_approval`` governs RE-APPROVAL — whether a
+    #     re-rendered check on an EXISTING following (``pinned_version IS
+    #     NULL``) application silently re-approves or falls back to
+    #     ``pending_approval``.
+    #   * ``default_auto_upgrade`` (this setting) governs the PIN CHOSEN AT
+    #     ATTACH TIME for a brand-new rule application / data-product
+    #     member, when the caller does not explicitly request a pin:
+    #       - ``True`` (default): the new attachment follows latest
+    #         (``pinned_version = None``), matching today's behaviour.
+    #       - ``False``: the new attachment is pinned to the rule's (or
+    #         binding's) CURRENT version at attach time, so it only moves
+    #         forward when a steward explicitly re-pins/unpins it.
+    #     This mirrors dqlake's ``default_auto_upgrade`` app-setting
+    #     (``backend/routers/bindings.py:_resolve_pinned_version``).
+    #     It is applied ONLY when a NEW row is inserted — never on an
+    #     update of an existing application/member, where an explicit
+    #     ``pinned_version=None`` from the caller already means "the
+    #     steward explicitly chose to follow latest / clear the pin" and
+    #     must be honoured as-is. See
+    #     :meth:`resolve_pinned_version_for_new_attachment` and its call
+    #     sites in ``ApplyRulesService.apply_rule`` / ``DataProductService.add_member``.
+    # ------------------------------------------------------------------
+
+    _DEFAULT_AUTO_UPGRADE_KEY = "default_auto_upgrade"
+
+    def get_default_auto_upgrade(self) -> bool:
+        """Return whether new attachments default to following latest; defaults to ``True`` when unset."""
+        raw = self.get_setting(self._DEFAULT_AUTO_UPGRADE_KEY)
+        if raw is None:
+            return True
+        return raw.strip().lower() == "true"
+
+    def save_default_auto_upgrade(self, enabled: bool, *, user_email: str | None = None) -> bool:
+        """Persist the default-auto-upgrade setting. Returns the saved value."""
+        self.save_setting(self._DEFAULT_AUTO_UPGRADE_KEY, "true" if enabled else "false", user_email=user_email)
+        return enabled
+
+    def resolve_pinned_version_for_new_attachment(
+        self, explicit_pinned_version: int | None, current_version: int
+    ) -> int | None:
+        """Resolve the pin to store for a BRAND-NEW rule application / data-product member.
+
+        Call this ONLY from the insert path of a new attachment — never
+        when updating an existing row (see the module-level comment on
+        ``default_auto_upgrade`` above for why this is attach-time-only).
+
+        Args:
+            explicit_pinned_version: The pin the caller explicitly requested,
+                or ``None`` if the caller left it unspecified (the common
+                case — most attach flows have no pin control at all).
+            current_version: The rule's (or binding's) current published/
+                approved version, used as the pin when ``default_auto_upgrade``
+                is off.
+
+        Returns:
+            ``explicit_pinned_version`` unchanged if the caller specified one;
+            otherwise ``None`` (follow latest) when ``default_auto_upgrade`` is
+            on, or ``current_version`` when it's off.
+        """
+        if explicit_pinned_version is not None:
+            return explicit_pinned_version
+        if self.get_default_auto_upgrade():
+            return None
+        return current_version
+
+    # ------------------------------------------------------------------
     # Embedded dashboard — Insights page renders a Databricks AI/BI
     # dashboard inside an iframe. Admins set the dashboard ID + an
     # optional display title via the Configuration page; the GET

@@ -31,6 +31,7 @@ from databricks_labs_dqx_app.backend.registry_models import (
     ColumnMappingGroup,
     compute_mapping_hash,
 )
+from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
@@ -65,9 +66,10 @@ class DesiredAppliedRule:
 class ApplyRulesService:
     """Manages ``dq_applied_rules`` (the tier-2 apply/map link) in the OLTP store."""
 
-    def __init__(self, sql: OltpExecutorProtocol, registry: RegistryService) -> None:
+    def __init__(self, sql: OltpExecutorProtocol, registry: RegistryService, app_settings: AppSettingsService) -> None:
         self._sql = sql
         self._registry = registry
+        self._app_settings = app_settings
         self._table = sql.fqn("dq_applied_rules")
         self._monitored_table = sql.fqn("dq_monitored_tables")
         self._quality_rules_table = sql.fqn("dq_quality_rules")
@@ -115,7 +117,14 @@ class ApplyRulesService:
                 group's keys must exactly match the rule's slot names.
             user_email: Attributed as ``created_by`` on a new row.
             pinned_version: ``None`` to follow the latest published version;
-                a concrete version number to freeze to that snapshot.
+                a concrete version number to freeze to that snapshot. On a
+                brand-new application, an explicit ``None`` here is resolved
+                against the ``default_auto_upgrade`` app-setting (see
+                :meth:`~databricks_labs_dqx_app.backend.services.app_settings_service.AppSettingsService.resolve_pinned_version_for_new_attachment`) —
+                it only means "follow latest" when that setting is on;
+                otherwise the rule's current version is pinned instead. On
+                an existing application (identical-mapping re-apply), the
+                setting does NOT apply — ``None`` is honoured as-is.
             severity_override: Overrides the rule's tagged severity for this
                 application only.
             tags: Per-application free-text tags (merged with rule tags at
@@ -149,12 +158,22 @@ class ApplyRulesService:
                 existing, pinned_version=pinned_version, severity_override=severity_override, tags=tags
             )
 
+        # Attach-time-only default_auto_upgrade resolution: this is the
+        # INSERT branch (no existing row for this natural key), i.e. a
+        # genuinely new application. An update (see _update_mutable_fields
+        # above) never goes through this resolution — an explicit
+        # pinned_version=None there already means "steward chose to follow
+        # latest", not "caller left it unspecified".
+        resolved_pinned_version = self._app_settings.resolve_pinned_version_for_new_attachment(
+            pinned_version, rule.version
+        )
+
         now = datetime.now(timezone.utc)
         applied = AppliedRule(
             id=uuid4().hex[:16],
             binding_id=binding_id,
             rule_id=rule_id,
-            pinned_version=pinned_version,
+            pinned_version=resolved_pinned_version,
             severity_override=severity_override,
             column_mapping=column_mapping,
             user_metadata=dict(tags or {}),

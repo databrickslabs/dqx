@@ -13,6 +13,7 @@ from unittest.mock import create_autospec
 import pytest
 
 from databricks_labs_dqx_app.backend.registry_models import RegistryRule, RuleDefinition, compute_mapping_hash
+from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.services.apply_rules_service import (
     ApplyRulesService,
     DesiredAppliedRule,
@@ -40,8 +41,20 @@ def registry():
 
 
 @pytest.fixture
-def svc(sql, registry):
-    return ApplyRulesService(sql=sql, registry=registry)
+def app_settings():
+    mock = create_autospec(AppSettingsService, instance=True)
+    # Default matches production default: new applications follow latest
+    # unless the caller explicitly pins.
+    mock.get_default_auto_upgrade.return_value = True
+    mock.resolve_pinned_version_for_new_attachment.side_effect = (
+        lambda explicit, current: explicit if explicit is not None else (None if mock.get_default_auto_upgrade() else current)
+    )
+    return mock
+
+
+@pytest.fixture
+def svc(sql, registry, app_settings):
+    return ApplyRulesService(sql=sql, registry=registry, app_settings=app_settings)
 
 
 def _published_rule(rule_id: str = "r1", slot_names: list[str] | None = None) -> RegistryRule:
@@ -157,6 +170,59 @@ class TestApplyRule:
         registry.get_rule.return_value = _published_rule()
         with pytest.raises(MappingIncompleteError):
             svc.apply_rule("b1", "r1", [{"column": "customer_id", "extra": "x"}], "alice@x")
+
+    def test_new_application_unspecified_pin_follows_latest_when_auto_upgrade_on(
+        self, svc, sql, registry, app_settings
+    ):
+        app_settings.get_default_auto_upgrade.return_value = True
+        registry.get_rule.return_value = _published_rule()
+        sql.query.side_effect = [
+            [["b1"]],  # binding exists
+            [],  # no existing application with this natural key
+        ]
+        applied = svc.apply_rule("b1", "r1", [{"column": "customer_id"}], "alice@x", pinned_version=None)
+        assert applied.pinned_version is None
+
+    def test_new_application_unspecified_pin_freezes_current_version_when_auto_upgrade_off(
+        self, svc, sql, registry, app_settings
+    ):
+        app_settings.get_default_auto_upgrade.return_value = False
+        registry.get_rule.return_value = _published_rule()  # version=1
+        sql.query.side_effect = [
+            [["b1"]],  # binding exists
+            [],  # no existing application with this natural key
+        ]
+        applied = svc.apply_rule("b1", "r1", [{"column": "customer_id"}], "alice@x", pinned_version=None)
+        assert applied.pinned_version == 1
+        insert_sql = sql.execute.call_args[0][0]
+        assert ", 1, " in insert_sql
+
+    def test_new_application_explicit_pin_wins_regardless_of_setting(self, svc, sql, registry, app_settings):
+        app_settings.get_default_auto_upgrade.return_value = False
+        registry.get_rule.return_value = _published_rule()
+        sql.query.side_effect = [
+            [["b1"]],
+            [],
+        ]
+        applied = svc.apply_rule("b1", "r1", [{"column": "customer_id"}], "alice@x", pinned_version=7)
+        assert applied.pinned_version == 7
+
+    def test_existing_application_explicit_none_unpins_regardless_of_setting(
+        self, svc, sql, registry, app_settings
+    ):
+        # Attach-time-only: default_auto_upgrade must NOT be consulted on an
+        # UPDATE of an existing application — an explicit None here means
+        # the steward chose to unpin, not "unspecified".
+        app_settings.get_default_auto_upgrade.return_value = False
+        registry.get_rule.return_value = _published_rule()
+        existing_row = _applied_row(pinned_version="3")
+        sql.query.side_effect = [
+            [["b1"]],
+            [existing_row],
+        ]
+        applied = svc.apply_rule("b1", "r1", [{"column": "customer_id"}], "alice@x", pinned_version=None)
+        assert applied.pinned_version is None
+        app_settings.resolve_pinned_version_for_new_attachment.assert_not_called()
 
     def test_reapplying_identical_mapping_updates_instead_of_duplicating(self, svc, sql, registry):
         registry.get_rule.return_value = _published_rule()

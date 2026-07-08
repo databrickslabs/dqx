@@ -56,7 +56,11 @@ import {
   getGetAiSettingsQueryKey,
   useListServingEndpoints,
   useEnsureVectorStore,
+  useGetRulesRegistrySettings,
+  useSaveRulesRegistrySettings,
+  getGetRulesRegistrySettingsQueryKey,
   type AiSettingsIn,
+  type RulesRegistrySettingsIn,
 } from "@/lib/api";
 import {
   Select,
@@ -1916,6 +1920,94 @@ function AiSettingsCard() {
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Rules Registry governance — two distinct admin knobs bundled behind one
+// read/write surface (P21-G): ``defaultAutoUpgrade`` governs the pin chosen
+// at ATTACH TIME for a brand-new rule application / data-product member;
+// ``autoUpgradeWithoutApproval`` governs RE-APPROVAL of an EXISTING
+// following application when its rule is re-published. Kept side by side so
+// stewards don't conflate "when does a table start following a rule" with
+// "what happens once it's already following it".
+// ─────────────────────────────────────────────────────────────────────────────
+
+function RulesRegistrySettingsCard() {
+  const { t } = useTranslation();
+  const { data, isLoading } = useGetRulesRegistrySettings();
+  const queryClient = useQueryClient();
+  const saveMutation = useSaveRulesRegistrySettings();
+  const { isAdmin } = usePermissions();
+
+  const settings = data?.data;
+
+  if (isLoading || !settings) return <Skeleton className="h-40 w-full" />;
+
+  const save = (payload: RulesRegistrySettingsIn) => {
+    saveMutation.mutate(
+      { data: payload },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getGetRulesRegistrySettingsQueryKey() });
+          toast.success(t("config.rulesRegistrySettingsSaved"));
+        },
+        onError: (err: unknown) => {
+          const axErr = err as AxiosError<{ detail?: string }>;
+          toast.error(axErr?.response?.data?.detail ?? t("config.rulesRegistrySettingsFailedSave"));
+        },
+      },
+    );
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <ShieldCheck className="h-5 w-5" />
+          {t("config.rulesRegistrySettingsTitle")}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          {t("config.rulesRegistrySettingsDescription")}
+        </p>
+
+        <div className="flex items-center justify-between rounded-md border p-3">
+          <div className="space-y-0.5 pr-4">
+            <Label htmlFor="default-auto-upgrade" className="text-sm">
+              {t("config.defaultAutoUpgradeLabel")}
+            </Label>
+            <p className="text-[11px] text-muted-foreground">{t("config.defaultAutoUpgradeHint")}</p>
+          </div>
+          <Switch
+            id="default-auto-upgrade"
+            checked={settings.default_auto_upgrade}
+            onCheckedChange={(checked) => save({ default_auto_upgrade: checked })}
+            disabled={!isAdmin || saveMutation.isPending}
+          />
+        </div>
+
+        <div className="flex items-center justify-between rounded-md border p-3">
+          <div className="space-y-0.5 pr-4">
+            <Label htmlFor="auto-upgrade-without-approval" className="text-sm">
+              {t("config.autoUpgradeWithoutApprovalLabel")}
+            </Label>
+            <p className="text-[11px] text-muted-foreground">{t("config.autoUpgradeWithoutApprovalHint")}</p>
+          </div>
+          <Switch
+            id="auto-upgrade-without-approval"
+            checked={settings.auto_upgrade_without_approval}
+            onCheckedChange={(checked) => save({ auto_upgrade_without_approval: checked })}
+            disabled={!isAdmin || saveMutation.isPending}
+          />
+        </div>
+
+        {!isAdmin && (
+          <span className="text-xs text-muted-foreground">{t("config.rulesRegistrySettingsAdminOnlyHint")}</span>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function ConfigPage() {
   const { t } = useTranslation();
   const { isAdmin } = usePermissions();
@@ -1973,6 +2065,13 @@ function ConfigPage() {
               <ErrorBoundary onReset={reset} FallbackComponent={SectionError}>
                 <Suspense fallback={<Skeleton className="h-40 w-full" />}>
                   <AiSettingsCard />
+                </Suspense>
+              </ErrorBoundary>
+            </FadeIn>
+            <FadeIn delay={0.18}>
+              <ErrorBoundary onReset={reset} FallbackComponent={SectionError}>
+                <Suspense fallback={<Skeleton className="h-40 w-full" />}>
+                  <RulesRegistrySettingsCard />
                 </Suspense>
               </ErrorBoundary>
             </FadeIn>

@@ -194,7 +194,16 @@
     "aiSettingsSaveButton": "Salvar alterações",
     "aiSettingsSaved": "Configurações de IA salvas.",
     "aiSettingsSaveFailed": "Falha ao salvar as configurações de IA.",
-    "aiSettingsAdminOnlyHint": "Somente administradores podem alterar esta configuração."
+    "aiSettingsAdminOnlyHint": "Somente administradores podem alterar esta configuração.",
+    "rulesRegistrySettingsTitle": "Governança do Registro de regras",
+    "rulesRegistrySettingsDescription": "Dois controles relacionados, mas distintos: um decide como uma nova vinculação começa, o outro decide o que acontece depois quando a regra dela muda.",
+    "defaultAutoUpgradeLabel": "Seguir a versão mais recente por padrão",
+    "defaultAutoUpgradeHint": "Quando uma regra ou membro é vinculado sem uma versão fixada explícita, ele segue a versão publicada mais recente. Desative para fixar novas vinculações na versão atual — vinculações existentes mantêm seu estado de fixação de qualquer forma.",
+    "autoUpgradeWithoutApprovalLabel": "Aprovar automaticamente atualizações em regras que já seguem a versão mais recente",
+    "autoUpgradeWithoutApprovalHint": "Quando uma regra que segue a versão mais recente (não fixada) é republicada com uma verificação alterada, ela é aprovada automaticamente. Desative para enviá-la de volta para revisão por tabela. Aplicações fixadas nunca são afetadas.",
+    "rulesRegistrySettingsSaved": "Configurações do Registro de regras salvas.",
+    "rulesRegistrySettingsFailedSave": "Falha ao salvar as configurações do Registro de regras.",
+    "rulesRegistrySettingsAdminOnlyHint": "Somente administradores podem alterar estas configurações."
   },
   "discovery": {
     "breadcrumb": "Descoberta",

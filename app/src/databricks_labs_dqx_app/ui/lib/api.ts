@@ -1896,6 +1896,28 @@ export interface RuleSlot {
   arg_key?: RuleSlotArgKey;
 }
 
+export type RulesRegistrySettingsInAutoUpgradeWithoutApproval = boolean | null;
+
+export type RulesRegistrySettingsInDefaultAutoUpgrade = boolean | null;
+
+/**
+ * Update payload — omitted fields are left unchanged.
+ */
+export interface RulesRegistrySettingsIn {
+  auto_upgrade_without_approval?: RulesRegistrySettingsInAutoUpgradeWithoutApproval;
+  default_auto_upgrade?: RulesRegistrySettingsInDefaultAutoUpgrade;
+}
+
+/**
+ * Effective Rules Registry governance settings.
+ */
+export interface RulesRegistrySettingsOut {
+  /** Re-approval behaviour: silently re-approve a following application's re-rendered check (True) vs. send it back to pending_approval (False, default). */
+  auto_upgrade_without_approval: boolean;
+  /** Attach-time default pin for new applications/members: follow latest (True, default) vs. pin to the current version (False). */
+  default_auto_upgrade: boolean;
+}
+
 export type RunConfigInputConfig = InputConfig | null;
 
 export type RunConfigOutputConfig = OutputConfig | null;
@@ -5533,6 +5555,219 @@ export function useListServingEndpointsSuspense<TData = Awaited<ReturnType<typeo
 
 
 
+/**
+ * Return the current Rules Registry governance settings.
+
+Available to any authenticated user — stewards benefit from seeing
+the effective governance policy even though only admins can change it.
+ * @summary Get Rules Registry Settings
+ */
+export const getRulesRegistrySettings = (
+     options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<RulesRegistrySettingsOut>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/config/rules-registry-settings`,options
+    );
+  }
+
+
+
+
+export const getGetRulesRegistrySettingsQueryKey = () => {
+    return [
+    `/api/v1/config/rules-registry-settings`
+    ] as const;
+    }
+
+    
+export const getGetRulesRegistrySettingsQueryOptions = <TData = Awaited<ReturnType<typeof getRulesRegistrySettings>>, TError = AxiosError<unknown>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRulesRegistrySettings>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetRulesRegistrySettingsQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getRulesRegistrySettings>>> = ({ signal }) => getRulesRegistrySettings({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getRulesRegistrySettings>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetRulesRegistrySettingsQueryResult = NonNullable<Awaited<ReturnType<typeof getRulesRegistrySettings>>>
+export type GetRulesRegistrySettingsQueryError = AxiosError<unknown>
+
+
+export function useGetRulesRegistrySettings<TData = Awaited<ReturnType<typeof getRulesRegistrySettings>>, TError = AxiosError<unknown>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRulesRegistrySettings>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getRulesRegistrySettings>>,
+          TError,
+          Awaited<ReturnType<typeof getRulesRegistrySettings>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetRulesRegistrySettings<TData = Awaited<ReturnType<typeof getRulesRegistrySettings>>, TError = AxiosError<unknown>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRulesRegistrySettings>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getRulesRegistrySettings>>,
+          TError,
+          Awaited<ReturnType<typeof getRulesRegistrySettings>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetRulesRegistrySettings<TData = Awaited<ReturnType<typeof getRulesRegistrySettings>>, TError = AxiosError<unknown>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRulesRegistrySettings>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Rules Registry Settings
+ */
+
+export function useGetRulesRegistrySettings<TData = Awaited<ReturnType<typeof getRulesRegistrySettings>>, TError = AxiosError<unknown>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRulesRegistrySettings>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetRulesRegistrySettingsQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getGetRulesRegistrySettingsSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getRulesRegistrySettings>>, TError = AxiosError<unknown>>( options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getRulesRegistrySettings>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetRulesRegistrySettingsQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getRulesRegistrySettings>>> = ({ signal }) => getRulesRegistrySettings({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof getRulesRegistrySettings>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetRulesRegistrySettingsSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof getRulesRegistrySettings>>>
+export type GetRulesRegistrySettingsSuspenseQueryError = AxiosError<unknown>
+
+
+export function useGetRulesRegistrySettingsSuspense<TData = Awaited<ReturnType<typeof getRulesRegistrySettings>>, TError = AxiosError<unknown>>(
+  options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getRulesRegistrySettings>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetRulesRegistrySettingsSuspense<TData = Awaited<ReturnType<typeof getRulesRegistrySettings>>, TError = AxiosError<unknown>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getRulesRegistrySettings>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetRulesRegistrySettingsSuspense<TData = Awaited<ReturnType<typeof getRulesRegistrySettings>>, TError = AxiosError<unknown>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getRulesRegistrySettings>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Rules Registry Settings
+ */
+
+export function useGetRulesRegistrySettingsSuspense<TData = Awaited<ReturnType<typeof getRulesRegistrySettings>>, TError = AxiosError<unknown>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getRulesRegistrySettings>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetRulesRegistrySettingsSuspenseQueryOptions(options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Update one or both Rules Registry governance settings (admin only).
+ * @summary Save Rules Registry Settings
+ */
+export const saveRulesRegistrySettings = (
+    rulesRegistrySettingsIn: RulesRegistrySettingsIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<RulesRegistrySettingsOut>> => {
+    
+    
+    return axios.default.put(
+      `/api/v1/config/rules-registry-settings`,
+      rulesRegistrySettingsIn,options
+    );
+  }
+
+
+
+export const getSaveRulesRegistrySettingsMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveRulesRegistrySettings>>, TError,{data: RulesRegistrySettingsIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof saveRulesRegistrySettings>>, TError,{data: RulesRegistrySettingsIn}, TContext> => {
+
+const mutationKey = ['saveRulesRegistrySettings'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof saveRulesRegistrySettings>>, {data: RulesRegistrySettingsIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  saveRulesRegistrySettings(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SaveRulesRegistrySettingsMutationResult = NonNullable<Awaited<ReturnType<typeof saveRulesRegistrySettings>>>
+    export type SaveRulesRegistrySettingsMutationBody = RulesRegistrySettingsIn
+    export type SaveRulesRegistrySettingsMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Save Rules Registry Settings
+ */
+export const useSaveRulesRegistrySettings = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveRulesRegistrySettings>>, TError,{data: RulesRegistrySettingsIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof saveRulesRegistrySettings>>,
+        TError,
+        {data: RulesRegistrySettingsIn},
+        TContext
+      > => {
+
+      const mutationOptions = getSaveRulesRegistrySettingsMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
 /**
  * Best-effort kick off Vector Search endpoint/index creation (admin-triggered).
 

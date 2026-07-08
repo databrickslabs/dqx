@@ -52,6 +52,7 @@ from databricks_labs_dqx_app.backend.registry_models import (
     RunSetSource,
     RunSetTrigger,
 )
+from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.services.binding_run_service import BindingRunService
 from databricks_labs_dqx_app.backend.services.monitored_table_service import (
     MonitoredTableService,
@@ -167,12 +168,14 @@ class DataProductService:
         run_set_service: RunSetService,
         binding_run_service: BindingRunService,
         version_service: MonitoredTableVersionService,
+        app_settings: AppSettingsService,
     ) -> None:
         self._sql = sql
         self._monitored_tables = monitored_tables
         self._run_set_service = run_set_service
         self._binding_run_service = binding_run_service
         self._version_service = version_service
+        self._app_settings = app_settings
         self._products_table = sql.fqn("dq_data_products")
         self._members_table = sql.fqn("dq_data_product_members")
 
@@ -298,6 +301,15 @@ class DataProductService:
 
         Flips the space back to ``draft`` (P21 item 30).
 
+        On a brand-new member (no existing row for *binding_id*), an
+        unspecified *pinned_version* (``None``) is resolved against the
+        ``default_auto_upgrade`` app-setting — see
+        :meth:`~databricks_labs_dqx_app.backend.services.app_settings_service.AppSettingsService.resolve_pinned_version_for_new_attachment`.
+        This is attach-time-only: re-adding an existing member (the
+        ``UPDATE`` branch) always honours the caller's ``pinned_version``
+        as-is, including an explicit ``None`` meaning "unpin / follow
+        latest".
+
         Raises:
             LookupError: *product_id* does not exist.
         """
@@ -317,6 +329,12 @@ class DataProductService:
             )
         else:
             member_id = uuid4().hex
+            if pinned_version is None:
+                binding_detail = self._monitored_tables.get(binding_id)
+                current_version = binding_detail.table.version if binding_detail is not None else 0
+                pinned_version = self._app_settings.resolve_pinned_version_for_new_attachment(
+                    None, current_version
+                )
             self._sql.execute(
                 f"INSERT INTO {self._members_table} (id, product_id, binding_id, pinned_version) VALUES "
                 f"('{escape_sql_string(member_id)}', '{e_pid}', '{e_bid}', {self._opt_int(pinned_version)})"
