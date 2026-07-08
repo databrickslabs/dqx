@@ -225,7 +225,7 @@ DATABRICKS_WAREHOUSE_ID=<your-warehouse-id>     # SQL Warehouses → connection 
 DQX_CATALOG=dqx                                 # Unity Catalog catalog name (default: dqx)
 DQX_SCHEMA=dqx_studio                           # schema inside the catalog (default: dqx_studio)
 DQX_JOB_ID=<task-runner-job-id>                 # optional locally; required for profiler / dry-run
-DQX_LAKEBASE_INSTANCE_NAME=                     # optional locally; empty = OLTP tables run on Delta
+DQX_LAKEBASE_ENDPOINT=                          # optional locally; empty = OLTP tables run on Delta
 DQX_ADMIN_GROUP=<a workspace group you belong to>  # grants you the Admin role in the app
 ```
 
@@ -233,7 +233,7 @@ DQX_ADMIN_GROUP=<a workspace group you belong to>  # grants you the Admin role i
 
 Set `DQX_ADMIN_GROUP` to a workspace group you're a member of to get the **Admin** role in the app — otherwise role resolution falls back to `VIEWER` and privileged actions (configure storage, approve rules, manage roles) return `403`. List your groups with `databricks current-user me -p <your-profile> | jq '.groups[].display'` and pick one.
 
-Leave `DQX_LAKEBASE_INSTANCE_NAME` empty for most local dev — the app falls back to Delta for the OLTP tables (rules catalog, app settings, RBAC, comments, schedules) so you don't need a Lakebase instance to iterate. To exercise the Lakebase path locally, deploy the bundle once and point the variable at the resulting instance. See [app/DEVELOPMENT.md](https://github.com/databrickslabs/dqx/blob/v0.15.0/app/DEVELOPMENT.md) for the full set of `DQX_LAKEBASE_*` variables.
+Leave `DQX_LAKEBASE_ENDPOINT` empty for most local dev — the app falls back to Delta for the OLTP tables (rules catalog, app settings, RBAC, comments, schedules) so you don't need a Lakebase project to iterate. To exercise the Lakebase path locally, deploy the bundle once and point the variable at the resulting endpoint path (`projects/<project>/branches/<branch>/endpoints/primary`). See [app/DEVELOPMENT.md](https://github.com/databrickslabs/dqx/blob/v0.15.0/app/DEVELOPMENT.md) for the full set of `DQX_LAKEBASE_*` variables.
 
 If you don't have a profile yet, run `databricks auth login --host <workspace-url> -p <your-profile>` first. See [app/DEVELOPMENT.md](https://github.com/databrickslabs/dqx/blob/v0.15.0/app/DEVELOPMENT.md) for the full local-development guide.
 

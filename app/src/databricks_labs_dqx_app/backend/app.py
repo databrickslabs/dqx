@@ -338,7 +338,7 @@ async def lifespan(app: FastAPI):
     # raise, let the Databricks Apps platform restart the container,
     # and surface the underlying problem via restart-loop alerting.
     # The opt-out is intentional and explicit (unset
-    # ``DQX_LAKEBASE_INSTANCE_NAME``); a flap is not an opt-out.
+    # ``DQX_LAKEBASE_ENDPOINT``); a flap is not an opt-out.
     # The legitimate Delta-only path runs in the ``else`` branch below.
     # ------------------------------------------------------------------
     pg_executor = None
@@ -357,7 +357,7 @@ async def lifespan(app: FastAPI):
             pg_executor = await asyncio.to_thread(
                 build_pg_executor,
                 sp_ws,
-                instance_name=conf.lakebase_instance_name,
+                endpoint=conf.lakebase_endpoint,
                 database=conf.lakebase_database_name,
                 schema=conf.lakebase_schema_name,
                 token_refresh_minutes=conf.lakebase_token_refresh_minutes,
@@ -375,8 +375,8 @@ async def lifespan(app: FastAPI):
                 logger.info("Lakebase schema is up to date")
             set_oltp_executor(pg_executor)
             logger.info(
-                "Lakebase OLTP routing enabled (instance=%s, database=%s, schema=%s)",
-                conf.lakebase_instance_name,
+                "Lakebase OLTP routing enabled (endpoint=%s, database=%s, schema=%s)",
+                conf.lakebase_endpoint,
                 conf.lakebase_database_name,
                 conf.lakebase_schema_name,
             )
@@ -399,21 +399,21 @@ async def lifespan(app: FastAPI):
                     logger.warning("Error closing Lakebase pool during init failure", exc_info=True)
             set_oltp_executor(None)
             logger.exception(
-                "Lakebase initialisation failed (instance=%s, database=%s, schema=%s). "
+                "Lakebase initialisation failed (endpoint=%s, database=%s, schema=%s). "
                 "Refusing to start — silent fallback to Delta would split OLTP writes across "
                 "two physical stores and orphan prior Lakebase data on every flap. "
-                "Common causes: the database_instance is not provisioned, the app SP lacks "
-                "CAN_CONNECT_AND_CREATE on the bound database, OAuth token issuance is failing, "
+                "Common causes: the project branch/endpoint is not provisioned, the app SP "
+                "lacks a Postgres role on the branch, OAuth token issuance is failing, "
                 "or the Lakebase endpoint is transiently unreachable. Fix the underlying issue "
                 "and the platform will restart this container automatically. To intentionally "
-                "run on Delta only, unset DQX_LAKEBASE_INSTANCE_NAME.",
-                conf.lakebase_instance_name,
+                "run on Delta only, unset DQX_LAKEBASE_ENDPOINT.",
+                conf.lakebase_endpoint,
                 conf.lakebase_database_name,
                 conf.lakebase_schema_name,
             )
             raise
     else:
-        logger.info("Lakebase not configured (DQX_LAKEBASE_INSTANCE_NAME is empty). OLTP tables will live on Delta.")
+        logger.info("Lakebase not configured (DQX_LAKEBASE_ENDPOINT is empty). OLTP tables will live on Delta.")
         set_oltp_executor(None)
 
     # Delta migrations always run, but the OLTP fallback DDL is
@@ -483,8 +483,7 @@ async def lifespan(app: FastAPI):
 
     if not (conf.wheels_volume and conf.job_id):
         msg = (
-            "DQX_WHEELS_VOLUME or DQX_JOB_ID is not set — profiler, dry-run, "
-            "and scheduler features will be unavailable"
+            "DQX_WHEELS_VOLUME or DQX_JOB_ID is not set — profiler, dry-run, and scheduler features will be unavailable"
         )
         if conf.require_task_runner:
             # Production-style deploy (bundle sets DQX_REQUIRE_TASK_RUNNER=1):
