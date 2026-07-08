@@ -10,16 +10,14 @@ route below blocks (409) deleting a rule that's still applied anywhere.
 from typing import Annotated
 
 from databricks.labs.dqx.errors import UnsafeSqlQueryError
-from databricks.sdk import WorkspaceClient
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from databricks_labs_dqx_app.backend.common.authorization import UserRole
+from databricks_labs_dqx_app.backend.common.authorization import CurrentUser, UserRole
 from databricks_labs_dqx_app.backend.dependencies import (
     get_app_settings_service,
     get_apply_rules_service,
     get_materializer,
     get_monitored_table_version_service,
-    get_obo_ws,
     get_registry_service,
     get_rule_embeddings_service,
     require_role,
@@ -46,11 +44,6 @@ router = APIRouter()
 _ALL_ROLES = [UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTHOR, UserRole.VIEWER]
 _AUTHORS_AND_ABOVE = [UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTHOR]
 _APPROVERS_ONLY = [UserRole.ADMIN, UserRole.RULE_APPROVER]
-
-
-def _current_user_email(obo_ws: WorkspaceClient) -> str:
-    user = obo_ws.current_user.me()
-    return user.user_name or "unknown"
 
 
 # ------------------------------------------------------------------
@@ -122,7 +115,7 @@ def get_registry_rule(
 def create_registry_rule(
     body: CreateRegistryRuleIn,
     svc: Annotated[RegistryService, Depends(get_registry_service)],
-    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    user_email: CurrentUser,
 ) -> CreateRegistryRuleOut:
     """Create a new draft registry rule.
 
@@ -130,7 +123,6 @@ def create_registry_rule(
     already shares this rule's structural fingerprint.
     """
     try:
-        user_email = _current_user_email(obo_ws)
         rule, warning = svc.create_rule(
             mode=body.mode,
             definition=body.definition,
@@ -158,11 +150,10 @@ def update_registry_rule(
     rule_id: str,
     body: UpdateRegistryRuleIn,
     svc: Annotated[RegistryService, Depends(get_registry_service)],
-    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    user_email: CurrentUser,
 ) -> RegistryRuleOut:
     """Update a draft registry rule. Only draft rules can be edited."""
     try:
-        user_email = _current_user_email(obo_ws)
         rule = svc.update_draft(
             rule_id,
             user_email=user_email,
@@ -199,7 +190,7 @@ def delete_registry_rule(
     rule_id: str,
     svc: Annotated[RegistryService, Depends(get_registry_service)],
     apply_rules: Annotated[ApplyRulesService, Depends(get_apply_rules_service)],
-    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    user_email: CurrentUser,
 ) -> dict[str, str]:
     """Delete a registry rule.
 
@@ -217,7 +208,6 @@ def delete_registry_rule(
                     "Remove it from those tables before deleting."
                 ),
             )
-        user_email = _current_user_email(obo_ws)
         svc.delete(rule_id, user_email)
         return {"status": "deleted", "rule_id": rule_id}
     except HTTPException:
@@ -243,11 +233,10 @@ def delete_registry_rule(
 def submit_registry_rule(
     rule_id: str,
     svc: Annotated[RegistryService, Depends(get_registry_service)],
-    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    user_email: CurrentUser,
 ) -> RegistryRuleOut:
     """Submit a draft registry rule for approval."""
     try:
-        user_email = _current_user_email(obo_ws)
         rule = svc.submit(rule_id, user_email)
         return RegistryRuleOut.from_domain(rule)
     except ValueError as e:
@@ -272,7 +261,7 @@ def approve_registry_rule(
     materializer: Annotated[Materializer, Depends(get_materializer)],
     version_svc: Annotated[MonitoredTableVersionService, Depends(get_monitored_table_version_service)],
     app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
-    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    user_email: CurrentUser,
 ) -> RegistryRuleOut:
     """Approve (publish) a pending registry rule — bumps version and freezes a snapshot.
 
@@ -300,7 +289,6 @@ def approve_registry_rule(
     re-freeze failure never turns a successful publish into a 5xx.
     """
     try:
-        user_email = _current_user_email(obo_ws)
         rule = svc.approve(rule_id, user_email)
         embeddings.embed_and_store(rule)
         rematerialized = materializer.rematerialize_for_rule(rule_id)
@@ -334,11 +322,10 @@ def approve_registry_rule(
 def reject_registry_rule(
     rule_id: str,
     svc: Annotated[RegistryService, Depends(get_registry_service)],
-    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    user_email: CurrentUser,
 ) -> RegistryRuleOut:
     """Reject a pending registry rule."""
     try:
-        user_email = _current_user_email(obo_ws)
         rule = svc.reject(rule_id, user_email)
         return RegistryRuleOut.from_domain(rule)
     except ValueError as e:
@@ -359,11 +346,10 @@ def reject_registry_rule(
 def deprecate_registry_rule(
     rule_id: str,
     svc: Annotated[RegistryService, Depends(get_registry_service)],
-    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    user_email: CurrentUser,
 ) -> RegistryRuleOut:
     """Deprecate a published registry rule."""
     try:
-        user_email = _current_user_email(obo_ws)
         rule = svc.deprecate(rule_id, user_email)
         return RegistryRuleOut.from_domain(rule)
     except ValueError as e:
@@ -384,11 +370,10 @@ def deprecate_registry_rule(
 def undeprecate_registry_rule(
     rule_id: str,
     svc: Annotated[RegistryService, Depends(get_registry_service)],
-    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    user_email: CurrentUser,
 ) -> RegistryRuleOut:
     """Reinstate a deprecated registry rule back to approved."""
     try:
-        user_email = _current_user_email(obo_ws)
         rule = svc.undeprecate(rule_id, user_email)
         return RegistryRuleOut.from_domain(rule)
     except ValueError as e:

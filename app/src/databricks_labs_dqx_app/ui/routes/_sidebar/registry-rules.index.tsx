@@ -151,7 +151,14 @@ function RegistryRulesPage() {
     [statusFilter, dimensionFilter, severityFilter, tagFilter],
   );
 
-  const { data } = useListRegistryRules(serverParams);
+  // Non-suspense on purpose: the `tag` server param is a free-text input, so
+  // a suspense query would re-suspend (flashing the whole page skeleton and
+  // dropping input focus) on every keystroke. The trade-off is that a failed
+  // list fetch resolves to `data === undefined` rather than throwing to the
+  // route's ErrorBoundary — which historically rendered as a misleading empty
+  // "no rules" table with no hint that anything went wrong. We surface
+  // `isError` explicitly below so a fetch failure shows the retry UI instead.
+  const { data, isError, refetch } = useListRegistryRules(serverParams);
   const serverFilteredRules = useMemo(() => data?.data ?? [], [data]);
 
   const stewardValues = useMemo(() => {
@@ -518,24 +525,30 @@ function RegistryRulesPage() {
           )}
         </div>
 
-        <RulesTable
-          rows={pagedRules}
-          labelDefinitions={labelDefinitions}
-          sortKey={sortKey}
-          sortDir={sortDir}
-          onHeaderClick={handleHeaderClick}
-          onRowClick={openRule}
-          renderActions={renderActionsCell}
-          toolbarExtra={filterControls}
-          emptyMessage={
-            hasActiveFilters
-              ? t("rulesRegistry.emptyState")
-              : perms.canCreateRules
-                ? t("rulesRegistry.emptyStateNoRulesCta")
-                : t("rulesRegistry.emptyStateNoRules")
-          }
-        />
-        <Pagination page={page} totalItems={rules.length} pageSize={PAGE_SIZE} onPageChange={setPage} />
+        {isError ? (
+          <RegistryRulesError resetErrorBoundary={() => void refetch()} />
+        ) : (
+          <>
+            <RulesTable
+              rows={pagedRules}
+              labelDefinitions={labelDefinitions}
+              sortKey={sortKey}
+              sortDir={sortDir}
+              onHeaderClick={handleHeaderClick}
+              onRowClick={openRule}
+              renderActions={renderActionsCell}
+              toolbarExtra={filterControls}
+              emptyMessage={
+                hasActiveFilters
+                  ? t("rulesRegistry.emptyState")
+                  : perms.canCreateRules
+                    ? t("rulesRegistry.emptyStateNoRulesCta")
+                    : t("rulesRegistry.emptyStateNoRules")
+              }
+            />
+            <Pagination page={page} totalItems={rules.length} pageSize={PAGE_SIZE} onPageChange={setPage} />
+          </>
+        )}
       </div>
 
       <AlertDialog open={deleteTarget !== null} onOpenChange={(open) => !open && setDeleteTarget(null)}>

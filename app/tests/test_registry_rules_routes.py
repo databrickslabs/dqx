@@ -45,14 +45,6 @@ def _rule(rule_id: str = "r1", status: str = "draft", version: int = 0) -> Regis
     return RegistryRule(rule_id=rule_id, mode="dqx_native", status=status, version=version, definition=_definition())
 
 
-def _mock_obo_ws(user_email: str = "alice@x") -> MagicMock:
-    obo = MagicMock()
-    me = MagicMock()
-    me.user_name = user_email
-    obo.current_user.me.return_value = me
-    return obo
-
-
 def _no_auto_upgrade() -> MagicMock:
     """App-settings mock with auto-upgrade OFF (the default posture).
 
@@ -94,9 +86,29 @@ class TestCreateAndUpdate:
         svc = MagicMock()
         svc.create_rule.return_value = (_rule(), "possible duplicate")
         body = CreateRegistryRuleIn(mode="dqx_native", definition=_definition())
-        result = create_registry_rule(body=body, svc=svc, obo_ws=_mock_obo_ws())
+        result = create_registry_rule(body=body, svc=svc, user_email="alice@x")
         assert result.rule.rule_id == "r1"
         assert result.dedup_warning == "possible duplicate"
+
+    def test_create_uses_injected_user_email_without_scim_call(self):
+        """Author identity comes from the header-derived ``get_user_email``
+        dependency (``CurrentUser``), NOT a per-request SCIM
+        ``current_user.me()`` round-trip — that redundant call added
+        ~200-500ms to every registry save/action (P19 bug #1). The route now
+        takes ``user_email`` directly, so it can only forward what it is
+        given and cannot issue a network call to resolve identity."""
+        svc = MagicMock()
+        svc.create_rule.return_value = (_rule(), None)
+        body = CreateRegistryRuleIn(mode="dqx_native", definition=_definition())
+        create_registry_rule(body=body, svc=svc, user_email="carol@x")
+        assert svc.create_rule.call_args.kwargs["user_email"] == "carol@x"
+
+    def test_update_forwards_injected_user_email(self):
+        svc = MagicMock()
+        svc.update_draft.return_value = _rule(status="draft")
+        body = UpdateRegistryRuleIn(user_metadata={"name": "x"})
+        update_registry_rule("r1", body=body, svc=svc, user_email="carol@x")
+        assert svc.update_draft.call_args.kwargs["user_email"] == "carol@x"
 
     def test_create_rejects_unsafe_sql_with_400(self):
         """``RegistryService.create_rule`` also validates SQL safety (the
@@ -115,7 +127,7 @@ class TestCreateAndUpdate:
             ),
         )
         with pytest.raises(HTTPException) as excinfo:
-            create_registry_rule(body=body, svc=svc, obo_ws=_mock_obo_ws())
+            create_registry_rule(body=body, svc=svc, user_email="alice@x")
         assert excinfo.value.status_code == 400
 
     def test_update_rejects_non_draft_with_400(self):
@@ -123,7 +135,7 @@ class TestCreateAndUpdate:
         svc.update_draft.side_effect = ValueError("only draft rules can be edited")
         body = UpdateRegistryRuleIn(user_metadata={"name": "x"})
         with pytest.raises(HTTPException) as excinfo:
-            update_registry_rule("r1", body=body, svc=svc, obo_ws=_mock_obo_ws())
+            update_registry_rule("r1", body=body, svc=svc, user_email="alice@x")
         assert excinfo.value.status_code == 400
 
     def test_update_missing_rule_raises_404(self):
@@ -131,21 +143,21 @@ class TestCreateAndUpdate:
         svc.update_draft.side_effect = RuntimeError("Registry rule not found: r1")
         body = UpdateRegistryRuleIn(user_metadata={"name": "x"})
         with pytest.raises(HTTPException) as excinfo:
-            update_registry_rule("r1", body=body, svc=svc, obo_ws=_mock_obo_ws())
+            update_registry_rule("r1", body=body, svc=svc, user_email="alice@x")
         assert excinfo.value.status_code == 404
 
     def test_update_passes_author_kind_through_to_service(self):
         svc = MagicMock()
         svc.update_draft.return_value = _rule(status="draft")
         body = UpdateRegistryRuleIn(user_metadata={"name": "x"}, author_kind="ai_assisted")
-        update_registry_rule("r1", body=body, svc=svc, obo_ws=_mock_obo_ws())
+        update_registry_rule("r1", body=body, svc=svc, user_email="alice@x")
         assert svc.update_draft.call_args.kwargs["author_kind"] == "ai_assisted"
 
     def test_update_without_author_kind_passes_none(self):
         svc = MagicMock()
         svc.update_draft.return_value = _rule(status="draft")
         body = UpdateRegistryRuleIn(user_metadata={"name": "x"})
-        update_registry_rule("r1", body=body, svc=svc, obo_ws=_mock_obo_ws())
+        update_registry_rule("r1", body=body, svc=svc, user_email="alice@x")
         assert svc.update_draft.call_args.kwargs["author_kind"] is None
 
     def test_update_rejects_unsafe_sql_with_400(self):
@@ -165,7 +177,7 @@ class TestCreateAndUpdate:
             ),
         )
         with pytest.raises(HTTPException) as excinfo:
-            update_registry_rule("r1", body=body, svc=svc, obo_ws=_mock_obo_ws())
+            update_registry_rule("r1", body=body, svc=svc, user_email="alice@x")
         assert excinfo.value.status_code == 400
 
 
@@ -174,7 +186,7 @@ class TestDelete:
         svc = MagicMock()
         apply_rules = MagicMock()
         apply_rules.count_applications_for_rule.return_value = 0
-        result = delete_registry_rule("r1", svc=svc, apply_rules=apply_rules, obo_ws=_mock_obo_ws())
+        result = delete_registry_rule("r1", svc=svc, apply_rules=apply_rules, user_email="alice@x")
         assert result == {"status": "deleted", "rule_id": "r1"}
         svc.delete.assert_called_once_with("r1", "alice@x")
 
@@ -184,7 +196,7 @@ class TestDelete:
         apply_rules.count_applications_for_rule.return_value = 0
         svc.delete.side_effect = RuntimeError("Registry rule not found: r1")
         with pytest.raises(HTTPException) as excinfo:
-            delete_registry_rule("r1", svc=svc, apply_rules=apply_rules, obo_ws=_mock_obo_ws())
+            delete_registry_rule("r1", svc=svc, apply_rules=apply_rules, user_email="alice@x")
         assert excinfo.value.status_code == 404
 
     def test_delete_applied_rule_raises_409(self):
@@ -192,7 +204,7 @@ class TestDelete:
         apply_rules = MagicMock()
         apply_rules.count_applications_for_rule.return_value = 2
         with pytest.raises(HTTPException) as excinfo:
-            delete_registry_rule("r1", svc=svc, apply_rules=apply_rules, obo_ws=_mock_obo_ws())
+            delete_registry_rule("r1", svc=svc, apply_rules=apply_rules, user_email="alice@x")
         assert excinfo.value.status_code == 409
         svc.delete.assert_not_called()
 
@@ -201,14 +213,14 @@ class TestLifecycleRoutes:
     def test_submit_success(self):
         svc = MagicMock()
         svc.submit.return_value = _rule(status="pending_approval")
-        result = submit_registry_rule("r1", svc=svc, obo_ws=_mock_obo_ws())
+        result = submit_registry_rule("r1", svc=svc, user_email="alice@x")
         assert result.status == "pending_approval"
 
     def test_submit_invalid_transition_raises_400(self):
         svc = MagicMock()
         svc.submit.side_effect = ValueError("Cannot transition from 'approved' to 'pending_approval'")
         with pytest.raises(HTTPException) as excinfo:
-            submit_registry_rule("r1", svc=svc, obo_ws=_mock_obo_ws())
+            submit_registry_rule("r1", svc=svc, user_email="alice@x")
         assert excinfo.value.status_code == 400
 
     def test_approve_success(self):
@@ -217,7 +229,7 @@ class TestLifecycleRoutes:
         embeddings = MagicMock()
         materializer = MagicMock()
         result = approve_registry_rule(
-            "r1", svc=svc, embeddings=embeddings, materializer=materializer, version_svc=MagicMock(), app_settings=_no_auto_upgrade(), obo_ws=_mock_obo_ws()
+            "r1", svc=svc, embeddings=embeddings, materializer=materializer, version_svc=MagicMock(), app_settings=_no_auto_upgrade(), user_email="alice@x"
         )
         assert result.status == "approved"
         assert result.version == 1
@@ -228,7 +240,7 @@ class TestLifecycleRoutes:
         svc.approve.return_value = published
         embeddings = MagicMock()
         materializer = MagicMock()
-        approve_registry_rule("r1", svc=svc, embeddings=embeddings, materializer=materializer, version_svc=MagicMock(), app_settings=_no_auto_upgrade(), obo_ws=_mock_obo_ws())
+        approve_registry_rule("r1", svc=svc, embeddings=embeddings, materializer=materializer, version_svc=MagicMock(), app_settings=_no_auto_upgrade(), user_email="alice@x")
         embeddings.embed_and_store.assert_called_once_with(published)
 
     def test_approve_propagates_unexpected_embedding_errors_as_500(self):
@@ -242,7 +254,7 @@ class TestLifecycleRoutes:
         materializer = MagicMock()
         with pytest.raises(HTTPException) as excinfo:
             approve_registry_rule(
-                "r1", svc=svc, embeddings=embeddings, materializer=materializer, version_svc=MagicMock(), app_settings=_no_auto_upgrade(), obo_ws=_mock_obo_ws()
+                "r1", svc=svc, embeddings=embeddings, materializer=materializer, version_svc=MagicMock(), app_settings=_no_auto_upgrade(), user_email="alice@x"
             )
         assert excinfo.value.status_code == 500
 
@@ -255,7 +267,7 @@ class TestLifecycleRoutes:
         svc.approve.return_value = published
         embeddings = MagicMock()
         materializer = MagicMock()
-        approve_registry_rule("r1", svc=svc, embeddings=embeddings, materializer=materializer, version_svc=MagicMock(), app_settings=_no_auto_upgrade(), obo_ws=_mock_obo_ws())
+        approve_registry_rule("r1", svc=svc, embeddings=embeddings, materializer=materializer, version_svc=MagicMock(), app_settings=_no_auto_upgrade(), user_email="alice@x")
         materializer.rematerialize_for_rule.assert_called_once_with("r1")
 
     def test_approve_propagates_unexpected_materializer_errors_as_500(self):
@@ -266,26 +278,26 @@ class TestLifecycleRoutes:
         materializer.rematerialize_for_rule.side_effect = TypeError("boom")
         with pytest.raises(HTTPException) as excinfo:
             approve_registry_rule(
-                "r1", svc=svc, embeddings=embeddings, materializer=materializer, version_svc=MagicMock(), app_settings=_no_auto_upgrade(), obo_ws=_mock_obo_ws()
+                "r1", svc=svc, embeddings=embeddings, materializer=materializer, version_svc=MagicMock(), app_settings=_no_auto_upgrade(), user_email="alice@x"
             )
         assert excinfo.value.status_code == 500
 
     def test_reject_success(self):
         svc = MagicMock()
         svc.reject.return_value = _rule(status="rejected")
-        result = reject_registry_rule("r1", svc=svc, obo_ws=_mock_obo_ws())
+        result = reject_registry_rule("r1", svc=svc, user_email="alice@x")
         assert result.status == "rejected"
 
     def test_deprecate_success(self):
         svc = MagicMock()
         svc.deprecate.return_value = _rule(status="deprecated", version=1)
-        result = deprecate_registry_rule("r1", svc=svc, obo_ws=_mock_obo_ws())
+        result = deprecate_registry_rule("r1", svc=svc, user_email="alice@x")
         assert result.status == "deprecated"
 
     def test_undeprecate_success(self):
         svc = MagicMock()
         svc.undeprecate.return_value = _rule(status="approved", version=1)
-        result = undeprecate_registry_rule("r1", svc=svc, obo_ws=_mock_obo_ws())
+        result = undeprecate_registry_rule("r1", svc=svc, user_email="alice@x")
         assert result.status == "approved"
 
     def test_approve_missing_rule_raises_404(self):
@@ -295,7 +307,7 @@ class TestLifecycleRoutes:
         materializer = MagicMock()
         with pytest.raises(HTTPException) as excinfo:
             approve_registry_rule(
-                "r1", svc=svc, embeddings=embeddings, materializer=materializer, version_svc=MagicMock(), app_settings=_no_auto_upgrade(), obo_ws=_mock_obo_ws()
+                "r1", svc=svc, embeddings=embeddings, materializer=materializer, version_svc=MagicMock(), app_settings=_no_auto_upgrade(), user_email="alice@x"
             )
         assert excinfo.value.status_code == 404
 
