@@ -1418,7 +1418,64 @@
     "aiSuggestFailed": "Failed to get an AI suggestion.",
     "aiSuggestInvalidValue": "AI suggested a value that isn't one of the configured options. Pick one manually.",
     "aiSuggestNoContextYet": "No details yet — fill in a few fields first.",
-    "lowcodeComingSoon": "Low-code authoring is coming soon — use DQX Native or SQL for now.",
+    "lowcodeIf": "if",
+    "lowcodeNoConditions": "No conditions defined.",
+    "lowcodeAddFirstCondition": "Add a condition to start building the rule.",
+    "lowcodeAddCondition": "Add condition",
+    "lowcodeAddAggregatedCondition": "Add aggregated condition",
+    "lowcodeOperatorPlaceholder": "operator",
+    "lowcodeColumnPlaceholder": "column",
+    "lowcodeAggregatePlaceholder": "aggregate",
+    "lowcodeUniversalOperators": "Universal",
+    "lowcodeTypeSpecific": "Type-specific",
+    "lowcodeMinPlaceholder": "min",
+    "lowcodeMaxPlaceholder": "max",
+    "lowcodeTypePlaceholder": "type",
+    "lowcodeChipPlaceholder": "comma-separated values",
+    "lowcodeQuantileTitle": "Quantile (0–1)",
+    "lowcodeGroupByLabel": "Group by",
+    "lowcodeGroupByHelp": "Optional. Group rows before evaluating aggregated conditions, e.g. {{region}}, COALESCE({{country}}, 'XX').",
+    "lowcodeJoinsLabel": "Joins",
+    "lowcodeNoJoins": "No joins configured. Add a join to bring in a related table.",
+    "lowcodeAddJoin": "Add join",
+    "lowcodeAddKey": "Add key",
+    "lowcodeJoinedColumnPlaceholder": "joined column",
+    "lowcodeColumnRefPlaceholder": "column ref",
+    "lowcodeNoCrossKeys": "No join keys for a CROSS JOIN.",
+    "lowcodeConditionsLabel": "Conditions",
+    "lowcodeConditionsRequired": "Add at least one complete condition.",
+    "modeSwitch": {
+      "LOWCODE_TO_SQL": {
+        "title": "Switch to SQL?",
+        "body": "We'll translate the conditions you've built into SQL and drop them into the editor. Switching back to Low-Code later starts from a blank row stack — your rows won't be rebuilt automatically.",
+        "confirm": "Switch to SQL"
+      },
+      "LOWCODE_TO_NATIVE": {
+        "title": "Switch to DQX Native?",
+        "body": "The conditions you've built in Low-Code will be cleared. DQX Native uses a built-in check function instead of a hand-built predicate.",
+        "confirm": "Switch to DQX Native"
+      },
+      "SQL_TO_LOWCODE": {
+        "title": "Switch to Low-Code?",
+        "body": "You'll start with an empty condition stack. The SQL you wrote stays saved on the rule, so you can switch back to it any time.",
+        "confirm": "Switch to Low-Code"
+      },
+      "SQL_TO_NATIVE": {
+        "title": "Switch to DQX Native?",
+        "body": "The SQL predicate you wrote will be cleared. DQX Native uses a built-in check function instead.",
+        "confirm": "Switch to DQX Native"
+      },
+      "NATIVE_TO_LOWCODE": {
+        "title": "Switch to Low-Code?",
+        "body": "The check function you selected will be cleared. Low-Code lets you build conditions visually instead.",
+        "confirm": "Switch to Low-Code"
+      },
+      "NATIVE_TO_SQL": {
+        "title": "Switch to SQL?",
+        "body": "The check function you selected will be cleared. SQL lets you write the predicate by hand instead.",
+        "confirm": "Switch to SQL"
+      }
+    },
     "authorKindAiGenerated": "Generated fully by AI",
     "authorKindAiAssisted": "Co-authored with AI",
     "authorKindHuman": "Manually created",
@@ -1623,6 +1680,7 @@
     "incompleteMappingStatus_other": "{{incomplete}} of {{count}} mappings incomplete",
     "ruleLogicLabel": "Rule logic",
     "ruleLogicUnavailable": "No logic details available for this rule.",
+    "ruleLogicCompiledSql": "Compiled SQL",
     "mappingCheckCount_one": "→ {{count}} check",
     "mappingCheckCount_other": "→ {{count}} checks",
     "noColumnMapped": "No column mapped",

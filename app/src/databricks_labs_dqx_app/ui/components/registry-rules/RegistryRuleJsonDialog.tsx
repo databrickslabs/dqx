@@ -86,7 +86,7 @@ export function RegistryRuleJsonDialog({
     setError(null);
     let parsed;
     try {
-      parsed = parseDqxCheckJson(text, rule.definition, rule.user_metadata, checkFunctions, t);
+      parsed = parseDqxCheckJson(text, rule.definition, rule.user_metadata, checkFunctions, t, rule.mode);
     } catch (err) {
       setError(err instanceof Error ? err.message : t("rulesRegistry.jsonParseError"));
       return;

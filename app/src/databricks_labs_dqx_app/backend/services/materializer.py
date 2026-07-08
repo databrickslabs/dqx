@@ -215,6 +215,16 @@ def render_check(
                     "The registry rule's SQL query contains prohibited statements and cannot be materialized."
                 )
             arguments = {"query": query, "negate": negate}
+            # A low-code advanced (group-by) rule folds its group-by columns
+            # into ``body.merge_columns`` so the ``sql_query`` check joins the
+            # per-group violation result back onto the source rows (row-level
+            # semantics). Each entry is a ``{{slot}}`` reference substituted
+            # against the mapping group exactly like the query itself.
+            merge_columns = body.get("merge_columns")
+            if isinstance(merge_columns, list) and merge_columns:
+                arguments["merge_columns"] = [
+                    _substitute_text(str(col), group, definition.slots) for col in merge_columns
+                ]
             for param in definition.parameters:
                 if param.value is not None:
                     arguments[param.name] = param.value

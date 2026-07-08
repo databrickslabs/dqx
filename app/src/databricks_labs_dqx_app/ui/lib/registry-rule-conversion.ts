@@ -206,6 +206,12 @@ export function buildDqxCheckJson(rule: RegistryRuleOut): Record<string, unknown
     if (typeof body.sql_query === "string") {
       functionName = "sql_query";
       args.query = body.sql_query;
+      // A low-code advanced (group-by) rule carries the group-by columns as
+      // `merge_columns` so violating groups flag their source rows row-level;
+      // surface them so the JSON mirrors exactly what materializes.
+      if (Array.isArray(body.merge_columns) && body.merge_columns.length > 0) {
+        args.merge_columns = body.merge_columns;
+      }
     } else {
       functionName = "sql_expression";
       args.expression = typeof body.predicate === "string" ? body.predicate : "";
@@ -229,7 +235,7 @@ export function buildDqxCheckJson(rule: RegistryRuleOut): Record<string, unknown
 }
 
 export interface ParsedCheckDefinition {
-  mode: "dqx_native" | "sql";
+  mode: "dqx_native" | "sql" | "lowcode";
   definition: RuleDefinition;
   polarity: "pass" | "fail" | null;
   /**
@@ -271,6 +277,7 @@ export function parseDqxCheckJson(
   currentUserMetadata: Record<string, unknown> | null | undefined,
   checkFunctions: ApiCheckFunctionDef[],
   t: (key: string, opts?: Record<string, unknown>) => string,
+  currentMode?: "dqx_native" | "lowcode" | "sql",
 ): ParsedCheckDefinition {
   let parsed: unknown;
   try {
@@ -310,6 +317,30 @@ export function parseDqxCheckJson(
       functionName === "sql_query"
         ? { sql_query: typeof args.query === "string" ? args.query : "" }
         : { predicate: typeof args.expression === "string" ? args.expression : "" };
+    if (functionName === "sql_query" && Array.isArray(args.merge_columns)) {
+      body.merge_columns = args.merge_columns.filter((c) => typeof c === "string");
+    }
+    // Preserve LOW-CODE identity when editing a low-code rule's JSON: keep
+    // mode "lowcode" and carry the re-editable AST + group-by forward from
+    // the stored body (the JSON is only the compiled sql_check view — it
+    // never carries the AST), so a JSON round-trip can't silently flip a
+    // low-code rule to SQL and drop its structured rows.
+    if (currentMode === "lowcode") {
+      const currentBody = (currentDefinition.body ?? {}) as Record<string, unknown>;
+      if (currentBody.lowcode_ast !== undefined) body.lowcode_ast = currentBody.lowcode_ast;
+      if (typeof currentBody.group_by === "string") body.group_by = currentBody.group_by;
+      return {
+        mode: "lowcode",
+        polarity,
+        definition: {
+          body,
+          slots: currentDefinition.slots ?? [],
+          parameters: currentDefinition.parameters ?? [],
+          error_message: errorMessage,
+        },
+        userMetadata,
+      };
+    }
     return {
       mode: "sql",
       polarity,

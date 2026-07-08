@@ -22,6 +22,10 @@ import { cn } from "@/lib/utils";
 import type { AppliedRuleOut, ColumnOut, RegistryRuleOut, RuleParameter, RuleSlot } from "@/lib/api";
 import type { LabelDefinition } from "@/lib/api-custom";
 import { paramValueToRaw } from "@/lib/registry-rule-conversion";
+import { LowcodeBuilder } from "@/components/rules/lowcode/LowcodeBuilder";
+import { JoinsBuilder } from "@/components/rules/lowcode/JoinsBuilder";
+import { isV2Ast } from "@/lib/lowcodeAst";
+import { slotFamilyToLowcode, type LowcodeColumnRef } from "@/lib/lowcodeCompile";
 import { MappingChips } from "./MappingChips";
 import { RESERVED_DIMENSION_KEY, RESERVED_SEVERITY_KEY, TagBadge, colorFor } from "./shared";
 
@@ -90,6 +94,58 @@ function RuleParametersView({ parameters }: { parameters: RuleParameter[] }) {
   );
 }
 
+// Low-code view: render the stored AST in a read-only LowcodeBuilder (the
+// structured IF/THEN condition rows + joins), plus the group-by and the
+// compiled SQL that actually runs. Ported from dqlake's `LowcodeBody`
+// (bindings/RuleConfigCard) so a low-code rule surfaces faithfully in Apply
+// Rules → rule logic instead of only showing raw SQL text.
+function LowcodeLogicBody({ registryRule }: { registryRule: RegistryRuleOut }) {
+  const { t } = useTranslation();
+  const body = (registryRule.definition.body ?? {}) as Record<string, unknown>;
+  const ast = body.lowcode_ast;
+  const groupBy = typeof body.group_by === "string" ? body.group_by : "";
+  const compiled = typeof body.sql_query === "string" ? body.sql_query : typeof body.predicate === "string" ? body.predicate : "";
+  const declaredColumns: LowcodeColumnRef[] = (registryRule.definition.slots ?? []).map((s) => ({
+    name: s.name,
+    family: slotFamilyToLowcode(s.family),
+  }));
+
+  if (!isV2Ast(ast)) {
+    // No stored AST (e.g. legacy/hand-crafted lowcode body) — fall back to
+    // the compiled SQL text so the disclosure is never empty.
+    return compiled ? (
+      <pre className="font-mono text-xs whitespace-pre-wrap rounded bg-muted/40 p-3 overflow-x-auto">{compiled}</pre>
+    ) : (
+      <p className="text-xs italic text-muted-foreground">{t("monitoredTables.ruleLogicUnavailable")}</p>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      <LowcodeBuilder ast={ast} onChange={() => {}} declaredColumns={declaredColumns} readOnly />
+      {ast.joins.length > 0 && (
+        <JoinsBuilder ast={ast} onChange={() => {}} declaredColumns={declaredColumns} readOnly />
+      )}
+      {groupBy && (
+        <div className="space-y-1">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+            {t("rulesRegistry.lowcodeGroupByLabel")}
+          </div>
+          <code className="block font-mono text-xs rounded bg-muted/40 p-2 overflow-x-auto">{groupBy}</code>
+        </div>
+      )}
+      {compiled && (
+        <div className="space-y-1">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+            {t("monitoredTables.ruleLogicCompiledSql")}
+          </div>
+          <pre className="font-mono text-xs whitespace-pre-wrap rounded bg-muted/40 p-3 overflow-x-auto">{compiled}</pre>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function RuleLogicBody({ registryRule }: { registryRule: RegistryRuleOut }) {
   const { t } = useTranslation();
   const body = (registryRule.definition.body ?? {}) as Record<string, unknown>;
@@ -98,6 +154,10 @@ function RuleLogicBody({ registryRule }: { registryRule: RegistryRuleOut }) {
   const sql = typeof body.sql_query === "string" ? body.sql_query : undefined;
   const predicate = typeof body.predicate === "string" ? body.predicate : undefined;
   const parameters = registryRule.definition.parameters ?? [];
+
+  if (registryRule.mode === "lowcode") {
+    return <LowcodeLogicBody registryRule={registryRule} />;
+  }
 
   if (!fn && !sql && !predicate) {
     return <p className="text-xs italic text-muted-foreground">{t("monitoredTables.ruleLogicUnavailable")}</p>;

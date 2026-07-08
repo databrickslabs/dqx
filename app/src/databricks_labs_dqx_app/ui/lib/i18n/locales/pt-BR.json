@@ -1418,7 +1418,64 @@
     "aiSuggestFailed": "Falha ao obter uma sugestão da IA.",
     "aiSuggestInvalidValue": "A IA sugeriu um valor que não está entre as opções configuradas. Escolha um manualmente.",
     "aiSuggestNoContextYet": "Ainda sem detalhes — preencha alguns campos primeiro.",
-    "lowcodeComingSoon": "A criação low-code chegará em breve — use DQX Native ou SQL por enquanto.",
+    "lowcodeIf": "se",
+    "lowcodeNoConditions": "Nenhuma condição definida.",
+    "lowcodeAddFirstCondition": "Adicione uma condição para começar a construir a regra.",
+    "lowcodeAddCondition": "Adicionar condição",
+    "lowcodeAddAggregatedCondition": "Adicionar condição agregada",
+    "lowcodeOperatorPlaceholder": "operador",
+    "lowcodeColumnPlaceholder": "coluna",
+    "lowcodeAggregatePlaceholder": "agregado",
+    "lowcodeUniversalOperators": "Universal",
+    "lowcodeTypeSpecific": "Específico do tipo",
+    "lowcodeMinPlaceholder": "mín",
+    "lowcodeMaxPlaceholder": "máx",
+    "lowcodeTypePlaceholder": "tipo",
+    "lowcodeChipPlaceholder": "valores separados por vírgulas",
+    "lowcodeQuantileTitle": "Quantil (0–1)",
+    "lowcodeGroupByLabel": "Agrupar por",
+    "lowcodeGroupByHelp": "Opcional. Agrupa as linhas antes de avaliar as condições agregadas, por ex. {{region}}, COALESCE({{country}}, 'XX').",
+    "lowcodeJoinsLabel": "Junções",
+    "lowcodeNoJoins": "Nenhuma junção configurada. Adicione uma junção para incluir uma tabela relacionada.",
+    "lowcodeAddJoin": "Adicionar junção",
+    "lowcodeAddKey": "Adicionar chave",
+    "lowcodeJoinedColumnPlaceholder": "coluna da junção",
+    "lowcodeColumnRefPlaceholder": "ref. de coluna",
+    "lowcodeNoCrossKeys": "Sem chaves de junção para um CROSS JOIN.",
+    "lowcodeConditionsLabel": "Condições",
+    "lowcodeConditionsRequired": "Adicione pelo menos uma condição completa.",
+    "modeSwitch": {
+      "LOWCODE_TO_SQL": {
+        "title": "Mudar para SQL?",
+        "body": "Vamos traduzir as condições que você criou para SQL e colocá-las no editor. Se você voltar para Low-Code depois, começará com uma pilha de linhas em branco — suas linhas não serão reconstruídas automaticamente.",
+        "confirm": "Mudar para SQL"
+      },
+      "LOWCODE_TO_NATIVE": {
+        "title": "Mudar para DQX Native?",
+        "body": "As condições que você criou no Low-Code serão apagadas. O DQX Native usa uma função de verificação integrada em vez de um predicado feito à mão.",
+        "confirm": "Mudar para DQX Native"
+      },
+      "SQL_TO_LOWCODE": {
+        "title": "Mudar para Low-Code?",
+        "body": "Você começará com uma pilha de condições vazia. O SQL que você escreveu permanece salvo na regra, então você pode voltar a ele quando quiser.",
+        "confirm": "Mudar para Low-Code"
+      },
+      "SQL_TO_NATIVE": {
+        "title": "Mudar para DQX Native?",
+        "body": "O predicado SQL que você escreveu será apagado. O DQX Native usa uma função de verificação integrada em vez disso.",
+        "confirm": "Mudar para DQX Native"
+      },
+      "NATIVE_TO_LOWCODE": {
+        "title": "Mudar para Low-Code?",
+        "body": "A função de verificação que você selecionou será apagada. O Low-Code permite criar condições visualmente.",
+        "confirm": "Mudar para Low-Code"
+      },
+      "NATIVE_TO_SQL": {
+        "title": "Mudar para SQL?",
+        "body": "A função de verificação que você selecionou será apagada. O SQL permite escrever o predicado à mão.",
+        "confirm": "Mudar para SQL"
+      }
+    },
     "authorKindAiGenerated": "Gerado totalmente por IA",
     "authorKindAiAssisted": "Coautoria com IA",
     "authorKindHuman": "Criado manualmente",
@@ -1623,6 +1680,7 @@
     "incompleteMappingStatus_other": "{{incomplete}} de {{count}} mapeamentos incompletos",
     "ruleLogicLabel": "Lógica da regra",
     "ruleLogicUnavailable": "Nenhum detalhe de lógica disponível para esta regra.",
+    "ruleLogicCompiledSql": "SQL compilado",
     "mappingCheckCount_one": "→ {{count}} verificação",
     "mappingCheckCount_other": "→ {{count}} verificações",
     "noColumnMapped": "Nenhuma coluna mapeada",

@@ -58,6 +58,19 @@ import { PredicatePolaritySwitch } from "@/components/rules/PredicatePolaritySwi
 import { PredicateEditorExplainer } from "@/components/rules/PredicateEditorExplainer";
 import { PredicateEditor } from "@/components/rules/PredicateEditor";
 import { AdvancedDisclosure } from "@/components/rules/AdvancedDisclosure";
+import { LowcodeBuilder } from "@/components/rules/lowcode/LowcodeBuilder";
+import { JoinsBuilder } from "@/components/rules/lowcode/JoinsBuilder";
+import { GroupBySqlField } from "@/components/rules/lowcode/GroupBySqlField";
+import { ModeSwitchDialog, type ModeSwitchDirection } from "@/components/rules/lowcode/ModeSwitchDialog";
+import { useJoinedColumns } from "@/hooks/useJoinedColumns";
+import {
+  compileAstToSql,
+  compileJoinsToSql,
+  compileLowcodeBody,
+  slotFamilyToLowcode,
+  type LowcodeColumnRef,
+} from "@/lib/lowcodeCompile";
+import { EMPTY_LOWCODE_AST, isV2Ast, type LowcodeAstV2 } from "@/lib/lowcodeAst";
 import { cn } from "@/lib/utils";
 import type { LabelDefinition } from "@/lib/api-custom";
 import {
@@ -718,6 +731,8 @@ interface RuleEditSnapshot {
   sqlPredicate: string;
   sqlSlots: RuleSlot[];
   nativeSlots: RuleSlot[];
+  lowcodeAst: LowcodeAstV2;
+  groupBy: string;
   authorKind: CreateRegistryRuleInAuthorKind | undefined;
 }
 
@@ -734,6 +749,8 @@ function snapshotFromRule(rule: RegistryRuleOut): RuleEditSnapshot {
   if (isNative) {
     for (const p of rule.definition?.parameters ?? []) paramRawValues[p.name] = paramValueToRaw(p.value);
   }
+  const body = (rule.definition?.body ?? {}) as Record<string, unknown>;
+  const storedAst = body.lowcode_ast;
   return {
     name: asString(RESERVED_NAME_KEY),
     description: asString(RESERVED_DESCRIPTION_KEY),
@@ -746,9 +763,11 @@ function snapshotFromRule(rule: RegistryRuleOut): RuleEditSnapshot {
     errorMessage: rule.definition?.error_message ?? "",
     functionName: isNative ? String((rule.definition?.body ?? {}).function ?? "") : "",
     paramRawValues,
-    sqlPredicate: isNative ? "" : String((rule.definition?.body ?? {}).predicate ?? ""),
+    sqlPredicate: isNative ? "" : String(body.predicate ?? ""),
     sqlSlots: isNative ? [] : (rule.definition?.slots ?? []),
     nativeSlots: isNative ? (rule.definition?.slots ?? []) : [],
+    lowcodeAst: rule.mode === "lowcode" && isV2Ast(storedAst) ? storedAst : EMPTY_LOWCODE_AST,
+    groupBy: rule.mode === "lowcode" && typeof body.group_by === "string" ? body.group_by : "",
     authorKind: rule.author_kind ?? undefined,
   };
 }
@@ -775,6 +794,8 @@ const PRISTINE_NEW_SNAPSHOT: RuleEditSnapshot = {
   sqlPredicate: "",
   sqlSlots: [seededFirstSlot()],
   nativeSlots: [],
+  lowcodeAst: EMPTY_LOWCODE_AST,
+  groupBy: "",
   authorKind: "human",
 };
 
@@ -828,6 +849,18 @@ export function RegistryRuleFormDialog({
   const [paramRawValues, setParamRawValues] = useState<Record<string, string>>({});
   const [sqlPredicate, setSqlPredicate] = useState("");
   const [sqlSlots, setSqlSlots] = useState<RuleSlot[]>([]);
+  // Low-Code authoring state (shares `sqlSlots` for its "Columns used"
+  // placeholders — the row/aggregate pickers bind to the same declared
+  // slots). `lowcodeAst` holds the row stack + joins; `groupBy` is the raw
+  // group-by SQL string (advanced). Both are persisted under the rule's body
+  // (`lowcode_ast` / `group_by`) for re-editing, alongside the compiled SQL.
+  const [lowcodeAst, setLowcodeAst] = useState<LowcodeAstV2>(EMPTY_LOWCODE_AST);
+  const [groupBy, setGroupBy] = useState("");
+  const [modeSwitch, setModeSwitch] = useState<{ direction: ModeSwitchDirection; next: RegistryMode } | null>(null);
+  // Joined-table columns feed the Low-Code row/aggregate/group-by pickers
+  // alongside the declared `{{slot}}` placeholders — qualified as
+  // `<fqn>.<col>` so the compiler emits them as raw SQL, not placeholders.
+  const joinedColumns = useJoinedColumns(lowcodeAst.joins);
   // DQX Native's slot SET (arity) is fixed by the selected function's
   // column-kind parameters, but each slot's `name`/`family` is author-
   // editable through the same SlotsPanel used by SQL/Low-Code — so, unlike
@@ -908,16 +941,25 @@ export function RegistryRuleFormDialog({
         setParamRawValues(raw);
         setSqlPredicate("");
         setSqlSlots([]);
+        setLowcodeAst(EMPTY_LOWCODE_AST);
+        setGroupBy("");
         // Load the persisted slots as-authored (custom names/families
         // preserved) rather than re-deriving canonical ones from the
         // function signature.
         setNativeSlots(sourceRule.definition?.slots ?? []);
       } else {
-        const predicate = (sourceRule.definition?.body ?? {}).predicate;
+        const body = (sourceRule.definition?.body ?? {}) as Record<string, unknown>;
+        const predicate = body.predicate;
         setSqlPredicate(typeof predicate === "string" ? predicate : "");
         setSqlSlots(sourceRule.definition?.slots ?? []);
         setFunctionName("");
         setParamRawValues({});
+        // Low-Code rules rehydrate the exact row stack / joins / group-by the
+        // author built (stored alongside the compiled SQL) so the visual
+        // builder reopens as-authored.
+        const storedAst = body.lowcode_ast;
+        setLowcodeAst(isV2Ast(storedAst) ? storedAst : EMPTY_LOWCODE_AST);
+        setGroupBy(typeof body.group_by === "string" ? body.group_by : "");
       }
     } else {
       // Creating a brand-new rule: default to "human" authorship until an
@@ -932,6 +974,8 @@ export function RegistryRuleFormDialog({
       setSqlPredicate("");
       setSqlSlots([seededFirstSlot()]);
       setNativeSlots([]);
+      setLowcodeAst(EMPTY_LOWCODE_AST);
+      setGroupBy("");
       setPolarity("pass");
     }
   }, [open, sourceRule, setPageTab]);
@@ -1003,6 +1047,8 @@ export function RegistryRuleFormDialog({
     sqlPredicate,
     sqlSlots,
     nativeSlots,
+    lowcodeAst,
+    groupBy,
     authorKind,
   };
   const isDirty =
@@ -1047,14 +1093,19 @@ export function RegistryRuleFormDialog({
   // `canSubmit` layers the completeness requirements (severity, dimension,
   // required parameters) on top and gates "Save & submit" / "Submit for
   // approval" — the quality bar moves to the review boundary instead of
-  // blocking persistence. Low-Code has no editable body yet (see
-  // `lowcodeComingSoon` below), so it's never save-able.
+  // blocking persistence. Low-Code gates on its compiled predicate being
+  // non-empty (at least one fully-built condition row).
+  // Compiled low-code predicate — non-empty only once at least one row
+  // fully compiles (a column/aggregate + operator + any required value).
+  // Drives Low-Code's structural-validity gate the way `sqlPredicate` does
+  // for SQL mode.
+  const lowcodePredicate = mode === "lowcode" ? compileAstToSql(lowcodeAst).trim() : "";
   const structurallyValid =
     mode === "dqx_native"
       ? functionName.trim().length > 0 && slotsHaveValidNames(nativeSlots)
       : mode === "sql"
         ? sqlPredicate.trim().length > 0 && sqlError === null && slotsHaveValidNames(sqlSlots)
-        : false;
+        : lowcodePredicate.length > 0 && slotsHaveValidNames(sqlSlots);
   const canSaveDraft = name.trim().length > 0 && !nameError && structurallyValid;
   const canSubmit =
     canSaveDraft &&
@@ -1076,6 +1127,9 @@ export function RegistryRuleFormDialog({
   } else if (mode === "sql") {
     if (!sqlPredicate.trim() || sqlError) missingDraftFieldLabels.push(t("rulesRegistry.sqlPredicateLabel"));
     if (!slotsHaveValidNames(sqlSlots)) missingDraftFieldLabels.push(t("rulesRegistry.columnSlotsLabel"));
+  } else if (mode === "lowcode") {
+    if (!lowcodePredicate) missingDraftFieldLabels.push(t("rulesRegistry.lowcodeConditionsLabel"));
+    if (!slotsHaveValidNames(sqlSlots)) missingDraftFieldLabels.push(t("rulesRegistry.columnSlotsLabel"));
   }
   const missingSubmitFieldLabels: string[] = [...missingDraftFieldLabels];
   if (!severity.trim()) missingSubmitFieldLabels.push(t("rulesRegistry.severityLabel"));
@@ -1088,6 +1142,24 @@ export function RegistryRuleFormDialog({
     if (mode === "sql") {
       return {
         body: { predicate: sqlPredicate.trim() },
+        slots: sqlSlots,
+        parameters: [],
+        error_message: trimmedError || undefined,
+      };
+    }
+    if (mode === "lowcode") {
+      // Persist the re-editable AST + group-by alongside the compiled SQL.
+      // The compiled `predicate` (simple) or `sql_query` + `merge_columns`
+      // (joins/group-by) is what materializes and runs via the existing
+      // sql-mode path — the AST is display/edit-only.
+      const compiled = compileLowcodeBody(lowcodeAst, groupBy);
+      const body: Record<string, unknown> = { lowcode_ast: lowcodeAst };
+      if (groupBy.trim()) body.group_by = groupBy.trim();
+      if (compiled.predicate !== undefined) body.predicate = compiled.predicate;
+      if (compiled.sql_query !== undefined) body.sql_query = compiled.sql_query;
+      if (compiled.merge_columns !== undefined) body.merge_columns = compiled.merge_columns;
+      return {
+        body,
         slots: sqlSlots,
         parameters: [],
         error_message: trimmedError || undefined,
@@ -1290,6 +1362,11 @@ export function RegistryRuleFormDialog({
         return false;
       }
     }
+    if (mode === "lowcode" && !lowcodePredicate) {
+      toast.error(t("rulesRegistry.lowcodeConditionsRequired"));
+      setPageTab("implementation");
+      return false;
+    }
     return true;
   };
 
@@ -1309,7 +1386,7 @@ export function RegistryRuleFormDialog({
         const payload: UpdateRegistryRuleIn = {
           mode,
           definition,
-          polarity: mode === "sql" ? polarity : null,
+          polarity: mode === "sql" || mode === "lowcode" ? polarity : null,
           user_metadata: userMetadata,
           steward: steward.trim() || null,
           // Persist AI provenance stamped during this edit-in-place session
@@ -1324,7 +1401,7 @@ export function RegistryRuleFormDialog({
         const payload: CreateRegistryRuleIn = {
           mode,
           definition,
-          polarity: mode === "sql" ? polarity : null,
+          polarity: mode === "sql" || mode === "lowcode" ? polarity : null,
           user_metadata: userMetadata,
           steward: steward.trim() || null,
           author_kind: authorKind ?? "human",
@@ -1595,6 +1672,55 @@ export function RegistryRuleFormDialog({
   // arity (one slot per scalar parameter).
   const nativeExpandableArgKey = listColumnArgKey(selectedFn);
 
+  // The columns the Low-Code builder offers in its pickers: every declared
+  // `{{slot}}` (family-mapped to the builder's UPPERCASE vocabulary) plus any
+  // joined-table columns.
+  const lowcodeColumns: LowcodeColumnRef[] = [
+    ...sqlSlots.map((s) => ({ name: s.name, family: slotFamilyToLowcode(s.family) })),
+    ...joinedColumns,
+  ];
+
+  // Guarded authoring-mode switch (ported from dqlake's ModeSwitchDialog).
+  // Only prompts when the source mode holds real content the target can't
+  // preserve; otherwise switches immediately.
+  const performModeSwitch = (next: RegistryMode) => {
+    // Low-Code -> SQL: translate the built rows + joins into the SQL editor
+    // so the author keeps their work instead of retyping it.
+    if (mode === "lowcode" && next === "sql") {
+      const predicate = compileAstToSql(lowcodeAst);
+      const joinsSql = compileJoinsToSql(lowcodeAst.joins);
+      if (predicate) setSqlPredicate(predicate);
+      if (joinsSql || groupBy.trim()) {
+        // Fold joins/group-by into the SQL editor's Advanced note is out of
+        // scope for the single-predicate SQL editor; surface them inline so
+        // nothing is silently dropped.
+        setSqlPredicate((prev) => prev || predicate);
+      }
+    }
+    setMode(next);
+    setModeSwitch(null);
+  };
+
+  const requestModeChange = (next: RegistryMode) => {
+    if (readOnly || next === mode) return;
+    const hasLowcodeContent = lowcodeAst.rows.length > 0 || lowcodeAst.joins.length > 0 || groupBy.trim().length > 0;
+    const hasSqlContent = sqlPredicate.trim().length > 0;
+    const hasNativeContent = functionName.trim().length > 0;
+    if (mode === "lowcode" && hasLowcodeContent) {
+      setModeSwitch({ direction: next === "sql" ? "LOWCODE_TO_SQL" : "LOWCODE_TO_NATIVE", next });
+      return;
+    }
+    if (mode === "sql" && hasSqlContent) {
+      setModeSwitch({ direction: next === "lowcode" ? "SQL_TO_LOWCODE" : "SQL_TO_NATIVE", next });
+      return;
+    }
+    if (mode === "dqx_native" && hasNativeContent) {
+      setModeSwitch({ direction: next === "lowcode" ? "NATIVE_TO_LOWCODE" : "NATIVE_TO_SQL", next });
+      return;
+    }
+    setMode(next);
+  };
+
   const implementationTabContent = (
     // `w-full` pins this tab's content to the tab strip's stable width
     // regardless of which mode's fields it's currently rendering (DQX
@@ -1607,7 +1733,7 @@ export function RegistryRuleFormDialog({
           tabs. */}
       <div className="space-y-2 pb-2">
         <SectionHeader>{t("rulesRegistry.ruleTypeHeader")}</SectionHeader>
-        <ModeSegmentedSwitch value={mode} onChange={setMode} disabled={readOnly} />
+        <ModeSegmentedSwitch value={mode} onChange={requestModeChange} disabled={readOnly} />
       </div>
 
       {/* "Columns used" leads the rest of the Implementation area, matching
@@ -1624,7 +1750,34 @@ export function RegistryRuleFormDialog({
       )}
 
       {mode === "lowcode" && (
-        <p className="text-xs text-muted-foreground italic">{t("rulesRegistry.lowcodeComingSoon")}</p>
+        <div className="space-y-3">
+          <LowcodeBuilder
+            ast={lowcodeAst}
+            onChange={setLowcodeAst}
+            declaredColumns={lowcodeColumns}
+            readOnly={readOnly}
+          />
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+              {t("rulesRegistry.thenTheRow")}
+            </span>
+            <PredicatePolaritySwitch value={polarity} onChange={setPolarity} disabled={readOnly} />
+          </div>
+          {/* Advanced — group-by + joins, folded into the compiled SQL that
+              actually runs (see lowcodeCompile.compileLowcodeBody). */}
+          <AdvancedDisclosure
+            label={t("rulesRegistry.advancedSectionLabel")}
+            defaultOpen={!!groupBy || lowcodeAst.joins.length > 0}
+          >
+            <GroupBySqlField value={groupBy} onChange={setGroupBy} disabled={readOnly} />
+            <JoinsBuilder
+              ast={lowcodeAst}
+              onChange={setLowcodeAst}
+              declaredColumns={lowcodeColumns}
+              readOnly={readOnly}
+            />
+          </AdvancedDisclosure>
+        </div>
       )}
 
       {mode === "dqx_native" && (
@@ -1934,6 +2087,12 @@ export function RegistryRuleFormDialog({
   // TabsContent panels.
   const formBody = (
     <div className="space-y-4">
+      <ModeSwitchDialog
+        open={modeSwitch !== null}
+        direction={modeSwitch?.direction ?? null}
+        onCancel={() => setModeSwitch(null)}
+        onConfirm={() => modeSwitch && performModeSwitch(modeSwitch.next)}
+      />
       {buildWithAiBanner}
       <Tabs value={pageTab} onValueChange={(v) => setPageTab(v as PageTab)}>
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1998,29 +2157,6 @@ export function RegistryRuleFormDialog({
     );
   };
 
-  // Low-code mode is a not-yet-implemented placeholder (`structurallyValid`
-  // is unconditionally `false` for it), so `missingDraftFieldLabels` stays
-  // empty and `withMissingFieldsTooltip` renders no tooltip at all — the
-  // disabled Save button just looks broken with no explanation. Use plain,
-  // self-contained copy (the same text as the in-form "coming soon" note)
-  // instead of routing it through the "Fill in the following…" wrapper,
-  // which doesn't make sense when there's no field to fill in.
-  const withPlainTooltip = (button: ReactNode, show: boolean, textKey: string) => {
-    if (!show) return button;
-    return (
-      <TooltipProvider delayDuration={200}>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span tabIndex={0} className="inline-flex">
-              {button}
-            </span>
-          </TooltipTrigger>
-          <TooltipContent>{t(textKey)}</TooltipContent>
-        </Tooltip>
-      </TooltipProvider>
-    );
-  };
-
   const footerButtons = (
     <>
       <Button variant="outline" onClick={closeAndReset} disabled={saving}>
@@ -2034,53 +2170,41 @@ export function RegistryRuleFormDialog({
               with no real change), matching dqlake's steward editor.
               Draft saves only need structural validity (`canSaveDraft`);
               the completeness bar applies to the submit buttons below. */}
-          {withPlainTooltip(
-            withMissingFieldsTooltip(
-              <Button
-                variant="secondary"
-                onClick={() => handleSave(false)}
-                disabled={saving || !isDirty || !canSaveDraft}
-                className="gap-2"
-              >
-                {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                {t("rulesRegistry.saveDraft")}
-              </Button>,
-              !canSaveDraft,
-              missingDraftFieldLabels,
-              "rulesRegistry.canSaveMissingFieldsTooltip",
-            ),
-            mode === "lowcode" && !canSaveDraft,
-            "rulesRegistry.lowcodeComingSoon",
+          {withMissingFieldsTooltip(
+            <Button
+              variant="secondary"
+              onClick={() => handleSave(false)}
+              disabled={saving || !isDirty || !canSaveDraft}
+              className="gap-2"
+            >
+              {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              {t("rulesRegistry.saveDraft")}
+            </Button>,
+            !canSaveDraft,
+            missingDraftFieldLabels,
+            "rulesRegistry.canSaveMissingFieldsTooltip",
           )}
           {isEditing && !isDirty ? (
             // The draft is already persisted and unchanged — submit it
             // for approval directly rather than issuing a redundant save.
-            withPlainTooltip(
-              withMissingFieldsTooltip(
-                <Button onClick={handleSubmitOnly} disabled={saving || !canSubmit} className="gap-2">
-                  {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                  {t("rulesRegistry.actionSubmit")}
-                </Button>,
-                !canSubmit,
-                missingSubmitFieldLabels,
-                "rulesRegistry.canSubmitMissingFieldsTooltip",
-              ),
-              mode === "lowcode" && !canSubmit,
-              "rulesRegistry.lowcodeComingSoon",
+            withMissingFieldsTooltip(
+              <Button onClick={handleSubmitOnly} disabled={saving || !canSubmit} className="gap-2">
+                {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                {t("rulesRegistry.actionSubmit")}
+              </Button>,
+              !canSubmit,
+              missingSubmitFieldLabels,
+              "rulesRegistry.canSubmitMissingFieldsTooltip",
             )
           ) : (
-            withPlainTooltip(
-              withMissingFieldsTooltip(
-                <Button onClick={() => handleSave(true)} disabled={saving || !isDirty || !canSubmit} className="gap-2">
-                  {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                  {t("rulesRegistry.saveAndSubmit")}
-                </Button>,
-                !canSubmit,
-                missingSubmitFieldLabels,
-                "rulesRegistry.canSubmitMissingFieldsTooltip",
-              ),
-              mode === "lowcode" && !canSubmit,
-              "rulesRegistry.lowcodeComingSoon",
+            withMissingFieldsTooltip(
+              <Button onClick={() => handleSave(true)} disabled={saving || !isDirty || !canSubmit} className="gap-2">
+                {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                {t("rulesRegistry.saveAndSubmit")}
+              </Button>,
+              !canSubmit,
+              missingSubmitFieldLabels,
+              "rulesRegistry.canSubmitMissingFieldsTooltip",
             )
           )}
         </>

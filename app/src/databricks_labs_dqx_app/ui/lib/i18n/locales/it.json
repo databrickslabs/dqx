@@ -1418,7 +1418,64 @@
     "aiSuggestFailed": "Impossibile ottenere un suggerimento dall'IA.",
     "aiSuggestInvalidValue": "L'IA ha suggerito un valore che non è tra le opzioni configurate. Scegline uno manualmente.",
     "aiSuggestNoContextYet": "Ancora nessun dettaglio — compila prima alcuni campi.",
-    "lowcodeComingSoon": "La creazione low-code arriverà presto — per ora usa DQX Native o SQL.",
+    "lowcodeIf": "se",
+    "lowcodeNoConditions": "Nessuna condizione definita.",
+    "lowcodeAddFirstCondition": "Aggiungi una condizione per iniziare a costruire la regola.",
+    "lowcodeAddCondition": "Aggiungi condizione",
+    "lowcodeAddAggregatedCondition": "Aggiungi condizione aggregata",
+    "lowcodeOperatorPlaceholder": "operatore",
+    "lowcodeColumnPlaceholder": "colonna",
+    "lowcodeAggregatePlaceholder": "aggregato",
+    "lowcodeUniversalOperators": "Universale",
+    "lowcodeTypeSpecific": "Specifico del tipo",
+    "lowcodeMinPlaceholder": "min",
+    "lowcodeMaxPlaceholder": "max",
+    "lowcodeTypePlaceholder": "tipo",
+    "lowcodeChipPlaceholder": "valori separati da virgole",
+    "lowcodeQuantileTitle": "Quantile (0–1)",
+    "lowcodeGroupByLabel": "Raggruppa per",
+    "lowcodeGroupByHelp": "Facoltativo. Raggruppa le righe prima di valutare le condizioni aggregate, ad es. {{region}}, COALESCE({{country}}, 'XX').",
+    "lowcodeJoinsLabel": "Join",
+    "lowcodeNoJoins": "Nessun join configurato. Aggiungi un join per includere una tabella correlata.",
+    "lowcodeAddJoin": "Aggiungi join",
+    "lowcodeAddKey": "Aggiungi chiave",
+    "lowcodeJoinedColumnPlaceholder": "colonna del join",
+    "lowcodeColumnRefPlaceholder": "rif. colonna",
+    "lowcodeNoCrossKeys": "Nessuna chiave di join per un CROSS JOIN.",
+    "lowcodeConditionsLabel": "Condizioni",
+    "lowcodeConditionsRequired": "Aggiungi almeno una condizione completa.",
+    "modeSwitch": {
+      "LOWCODE_TO_SQL": {
+        "title": "Passare a SQL?",
+        "body": "Tradurremo le condizioni che hai creato in SQL e le inseriremo nell'editor. Se torni a Low-Code in seguito, partirai da uno stack di righe vuoto — le tue righe non verranno ricostruite automaticamente.",
+        "confirm": "Passa a SQL"
+      },
+      "LOWCODE_TO_NATIVE": {
+        "title": "Passare a DQX Native?",
+        "body": "Le condizioni create in Low-Code verranno cancellate. DQX Native usa una funzione di controllo integrata invece di un predicato scritto a mano.",
+        "confirm": "Passa a DQX Native"
+      },
+      "SQL_TO_LOWCODE": {
+        "title": "Passare a Low-Code?",
+        "body": "Partirai da uno stack di condizioni vuoto. L'SQL che hai scritto resta salvato nella regola, così puoi tornarci quando vuoi.",
+        "confirm": "Passa a Low-Code"
+      },
+      "SQL_TO_NATIVE": {
+        "title": "Passare a DQX Native?",
+        "body": "Il predicato SQL che hai scritto verrà cancellato. DQX Native usa invece una funzione di controllo integrata.",
+        "confirm": "Passa a DQX Native"
+      },
+      "NATIVE_TO_LOWCODE": {
+        "title": "Passare a Low-Code?",
+        "body": "La funzione di controllo selezionata verrà cancellata. Low-Code ti permette di costruire le condizioni visivamente.",
+        "confirm": "Passa a Low-Code"
+      },
+      "NATIVE_TO_SQL": {
+        "title": "Passare a SQL?",
+        "body": "La funzione di controllo selezionata verrà cancellata. SQL ti permette di scrivere il predicato a mano.",
+        "confirm": "Passa a SQL"
+      }
+    },
     "authorKindAiGenerated": "Generato interamente dall'IA",
     "authorKindAiAssisted": "Co-creato con l'IA",
     "authorKindHuman": "Creato manualmente",
@@ -1623,6 +1680,7 @@
     "incompleteMappingStatus_other": "{{incomplete}} di {{count}} mappature incomplete",
     "ruleLogicLabel": "Logica della regola",
     "ruleLogicUnavailable": "Nessun dettaglio di logica disponibile per questa regola.",
+    "ruleLogicCompiledSql": "SQL compilato",
     "mappingCheckCount_one": "→ {{count}} controllo",
     "mappingCheckCount_other": "→ {{count}} controlli",
     "noColumnMapped": "Nessuna colonna associata",

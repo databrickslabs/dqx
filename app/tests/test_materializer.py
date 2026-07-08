@@ -418,6 +418,146 @@ class TestRenderCheckSqlMode:
             )
 
 
+class TestRenderCheckLowcodeMode:
+    """Low-code rules flow through the SAME sql-mode materialization path.
+
+    The Low-Code builder compiles its structured AST into either a simple
+    ``predicate`` (no joins/group-by) or a full ``sql_query`` + ``merge_columns``
+    (joins/group-by), stored in ``body`` alongside the re-editable
+    ``lowcode_ast``. ``render_check`` treats mode ``lowcode`` exactly like
+    ``sql`` — these tests pin the AST -> SQL -> materialized-check byte shape.
+    """
+
+    def _lowcode_definition(self, body: dict, slot_name: str = "column") -> RuleDefinition:
+        return RuleDefinition.model_validate(
+            {
+                "body": body,
+                "slots": [{"name": slot_name, "family": "any", "position": 0, "cardinality": "one"}],
+                "parameters": [],
+            }
+        )
+
+    def test_simple_predicate_renders_as_sql_expression(self):
+        # Simple row stack: body carries the compiled predicate (the pass
+        # condition) plus the re-editable AST; renders like an sql-mode rule.
+        body = {
+            "lowcode_ast": {
+                "rows": [{"kind": "row", "combinator": None, "column_ref": "column", "operator": "is not null", "value": None}],
+                "joins": [],
+            },
+            "predicate": "{{column}} IS NOT NULL",
+        }
+        definition = self._lowcode_definition(body)
+        version = RuleVersion(rule_id="r1", version=1, definition=definition, polarity="pass", user_metadata={})
+        check, is_tableless = render_check(
+            mode="lowcode",
+            version=version,
+            group={"column": "customer_id"},
+            effective_severity="Medium",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+        )
+        assert is_tableless is False
+        assert check["check"]["function"] == "sql_expression"
+        assert check["check"]["arguments"]["expression"] == "customer_id IS NOT NULL"
+        assert check["check"]["arguments"]["negate"] is False
+        assert "merge_columns" not in check["check"]["arguments"]
+
+    def test_fail_polarity_negates_lowcode_predicate(self):
+        body = {"lowcode_ast": {"rows": [], "joins": []}, "predicate": "{{column}} IS NOT NULL"}
+        definition = self._lowcode_definition(body)
+        version = RuleVersion(rule_id="r1", version=1, definition=definition, polarity="fail", user_metadata={})
+        check, _ = render_check(
+            mode="lowcode",
+            version=version,
+            group={"column": "customer_id"},
+            effective_severity="Medium",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+        )
+        assert check["check"]["arguments"]["negate"] is True
+
+    def test_group_by_renders_sql_query_with_substituted_merge_columns(self):
+        # Advanced (group-by): body carries a full sql_query referencing
+        # {{input_view}} plus merge_columns as {{slot}} refs — both the query
+        # and each merge column get the slot substituted with the real column.
+        body = {
+            "lowcode_ast": {"rows": [], "joins": []},
+            "group_by": "{{column}}",
+            "sql_query": "SELECT {{column}}, (NOT (COUNT(*) > 1)) AS condition FROM {{input_view}} GROUP BY {{column}}",
+            "merge_columns": ["{{column}}"],
+        }
+        definition = self._lowcode_definition(body)
+        version = RuleVersion(rule_id="r1", version=1, definition=definition, polarity="pass", user_metadata={})
+        check, is_tableless = render_check(
+            mode="lowcode",
+            version=version,
+            group={"column": "region"},
+            effective_severity="High",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+        )
+        args = check["check"]["arguments"]
+        assert check["check"]["function"] == "sql_query"
+        # {{input_view}} is NOT a declared slot — it survives substitution and
+        # is resolved by DQX's sql_query check at run time.
+        assert args["query"] == "SELECT region, (NOT (COUNT(*) > 1)) AS condition FROM {{input_view}} GROUP BY region"
+        assert args["merge_columns"] == ["region"]
+        assert is_tableless is False
+
+    def test_joins_only_renders_dataset_sql_query_without_merge_columns(self):
+        body = {
+            "lowcode_ast": {
+                "rows": [],
+                "joins": [
+                    {"join_type": "LEFT", "target_table": "c.s.dim", "keys": [{"joined_column": "id", "column_ref": "column"}]}
+                ],
+            },
+            "sql_query": "SELECT (NOT ({{column}} IS NOT NULL)) AS condition FROM {{input_view}} LEFT JOIN c.s.dim ON c.s.dim.id = {{column}}",
+        }
+        definition = self._lowcode_definition(body)
+        version = RuleVersion(rule_id="r1", version=1, definition=definition, polarity="pass", user_metadata={})
+        check, _ = render_check(
+            mode="lowcode",
+            version=version,
+            group={"column": "customer_id"},
+            effective_severity="Medium",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+        )
+        args = check["check"]["arguments"]
+        assert check["check"]["function"] == "sql_query"
+        assert "merge_columns" not in args
+        assert "c.s.dim.id = customer_id" in args["query"]
+
+    def test_unsafe_compiled_sql_query_raises(self):
+        body = {
+            "lowcode_ast": {"rows": [], "joins": []},
+            "sql_query": "SELECT 1 AS condition FROM {{input_view}}; DROP TABLE {{column}}",
+        }
+        definition = self._lowcode_definition(body)
+        version = RuleVersion(rule_id="r1", version=1, definition=definition, polarity="pass", user_metadata={})
+        with pytest.raises(UnsafeSqlQueryError):
+            render_check(
+                mode="lowcode",
+                version=version,
+                group={"column": "t"},
+                effective_severity="Medium",
+                per_application_tags={},
+                registry_rule_id="r1",
+                registry_version=1,
+                applied_rule_id="ar1",
+            )
+
+
 # ---------------------------------------------------------------------------
 # Materializer.materialize_binding — orchestration
 # ---------------------------------------------------------------------------
