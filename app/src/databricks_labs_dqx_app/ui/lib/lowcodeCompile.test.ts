@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { compileAstToSql, compileJoinsToSql, compileLowcodeBody } from "./lowcodeCompile";
+import { compileAstToSql, compileJoinsToSql, compileLowcodeBody, pruneStaleGroupByRefs } from "./lowcodeCompile";
+import type { LowcodeColumnRef } from "./lowcodeCompile";
 import type { AnyRow, JoinAst, LowcodeAstV2 } from "./lowcodeAst";
 
 // Unit tests for the low-code -> SQL compiler. This is the sole guard against
@@ -157,5 +158,31 @@ describe("compileLowcodeBody — folding", () => {
     const body = compileLowcodeBody(ast([row()], [{ join_type: "CROSS", target_table: "c.s.dim", keys: [] }]), "");
     expect(body.sql_query).toBe("SELECT (NOT ({{email}} IS NOT NULL)) AS condition FROM {{input_view}} CROSS JOIN c.s.dim");
     expect(body.merge_columns).toBeUndefined();
+  });
+});
+
+describe("pruneStaleGroupByRefs", () => {
+  const col = (name: string): LowcodeColumnRef => ({ name, family: "textual" as LowcodeColumnRef["family"] });
+  const declared: LowcodeColumnRef[] = [col("region"), col("country")];
+
+  test("nothing stale -> returns the same value unchanged", () => {
+    const value = "{{region}}, {{country}}";
+    expect(pruneStaleGroupByRefs(value, declared)).toBe(value);
+  });
+
+  test("one stale token (column removed from Columns Used) is pruned", () => {
+    // {{removed}} is no longer a declared column — e.g. dropped from "Columns Used"
+    // after being used as a group-by key.
+    expect(pruneStaleGroupByRefs("{{region}}, {{removed}}", declared)).toBe("{{region}}");
+  });
+
+  test("all tokens stale -> prunes to empty string", () => {
+    expect(pruneStaleGroupByRefs("{{removed1}}, {{removed2}}", declared)).toBe("");
+  });
+
+  test("qualified (dotted) join-key refs are treated as-is, not slot-wrapped", () => {
+    const withJoinKey: LowcodeColumnRef[] = [...declared, col("orders.total")];
+    const value = "{{region}}, orders.total";
+    expect(pruneStaleGroupByRefs(value, withJoinKey)).toBe(value);
   });
 });

@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Check, ChevronDown, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { FAMILY_LABEL, type Family } from "@/lib/lowcodeOperators";
-import type { LowcodeColumnRef } from "@/lib/lowcodeCompile";
+import { pruneStaleGroupByRefs, type LowcodeColumnRef } from "@/lib/lowcodeCompile";
 
 type Props = {
   value: string;
@@ -59,11 +59,9 @@ export function GroupByField({ value, onChange, declaredColumns, disabled }: Pro
   // If a column is removed from Columns Used (or its join goes away), prune the
   // stored value so save-time compilation never references a stale column.
   useEffect(() => {
-    const declaredSet = new Set(declaredColumns.map((c) => c.name));
-    const refs = parseRefs(value, declaredColumns);
-    const stillValid = refs.filter((r) => declaredSet.has(r));
-    if (stillValid.length !== refs.length) {
-      onChange(buildValue(stillValid));
+    const pruned = pruneStaleGroupByRefs(value, declaredColumns);
+    if (pruned !== value) {
+      onChange(pruned);
     }
   }, [declaredColumns, value, onChange]);
 

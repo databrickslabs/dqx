@@ -255,6 +255,32 @@ export interface LowcodeColumnRef {
   family: Family;
 }
 
+function groupByTokenToRefName(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return "";
+  const m = /^\{\{(.+?)\}\}$/.exec(trimmed);
+  return m ? m[1] : trimmed;
+}
+
+/**
+ * Drop any `{{slot}}` / `<table>.<col>` token from a comma-joined group-by
+ * `value` that no longer names a declared column (e.g. the column was
+ * removed from "Columns Used" after being picked as a group-by key). Parses
+ * every raw token in `value` first — unlike the UI's rendering-only parser,
+ * this must NOT pre-filter by `declaredColumns`, or a stale token is
+ * silently dropped from consideration and never detected as stale.
+ *
+ * Returns `value` unchanged (same reference) when nothing is stale, so
+ * callers can skip a state update and avoid an effect loop.
+ */
+export function pruneStaleGroupByRefs(value: string, declaredColumns: LowcodeColumnRef[]): string {
+  const declaredSet = new Set(declaredColumns.map((c) => c.name));
+  const refs = value.split(",").map(groupByTokenToRefName).filter(Boolean);
+  const stillValid = refs.filter((ref) => declaredSet.has(ref));
+  if (stillValid.length === refs.length) return value;
+  return stillValid.map((name) => (name.includes(".") ? name : `{{${name}}}`)).join(", ");
+}
+
 export interface CompiledLowcodeBody {
   /** Simple row stack (no joins, no group-by): the sql_expression predicate. */
   predicate?: string;
