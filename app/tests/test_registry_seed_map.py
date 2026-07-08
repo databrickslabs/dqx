@@ -36,11 +36,19 @@ class TestResolveSlotFamily:
     def test_is_valid_email_is_text(self):
         assert resolve_slot_family("is_valid_email") == "text"
 
-    def test_is_in_range_is_numeric(self):
-        assert resolve_slot_family("is_in_range") == "numeric"
+    def test_is_in_range_is_any(self):
+        # `is_in_range`'s bounds can be numeric OR temporal (date/datetime),
+        # so its column slot genuinely spans both families — restricting to
+        # "numeric" would wrongly exclude date-range checks at apply time.
+        # See `routes.v1.check_functions._COLUMN_FAMILIES`.
+        assert resolve_slot_family("is_in_range") == "any"
 
-    def test_is_valid_date_is_temporal(self):
-        assert resolve_slot_family("is_valid_date") == "temporal"
+    def test_is_valid_date_is_text(self):
+        # `is_valid_date` parses a STRING column against a format
+        # (`F.try_to_timestamp`) — the column under validation is text, not
+        # an already-typed date/timestamp (which would validate trivially).
+        # See `routes.v1.check_functions._COLUMN_FAMILIES`.
+        assert resolve_slot_family("is_valid_date") == "text"
 
     def test_is_not_null_defaults_to_any(self):
         assert resolve_slot_family("is_not_null") == "any"
@@ -68,10 +76,11 @@ class TestDeriveSlotsAndParametersOnRealFunctions:
         assert [s.name for s in slots] == ["column"]
         assert slots[0].family == "text"
 
-    def test_is_in_range_numeric_slot_plus_number_parameters(self):
+    def test_is_in_range_any_slot_plus_number_parameters(self):
         slots, parameters = derive_slots_and_parameters(_real_check_function("is_in_range"))
         assert [s.name for s in slots] == ["column"]
-        assert slots[0].family == "numeric"
+        # Spans numeric and temporal bounds — stays unconstrained ("any").
+        assert slots[0].family == "any"
         param_by_name = {p.name: p for p in parameters}
         assert param_by_name["min_limit"].type == "number"
         assert param_by_name["max_limit"].type == "number"

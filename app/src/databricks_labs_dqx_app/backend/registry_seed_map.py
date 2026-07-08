@@ -9,14 +9,20 @@ mapping later binds to real columns) and
 entries (everything else).
 
 DQX check-function signatures type column arguments as ``str | Column``,
-which says nothing about what *kind* of column the check expects. A small
-seed map (:data:`_FUNCTION_FAMILY_SEED_MAP`) refines the slot family for
-functions where that matters (e.g. ``is_valid_email`` only makes sense on a
-text column) — everything not in the map defaults to ``"any"``, which is
-correct for genuinely type-agnostic checks like ``is_not_null``.
+which says nothing about what *kind* of column the check expects. The slot
+family for each check's column argument(s) is resolved by
+``routes.v1.check_functions._family_for_column_param`` (item 10 — typed
+slots) — that module is the single source of truth for check-function
+semantics (it already owns ``_CATEGORIES`` and the param-kind classifier),
+so :func:`resolve_slot_family` here simply delegates to it rather than
+keeping a second, independently-maintained family table. Everything not
+covered by that map defaults to ``"any"``, which is correct for genuinely
+type-agnostic checks like ``is_not_null``.
 """
 
 from __future__ import annotations
+
+from typing import cast
 
 from .models import CheckFunctionDef
 from .registry_models import ParamType, RuleParameter, RuleSlot, SlotFamily
@@ -46,68 +52,20 @@ _PARAM_KIND_TO_TYPE: dict[str, ParamType] = {
     "ref_columns": "ref_column",
 }
 
-_DEFAULT_SLOT_FAMILY: SlotFamily = "any"
-
-# Seed map refining slot family beyond the "any" default where DQX's
-# ``str | Column`` signature is too loose to say anything useful about the
-# expected column type (design spec §3.2 / §141). Keyed by check-function
-# name — every column slot on that function shares the resolved family
-# (none of today's built-ins mix families across two column slots of the
-# same function).
-#
-# ``is_in_range``'s ``min_limit``/``max_limit`` bounds can be numeric OR
-# temporal (date/datetime), so its column slot genuinely spans both
-# families. "numeric" is picked as the practical default — numeric range
-# checks vastly outnumber date-range ones in practice. A future per-
-# argument refinement could special-case a temporal-typed limit.
-_FUNCTION_FAMILY_SEED_MAP: dict[str, SlotFamily] = {
-    # --- Text / string-shaped -------------------------------------------------
-    "is_valid_email": "text",
-    "is_not_null_and_not_empty": "text",
-    "is_not_empty": "text",
-    "is_empty": "text",
-    "is_null_or_empty": "text",
-    "regex_match": "text",
-    "is_valid_ipv4_address": "text",
-    "is_valid_ipv6_address": "text",
-    "is_ipv4_address_in_cidr": "text",
-    "is_ipv6_address_in_cidr": "text",
-    "is_valid_json": "text",
-    "has_json_keys": "text",
-    "has_valid_json_schema": "text",
-    # --- Numeric ---------------------------------------------------------------
-    "is_in_range": "numeric",
-    "is_not_in_range": "numeric",
-    "is_not_less_than": "numeric",
-    "is_not_greater_than": "numeric",
-    "is_equal_to": "numeric",
-    "is_not_equal_to": "numeric",
-    "has_no_outliers": "numeric",
-    "has_no_aggr_outliers": "numeric",
-    "is_aggr_not_greater_than": "numeric",
-    "is_aggr_not_less_than": "numeric",
-    "is_aggr_equal": "numeric",
-    "is_aggr_not_equal": "numeric",
-    # --- Temporal ----------------------------------------------------------
-    "is_valid_date": "temporal",
-    "is_valid_timestamp": "temporal",
-    "is_data_fresh": "temporal",
-    "is_data_fresh_per_time_window": "temporal",
-    "is_older_than_n_days": "temporal",
-    "is_older_than_col2_for_n_days": "temporal",
-    "is_not_in_future": "temporal",
-    "is_not_in_near_future": "temporal",
-    # Everything else (is_not_null, is_in_list, is_unique, foreign_key, ...)
-    # is genuinely type-agnostic and stays at the "any" default — no entry
-    # needed here.
-}
-
 
 def resolve_slot_family(function_name: str) -> SlotFamily:
     """Resolve the slot family for a check function's column slot(s).
 
-    Falls back to ``"any"`` (correct for genuinely type-agnostic checks)
-    when *function_name* has no seed-map override.
+    Delegates to ``routes.v1.check_functions._family_for_column_param`` — the
+    single source of truth for a check's column-argument semantics (see the
+    ``_COLUMN_FAMILIES`` map there, which also backs the ``family`` exposed
+    on each ``CheckFunctionParam`` via ``listCheckFunctions``). Falls back to
+    ``"any"`` (correct for genuinely type-agnostic checks) when
+    *function_name* has no override there.
+
+    The import is local to avoid a module-load-order dependency between
+    ``registry_seed_map`` and the FastAPI route module; there is no circular
+    import risk since ``check_functions`` never imports this module.
 
     Args:
         function_name: The DQX check-function name (``CHECK_FUNC_REGISTRY``
@@ -116,7 +74,12 @@ def resolve_slot_family(function_name: str) -> SlotFamily:
     Returns:
         The resolved :data:`SlotFamily`.
     """
-    return _FUNCTION_FAMILY_SEED_MAP.get(function_name, _DEFAULT_SLOT_FAMILY)
+    from .routes.v1.check_functions import _family_for_column_param  # noqa: PLC0415
+
+    # `_family_for_column_param` returns `str`, but its `_COLUMN_FAMILIES`
+    # map is hand-authored with only valid SlotFamily literal values (plus
+    # the "any" default), so this cast is safe.
+    return cast(SlotFamily, _family_for_column_param(function_name))
 
 
 def derive_slots_and_parameters(check_function: CheckFunctionDef) -> tuple[list[RuleSlot], list[RuleParameter]]:
@@ -143,10 +106,16 @@ def derive_slots_and_parameters(check_function: CheckFunctionDef) -> tuple[list[
     slot_position = 0
     for param in check_function.params:
         if param.kind in _COLUMN_KINDS:
+            # Prefer the family already resolved onto the param (set by
+            # ``_build_param`` via ``_family_for_column_param`` for every
+            # real ``CheckFunctionDef``); fall back to re-resolving by
+            # function name for synthetic/hand-built fixtures (e.g. unit
+            # tests) that construct a ``CheckFunctionParam`` without it.
+            family = cast(SlotFamily, param.family) if param.family else resolve_slot_family(check_function.name)
             slots.append(
                 RuleSlot(
                     name=param.name,
-                    family=resolve_slot_family(check_function.name),
+                    family=family,
                     position=slot_position,
                     cardinality="many" if param.kind == "columns" else "one",
                 )
