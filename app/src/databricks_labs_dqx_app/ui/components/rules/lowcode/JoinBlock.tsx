@@ -87,7 +87,7 @@ export function JoinBlock({ join, declaredColumns, onChange, onDelete }: Props) 
               </SelectTrigger>
               <SelectContent>
                 {joinedCols.map((c) => (
-                  <SelectItem key={c.name} value={c.name}>
+                  <SelectItem key={c.name} value={c.name} className="font-mono text-xs">
                     {c.name}
                   </SelectItem>
                 ))}
@@ -103,7 +103,7 @@ export function JoinBlock({ join, declaredColumns, onChange, onDelete }: Props) 
               </SelectTrigger>
               <SelectContent>
                 {declaredColumns.map((c) => (
-                  <SelectItem key={c.name} value={c.name}>{`{{${c.name}}}`}</SelectItem>
+                  <SelectItem key={c.name} value={c.name} className="font-mono text-xs">{`{{${c.name}}}`}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -138,7 +138,7 @@ export function JoinBlock({ join, declaredColumns, onChange, onDelete }: Props) 
                 </SelectTrigger>
                 <SelectContent>
                   {joinedCols.map((c) => (
-                    <SelectItem key={c.name} value={c.name}>
+                    <SelectItem key={c.name} value={c.name} className="font-mono text-xs">
                       {c.name}
                     </SelectItem>
                   ))}
@@ -151,7 +151,7 @@ export function JoinBlock({ join, declaredColumns, onChange, onDelete }: Props) 
                 </SelectTrigger>
                 <SelectContent>
                   {declaredColumns.map((c) => (
-                    <SelectItem key={c.name} value={c.name}>{`{{${c.name}}}`}</SelectItem>
+                    <SelectItem key={c.name} value={c.name} className="font-mono text-xs">{`{{${c.name}}}`}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>

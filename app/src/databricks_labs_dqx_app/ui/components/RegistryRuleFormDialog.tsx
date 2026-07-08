@@ -99,7 +99,6 @@ import {
   orderSeverityValuesForDisplay,
   colorFor,
   ColorDot,
-  SeverityBadge,
   type LabelColorDefinition,
 } from "@/components/RegistryRuleBadges";
 import {
@@ -1617,28 +1616,31 @@ export function RegistryRuleFormDialog({
           <HelpTooltip text={t("rulesRegistry.severityTooltip")} />
         </div>
         <div className="flex items-center gap-2 group">
-          {readOnly ? (
-            <SeverityBadge
-              severity={severity}
-              color={colorFor(labelDefinitions as LabelColorDefinition[], RESERVED_SEVERITY_KEY, severity)}
-            />
-          ) : (
-            <Select value={severity || undefined} onValueChange={setSeverity}>
-              <SelectTrigger className="h-8 w-full max-w-xs text-xs">
-                <SelectValue placeholder={t("rulesRegistry.selectSeverity")} />
-              </SelectTrigger>
-              <SelectContent>
-                {severityValues.map((v) => (
-                  <SelectItem key={v} value={v} className="text-xs">
-                    <span className="flex items-center gap-1.5">
-                      <ColorDot color={colorFor(labelDefinitions as LabelColorDefinition[], RESERVED_SEVERITY_KEY, v)} />
-                      {v}
-                    </span>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
+          {/* Always a Select (disabled when read-only) — matches Dimension's
+              rendering below so severity doesn't visually downgrade from a
+              dropdown to a plain badge for non-editable rules (regression:
+              a rule WITH severity set, e.g. rejected, used to lose its
+              dropdown chrome entirely). The read-only "None" placeholder
+              still communicates a genuinely-unset severity — see
+              `SeverityBadge`'s read-only rendering elsewhere for the
+              plain-badge equivalent used outside this form. */}
+          <Select value={severity || undefined} onValueChange={setSeverity} disabled={readOnly}>
+            <SelectTrigger className="h-8 w-full max-w-xs text-xs">
+              <SelectValue
+                placeholder={readOnly ? t("monitoredTables.severityNoneLabel") : t("rulesRegistry.selectSeverity")}
+              />
+            </SelectTrigger>
+            <SelectContent>
+              {severityValues.map((v) => (
+                <SelectItem key={v} value={v} className="text-xs">
+                  <span className="flex items-center gap-1.5">
+                    <ColorDot color={colorFor(labelDefinitions as LabelColorDefinition[], RESERVED_SEVERITY_KEY, v)} />
+                    {v}
+                  </span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           {showFieldSuggest && severityValues.length > 0 && (
             <AiSuggestIcon
               field="severity"
@@ -1818,26 +1820,23 @@ export function RegistryRuleFormDialog({
         <div className="space-y-3">
           <div className="space-y-1.5">
             <Label className="text-xs">{t("rulesRegistry.conditionLabel")}</Label>
-            <div className="flex items-start gap-2">
-              <div className="pt-2">
-                <FramingWord>{t("rulesRegistry.ifCondition")}</FramingWord>
-              </div>
-              <div className="min-w-0 flex-1">
-                <LowcodeBuilder
-                  ast={lowcodeAst}
-                  onChange={setLowcodeAst}
-                  declaredColumns={lowcodeColumns}
-                  readOnly={readOnly}
-                />
-              </div>
+            {/* IF on its own line, condition logic below it (item 18) —
+                consistent across all three modes rather than IF sitting
+                beside the condition editor. */}
+            <div className="space-y-1.5">
+              <FramingWord>{t("rulesRegistry.ifCondition")}</FramingWord>
+              <LowcodeBuilder
+                ast={lowcodeAst}
+                onChange={setLowcodeAst}
+                declaredColumns={lowcodeColumns}
+                readOnly={readOnly}
+              />
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <FramingWord>{t("rulesRegistry.thenTheRow")}</FramingWord>
-            <PredicatePolaritySwitch value={polarity} onChange={setPolarity} disabled={readOnly} />
-          </div>
           {/* Advanced — group-by + joins, folded into the compiled SQL that
-              actually runs (see lowcodeCompile.compileLowcodeBody). */}
+              actually runs (see lowcodeCompile.compileLowcodeBody). Placed
+              above "THEN THE ROW" (item 23f) since group-by/joins configure
+              the IF condition's inputs, not the row-level outcome below it. */}
           <AdvancedDisclosure
             label={t("rulesRegistry.advancedSectionLabel")}
             defaultOpen={!!groupBy || lowcodeAst.joins.length > 0}
@@ -1859,6 +1858,10 @@ export function RegistryRuleFormDialog({
               readOnly={readOnly}
             />
           </AdvancedDisclosure>
+          <div className="flex flex-wrap items-center gap-3">
+            <FramingWord>{t("rulesRegistry.thenTheRow")}</FramingWord>
+            <PredicatePolaritySwitch value={polarity} onChange={setPolarity} disabled={readOnly} />
+          </div>
         </div>
       )}
 
@@ -1868,43 +1871,42 @@ export function RegistryRuleFormDialog({
             <Label className="text-xs">
               {t("rulesRegistry.conditionLabel")} <span className="text-destructive">*</span>
             </Label>
-            <div className="flex items-center gap-2">
+            {/* IF on its own line, condition logic below it (item 18). */}
+            <div className="space-y-1.5">
               <FramingWord>{t("rulesRegistry.ifCondition")}</FramingWord>
-              <div className="min-w-0 flex-1">
-                <FunctionCombobox
-              value={functionName}
-              functions={checkFunctions}
-              onChange={(fn) => {
-                // `sql_expression` / `sql_query` are technically selectable
-                // dqx_native functions, but authoring a raw SQL predicate is
-                // exactly what SQL mode is for — redirect there instead of
-                // wiring them up as a native function selection, mirroring
-                // how `applyAiProposal` resets the *other* mode's fields
-                // when switching modes.
-                if (fn === "sql_expression" || fn === "sql_query") {
-                  setMode("sql");
-                  setFunctionName("");
+              <FunctionCombobox
+                value={functionName}
+                functions={checkFunctions}
+                onChange={(fn) => {
+                  // `sql_expression` / `sql_query` are technically selectable
+                  // dqx_native functions, but authoring a raw SQL predicate is
+                  // exactly what SQL mode is for — redirect there instead of
+                  // wiring them up as a native function selection, mirroring
+                  // how `applyAiProposal` resets the *other* mode's fields
+                  // when switching modes.
+                  if (fn === "sql_expression" || fn === "sql_query") {
+                    setMode("sql");
+                    setFunctionName("");
+                    setParamRawValues({});
+                    setNativeSlots([]);
+                    return;
+                  }
+                  setFunctionName(fn);
                   setParamRawValues({});
-                  setNativeSlots([]);
-                  return;
-                }
-                setFunctionName(fn);
-                setParamRawValues({});
-                // A freshly selected native function resets polarity to its
-                // default ("pass" = the check's named assertion passing); the
-                // switcher is only editable when the new function supports
-                // `negate` (item 11).
-                setPolarity("pass");
-                // Arity is fixed by the function signature — switching
-                // functions must fully replace the slot set (e.g.
-                // is_not_null's 1 slot -> is_unique's many-cardinality
-                // `columns` slot), not merge with whatever was there before.
-                const nextFn = checkFunctions.find((f) => f.name === fn);
-                setNativeSlots(deriveSlotsAndParameters(nextFn).slots);
-              }}
-              disabled={readOnly}
-                />
-              </div>
+                  // A freshly selected native function resets polarity to its
+                  // default ("pass" = the check's named assertion passing); the
+                  // switcher is only editable when the new function supports
+                  // `negate` (item 11).
+                  setPolarity("pass");
+                  // Arity is fixed by the function signature — switching
+                  // functions must fully replace the slot set (e.g.
+                  // is_not_null's 1 slot -> is_unique's many-cardinality
+                  // `columns` slot), not merge with whatever was there before.
+                  const nextFn = checkFunctions.find((f) => f.name === fn);
+                  setNativeSlots(deriveSlotsAndParameters(nextFn).slots);
+                }}
+                disabled={readOnly}
+              />
             </div>
           </div>
           {derivedParams.length > 0 && (
@@ -2032,11 +2034,10 @@ export function RegistryRuleFormDialog({
               {t("rulesRegistry.conditionLabel")} <span className="text-destructive">*</span>
             </Label>
             <PredicateEditorExplainer />
-            <div className="flex items-start gap-2">
-              <div className="pt-2">
-                <FramingWord>{t("rulesRegistry.ifCondition")}</FramingWord>
-              </div>
-              <div className={cn("min-w-0 flex-1", sqlError && "rounded-md ring-1 ring-red-400")}>
+            {/* IF on its own line, condition logic below it (item 18). */}
+            <div className="space-y-1.5">
+              <FramingWord>{t("rulesRegistry.ifCondition")}</FramingWord>
+              <div className={cn(sqlError && "rounded-md ring-1 ring-red-400")}>
                 <PredicateEditor
                   value={sqlPredicate}
                   onChange={setSqlPredicate}

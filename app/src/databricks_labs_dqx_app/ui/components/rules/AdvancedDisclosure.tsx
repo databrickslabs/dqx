@@ -21,7 +21,7 @@ export function AdvancedDisclosure({ defaultOpen = false, label, children }: Adv
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="w-full flex items-center gap-2 px-4 py-2 text-sm font-medium text-left hover:bg-muted/40"
+        className="w-full flex items-center gap-2 px-4 py-2 text-xs font-medium text-left hover:bg-muted/40"
         aria-expanded={open}
       >
         <ChevronRight className={cn("h-4 w-4 transition-transform", open && "rotate-90")} />

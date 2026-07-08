@@ -124,7 +124,7 @@ export function AggregatedFieldArea({ aggregate, column_ref, aggregate_param, de
         </SelectTrigger>
         <SelectContent>
           {allowedColumns.map((c) => (
-            <SelectItem key={c.name} value={c.name}>
+            <SelectItem key={c.name} value={c.name} className="font-mono text-xs">
               {c.name.includes(".") ? c.name : `{{${c.name}}}`}
             </SelectItem>
           ))}

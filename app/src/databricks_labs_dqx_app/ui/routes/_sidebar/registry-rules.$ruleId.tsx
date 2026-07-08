@@ -54,7 +54,7 @@ import {
 } from "@/components/RegistryRuleFormDialog";
 import { ApplyRuleModal } from "@/components/registry-rules/ApplyRuleModal";
 import { RegistryRuleJsonDialog } from "@/components/registry-rules/RegistryRuleJsonDialog";
-import { StatusBadge, ModifiedBadge, getTag, RESERVED_NAME_KEY } from "@/components/RegistryRuleBadges";
+import { StatusBadge, ModifiedBadge, RuleVersionBadge, getTag, RESERVED_NAME_KEY } from "@/components/RegistryRuleBadges";
 import { invalidateAfterRegistryRuleApprovalChange } from "@/lib/registry-rule-invalidation";
 import { cn } from "@/lib/utils";
 
@@ -283,7 +283,15 @@ function RegistryRuleDetailPage() {
           <div className="flex flex-wrap items-center gap-2 min-w-0">
             <h1 className="text-2xl font-semibold tracking-tight leading-none truncate">{name}</h1>
             <StatusBadge status={rule.status} />
-            {rule.display_status === "modified" && <ModifiedBadge version={rule.version} />}
+            {/* Name + status + version, one header row — matches the
+                Monitored Table / Data Product detail headers (item 21).
+                "Modified since vN" takes priority over the plain vN badge,
+                same precedence as the MT header's VersionBadge. */}
+            {rule.display_status === "modified" ? (
+              <ModifiedBadge version={rule.version} />
+            ) : (
+              <RuleVersionBadge version={rule.version} />
+            )}
           </div>
           <div className="flex items-center gap-2 ml-auto">
             {canApproveReject && (

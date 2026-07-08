@@ -84,10 +84,13 @@ export function LowcodeBuilder({ ast, onChange, declaredColumns, readOnly }: Pro
       ))}
       {!readOnly && (
         <div className="flex gap-2 pt-2 border-t">
-          <Button type="button" variant="outline" size="sm" onClick={addRow}>
+          {/* text-xs to match the adjacent row dropdowns' size (item 23d) —
+              `size="sm"` only trims height/padding, Button's base class
+              still sets text-sm. */}
+          <Button type="button" variant="outline" size="sm" className="text-xs" onClick={addRow}>
             <Plus className="mr-1.5 h-3.5 w-3.5" /> {t("rulesRegistry.lowcodeAddCondition")}
           </Button>
-          <Button type="button" variant="outline" size="sm" onClick={addAggregated}>
+          <Button type="button" variant="outline" size="sm" className="text-xs" onClick={addAggregated}>
             <Plus className="mr-1.5 h-3.5 w-3.5" /> {t("rulesRegistry.lowcodeAddAggregatedCondition")}
           </Button>
         </div>

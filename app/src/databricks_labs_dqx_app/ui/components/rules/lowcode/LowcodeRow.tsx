@@ -47,11 +47,12 @@ export function LowcodeRow({ row, isFirst, declaredColumns, onChange, onDelete, 
       )}
     >
       {isFirst ? (
-        <div className="flex items-center h-8 pl-2 justify-self-start">
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-            {t("rulesRegistry.lowcodeIf")}
-          </span>
-        </div>
+        // The "IF" framing word is rendered once, above the whole builder
+        // (RegistryRuleFormDialog's `FramingWord`, item 18) — an empty
+        // spacer here just keeps this row's column grid aligned with the
+        // AND/OR-pill rows below it, instead of a second, smaller "IF"
+        // duplicating that label (item 23a).
+        <div className="h-8" />
       ) : (
         <div className="flex items-center h-8 pr-2 justify-self-end">
           <div className="relative inline-grid grid-cols-2 p-0.5 rounded-full bg-muted">
@@ -87,7 +88,7 @@ export function LowcodeRow({ row, isFirst, declaredColumns, onChange, onDelete, 
           </SelectTrigger>
           <SelectContent>
             {declaredColumns.map((c) => (
-              <SelectItem key={c.name} value={c.name}>
+              <SelectItem key={c.name} value={c.name} className="font-mono text-xs">
                 {c.name.includes(".") ? c.name : `{{${c.name}}}`}
               </SelectItem>
             ))}

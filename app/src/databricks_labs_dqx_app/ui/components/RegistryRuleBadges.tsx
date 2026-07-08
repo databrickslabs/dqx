@@ -151,6 +151,24 @@ export function StatusBadge({ status }: { status: string }) {
 }
 
 /**
+ * Plain "vN" badge for the rule detail header — mirrors the Monitored
+ * Table / Data Product detail headers' `VersionBadge` composition (item
+ * 21: name + StatusBadge + version, all in one header row). Renders
+ * nothing at v0 (never published), matching the MT header's same rule.
+ * Use {@link ModifiedBadge} instead once the rule has unpublished
+ * edit-in-place changes on top of this version.
+ */
+export function RuleVersionBadge({ version }: { version: number }) {
+  const { t } = useTranslation();
+  if (version <= 0) return null;
+  return (
+    <Badge variant="secondary" className="font-mono text-[10px]">
+      {t("rulesRegistry.versionBadge", { version })}
+    </Badge>
+  );
+}
+
+/**
  * "Modified since vN" indicator, shown alongside the `approved` StatusBadge
  * when a published rule carries unpublished edit-in-place changes
  * (`RegistryRuleOut.modified_since_publish`). The published vN keeps serving
