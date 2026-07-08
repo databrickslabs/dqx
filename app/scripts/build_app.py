@@ -59,6 +59,14 @@ BUILD_DIR = APP_DIR / ".build"
 WHEELS_DIR = BUILD_DIR / "wheels"  # vendored local DQX library wheel ships here
 NODE_BIN = APP_DIR / "node_modules" / ".bin"
 
+# The Databricks Apps container cannot reach this dev machine's global uv
+# default index (``pypi-proxy.dev.databricks.com`` — set in the developer's
+# ``~/.config/uv/uv.toml``). Any ``uv`` subprocess that (re-)resolves package
+# URLs for the shipped ``.build/`` tree must be pinned to the container-
+# reachable proxy instead, or the deploy lock bakes in unreachable URLs and
+# ``uv run`` times out downloading dependencies at app startup.
+BUILD_PYPI_INDEX = "https://pypi-proxy.cloud.databricks.com/simple/"
+
 PKG_DIR = APP_DIR / "src" / "databricks_labs_dqx_app"
 METADATA_PY = PKG_DIR / "_metadata.py"
 VERSION_PY = PKG_DIR / "_version.py"
@@ -247,9 +255,48 @@ def _rewrite_deploy_sources(dqx_wheel_name: str) -> None:
     # source to the vendored wheel and leaves every registry pin untouched.
     # UV_FROZEN=1 (the repo-wide default) would make ``uv lock`` validate-only,
     # so drop it just for this call — the deploy lock MUST be rewritten here.
+    #
+    # Pin the index to the container-reachable proxy (not this machine's
+    # global default) so uv re-resolves and re-stamps EVERY package entry
+    # against a host the Apps container can actually reach. ``uv lock``
+    # performs a full resolution (the existing lock is only a version
+    # preference, not a URL cache), so this single override is sufficient to
+    # scrub the unreachable dev-proxy host from the whole deploy lock — not
+    # just the DQX source line rewritten above.
     lock_env = os.environ.copy()
     lock_env.pop("UV_FROZEN", None)
+    lock_env["UV_DEFAULT_INDEX"] = BUILD_PYPI_INDEX
+    lock_env["UV_INDEX_URL"] = BUILD_PYPI_INDEX
     _run(["uv", "lock", "--project", str(BUILD_DIR)], env=lock_env)
+    _assert_no_dev_proxy_urls()
+
+
+def _assert_no_dev_proxy_urls() -> None:
+    """Fail loudly if the unreachable dev-proxy host leaked into ``.build/``.
+
+    Belt-and-braces check for the ``UV_DEFAULT_INDEX`` override above: if a
+    future change reintroduces the dev-only ``pypi-proxy.dev.databricks.com``
+    host anywhere under ``.build/`` (lock file, manifests, vendored
+    metadata…), the build must stop here rather than ship an app that hangs
+    and crashes at Databricks Apps container startup.
+    """
+    unreachable_host = "pypi-proxy.dev.databricks.com"
+    offenders = []
+    for path in BUILD_DIR.rglob("*"):
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        if unreachable_host in text:
+            offenders.append(str(path.relative_to(BUILD_DIR)))
+    if offenders:
+        raise SystemExit(
+            f"error: found unreachable dev-proxy host {unreachable_host!r} in .build/ files: "
+            f"{offenders}. The Databricks Apps container cannot reach this host — "
+            f"re-run the uv lock step with UV_DEFAULT_INDEX={BUILD_PYPI_INDEX!r}."
+        )
 
 
 def _assemble_deploy_tree() -> None:
