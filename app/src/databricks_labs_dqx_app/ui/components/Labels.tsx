@@ -390,6 +390,16 @@ function CustomEntrySection({
           placeholder={placeholder}
           value={value}
           onChange={(e) => onValueChange(e.target.value)}
+          // Item 6: pressing Enter here previously did nothing (no submit
+          // handler, no surrounding <form>) — commit the custom key/value the
+          // same way clicking the Set button does, rather than leaving the
+          // user to reach for the mouse.
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && value.trim()) {
+              e.preventDefault();
+              onSubmit();
+            }
+          }}
           className="h-7 text-xs"
         />
         <Button

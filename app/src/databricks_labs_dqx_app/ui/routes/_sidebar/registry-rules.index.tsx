@@ -417,13 +417,13 @@ function RegistryRulesPage() {
 
   const filterControls = (
     <>
-      <div className="relative w-36">
+      <div className="relative w-56">
         <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
         <Input
           placeholder={t("rulesRegistry.searchPlaceholder")}
           value={nameSearch}
           onChange={(e) => applyFilter(setNameSearch)(e.target.value)}
-          className={cn(FILTER_CLASS, "pl-7")}
+          className="h-8 text-xs pl-7"
         />
       </div>
       <Select value={statusFilter} onValueChange={applyFilter(setStatusFilter)}>

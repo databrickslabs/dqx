@@ -6,6 +6,7 @@ import { autocompletion, type CompletionContext } from "@codemirror/autocomplete
 import { EditorView } from "@codemirror/view";
 import { findRefRanges, findUnknownRefs } from "@/lib/columnRefs";
 import { useTranslation } from "react-i18next";
+import { useResolvedTheme } from "@/hooks/use-resolved-theme";
 
 export type PredicateEditorDeclaredColumn = { name: string; family: string };
 
@@ -28,6 +29,16 @@ type Props = {
  */
 export function PredicateEditor({ value, onChange, declaredColumns, placeholder, disabled }: Props) {
   const { t } = useTranslation();
+  // Item 14: the editor was hard-locked to CodeMirror's default light theme
+  // regardless of the app's own dark mode. `@uiw/react-codemirror` always
+  // injects its own base theme (light by default) into the extension list
+  // *after* the caller's own `extensions`, so passing `oneDark` as just
+  // another entry in `extensions` loses to that internal default on the CSS
+  // rules it duplicates (only the syntax-highlighting colors, added via
+  // `syntaxHighlighting`, actually won). The `theme` prop is the sanctioned
+  // way to swap the library's own base theme, tracked live so toggling the
+  // app's theme switch restyles the editor immediately.
+  const resolvedTheme = useResolvedTheme();
   const slotNames = useMemo(() => declaredColumns.map((c) => c.name), [declaredColumns]);
 
   const unknownRefLinter = useMemo(
@@ -100,6 +111,7 @@ export function PredicateEditor({ value, onChange, declaredColumns, placeholder,
       editable={!disabled}
       height="132px"
       placeholder={placeholder}
+      theme={resolvedTheme}
       extensions={[sql(), unknownRefLinter, slotCompletion, fontSizeTheme, EditorView.lineWrapping]}
       className="border rounded-md overflow-hidden"
       basicSetup={{ foldGutter: false }}

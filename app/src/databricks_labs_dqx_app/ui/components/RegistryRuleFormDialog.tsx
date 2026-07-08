@@ -1886,11 +1886,18 @@ export function RegistryRuleFormDialog({
           {derivedParams.length > 0 && (
             <div className="space-y-2 border-l pl-5 ml-3">
               <Label className="text-xs">{t("rulesRegistry.parametersLabel")}</Label>
-              <div className="grid gap-2 sm:grid-cols-2">
+              {/* Item 17: `flex-wrap` + a fixed narrow basis (rather than a
+                  2-column grid stretching each field to half the dialog's
+                  width) — DQX Native parameters are typically short scalars
+                  (thresholds, flags, small literals), so a half-dialog-wide
+                  input just wastes space and reads as over-emphasized.
+                  Reference-table/-column pickers still take the full row —
+                  they genuinely need it. */}
+              <div className="flex flex-wrap gap-3">
                 {derivedParams.map((p) => {
                   if (p.type === "ref_table") {
                     return (
-                      <div key={p.name} className="space-y-1 sm:col-span-2">
+                      <div key={p.name} className="space-y-1 w-full">
                         <div className="flex items-center gap-1.5">
                           <Label className="text-[11px] text-muted-foreground font-mono">
                             {p.name} {requiredParamNames.has(p.name) && <span className="text-destructive">*</span>}
@@ -1907,7 +1914,7 @@ export function RegistryRuleFormDialog({
                   }
                   if (p.type === "ref_column") {
                     return (
-                      <div key={p.name} className="space-y-1 sm:col-span-2">
+                      <div key={p.name} className="space-y-1 w-full">
                         <div className="flex items-center gap-1.5">
                           <Label className="text-[11px] text-muted-foreground font-mono">
                             {p.name} {requiredParamNames.has(p.name) && <span className="text-destructive">*</span>}
@@ -1924,7 +1931,7 @@ export function RegistryRuleFormDialog({
                     );
                   }
                   return (
-                    <div key={p.name} className="space-y-1">
+                    <div key={p.name} className="space-y-1 w-40">
                       <Label className="text-[11px] text-muted-foreground font-mono">
                         {p.name} {requiredParamNames.has(p.name) && <span className="text-destructive">*</span>}
                       </Label>
@@ -1942,10 +1949,25 @@ export function RegistryRuleFormDialog({
                             <SelectItem value="false" className="text-xs">false</SelectItem>
                           </SelectContent>
                         </Select>
-                      ) : (
+                      ) : p.type === "number" ? (
                         <Input
-                          className="h-7 text-xs"
-                          type={p.type === "number" ? "number" : "text"}
+                          className="h-7 w-40 text-xs"
+                          type="number"
+                          value={paramRawValues[p.name] ?? ""}
+                          onChange={(e) => setParamRawValues((prev) => ({ ...prev, [p.name]: e.target.value }))}
+                          disabled={readOnly}
+                        />
+                      ) : (
+                        // Free-text params (string / list / regex) get a
+                        // resizable field (item 17) — a plain `Input` can't be
+                        // resized by the user, but a `Textarea` can (Tailwind's
+                        // base styles make it vertically resizable, and we
+                        // additionally allow horizontal resize since these
+                        // values are often single long tokens like a regex or
+                        // comma-separated list).
+                        <Textarea
+                          className="min-h-7 h-7 w-40 resize py-1 px-2 text-xs font-mono"
+                          rows={1}
                           placeholder={p.type === "list" ? t("rulesRegistry.listPlaceholder") : undefined}
                           value={paramRawValues[p.name] ?? ""}
                           onChange={(e) => setParamRawValues((prev) => ({ ...prev, [p.name]: e.target.value }))}
@@ -2011,36 +2033,6 @@ export function RegistryRuleFormDialog({
             <FramingWord>{t("rulesRegistry.thenTheRow")}</FramingWord>
             <PredicatePolaritySwitch value={polarity} onChange={setPolarity} disabled={readOnly} />
           </div>
-          {/* DQX's SQL registry rule has no separate GROUP BY / JOINs fields —
-              the entire query lives in one predicate string (see
-              backend/registry_models.py RuleDefinition + materializer.py
-              _substitute_text). So, unlike dqlake, Advanced here houses the
-              error-message override instead of dead group_by/joins UI. */}
-          <AdvancedDisclosure label={t("rulesRegistry.advancedSectionLabel")} defaultOpen={!!errorMessage}>
-            <Label className="text-xs">{t("rulesRegistry.errorMessageLabel")}</Label>
-            <p className="text-[10px] text-muted-foreground">{t("rulesRegistry.errorMessageHelp")}</p>
-            <Textarea
-              className="text-xs min-h-[48px]"
-              value={errorMessage}
-              onChange={(e) => setErrorMessage(e.target.value)}
-              disabled={readOnly}
-              placeholder={t("rulesRegistry.errorMessagePlaceholder")}
-            />
-          </AdvancedDisclosure>
-        </div>
-      )}
-
-      {mode !== "sql" && (
-        <div className="border-t pt-3 space-y-1.5">
-          <Label className="text-xs">{t("rulesRegistry.errorMessageLabel")}</Label>
-          <p className="text-[10px] text-muted-foreground">{t("rulesRegistry.errorMessageHelp")}</p>
-          <Textarea
-            className="text-xs min-h-[48px]"
-            value={errorMessage}
-            onChange={(e) => setErrorMessage(e.target.value)}
-            disabled={readOnly}
-            placeholder={t("rulesRegistry.errorMessagePlaceholder")}
-          />
         </div>
       )}
     </div>
@@ -2049,8 +2041,8 @@ export function RegistryRuleFormDialog({
   const testTabContent = (
     <div className="space-y-3 pt-2">
       {mode === "dqx_native" ? (
-        <div className="rounded-lg border bg-muted/30 p-4 flex items-start gap-3">
-          <FlaskConical className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />
+        <div className="rounded-lg border bg-muted/30 p-4 flex items-center gap-3">
+          <FlaskConical className="h-4 w-4 text-muted-foreground shrink-0" />
           <p className="text-xs text-muted-foreground">{t("rulesRegistry.testNotAvailableDqxNative")}</p>
         </div>
       ) : (
@@ -2241,9 +2233,16 @@ export function RegistryRuleFormDialog({
 
   const footerButtons = (
     <>
-      <Button variant="outline" onClick={closeAndReset} disabled={saving}>
-        {readOnly ? t("common.close") : t("common.cancel")}
-      </Button>
+      {/* Item 18: the routed detail page ("page" variant) already offers a
+          breadcrumb back to the registry list, so a redundant "Close" button
+          here is pure clutter when the rule is being viewed read-only. Only
+          the dialog variant (which has no other way to dismiss) and the
+          editable ("Cancel") case keep this button. */}
+      {!(readOnly && variant === "page") && (
+        <Button variant="outline" onClick={closeAndReset} disabled={saving}>
+          {readOnly ? t("common.close") : t("common.cancel")}
+        </Button>
+      )}
       {!readOnly && (
         <>
           {/* Grey out once there's nothing to save — either a blank,
