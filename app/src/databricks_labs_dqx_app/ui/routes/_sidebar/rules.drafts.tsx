@@ -61,6 +61,7 @@ import {
   Undo2,
   Loader2,
   ShieldCheck,
+  Boxes,
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { FadeIn } from "@/components/anim/FadeIn";
@@ -81,8 +82,14 @@ import {
   useListRegistryRules,
   useApproveRegistryRule,
   useRejectRegistryRule,
+  useListDataProducts,
+  useApproveDataProduct,
+  useRejectDataProduct,
+  getListDataProductsQueryKey,
+  getGetDataProductQueryKey,
   type RuleCatalogEntryOut,
   type RegistryRuleOut,
+  type DataProductOut,
   type User as UserType,
 } from "@/lib/api";
 import {
@@ -477,6 +484,197 @@ function RegistryApprovalsSection({
                   ? getUserMetadata(rejectTarget as unknown as Record<string, unknown>).name || rejectTarget.rule_id
                   : "",
               })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                const target = rejectTarget;
+                setRejectTarget(null);
+                if (target) confirmReject(target);
+              }}
+              className="bg-destructive text-white hover:bg-destructive/90"
+            >
+              {t("rulesDrafts.rejectAction")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </Card>
+  );
+}
+
+/**
+ * Table Spaces awaiting approval (P21 item 30). A Table Space carries its own
+ * submit-for-review lifecycle (draft -> pending_approval -> approved/rejected),
+ * so it belongs in the same single approvals queue as registry rules and
+ * per-table drafts. Mirrors the registry-rules pending section's shape. This is
+ * the SPACE's own lifecycle — distinct from the member-table "Review N pending
+ * changes" affordance on the space header (P19-I), which is about member TABLES.
+ */
+function TableSpacesApprovalsSection({ canApproveRules }: { canApproveRules: boolean }) {
+  const { t } = useTranslation();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+
+  const { data, isLoading, error } = useListDataProducts();
+  const pending: DataProductOut[] = useMemo(
+    () => (data?.data ?? []).filter((p) => p.display_status === "pending_approval"),
+    [data],
+  );
+
+  const approveMutation = useApproveDataProduct();
+  const rejectMutation = useRejectDataProduct();
+  const [pendingId, setPendingId] = useState<string | null>(null);
+  const [rejectTarget, setRejectTarget] = useState<DataProductOut | null>(null);
+
+  const invalidate = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: getListDataProductsQueryKey() });
+  }, [queryClient]);
+
+  const runAction = useCallback(
+    (id: string, mutate: () => Promise<unknown>, successMsg: string, errorMsg: string) => {
+      if (pendingId) return;
+      setPendingId(id);
+      mutate()
+        .then(() => {
+          toast.success(successMsg);
+          queryClient.invalidateQueries({ queryKey: getGetDataProductQueryKey(id) });
+          invalidate();
+        })
+        .catch((err: unknown) => {
+          const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+          toast.error(detail || errorMsg, { duration: 6000 });
+        })
+        .finally(() => setPendingId(null));
+    },
+    [pendingId, invalidate, queryClient],
+  );
+
+  const confirmApprove = (p: DataProductOut) =>
+    runAction(
+      p.product_id,
+      () => approveMutation.mutateAsync({ productId: p.product_id }),
+      t("dataProducts.toastApproved"),
+      t("dataProducts.toastApproveFailed"),
+    );
+  const confirmReject = (p: DataProductOut) =>
+    runAction(
+      p.product_id,
+      () => rejectMutation.mutateAsync({ productId: p.product_id }),
+      t("dataProducts.toastRejected"),
+      t("dataProducts.toastRejectFailed"),
+    );
+
+  // Hide the whole section when there is nothing pending (mirrors the intent of
+  // keeping the queue focused) — but keep it while loading/erroring for context.
+  if (!isLoading && !error && pending.length === 0) return null;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Boxes className="h-5 w-5" />
+          {t("rulesDrafts.tableSpacesSectionTitle")}
+        </CardTitle>
+        <CardDescription>{t("rulesDrafts.tableSpacesSectionDescription")}</CardDescription>
+      </CardHeader>
+      <CardContent>
+        {isLoading && (
+          <div className="space-y-2">
+            {[1, 2].map((i) => <Skeleton key={i} className="h-14 w-full" />)}
+          </div>
+        )}
+
+        {error && (
+          <p className="text-destructive text-sm">
+            {t("rulesDrafts.tableSpacesFailedLoad", { error: (error as Error).message })}
+          </p>
+        )}
+
+        {!isLoading && !error && pending.length > 0 && (
+          <FadeIn duration={0.3}>
+            <div className="border rounded-lg overflow-x-auto">
+              <table className="w-full text-sm" style={{ minWidth: "700px" }}>
+                <thead>
+                  <tr className="border-b bg-muted/50">
+                    <th className="text-left p-3 font-medium whitespace-nowrap">{t("rulesDrafts.headerName")}</th>
+                    <th className="text-left p-3 font-medium whitespace-nowrap">{t("rulesDrafts.headerSteward")}</th>
+                    <th className="text-left p-3 font-medium whitespace-nowrap">{t("dataProducts.colTables")}</th>
+                    <th className="text-left p-3 font-medium whitespace-nowrap">{t("rulesDrafts.headerModified")}</th>
+                    <th className="text-right p-3 font-medium whitespace-nowrap">{t("rulesDrafts.headerActions")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pending.map((p) => {
+                    const busy = pendingId === p.product_id;
+                    return (
+                      <tr key={p.product_id} className="border-b last:border-b-0 hover:bg-muted/30 transition-colors">
+                        <td className="p-3">
+                          <button
+                            type="button"
+                            className="font-medium hover:underline text-left"
+                            onClick={() =>
+                              navigate({ to: "/table-spaces/$productId", params: { productId: p.product_id } })
+                            }
+                          >
+                            {p.name}
+                          </button>
+                        </td>
+                        <td className="p-3 text-xs text-muted-foreground whitespace-nowrap" title={p.steward ?? ""}>
+                          {p.steward || "—"}
+                        </td>
+                        <td className="p-3 text-xs text-muted-foreground tabular-nums">{p.member_count ?? 0}</td>
+                        <td className="p-3 text-muted-foreground text-xs whitespace-nowrap" title={p.updated_at ?? ""}>
+                          {formatDate(p.updated_at)}
+                        </td>
+                        <td className="p-3 text-right">
+                          {canApproveRules ? (
+                            <div className="flex items-center justify-end gap-1">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={busy}
+                                onClick={() => confirmApprove(p)}
+                                className="gap-1 h-7 text-xs text-green-600"
+                              >
+                                <CheckCircle2 className="h-3 w-3" />
+                                {busy ? t("rulesDrafts.ellipsis") : t("rulesDrafts.approveAction")}
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={busy}
+                                onClick={() => setRejectTarget(p)}
+                                className="gap-1 h-7 text-xs text-red-600"
+                              >
+                                <XCircle className="h-3 w-3" />
+                                {busy ? t("rulesDrafts.ellipsis") : t("rulesDrafts.rejectAction")}
+                              </Button>
+                            </div>
+                          ) : (
+                            <span className="text-[11px] text-muted-foreground italic">
+                              {t("rulesDrafts.registryReadOnly")}
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </FadeIn>
+        )}
+      </CardContent>
+
+      <AlertDialog open={!!rejectTarget} onOpenChange={(open) => !open && setRejectTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("dataProducts.rejectConfirmTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("dataProducts.rejectConfirmDescription", { name: rejectTarget?.name ?? "" })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -995,6 +1193,8 @@ function DraftsPage() {
       </div>
 
       <RegistryApprovalsSection canApproveRules={canApproveRules} currentUserEmail={currentUserEmail} />
+
+      <TableSpacesApprovalsSection canApproveRules={canApproveRules} />
 
       <div className="flex items-center gap-2 pt-2">
         <ClipboardCheck className="h-4 w-4 text-muted-foreground" />

@@ -3,9 +3,11 @@
  * Adapted: no `SyncStatusChip`/`sync_state` concept (DQX runs stay in-app,
  * there is no external Databricks-side reconcile step to poll); RBAC gates
  * edit actions on `canEdit` (RULE_AUTHOR+) and run actions on `canRun`
- * (RUNNER, orthogonal) rather than dqlake's single per-object `can_edit`;
- * "Run draft" moved into the ⋮ menu per the design spec since Runs is now a
- * visible tab (dqlake tucks the whole Runs surface there instead).
+ * (RUNNER, orthogonal) rather than dqlake's single per-object `can_edit`.
+ * A Table Space carries its own submit-for-review lifecycle (P21 item 30):
+ * "Submit for review" replaces Publish, and approvers see Approve/Reject
+ * top-right when it's pending. Runs is dqlake-exact — it lives in the ⋮ menu
+ * (item 29) alongside Run draft and Delete, not in the visible tab strip.
  */
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
@@ -15,6 +17,8 @@ import { toast } from "sonner";
 import {
   useDeleteDataProduct,
   useRunDataProduct,
+  useApproveDataProduct,
+  useRejectDataProduct,
   useApproveMonitoredTable,
   useRejectMonitoredTable,
   RunDataProductInSource,
@@ -41,7 +45,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { CheckCircle2, Clock, Loader2, MoreVertical, Play, Save, Send, Trash2, XCircle } from "lucide-react";
+import { CheckCircle2, Clock, History, Loader2, MoreVertical, Play, Save, Send, Trash2, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { EditProductState } from "@/components/data-products/useEditProductState";
 
@@ -244,13 +248,18 @@ interface Props {
 export function ProductHeader({ product, canEdit, editState }: Props) {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const perms = usePermissions();
   const canRun = perms.canRunRules;
+  const canApprove = perms.canApproveRules;
 
   const runMut = useRunDataProduct({ mutation: { onError: () => {} } });
   const deleteMut = useDeleteDataProduct({ mutation: { onError: () => {} } });
+  const approveMut = useApproveDataProduct({ mutation: { onError: () => {} } });
+  const rejectMut = useRejectDataProduct({ mutation: { onError: () => {} } });
 
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [rejectOpen, setRejectOpen] = useState(false);
   const [busyRun, setBusyRun] = useState(false);
   // Bridges the gap between a successful submit and the next 4s poll
   // catching the new RUNNING run set, so the button doesn't flash back to
@@ -276,14 +285,47 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
 
   const runPending = busyRun || hasActive || justSubmitted;
 
-  // Publish-only state: a saved draft with no in-memory edits and a prior
-  // publish on record — the only relevant action is Publish. Hiding
-  // "Save & publish" here avoids a greyed-out button implying "save
-  // something first" when nothing is unsaved.
-  const inPublishOnlyState = !editState.isDirty && product.status === "draft" && product.version > 0;
+  // Nothing to submit: no staged edits AND already approved — mirrors the
+  // monitored-table "Submit for review" disabled-no-changes guard so the
+  // button doesn't imply there's something to re-submit when there isn't.
+  const submitDisabledNoChanges = !editState.isDirty && product.status === "approved";
+  const isPending = product.status === "pending_approval";
+  const lifecycleBusy = approveMut.isPending || rejectMut.isPending || editState.submitPending;
 
   const runnableCount = product.runnable_count ?? 0;
   const memberCount = product.member_count ?? 0;
+
+  const invalidateLifecycle = () => {
+    queryClient.invalidateQueries({ queryKey: getGetDataProductQueryKey(product.product_id) });
+    queryClient.invalidateQueries({ queryKey: getListDataProductsQueryKey() });
+  };
+
+  const handleApprove = async () => {
+    try {
+      await approveMut.mutateAsync({ productId: product.product_id });
+      toast.success(t("dataProducts.toastApproved"));
+      invalidateLifecycle();
+    } catch (e) {
+      toast.error(extractApiError(e, t("dataProducts.toastApproveFailed")), { duration: 6000 });
+    }
+  };
+
+  const handleReject = async () => {
+    try {
+      await rejectMut.mutateAsync({ productId: product.product_id });
+      toast.success(t("dataProducts.toastRejected"));
+      invalidateLifecycle();
+    } catch (e) {
+      toast.error(extractApiError(e, t("dataProducts.toastRejectFailed")), { duration: 6000 });
+    }
+  };
+
+  const goToRuns = () =>
+    void navigate({
+      to: "/table-spaces/$productId",
+      params: { productId: product.product_id },
+      search: (prev) => ({ ...prev, tab: "runs" }),
+    });
 
   const handleRun = async (source: (typeof RunDataProductInSource)[keyof typeof RunDataProductInSource]) => {
     setBusyRun(true);
@@ -312,24 +354,62 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
     try {
       await deleteMut.mutateAsync({ productId: product.product_id });
       toast.success(t("dataProducts.toastDeleted"));
-      void navigate({ to: "/data-products" });
+      void navigate({ to: "/table-spaces" });
     } catch (e) {
       toast.error(extractApiError(e, t("dataProducts.toastDeleteFailed")), { duration: 6000 });
     }
   };
-
-  const showMenu = canRun || canEdit;
 
   return (
     <div className="flex items-start justify-between gap-4 border-b pb-4 max-w-5xl">
       <div className="space-y-1">
         <div className="flex items-center gap-2">
           <h1 className="text-xl font-semibold">{product.name}</h1>
-          {product.status === "published" && <Badge>{t("dataProducts.versionBadge", { version: product.version })}</Badge>}
+          {product.status === "approved" && (
+            <Badge>{t("dataProducts.versionBadge", { version: product.version })}</Badge>
+          )}
+          {isPending && (
+            <Badge variant="outline" className="border-amber-500 text-amber-600">
+              {t("dataProducts.statusPendingApproval")}
+            </Badge>
+          )}
+          {product.status === "rejected" && (
+            <Badge variant="outline" className="border-red-500 text-red-600">
+              {t("dataProducts.statusRejected")}
+            </Badge>
+          )}
         </div>
       </div>
       <div className="flex gap-2 items-center">
-        {perms.canApproveRules && (
+        {/* Product-level Approve/Reject — the space's OWN review lifecycle
+            (P21 item 30), gated to approvers when it's pending. Distinct from
+            the member-table ReviewPendingChangesButton below (P19-I). */}
+        {isPending && canApprove && (
+          <>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={lifecycleBusy}
+              onClick={() => void handleApprove()}
+              className="gap-1.5 text-emerald-600 border-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950"
+            >
+              {approveMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+              {t("dataProducts.approveAction")}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={lifecycleBusy}
+              onClick={() => setRejectOpen(true)}
+              className="gap-1.5 text-red-600 border-red-400 hover:bg-red-50 dark:hover:bg-red-950"
+            >
+              {rejectMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <XCircle className="h-3.5 w-3.5" />}
+              {t("dataProducts.rejectAction")}
+            </Button>
+          </>
+        )}
+
+        {canApprove && (
           <ReviewPendingChangesButton productId={product.product_id} members={editState.members} />
         )}
 
@@ -346,28 +426,16 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
           </Button>
         )}
 
-        {canEdit && !inPublishOnlyState && (
+        {canEdit && (
           <Button
-            onClick={() => void editState.handleSaveAndPublish()}
-            disabled={!editState.canSave || editState.saveAndPublishPending}
-            variant="outline"
+            onClick={() => void editState.handleSubmit()}
+            disabled={editState.submitPending || (submitDisabledNoChanges && !editState.canSave)}
             size="sm"
             className="gap-2"
+            title={submitDisabledNoChanges ? t("dataProducts.submitDisabledNoChangesHint") : undefined}
           >
-            {editState.saveAndPublishPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-            {t("dataProducts.saveAndPublishButton")}
-          </Button>
-        )}
-
-        {canEdit && inPublishOnlyState && (
-          <Button
-            onClick={() => void editState.handlePublish()}
-            disabled={editState.publishPending}
-            size="sm"
-            className="gap-2"
-          >
-            {editState.publishPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-            {t("dataProducts.publishButton")}
+            {editState.submitPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+            {t("dataProducts.submitForReviewButton")}
           </Button>
         )}
 
@@ -384,38 +452,64 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
           </Button>
         )}
 
-        {showMenu && (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button size="sm" variant="ghost" aria-label={t("dataProducts.actionsMenuLabel")}>
-                <MoreVertical className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              {canRun && (
-                <DropdownMenuItem
-                  onSelect={() => void handleRun(RunDataProductInSource.draft)}
-                  disabled={runPending || memberCount === 0}
-                  className="gap-2"
-                >
-                  <Play className="h-3.5 w-3.5" />
-                  {t("dataProducts.runDraftAction")}
-                </DropdownMenuItem>
-              )}
-              {canRun && canEdit && <DropdownMenuSeparator />}
-              {canEdit && (
-                <DropdownMenuItem
-                  onSelect={() => setDeleteOpen(true)}
-                  className={cn("gap-2 text-destructive focus:text-destructive")}
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                  {t("dataProducts.deleteAction")}
-                </DropdownMenuItem>
-              )}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        )}
+        {/* ⋮ menu — Runs (dqlake-exact, item 29), Run draft, Delete. */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button size="sm" variant="ghost" aria-label={t("dataProducts.actionsMenuLabel")}>
+              <MoreVertical className="h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onSelect={goToRuns} className="gap-2">
+              <History className="h-3.5 w-3.5" />
+              {t("dataProducts.tabRuns")}
+            </DropdownMenuItem>
+            {canRun && (
+              <DropdownMenuItem
+                onSelect={() => void handleRun(RunDataProductInSource.draft)}
+                disabled={runPending || memberCount === 0}
+                className="gap-2"
+              >
+                <Play className="h-3.5 w-3.5" />
+                {t("dataProducts.runDraftAction")}
+              </DropdownMenuItem>
+            )}
+            {canEdit && <DropdownMenuSeparator />}
+            {canEdit && (
+              <DropdownMenuItem
+                onSelect={() => setDeleteOpen(true)}
+                className={cn("gap-2 text-destructive focus:text-destructive")}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                {t("dataProducts.deleteAction")}
+              </DropdownMenuItem>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
+
+      <AlertDialog open={rejectOpen} onOpenChange={setRejectOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("dataProducts.rejectConfirmTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("dataProducts.rejectConfirmDescription", { name: product.name })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-white hover:bg-destructive/90"
+              onClick={() => {
+                setRejectOpen(false);
+                void handleReject();
+              }}
+            >
+              {t("dataProducts.rejectAction")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <AlertDialogContent>

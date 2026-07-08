@@ -25,6 +25,7 @@ from databricks_labs_dqx_app.backend.services.binding_run_service import (
 from databricks_labs_dqx_app.backend.services.data_product_service import (
     DataProductService,
     DuplicateDataProductNameError,
+    InvalidStatusTransitionError,
     NoRunnableMembersError,
     display_status,
 )
@@ -137,15 +138,23 @@ def service(sql, monitored_tables, run_set_service, binding_run_service, version
 
 
 class TestDisplayStatus:
-    def test_published(self):
-        p = DataProduct(product_id="p1", name="x", status="published", version=1)
-        assert display_status(p) == "published"
+    def test_approved(self):
+        p = DataProduct(product_id="p1", name="x", status="approved", version=1)
+        assert display_status(p) == "approved"
 
-    def test_modified_since_publish(self):
+    def test_pending_approval(self):
+        p = DataProduct(product_id="p1", name="x", status="pending_approval", version=0)
+        assert display_status(p) == "pending_approval"
+
+    def test_rejected(self):
+        p = DataProduct(product_id="p1", name="x", status="rejected", version=0)
+        assert display_status(p) == "rejected"
+
+    def test_modified_since_approval(self):
         p = DataProduct(product_id="p1", name="x", status="draft", version=1)
         assert display_status(p) == "modified"
 
-    def test_never_published_is_draft(self):
+    def test_never_approved_is_draft(self):
         p = DataProduct(product_id="p1", name="x", status="draft", version=0)
         assert display_status(p) == "draft"
 
@@ -378,20 +387,62 @@ class TestMembers:
             service.remove_member("p1", "missing", "bob@x")
 
 
-class TestPublish:
-    def test_publish_bumps_version_and_sets_published(self, service, sql):
+class TestSubmit:
+    def test_submit_draft_to_pending_without_version_bump(self, service, sql):
         sql.query.return_value = [_product_row(product_id="p1", status="draft", version="1")]
-        product = service.publish("p1", "bob@x")
-        assert product.status == "published"
+        product = service.submit("p1", "bob@x")
+        assert product.status == "pending_approval"
+        assert product.version == 1  # unchanged — only approve bumps
+        update_sql = sql.execute.call_args[0][0]
+        assert "status = 'pending_approval'" in update_sql
+        assert "version =" not in update_sql
+
+    def test_submit_missing_raises(self, service, sql):
+        sql.query.return_value = []
+        with pytest.raises(LookupError):
+            service.submit("missing", "bob@x")
+
+
+class TestApprove:
+    def test_approve_bumps_version_and_sets_approved(self, service, sql):
+        sql.query.return_value = [_product_row(product_id="p1", status="pending_approval", version="1")]
+        product = service.approve("p1", "bob@x")
+        assert product.status == "approved"
         assert product.version == 2
         update_sql = sql.execute.call_args[0][0]
         assert "version = 2" in update_sql
-        assert "status = 'published'" in update_sql
+        assert "status = 'approved'" in update_sql
 
-    def test_publish_missing_raises(self, service, sql):
+    def test_approve_non_pending_raises_409(self, service, sql):
+        sql.query.return_value = [_product_row(product_id="p1", status="draft", version="0")]
+        with pytest.raises(InvalidStatusTransitionError):
+            service.approve("p1", "bob@x")
+
+    def test_approve_missing_raises(self, service, sql):
         sql.query.return_value = []
         with pytest.raises(LookupError):
-            service.publish("missing", "bob@x")
+            service.approve("missing", "bob@x")
+
+
+class TestReject:
+    def test_reject_pending_to_rejected_without_version_bump(self, service, sql):
+        sql.query.return_value = [_product_row(product_id="p1", status="pending_approval", version="2")]
+        product = service.reject("p1", "bob@x")
+        assert product.status == "rejected"
+        assert product.version == 2
+        update_sql = sql.execute.call_args[0][0]
+        assert "status = 'rejected'" in update_sql
+        assert "version =" not in update_sql
+
+    def test_reject_non_pending_raises_409(self, service, sql):
+        sql.query.return_value = [_product_row(product_id="p1", status="approved", version="1")]
+        with pytest.raises(InvalidStatusTransitionError):
+            service.reject("p1", "bob@x")
+
+    def test_reject_missing_raises(self, service, sql):
+        sql.query.return_value = []
+        with pytest.raises(LookupError):
+            service.reject("missing", "bob@x")
 
 
 class TestRun:

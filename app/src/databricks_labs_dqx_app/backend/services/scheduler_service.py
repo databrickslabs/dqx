@@ -10,7 +10,7 @@ Persistence of *last run / next run* timestamps lives in
 re-triggering runs that already completed.
 
 **Data Products product ticks (design spec §4.3, Task 5):** each tick also
-polls ``dq_data_products`` for published products with a non-null
+polls ``dq_data_products`` for approved products with a non-null
 ``schedule_cron`` and fires ``DataProductService.run(...)`` for due ones.
 This is a SECOND, independent source of due-ness — it runs after the
 scope-config loop above completes and never mutates any state the
@@ -290,7 +290,7 @@ class SchedulerService:
 
         After the scope-config loop below completes (unconditionally, and
         regardless of whether any config exists), :meth:`_tick_products`
-        runs as a SECOND, independent due-ness source over published Data
+        runs as a SECOND, independent due-ness source over approved Data
         Products (design spec §4.3). It never reads or mutates any state
         the scope-config loop touches, so scope-config behaviour is
         unaffected either way.
@@ -442,7 +442,7 @@ class SchedulerService:
     # common case where no timezone was configured.
 
     def _tick_products(self, now: datetime) -> None:
-        """Check every published, cron-scheduled Data Product and trigger due ones.
+        """Check every approved, cron-scheduled Data Product and trigger due ones.
 
         No-op when the scheduler was constructed without a
         :class:`DataProductService` (legacy deployments, or unit tests that
@@ -467,7 +467,7 @@ class SchedulerService:
                 )
 
     def _load_scheduled_products(self) -> list[dict[str, Any]]:
-        """Return published products with a non-null ``schedule_cron``.
+        """Return approved products with a non-null ``schedule_cron``.
 
         Best-effort like :meth:`_load_schedule_configs`: a missing
         ``dq_data_products`` table (a deployment predating Data Products, or
@@ -477,7 +477,7 @@ class SchedulerService:
         try:
             sql = (
                 f"SELECT product_id, schedule_cron, schedule_tz FROM {self._products_table} "
-                f"WHERE schedule_cron IS NOT NULL AND status = 'published'"
+                f"WHERE schedule_cron IS NOT NULL AND status = 'approved'"
             )
             rows = self._oltp_sql.query(sql)
         except Exception:

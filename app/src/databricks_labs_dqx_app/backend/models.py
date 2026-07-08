@@ -1013,8 +1013,8 @@ class UpdateDataProductIn(BaseModel):
 
     Every field is optional; the route uses ``model_dump(exclude_unset=True)``
     so an omitted field is left untouched while an explicit ``null`` (e.g.
-    clearing the schedule) is honored. ANY successful PATCH flips
-    ``published`` -> ``draft`` without bumping ``version`` (design spec §3.3).
+    clearing the schedule) is honored. ANY successful PATCH flips the space
+    back to ``draft`` without bumping ``version`` (P21 item 30).
     """
 
     name: str | None = None
@@ -1082,7 +1082,9 @@ class DataProductOut(BaseModel):
     schedule_tz: str | None = None
     status: RegistryDataProductStatus
     version: int
-    display_status: str = Field(description="'published' | 'modified' | 'draft' — dqlake display logic")
+    display_status: str = Field(
+        description="'approved' | 'pending_approval' | 'rejected' | 'modified' | 'draft' — review lifecycle display"
+    )
     members: list[DataProductMemberOut] = Field(default_factory=list)
     member_count: int = 0
     runnable_count: int = 0

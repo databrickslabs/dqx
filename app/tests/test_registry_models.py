@@ -353,8 +353,8 @@ class TestDataProduct:
         with pytest.raises(ValidationError):
             DataProduct(product_id="p1", name="x", status="archived")
 
-    @pytest.mark.parametrize("status", ["draft", "published"])
-    def test_accepts_both_statuses(self, DataProduct, status):
+    @pytest.mark.parametrize("status", ["draft", "pending_approval", "approved", "rejected"])
+    def test_accepts_lifecycle_statuses(self, DataProduct, status):
         assert DataProduct(product_id="p1", name="x", status=status).status == status
 
 

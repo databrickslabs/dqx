@@ -86,19 +86,21 @@ function Layout() {
               </Link>
             </SidebarMenuItem>
 
-            {/* Data Products — group monitored tables into governed,
-                versioned, schedulable bundles (Phase 11). Visible to all
-                roles, same as Monitored Tables — run actions inside the
-                product itself are gated to RUNNER (admins implicit).
-                Replaces the old runner-only "Run Rules" entry; ``/runs``
-                now redirects here (Phase-5 redirect pattern) so old
-                bookmarks don't 404. */}
+            {/* Table Spaces — group monitored tables into governed,
+                versioned, schedulable bundles (Phase 11; renamed from
+                "Data Products" in P21 item 28). Visible to all roles, same
+                as Monitored Tables — run actions inside the space itself are
+                gated to RUNNER (admins implicit). Replaces the old
+                runner-only "Run Rules" entry; ``/runs`` and the old
+                ``/data-products`` path now redirect here (Phase-5 redirect
+                pattern) so old bookmarks don't 404. */}
             <SidebarMenuItem>
               <Link
-                to="/data-products"
+                to="/table-spaces"
                 className={cn(
                   "flex items-center gap-2 p-2 rounded-lg",
-                  location.pathname.startsWith("/data-products") ||
+                  location.pathname.startsWith("/table-spaces") ||
+                    location.pathname.startsWith("/data-products") ||
                     (location.pathname.startsWith("/runs") &&
                       !location.pathname.startsWith("/runs-history"))
                     ? "bg-sidebar-accent text-sidebar-accent-foreground"

@@ -1,10 +1,11 @@
-"""Data Products routes (Data Products Task 4).
+"""Data Products (Table Spaces) routes (Data Products Task 4; lifecycle P21 item 30).
 
-CRUD + publish + member management + run fan-out over
+CRUD + submit/approve/reject review lifecycle + member management + run
+fan-out over
 :class:`~databricks_labs_dqx_app.backend.services.data_product_service.DataProductService`.
-RBAC (design spec §5): view VIEWER+; create/update/delete/members/publish
-RULE_AUTHOR+ (no approver gate — members are already approval-gated via
-their own binding lifecycle); run uses the same orthogonal RUNNER gate as
+RBAC (design spec §5): view VIEWER+; create/update/delete/members/submit
+RULE_AUTHOR+; approve/reject approvers-only (same gate as the monitored-table
+approve/reject routes); run uses the same orthogonal RUNNER gate as
 ``runMonitoredTable`` / ``batch_run_from_catalog``.
 """
 
@@ -27,6 +28,7 @@ from databricks_labs_dqx_app.backend.models import (
 from databricks_labs_dqx_app.backend.services.data_product_service import (
     DataProductService,
     DuplicateDataProductNameError,
+    InvalidStatusTransitionError,
     NoRunnableMembersError,
 )
 
@@ -34,6 +36,7 @@ router = APIRouter()
 
 _VIEWERS_PLUS = [UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTHOR, UserRole.VIEWER]
 _AUTHORS_AND_ABOVE = [UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTHOR]
+_APPROVERS_ONLY = [UserRole.ADMIN, UserRole.RULE_APPROVER]
 
 
 def _current_user_email(obo_ws: WorkspaceClient) -> str:
@@ -130,7 +133,7 @@ def update_data_product(
     svc: Annotated[DataProductService, Depends(get_data_product_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
 ) -> DataProductOut:
-    """Apply a partial update. Any successful update flips ``published`` -> ``draft``."""
+    """Apply a partial update. Any successful update flips the space back to ``draft``."""
     try:
         user_email = _current_user_email(obo_ws)
         updates = body.model_dump(exclude_unset=True)
@@ -227,33 +230,98 @@ def remove_data_product_member(
 
 
 # ------------------------------------------------------------------
-# Publish
+# Review lifecycle (submit / approve / reject) — P21 item 30
+#
+# A Table Space carries the SAME review lifecycle as registry rules and
+# monitored tables (draft -> pending_approval -> approved/rejected). Submit
+# is RULE_AUTHOR+ (authors submit their own work); approve/reject are
+# approvers-only — same gate as the monitored-table approve/reject routes.
 # ------------------------------------------------------------------
 
 
 @router.post(
-    "/{product_id}/publish",
+    "/{product_id}/submit",
     response_model=DataProductOut,
-    operation_id="publishDataProduct",
+    operation_id="submitDataProduct",
     dependencies=[require_role(*_AUTHORS_AND_ABOVE)],
 )
-def publish_data_product(
+def submit_data_product(
     product_id: str,
     svc: Annotated[DataProductService, Depends(get_data_product_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
 ) -> DataProductOut:
-    """Publish a data product — bumps ``version`` by 1 and sets ``status='published'``."""
+    """Submit a Table Space for review — moves ``draft``/``rejected`` -> ``pending_approval``."""
     try:
         user_email = _current_user_email(obo_ws)
-        svc.publish(product_id, user_email)
+        svc.submit(product_id, user_email)
         detail = svc.get(product_id)
-        assert detail is not None  # just published it
+        assert detail is not None  # just submitted it
         return DataProductOut.from_domain(detail)
     except LookupError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        logger.error(f"Failed to publish data product {product_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to publish data product: {e}")
+        logger.error(f"Failed to submit data product {product_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to submit data product: {e}")
+
+
+@router.post(
+    "/{product_id}/approve",
+    response_model=DataProductOut,
+    operation_id="approveDataProduct",
+    dependencies=[require_role(*_APPROVERS_ONLY)],
+)
+def approve_data_product(
+    product_id: str,
+    svc: Annotated[DataProductService, Depends(get_data_product_service)],
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+) -> DataProductOut:
+    """Approve a Table Space — bumps ``version`` by 1 and sets ``status='approved'``.
+
+    409 if the space is not ``pending_approval`` (the 557a486 lesson).
+    """
+    try:
+        user_email = _current_user_email(obo_ws)
+        svc.approve(product_id, user_email)
+        detail = svc.get(product_id)
+        assert detail is not None  # just approved it
+        return DataProductOut.from_domain(detail)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except InvalidStatusTransitionError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to approve data product {product_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to approve data product: {e}")
+
+
+@router.post(
+    "/{product_id}/reject",
+    response_model=DataProductOut,
+    operation_id="rejectDataProduct",
+    dependencies=[require_role(*_APPROVERS_ONLY)],
+)
+def reject_data_product(
+    product_id: str,
+    svc: Annotated[DataProductService, Depends(get_data_product_service)],
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+) -> DataProductOut:
+    """Reject a Table Space — sets ``status='rejected'``.
+
+    409 if the space is not ``pending_approval``.
+    """
+    try:
+        user_email = _current_user_email(obo_ws)
+        svc.reject(product_id, user_email)
+        detail = svc.get(product_id)
+        assert detail is not None  # just rejected it
+        return DataProductOut.from_domain(detail)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except InvalidStatusTransitionError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to reject data product {product_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to reject data product: {e}")
 
 
 # ------------------------------------------------------------------

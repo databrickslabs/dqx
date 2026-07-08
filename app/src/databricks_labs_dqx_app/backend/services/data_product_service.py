@@ -1,15 +1,20 @@
 """Data Products service (Data Products Task 4).
 
 Owns the ``dq_data_products`` / ``dq_data_product_members`` tables (design
-spec §3.3/§3.4) and the dqlake-exact lifecycle semantics on top of them:
+spec §3.3/§3.4) and the review lifecycle on top of them (a Table Space
+carries the SAME draft -> pending_approval -> approved/rejected lifecycle as
+registry rules and monitored tables — P21 item 30):
 
-- Any metadata edit or member add/remove flips ``published`` -> ``draft``
-  ("Modified since publish" display state) WITHOUT bumping ``version``.
-- :meth:`publish` is the ONLY operation that bumps ``version`` (``v+1``)
-  and sets ``status='published'``.
-- ``display_status`` (dqlake logic): ``published`` -> ``"published"``;
-  ``draft`` with ``version > 0`` -> ``"modified"`` (has been published
-  before, edited since); otherwise -> ``"draft"``.
+- Any metadata edit or member add/remove flips the space back to ``draft``
+  ("Modified since approval" display state) WITHOUT bumping ``version``.
+- :meth:`submit` moves ``draft``/``rejected`` -> ``pending_approval``.
+- :meth:`approve` is the ONLY operation that bumps ``version`` (``v+1``):
+  ``pending_approval`` -> ``approved`` (409 otherwise).
+- :meth:`reject` moves ``pending_approval`` -> ``rejected`` (409 otherwise).
+- ``display_status``: ``approved`` -> ``"approved"``;
+  ``pending_approval`` -> ``"pending_approval"``; ``rejected`` ->
+  ``"rejected"``; ``draft`` with ``version > 0`` -> ``"modified"`` (has been
+  approved before, edited since); otherwise -> ``"draft"``.
 - Member upsert is by ``binding_id`` (a pin change on an existing member
   updates in place rather than duplicating a row).
 - Name uniqueness is enforced app-side (ahead of the DB
@@ -62,6 +67,14 @@ class DuplicateDataProductNameError(ValueError):
 
 class NoRunnableMembersError(ValueError):
     """Raised by :meth:`DataProductService.run` when zero members resolve to a runnable check set."""
+
+
+class InvalidStatusTransitionError(ValueError):
+    """Raised by :meth:`DataProductService.approve`/:meth:`reject` when the space is not ``pending_approval``.
+
+    Maps to HTTP 409 at the route — the same non-pending guard the monitored-table
+    approve/reject routes enforce (the 557a486 lesson).
+    """
 
 
 @dataclass
@@ -119,14 +132,15 @@ class _MemberRow:
 
 
 def display_status(product: DataProduct) -> str:
-    """Compute the dqlake-style display status for *product*.
+    """Compute the display status for *product*.
 
-    ``published`` -> ``"published"``; ``draft`` with ``version > 0``
-    (has been published before, edited since) -> ``"modified"``;
-    otherwise (never published) -> ``"draft"``.
+    ``approved`` -> ``"approved"``; ``pending_approval`` ->
+    ``"pending_approval"``; ``rejected`` -> ``"rejected"``; ``draft`` with
+    ``version > 0`` (has been approved before, edited since) ->
+    ``"modified"``; otherwise (never approved) -> ``"draft"``.
     """
-    if product.status == "published":
-        return "published"
+    if product.status in ("approved", "pending_approval", "rejected"):
+        return product.status
     if product.version > 0:
         return "modified"
     return "draft"
@@ -221,9 +235,9 @@ class DataProductService:
         *updates* should only contain keys the caller explicitly supplied
         (e.g. via ``UpdateDataProductIn.model_dump(exclude_unset=True)``) so
         an omitted field is left untouched while an explicit ``None`` (e.g.
-        clearing a schedule) is honored. ANY call flips ``published`` ->
-        ``draft`` without touching ``version`` (design spec §3.3) — even a
-        no-op save, matching dqlake's "editing = modified" semantics.
+        clearing a schedule) is honored. ANY call flips the space back to
+        ``draft`` without touching ``version`` (P21 item 30) — even a
+        no-op save, matching the "editing = modified" semantics.
 
         Raises:
             LookupError: *product_id* does not exist.
@@ -274,7 +288,7 @@ class DataProductService:
     def add_member(self, product_id: str, binding_id: str, pinned_version: int | None, updated_by: str) -> DataProductMember:
         """Upsert a member by *binding_id* (a pin change updates the existing row in place).
 
-        Flips the product ``published`` -> ``draft`` (design spec §3.3).
+        Flips the space back to ``draft`` (P21 item 30).
 
         Raises:
             LookupError: *product_id* does not exist.
@@ -303,7 +317,7 @@ class DataProductService:
         return DataProductMember(id=member_id, product_id=product_id, binding_id=binding_id, pinned_version=pinned_version)
 
     def remove_member(self, product_id: str, member_id: str, updated_by: str) -> None:
-        """Remove a member. Flips the product ``published`` -> ``draft``.
+        """Remove a member. Flips the space back to ``draft``.
 
         Raises:
             LookupError: *product_id* or *member_id* does not exist (or the
@@ -322,34 +336,86 @@ class DataProductService:
         self._flip_to_draft(product_id, updated_by)
 
     # ------------------------------------------------------------------
-    # Publish
+    # Review lifecycle (submit / approve / reject) — P21 item 30
     # ------------------------------------------------------------------
 
-    def publish(self, product_id: str, updated_by: str) -> DataProduct:
-        """Bump ``version`` by 1 and set ``status='published'`` (design spec §3.3).
+    def submit(self, product_id: str, updated_by: str) -> DataProduct:
+        """Submit a Table Space for review: ``draft``/``rejected`` -> ``pending_approval``.
 
-        The ONLY operation that bumps a product's version.
+        Idempotent for an already-``pending_approval`` space (no-op re-submit).
+        Does NOT bump ``version`` — only :meth:`approve` does.
 
         Raises:
             LookupError: *product_id* does not exist.
         """
+        return self._set_status(product_id, "pending_approval", updated_by)
+
+    def approve(self, product_id: str, updated_by: str) -> DataProduct:
+        """Approve a Table Space: ``pending_approval`` -> ``approved``, bumping ``version`` by 1.
+
+        The ONLY operation that bumps a space's version (mirrors monitored-table
+        and registry-rule approval). Guards against approving a non-pending
+        space out of band (the 557a486 lesson).
+
+        Raises:
+            LookupError: *product_id* does not exist.
+            InvalidStatusTransitionError: the space is not ``pending_approval`` (HTTP 409).
+        """
         product = self._fetch_product(product_id)
         if product is None:
             raise LookupError(f"Data product not found: {product_id}")
+        if product.status != "pending_approval":
+            raise InvalidStatusTransitionError(
+                f"Cannot approve Table Space {product_id}: status is '{product.status}', expected 'pending_approval'"
+            )
         new_version = product.version + 1
         e = escape_sql_string(product_id)
         self._sql.execute(
-            f"UPDATE {self._products_table} SET status = 'published', version = {new_version}, "
+            f"UPDATE {self._products_table} SET status = 'approved', version = {new_version}, "
             f"updated_by = {self._opt_str(updated_by)}, updated_at = now() WHERE product_id = '{e}'"
         )
-        logger.info("Published data product %s at version %d", product_id, new_version)
+        logger.info("Approved data product %s at version %d", product_id, new_version)
         return product.model_copy(
             update={
-                "status": "published",
+                "status": "approved",
                 "version": new_version,
                 "updated_by": updated_by,
                 "updated_at": datetime.now(timezone.utc),
             }
+        )
+
+    def reject(self, product_id: str, updated_by: str) -> DataProduct:
+        """Reject a Table Space: ``pending_approval`` -> ``rejected``.
+
+        Guards against rejecting a non-pending space out of band.
+
+        Raises:
+            LookupError: *product_id* does not exist.
+            InvalidStatusTransitionError: the space is not ``pending_approval`` (HTTP 409).
+        """
+        product = self._fetch_product(product_id)
+        if product is None:
+            raise LookupError(f"Data product not found: {product_id}")
+        if product.status != "pending_approval":
+            raise InvalidStatusTransitionError(
+                f"Cannot reject Table Space {product_id}: status is '{product.status}', expected 'pending_approval'"
+            )
+        return self._set_status(product_id, "rejected", updated_by, _prefetched=product)
+
+    def _set_status(
+        self, product_id: str, status: str, updated_by: str, _prefetched: DataProduct | None = None
+    ) -> DataProduct:
+        product = _prefetched or self._fetch_product(product_id)
+        if product is None:
+            raise LookupError(f"Data product not found: {product_id}")
+        e = escape_sql_string(product_id)
+        self._sql.execute(
+            f"UPDATE {self._products_table} SET status = '{status}', "
+            f"updated_by = {self._opt_str(updated_by)}, updated_at = now() WHERE product_id = '{e}'"
+        )
+        logger.info("Set data product %s status to %s", product_id, status)
+        return product.model_copy(
+            update={"status": status, "updated_by": updated_by, "updated_at": datetime.now(timezone.utc)}
         )
 
     # ------------------------------------------------------------------
@@ -580,7 +646,7 @@ class DataProductService:
             steward=row[3],
             schedule_cron=row[4],
             schedule_tz=row[5],
-            status="published" if row[6] == "published" else "draft",
+            status=row[6] if row[6] in ("pending_approval", "approved", "rejected") else "draft",
             version=self._parse_int(row[7]) or 0,
             created_by=row[8],
             created_at=self._parse_timestamp(row[9]),

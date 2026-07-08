@@ -756,7 +756,7 @@ class TestTickProducts:
 
         mocks.oltp.query.assert_not_called()
 
-    def test_query_predicate_filters_by_cron_and_published_status(self, make_scheduler):
+    def test_query_predicate_filters_by_cron_and_approved_status(self, make_scheduler):
         svc, mocks, _dp = _make_product_scheduler(make_scheduler)
         mocks.oltp.query.return_value = []
 
@@ -764,7 +764,7 @@ class TestTickProducts:
 
         sql = mocks.oltp.query.call_args.args[0]
         assert "schedule_cron IS NOT NULL" in sql
-        assert "status = 'published'" in sql
+        assert "status = 'approved'" in sql
 
     def test_missing_table_is_tolerated(self, make_scheduler):
         svc, mocks, dp_service = _make_product_scheduler(make_scheduler)

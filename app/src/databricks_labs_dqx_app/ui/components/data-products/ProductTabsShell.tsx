@@ -3,11 +3,11 @@
  *
  * Ported from dqlake's `components/products/ProductTabsShell.tsx`. Adapted
  * per the Data Products design spec (§6): the History tab is cut entirely
- * (no history model in DQX), and — diverging deliberately from dqlake,
- * which tucks Runs into the header's ⋮ menu — Runs is a first-class visible
- * tab, taking the slot dqlake used for "Results".
+ * (no history model in DQX). Runs is dqlake-exact — it is NOT a visible tab;
+ * it lives in the header's ⋮ menu (P21 item 29) and its content is still
+ * reachable via `?tab=runs` deep links (the menu navigates there).
  *
- * Tab order: About | Sharing, Tables | Runs  ‖  Schedule
+ * Tab order: About | Sharing, Tables  ‖  Schedule
  * `|` characters render as visible muted dividers inside the TabsList.
  */
 import { useTranslation } from "react-i18next";
@@ -49,10 +49,11 @@ function Separator() {
 }
 
 // Groups define the visual separator layout:
-// [About] | [Sharing, Tables] | [Runs]  →gap→  [Schedule]
+// [About] | [Sharing, Tables]  →gap→  [Schedule]
+// Runs is intentionally absent from the strip — it lives in the header ⋮
+// menu (P21 item 29) and is still reachable by `?tab=runs`.
 const GROUP_A: ProductTabKey[] = ["about"];
 const GROUP_B: ProductTabKey[] = ["sharing", "tables"];
-const GROUP_C: ProductTabKey[] = ["runs"];
 const RIGHT_TABS: ProductTabKey[] = ["scheduling"];
 
 function TabTrigger({ tabKey, label, disabled }: { tabKey: ProductTabKey; label: string; disabled: boolean }) {
@@ -92,12 +93,6 @@ export function ProductTabsShell({ activeTab, onTabChange, disabledTabs = new Se
           <Separator />
 
           {GROUP_B.map((key) => (
-            <TabTrigger key={key} tabKey={key} label={labelFor(key)} disabled={disabledTabs.has(key)} />
-          ))}
-
-          <Separator />
-
-          {GROUP_C.map((key) => (
             <TabTrigger key={key} tabKey={key} label={labelFor(key)} disabled={disabledTabs.has(key)} />
           ))}
         </TabsList>

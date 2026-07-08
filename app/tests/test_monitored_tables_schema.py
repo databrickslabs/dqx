@@ -221,7 +221,7 @@ class TestDataProductsPostgres:
         ):
             assert col in sql
         assert "UNIQUE (name)" in sql
-        assert "CHECK (status IN ('draft','published'))" in sql
+        assert "CHECK (status IN ('draft','pending_approval','approved','rejected'))" in sql
 
     def test_data_product_members_table(self):
         sql = self._v6().sql
@@ -304,7 +304,7 @@ class TestDataProductsDelta:
             "updated_at",
         ):
             assert col in sql
-        assert "CHECK (status IN ('draft','published'))" in sql
+        assert "CHECK (status IN ('draft','pending_approval','approved','rejected'))" in sql
 
     def test_data_product_members_table(self):
         sql = self._v10().sql_template

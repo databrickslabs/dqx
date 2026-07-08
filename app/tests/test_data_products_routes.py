@@ -26,19 +26,22 @@ from databricks_labs_dqx_app.backend.registry_models import DataProduct, DataPro
 from databricks_labs_dqx_app.backend.routes.v1 import data_products as dp_routes
 from databricks_labs_dqx_app.backend.routes.v1.data_products import (
     add_data_product_member,
+    approve_data_product,
     create_data_product,
     delete_data_product,
     get_data_product,
     list_data_products,
-    publish_data_product,
+    reject_data_product,
     remove_data_product_member,
     run_data_product,
+    submit_data_product,
     update_data_product,
 )
 from databricks_labs_dqx_app.backend.services.data_product_service import (
     DataProductDetail,
     DataProductRunResult,
     DuplicateDataProductNameError,
+    InvalidStatusTransitionError,
     NoRunnableMembersError,
 )
 
@@ -86,10 +89,18 @@ class TestRbac:
             "deleteDataProduct",
             "addDataProductMember",
             "removeDataProductMember",
-            "publishDataProduct",
+            "submitDataProduct",
         ):
             roles = _route_required_roles(op)
             assert UserRole.RULE_AUTHOR in roles
+            assert UserRole.VIEWER not in roles
+
+    def test_approve_reject_are_approvers_only(self):
+        for op in ("approveDataProduct", "rejectDataProduct"):
+            roles = _route_required_roles(op)
+            assert UserRole.RULE_APPROVER in roles
+            assert UserRole.ADMIN in roles
+            assert UserRole.RULE_AUTHOR not in roles
             assert UserRole.VIEWER not in roles
 
     def test_run_uses_orthogonal_runner_gate_not_require_role(self):
@@ -235,20 +246,59 @@ class TestMembers:
         assert excinfo.value.status_code == 404
 
 
-class TestPublish:
-    def test_publish_success(self):
+class TestSubmit:
+    def test_submit_success(self):
         svc = MagicMock()
-        svc.get.return_value = _detail(product_id="p1", status="published", version=1)
-        result = publish_data_product("p1", svc=svc, obo_ws=_mock_obo_ws())
-        assert result.status == "published"
-        svc.publish.assert_called_once_with("p1", "alice@x")
+        svc.get.return_value = _detail(product_id="p1", status="pending_approval", version=0)
+        result = submit_data_product("p1", svc=svc, obo_ws=_mock_obo_ws())
+        assert result.status == "pending_approval"
+        svc.submit.assert_called_once_with("p1", "alice@x")
 
-    def test_publish_missing_raises_404(self):
+    def test_submit_missing_raises_404(self):
         svc = MagicMock()
-        svc.publish.side_effect = LookupError("Data product not found: p1")
+        svc.submit.side_effect = LookupError("Data product not found: p1")
         with pytest.raises(HTTPException) as excinfo:
-            publish_data_product("p1", svc=svc, obo_ws=_mock_obo_ws())
+            submit_data_product("p1", svc=svc, obo_ws=_mock_obo_ws())
         assert excinfo.value.status_code == 404
+
+
+class TestApprove:
+    def test_approve_success(self):
+        svc = MagicMock()
+        svc.get.return_value = _detail(product_id="p1", status="approved", version=1)
+        result = approve_data_product("p1", svc=svc, obo_ws=_mock_obo_ws())
+        assert result.status == "approved"
+        svc.approve.assert_called_once_with("p1", "alice@x")
+
+    def test_approve_non_pending_raises_409(self):
+        svc = MagicMock()
+        svc.approve.side_effect = InvalidStatusTransitionError("boom")
+        with pytest.raises(HTTPException) as excinfo:
+            approve_data_product("p1", svc=svc, obo_ws=_mock_obo_ws())
+        assert excinfo.value.status_code == 409
+
+    def test_approve_missing_raises_404(self):
+        svc = MagicMock()
+        svc.approve.side_effect = LookupError("Data product not found: p1")
+        with pytest.raises(HTTPException) as excinfo:
+            approve_data_product("p1", svc=svc, obo_ws=_mock_obo_ws())
+        assert excinfo.value.status_code == 404
+
+
+class TestReject:
+    def test_reject_success(self):
+        svc = MagicMock()
+        svc.get.return_value = _detail(product_id="p1", status="rejected", version=0)
+        result = reject_data_product("p1", svc=svc, obo_ws=_mock_obo_ws())
+        assert result.status == "rejected"
+        svc.reject.assert_called_once_with("p1", "alice@x")
+
+    def test_reject_non_pending_raises_409(self):
+        svc = MagicMock()
+        svc.reject.side_effect = InvalidStatusTransitionError("boom")
+        with pytest.raises(HTTPException) as excinfo:
+            reject_data_product("p1", svc=svc, obo_ws=_mock_obo_ws())
+        assert excinfo.value.status_code == 409
 
 
 class TestRun:

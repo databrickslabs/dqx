@@ -735,7 +735,9 @@ export type DataProductOutStatus = typeof DataProductOutStatus[keyof typeof Data
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const DataProductOutStatus = {
   draft: 'draft',
-  published: 'published',
+  pending_approval: 'pending_approval',
+  approved: 'approved',
+  rejected: 'rejected',
 } as const;
 
 export type DataProductOutLastRunAt = string | null;
@@ -760,7 +762,7 @@ export interface DataProductOut {
   schedule_tz?: DataProductOutScheduleTz;
   status: DataProductOutStatus;
   version: number;
-  /** 'published' | 'modified' | 'draft' — dqlake display logic */
+  /** 'approved' | 'pending_approval' | 'rejected' | 'modified' | 'draft' — review lifecycle display */
   display_status: string;
   members?: DataProductMemberOut[];
   member_count?: number;
@@ -2386,8 +2388,8 @@ export type UpdateDataProductInScheduleTz = string | null;
 
 Every field is optional; the route uses ``model_dump(exclude_unset=True)``
 so an omitted field is left untouched while an explicit ``null`` (e.g.
-clearing the schedule) is honored. ANY successful PATCH flips
-``published`` -> ``draft`` without bumping ``version`` (design spec §3.3).
+clearing the schedule) is honored. ANY successful PATCH flips the space
+back to ``draft`` without bumping ``version`` (P21 item 30).
  */
 export interface UpdateDataProductIn {
   name?: UpdateDataProductInName;
@@ -15834,26 +15836,26 @@ export const useRemoveDataProductMember = <TError = AxiosError<HTTPValidationErr
     }
     
 /**
- * Publish a data product — bumps ``version`` by 1 and sets ``status='published'``.
- * @summary Publish Data Product
+ * Submit a Table Space for review — moves ``draft``/``rejected`` -> ``pending_approval``.
+ * @summary Submit Data Product
  */
-export const publishDataProduct = (
+export const submitDataProduct = (
     productId: string, options?: AxiosRequestConfig
  ): Promise<AxiosResponse<DataProductOut>> => {
     
     
     return axios.default.post(
-      `/api/v1/data-products/${productId}/publish`,undefined,options
+      `/api/v1/data-products/${productId}/submit`,undefined,options
     );
   }
 
 
 
-export const getPublishDataProductMutationOptions = <TError = AxiosError<HTTPValidationError>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof publishDataProduct>>, TError,{productId: string}, TContext>, axios?: AxiosRequestConfig}
-): UseMutationOptions<Awaited<ReturnType<typeof publishDataProduct>>, TError,{productId: string}, TContext> => {
+export const getSubmitDataProductMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof submitDataProduct>>, TError,{productId: string}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof submitDataProduct>>, TError,{productId: string}, TContext> => {
 
-const mutationKey = ['publishDataProduct'];
+const mutationKey = ['submitDataProduct'];
 const {mutation: mutationOptions, axios: axiosOptions} = options ?
       options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
       options
@@ -15863,10 +15865,10 @@ const {mutation: mutationOptions, axios: axiosOptions} = options ?
       
 
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof publishDataProduct>>, {productId: string}> = (props) => {
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof submitDataProduct>>, {productId: string}> = (props) => {
           const {productId} = props ?? {};
 
-          return  publishDataProduct(productId,axiosOptions)
+          return  submitDataProduct(productId,axiosOptions)
         }
 
         
@@ -15874,23 +15876,151 @@ const {mutation: mutationOptions, axios: axiosOptions} = options ?
 
   return  { mutationFn, ...mutationOptions }}
 
-    export type PublishDataProductMutationResult = NonNullable<Awaited<ReturnType<typeof publishDataProduct>>>
+    export type SubmitDataProductMutationResult = NonNullable<Awaited<ReturnType<typeof submitDataProduct>>>
     
-    export type PublishDataProductMutationError = AxiosError<HTTPValidationError>
+    export type SubmitDataProductMutationError = AxiosError<HTTPValidationError>
 
     /**
- * @summary Publish Data Product
+ * @summary Submit Data Product
  */
-export const usePublishDataProduct = <TError = AxiosError<HTTPValidationError>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof publishDataProduct>>, TError,{productId: string}, TContext>, axios?: AxiosRequestConfig}
+export const useSubmitDataProduct = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof submitDataProduct>>, TError,{productId: string}, TContext>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof publishDataProduct>>,
+        Awaited<ReturnType<typeof submitDataProduct>>,
         TError,
         {productId: string},
         TContext
       > => {
 
-      const mutationOptions = getPublishDataProductMutationOptions(options);
+      const mutationOptions = getSubmitDataProductMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Approve a Table Space — bumps ``version`` by 1 and sets ``status='approved'``.
+
+409 if the space is not ``pending_approval`` (the 557a486 lesson).
+ * @summary Approve Data Product
+ */
+export const approveDataProduct = (
+    productId: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<DataProductOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/data-products/${productId}/approve`,undefined,options
+    );
+  }
+
+
+
+export const getApproveDataProductMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof approveDataProduct>>, TError,{productId: string}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof approveDataProduct>>, TError,{productId: string}, TContext> => {
+
+const mutationKey = ['approveDataProduct'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof approveDataProduct>>, {productId: string}> = (props) => {
+          const {productId} = props ?? {};
+
+          return  approveDataProduct(productId,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ApproveDataProductMutationResult = NonNullable<Awaited<ReturnType<typeof approveDataProduct>>>
+    
+    export type ApproveDataProductMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Approve Data Product
+ */
+export const useApproveDataProduct = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof approveDataProduct>>, TError,{productId: string}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof approveDataProduct>>,
+        TError,
+        {productId: string},
+        TContext
+      > => {
+
+      const mutationOptions = getApproveDataProductMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Reject a Table Space — sets ``status='rejected'``.
+
+409 if the space is not ``pending_approval``.
+ * @summary Reject Data Product
+ */
+export const rejectDataProduct = (
+    productId: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<DataProductOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/data-products/${productId}/reject`,undefined,options
+    );
+  }
+
+
+
+export const getRejectDataProductMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rejectDataProduct>>, TError,{productId: string}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof rejectDataProduct>>, TError,{productId: string}, TContext> => {
+
+const mutationKey = ['rejectDataProduct'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof rejectDataProduct>>, {productId: string}> = (props) => {
+          const {productId} = props ?? {};
+
+          return  rejectDataProduct(productId,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RejectDataProductMutationResult = NonNullable<Awaited<ReturnType<typeof rejectDataProduct>>>
+    
+    export type RejectDataProductMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Reject Data Product
+ */
+export const useRejectDataProduct = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rejectDataProduct>>, TError,{productId: string}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof rejectDataProduct>>,
+        TError,
+        {productId: string},
+        TContext
+      > => {
+
+      const mutationOptions = getRejectDataProductMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }

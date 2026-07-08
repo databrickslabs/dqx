@@ -589,7 +589,8 @@ PG_MIGRATIONS: list[PgMigration] = [
             "  updated_by     TEXT,"
             "  updated_at     TIMESTAMPTZ,"
             "  CONSTRAINT uq_dq_data_products_name UNIQUE (name),"
-            "  CONSTRAINT chk_dq_data_products_status CHECK (status IN ('draft','published'))"
+            "  CONSTRAINT chk_dq_data_products_status "
+            "    CHECK (status IN ('draft','pending_approval','approved','rejected'))"
             ");"
             # ----------------------------------------------------------
             # dq_data_product_members — table membership within a

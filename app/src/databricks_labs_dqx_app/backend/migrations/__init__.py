@@ -835,7 +835,7 @@ _V10_DATA_PRODUCTS = (
     ") CLUSTER BY (name);"
     f"ALTER TABLE {_PLACEHOLDER}.dq_data_products "
     f"  ADD CONSTRAINT chk_dq_data_products_status "
-    f"  CHECK (status IN ('draft','published'));"
+    f"  CHECK (status IN ('draft','pending_approval','approved','rejected'));"
     #
     # dq_data_product_members — table membership within a product (design
     # spec §3.4).

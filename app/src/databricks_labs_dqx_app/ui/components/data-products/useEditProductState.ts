@@ -16,8 +16,9 @@ import {
   useUpdateDataProduct,
   useAddDataProductMember,
   useRemoveDataProductMember,
-  usePublishDataProduct,
+  useSubmitDataProduct,
   getGetDataProductQueryKey,
+  getListDataProductsQueryKey,
   getListRunSetsQueryKey,
   type DataProductOut,
   type DataProductMemberOut,
@@ -170,10 +171,11 @@ export function useEditProductState(product: DataProductOut) {
   const updateMut = useUpdateDataProduct({ mutation: { onError: () => {} } });
   const addMut = useAddDataProductMember({ mutation: { onError: () => {} } });
   const removeMut = useRemoveDataProductMember({ mutation: { onError: () => {} } });
-  const publishMut = usePublishDataProduct({ mutation: { onError: () => {} } });
+  const submitMut = useSubmitDataProduct({ mutation: { onError: () => {} } });
 
   const invalidate = useCallback(() => {
     qc.invalidateQueries({ queryKey: getGetDataProductQueryKey(product.product_id) });
+    qc.invalidateQueries({ queryKey: getListDataProductsQueryKey() });
     qc.invalidateQueries({ queryKey: getListRunSetsQueryKey() });
   }, [qc, product.product_id]);
 
@@ -262,32 +264,22 @@ export function useEditProductState(product: DataProductOut) {
     }
   }, [persist, invalidate, t]);
 
-  const handleSaveAndPublish = useCallback(async (): Promise<boolean> => {
+  /** Persist any staged edits, then submit the space for review
+   *  (draft/rejected -> pending_approval). Mirrors the monitored-table
+   *  "Submit for review" flow. */
+  const handleSubmit = useCallback(async (): Promise<boolean> => {
     try {
       await persist();
-      await publishMut.mutateAsync({ productId: product.product_id });
+      await submitMut.mutateAsync({ productId: product.product_id });
       bypassGuardRef.current = true;
       invalidate();
-      toast.success(t("dataProducts.toastSavedAndPublished"));
+      toast.success(t("dataProducts.toastSubmitted"));
       return true;
     } catch (e) {
-      toast.error(extractApiError(e, t("dataProducts.toastPublishFailed")), { duration: 6000 });
+      toast.error(extractApiError(e, t("dataProducts.toastSubmitFailed")), { duration: 6000 });
       return false;
     }
-  }, [persist, publishMut, product.product_id, invalidate, t]);
-
-  const handlePublish = useCallback(async (): Promise<boolean> => {
-    try {
-      await publishMut.mutateAsync({ productId: product.product_id });
-      bypassGuardRef.current = true;
-      invalidate();
-      toast.success(t("dataProducts.toastPublished"));
-      return true;
-    } catch (e) {
-      toast.error(extractApiError(e, t("dataProducts.toastPublishFailed")), { duration: 6000 });
-      return false;
-    }
-  }, [publishMut, product.product_id, invalidate, t]);
+  }, [persist, submitMut, product.product_id, invalidate, t]);
 
   // A save touches several endpoints; treat any in flight as "save pending".
   const savePending = updateMut.isPending || addMut.isPending || removeMut.isPending;
@@ -316,11 +308,9 @@ export function useEditProductState(product: DataProductOut) {
     canSave,
     bypassGuardRef,
     handleSaveDraft,
-    handleSaveAndPublish,
-    handlePublish,
+    handleSubmit,
     savePending,
-    saveAndPublishPending: savePending || publishMut.isPending,
-    publishPending: publishMut.isPending,
+    submitPending: savePending || submitMut.isPending,
   };
 }
 

@@ -285,7 +285,7 @@ def compute_mapping_hash(column_mapping: list[ColumnMappingGroup]) -> str:
 # design spec docs/superpowers/specs/2026-07-07-data-products-design.md §3).
 # ---------------------------------------------------------------------------
 
-DataProductStatus = Literal["draft", "published"]
+DataProductStatus = Literal["draft", "pending_approval", "approved", "rejected"]
 RunSetSource = Literal["approved", "draft"]
 RunSetTrigger = Literal["manual", "scheduled"]
 
@@ -316,10 +316,11 @@ class MonitoredTableVersion(BaseModel):
 class DataProduct(BaseModel):
     """Domain model for a ``dq_data_products`` row — the grouping GUID.
 
-    No approver gate: members are already approval-gated via their own
-    binding lifecycle. ``version`` is bumped ONLY on Publish; member or
-    metadata edits flip ``published`` -> ``draft`` ("Modified since
-    publish" display state) without touching it.
+    A Table Space carries its own review lifecycle
+    (draft -> pending_approval -> approved/rejected), mirroring registry
+    rules and monitored tables. ``version`` is bumped ONLY on approve; member
+    or metadata edits flip the space back to ``draft`` ("Modified since
+    approval" display state) without touching it.
     """
 
     product_id: str
@@ -329,7 +330,7 @@ class DataProduct(BaseModel):
     schedule_cron: str | None = None
     schedule_tz: str | None = None
     status: DataProductStatus = "draft"
-    version: int = Field(default=0, description="0 until first publish; bumped ONLY on publish")
+    version: int = Field(default=0, description="0 until first approval; bumped ONLY on approve")
     created_by: str | None = None
     created_at: datetime | None = None
     updated_by: str | None = None

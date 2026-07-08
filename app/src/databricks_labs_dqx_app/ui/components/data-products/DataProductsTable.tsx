@@ -80,14 +80,26 @@ function TruncatedCell({
   );
 }
 
-/** Status badge for a product's `display_status` ('draft' | 'modified' |
- *  'published' — dqlake display logic, see backend `data_product_service.
- *  display_status`). */
+/** Status badge for a Table Space's `display_status` ('draft' | 'modified' |
+ *  'pending_approval' | 'approved' | 'rejected' — review lifecycle, see
+ *  backend `data_product_service.display_status`). */
 function DataProductStatusBadge({ status }: { status: string }) {
   const { t } = useTranslation();
   switch (status) {
-    case "published":
-      return <Badge variant="default" className="text-[10px]">{t("dataProducts.statusPublished")}</Badge>;
+    case "approved":
+      return <Badge variant="default" className="text-[10px]">{t("dataProducts.statusApproved")}</Badge>;
+    case "pending_approval":
+      return (
+        <Badge variant="outline" className="text-[10px] border-amber-500 text-amber-600">
+          {t("dataProducts.statusPendingApproval")}
+        </Badge>
+      );
+    case "rejected":
+      return (
+        <Badge variant="outline" className="text-[10px] border-red-500 text-red-600">
+          {t("dataProducts.statusRejected")}
+        </Badge>
+      );
     case "modified":
       return (
         <Badge variant="outline" className="text-[10px] border-amber-500 text-amber-600">
