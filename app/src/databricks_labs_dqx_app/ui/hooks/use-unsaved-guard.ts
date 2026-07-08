@@ -37,6 +37,19 @@ export function useUnsavedGuard({ hasUnsavedChanges, isRunning = false, bypassRe
       if (current?.routeId === next?.routeId) return false;
       return shouldBlock;
     },
+    // TanStack Router's `history.block()` also wires its own native
+    // `beforeunload` listener (see `@tanstack/history`'s `onBeforeUnload`),
+    // gated ONLY by this static `enableBeforeUnload` flag — it does NOT
+    // re-evaluate `shouldBlockFn` (which is async) for that native event, and
+    // defaults to `true` whenever this hook's `useBlocker` is registered at
+    // all. Left at its default, the browser's native "leave site?" prompt
+    // fires unconditionally for every visit to a page using this hook — even
+    // with zero unsaved changes — because the blocker itself is always
+    // registered while the component is mounted (B10). We already run our
+    // own correctly-gated `window.addEventListener("beforeunload", ...)`
+    // above (checks `shouldBlock`/`bypassRef` live), so disable the
+    // router's redundant, unconditional one and rely solely on ours.
+    enableBeforeUnload: false,
     withResolver: true,
   });
 
