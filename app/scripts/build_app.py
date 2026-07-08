@@ -16,6 +16,14 @@ Databricks Apps runtime runs via ``uv run`` (no application wheel):
   ``pip install``s this into the platform venv; ``uv`` then builds the real
   environment from ``pyproject.toml`` + ``uv.lock`` at launch — which is what
   lets the app target a newer Python than the container's system Python.
+* ``wheels/databricks_labs_dqx-*.whl`` — the co-developed DQX library built
+  from the parent checkout. The Rules Registry integration imports DQX
+  symbols not present in the published ``databricks-labs-dqx`` release, so the
+  deployed app must install this LOCAL build, not the registry wheel. The
+  deploy tree's ``pyproject.toml`` / ``uv.lock`` copies are rewritten to
+  resolve ``databricks-labs-dqx`` from this vendored wheel (the tracked app
+  files keep the live ``../`` source for local development). The task-runner
+  job installs the same wheel via ``databricks.yml`` environment deps.
 * ``app.yml`` — Databricks Apps launch manifest (``uv run uvicorn`` …), a
   fallback for non-DABs deploys; DABs overrides the command via
   ``var.app_config.command`` in ``databricks.yml``.
@@ -36,16 +44,19 @@ Designed to be cwd-independent — paths resolve relative to this file.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import tomllib
 from pathlib import Path
 
 APP_DIR = Path(__file__).resolve().parent.parent  # scripts/build_app.py → app/
+REPO_ROOT = APP_DIR.parent  # app/ → dqx repo root (the DQX library source)
 PYPROJECT = APP_DIR / "pyproject.toml"
 UV_LOCK = APP_DIR / "uv.lock"
 README = APP_DIR / "README.md"
 BUILD_DIR = APP_DIR / ".build"
+WHEELS_DIR = BUILD_DIR / "wheels"  # vendored local DQX library wheel ships here
 NODE_BIN = APP_DIR / "node_modules" / ".bin"
 
 PKG_DIR = APP_DIR / "src" / "databricks_labs_dqx_app"
@@ -59,14 +70,16 @@ def _step(msg: str) -> None:
     print(f"\n▶ {msg}", flush=True)
 
 
-def _run(cmd: list[str]) -> None:
+def _run(cmd: list[str], env: dict[str, str] | None = None) -> None:
     """Run a subprocess from ``APP_DIR`` with stdio passed through.
 
     Failures abort the build via ``check=True`` — every stage must
-    succeed for the deploy tree to be considered usable.
+    succeed for the deploy tree to be considered usable. ``env`` overrides
+    the child environment when supplied (used to drop ``UV_FROZEN`` for the
+    one ``uv lock`` step that must be allowed to rewrite the deploy lock).
     """
     print(f"  $ {' '.join(cmd)}", flush=True)
-    subprocess.run(cmd, cwd=APP_DIR, check=True)  # noqa: S603
+    subprocess.run(cmd, cwd=APP_DIR, check=True, env=env)  # noqa: S603
 
 
 def _load_pyproject() -> dict:
@@ -172,17 +185,87 @@ def _run_vite_build() -> None:
     _run([str(NODE_BIN / "vite"), "build"])
 
 
+def _build_dqx_wheel() -> str:
+    """Build the co-developed DQX library wheel into ``.build/wheels/``.
+
+    The Rules Registry integration imports DQX symbols not present in the
+    published ``databricks-labs-dqx`` release, so the deployed app and the
+    task-runner job must install the LOCAL library build rather than the
+    registry wheel. The wheel is vendored inside ``.build/`` (which DABs
+    ``sync``s wholesale) and referenced by both the app (via the deploy
+    tree's rewritten ``[tool.uv.sources]`` — see ``_rewrite_deploy_sources``)
+    and the task-runner job (``databricks.yml`` environment dependencies).
+
+    Returns the built wheel's filename (version comes from the library's
+    static ``__about__.py``, so it's deterministic across builds).
+    """
+    shutil.rmtree(WHEELS_DIR, ignore_errors=True)
+    WHEELS_DIR.mkdir(parents=True, exist_ok=True)
+    _run(["uv", "build", str(REPO_ROOT), "--wheel", "--out-dir", str(WHEELS_DIR)])
+    wheels = sorted(WHEELS_DIR.glob("databricks_labs_dqx-*.whl"))
+    if not wheels:
+        raise SystemExit(f"error: no DQX library wheel produced in {WHEELS_DIR}")
+    return wheels[-1].name
+
+
+def _rewrite_deploy_sources(dqx_wheel_name: str) -> None:
+    """Point the deploy tree's DQX dependency at the vendored wheel.
+
+    The app root's ``pyproject.toml`` / ``uv.lock`` resolve
+    ``databricks-labs-dqx`` from the parent checkout (``path = "../"`` /
+    ``directory = "../"``) so LOCAL development, type-check, and tests track
+    the co-developed library live. That path does not exist in the Databricks
+    Apps container, so the ``.build/`` copies are rewritten to install the
+    vendored wheel (``wheels/<name>``, relative to the deploy-tree root)
+    instead. Only the ``.build/`` copies change; the tracked app files keep
+    the ``../`` source.
+
+    The deploy-tree ``pyproject.toml`` is repointed at the vendored wheel and
+    ``uv lock`` reconciles the copied ``uv.lock`` to match (using it as the
+    resolution preference, so only the DQX source line changes). Shipping a
+    consistent lock means the Apps container's ``uv run`` installs from it
+    directly instead of re-resolving on every cold start.
+
+    Fails loudly if the expected ``[tool.uv.sources]`` marker is absent, so an
+    upstream change to how the app declares the DQX source can't silently ship
+    a deploy tree that resolves the (symbol-less) registry wheel.
+    """
+    wheel_ref = f"wheels/{dqx_wheel_name}"
+
+    pyproject_path = BUILD_DIR / "pyproject.toml"
+    text = pyproject_path.read_text(encoding="utf-8")
+    marker = 'databricks-labs-dqx = { path = "../" }'
+    if marker not in text:
+        raise SystemExit(
+            f"error: expected DQX [tool.uv.sources] marker {marker!r} not found in {pyproject_path}"
+        )
+    text = text.replace(marker, f'databricks-labs-dqx = {{ path = "{wheel_ref}" }}')
+    pyproject_path.write_text(text, encoding="utf-8")
+
+    # Reconcile .build/uv.lock with the repointed source. The copied lock (DQX
+    # from ``../``) is the resolution preference, so this only rewrites the DQX
+    # source to the vendored wheel and leaves every registry pin untouched.
+    # UV_FROZEN=1 (the repo-wide default) would make ``uv lock`` validate-only,
+    # so drop it just for this call — the deploy lock MUST be rewritten here.
+    lock_env = os.environ.copy()
+    lock_env.pop("UV_FROZEN", None)
+    _run(["uv", "lock", "--project", str(BUILD_DIR)], env=lock_env)
+
+
 def _assemble_deploy_tree() -> None:
     """Assemble the source tree the Apps runtime runs via ``uv run``.
 
     Copies the app root's ``pyproject.toml`` / ``uv.lock`` / ``README.md``
     and the package ``src/`` (minus the ``ui/`` TS source and caches) into
-    ``.build/``, and writes ``requirements.txt`` = ``uv``. ``.build/tasks``
-    (the task-runner wheel, built by the ``databricks.yml`` pipeline after
-    this script) is left untouched.
+    ``.build/``, vendors the local DQX library wheel under ``.build/wheels/``
+    and repoints the deploy-tree copies at it, then writes
+    ``requirements.txt`` = ``uv``. ``.build/tasks`` (the task-runner wheel,
+    built by the ``databricks.yml`` pipeline after this script) is left
+    untouched.
     """
     # Sweep stale wheels from the previous (wheel-based) layout so they
-    # don't linger in the synced source tree.
+    # don't linger in the synced source tree. ``.build/wheels`` is rebuilt
+    # wholesale by ``_build_dqx_wheel``.
     for stale in list(BUILD_DIR.glob("*.whl")):
         stale.unlink()
 
@@ -197,6 +280,9 @@ def _assemble_deploy_tree() -> None:
         dest_pkg,
         ignore=shutil.ignore_patterns("ui", "__pycache__", "*.pyc"),
     )
+
+    dqx_wheel_name = _build_dqx_wheel()
+    _rewrite_deploy_sources(dqx_wheel_name)
 
     (BUILD_DIR / "requirements.txt").write_text("uv\n", encoding="utf-8")
 
@@ -226,11 +312,13 @@ def main() -> int:
     _step("Building UI bundle (vite build → src/databricks_labs_dqx_app/__dist__/)")
     _run_vite_build()
 
-    _step("Assembling .build/ source tree (pyproject + uv.lock + src + requirements.txt=uv)")
+    _step("Assembling .build/ source tree (pyproject + uv.lock + src + vendored DQX wheel + requirements.txt=uv)")
     _assemble_deploy_tree()
 
     _step("Build complete:")
     print(f"  → {(BUILD_DIR / 'src' / 'databricks_labs_dqx_app').relative_to(APP_DIR)} (source), requirements.txt=uv")
+    for wheel in sorted(WHEELS_DIR.glob("databricks_labs_dqx-*.whl")):
+        print(f"  → {wheel.relative_to(APP_DIR)} (vendored local DQX library)")
     return 0
 
 

@@ -126,10 +126,13 @@ sync:
 artifacts:
   default:
     # build_app.py assembles the app as a SOURCE tree under .build/ (pyproject +
-    # uv.lock + src + requirements.txt=``uv``) — no app wheel, no local dqx wheel
-    # (the app pins databricks-labs-dqx from the registry). We still build the
-    # task-runner wheel for the job (it's not published); its dqx dep resolves
-    # from the registry at job-environment install time.
+    # uv.lock + src + requirements.txt=``uv``) AND vendors the locally-built DQX
+    # library wheel under .build/wheels/, repointing the deploy tree's
+    # pyproject/uv.lock at it. The Rules Registry integration imports DQX symbols
+    # not in the published release, so the app must ship the local library build
+    # rather than the registry wheel. We also build the task-runner wheel here
+    # (it's not published); its dqx dep is pinned to the same local wheel in the
+    # job environment below.
     build: >
       uv run python scripts/build_app.py &&
       rm -rf .build/tasks &&
@@ -346,10 +349,13 @@ resources:
           spec:
             client: "5"
             dependencies:
-              # Local task-runner wheel (not published) + the library pinned
-              # from the registry — same version as the app, no local dqx build.
+              # Local task-runner wheel (not published) + the locally-built DQX
+              # library wheel vendored by build_app.py under .build/wheels/. The
+              # app imports Rules Registry symbols absent from the published
+              # release, so the task-runner runs the same local library build as
+              # the app (satisfies the task-runner wheel's ==0.15.0 dqx pin).
               - ./.build/tasks/databricks_labs_dqx_task_runner-*.whl
-              - databricks-labs-dqx==0.15.0
+              - ./.build/wheels/databricks_labs_dqx-*.whl
       parameters:
         - name: "task_type"
           default: "profile"
