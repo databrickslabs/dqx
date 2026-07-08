@@ -1826,6 +1826,13 @@
     "suggestRulesFetchFailed": "Falha ao obter sugestões.",
     "suggestRulesTimeoutReason": "A solicitação de sugestões expirou. Verifique sua conexão e tente novamente.",
     "suggestRulesNoneSelected": "Selecione pelo menos uma sugestão para adicionar.",
+    "suggestRulesGroupBy": "Agrupar por",
+    "suggestRulesGroupByRule": "regra",
+    "suggestRulesGroupByColumn": "coluna",
+    "suggestRulesUnmappedGroup": "Sem mapeamento",
+    "suggestRulesToggleAll": "Alternar todos {{label}}",
+    "suggestRulesSelectedCount": "{{selected}} de {{total}} selecionados",
+    "suggestRulesAddAllButton": "Adicionar todas as verificações",
     "wizard": {
       "title": "Monitorar tabelas",
       "description": "Selecione a(s) tabela(s) para aplicar regras e monitorar",

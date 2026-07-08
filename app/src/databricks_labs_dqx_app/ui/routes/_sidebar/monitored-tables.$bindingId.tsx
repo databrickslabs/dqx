@@ -1661,6 +1661,7 @@ function ApplyRulesTab({
         state={suggestState}
         loading={suggestLoading}
         onRefresh={runSuggest}
+        appliedRules={stagedRows}
         onAdd={stageNewRows}
         onApplied={() => {}}
       />

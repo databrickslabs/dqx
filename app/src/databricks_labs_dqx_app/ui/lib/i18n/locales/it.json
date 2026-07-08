@@ -1826,6 +1826,13 @@
     "suggestRulesFetchFailed": "Impossibile ottenere suggerimenti.",
     "suggestRulesTimeoutReason": "La richiesta di suggerimenti è scaduta. Controlla la connessione e riprova.",
     "suggestRulesNoneSelected": "Seleziona almeno un suggerimento da aggiungere.",
+    "suggestRulesGroupBy": "Raggruppa per",
+    "suggestRulesGroupByRule": "regola",
+    "suggestRulesGroupByColumn": "colonna",
+    "suggestRulesUnmappedGroup": "Non mappato",
+    "suggestRulesToggleAll": "Attiva/disattiva tutti {{label}}",
+    "suggestRulesSelectedCount": "{{selected}} di {{total}} selezionati",
+    "suggestRulesAddAllButton": "Aggiungi tutti i controlli",
     "wizard": {
       "title": "Monitora tabelle",
       "description": "Seleziona la/e tabella/e a cui applicare le regole e monitorare",

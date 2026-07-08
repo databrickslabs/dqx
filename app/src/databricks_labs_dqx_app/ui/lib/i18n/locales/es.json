@@ -1826,6 +1826,13 @@
     "suggestRulesFetchFailed": "No se pudieron obtener sugerencias.",
     "suggestRulesTimeoutReason": "La solicitud de sugerencias agotó el tiempo de espera. Comprueba tu conexión e inténtalo de nuevo.",
     "suggestRulesNoneSelected": "Selecciona al menos una sugerencia para agregar.",
+    "suggestRulesGroupBy": "Agrupar por",
+    "suggestRulesGroupByRule": "regla",
+    "suggestRulesGroupByColumn": "columna",
+    "suggestRulesUnmappedGroup": "Sin asignar",
+    "suggestRulesToggleAll": "Alternar todos {{label}}",
+    "suggestRulesSelectedCount": "{{selected}} de {{total}} seleccionados",
+    "suggestRulesAddAllButton": "Agregar todas las comprobaciones",
     "wizard": {
       "title": "Supervisar tablas",
       "description": "Selecciona la(s) tabla(s) para aplicar reglas y monitorear",

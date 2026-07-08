@@ -287,6 +287,20 @@
   z-index: 1;
 }
 
+/* AI suggestion card entrance — a subtle rise + fade used by the AI Rule
+   Suggestions dialog cards (staggered via inline animation-delay). Ported
+   from dqlake's `dq-suggestion-in`. */
+@keyframes dq-suggestion-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 /* Forward (left → right) shine — applied to a span/element. A bright
    fuchsia stripe travels across the foreground-coloured text and loops
    seamlessly thanks to a repeating gradient with a 200%-wide period. */

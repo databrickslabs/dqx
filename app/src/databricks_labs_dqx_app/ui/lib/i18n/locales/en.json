@@ -1826,6 +1826,13 @@
     "suggestRulesFetchFailed": "Failed to get suggestions.",
     "suggestRulesTimeoutReason": "The suggestion request timed out. Check your connection and try again.",
     "suggestRulesNoneSelected": "Select at least one suggestion to add.",
+    "suggestRulesGroupBy": "Group by",
+    "suggestRulesGroupByRule": "rule",
+    "suggestRulesGroupByColumn": "column",
+    "suggestRulesUnmappedGroup": "Unmapped",
+    "suggestRulesToggleAll": "Toggle all {{label}}",
+    "suggestRulesSelectedCount": "{{selected}} of {{total}} selected",
+    "suggestRulesAddAllButton": "Add all checks",
     "wizard": {
       "title": "Monitor tables",
       "description": "Select table(s) to apply rules to and monitor",
