@@ -278,6 +278,67 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded }:
           <div className="text-center py-8 text-muted-foreground text-sm">
             {rows.length === 0 ? t("dataProducts.pickerNoTables") : t("dataProducts.pickerNoMatches")}
           </div>
+        ) : groupBy === "none" ? (
+          <Table className="table-fixed w-full">
+            <colgroup>
+              <col style={{ width: 48 }} />
+              <col />
+              <col style={{ width: 100 }} />
+              <col style={{ width: 140 }} />
+            </colgroup>
+            <TableHeader>
+              <TableRow>
+                <TableHead style={{ width: 48 }} className="text-center" />
+                <TableHead>{t("monitoredTables.colTableName")}</TableHead>
+                <TableHead className="text-right">{t("dataProducts.colRules")}</TableHead>
+                <TableHead>{t("dataProducts.colStatus")}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filtered.map((r) => {
+                const key = r.table.binding_id;
+                const isDisabled = disabledKeys?.has(key) ?? false;
+                const isChecked = isDisabled || selected.has(key);
+                const notReady = r.table.status !== "approved";
+                return (
+                  <TableRow
+                    key={key}
+                    className={cn(
+                      isDisabled ? "cursor-not-allowed opacity-50" : "cursor-pointer hover:bg-muted/50",
+                      !isDisabled && selected.has(key) && "bg-primary/5",
+                    )}
+                    data-selected={selected.has(key) || undefined}
+                    onClick={() => toggleRow(key)}
+                  >
+                    <TableCell className="text-center" onClick={(e) => e.stopPropagation()}>
+                      <Checkbox
+                        checked={isChecked}
+                        disabled={isDisabled}
+                        onCheckedChange={() => toggleRow(key)}
+                        aria-label={t("dataProducts.pickerSelectRowAria", { table: r.table.table_fqn })}
+                      />
+                    </TableCell>
+                    <TableCell className="overflow-hidden">
+                      <span className="inline-flex items-center gap-2 max-w-full">
+                        <TruncatedCell text={r.table.table_fqn} className="font-mono text-xs" />
+                        {notReady && (
+                          <Badge variant="outline" className="text-[10px] shrink-0">
+                            {t("dataProducts.pickerNotReadyBadge")}
+                          </Badge>
+                        )}
+                      </span>
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums text-xs">
+                      {r.applied_rule_count ?? 0}
+                    </TableCell>
+                    <TableCell>
+                      <StatusBadge status={r.table.status} />
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
         ) : (
           Array.from(grouped.entries()).map(([group, groupRows]) => {
             const selectableKeys = groupRows.map((r) => r.table.binding_id).filter((k) => !disabledKeys?.has(k));
