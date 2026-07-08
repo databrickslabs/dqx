@@ -123,8 +123,10 @@ function ChipInput({ value, onChange }: { value: unknown; onChange: (v: unknown)
   useEffect(() => {
     if (focused) return;
     const next = Array.isArray(value) ? (value as unknown[]).join(", ") : "";
-    if (next !== text) setText(next);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Functional update so the effect reads no outer `text` — deps stay
+    // exhaustive on the values that should re-sync the buffer (the incoming
+    // committed `value` and focus), without refiring on every keystroke.
+    setText((prev) => (prev === next ? prev : next));
   }, [value, focused]);
 
   const commit = (s: string) => {

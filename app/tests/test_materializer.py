@@ -511,19 +511,30 @@ class TestRenderCheckLowcodeMode:
         assert args["merge_columns"] == ["region"]
         assert is_tableless is False
 
-    def test_joins_only_renders_dataset_sql_query_without_merge_columns(self):
+    def test_joins_only_renders_row_level_sql_query_with_join_key_merge_columns(self):
+        # A joins-only rule (no group-by) must run ROW-LEVEL: the compiler emits
+        # merge_columns = the input-side join keys so DQX joins the per-row
+        # result back onto the monitored table. Without merge_columns DQX would
+        # route it to the dataset-level "must return exactly one row" path and
+        # fail at run time for every such rule.
         body = {
             "lowcode_ast": {
-                "rows": [],
+                "rows": [
+                    {"kind": "row", "combinator": None, "column_ref": "column", "operator": "is not null", "value": None}
+                ],
                 "joins": [
                     {"join_type": "LEFT", "target_table": "c.s.dim", "keys": [{"joined_column": "id", "column_ref": "column"}]}
                 ],
             },
-            "sql_query": "SELECT (NOT ({{column}} IS NOT NULL)) AS condition FROM {{input_view}} LEFT JOIN c.s.dim ON c.s.dim.id = {{column}}",
+            "sql_query": (
+                "SELECT {{column}}, (NOT ({{column}} IS NOT NULL)) AS condition "
+                "FROM {{input_view}} LEFT JOIN c.s.dim ON c.s.dim.id = {{column}}"
+            ),
+            "merge_columns": ["{{column}}"],
         }
         definition = self._lowcode_definition(body)
         version = RuleVersion(rule_id="r1", version=1, definition=definition, polarity="pass", user_metadata={})
-        check, _ = render_check(
+        check, is_tableless = render_check(
             mode="lowcode",
             version=version,
             group={"column": "customer_id"},
@@ -535,8 +546,51 @@ class TestRenderCheckLowcodeMode:
         )
         args = check["check"]["arguments"]
         assert check["check"]["function"] == "sql_query"
-        assert "merge_columns" not in args
+        assert args["merge_columns"] == ["customer_id"]
         assert "c.s.dim.id = customer_id" in args["query"]
+        assert is_tableless is False
+
+    def test_expression_group_by_renders_sql_query_with_substituted_merge_columns(self):
+        # Advanced group-by with an expression grouping key: the compiler splits
+        # the group-by at top-level commas only, so the COALESCE's inner comma
+        # is NOT shredded into invalid merge-column fragments. Each token — plain
+        # slot ref AND expression — has its slots substituted by render_check.
+        definition = RuleDefinition.model_validate(
+            {
+                "body": {
+                    "lowcode_ast": {"rows": [], "joins": []},
+                    "group_by": "{{region}}, COALESCE({{country}}, 'XX')",
+                    "sql_query": (
+                        "SELECT {{region}}, COALESCE({{country}}, 'XX'), (NOT (COUNT(*) > 1)) AS condition "
+                        "FROM {{input_view}} GROUP BY {{region}}, COALESCE({{country}}, 'XX')"
+                    ),
+                    "merge_columns": ["{{region}}", "COALESCE({{country}}, 'XX')"],
+                },
+                "slots": [
+                    {"name": "region", "family": "text", "position": 0, "cardinality": "one"},
+                    {"name": "country", "family": "text", "position": 1, "cardinality": "one"},
+                ],
+                "parameters": [],
+            }
+        )
+        version = RuleVersion(rule_id="r1", version=1, definition=definition, polarity="pass", user_metadata={})
+        check, _ = render_check(
+            mode="lowcode",
+            version=version,
+            group={"region": "sales_region", "country": "country_code"},
+            effective_severity="Medium",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+        )
+        args = check["check"]["arguments"]
+        assert check["check"]["function"] == "sql_query"
+        assert args["merge_columns"] == ["sales_region", "COALESCE(country_code, 'XX')"]
+        assert args["query"] == (
+            "SELECT sales_region, COALESCE(country_code, 'XX'), (NOT (COUNT(*) > 1)) AS condition "
+            "FROM {{input_view}} GROUP BY sales_region, COALESCE(country_code, 'XX')"
+        )
 
     def test_unsafe_compiled_sql_query_raises(self):
         body = {

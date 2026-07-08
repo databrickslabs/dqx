@@ -152,11 +152,18 @@ open('.build/openapi.json', 'w').write(json.dumps(app.openapi(), indent=2))"
 # (``-b``) so subsequent runs only re-check changed files; the Python
 # pass runs basedpyright at ``error`` level only (per the existing
 # pyproject configuration excluding tests, see [tool.basedpyright]).
-app-check: ## Type-check app: tsc -b (TypeScript) + basedpyright (Python)
+app-check: ## Type-check app: tsc -b (TypeScript) + basedpyright (Python) + bun UI unit tests
 	@echo "🔍 Checking TypeScript..."
 	cd app && bun run tsc -b --incremental
 	@echo "🔍 Checking Python..."
 	cd app && $(UV_RUN) basedpyright --level error
+	@$(MAKE) app-test-ui
+
+# Front-end unit tests (bun's built-in test runner — runs *.test.ts natively,
+# no extra config). Kept fast + dependency-free so it can run inside app-check.
+app-test-ui: ## Run app UI unit tests (bun test)
+	@echo "🧪 Testing UI (bun test)..."
+	cd app && bun test src/databricks_labs_dqx_app/ui
 
 # Run the app's backend unit-test suite (pytest, no Databricks dependencies).
 # Usage:  make app-test            # run everything
@@ -328,4 +335,4 @@ fork-sync: ## Mirror a fork PR to a branch in the main repo for full CI (PR=<num
 	./.github/scripts/fork-sync-pr.sh $(PR)
 
 .DEFAULT: all
-.PHONY: help all clean dev lint fmt test integration e2e perf anomaly coverage combine-coverage docs-build docs-serve-dev docs-install docs-serve docs-clean app-install app-build app-start-dev app-stop-dev app-regen-api app-check app-test app-check-cli app-grant-permissions app-bind app-deploy fork-sync build lock-dependencies lock-app-dependencies
+.PHONY: help all clean dev lint fmt test integration e2e perf anomaly coverage combine-coverage docs-build docs-serve-dev docs-install docs-serve docs-clean app-install app-build app-start-dev app-stop-dev app-regen-api app-check app-test app-test-ui app-check-cli app-grant-permissions app-bind app-deploy fork-sync build lock-dependencies lock-app-dependencies

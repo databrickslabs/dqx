@@ -60,7 +60,7 @@ import { PredicateEditor } from "@/components/rules/PredicateEditor";
 import { AdvancedDisclosure } from "@/components/rules/AdvancedDisclosure";
 import { LowcodeBuilder } from "@/components/rules/lowcode/LowcodeBuilder";
 import { JoinsBuilder } from "@/components/rules/lowcode/JoinsBuilder";
-import { GroupBySqlField } from "@/components/rules/lowcode/GroupBySqlField";
+import { GroupByField } from "@/components/rules/lowcode/GroupByField";
 import { ModeSwitchDialog, type ModeSwitchDirection } from "@/components/rules/lowcode/ModeSwitchDialog";
 import { useJoinedColumns } from "@/hooks/useJoinedColumns";
 import {
@@ -1769,7 +1769,16 @@ export function RegistryRuleFormDialog({
             label={t("rulesRegistry.advancedSectionLabel")}
             defaultOpen={!!groupBy || lowcodeAst.joins.length > 0}
           >
-            <GroupBySqlField value={groupBy} onChange={setGroupBy} disabled={readOnly} />
+            {/* Group-by is restricted to declared `{{slot}}` columns (not
+                joined-table columns): a grouping key becomes a `merge_column`,
+                and DQX's row-level merge-back requires those columns to exist
+                on the monitored input table. */}
+            <GroupByField
+              value={groupBy}
+              onChange={setGroupBy}
+              declaredColumns={lowcodeColumns.filter((c) => !c.name.includes("."))}
+              disabled={readOnly}
+            />
             <JoinsBuilder
               ast={lowcodeAst}
               onChange={setLowcodeAst}

@@ -57,6 +57,70 @@ function quoteList(values: unknown[]): string {
   return values.map(quote).join(", ");
 }
 
+// Escape a value for embedding INSIDE a single-quoted SQL LIKE pattern
+// (e.g. `'%<value>%'`). Only the quote needs doubling so a value like
+// `O'Brien` can't terminate the literal early and break the SQL — matching
+// how `quote()` escapes ordinary string literals.
+function likeLiteral(value: unknown): string {
+  return String(value).replaceAll("'", "''");
+}
+
+// Split a comma-separated group-by / column-ref string at TOP-LEVEL commas
+// only — commas nested inside parentheses (e.g. `COALESCE({{c}}, 'XX')`) or
+// inside single-quoted string literals are NOT split points. The structured
+// GroupByField only ever emits clean single-token column refs, but a rule
+// hydrated from a legacy raw group-by string (or a dqlake import) may still
+// carry an expression; a naive `split(",")` would shred it into invalid
+// merge-column fragments, so we parse structurally instead.
+function splitTopLevelCommas(value: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let inQuote = false;
+  let start = 0;
+  for (let i = 0; i < value.length; i++) {
+    const ch = value[i];
+    if (inQuote) {
+      // Doubled '' is an escaped quote inside the literal — stay in-quote.
+      if (ch === "'" && value[i + 1] === "'") {
+        i++;
+        continue;
+      }
+      if (ch === "'") inQuote = false;
+      continue;
+    }
+    if (ch === "'") inQuote = true;
+    else if (ch === "(") depth++;
+    else if (ch === ")") depth = Math.max(0, depth - 1);
+    else if (ch === "," && depth === 0) {
+      out.push(value.slice(start, i));
+      start = i + 1;
+    }
+  }
+  out.push(value.slice(start));
+  return out.map((s) => s.trim()).filter(Boolean);
+}
+
+// The distinct input-side merge keys for a set of joins: the `{{column_ref}}`
+// tokens each (non-CROSS) join equates against its target table. These are the
+// only columns present on BOTH the joined result and the monitored input table,
+// so they are what a joins-only row-level `sql_query` merges its per-row result
+// back on (see `compileLowcodeBody`).
+function joinKeyRefs(joins: JoinAst[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const j of joins ?? []) {
+    if (j.join_type === "CROSS" || !j.target_table) continue;
+    for (const k of j.keys ?? []) {
+      if (!k.column_ref) continue;
+      const token = ref(k.column_ref);
+      if (seen.has(token)) continue;
+      seen.add(token);
+      out.push(token);
+    }
+  }
+  return out;
+}
+
 function aggExpr(spec: { aggregate?: string; column_ref?: string; aggregate_param?: number | null }): string {
   const agg = spec.aggregate;
   const col = spec.column_ref;
@@ -70,10 +134,10 @@ function rowSql(left: string, operator: string, value: unknown): string {
   if (["=", "!=", "<", "<=", ">", ">="].includes(op)) return `${left} ${op} ${quote(value)}`;
   if (op === "equals") return `${left} = ${quote(value)}`;
   if (op === "not equals") return `${left} != ${quote(value)}`;
-  if (op === "contains") return `${left} LIKE '%${value}%'`;
-  if (op === "does not contain") return `${left} NOT LIKE '%${value}%'`;
-  if (op === "starts with") return `${left} LIKE '${value}%'`;
-  if (op === "ends with") return `${left} LIKE '%${value}'`;
+  if (op === "contains") return `${left} LIKE '%${likeLiteral(value)}%'`;
+  if (op === "does not contain") return `${left} NOT LIKE '%${likeLiteral(value)}%'`;
+  if (op === "starts with") return `${left} LIKE '${likeLiteral(value)}%'`;
+  if (op === "ends with") return `${left} LIKE '%${likeLiteral(value)}'`;
   if (op === "matches regex") return `${left} RLIKE ${quote(value)}`;
   if (op === "between") {
     const [lo, hi] = Array.isArray(value) ? (value as unknown[]) : [null, null];
@@ -205,33 +269,63 @@ export interface CompiledLowcodeBody {
  * materializer's existing sql-mode path consumes.
  *
  * Composition rule: the row stack compiles to the pass-condition `P`; the
- * emitted fail-condition is `NOT (P)`. With no joins and no group-by the body
- * is `{ predicate: P }` (sql_expression). Otherwise the body is a full
- * `sql_query` selecting `(NOT (P)) AS condition FROM {{input_view}} <joins>
- * [GROUP BY <gb>]`; a group-by additionally emits `merge_columns` (its
- * comma-split columns) so violating groups flag their source rows row-level.
- * Polarity is NOT baked in — `render_check`'s `negate` applies it, uniform
- * with a hand-written sql-mode rule.
+ * emitted fail-condition is `NOT (P)`. Every folded form is ROW-LEVEL — DQX's
+ * `sql_query` check joins the per-row result back onto the monitored table via
+ * `merge_columns`, which MUST be columns that exist on the input DataFrame
+ * (see the `sql_query` docstring / `quality_checks.mdx`).
+ *
+ *   • no joins & no group-by  →  `{ predicate: P }`  (sql_expression path)
+ *   • group-by present        →  `SELECT <gb>, (NOT (P)) AS condition
+ *                                  FROM {{input_view}} [<joins>] GROUP BY <gb>`
+ *                                 with `merge_columns` = the group-by columns.
+ *   • joins only (no gb)      →  `SELECT <keys>, (NOT (P)) AS condition
+ *                                  FROM {{input_view}} <joins>` with
+ *                                 `merge_columns` = the input-side join keys.
+ *                                 DQX collapses join fan-out internally by
+ *                                 grouping on `merge_columns` and taking the
+ *                                 max condition (fail if any joined row
+ *                                 violates), matching the canonical join
+ *                                 example in `quality_checks.mdx`.
+ *
+ * Group-by / merge keys are always clean single-token column refs (the
+ * structured GroupByField and the join-key pickers only ever emit
+ * `{{slot}}` / `<table>.<col>` tokens), split at top-level commas so an
+ * expression such as `COALESCE({{c}}, 'XX')` in a legacy raw group-by string
+ * is never shredded into invalid fragments. Only the degenerate case with no
+ * usable row key (e.g. a CROSS-join-only rule with no group-by) falls back to
+ * the dataset-level single-row query. Polarity is NOT baked in — `render_check`'s
+ * `negate` applies it, uniform with a hand-written sql-mode rule.
  */
 export function compileLowcodeBody(ast: LowcodeAstV2, groupBy: string): CompiledLowcodeBody {
   const predicate = compileAstToSql(ast);
   const joinsSql = compileJoinsToSql(ast.joins);
-  const gb = (groupBy ?? "").trim();
+  const gbColumns = splitTopLevelCommas(groupBy ?? "");
 
-  if (!joinsSql && !gb) {
+  if (!joinsSql && gbColumns.length === 0) {
     return { predicate };
   }
 
   const failCond = `NOT (${predicate})`;
   const from = `{{input_view}}${joinsSql ? ` ${joinsSql}` : ""}`;
-  if (gb) {
+
+  if (gbColumns.length > 0) {
+    const gbList = gbColumns.join(", ");
     return {
-      sql_query: `SELECT ${gb}, (${failCond}) AS condition FROM ${from} GROUP BY ${gb}`,
-      merge_columns: gb
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean),
+      sql_query: `SELECT ${gbList}, (${failCond}) AS condition FROM ${from} GROUP BY ${gbList}`,
+      merge_columns: gbColumns,
     };
   }
+
+  // Joins only: run row-level, merging the per-row result back on the
+  // input-side join keys (the only columns present on the input table).
+  const keyRefs = joinKeyRefs(ast.joins);
+  if (keyRefs.length > 0) {
+    return {
+      sql_query: `SELECT ${keyRefs.join(", ")}, (${failCond}) AS condition FROM ${from}`,
+      merge_columns: keyRefs,
+    };
+  }
+
+  // No usable row key (e.g. CROSS-join-only) — dataset-level single-row query.
   return { sql_query: `SELECT (${failCond}) AS condition FROM ${from}` };
 }
