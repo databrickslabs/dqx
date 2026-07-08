@@ -33,7 +33,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { AlertCircle, Boxes, Loader2, Plus, RotateCcw, Search, Trash2 } from "lucide-react";
+import { AlertCircle, Loader2, Plus, RotateCcw, Search, Table2, Trash2 } from "lucide-react";
 import {
   useListMonitoredTables,
   getListMonitoredTablesQueryKey,
@@ -353,7 +353,7 @@ function MonitoredTablesPage() {
               </div>
             ) : (
               <div className="flex flex-col items-center justify-center text-center">
-                <Boxes className="h-10 w-10 text-muted-foreground/30 mb-3" />
+                <Table2 className="h-10 w-10 text-muted-foreground/30 mb-3" />
                 <p className="text-sm text-muted-foreground">
                   {hasActiveFilters
                     ? t("monitoredTables.emptyState")

@@ -13,7 +13,7 @@ import { ChevronDown, ChevronUp, Lock, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useColumnLayout, type ColumnLayoutDef } from "@/components/data-table/column-layout";
 import { EditColumnsDropdown } from "@/components/data-table/EditColumnsDropdown";
-import { formatDateShort } from "@/lib/format-utils";
+import { RelativeTimeCell } from "@/components/data-table/RelativeTimeCell";
 import { AI_GRADIENT_URL } from "@/lib/ai-style";
 import { AuthorKindIcon } from "./AuthorKindIcon";
 import {
@@ -214,11 +214,7 @@ const COLUMNS: Record<ColumnKey, ColumnDef> = {
     defaultWidth: 140,
     sortable: true,
     renderHeader: (label) => label,
-    renderCell: (r) => (
-      <span className="text-xs text-muted-foreground" title={r.updated_at ?? undefined}>
-        {r.updated_at ? formatDateShort(r.updated_at) : "—"}
-      </span>
-    ),
+    renderCell: (r) => <RelativeTimeCell iso={r.updated_at} />,
   },
   mode: {
     labelKey: "rulesRegistry.colMode",
@@ -381,12 +377,22 @@ export function RulesTable({
 
   const totalWidth = visibleKeys.reduce((acc, k) => acc + (colWidths[k] ?? COLUMNS[k].defaultWidth), 0);
 
+  // Actions is pinned last: excluded from the Edit Columns list/reorder
+  // entirely (it's the only surface for rule lifecycle actions and must
+  // never be hidden or moved), and rendered as the final, sticky-right
+  // column regardless of where it happens to sit in the persisted column
+  // order — so a stale/corrupted layout payload can't move it.
+  const editableOrder = colOrder.filter((k) => k !== "actions");
+  const orderedKeys: ColumnKey[] = visibleKeys.includes("actions")
+    ? [...visibleKeys.filter((k) => k !== "actions"), "actions"]
+    : visibleKeys;
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
         {toolbarExtra}
         <EditColumnsDropdown
-          order={colOrder}
+          order={editableOrder}
           labelOf={(key) => t(COLUMNS[key].labelKey)}
           toggleableOf={(key) => COLUMNS[key].toggleable}
           isChecked={(key) => visibleKeys.includes(key)}
@@ -399,13 +405,13 @@ export function RulesTable({
       <div className="overflow-x-auto">
         <Table className="table-fixed" style={{ width: totalWidth, minWidth: totalWidth }}>
           <colgroup>
-            {visibleKeys.map((k) => (
+            {orderedKeys.map((k) => (
               <col key={k} style={{ width: colWidths[k] ?? COLUMNS[k].defaultWidth }} />
             ))}
           </colgroup>
           <TableHeader>
             <TableRow className="bg-muted/50 hover:bg-muted/50">
-              {visibleKeys.map((k) => {
+              {orderedKeys.map((k) => {
                 const def = COLUMNS[k];
                 const width = colWidths[k] ?? def.defaultWidth;
                 const isSorted = k !== "actions" && sortKey === k;
@@ -422,6 +428,10 @@ export function RulesTable({
                       "relative text-xs font-medium px-2",
                       def.headClassName,
                       def.sortable && "cursor-pointer select-none",
+                      // Pinned right, frozen under horizontal scroll — same
+                      // treatment as the Drafts & Review table's Actions
+                      // column (routes/_sidebar/rules.drafts.tsx).
+                      k === "actions" && "sticky right-0 z-10 bg-muted/50 border-l",
                     )}
                     style={{ width, minWidth: width, maxWidth: width }}
                     onClick={def.sortable ? () => handleHeaderClick(k) : undefined}
@@ -452,8 +462,8 @@ export function RulesTable({
           </TableHeader>
           <TableBody>
             {rows.map((r) => (
-              <TableRow key={r.rule_id} className="cursor-pointer" onClick={() => onRowClick(r)}>
-                {visibleKeys.map((k) => {
+              <TableRow key={r.rule_id} className="group cursor-pointer" onClick={() => onRowClick(r)}>
+                {orderedKeys.map((k) => {
                   const width = colWidths[k] ?? COLUMNS[k].defaultWidth;
                   return (
                     <TableCell
@@ -463,7 +473,13 @@ export function RulesTable({
                       // instead of the shared primitive's default p-3).
                       // align-middle keeps badge cells (status/dimension/
                       // severity/mode) vertically centered in the row.
-                      className="overflow-hidden p-2 align-middle"
+                      // The actions cell is pinned right and frozen under
+                      // horizontal scroll — same treatment as the Drafts &
+                      // Review table (routes/_sidebar/rules.drafts.tsx).
+                      className={cn(
+                        "overflow-hidden p-2 align-middle",
+                        k === "actions" && "sticky right-0 z-10 bg-background border-l group-hover:bg-muted/50",
+                      )}
                       onClick={k === "actions" ? (e) => e.stopPropagation() : undefined}
                     >
                       {k === "actions" ? renderActions(r) : COLUMNS[k].renderCell(r, ctx)}
@@ -474,7 +490,7 @@ export function RulesTable({
             ))}
             {rows.length === 0 && emptyMessage && (
               <TableRow>
-                <TableCell colSpan={visibleKeys.length} className="text-center text-muted-foreground py-16 px-2">
+                <TableCell colSpan={orderedKeys.length} className="text-center text-muted-foreground py-16 px-2">
                   {emptyMessage}
                 </TableCell>
               </TableRow>

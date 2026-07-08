@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/select";
 import {
   AlertCircle,
+  Library,
   Plus,
   RotateCcw,
   Search,
@@ -543,11 +544,16 @@ function RegistryRulesPage() {
               renderActions={renderActionsCell}
               toolbarExtra={filterControls}
               emptyMessage={
-                hasActiveFilters
-                  ? t("rulesRegistry.emptyState")
-                  : perms.canCreateRules
-                    ? t("rulesRegistry.emptyStateNoRulesCta")
-                    : t("rulesRegistry.emptyStateNoRules")
+                <div className="flex flex-col items-center justify-center text-center">
+                  <Library className="h-10 w-10 text-muted-foreground/30 mb-3" />
+                  <p className="text-sm text-muted-foreground">
+                    {hasActiveFilters
+                      ? t("rulesRegistry.emptyState")
+                      : perms.canCreateRules
+                        ? t("rulesRegistry.emptyStateNoRulesCta")
+                        : t("rulesRegistry.emptyStateNoRules")}
+                  </p>
+                </div>
               }
             />
             <Pagination page={page} totalItems={rules.length} pageSize={PAGE_SIZE} onPageChange={setPage} />

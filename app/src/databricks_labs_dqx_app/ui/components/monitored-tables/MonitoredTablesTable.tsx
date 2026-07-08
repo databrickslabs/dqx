@@ -15,7 +15,7 @@ import { StatusBadge } from "@/components/RegistryRuleBadges";
 import { cn } from "@/lib/utils";
 import { useColumnLayout, type ColumnLayoutDef } from "@/components/data-table/column-layout";
 import { EditColumnsDropdown } from "@/components/data-table/EditColumnsDropdown";
-import { formatDateTime, getRelativeTimeParts } from "@/lib/format-utils";
+import { RelativeTimeCell } from "@/components/data-table/RelativeTimeCell";
 import type { MonitoredTableSummaryOut } from "@/lib/api";
 
 /** Column keys that carry a comparable value and can drive client sort. */
@@ -97,26 +97,6 @@ function VersionCell({ version }: { version: number }) {
     <Badge variant="secondary" className="font-mono text-[10px]">
       {t("monitoredTables.versionBadge", { version })}
     </Badge>
-  );
-}
-
-/** Relative "time-since" cell with an in-app tooltip (not the native
- *  `title` attribute) revealing the absolute timestamp on hover. */
-function RelativeTimeCell({ iso }: { iso: string | null | undefined }) {
-  const { t } = useTranslation();
-  const rel = getRelativeTimeParts(iso);
-  if (!rel) return <span className="text-muted-foreground">—</span>;
-  const label =
-    rel.key === "justNow"
-      ? t("monitoredTables.relativeJustNow")
-      : t(`monitoredTables.relative${rel.key[0].toUpperCase()}${rel.key.slice(1)}`, { count: rel.count });
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <span className="cursor-default">{label}</span>
-      </TooltipTrigger>
-      <TooltipContent side="top">{formatDateTime(iso)}</TooltipContent>
-    </Tooltip>
   );
 }
 

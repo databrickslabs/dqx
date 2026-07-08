@@ -12,8 +12,21 @@
  */
 import { useTranslation } from "react-i18next";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { CalendarClock, History, Info, Share2, Table2, type LucideIcon } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 export type ProductTabKey = "about" | "sharing" | "tables" | "runs" | "scheduling";
+
+// Same icon-strip treatment as the Monitored Tables detail tab bar
+// (routes/_sidebar/monitored-tables.$bindingId.tsx) — gap-1.5 + h-3.5 w-3.5
+// icons ahead of the label.
+const TAB_ICONS: Record<ProductTabKey, LucideIcon> = {
+  about: Info,
+  sharing: Share2,
+  tables: Table2,
+  runs: History,
+  scheduling: CalendarClock,
+};
 
 interface Props {
   activeTab: ProductTabKey;
@@ -43,13 +56,15 @@ const GROUP_C: ProductTabKey[] = ["runs"];
 const RIGHT_TABS: ProductTabKey[] = ["scheduling"];
 
 function TabTrigger({ tabKey, label, disabled }: { tabKey: ProductTabKey; label: string; disabled: boolean }) {
+  const Icon = TAB_ICONS[tabKey];
   return (
     <TabsTrigger
       value={tabKey}
       disabled={disabled}
       aria-disabled={disabled}
-      className={disabled ? "opacity-50 cursor-not-allowed" : undefined}
+      className={cn("gap-1.5", disabled && "opacity-50 cursor-not-allowed")}
     >
+      <Icon className="h-3.5 w-3.5" />
       {label}
     </TabsTrigger>
   );

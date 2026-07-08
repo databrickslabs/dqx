@@ -14,7 +14,7 @@ import { Check, ChevronDown, ChevronUp, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useColumnLayout, type ColumnLayoutDef } from "@/components/data-table/column-layout";
 import { EditColumnsDropdown } from "@/components/data-table/EditColumnsDropdown";
-import { formatDateTime, getRelativeTimeParts } from "@/lib/format-utils";
+import { RelativeTimeCell } from "@/components/data-table/RelativeTimeCell";
 import type { DataProductOut } from "@/lib/api";
 
 /** Column keys that carry a comparable value and can drive client sort.
@@ -76,27 +76,6 @@ function TruncatedCell({
           {tooltipText ?? text}
         </TooltipContent>
       )}
-    </Tooltip>
-  );
-}
-
-/** Relative "time-since" cell with an in-app tooltip revealing the absolute
- *  timestamp on hover — same treatment as MonitoredTablesTable's Last Run
- *  column. */
-function RelativeTimeCell({ iso }: { iso: string | null | undefined }) {
-  const { t } = useTranslation();
-  const rel = getRelativeTimeParts(iso);
-  if (!rel) return <span className="text-muted-foreground">—</span>;
-  const label =
-    rel.key === "justNow"
-      ? t("dataProducts.relativeJustNow")
-      : t(`dataProducts.relative${rel.key[0].toUpperCase()}${rel.key.slice(1)}`, { count: rel.count });
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <span className="cursor-default">{label}</span>
-      </TooltipTrigger>
-      <TooltipContent side="top">{formatDateTime(iso)}</TooltipContent>
     </Tooltip>
   );
 }
