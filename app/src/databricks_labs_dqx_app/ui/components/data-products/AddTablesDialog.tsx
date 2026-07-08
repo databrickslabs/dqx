@@ -84,7 +84,7 @@ function Inner({ existingMembers, onOpenChange, onAdd }: Omit<Props, "open">) {
         <p className="text-xs text-muted-foreground">{t("dataProducts.addTablesDescription")}</p>
       </DialogHeader>
 
-      <div className="flex-1 overflow-y-auto min-h-0 max-h-[60vh]">
+      <div className="dq-scroll-visible flex-1 overflow-y-auto min-h-0 max-h-[60vh]">
         <TablesPicker
           selected={selected}
           onChange={setSelected}

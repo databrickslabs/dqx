@@ -1,26 +1,29 @@
 /**
- * TablesPicker — a selectable, mini variant of the Monitored Tables list,
- * ported from dqlake's `components/products/TablesPicker.tsx`.
+ * TablesPicker — the Table Spaces "Add tables" picker.
  *
- * Kept deliberately lean (no Edit Columns / column-resize / dnd), mirroring
- * dqlake's structure:
- *   - Leading "Select" column with per-row checkboxes; header toggles the
- *     current filtered page (indeterminate when partially selected).
- *   - Search + Catalog / Schema / Steward filter Selects derived from the
- *     loaded rows (no extra API calls) — matches the app's own filter-bar
- *     convention on the Monitored Tables list (plain shadcn `Select`s, not
- *     a cmdk combobox).
- *   - Client-side pagination (the monitored-tables endpoint returns every
- *     row in one page).
- *   - Footer: "<N> selected" on the left, pagination on the right.
+ * Layout resurrected from main branch's old Run Rules → Table Selection
+ * screen (`routes/_sidebar/runs.tsx`'s `ExecuteTab`/`RuleTable`, pre-Table-
+ * Spaces): a filter toolbar (Group by / catalog / schema / an extra facet /
+ * search / Select all / Clear) above one card per group, each card holding a
+ * mini table of checkbox | table | count | status rows. Ported to this
+ * dialog's actual data source — monitored tables, not approved rule sets —
+ * so the extra facet is Steward (there's no label/severity concept on a
+ * monitored table) and the "Rules" column shows `applied_rule_count`
+ * instead of a checks-array length. Grouping is client-side over the single
+ * `listMonitoredTables` page (matches dqlake's pattern; no separate paged
+ * fetch per group).
  *
- * Sourced from ALL monitored tables regardless of approval status — per the
- * Data Products design spec §6, unapproved rows are marked "not ready" but
- * stay addable. Props key off `binding_id` (DQX has a real binding concept
- * dqlake doesn't, so there's no need to key off the FQN).
+ * Preserves the pre-existing contract dqlake's port relied on:
+ *   - Sourced from ALL monitored tables regardless of approval status — per
+ *     the Table Spaces design spec §6, unapproved rows are marked "not
+ *     ready" but stay addable.
+ *   - Already-member rows (`disabledKeys`) render checked + non-interactive.
+ *   - Props key off `binding_id` (DQX has a real binding concept dqlake
+ *     doesn't, so there's no need to key off the FQN).
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { Database, Layers, Table2 } from "lucide-react";
 import { useListMonitoredTablesSuspense, type MonitoredTableSummaryOut } from "@/lib/api";
 import selector from "@/lib/selector";
 import { Input } from "@/components/ui/input";
@@ -30,7 +33,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { StatusBadge } from "@/components/RegistryRuleBadges";
 import { cn } from "@/lib/utils";
 
 function TruncatedCell({ text, className }: { text: string; className?: string }) {
@@ -75,8 +78,8 @@ interface Props {
   onRowsLoaded?: (rows: MonitoredTableSummaryOut[]) => void;
 }
 
-const PAGE_SIZE = 25;
-const SELECT_COL_WIDTH = 48;
+type GroupMode = "catalog" | "schema" | "none";
+
 const ALL = "ALL";
 
 export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded }: Props) {
@@ -89,11 +92,11 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded }:
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data]);
 
+  const [groupBy, setGroupBy] = useState<GroupMode>("catalog");
   const [search, setSearch] = useState("");
   const [catalogFilter, setCatalogFilter] = useState<string>(ALL);
   const [schemaFilter, setSchemaFilter] = useState<string>(ALL);
   const [stewardFilter, setStewardFilter] = useState<string>(ALL);
-  const [page, setPage] = useState(0);
 
   const catalogOptions = useMemo(
     () => Array.from(new Set(rows.map((r) => splitFqn(r.table.table_fqn).catalog))).sort(),
@@ -114,10 +117,6 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded }:
     if (schemaFilter !== ALL && !schemaOptions.includes(schemaFilter)) setSchemaFilter(ALL);
   }, [schemaOptions, schemaFilter]);
 
-  useEffect(() => {
-    setPage(0);
-  }, [search, catalogFilter, schemaFilter, stewardFilter]);
-
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return rows.filter((r) => {
@@ -130,27 +129,21 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded }:
     });
   }, [rows, search, catalogFilter, schemaFilter, stewardFilter]);
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const pageRows = useMemo(() => filtered.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE), [filtered, page]);
-
-  const selectablePageKeys = pageRows.map((r) => r.table.binding_id).filter((k) => !disabledKeys?.has(k));
-  const allPageSelected = selectablePageKeys.length > 0 && selectablePageKeys.every((k) => selected.has(k));
-  const somePageSelected = selectablePageKeys.some((k) => selected.has(k));
-  const checkedState: boolean | "indeterminate" = allPageSelected
-    ? true
-    : somePageSelected
-      ? "indeterminate"
-      : false;
-
-  function toggleAll() {
-    const next = new Set(selected);
-    if (allPageSelected) {
-      selectablePageKeys.forEach((k) => next.delete(k));
-    } else {
-      selectablePageKeys.forEach((k) => next.add(k));
+  const grouped = useMemo((): Map<string, MonitoredTableSummaryOut[]> => {
+    if (groupBy === "none") {
+      return filtered.length > 0
+        ? new Map<string, MonitoredTableSummaryOut[]>([[t("dataProducts.pickerAllGroup"), filtered]])
+        : new Map<string, MonitoredTableSummaryOut[]>();
     }
-    onChange(next);
-  }
+    const groups = new Map<string, MonitoredTableSummaryOut[]>();
+    for (const r of filtered) {
+      const { catalog, schema } = splitFqn(r.table.table_fqn);
+      const key = groupBy === "catalog" ? catalog || t("dataProducts.pickerUnknownGroup") : `${catalog}.${schema}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(r);
+    }
+    return new Map([...groups.entries()].sort(([a], [b]) => a.localeCompare(b)));
+  }, [filtered, groupBy, t]);
 
   function toggleRow(key: string) {
     if (disabledKeys?.has(key)) return;
@@ -160,178 +153,222 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded }:
     onChange(next);
   }
 
-  const COL_COUNT = 5; // checkbox + table + catalog + schema + steward
+  function toggleGroup(groupRows: MonitoredTableSummaryOut[]) {
+    const selectableKeys = groupRows.map((r) => r.table.binding_id).filter((k) => !disabledKeys?.has(k));
+    const allSelected = selectableKeys.length > 0 && selectableKeys.every((k) => selected.has(k));
+    const next = new Set(selected);
+    if (allSelected) {
+      selectableKeys.forEach((k) => next.delete(k));
+    } else {
+      selectableKeys.forEach((k) => next.add(k));
+    }
+    onChange(next);
+  }
+
+  function selectAll() {
+    const selectableKeys = filtered.map((r) => r.table.binding_id).filter((k) => !disabledKeys?.has(k));
+    onChange(new Set([...selected, ...selectableKeys]));
+  }
+
+  function clearAll() {
+    onChange(new Set());
+  }
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-3 flex-wrap">
-        <Input
-          placeholder={t("monitoredTables.searchTablesPlaceholder")}
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="w-56 h-9 text-xs"
-        />
-        <Select value={catalogFilter} onValueChange={setCatalogFilter}>
-          <SelectTrigger className="w-44" aria-label={t("monitoredTables.colCatalog")}>
+      <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center gap-1.5">
+          <Layers className="h-3.5 w-3.5 text-muted-foreground" />
+          <span className="text-xs text-muted-foreground">{t("dataProducts.pickerGroupByLabel")}</span>
+          <Select value={groupBy} onValueChange={(v) => setGroupBy(v as GroupMode)}>
+            <SelectTrigger className="w-[120px] h-8 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="catalog" className="text-xs">
+                <span className="flex items-center gap-1.5">
+                  <Database className="h-3 w-3" /> {t("dataProducts.pickerGroupByCatalog")}
+                </span>
+              </SelectItem>
+              <SelectItem value="schema" className="text-xs">
+                <span className="flex items-center gap-1.5">
+                  <Layers className="h-3 w-3" /> {t("dataProducts.pickerGroupBySchema")}
+                </span>
+              </SelectItem>
+              <SelectItem value="none" className="text-xs">
+                <span className="flex items-center gap-1.5">
+                  <Table2 className="h-3 w-3" /> {t("dataProducts.pickerGroupByFlat")}
+                </span>
+              </SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        <Select value={catalogFilter} onValueChange={(v) => { setCatalogFilter(v); setSchemaFilter(ALL); }}>
+          <SelectTrigger className="w-40 h-8 text-xs" aria-label={t("monitoredTables.colCatalog")}>
             <SelectValue placeholder={t("monitoredTables.colCatalog")} />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value={ALL}>{t("monitoredTables.allCatalogs")}</SelectItem>
+            <SelectItem value={ALL} className="text-xs">
+              {t("monitoredTables.allCatalogs")}
+            </SelectItem>
             {catalogOptions.map((c) => (
-              <SelectItem key={c} value={c}>
+              <SelectItem key={c} value={c} className="text-xs">
                 {c}
               </SelectItem>
             ))}
           </SelectContent>
         </Select>
         <Select value={schemaFilter} onValueChange={setSchemaFilter}>
-          <SelectTrigger className="w-44" aria-label={t("monitoredTables.colSchema")}>
+          <SelectTrigger className="w-40 h-8 text-xs" aria-label={t("monitoredTables.colSchema")}>
             <SelectValue placeholder={t("monitoredTables.colSchema")} />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value={ALL}>{t("monitoredTables.allSchemas")}</SelectItem>
+            <SelectItem value={ALL} className="text-xs">
+              {t("monitoredTables.allSchemas")}
+            </SelectItem>
             {schemaOptions.map((s) => (
-              <SelectItem key={s} value={s}>
+              <SelectItem key={s} value={s} className="text-xs">
                 {s}
               </SelectItem>
             ))}
           </SelectContent>
         </Select>
         <Select value={stewardFilter} onValueChange={setStewardFilter}>
-          <SelectTrigger className="w-52" aria-label={t("dataProducts.colSteward")}>
+          <SelectTrigger className="w-44 h-8 text-xs" aria-label={t("dataProducts.colSteward")}>
             <SelectValue placeholder={t("dataProducts.colSteward")} />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value={ALL}>{t("dataProducts.allStewards")}</SelectItem>
+            <SelectItem value={ALL} className="text-xs">
+              {t("dataProducts.allStewards")}
+            </SelectItem>
             {stewardOptions.map((s) => (
-              <SelectItem key={s} value={s}>
+              <SelectItem key={s} value={s} className="text-xs">
                 {s}
               </SelectItem>
             ))}
           </SelectContent>
         </Select>
+
+        <Input
+          placeholder={t("monitoredTables.searchTablesPlaceholder")}
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="w-48 h-8 text-xs"
+        />
+
+        <div className="flex items-center gap-1.5 ml-auto">
+          <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={selectAll}>
+            {t("dataProducts.pickerSelectAll")}
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-8 text-xs"
+            onClick={clearAll}
+            disabled={selected.size === 0}
+          >
+            {t("dataProducts.pickerClear")}
+          </Button>
+        </div>
       </div>
 
-      <div className="overflow-x-auto min-h-[26rem]">
-        <Table className="table-fixed w-full">
-          <colgroup>
-            <col style={{ width: SELECT_COL_WIDTH }} />
-            <col style={{ width: 360 }} />
-            <col style={{ width: 160 }} />
-            <col style={{ width: 160 }} />
-            <col style={{ width: 200 }} />
-          </colgroup>
-          <TableHeader>
-            <TableRow>
-              <TableHead
-                style={{ width: SELECT_COL_WIDTH, minWidth: SELECT_COL_WIDTH, maxWidth: SELECT_COL_WIDTH }}
-                className="text-center"
-              >
-                <Checkbox
-                  checked={checkedState}
-                  onCheckedChange={toggleAll}
-                  disabled={selectablePageKeys.length === 0}
-                  aria-label={t("dataProducts.pickerSelectAllAria")}
-                />
-              </TableHead>
-              <TableHead>{t("monitoredTables.colTableName")}</TableHead>
-              <TableHead>{t("monitoredTables.colCatalog")}</TableHead>
-              <TableHead>{t("monitoredTables.colSchema")}</TableHead>
-              <TableHead>{t("dataProducts.colSteward")}</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {pageRows.map((r) => {
-              const key = r.table.binding_id;
-              const { catalog, schema } = splitFqn(r.table.table_fqn);
-              const isDisabled = disabledKeys?.has(key) ?? false;
-              const isChecked = isDisabled || selected.has(key);
-              const notReady = r.table.status !== "approved";
-              return (
-                <TableRow
-                  key={key}
-                  className={cn(isDisabled ? "cursor-not-allowed opacity-50" : "cursor-pointer hover:bg-muted/50")}
-                  data-selected={selected.has(key) || undefined}
-                  onClick={() => toggleRow(key)}
-                >
-                  <TableCell
-                    style={{ width: SELECT_COL_WIDTH, minWidth: SELECT_COL_WIDTH, maxWidth: SELECT_COL_WIDTH }}
-                    className="text-center"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <Checkbox
-                      checked={isChecked}
-                      disabled={isDisabled}
-                      onCheckedChange={() => toggleRow(key)}
-                      aria-label={t("dataProducts.pickerSelectRowAria", { table: r.table.table_fqn })}
-                    />
-                  </TableCell>
-                  <TableCell className="overflow-hidden">
-                    <span className="inline-flex items-center gap-2 max-w-full">
-                      <TruncatedCell text={r.table.table_fqn} className="font-mono text-xs" />
-                      {notReady && (
-                        <Badge variant="outline" className="text-[10px] shrink-0">
-                          {t("dataProducts.pickerNotReadyBadge")}
-                        </Badge>
-                      )}
-                    </span>
-                  </TableCell>
-                  <TableCell className="overflow-hidden">
-                    <TruncatedCell text={catalog} />
-                  </TableCell>
-                  <TableCell className="overflow-hidden">
-                    <TruncatedCell text={schema} />
-                  </TableCell>
-                  <TableCell className="overflow-hidden">
-                    <TruncatedCell text={r.table.steward ?? "—"} />
-                  </TableCell>
-                </TableRow>
-              );
-            })}
-            {pageRows.length === 0 && rows.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={COL_COUNT} className="text-center text-muted-foreground py-8">
-                  {t("dataProducts.pickerNoTables")}
-                </TableCell>
-              </TableRow>
-            )}
-            {pageRows.length === 0 && rows.length > 0 && (
-              <TableRow>
-                <TableCell colSpan={COL_COUNT} className="text-center text-muted-foreground py-8">
-                  {t("dataProducts.pickerNoMatches")}
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
+      <div className="space-y-3 min-h-[20rem]">
+        {filtered.length === 0 ? (
+          <div className="text-center py-8 text-muted-foreground text-sm">
+            {rows.length === 0 ? t("dataProducts.pickerNoTables") : t("dataProducts.pickerNoMatches")}
+          </div>
+        ) : (
+          Array.from(grouped.entries()).map(([group, groupRows]) => {
+            const selectableKeys = groupRows.map((r) => r.table.binding_id).filter((k) => !disabledKeys?.has(k));
+            const allSelected = selectableKeys.length > 0 && selectableKeys.every((k) => selected.has(k));
+            const someSelected = selectableKeys.some((k) => selected.has(k));
+            return (
+              <div key={group} className="border rounded-lg overflow-hidden">
+                <div className="flex items-center gap-3 p-3 bg-muted/40 border-b">
+                  <Checkbox
+                    checked={allSelected ? true : someSelected ? "indeterminate" : false}
+                    onCheckedChange={() => toggleGroup(groupRows)}
+                    disabled={selectableKeys.length === 0}
+                    aria-label={t("dataProducts.pickerSelectGroupAria", { group })}
+                  />
+                  <div className="flex items-center gap-2">
+                    {groupBy === "catalog" && <Database className="h-3.5 w-3.5 text-muted-foreground" />}
+                    {groupBy === "schema" && <Layers className="h-3.5 w-3.5 text-muted-foreground" />}
+                    <span className="text-sm font-medium">{group}</span>
+                  </div>
+                  <Badge variant="secondary" className="ml-auto text-xs">
+                    {t("dataProducts.pickerGroupTablesCount", { count: groupRows.length })}
+                  </Badge>
+                </div>
+                <Table className="table-fixed w-full">
+                  <colgroup>
+                    <col style={{ width: 48 }} />
+                    <col />
+                    <col style={{ width: 100 }} />
+                    <col style={{ width: 140 }} />
+                  </colgroup>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead style={{ width: 48 }} className="text-center" />
+                      <TableHead>{t("monitoredTables.colTableName")}</TableHead>
+                      <TableHead className="text-right">{t("dataProducts.colRules")}</TableHead>
+                      <TableHead>{t("dataProducts.colStatus")}</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {groupRows.map((r) => {
+                      const key = r.table.binding_id;
+                      const isDisabled = disabledKeys?.has(key) ?? false;
+                      const isChecked = isDisabled || selected.has(key);
+                      const notReady = r.table.status !== "approved";
+                      return (
+                        <TableRow
+                          key={key}
+                          className={cn(
+                            isDisabled ? "cursor-not-allowed opacity-50" : "cursor-pointer hover:bg-muted/50",
+                            !isDisabled && selected.has(key) && "bg-primary/5",
+                          )}
+                          data-selected={selected.has(key) || undefined}
+                          onClick={() => toggleRow(key)}
+                        >
+                          <TableCell className="text-center" onClick={(e) => e.stopPropagation()}>
+                            <Checkbox
+                              checked={isChecked}
+                              disabled={isDisabled}
+                              onCheckedChange={() => toggleRow(key)}
+                              aria-label={t("dataProducts.pickerSelectRowAria", { table: r.table.table_fqn })}
+                            />
+                          </TableCell>
+                          <TableCell className="overflow-hidden">
+                            <span className="inline-flex items-center gap-2 max-w-full">
+                              <TruncatedCell text={r.table.table_fqn} className="font-mono text-xs" />
+                              {notReady && (
+                                <Badge variant="outline" className="text-[10px] shrink-0">
+                                  {t("dataProducts.pickerNotReadyBadge")}
+                                </Badge>
+                              )}
+                            </span>
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums text-xs">
+                            {r.applied_rule_count ?? 0}
+                          </TableCell>
+                          <TableCell>
+                            <StatusBadge status={r.table.status} />
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+            );
+          })
+        )}
       </div>
 
       <div className="flex items-center justify-between text-sm text-muted-foreground pt-2">
         <span>{t("dataProducts.pickerSelectedCount", { count: selected.size })}</span>
-        {filtered.length > PAGE_SIZE && (
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={page === 0}
-              onClick={() => setPage((p) => Math.max(0, p - 1))}
-              aria-label={t("dataProducts.pickerPrevPage")}
-            >
-              <ChevronLeft className="h-4 w-4" />
-              {t("dataProducts.pickerPrevPage")}
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={page >= totalPages - 1}
-              onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
-              aria-label={t("dataProducts.pickerNextPage")}
-            >
-              {t("dataProducts.pickerNextPage")}
-              <ChevronRight className="h-4 w-4" />
-            </Button>
-          </div>
-        )}
       </div>
     </div>
   );
