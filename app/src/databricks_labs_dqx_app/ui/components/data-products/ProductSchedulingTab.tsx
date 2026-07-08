@@ -28,6 +28,7 @@ export function ProductSchedulingTab({ editState, canEdit }: Props) {
       onRemove={() => setSchedule(null)}
       onValidityChange={(valid) => setScheduleCronInvalid(!valid)}
       footerNote={t("dataProducts.scheduleFooterNote")}
+      emptyText={t("dataProducts.scheduleEmptyText")}
     />
   );
 }

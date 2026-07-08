@@ -1861,6 +1861,7 @@
     "tabSchedule": "Schedule",
     "scheduleSaveButton": "Save schedule",
     "scheduleFooterNote": "Schedule changes take effect as soon as you save — no re-approval needed. Only approved tables run automatically; removing the schedule stops automatic runs.",
+    "scheduleEmptyText": "This table runs on demand only. Add a schedule to run it automatically.",
     "scheduleToastSaved": "Schedule saved.",
     "scheduleToastSaveFailed": "Failed to save schedule.",
     "runActionGroupAria": "Run this table's checks",

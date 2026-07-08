@@ -31,6 +31,9 @@ interface Props {
   actions?: ReactNode;
   /** Optional footer note shown under the editor. */
   footerNote?: string;
+  /** Empty-state copy, translated by the caller so it can name the right entity
+   *  (e.g. "table space" vs "table") instead of hard-coding one noun for both tabs. */
+  emptyText: string;
 }
 
 export function ScheduleEditor({
@@ -42,6 +45,7 @@ export function ScheduleEditor({
   onValidityChange,
   actions,
   footerNote,
+  emptyText,
 }: Props) {
   const { t } = useTranslation();
   const [editing, setEditing] = useState(false);
@@ -51,7 +55,7 @@ export function ScheduleEditor({
   if (!showEditor) {
     return (
       <div className="space-y-4 max-w-xl">
-        <p className="text-sm text-muted-foreground">{t("dataProducts.scheduleEmptyText")}</p>
+        <p className="text-sm text-muted-foreground">{emptyText}</p>
         {canEdit && (
           <Button
             size="sm"

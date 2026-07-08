@@ -1861,6 +1861,7 @@
     "tabSchedule": "Agendamento",
     "scheduleSaveButton": "Salvar agendamento",
     "scheduleFooterNote": "As alterações de agendamento entram em vigor assim que você salva: sem necessidade de reaprovação. Apenas tabelas aprovadas são executadas automaticamente; remover o agendamento interrompe as execuções automáticas.",
+    "scheduleEmptyText": "Esta tabela é executada somente sob demanda. Adicione um agendamento para executá-la automaticamente.",
     "scheduleToastSaved": "Agendamento salvo.",
     "scheduleToastSaveFailed": "Falha ao salvar o agendamento.",
     "runActionGroupAria": "Executar as verificações desta tabela",

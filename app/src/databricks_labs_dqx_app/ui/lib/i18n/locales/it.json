@@ -1861,6 +1861,7 @@
     "tabSchedule": "Pianificazione",
     "scheduleSaveButton": "Salva pianificazione",
     "scheduleFooterNote": "Le modifiche alla pianificazione hanno effetto appena salvi: nessuna riapprovazione necessaria. Solo le tabelle approvate vengono eseguite automaticamente; rimuovere la pianificazione interrompe le esecuzioni automatiche.",
+    "scheduleEmptyText": "Questa tabella viene eseguita solo su richiesta. Aggiungi una pianificazione per eseguirla automaticamente.",
     "scheduleToastSaved": "Pianificazione salvata.",
     "scheduleToastSaveFailed": "Impossibile salvare la pianificazione.",
     "runActionGroupAria": "Esegui i controlli di questa tabella",

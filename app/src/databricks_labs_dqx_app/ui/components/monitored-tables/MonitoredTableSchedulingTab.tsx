@@ -74,6 +74,7 @@ export function MonitoredTableSchedulingTab({
         onRemove={() => setCron(null)}
         onValidityChange={(valid) => setCronInvalid(!valid)}
         footerNote={t("monitoredTables.scheduleFooterNote")}
+        emptyText={t("monitoredTables.scheduleEmptyText")}
         actions={
           canEdit ? (
             <Button size="sm" onClick={handleSave} disabled={!canSave || updateMut.isPending} className="gap-2">

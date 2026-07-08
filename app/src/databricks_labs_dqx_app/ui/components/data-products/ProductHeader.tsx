@@ -358,11 +358,19 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
   const canRunDraft = (product.status === "draft" || editState.isDirty) && editState.members.length > 0;
 
   const handleRunDraft = async () => {
-    if (editState.isDirty) {
-      const ok = await editState.handleSaveDraft();
-      if (!ok) return;
+    // Spans the whole save-then-run sequence, not just the run mutation, so a
+    // fast double-click can't fire a second save while the first is still in
+    // flight (the save leg predates `handleRun`'s own `busyRun` toggle).
+    setBusyRun(true);
+    try {
+      if (editState.isDirty) {
+        const ok = await editState.handleSaveDraft();
+        if (!ok) return;
+      }
+      await handleRun(RunDataProductInSource.draft);
+    } finally {
+      setBusyRun(false);
     }
-    await handleRun(RunDataProductInSource.draft);
   };
 
   const handleDelete = async () => {

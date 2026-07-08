@@ -649,6 +649,11 @@ function RunTableAction({
   // binding itself is in draft, or there are unsaved applied-rule edits that
   // Save-as-draft would persist (item 15).
   const canRunDraft = table.status === "draft" || isDirty;
+  // Spans the whole save-then-run sequence in `handleRunDraft`, not just
+  // `runMutation.isPending`. `onSaveDraft` runs against the caller's own save
+  // mutation (not visible here), so without this a fast double-click could
+  // fire a second save-then-run while the first save is still in flight.
+  const [runDraftBusy, setRunDraftBusy] = useState(false);
 
   const handleRun = (source: "approved" | "draft", version?: number) => {
     runMutation.mutate(
@@ -673,11 +678,16 @@ function RunTableAction({
   // Save any pending edits first (so the draft run reflects them), then run.
   // A save failure is surfaced by `onSaveDraft` and we do NOT run.
   const handleRunDraft = async () => {
-    if (isDirty) {
-      const ok = await onSaveDraft();
-      if (!ok) return;
+    setRunDraftBusy(true);
+    try {
+      if (isDirty) {
+        const ok = await onSaveDraft();
+        if (!ok) return;
+      }
+      handleRun("draft");
+    } finally {
+      setRunDraftBusy(false);
     }
-    handleRun("draft");
   };
 
   return (
@@ -720,7 +730,7 @@ function RunTableAction({
               <TooltipTrigger asChild>
                 <span className={cn(!canRunDraft && "cursor-not-allowed")}>
                   <DropdownMenuItem
-                    disabled={!canRunDraft || runMutation.isPending}
+                    disabled={!canRunDraft || runMutation.isPending || runDraftBusy}
                     onSelect={(e) => {
                       e.preventDefault();
                       void handleRunDraft();
