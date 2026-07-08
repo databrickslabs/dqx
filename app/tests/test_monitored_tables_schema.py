@@ -145,9 +145,7 @@ class TestMonitoredTableStatusConvergePostgres:
         # The converge migration is whichever appended version carries the
         # drop-and-re-add of chk_dq_monitored_tables_status (not the v1
         # baseline, which CREATEs the table).
-        candidates = [
-            m for m in PG_MIGRATIONS if m.version > 1 and "chk_dq_monitored_tables_status" in m.sql
-        ]
+        candidates = [m for m in PG_MIGRATIONS if m.version > 1 and "chk_dq_monitored_tables_status" in m.sql]
         assert len(candidates) == 1, "exactly one appended PG converge migration expected"
         return candidates[0]
 
@@ -357,6 +355,72 @@ class TestMonitoredTableStatusConvergeDelta:
         drop_at = sql.index("DROP CONSTRAINT IF EXISTS chk_dq_monitored_tables_status")
         update_at = sql.index("SET status = 'approved' WHERE status = 'published'")
         add_at = sql.index("ADD CONSTRAINT chk_dq_monitored_tables_status")
+        assert drop_at < update_at < add_at
+
+    def test_readds_four_state_constraint(self):
+        sql = self._converge().sql_template
+        assert "CHECK (status IN ('draft','pending_approval','approved','rejected'))" in sql
+
+
+class TestDataProductStatusConvergePostgres:
+    """P21-D: appended PG migration that converges DBs deployed with the
+    original 2-state (`draft`/`published`) ``dq_data_products.status``
+    constraint to the 4-state review set.
+
+    The v6 baseline's ``chk_dq_data_products_status`` CHECK was edited in
+    place from 2-state to 4-state — exactly the class of bug the v5
+    monitored-table converge (above) fixed. Editing v6 in place can never
+    reach a DB already migrated past it (the runner skips versions recorded
+    in ``dq_migrations``), so a new appended version is required.
+    """
+
+    def _converge(self):
+        candidates = [m for m in PG_MIGRATIONS if m.version > 6 and "chk_dq_data_products_status" in m.sql]
+        assert len(candidates) == 1, "exactly one appended PG converge migration expected"
+        return candidates[0]
+
+    def test_appended_after_data_products_baseline(self):
+        assert self._converge().version > 6
+
+    def test_drops_then_updates_then_readds_constraint(self):
+        sql = self._converge().sql
+        drop_at = sql.index("DROP CONSTRAINT IF EXISTS chk_dq_data_products_status")
+        update_at = sql.index("SET status = 'approved' WHERE status = 'published'")
+        add_at = sql.index("ADD CONSTRAINT chk_dq_data_products_status")
+        assert drop_at < update_at < add_at
+
+    def test_readds_four_state_constraint(self):
+        sql = self._converge().sql
+        assert "CHECK (status IN ('draft','pending_approval','approved','rejected'))" in sql
+
+
+class TestDataProductStatusConvergeDelta:
+    """P21-D: the Delta mirror of the converge migration. Marked
+    ``oltp_fallback=True`` so it only runs on Delta when Lakebase is disabled.
+    """
+
+    def _converge(self):
+        candidates = [
+            m
+            for m in MIGRATIONS
+            if m.version > 10 and "DROP CONSTRAINT IF EXISTS chk_dq_data_products_status" in m.sql_template
+        ]
+        assert len(candidates) == 1, "exactly one appended Delta converge migration expected"
+        return candidates[0]
+
+    def test_appended_after_data_products_baseline(self):
+        assert self._converge().version > 10
+
+    def test_is_oltp_fallback(self):
+        # dq_data_products lives in Lakebase when enabled — the Delta
+        # converge must be skipped there (the Postgres mirror handles it).
+        assert getattr(self._converge(), "oltp_fallback", False) is True
+
+    def test_drops_then_updates_then_readds_constraint(self):
+        sql = self._converge().sql_template
+        drop_at = sql.index("DROP CONSTRAINT IF EXISTS chk_dq_data_products_status")
+        update_at = sql.index("SET status = 'approved' WHERE status = 'published'")
+        add_at = sql.index("ADD CONSTRAINT chk_dq_data_products_status")
         assert drop_at < update_at < add_at
 
     def test_readds_four_state_constraint(self):

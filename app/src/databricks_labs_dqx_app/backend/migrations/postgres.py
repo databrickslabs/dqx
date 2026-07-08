@@ -671,6 +671,42 @@ PG_MIGRATIONS: list[PgMigration] = [
             f"  FROM {_S}.dq_rules r WHERE v.rule_id = r.rule_id AND v.mode IS NULL;"
         ),
     ),
+    PgMigration(
+        version=8,
+        description="Converge dq_data_products status to the 4-state review set (draft/pending_approval/approved/rejected)",
+        sql=(
+            # ----------------------------------------------------------
+            # Data-products status lifecycle converge (P21-D). The v6
+            # baseline above declares ``chk_dq_data_products_status`` as
+            # the 4-state CHECK set, but it was edited IN PLACE from the
+            # ORIGINAL 2-state constraint (``('draft','published')``)
+            # shipped when v6 first went out — exactly the class of bug
+            # v5 (above) fixed for ``dq_monitored_tables``. A DB already
+            # migrated to v6 never re-runs it (the runner skips versions
+            # recorded in ``dq_migrations``), so it is stuck on the
+            # 2-state constraint with any ``published`` rows still at
+            # that legacy value — submit/approve then 500s on the CHECK
+            # violation, and the scheduler (which now filters on
+            # ``status='approved'``) silently stops seeing them.
+            # Appending a new version is the only way to reach those DBs.
+            #
+            # Order matters and is safe inside the single transaction the
+            # runner wraps every migration in: drop the old constraint
+            # first (so the legacy value can be rewritten), rewrite any
+            # legacy ``published`` value to ``approved`` (its lifecycle
+            # equivalent — a published product's members were live), then
+            # re-add the constraint with the final 4-state set. On a
+            # fresh install (already at the 4-state set) this drops and
+            # re-adds an identical constraint and rewrites zero rows.
+            # ----------------------------------------------------------
+            f"ALTER TABLE {_S}.dq_data_products "
+            "  DROP CONSTRAINT IF EXISTS chk_dq_data_products_status;"
+            f"UPDATE {_S}.dq_data_products SET status = 'approved' WHERE status = 'published';"
+            f"ALTER TABLE {_S}.dq_data_products "
+            "  ADD CONSTRAINT chk_dq_data_products_status "
+            "    CHECK (status IN ('draft','pending_approval','approved','rejected'));"
+        ),
+    ),
 ]
 
 

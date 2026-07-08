@@ -176,9 +176,7 @@ class TestUpdate:
     def test_update_only_passes_explicitly_set_fields(self):
         svc = MagicMock()
         svc.get.return_value = _detail(product_id="p1")
-        update_data_product(
-            "p1", body=UpdateDataProductIn(description="new desc"), svc=svc, obo_ws=_mock_obo_ws()
-        )
+        update_data_product("p1", body=UpdateDataProductIn(description="new desc"), svc=svc, obo_ws=_mock_obo_ws())
         svc.update.assert_called_once_with("p1", {"description": "new desc"}, "alice@x")
 
     def test_update_missing_raises_404(self):
@@ -226,9 +224,7 @@ class TestMembers:
         svc = MagicMock()
         svc.add_member.side_effect = LookupError("Data product not found: p1")
         with pytest.raises(HTTPException) as excinfo:
-            add_data_product_member(
-                "p1", body=AddDataProductMemberIn(binding_id="b1"), svc=svc, obo_ws=_mock_obo_ws()
-            )
+            add_data_product_member("p1", body=AddDataProductMemberIn(binding_id="b1"), svc=svc, obo_ws=_mock_obo_ws())
         assert excinfo.value.status_code == 404
 
     def test_remove_member_success(self):
@@ -260,6 +256,18 @@ class TestSubmit:
         with pytest.raises(HTTPException) as excinfo:
             submit_data_product("p1", svc=svc, obo_ws=_mock_obo_ws())
         assert excinfo.value.status_code == 404
+
+    def test_submit_approved_unchanged_raises_409(self):
+        """Minor fix: submitting an already-approved, unchanged space via the
+        API directly (bypassing the UI's disabled submit button) must 409, not
+        silently move the space to ``pending_approval`` and pause its
+        scheduled runs.
+        """
+        svc = MagicMock()
+        svc.submit.side_effect = InvalidStatusTransitionError("boom")
+        with pytest.raises(HTTPException) as excinfo:
+            submit_data_product("p1", svc=svc, obo_ws=_mock_obo_ws())
+        assert excinfo.value.status_code == 409
 
 
 class TestApprove:

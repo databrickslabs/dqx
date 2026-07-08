@@ -15,7 +15,12 @@ from databricks.sdk import WorkspaceClient
 from fastapi import APIRouter, Depends, HTTPException
 
 from databricks_labs_dqx_app.backend.common.authorization import UserRole
-from databricks_labs_dqx_app.backend.dependencies import get_data_product_service, get_obo_ws, require_role, require_runner
+from databricks_labs_dqx_app.backend.dependencies import (
+    get_data_product_service,
+    get_obo_ws,
+    require_role,
+    require_runner,
+)
 from databricks_labs_dqx_app.backend.logger import logger
 from databricks_labs_dqx_app.backend.models import (
     AddDataProductMemberIn,
@@ -250,7 +255,11 @@ def submit_data_product(
     svc: Annotated[DataProductService, Depends(get_data_product_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
 ) -> DataProductOut:
-    """Submit a Table Space for review — moves ``draft``/``rejected`` -> ``pending_approval``."""
+    """Submit a Table Space for review — moves ``draft``/``rejected`` -> ``pending_approval``.
+
+    409 if the space is already ``approved`` with no changes since publish
+    (:meth:`DataProductService.submit`).
+    """
     try:
         user_email = _current_user_email(obo_ws)
         svc.submit(product_id, user_email)
@@ -259,6 +268,8 @@ def submit_data_product(
         return DataProductOut.from_domain(detail)
     except LookupError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except InvalidStatusTransitionError as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except Exception as e:
         logger.error(f"Failed to submit data product {product_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to submit data product: {e}")

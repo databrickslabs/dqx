@@ -628,14 +628,14 @@ _V2_OLTP_FALLBACK = (
 # Backfills ``warning_rows`` on workspaces deployed before v1 added it.
 # On fresh deploys ``_apply`` swallows the ``COLUMN_ALREADY_EXISTS`` error
 # per the column-addition rule documented at the top of this module.
-_V3_VALIDATION_RUNS_WARNING_ROWS = f"ALTER TABLE {_PLACEHOLDER}.dq_validation_runs " f"  ADD COLUMN warning_rows INT"
+_V3_VALIDATION_RUNS_WARNING_ROWS = f"ALTER TABLE {_PLACEHOLDER}.dq_validation_runs   ADD COLUMN warning_rows INT"
 
 
 # Quarantine rows that fail only warning-level checks would otherwise
 # show an empty ``errors`` column in the UI. We mirror DQX's row-level
 # ``_warnings`` map into its own VARIANT so warnings can be rendered
 # alongside errors in the dry-run sample table.
-_V4_QUARANTINE_WARNINGS = f"ALTER TABLE {_PLACEHOLDER}.dq_quarantine_records " f"  ADD COLUMN warnings VARIANT"
+_V4_QUARANTINE_WARNINGS = f"ALTER TABLE {_PLACEHOLDER}.dq_quarantine_records   ADD COLUMN warnings VARIANT"
 
 
 # ``invalid_rows`` (set from ``invalid_df.count()``) conflated "rows that
@@ -644,7 +644,7 @@ _V4_QUARANTINE_WARNINGS = f"ALTER TABLE {_PLACEHOLDER}.dq_quarantine_records " f
 # authoritative count from the DQX observer (``error_row_count``), so the
 # UI now surfaces it as the primary "Errors" stat. ``invalid_rows`` is
 # kept for backwards compatibility but no longer drives the UI.
-_V5_VALIDATION_RUNS_ERROR_ROWS = f"ALTER TABLE {_PLACEHOLDER}.dq_validation_runs " f"  ADD COLUMN error_rows INT"
+_V5_VALIDATION_RUNS_ERROR_ROWS = f"ALTER TABLE {_PLACEHOLDER}.dq_validation_runs   ADD COLUMN error_rows INT"
 
 
 # Run review status — per-run review label set by business / SA reviewers
@@ -896,6 +896,37 @@ _V11_RULE_VERSIONS_MODE = (
 )
 
 
+# Data-products status lifecycle converge (P21-D). The v10 baseline above
+# declares ``chk_dq_data_products_status`` as the 4-state CHECK set, but it
+# was edited IN PLACE from the ORIGINAL 2-state constraint
+# (``('draft','published')``) shipped when v10 first went out — exactly the
+# class of bug ``_V9_MONITORED_TABLES_STATUS_CONVERGE`` above fixed for
+# ``dq_monitored_tables``. A DB already migrated to v10 never re-runs it (the
+# runner skips versions recorded in ``dq_migrations``), so it is stuck on the
+# 2-state constraint with any ``published`` rows still at that legacy value —
+# submit/approve then errors on the CHECK violation, and the scheduler (which
+# now filters on ``status='approved'``) silently stops seeing them. Appending
+# a new version is the only way to reach those DBs.
+#
+# Order (drop -> rewrite legacy value -> re-add), per the same idempotent-safe
+# reasoning as v9: ``DROP CONSTRAINT IF EXISTS`` no-ops when absent, the
+# ``UPDATE`` rewrites zero rows once converged, and a re-added-identical
+# constraint raises ``DELTA_CONSTRAINT_ALREADY_EXISTS`` which
+# ``_IDEMPOTENT_ERROR_FRAGMENTS`` swallows.
+#
+# Marked ``oltp_fallback=True``: ``dq_data_products`` lives in Lakebase when
+# enabled (the Postgres mirror is v8 in ``backend.migrations.postgres``), so
+# this only runs against Delta when Lakebase is disabled.
+_V12_DATA_PRODUCTS_STATUS_CONVERGE = (
+    f"ALTER TABLE {_PLACEHOLDER}.dq_data_products "
+    f"  DROP CONSTRAINT IF EXISTS chk_dq_data_products_status;"
+    f"UPDATE {_PLACEHOLDER}.dq_data_products SET status = 'approved' WHERE status = 'published';"
+    f"ALTER TABLE {_PLACEHOLDER}.dq_data_products "
+    f"  ADD CONSTRAINT chk_dq_data_products_status "
+    f"  CHECK (status IN ('draft','pending_approval','approved','rejected'))"
+)
+
+
 # OLTP fallback migration is identified by ``oltp_fallback=True`` so
 # the runner can skip it when Lakebase is enabled. Keeping the flag on
 # the migration itself (rather than e.g. a hard-coded version number)
@@ -987,6 +1018,13 @@ MIGRATIONS: list[Migration] = [
         sql_template=_V11_RULE_VERSIONS_MODE,
         oltp_fallback=True,
     ),
+    DeltaMigration(
+        version=12,
+        description="Converge dq_data_products status to the 4-state review set "
+        "(draft/pending_approval/approved/rejected) — used only when Lakebase is disabled",
+        sql_template=_V12_DATA_PRODUCTS_STATUS_CONVERGE,
+        oltp_fallback=True,
+    ),
 ]
 
 
@@ -1073,8 +1111,7 @@ class MigrationRunner:
 
             if not include_oltp_fallback and isinstance(migration, DeltaMigration) and migration.oltp_fallback:
                 logger.info(
-                    "Skipping Delta OLTP fallback migration v%d "
-                    "(Lakebase enabled — these tables live in Postgres): %s",
+                    "Skipping Delta OLTP fallback migration v%d (Lakebase enabled — these tables live in Postgres): %s",
                     migration.version,
                     migration.description,
                 )

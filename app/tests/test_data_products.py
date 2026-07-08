@@ -29,7 +29,10 @@ from databricks_labs_dqx_app.backend.services.data_product_service import (
     NoRunnableMembersError,
     display_status,
 )
-from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService, MonitoredTableSummary
+from databricks_labs_dqx_app.backend.services.monitored_table_service import (
+    MonitoredTableService,
+    MonitoredTableSummary,
+)
 from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
 from databricks_labs_dqx_app.backend.services.run_sets import RunSetService, RunSetSummary
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
@@ -165,7 +168,9 @@ class TestListAndGet:
             [_product_row(product_id="p1", status="draft", version="0")],
             [_member_row("m1", "b1")],
         ]
-        monitored_tables.list_monitored_tables.return_value = [_table_summary(binding_id="b1", status="approved", version=2)]
+        monitored_tables.list_monitored_tables.return_value = [
+            _table_summary(binding_id="b1", status="approved", version=2)
+        ]
         run_set_service.list_for_product.return_value = []
 
         result = service.list_products()
@@ -401,6 +406,26 @@ class TestSubmit:
         sql.query.return_value = []
         with pytest.raises(LookupError):
             service.submit("missing", "bob@x")
+
+    def test_submit_rejected_to_pending(self, service, sql):
+        sql.query.return_value = [_product_row(product_id="p1", status="rejected", version="1")]
+        product = service.submit("p1", "bob@x")
+        assert product.status == "pending_approval"
+
+    def test_submit_approved_unchanged_raises_409(self, service, sql):
+        """Minor fix: an approved, unchanged space submitted via direct API
+        must be rejected — mirrors the P20 registry-rule "no changes to
+        submit" guard. Every ``update``/``add_member``/``remove_member`` call
+        already flips the space to ``draft`` (even a no-op save), so a space
+        still at ``approved`` has zero unpublished changes by construction.
+        Without this guard, submitting it would move it to
+        ``pending_approval`` — which is not itself runnable — silently
+        pausing its scheduled runs.
+        """
+        sql.query.return_value = [_product_row(product_id="p1", status="approved", version="2")]
+        with pytest.raises(InvalidStatusTransitionError):
+            service.submit("p1", "bob@x")
+        sql.execute.assert_not_called()
 
 
 class TestApprove:

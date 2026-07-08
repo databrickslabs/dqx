@@ -7,7 +7,10 @@ registry rules and monitored tables — P21 item 30):
 
 - Any metadata edit or member add/remove flips the space back to ``draft``
   ("Modified since approval" display state) WITHOUT bumping ``version``.
-- :meth:`submit` moves ``draft``/``rejected`` -> ``pending_approval``.
+- :meth:`submit` moves ``draft``/``rejected`` -> ``pending_approval``; an
+  ``approved`` space (necessarily unchanged, since any edit above already
+  flips it to ``draft``) is rejected with ``InvalidStatusTransitionError``
+  (409) — mirrors the P20 registry-rule "no changes to submit" guard.
 - :meth:`approve` is the ONLY operation that bumps ``version`` (``v+1``):
   ``pending_approval`` -> ``approved`` (409 otherwise).
 - :meth:`reject` moves ``pending_approval`` -> ``rejected`` (409 otherwise).
@@ -50,7 +53,10 @@ from databricks_labs_dqx_app.backend.registry_models import (
     RunSetTrigger,
 )
 from databricks_labs_dqx_app.backend.services.binding_run_service import BindingRunService
-from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService, MonitoredTableSummary
+from databricks_labs_dqx_app.backend.services.monitored_table_service import (
+    MonitoredTableService,
+    MonitoredTableSummary,
+)
 from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
 from databricks_labs_dqx_app.backend.services.run_sets import RunSetService
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol
@@ -285,7 +291,9 @@ class DataProductService:
     # Members
     # ------------------------------------------------------------------
 
-    def add_member(self, product_id: str, binding_id: str, pinned_version: int | None, updated_by: str) -> DataProductMember:
+    def add_member(
+        self, product_id: str, binding_id: str, pinned_version: int | None, updated_by: str
+    ) -> DataProductMember:
         """Upsert a member by *binding_id* (a pin change updates the existing row in place).
 
         Flips the space back to ``draft`` (P21 item 30).
@@ -314,7 +322,9 @@ class DataProductService:
                 f"('{escape_sql_string(member_id)}', '{e_pid}', '{e_bid}', {self._opt_int(pinned_version)})"
             )
         self._flip_to_draft(product_id, updated_by)
-        return DataProductMember(id=member_id, product_id=product_id, binding_id=binding_id, pinned_version=pinned_version)
+        return DataProductMember(
+            id=member_id, product_id=product_id, binding_id=binding_id, pinned_version=pinned_version
+        )
 
     def remove_member(self, product_id: str, member_id: str, updated_by: str) -> None:
         """Remove a member. Flips the space back to ``draft``.
@@ -345,10 +355,29 @@ class DataProductService:
         Idempotent for an already-``pending_approval`` space (no-op re-submit).
         Does NOT bump ``version`` — only :meth:`approve` does.
 
+        Rejects submitting an ``approved`` space (mirrors the P20 registry-rule
+        guard in :meth:`RegistryService.submit`): :meth:`update`,
+        :meth:`add_member`, and :meth:`remove_member` ALL flip the space to
+        ``draft`` on ANY call — even a no-op save — so a space still sitting at
+        ``approved`` has, by construction, zero unpublished changes. Without
+        this guard a direct API call could submit an untouched approved space
+        straight to ``pending_approval``, which is not itself runnable
+        (:func:`_is_runnable` requires ``binding_status == "approved"``) —
+        silently pausing that space's scheduled runs for no reason.
+
         Raises:
             LookupError: *product_id* does not exist.
+            InvalidStatusTransitionError: the space is ``approved`` with no
+                changes to submit (HTTP 409).
         """
-        return self._set_status(product_id, "pending_approval", updated_by)
+        product = self._fetch_product(product_id)
+        if product is None:
+            raise LookupError(f"Data product not found: {product_id}")
+        if product.status == "approved":
+            raise InvalidStatusTransitionError(
+                f"Cannot submit Table Space {product_id}: already approved with no changes to submit"
+            )
+        return self._set_status(product_id, "pending_approval", updated_by, _prefetched=product)
 
     def approve(self, product_id: str, updated_by: str) -> DataProduct:
         """Approve a Table Space: ``pending_approval`` -> ``approved``, bumping ``version`` by 1.
@@ -477,9 +506,7 @@ class DataProductService:
                 skipped.append(f"{table.table_fqn}: never approved")
 
         if not to_run:
-            raise NoRunnableMembersError(
-                f"Data product {product_id} has zero runnable members for source={source}"
-            )
+            raise NoRunnableMembersError(f"Data product {product_id} has zero runnable members for source={source}")
 
         run_set_id = self._run_set_service.create(
             product_id=product_id,
@@ -525,7 +552,9 @@ class DataProductService:
             try:
                 self._run_set_service.delete_empty(run_set_id)
             except Exception as cleanup_err:  # best-effort rollback; a stray empty run set is a lesser-severity gap
-                logger.warning("Failed to roll back empty run set %s for product %s: %s", run_set_id, product_id, cleanup_err)
+                logger.warning(
+                    "Failed to roll back empty run set %s for product %s: %s", run_set_id, product_id, cleanup_err
+                )
 
         return DataProductRunResult(run_set_id=run_set_id, submitted=submitted, skipped=skipped)
 
@@ -540,7 +569,10 @@ class DataProductService:
             summary = table_map.get(row.binding_id)
             if summary is None:
                 logger.warning(
-                    "Data product %s member %s references missing binding %s", product.product_id, row.id, row.binding_id
+                    "Data product %s member %s references missing binding %s",
+                    product.product_id,
+                    row.id,
+                    row.binding_id,
                 )
                 continue
             table = summary.table
@@ -613,9 +645,7 @@ class DataProductService:
         rows = self._sql.query(
             f"SELECT id, binding_id, pinned_version FROM {self._members_table} WHERE product_id = '{e}'"  # noqa: S608
         )
-        return [
-            _MemberRow(id=row[0], binding_id=row[1], pinned_version=self._parse_int(row[2])) for row in rows
-        ]
+        return [_MemberRow(id=row[0], binding_id=row[1], pinned_version=self._parse_int(row[2])) for row in rows]
 
     def _select_cols(self) -> str:
         created_at = self._sql.ts_text("created_at")
