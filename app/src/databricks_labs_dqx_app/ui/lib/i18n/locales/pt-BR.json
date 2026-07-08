@@ -1779,6 +1779,7 @@
     "suggestRulesExplanationLabel": "Por que esta regra",
     "suggestRulesMappingLabel": "Mapeamento",
     "suggestRulesFetchFailed": "Falha ao obter sugestões.",
+    "suggestRulesTimeoutReason": "A solicitação de sugestões expirou. Verifique sua conexão e tente novamente.",
     "suggestRulesNoneSelected": "Selecione pelo menos uma sugestão para adicionar.",
     "wizard": {
       "title": "Monitorar tabelas",

@@ -1779,6 +1779,7 @@
     "suggestRulesExplanationLabel": "Why this rule",
     "suggestRulesMappingLabel": "Mapping",
     "suggestRulesFetchFailed": "Failed to get suggestions.",
+    "suggestRulesTimeoutReason": "The suggestion request timed out. Check your connection and try again.",
     "suggestRulesNoneSelected": "Select at least one suggestion to add.",
     "wizard": {
       "title": "Monitor tables",

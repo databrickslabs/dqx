@@ -1779,6 +1779,7 @@
     "suggestRulesExplanationLabel": "Por qué esta regla",
     "suggestRulesMappingLabel": "Asignación",
     "suggestRulesFetchFailed": "No se pudieron obtener sugerencias.",
+    "suggestRulesTimeoutReason": "La solicitud de sugerencias agotó el tiempo de espera. Comprueba tu conexión e inténtalo de nuevo.",
     "suggestRulesNoneSelected": "Selecciona al menos una sugerencia para agregar.",
     "wizard": {
       "title": "Supervisar tablas",

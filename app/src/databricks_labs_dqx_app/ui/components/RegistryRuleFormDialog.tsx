@@ -1436,7 +1436,11 @@ export function RegistryRuleFormDialog({
         };
         const resp = await updateMutation.mutateAsync({ ruleId: editingRule.rule_id, data: payload });
         ruleId = resp.data.rule_id;
-        toast.success(t("rulesRegistry.toastUpdated"));
+        // Skip the "updated" toast when this save is immediately followed by
+        // a submit — the final toastSubmitted below is the one that reflects
+        // where the rule actually lands, and firing both back-to-back reads
+        // as a contradiction ("updated" then "submitted for approval").
+        if (!thenSubmit) toast.success(t("rulesRegistry.toastUpdated"));
       } else {
         const payload: CreateRegistryRuleIn = {
           mode,
@@ -1448,7 +1452,10 @@ export function RegistryRuleFormDialog({
         };
         const resp = await createMutation.mutateAsync({ data: payload });
         ruleId = resp.data.rule.rule_id;
-        toast.success(t("rulesRegistry.toastCreated"));
+        // Same reasoning as above: "Save & submit" on a brand-new rule must
+        // not show "Rule created as a draft." — the rule never rests in
+        // draft state, it goes straight to pending approval.
+        if (!thenSubmit) toast.success(t("rulesRegistry.toastCreated"));
         if (resp.data.dedup_warning) {
           toast.warning(resp.data.dedup_warning, { duration: 8000 });
         }

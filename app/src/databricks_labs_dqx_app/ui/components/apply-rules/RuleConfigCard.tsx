@@ -250,7 +250,7 @@ function VersionPinDropdown({
       // "Latest" vs "Pinned", this badge never reflows the card header or
       // shifts the severity badge next to it (item 22).
       <div className="inline-flex items-center justify-center w-[104px] shrink-0">
-        <Badge variant="outline" className="font-mono text-[10px] w-full justify-center truncate">
+        <Badge variant="outline" className="font-mono text-[10px] w-full justify-start truncate">
           v{currentVersion} &middot; {label}
         </Badge>
       </div>
@@ -262,7 +262,7 @@ function VersionPinDropdown({
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <button type="button" onClick={(e) => e.stopPropagation()} className="w-full focus:outline-none">
-            <Badge variant="outline" className="font-mono text-[10px] w-full justify-center truncate cursor-pointer hover:bg-muted/60">
+            <Badge variant="outline" className="font-mono text-[10px] w-full justify-start truncate cursor-pointer hover:bg-muted/60">
               v{currentVersion} &middot; {label} &#x25BE;
             </Badge>
           </button>
@@ -331,7 +331,7 @@ function SeverityDropdown({
       <div className="inline-flex items-center justify-center w-[104px] shrink-0">
         <Badge
           variant="outline"
-          className={cn("text-[10px] gap-1.5 w-full justify-center truncate", !severity && "text-muted-foreground")}
+          className={cn("text-[10px] gap-1.5 w-full justify-start truncate", !severity && "text-muted-foreground")}
         >
           {dot}
           {label}
@@ -346,7 +346,7 @@ function SeverityDropdown({
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <button type="button" onClick={(e) => e.stopPropagation()} className="w-full focus:outline-none">
-            <Badge variant="outline" className="text-[10px] w-full justify-center truncate cursor-pointer hover:bg-muted/60 gap-1.5">
+            <Badge variant="outline" className="text-[10px] w-full justify-start truncate cursor-pointer hover:bg-muted/60 gap-1.5">
               {dot}
               {label}
               {isOverridden && <span className="text-muted-foreground ml-0.5">*</span>} &#x25BE;

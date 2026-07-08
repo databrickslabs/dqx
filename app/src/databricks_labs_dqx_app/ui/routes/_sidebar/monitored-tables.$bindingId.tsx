@@ -118,6 +118,11 @@ import { ProfileColumnList } from "@/components/bindings/ProfileColumnList";
 const DETAIL_TAB_KEYS = ["about", "profile", "apply-rules", "results"] as const;
 type DetailTab = (typeof DETAIL_TAB_KEYS)[number];
 
+/** Client-side deadline for the AI suggest-rules request (prefetch + manual
+ *  Refresh) — bounds a hung/blocked request so the dialog can't spin forever
+ *  with Refresh disabled; see `runSuggest` in `ApplyRulesTab`. */
+const SUGGEST_RULES_TIMEOUT_MS = 30_000;
+
 export const Route = createFileRoute("/_sidebar/monitored-tables/$bindingId")({
   validateSearch: (search: Record<string, unknown>): { tab?: string } => ({
     tab: typeof search.tab === "string" ? search.tab : undefined,
@@ -998,13 +1003,43 @@ function ApplyRulesTab({
   const { mutate: suggestRules, isPending: suggestPending } = suggestMutation;
   const [suggestState, setSuggestState] = useState<SuggestRulesState | null>(null);
   const suggestPrefetchedRef = useRef(false);
+  // Guards against a stale response/timeout clobbering a newer request's
+  // result — bumped on every runSuggest() call (initial prefetch AND manual
+  // Refresh); callbacks only apply if they're still the latest.
+  const suggestRequestIdRef = useRef(0);
+  const suggestTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearSuggestTimeout = useCallback(() => {
+    if (suggestTimeoutRef.current !== null) {
+      clearTimeout(suggestTimeoutRef.current);
+      suggestTimeoutRef.current = null;
+    }
+  }, []);
 
   const runSuggest = useCallback(() => {
+    const requestId = ++suggestRequestIdRef.current;
     setSuggestState(null);
+    clearSuggestTimeout();
+    // The backend call has no server-side deadline visible to the client,
+    // and a blocked/hung/never-responding request would otherwise leave the
+    // dialog spinning forever with Refresh disabled (bug: infinite "Finding
+    // good matches..." spinner). Bound it client-side and fall back to the
+    // same honest-reason error state a real 4xx/5xx would produce.
+    suggestTimeoutRef.current = setTimeout(() => {
+      if (suggestRequestIdRef.current !== requestId) return;
+      setSuggestState({
+        available: false,
+        reason: t("monitoredTables.suggestRulesTimeoutReason"),
+        suggestions: [],
+      });
+    }, SUGGEST_RULES_TIMEOUT_MS);
+
     suggestRules(
       { bindingId },
       {
         onSuccess: (resp) => {
+          if (suggestRequestIdRef.current !== requestId) return;
+          clearSuggestTimeout();
           setSuggestState({
             available: resp.data.available,
             reason: resp.data.reason,
@@ -1012,13 +1047,19 @@ function ApplyRulesTab({
           });
         },
         onError: (err) => {
+          if (suggestRequestIdRef.current !== requestId) return;
+          clearSuggestTimeout();
           const reason = aiUnavailableReason(err);
           if (reason) reportUnavailable(reason);
-          setSuggestState({ available: false, reason: reason ?? undefined, suggestions: [] });
+          setSuggestState({
+            available: false,
+            reason: reason ?? t("monitoredTables.suggestRulesFetchFailed"),
+            suggestions: [],
+          });
         },
       },
     );
-  }, [bindingId, suggestRules, reportUnavailable]);
+  }, [bindingId, suggestRules, reportUnavailable, clearSuggestTimeout, t]);
 
   useEffect(() => {
     if (suggestPrefetchedRef.current || !aiAvailable) return;
@@ -1026,6 +1067,12 @@ function ApplyRulesTab({
     runSuggest();
   }, [aiAvailable, runSuggest]);
 
+  // Unmount safety — don't let a late timeout fire setState on a gone tab.
+  useEffect(() => clearSuggestTimeout, [clearSuggestTimeout]);
+
+  // `loading` never gets stuck true: the timeout above guarantees
+  // `suggestState` transitions out of null within SUGGEST_RULES_TIMEOUT_MS
+  // even if the request itself never settles, so Refresh re-enables.
   const suggestLoading = suggestPending && suggestState === null;
 
   // DQX materializes one staged ROW per mapping group — a rule applied to
