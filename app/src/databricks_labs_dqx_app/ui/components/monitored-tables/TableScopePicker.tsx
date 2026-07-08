@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQueries } from "@tanstack/react-query";
+import { AlertTriangle } from "lucide-react";
 import { MultiSelectPopover } from "@/components/monitored-tables/MultiSelectPopover";
 import {
   useListCatalogs,
@@ -8,6 +9,11 @@ import {
   getListSchemasQueryOptions,
   getListTablesQueryOptions,
 } from "@/lib/api";
+
+/** Below this count, the scope summary card adds noise rather than value —
+ *  it's only worth surfacing once a pick is large enough that the resulting
+ *  bulk-register call might actually take a noticeable while. */
+const MANY_TABLES_WARNING_THRESHOLD = 5;
 
 /** Splits a "catalog.schema" scope key back into its two parts. */
 function splitScope(scope: string): [string, string] {
@@ -238,11 +244,18 @@ export function TableScopePickerFields({ state }: { state: TableScopePickerState
         disabledHint={t("monitoredTables.wizard.selectCatalogFirst")}
         emptyText={t("monitoredTables.wizard.emptyTables")}
       />
-      <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-        {state.selectedCatalogs.length === 0
-          ? t("monitoredTables.wizard.scopeHintEmpty")
-          : t("monitoredTables.wizard.scopeSummary", { count: state.effectiveFqns.length })}
-      </div>
+      {/* The scope summary card is only worth showing once it's warning the
+          user about a genuinely large bulk add — for 1-5 tables the outcome
+          is already obvious from the picker's own selections, and echoing
+          it back added noise without value. */}
+      {state.effectiveFqns.length > MANY_TABLES_WARNING_THRESHOLD && (
+        <div className="flex items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300">
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
+          <span>
+            {t("monitoredTables.wizard.scopeWarningManyTables", { count: state.effectiveFqns.length })}
+          </span>
+        </div>
+      )}
     </>
   );
 }

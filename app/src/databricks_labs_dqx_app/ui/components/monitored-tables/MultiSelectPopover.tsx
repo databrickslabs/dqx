@@ -94,6 +94,31 @@ export function MultiSelectPopover({
     }
   };
 
+  const closeAndClearSearch = () => {
+    setOpen(false);
+    setSearch("");
+  };
+
+  // Row-click convention: clicking the row LABEL (as opposed to its
+  // checkbox — see the item's `onClick` below) is a "pick this one and
+  // move on" gesture, so it replaces the selection outright and closes the
+  // popover — the common single-pick case shouldn't require a second click
+  // to dismiss the dropdown. It only falls back to plain checkbox-style
+  // toggle-and-stay-open once the user is clearly building a multi-item
+  // selection (more than one already picked), so extending an existing
+  // multi-select by row-clicking doesn't collapse it down to one. Keyboard
+  // Enter goes through this same handler (cmdk's `onSelect` fires for both
+  // click and Enter), so the two stay consistent by construction.
+  const selectRow = (o: MultiSelectOption) => {
+    if (o.disabled) return;
+    if (selected.length > 1) {
+      toggle(o);
+      return;
+    }
+    onChange([o.value]);
+    closeAndClearSearch();
+  };
+
   // Tri-state "select all" driven off the currently filtered/visible set:
   // unchecked when none are selected, checked when every visible option is
   // selected, indeterminate otherwise. Clicking it toggles between
@@ -123,7 +148,32 @@ export function MultiSelectPopover({
   return (
     <div className="grid gap-1.5">
       <Label className="text-xs text-muted-foreground">{label}</Label>
-      <Popover open={open} onOpenChange={(next) => { setOpen(next); if (!next) setSearch(""); }}>
+      {/* TRUE ROOT CAUSE of "still can't scroll" (verified in a real browser
+          with mouse.wheel — no amount of CSS height-bounding below fixes
+          this on its own): this picker is opened from inside a modal
+          `Dialog` (AddMonitoredTableModal / ApplyRuleModal). Radix's Dialog
+          locks page scroll via `react-remove-scroll`, which attaches a
+          `document`-level wheel/touch listener that PREVENTS every wheel
+          event whose target isn't a DOM descendant of the Dialog's own
+          content node (or an explicit `shards` entry). This Popover's
+          content renders into its own `Portal` — a sibling of the Dialog's
+          portal in `document.body`, not a descendant — so every wheel event
+          inside it was being swallowed by the Dialog's scroll lock, no
+          matter how the list itself was sized. `modal` here makes the
+          Popover wrap its own content in a *second*, nested
+          `react-remove-scroll` lock (see `@radix-ui/react-popover`'s
+          `PopoverContentModal`); its internal `lockStack` mechanism makes
+          the most-recently-opened lock authoritative, so once this Popover
+          is open its own lock evaluates wheel/touch events against its own
+          (genuinely scrollable) content instead of deferring to the outer
+          Dialog's now-irrelevant one. Confirmed via Playwright
+          `page.mouse.wheel()` (a real, trusted wheel event) before/after:
+          `scrollTop` stayed 0 without `modal`, advanced correctly with it. */}
+      <Popover
+        modal
+        open={open}
+        onOpenChange={(next) => (next ? setOpen(true) : closeAndClearSearch())}
+      >
         <PopoverTrigger asChild>
           <Button
             type="button"
@@ -221,23 +271,55 @@ export function MultiSelectPopover({
                       </CommandItem>
                       {filteredOptions.map((o) => {
                         const isSelected = selectedSet.has(o.value) || !!o.disabled;
-                        // Enter/click toggles the highlighted option and keeps
-                        // the popover open — matches dqlake's multi-select
-                        // `Command` behavior (see e.g. `GroupByField`), so
-                        // picking several options doesn't require reopening
-                        // the dropdown each time. Disabled (already-monitored)
-                        // rows are unselectable via keyboard or click — cmdk
-                        // skips `disabled` items during arrow-key navigation
-                        // and never fires `onSelect` for them.
+                        // Interaction matrix (mouse and Enter are kept
+                        // consistent — both end up calling `selectRow`,
+                        // since cmdk fires `onSelect` for either):
+                        //   - Click the checkbox itself: always toggles that
+                        //     one option and keeps the popover open, no
+                        //     matter how many are already selected — this is
+                        //     the explicit "building a multi-selection" tool,
+                        //     so it never auto-closes.
+                        //   - Click the row label / press Enter while it's
+                        //     highlighted, with 0 or 1 option(s) currently
+                        //     selected: replaces the selection with just this
+                        //     option and closes the popover — the common
+                        //     single-pick case shouldn't need a second
+                        //     dismissal click.
+                        //   - Same row-label/Enter gesture, but >1 option
+                        //     already selected: falls back to plain
+                        //     toggle-and-stay-open (matches dqlake's
+                        //     multi-select `Command` behavior, e.g.
+                        //     `GroupByField`), so row-clicking to extend an
+                        //     existing multi-selection doesn't collapse it
+                        //     down to one.
+                        // Disabled (already-monitored) rows are unselectable
+                        // via keyboard, click, or the checkbox — cmdk skips
+                        // `disabled` items during arrow-key navigation and
+                        // never fires `onSelect` for them, and `toggle`/
+                        // `selectRow` both no-op on `o.disabled`.
                         const item = (
                           <CommandItem
                             key={o.value}
                             value={o.value}
                             disabled={o.disabled}
-                            onSelect={() => toggle(o)}
+                            onSelect={() => selectRow(o)}
                             className={cn(o.disabled ? "opacity-70" : undefined, isSelected && "bg-primary/10")}
                           >
-                            <Checkbox checked={isSelected} disabled={o.disabled} className="shrink-0 pointer-events-none" />
+                            <Checkbox
+                              checked={isSelected}
+                              disabled={o.disabled}
+                              className="shrink-0"
+                              onClick={(e) => {
+                                // Stops the click from bubbling to the
+                                // CommandItem's own `onClick` (cmdk's
+                                // selection trigger) — the checkbox handles
+                                // its own toggle-and-stay-open semantics
+                                // instead of the row's close-on-single-pick
+                                // behavior above.
+                                e.stopPropagation();
+                                toggle(o);
+                              }}
+                            />
                             <span className="truncate text-sm" title={o.label}>
                               {o.label}
                             </span>
