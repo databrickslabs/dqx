@@ -202,7 +202,28 @@
     "autoUpgradeWithoutApprovalHint": "Quando una regola allineata (non fissata) viene ripubblicata con un controllo modificato, viene approvata automaticamente. Disattiva per inviarla a revisione per singola tabella. Le applicazioni fissate non sono mai interessate.",
     "rulesRegistrySettingsSaved": "Impostazioni del Registro regole salvate.",
     "rulesRegistrySettingsFailedSave": "Impossibile salvare le impostazioni del Registro regole.",
-    "rulesRegistrySettingsAdminOnlyHint": "Solo gli amministratori possono modificare queste impostazioni."
+    "rulesRegistrySettingsAdminOnlyHint": "Solo gli amministratori possono modificare queste impostazioni.",
+    "computeTitle": "Calcolo",
+    "computeDescription": "Scegli il warehouse SQL usato per le anteprime dei dati e le query ad-hoc, e il calcolo usato per i job di controllo.",
+    "computeWarehouseLabel": "Warehouse SQL",
+    "computeWarehousePlaceholder": "Seleziona un warehouse",
+    "computeWarehouseDefault": "Usa il predefinito dell'app",
+    "computeNoWarehouses": "Nessun warehouse trovato",
+    "computeSpAccessMissing": "L'entità servizio dell'app non può ancora usare questo warehouse.",
+    "computeGrantButton": "Concedi accesso",
+    "computeGrantAdminOnly": "Solo gli amministratori possono concedere l'accesso.",
+    "computeJobsLabel": "Calcolo dei job",
+    "computeJobsServerless": "Serverless",
+    "computeJobsCluster": "Cluster generico",
+    "computeClusterPlaceholder": "Seleziona un cluster",
+    "computeNoClusters": "Nessun cluster disponibile",
+    "computeJobsClusterNote": "Salvato per uso futuro. I job di controllo vengono attualmente eseguiti su serverless.",
+    "computeSaveButton": "Salva impostazioni di calcolo",
+    "computeAdminOnlyHint": "Solo gli amministratori possono modificare le impostazioni di calcolo.",
+    "computeSaved": "Impostazioni di calcolo salvate.",
+    "computeSaveFailed": "Impossibile salvare le impostazioni di calcolo.",
+    "computeGrantSucceeded": "Accesso concesso.",
+    "computeGrantFailed": "Impossibile concedere l'accesso."
   },
   "discovery": {
     "breadcrumb": "Esplorazione",
@@ -1881,7 +1902,21 @@
     "jumpToColumnTitle": "Vai alla colonna",
     "jumpToColumnLabel": "Visualizza {{column}} nella vista per colonna",
     "changeColumnTitle": "Cambia colonna",
-    "changeColumnLabel": "Cambia colonna per {{column}}"
+    "changeColumnLabel": "Cambia colonna per {{column}}",
+    "tabViewData": "Visualizza dati",
+    "viewData": {
+      "description": "Prime {{count}} righe, lette con i tuoi permessi.",
+      "loadFailed": "Impossibile caricare i dati. Controlla il warehouse SQL e i tuoi accessi.",
+      "queryFailed": "Impossibile eseguire la query. Riformula la domanda.",
+      "askPlaceholder": "Fai una domanda su questi dati…",
+      "askButton": "Chiedi",
+      "suggestCount": "Quante righe ci sono?",
+      "suggestNulls": "Righe dove {{column}} è nullo",
+      "suggestGroup": "Conta le righe per {{column}}",
+      "generatedSqlLabel": "SQL generato",
+      "backToSample": "Torna al campione",
+      "noRows": "Nessuna riga da mostrare."
+    }
   },
   "dataProducts": {
     "title": "Spazi Tabelle",

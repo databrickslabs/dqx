@@ -202,7 +202,28 @@
     "autoUpgradeWithoutApprovalHint": "Quando uma regra que segue a versão mais recente (não fixada) é republicada com uma verificação alterada, ela é aprovada automaticamente. Desative para enviá-la de volta para revisão por tabela. Aplicações fixadas nunca são afetadas.",
     "rulesRegistrySettingsSaved": "Configurações do Registro de regras salvas.",
     "rulesRegistrySettingsFailedSave": "Falha ao salvar as configurações do Registro de regras.",
-    "rulesRegistrySettingsAdminOnlyHint": "Somente administradores podem alterar estas configurações."
+    "rulesRegistrySettingsAdminOnlyHint": "Somente administradores podem alterar estas configurações.",
+    "computeTitle": "Computação",
+    "computeDescription": "Escolha o warehouse SQL usado para prévias de dados e consultas ad-hoc, e a computação usada nos jobs de verificação.",
+    "computeWarehouseLabel": "Warehouse SQL",
+    "computeWarehousePlaceholder": "Selecione um warehouse",
+    "computeWarehouseDefault": "Usar o padrão do app",
+    "computeNoWarehouses": "Nenhum warehouse encontrado",
+    "computeSpAccessMissing": "A entidade de serviço do app ainda não pode usar este warehouse.",
+    "computeGrantButton": "Conceder acesso",
+    "computeGrantAdminOnly": "Apenas administradores podem conceder acesso.",
+    "computeJobsLabel": "Computação dos jobs",
+    "computeJobsServerless": "Serverless",
+    "computeJobsCluster": "Cluster de uso geral",
+    "computeClusterPlaceholder": "Selecione um cluster",
+    "computeNoClusters": "Nenhum cluster disponível",
+    "computeJobsClusterNote": "Salvo para uso futuro. Os jobs de verificação são executados atualmente em serverless.",
+    "computeSaveButton": "Salvar configurações de computação",
+    "computeAdminOnlyHint": "Apenas administradores podem alterar as configurações de computação.",
+    "computeSaved": "Configurações de computação salvas.",
+    "computeSaveFailed": "Não foi possível salvar as configurações de computação.",
+    "computeGrantSucceeded": "Acesso concedido.",
+    "computeGrantFailed": "Não foi possível conceder o acesso."
   },
   "discovery": {
     "breadcrumb": "Descoberta",
@@ -1881,7 +1902,21 @@
     "jumpToColumnTitle": "Ir para a coluna",
     "jumpToColumnLabel": "Ver {{column}} na visualização por coluna",
     "changeColumnTitle": "Alterar coluna",
-    "changeColumnLabel": "Alterar coluna de {{column}}"
+    "changeColumnLabel": "Alterar coluna de {{column}}",
+    "tabViewData": "Ver dados",
+    "viewData": {
+      "description": "Primeiras {{count}} linhas, lidas com suas permissões.",
+      "loadFailed": "Não foi possível carregar os dados. Verifique o warehouse SQL e seu acesso.",
+      "queryFailed": "Não foi possível executar a consulta. Tente reformular a pergunta.",
+      "askPlaceholder": "Faça uma pergunta sobre estes dados…",
+      "askButton": "Perguntar",
+      "suggestCount": "Quantas linhas existem?",
+      "suggestNulls": "Linhas onde {{column}} é nulo",
+      "suggestGroup": "Contar linhas por {{column}}",
+      "generatedSqlLabel": "SQL gerado",
+      "backToSample": "Voltar à amostra",
+      "noRows": "Nenhuma linha para exibir."
+    }
   },
   "dataProducts": {
     "title": "Espaços de Tabelas",

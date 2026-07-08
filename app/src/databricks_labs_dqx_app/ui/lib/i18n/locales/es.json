@@ -202,7 +202,28 @@
     "autoUpgradeWithoutApprovalHint": "Cuando una regla que sigue la última versión (sin fijar) se vuelve a publicar con un cambio en la comprobación, la aprueba automáticamente. Desactívalo para enviarla a revisión por tabla. Las aplicaciones fijadas nunca se ven afectadas.",
     "rulesRegistrySettingsSaved": "Configuración del Registro de reglas guardada.",
     "rulesRegistrySettingsFailedSave": "Error al guardar la configuración del Registro de reglas.",
-    "rulesRegistrySettingsAdminOnlyHint": "Solo los administradores pueden cambiar esta configuración."
+    "rulesRegistrySettingsAdminOnlyHint": "Solo los administradores pueden cambiar esta configuración.",
+    "computeTitle": "Cómputo",
+    "computeDescription": "Elige el almacén SQL para las vistas previas de datos y consultas ad-hoc, y el cómputo para los trabajos de comprobación.",
+    "computeWarehouseLabel": "Almacén SQL",
+    "computeWarehousePlaceholder": "Selecciona un almacén",
+    "computeWarehouseDefault": "Usar el predeterminado de la app",
+    "computeNoWarehouses": "No se encontraron almacenes",
+    "computeSpAccessMissing": "La entidad de servicio de la app aún no puede usar este almacén.",
+    "computeGrantButton": "Conceder acceso",
+    "computeGrantAdminOnly": "Solo los administradores pueden conceder acceso.",
+    "computeJobsLabel": "Cómputo de trabajos",
+    "computeJobsServerless": "Sin servidor",
+    "computeJobsCluster": "Clúster de uso general",
+    "computeClusterPlaceholder": "Selecciona un clúster",
+    "computeNoClusters": "No hay clústeres disponibles",
+    "computeJobsClusterNote": "Guardado para uso futuro. Los trabajos de comprobación se ejecutan actualmente sin servidor.",
+    "computeSaveButton": "Guardar configuración de cómputo",
+    "computeAdminOnlyHint": "Solo los administradores pueden cambiar la configuración de cómputo.",
+    "computeSaved": "Configuración de cómputo guardada.",
+    "computeSaveFailed": "No se pudo guardar la configuración de cómputo.",
+    "computeGrantSucceeded": "Acceso concedido.",
+    "computeGrantFailed": "No se pudo conceder el acceso."
   },
   "discovery": {
     "breadcrumb": "Descubrimiento",
@@ -1881,7 +1902,21 @@
     "jumpToColumnTitle": "Ir a la columna",
     "jumpToColumnLabel": "Ver {{column}} en la vista por columna",
     "changeColumnTitle": "Cambiar columna",
-    "changeColumnLabel": "Cambiar columna para {{column}}"
+    "changeColumnLabel": "Cambiar columna para {{column}}",
+    "tabViewData": "Ver datos",
+    "viewData": {
+      "description": "Primeras {{count}} filas, con tus permisos.",
+      "loadFailed": "No se pudieron cargar los datos. Revisa el almacén SQL y tu acceso.",
+      "queryFailed": "No se pudo ejecutar la consulta. Reformula tu pregunta.",
+      "askPlaceholder": "Haz una pregunta sobre estos datos…",
+      "askButton": "Preguntar",
+      "suggestCount": "¿Cuántas filas hay?",
+      "suggestNulls": "Filas donde {{column}} es nulo",
+      "suggestGroup": "Contar filas por {{column}}",
+      "generatedSqlLabel": "SQL generado",
+      "backToSample": "Volver a la muestra",
+      "noRows": "No hay filas para mostrar."
+    }
   },
   "dataProducts": {
     "title": "Espacios de Tablas",

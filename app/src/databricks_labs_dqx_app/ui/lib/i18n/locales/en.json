@@ -202,7 +202,28 @@
     "autoUpgradeWithoutApprovalHint": "When a following (unpinned) rule is republished with a changed check, silently re-approve it. Turn off to send it back for per-table review instead. Pinned applications are never affected.",
     "rulesRegistrySettingsSaved": "Rules Registry settings saved.",
     "rulesRegistrySettingsFailedSave": "Failed to save Rules Registry settings.",
-    "rulesRegistrySettingsAdminOnlyHint": "Only admins can change these settings."
+    "rulesRegistrySettingsAdminOnlyHint": "Only admins can change these settings.",
+    "computeTitle": "Compute",
+    "computeDescription": "Choose the SQL warehouse used for data previews and ad-hoc queries, and the compute used for check jobs.",
+    "computeWarehouseLabel": "SQL warehouse",
+    "computeWarehousePlaceholder": "Select a warehouse",
+    "computeWarehouseDefault": "Use the app default",
+    "computeNoWarehouses": "No warehouses found",
+    "computeSpAccessMissing": "The app service principal can't use this warehouse yet.",
+    "computeGrantButton": "Grant access",
+    "computeGrantAdminOnly": "Only admins can grant access.",
+    "computeJobsLabel": "Jobs compute",
+    "computeJobsServerless": "Serverless",
+    "computeJobsCluster": "All-purpose cluster",
+    "computeClusterPlaceholder": "Select a cluster",
+    "computeNoClusters": "No clusters available",
+    "computeJobsClusterNote": "Saved for future use. Check jobs currently run on serverless.",
+    "computeSaveButton": "Save compute settings",
+    "computeAdminOnlyHint": "Only admins can change compute settings.",
+    "computeSaved": "Compute settings saved.",
+    "computeSaveFailed": "Couldn't save compute settings.",
+    "computeGrantSucceeded": "Access granted.",
+    "computeGrantFailed": "Couldn't grant access."
   },
   "discovery": {
     "breadcrumb": "Discovery",
@@ -1881,7 +1902,21 @@
     "jumpToColumnTitle": "Jump to column",
     "jumpToColumnLabel": "View {{column}} in the by-column view",
     "changeColumnTitle": "Change column",
-    "changeColumnLabel": "Change column for {{column}}"
+    "changeColumnLabel": "Change column for {{column}}",
+    "tabViewData": "View Data",
+    "viewData": {
+      "description": "First {{count}} rows, read with your permissions.",
+      "loadFailed": "Couldn't load table data. Check the SQL warehouse and your access.",
+      "queryFailed": "Couldn't run that query. Try rephrasing your question.",
+      "askPlaceholder": "Ask a question about this data…",
+      "askButton": "Ask",
+      "suggestCount": "How many rows are there?",
+      "suggestNulls": "Rows where {{column}} is null",
+      "suggestGroup": "Count rows by {{column}}",
+      "generatedSqlLabel": "Generated SQL",
+      "backToSample": "Back to sample",
+      "noRows": "No rows to show."
+    }
   },
   "dataProducts": {
     "title": "Table Spaces",

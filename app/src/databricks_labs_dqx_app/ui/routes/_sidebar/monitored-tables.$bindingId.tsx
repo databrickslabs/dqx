@@ -45,6 +45,7 @@ import {
   ClipboardList,
   Clock,
   Columns3,
+  Database,
   Info,
   KeyRound,
   Loader2,
@@ -52,6 +53,7 @@ import {
   Plus,
   RefreshCw,
   RotateCcw,
+  Send,
   Sparkles,
   UploadCloud,
   X,
@@ -73,11 +75,14 @@ import {
   useListMonitoredTableVersions,
   useRunMonitoredTable,
   useSuggestRulesForTable,
+  usePreviewTableData,
+  useQueryTableData,
   type AppliedRuleOut,
   type ColumnOut,
   type MonitoredTableOut,
   type MonitoredTableVersionOut,
   type RegistryRuleOut,
+  type TableDataOut,
 } from "@/lib/api";
 import {
   DropdownMenu,
@@ -114,7 +119,7 @@ import { orderSeverityValuesForDisplay } from "@/components/RegistryRuleBadges";
 import { ProfileColumnList } from "@/components/bindings/ProfileColumnList";
 import { MonitoredTableSchedulingTab } from "@/components/monitored-tables/MonitoredTableSchedulingTab";
 
-const DETAIL_TAB_KEYS = ["about", "profile", "apply-rules", "results", "schedule"] as const;
+const DETAIL_TAB_KEYS = ["about", "view-data", "profile", "apply-rules", "results", "schedule"] as const;
 type DetailTab = (typeof DETAIL_TAB_KEYS)[number];
 
 /** Client-side deadline for the AI suggest-rules request (prefetch + manual
@@ -538,6 +543,10 @@ function MonitoredTableDetailPage() {
               <Info className="h-3.5 w-3.5" />
               {t("monitoredTables.tabAbout")}
             </TabsTrigger>
+            <TabsTrigger value="view-data" className="gap-1.5">
+              <Database className="h-3.5 w-3.5" />
+              {t("monitoredTables.tabViewData")}
+            </TabsTrigger>
             <TabGroupDivider />
             <TabsTrigger value="profile" className="gap-1.5">
               <BarChart3 className="h-3.5 w-3.5" />
@@ -560,6 +569,10 @@ function MonitoredTableDetailPage() {
 
           <TabsContent value="about">
             <AboutTab table={table} onColumnClick={handleColumnDeepLink} />
+          </TabsContent>
+
+          <TabsContent value="view-data">
+            <ViewDataTab tableFqn={table.table_fqn} />
           </TabsContent>
 
           <TabsContent value="profile">
@@ -1673,6 +1686,210 @@ function ApplyRulesTab({
     </div>
   );
 }
+
+// ---------------------------------------------------------------------------
+// View Data tab (P22-B) — first 500 rows via OBO + pragmatic ask-a-question
+// ---------------------------------------------------------------------------
+
+function DataGrid({ columns, rows, emptyLabel }: { columns: string[]; rows: Record<string, string | null>[]; emptyLabel: string }) {
+  if (rows.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-10 text-center border border-dashed rounded-lg">
+        <Database className="h-5 w-5 text-muted-foreground mb-2" />
+        <p className="text-sm font-medium text-muted-foreground">{emptyLabel}</p>
+      </div>
+    );
+  }
+  return (
+    <div className="border rounded-lg overflow-auto max-h-[520px]">
+      <table className="w-full text-xs">
+        <thead className="sticky top-0 bg-muted/80 backdrop-blur-sm">
+          <tr className="border-b">
+            <th className="text-left p-2 font-medium whitespace-nowrap tabular-nums">#</th>
+            {columns.map((col) => (
+              <th key={col} className="text-left p-2 font-medium whitespace-nowrap font-mono">
+                {col}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, idx) => (
+            <tr key={idx} className="border-b last:border-b-0 hover:bg-muted/30">
+              <td className="p-2 tabular-nums text-muted-foreground">{idx + 1}</td>
+              {columns.map((col) => (
+                <td
+                  key={col}
+                  className="p-2 max-w-[240px] truncate font-mono"
+                  title={String(row[col] ?? "")}
+                >
+                  {String(row[col] ?? "")}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ViewDataTab({ tableFqn }: { tableFqn: string }) {
+  const { t } = useTranslation();
+  const previewMutation = usePreviewTableData();
+  const queryMutation = useQueryTableData();
+  const [preview, setPreview] = useState<TableDataOut | null>(null);
+  const [answer, setAnswer] = useState<TableDataOut | null>(null);
+  const [question, setQuestion] = useState("");
+  const loadedRef = useRef(false);
+
+  const loadPreview = useCallback(() => {
+    previewMutation.mutate(
+      { data: { table_fqn: tableFqn } },
+      {
+        onSuccess: (resp) => {
+          setPreview(resp.data);
+          setAnswer(null);
+        },
+        onError: (err) => toast.error(extractApiError(err, t("monitoredTables.viewData.loadFailed")), { duration: 6000 }),
+      },
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tableFqn]);
+
+  useEffect(() => {
+    if (loadedRef.current) return;
+    loadedRef.current = true;
+    loadPreview();
+  }, [loadPreview]);
+
+  const runQuestion = (raw: string) => {
+    const trimmed = raw.trim();
+    if (!trimmed) return;
+    setQuestion(trimmed);
+    queryMutation.mutate(
+      { data: { table_fqn: tableFqn, question: trimmed } },
+      {
+        onSuccess: (resp) => setAnswer(resp.data),
+        onError: (err) => toast.error(extractApiError(err, t("monitoredTables.viewData.queryFailed")), { duration: 6000 }),
+      },
+    );
+  };
+
+  const aiAvailable = preview?.ai_available ?? false;
+  const active = answer ?? preview;
+
+  const suggestions = useMemo(() => {
+    const cols = preview?.columns ?? [];
+    const first = cols[0];
+    const out = [t("monitoredTables.viewData.suggestCount")];
+    if (first) {
+      out.push(t("monitoredTables.viewData.suggestNulls", { column: first }));
+      out.push(t("monitoredTables.viewData.suggestGroup", { column: first }));
+    }
+    return out;
+  }, [preview, t]);
+
+  if (previewMutation.isPending && !preview) {
+    return <Skeleton className="h-64 w-full mt-4" />;
+  }
+
+  if (previewMutation.isError && !preview) {
+    return (
+      <div className="flex flex-col items-center justify-center py-12 text-center border border-dashed rounded-lg mt-4">
+        <AlertTriangle className="h-6 w-6 text-muted-foreground mb-3" />
+        <p className="text-sm font-medium text-muted-foreground mb-3">{t("monitoredTables.viewData.loadFailed")}</p>
+        <Button size="sm" variant="outline" onClick={loadPreview} className="gap-1.5">
+          <RefreshCw className="h-3.5 w-3.5" />
+          {t("common.retry")}
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4 pt-4">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs text-muted-foreground">
+          {t("monitoredTables.viewData.description", { count: TableDataService_PREVIEW_LIMIT })}
+        </p>
+        <Button size="sm" variant="ghost" onClick={loadPreview} disabled={previewMutation.isPending} className="gap-1.5">
+          <RefreshCw className={`h-3.5 w-3.5 ${previewMutation.isPending ? "animate-spin" : ""}`} />
+          {t("common.refresh")}
+        </Button>
+      </div>
+
+      {aiAvailable && (
+        <div className="space-y-2 rounded-lg border bg-muted/20 p-3">
+          <div className="flex items-center gap-2">
+            <Input
+              value={question}
+              onChange={(e) => setQuestion(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") runQuestion(question);
+              }}
+              placeholder={t("monitoredTables.viewData.askPlaceholder")}
+              disabled={queryMutation.isPending}
+              className="h-8 text-xs"
+            />
+            <Button
+              size="sm"
+              onClick={() => runQuestion(question)}
+              disabled={queryMutation.isPending || !question.trim()}
+              className="gap-1.5 shrink-0"
+            >
+              {queryMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+              {t("monitoredTables.viewData.askButton")}
+            </Button>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {suggestions.map((s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => runQuestion(s)}
+                disabled={queryMutation.isPending}
+                className="rounded-full border px-2.5 py-1 text-[11px] text-muted-foreground hover:bg-muted disabled:opacity-50"
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {answer && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">
+              {t("monitoredTables.viewData.generatedSqlLabel")}
+            </p>
+            <Button size="sm" variant="ghost" onClick={() => setAnswer(null)} className="gap-1.5 h-7 text-xs">
+              <ArrowLeft className="h-3.5 w-3.5" />
+              {t("monitoredTables.viewData.backToSample")}
+            </Button>
+          </div>
+          {answer.generated_sql && (
+            <pre className="rounded-md border bg-muted/40 p-3 text-[11px] font-mono overflow-x-auto whitespace-pre-wrap">
+              {answer.generated_sql}
+            </pre>
+          )}
+        </div>
+      )}
+
+      {active && (
+        <DataGrid
+          columns={active.columns}
+          rows={active.rows}
+          emptyLabel={t("monitoredTables.viewData.noRows")}
+        />
+      )}
+    </div>
+  );
+}
+
+// The preview row cap mirrors the backend TableDataService.PREVIEW_LIMIT.
+const TableDataService_PREVIEW_LIMIT = 500;
 
 // ---------------------------------------------------------------------------
 // Results tab

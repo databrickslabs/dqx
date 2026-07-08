@@ -496,6 +496,12 @@ export interface CheckMetricBreakdown {
   warning_count?: number;
 }
 
+export interface ClusterOut {
+  cluster_id: string;
+  cluster_name: string;
+  state: string;
+}
+
 export type ColumnOutComment = string | null;
 
 export interface ColumnOut {
@@ -533,6 +539,28 @@ export interface ComplexValue {
   ref?: ComplexValueRef;
   type?: ComplexValueType;
   value?: ComplexValueValue;
+}
+
+export type ComputeSettingsInSqlWarehouseId = string | null;
+
+export type ComputeSettingsInJobsCompute = JobsComputeModel | null;
+
+/**
+ * Update payload — omitted fields are left unchanged.
+ */
+export interface ComputeSettingsIn {
+  sql_warehouse_id?: ComputeSettingsInSqlWarehouseId;
+  jobs_compute?: ComputeSettingsInJobsCompute;
+}
+
+export interface ComputeSettingsOut {
+  /** Configured warehouse id, '' when unset (env fallback). */
+  sql_warehouse_id?: string;
+  /** Warehouse actually used after env fallback. */
+  effective_warehouse_id?: string;
+  /** True when an admin override is set. */
+  warehouse_is_override?: boolean;
+  jobs_compute?: JobsComputeModel;
 }
 
 export interface ConfigIn {
@@ -1009,6 +1037,10 @@ export interface GenerateRulesFromContractOut {
   validation_errors?: string[];
 }
 
+export interface GrantWarehouseAccessIn {
+  warehouse_id: string;
+}
+
 /**
  * Group ID
  */
@@ -1042,6 +1074,25 @@ export interface InputConfig {
 
 export interface InstallationSettings {
   install_folder: string;
+}
+
+export type JobsComputeModelKind = typeof JobsComputeModelKind[keyof typeof JobsComputeModelKind];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const JobsComputeModelKind = {
+  serverless: 'serverless',
+  existing_cluster: 'existing_cluster',
+} as const;
+
+export type JobsComputeModelClusterId = string | null;
+
+/**
+ * The jobs-compute selection. ``existing_cluster`` carries a ``cluster_id``.
+ */
+export interface JobsComputeModel {
+  kind?: JobsComputeModelKind;
+  cluster_id?: JobsComputeModelClusterId;
 }
 
 /**
@@ -2359,6 +2410,19 @@ export interface SuggestedRuleMappingOut {
   explanation?: string;
 }
 
+export type TableDataOutRowsItem = {[key: string]: string | null};
+
+export type TableDataOutGeneratedSql = string | null;
+
+export interface TableDataOut {
+  columns: string[];
+  rows: TableDataOutRowsItem[];
+  row_count: number;
+  truncated: boolean;
+  generated_sql?: TableDataOutGeneratedSql;
+  ai_available?: boolean;
+}
+
 export type TableOutTableType = string | null;
 
 export type TableOutComment = string | null;
@@ -2369,6 +2433,15 @@ export interface TableOut {
   schema_name: string;
   table_type?: TableOutTableType;
   comment?: TableOutComment;
+}
+
+export interface TablePreviewIn {
+  table_fqn: string;
+}
+
+export interface TableQueryIn {
+  table_fqn: string;
+  question: string;
 }
 
 /**
@@ -2628,6 +2701,30 @@ export interface ValidationRunSummaryOut {
 export interface VersionOut {
   version: string;
   core_version: string;
+}
+
+export type WarehouseAccessOutStatus = typeof WarehouseAccessOutStatus[keyof typeof WarehouseAccessOutStatus];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const WarehouseAccessOutStatus = {
+  granted: 'granted',
+  missing: 'missing',
+  unknown: 'unknown',
+} as const;
+
+export interface WarehouseAccessOut {
+  status: WarehouseAccessOutStatus;
+  warehouse_id: string;
+  sp_application_id?: string;
+  can_grant?: boolean;
+}
+
+export interface WarehouseOut {
+  id: string;
+  name: string;
+  serverless: boolean;
+  running: boolean;
 }
 
 export type WorkspaceConfigLogLevel = string | null;
@@ -2897,6 +2994,13 @@ limit?: number;
 };
 
 export type DeleteDataProduct200 = {[key: string]: string};
+
+export type GetWarehouseAccessParams = {
+/**
+ * Warehouse id to check
+ */
+warehouse_id: string;
+};
 
 /**
  * @summary Version
@@ -16427,6 +16531,851 @@ export const useRunDataProduct = <TError = AxiosError<HTTPValidationError>,
       > => {
 
       const mutationOptions = getRunDataProductMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * List the workspace's SQL warehouses, or ``[]`` on any SDK failure.
+ * @summary List Warehouses
+ */
+export const listComputeWarehouses = (
+     options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<WarehouseOut[]>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/compute/warehouses`,options
+    );
+  }
+
+
+
+
+export const getListComputeWarehousesQueryKey = () => {
+    return [
+    `/api/v1/compute/warehouses`
+    ] as const;
+    }
+
+    
+export const getListComputeWarehousesQueryOptions = <TData = Awaited<ReturnType<typeof listComputeWarehouses>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listComputeWarehouses>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListComputeWarehousesQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listComputeWarehouses>>> = ({ signal }) => listComputeWarehouses({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listComputeWarehouses>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListComputeWarehousesQueryResult = NonNullable<Awaited<ReturnType<typeof listComputeWarehouses>>>
+export type ListComputeWarehousesQueryError = AxiosError<HTTPValidationError>
+
+
+export function useListComputeWarehouses<TData = Awaited<ReturnType<typeof listComputeWarehouses>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listComputeWarehouses>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listComputeWarehouses>>,
+          TError,
+          Awaited<ReturnType<typeof listComputeWarehouses>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListComputeWarehouses<TData = Awaited<ReturnType<typeof listComputeWarehouses>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listComputeWarehouses>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listComputeWarehouses>>,
+          TError,
+          Awaited<ReturnType<typeof listComputeWarehouses>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListComputeWarehouses<TData = Awaited<ReturnType<typeof listComputeWarehouses>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listComputeWarehouses>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List Warehouses
+ */
+
+export function useListComputeWarehouses<TData = Awaited<ReturnType<typeof listComputeWarehouses>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listComputeWarehouses>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListComputeWarehousesQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getListComputeWarehousesSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof listComputeWarehouses>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listComputeWarehouses>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListComputeWarehousesQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listComputeWarehouses>>> = ({ signal }) => listComputeWarehouses({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof listComputeWarehouses>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListComputeWarehousesSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof listComputeWarehouses>>>
+export type ListComputeWarehousesSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useListComputeWarehousesSuspense<TData = Awaited<ReturnType<typeof listComputeWarehouses>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listComputeWarehouses>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListComputeWarehousesSuspense<TData = Awaited<ReturnType<typeof listComputeWarehouses>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listComputeWarehouses>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListComputeWarehousesSuspense<TData = Awaited<ReturnType<typeof listComputeWarehouses>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listComputeWarehouses>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List Warehouses
+ */
+
+export function useListComputeWarehousesSuspense<TData = Awaited<ReturnType<typeof listComputeWarehouses>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listComputeWarehouses>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListComputeWarehousesSuspenseQueryOptions(options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * List the workspace's all-purpose clusters, or ``[]`` on any SDK failure.
+ * @summary List Clusters
+ */
+export const listComputeClusters = (
+     options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<ClusterOut[]>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/compute/clusters`,options
+    );
+  }
+
+
+
+
+export const getListComputeClustersQueryKey = () => {
+    return [
+    `/api/v1/compute/clusters`
+    ] as const;
+    }
+
+    
+export const getListComputeClustersQueryOptions = <TData = Awaited<ReturnType<typeof listComputeClusters>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listComputeClusters>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListComputeClustersQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listComputeClusters>>> = ({ signal }) => listComputeClusters({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listComputeClusters>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListComputeClustersQueryResult = NonNullable<Awaited<ReturnType<typeof listComputeClusters>>>
+export type ListComputeClustersQueryError = AxiosError<HTTPValidationError>
+
+
+export function useListComputeClusters<TData = Awaited<ReturnType<typeof listComputeClusters>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listComputeClusters>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listComputeClusters>>,
+          TError,
+          Awaited<ReturnType<typeof listComputeClusters>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListComputeClusters<TData = Awaited<ReturnType<typeof listComputeClusters>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listComputeClusters>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listComputeClusters>>,
+          TError,
+          Awaited<ReturnType<typeof listComputeClusters>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListComputeClusters<TData = Awaited<ReturnType<typeof listComputeClusters>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listComputeClusters>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List Clusters
+ */
+
+export function useListComputeClusters<TData = Awaited<ReturnType<typeof listComputeClusters>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listComputeClusters>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListComputeClustersQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getListComputeClustersSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof listComputeClusters>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listComputeClusters>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListComputeClustersQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listComputeClusters>>> = ({ signal }) => listComputeClusters({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof listComputeClusters>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListComputeClustersSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof listComputeClusters>>>
+export type ListComputeClustersSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useListComputeClustersSuspense<TData = Awaited<ReturnType<typeof listComputeClusters>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listComputeClusters>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListComputeClustersSuspense<TData = Awaited<ReturnType<typeof listComputeClusters>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listComputeClusters>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListComputeClustersSuspense<TData = Awaited<ReturnType<typeof listComputeClusters>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listComputeClusters>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List Clusters
+ */
+
+export function useListComputeClustersSuspense<TData = Awaited<ReturnType<typeof listComputeClusters>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listComputeClusters>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListComputeClustersSuspenseQueryOptions(options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Return the current compute settings + the effective warehouse (admin only).
+ * @summary Get Compute Settings
+ */
+export const getComputeSettings = (
+     options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<ComputeSettingsOut>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/compute/settings`,options
+    );
+  }
+
+
+
+
+export const getGetComputeSettingsQueryKey = () => {
+    return [
+    `/api/v1/compute/settings`
+    ] as const;
+    }
+
+    
+export const getGetComputeSettingsQueryOptions = <TData = Awaited<ReturnType<typeof getComputeSettings>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getComputeSettings>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetComputeSettingsQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getComputeSettings>>> = ({ signal }) => getComputeSettings({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getComputeSettings>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetComputeSettingsQueryResult = NonNullable<Awaited<ReturnType<typeof getComputeSettings>>>
+export type GetComputeSettingsQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetComputeSettings<TData = Awaited<ReturnType<typeof getComputeSettings>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getComputeSettings>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getComputeSettings>>,
+          TError,
+          Awaited<ReturnType<typeof getComputeSettings>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetComputeSettings<TData = Awaited<ReturnType<typeof getComputeSettings>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getComputeSettings>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getComputeSettings>>,
+          TError,
+          Awaited<ReturnType<typeof getComputeSettings>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetComputeSettings<TData = Awaited<ReturnType<typeof getComputeSettings>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getComputeSettings>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Compute Settings
+ */
+
+export function useGetComputeSettings<TData = Awaited<ReturnType<typeof getComputeSettings>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getComputeSettings>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetComputeSettingsQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getGetComputeSettingsSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getComputeSettings>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getComputeSettings>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetComputeSettingsQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getComputeSettings>>> = ({ signal }) => getComputeSettings({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof getComputeSettings>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetComputeSettingsSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof getComputeSettings>>>
+export type GetComputeSettingsSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetComputeSettingsSuspense<TData = Awaited<ReturnType<typeof getComputeSettings>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getComputeSettings>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetComputeSettingsSuspense<TData = Awaited<ReturnType<typeof getComputeSettings>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getComputeSettings>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetComputeSettingsSuspense<TData = Awaited<ReturnType<typeof getComputeSettings>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getComputeSettings>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Compute Settings
+ */
+
+export function useGetComputeSettingsSuspense<TData = Awaited<ReturnType<typeof getComputeSettings>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getComputeSettings>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetComputeSettingsSuspenseQueryOptions(options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Update one or both compute settings (admin only).
+ * @summary Save Compute Settings
+ */
+export const saveComputeSettings = (
+    computeSettingsIn: ComputeSettingsIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<ComputeSettingsOut>> => {
+    
+    
+    return axios.default.put(
+      `/api/v1/compute/settings`,
+      computeSettingsIn,options
+    );
+  }
+
+
+
+export const getSaveComputeSettingsMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveComputeSettings>>, TError,{data: ComputeSettingsIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof saveComputeSettings>>, TError,{data: ComputeSettingsIn}, TContext> => {
+
+const mutationKey = ['saveComputeSettings'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof saveComputeSettings>>, {data: ComputeSettingsIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  saveComputeSettings(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SaveComputeSettingsMutationResult = NonNullable<Awaited<ReturnType<typeof saveComputeSettings>>>
+    export type SaveComputeSettingsMutationBody = ComputeSettingsIn
+    export type SaveComputeSettingsMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Save Compute Settings
+ */
+export const useSaveComputeSettings = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveComputeSettings>>, TError,{data: ComputeSettingsIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof saveComputeSettings>>,
+        TError,
+        {data: ComputeSettingsIn},
+        TContext
+      > => {
+
+      const mutationOptions = getSaveComputeSettingsMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Check whether the app SP has CAN_USE on *warehouse_id*.
+
+Never raises for the access-read itself — returns ``"unknown"`` when the ACL
+can't be read so the UI shows no false warning.
+ * @summary Get Warehouse Access
+ */
+export const getWarehouseAccess = (
+    params: GetWarehouseAccessParams, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<WarehouseAccessOut>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/compute/warehouse-access`,{
+    ...options,
+        params: {...params, ...options?.params},}
+    );
+  }
+
+
+
+
+export const getGetWarehouseAccessQueryKey = (params?: GetWarehouseAccessParams,) => {
+    return [
+    `/api/v1/compute/warehouse-access`, ...(params ? [params]: [])
+    ] as const;
+    }
+
+    
+export const getGetWarehouseAccessQueryOptions = <TData = Awaited<ReturnType<typeof getWarehouseAccess>>, TError = AxiosError<HTTPValidationError>>(params: GetWarehouseAccessParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getWarehouseAccess>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetWarehouseAccessQueryKey(params);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getWarehouseAccess>>> = ({ signal }) => getWarehouseAccess(params, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getWarehouseAccess>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetWarehouseAccessQueryResult = NonNullable<Awaited<ReturnType<typeof getWarehouseAccess>>>
+export type GetWarehouseAccessQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetWarehouseAccess<TData = Awaited<ReturnType<typeof getWarehouseAccess>>, TError = AxiosError<HTTPValidationError>>(
+ params: GetWarehouseAccessParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getWarehouseAccess>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getWarehouseAccess>>,
+          TError,
+          Awaited<ReturnType<typeof getWarehouseAccess>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetWarehouseAccess<TData = Awaited<ReturnType<typeof getWarehouseAccess>>, TError = AxiosError<HTTPValidationError>>(
+ params: GetWarehouseAccessParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getWarehouseAccess>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getWarehouseAccess>>,
+          TError,
+          Awaited<ReturnType<typeof getWarehouseAccess>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetWarehouseAccess<TData = Awaited<ReturnType<typeof getWarehouseAccess>>, TError = AxiosError<HTTPValidationError>>(
+ params: GetWarehouseAccessParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getWarehouseAccess>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Warehouse Access
+ */
+
+export function useGetWarehouseAccess<TData = Awaited<ReturnType<typeof getWarehouseAccess>>, TError = AxiosError<HTTPValidationError>>(
+ params: GetWarehouseAccessParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getWarehouseAccess>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetWarehouseAccessQueryOptions(params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getGetWarehouseAccessSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getWarehouseAccess>>, TError = AxiosError<HTTPValidationError>>(params: GetWarehouseAccessParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getWarehouseAccess>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetWarehouseAccessQueryKey(params);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getWarehouseAccess>>> = ({ signal }) => getWarehouseAccess(params, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof getWarehouseAccess>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetWarehouseAccessSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof getWarehouseAccess>>>
+export type GetWarehouseAccessSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetWarehouseAccessSuspense<TData = Awaited<ReturnType<typeof getWarehouseAccess>>, TError = AxiosError<HTTPValidationError>>(
+ params: GetWarehouseAccessParams, options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getWarehouseAccess>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetWarehouseAccessSuspense<TData = Awaited<ReturnType<typeof getWarehouseAccess>>, TError = AxiosError<HTTPValidationError>>(
+ params: GetWarehouseAccessParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getWarehouseAccess>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetWarehouseAccessSuspense<TData = Awaited<ReturnType<typeof getWarehouseAccess>>, TError = AxiosError<HTTPValidationError>>(
+ params: GetWarehouseAccessParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getWarehouseAccess>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Warehouse Access
+ */
+
+export function useGetWarehouseAccessSuspense<TData = Awaited<ReturnType<typeof getWarehouseAccess>>, TError = AxiosError<HTTPValidationError>>(
+ params: GetWarehouseAccessParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getWarehouseAccess>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetWarehouseAccessSuspenseQueryOptions(params,options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Grant the app SP CAN_USE on the warehouse via the admin's OBO client.
+ * @summary Grant Warehouse Access
+ */
+export const grantWarehouseAccess = (
+    grantWarehouseAccessIn: GrantWarehouseAccessIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<WarehouseAccessOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/compute/warehouse-access/grant`,
+      grantWarehouseAccessIn,options
+    );
+  }
+
+
+
+export const getGrantWarehouseAccessMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof grantWarehouseAccess>>, TError,{data: GrantWarehouseAccessIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof grantWarehouseAccess>>, TError,{data: GrantWarehouseAccessIn}, TContext> => {
+
+const mutationKey = ['grantWarehouseAccess'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof grantWarehouseAccess>>, {data: GrantWarehouseAccessIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  grantWarehouseAccess(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type GrantWarehouseAccessMutationResult = NonNullable<Awaited<ReturnType<typeof grantWarehouseAccess>>>
+    export type GrantWarehouseAccessMutationBody = GrantWarehouseAccessIn
+    export type GrantWarehouseAccessMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Grant Warehouse Access
+ */
+export const useGrantWarehouseAccess = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof grantWarehouseAccess>>, TError,{data: GrantWarehouseAccessIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof grantWarehouseAccess>>,
+        TError,
+        {data: GrantWarehouseAccessIn},
+        TContext
+      > => {
+
+      const mutationOptions = getGrantWarehouseAccessMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Return the first 500 rows of a table (OBO — UC permissions enforced).
+ * @summary Preview Table Data
+ */
+export const previewTableData = (
+    tablePreviewIn: TablePreviewIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<TableDataOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/table-data/preview`,
+      tablePreviewIn,options
+    );
+  }
+
+
+
+export const getPreviewTableDataMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof previewTableData>>, TError,{data: TablePreviewIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof previewTableData>>, TError,{data: TablePreviewIn}, TContext> => {
+
+const mutationKey = ['previewTableData'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof previewTableData>>, {data: TablePreviewIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  previewTableData(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PreviewTableDataMutationResult = NonNullable<Awaited<ReturnType<typeof previewTableData>>>
+    export type PreviewTableDataMutationBody = TablePreviewIn
+    export type PreviewTableDataMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Preview Table Data
+ */
+export const usePreviewTableData = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof previewTableData>>, TError,{data: TablePreviewIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof previewTableData>>,
+        TError,
+        {data: TablePreviewIn},
+        TContext
+      > => {
+
+      const mutationOptions = getPreviewTableDataMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Answer a natural-language question by generating + running a safe SELECT.
+ * @summary Query Table Data
+ */
+export const queryTableData = (
+    tableQueryIn: TableQueryIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<TableDataOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/table-data/query`,
+      tableQueryIn,options
+    );
+  }
+
+
+
+export const getQueryTableDataMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof queryTableData>>, TError,{data: TableQueryIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof queryTableData>>, TError,{data: TableQueryIn}, TContext> => {
+
+const mutationKey = ['queryTableData'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof queryTableData>>, {data: TableQueryIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  queryTableData(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type QueryTableDataMutationResult = NonNullable<Awaited<ReturnType<typeof queryTableData>>>
+    export type QueryTableDataMutationBody = TableQueryIn
+    export type QueryTableDataMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Query Table Data
+ */
+export const useQueryTableData = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof queryTableData>>, TError,{data: TableQueryIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof queryTableData>>,
+        TError,
+        {data: TableQueryIn},
+        TContext
+      > => {
+
+      const mutationOptions = getQueryTableDataMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }

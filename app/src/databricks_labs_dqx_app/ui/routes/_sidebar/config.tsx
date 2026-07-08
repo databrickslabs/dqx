@@ -4,7 +4,7 @@ import { ErrorBoundary } from "react-error-boundary";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
-import { AlertCircle, CheckCircle2, Circle, Clock, Globe, LayoutDashboard, Loader2, Lock, Search, Tags, Plus, Trash2, X, ExternalLink, RotateCcw, ShieldCheck, Sparkles } from "lucide-react";
+import { AlertCircle, AlertTriangle, CheckCircle2, Circle, Clock, Cpu, Database, Globe, LayoutDashboard, Loader2, Lock, Search, Tags, Plus, Trash2, X, ExternalLink, RotateCcw, ShieldCheck, Sparkles } from "lucide-react";
 import { FadeIn } from "@/components/anim/FadeIn";
 import { ShinyText } from "@/components/anim/ShinyText";
 import { RoleManagement } from "@/components/RoleManagement";
@@ -59,8 +59,18 @@ import {
   useGetRulesRegistrySettings,
   useSaveRulesRegistrySettings,
   getGetRulesRegistrySettingsQueryKey,
+  useGetComputeSettings,
+  useSaveComputeSettings,
+  getGetComputeSettingsQueryKey,
+  useListComputeWarehouses,
+  useListComputeClusters,
+  useGetWarehouseAccess,
+  getGetWarehouseAccessQueryKey,
+  useGrantWarehouseAccess,
   type AiSettingsIn,
   type RulesRegistrySettingsIn,
+  type ComputeSettingsIn,
+  type JobsComputeModel,
 } from "@/lib/api";
 import {
   Select,
@@ -2008,6 +2018,234 @@ function RulesRegistrySettingsCard() {
   );
 }
 
+function ComputeSettingsCard() {
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  const { data: settingsResp, isLoading } = useGetComputeSettings();
+  const settings = settingsResp?.data;
+  const { data: role } = useCurrentUserRoleSuspense();
+  const isAdmin = role?.data?.role === "admin";
+
+  const saveMutation = useSaveComputeSettings();
+  const grantMutation = useGrantWarehouseAccess();
+  const { data: warehousesResp } = useListComputeWarehouses();
+  const warehouses = useMemo(() => warehousesResp?.data ?? [], [warehousesResp]);
+  const { data: clustersResp } = useListComputeClusters();
+  const clusters = useMemo(() => clustersResp?.data ?? [], [clustersResp]);
+
+  const [warehouseId, setWarehouseId] = useState("");
+  const [jobsKind, setJobsKind] = useState<JobsComputeModel["kind"]>("serverless");
+  const [clusterId, setClusterId] = useState("");
+  const [hydrated, setHydrated] = useState(false);
+  useEffect(() => {
+    if (settings && !hydrated) {
+      setWarehouseId(settings.sql_warehouse_id ?? "");
+      setJobsKind(settings.jobs_compute?.kind ?? "serverless");
+      setClusterId(settings.jobs_compute?.cluster_id ?? "");
+      setHydrated(true);
+    }
+  }, [settings, hydrated]);
+
+  // The warehouse whose SP access we check: the picked one, else the effective
+  // (env-fallback) warehouse. Re-runs whenever the pick changes.
+  const checkWarehouseId = warehouseId || settings?.effective_warehouse_id || "";
+  const { data: accessResp } = useGetWarehouseAccess(
+    { warehouse_id: checkWarehouseId },
+    { query: { enabled: !!checkWarehouseId } },
+  );
+  const access = accessResp?.data;
+
+  const isDirty = useMemo(() => {
+    if (!settings) return false;
+    return (
+      warehouseId !== (settings.sql_warehouse_id ?? "") ||
+      jobsKind !== (settings.jobs_compute?.kind ?? "serverless") ||
+      (jobsKind === "existing_cluster" && clusterId !== (settings.jobs_compute?.cluster_id ?? ""))
+    );
+  }, [settings, warehouseId, jobsKind, clusterId]);
+
+  const handleSave = () => {
+    const jobs_compute: JobsComputeModel =
+      jobsKind === "existing_cluster"
+        ? { kind: "existing_cluster", cluster_id: clusterId || null }
+        : { kind: "serverless", cluster_id: null };
+    const payload: ComputeSettingsIn = { sql_warehouse_id: warehouseId, jobs_compute };
+    saveMutation.mutate(
+      { data: payload },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getGetComputeSettingsQueryKey() });
+          queryClient.invalidateQueries({ queryKey: getGetWarehouseAccessQueryKey({ warehouse_id: checkWarehouseId }) });
+          toast.success(t("config.computeSaved"));
+        },
+        onError: (err: unknown) => {
+          const axErr = err as AxiosError<{ detail?: string }>;
+          toast.error(axErr?.response?.data?.detail ?? t("config.computeSaveFailed"));
+        },
+      },
+    );
+  };
+
+  const handleGrant = () => {
+    if (!checkWarehouseId) return;
+    grantMutation.mutate(
+      { data: { warehouse_id: checkWarehouseId } },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getGetWarehouseAccessQueryKey({ warehouse_id: checkWarehouseId }) });
+          toast.success(t("config.computeGrantSucceeded"));
+        },
+        onError: (err: unknown) => {
+          const axErr = err as AxiosError<{ detail?: string }>;
+          toast.error(axErr?.response?.data?.detail ?? t("config.computeGrantFailed"));
+        },
+      },
+    );
+  };
+
+  if (isLoading || !settings) return <Skeleton className="h-40 w-full" />;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Cpu className="h-4 w-4" />
+          {t("config.computeTitle")}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-5">
+        <p className="text-xs text-muted-foreground leading-relaxed">{t("config.computeDescription")}</p>
+
+        {/* SQL warehouse */}
+        <div className="space-y-1.5">
+          <Label className="text-[11px] text-muted-foreground flex items-center gap-1.5">
+            <Database className="h-3.5 w-3.5" />
+            {t("config.computeWarehouseLabel")}
+          </Label>
+          <Select
+            value={warehouseId || NO_WAREHOUSE_VALUE}
+            onValueChange={(v) => setWarehouseId(v === NO_WAREHOUSE_VALUE ? "" : v)}
+            disabled={!isAdmin || saveMutation.isPending}
+          >
+            <SelectTrigger className="h-8 text-xs font-mono w-full">
+              <SelectValue placeholder={t("config.computeWarehousePlaceholder")} />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={NO_WAREHOUSE_VALUE} className="text-xs">
+                {t("config.computeWarehouseDefault")}
+              </SelectItem>
+              {warehouses.length === 0 && (
+                <SelectLabel className="font-normal">{t("config.computeNoWarehouses")}</SelectLabel>
+              )}
+              {warehouses.map((w) => (
+                <SelectItem key={w.id} value={w.id} className="text-xs font-mono">
+                  {w.name}
+                  {w.serverless ? " · serverless" : ""}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        {/* SP access warning */}
+        {access?.status === "missing" && checkWarehouseId && (
+          <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400 mt-0.5" />
+            <div className="space-y-1.5">
+              <p>{t("config.computeSpAccessMissing")}</p>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="inline-block">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={handleGrant}
+                        disabled={!isAdmin || grantMutation.isPending}
+                        className="gap-1.5 h-7 text-xs border-amber-400 text-amber-700 hover:bg-amber-100 dark:text-amber-300 dark:hover:bg-amber-900"
+                      >
+                        {grantMutation.isPending ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <ShieldCheck className="h-3.5 w-3.5" />
+                        )}
+                        {t("config.computeGrantButton")}
+                      </Button>
+                    </span>
+                  </TooltipTrigger>
+                  {!isAdmin && <TooltipContent>{t("config.computeGrantAdminOnly")}</TooltipContent>}
+                </Tooltip>
+              </TooltipProvider>
+            </div>
+          </div>
+        )}
+
+        {/* Jobs compute */}
+        <div className="space-y-1.5">
+          <Label className="text-[11px] text-muted-foreground flex items-center gap-1.5">
+            <Cpu className="h-3.5 w-3.5" />
+            {t("config.computeJobsLabel")}
+          </Label>
+          <Select
+            value={jobsKind}
+            onValueChange={(v) => setJobsKind(v as JobsComputeModel["kind"])}
+            disabled={!isAdmin || saveMutation.isPending}
+          >
+            <SelectTrigger className="h-8 text-xs w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="serverless" className="text-xs">
+                {t("config.computeJobsServerless")}
+              </SelectItem>
+              <SelectItem value="existing_cluster" className="text-xs">
+                {t("config.computeJobsCluster")}
+              </SelectItem>
+            </SelectContent>
+          </Select>
+          {jobsKind === "existing_cluster" && (
+            <>
+              <Select
+                value={clusterId || NO_CLUSTER_VALUE}
+                onValueChange={(v) => setClusterId(v === NO_CLUSTER_VALUE ? "" : v)}
+                disabled={!isAdmin || saveMutation.isPending}
+              >
+                <SelectTrigger className="h-8 text-xs font-mono w-full mt-1.5">
+                  <SelectValue placeholder={t("config.computeClusterPlaceholder")} />
+                </SelectTrigger>
+                <SelectContent>
+                  {clusters.length === 0 && (
+                    <SelectLabel className="font-normal">{t("config.computeNoClusters")}</SelectLabel>
+                  )}
+                  {clusters.map((c) => (
+                    <SelectItem key={c.cluster_id} value={c.cluster_id} className="text-xs font-mono">
+                      {c.cluster_name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-[11px] text-muted-foreground leading-relaxed pt-1">
+                {t("config.computeJobsClusterNote")}
+              </p>
+            </>
+          )}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 pt-2 border-t">
+          <Button size="sm" onClick={handleSave} disabled={!isAdmin || !isDirty || saveMutation.isPending}>
+            {saveMutation.isPending && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}
+            {t("config.computeSaveButton")}
+          </Button>
+          {!isAdmin && <span className="text-xs text-muted-foreground">{t("config.computeAdminOnlyHint")}</span>}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+const NO_WAREHOUSE_VALUE = "__default__";
+const NO_CLUSTER_VALUE = "__none__";
+
 function ConfigPage() {
   const { t } = useTranslation();
   const { isAdmin } = usePermissions();
@@ -2072,6 +2310,13 @@ function ConfigPage() {
               <ErrorBoundary onReset={reset} FallbackComponent={SectionError}>
                 <Suspense fallback={<Skeleton className="h-40 w-full" />}>
                   <RulesRegistrySettingsCard />
+                </Suspense>
+              </ErrorBoundary>
+            </FadeIn>
+            <FadeIn delay={0.19}>
+              <ErrorBoundary onReset={reset} FallbackComponent={SectionError}>
+                <Suspense fallback={<Skeleton className="h-40 w-full" />}>
+                  <ComputeSettingsCard />
                 </Suspense>
               </ErrorBoundary>
             </FadeIn>
