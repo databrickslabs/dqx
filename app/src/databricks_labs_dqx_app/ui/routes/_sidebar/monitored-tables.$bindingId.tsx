@@ -130,7 +130,7 @@ export const Route = createFileRoute("/_sidebar/monitored-tables/$bindingId")({
   component: () => (
     <QueryErrorResetBoundary>
       {({ reset }) => (
-        <ErrorBoundary onReset={reset} fallbackRender={DetailError}>
+        <ErrorBoundary onReset={reset} FallbackComponent={DetailError}>
           <Suspense fallback={<DetailSkeleton />}>
             <MonitoredTableDetailPage />
           </Suspense>

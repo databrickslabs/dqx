@@ -32,7 +32,7 @@ export const Route = createFileRoute("/_sidebar/data-products/")({
   component: () => (
     <QueryErrorResetBoundary>
       {({ reset }) => (
-        <ErrorBoundary onReset={reset} fallbackRender={DataProductsError}>
+        <ErrorBoundary onReset={reset} FallbackComponent={DataProductsError}>
           <Suspense fallback={<DataProductsSkeleton />}>
             <DataProductsPage />
           </Suspense>

@@ -91,7 +91,7 @@ function ProfilerRoute() {
   return (
     <QueryErrorResetBoundary>
       {({ reset }) => (
-        <ErrorBoundary onReset={reset} fallbackRender={ProfilerError}>
+        <ErrorBoundary onReset={reset} FallbackComponent={ProfilerError}>
           <Suspense fallback={null}>
             <ProfilerPage />
           </Suspense>

@@ -114,7 +114,7 @@ export const Route = createFileRoute("/_sidebar/rules/drafts")({
   component: () => (
     <QueryErrorResetBoundary>
       {({ reset }) => (
-        <ErrorBoundary onReset={reset} fallbackRender={DraftsError}>
+        <ErrorBoundary onReset={reset} FallbackComponent={DraftsError}>
           <Suspense fallback={<DraftsSkeleton />}>
             <DraftsPage />
           </Suspense>

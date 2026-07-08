@@ -1949,49 +1949,49 @@ function ConfigPage() {
         {({ reset }) => (
           <div className="space-y-6 pb-8">
             <FadeIn delay={0.05}>
-              <ErrorBoundary onReset={reset} fallbackRender={SectionError}>
+              <ErrorBoundary onReset={reset} FallbackComponent={SectionError}>
                 <Suspense fallback={<Skeleton className="h-40 w-full" />}>
                   <TimezoneSettings />
                 </Suspense>
               </ErrorBoundary>
             </FadeIn>
             <FadeIn delay={0.1}>
-              <ErrorBoundary onReset={reset} fallbackRender={SectionError}>
+              <ErrorBoundary onReset={reset} FallbackComponent={SectionError}>
                 <Suspense fallback={<Skeleton className="h-40 w-full" />}>
                   <LabelDefinitionsSettings />
                 </Suspense>
               </ErrorBoundary>
             </FadeIn>
             <FadeIn delay={0.15}>
-              <ErrorBoundary onReset={reset} fallbackRender={SectionError}>
+              <ErrorBoundary onReset={reset} FallbackComponent={SectionError}>
                 <Suspense fallback={<Skeleton className="h-40 w-full" />}>
                   <RunReviewStatusesSettings />
                 </Suspense>
               </ErrorBoundary>
             </FadeIn>
             <FadeIn delay={0.17}>
-              <ErrorBoundary onReset={reset} fallbackRender={SectionError}>
+              <ErrorBoundary onReset={reset} FallbackComponent={SectionError}>
                 <Suspense fallback={<Skeleton className="h-40 w-full" />}>
                   <AiSettingsCard />
                 </Suspense>
               </ErrorBoundary>
             </FadeIn>
             <FadeIn delay={0.2}>
-              <ErrorBoundary onReset={reset} fallbackRender={SectionError}>
+              <ErrorBoundary onReset={reset} FallbackComponent={SectionError}>
                 <Suspense fallback={<Skeleton className="h-40 w-full" />}>
                   <EmbeddedDashboardSettings />
                 </Suspense>
               </ErrorBoundary>
             </FadeIn>
             <FadeIn delay={0.25}>
-              <ErrorBoundary onReset={reset} fallbackRender={SectionError}>
+              <ErrorBoundary onReset={reset} FallbackComponent={SectionError}>
                 <Suspense fallback={<Skeleton className="h-40 w-full" />}>
                   <RetentionSettings />
                 </Suspense>
               </ErrorBoundary>
             </FadeIn>
             <FadeIn delay={0.3}>
-              <ErrorBoundary onReset={reset} fallbackRender={SectionError}>
+              <ErrorBoundary onReset={reset} FallbackComponent={SectionError}>
                 <RoleManagement />
               </ErrorBoundary>
             </FadeIn>

@@ -50,7 +50,7 @@ export const Route = createFileRoute("/_sidebar/monitored-tables/")({
   component: () => (
     <QueryErrorResetBoundary>
       {({ reset }) => (
-        <ErrorBoundary onReset={reset} fallbackRender={MonitoredTablesError}>
+        <ErrorBoundary onReset={reset} FallbackComponent={MonitoredTablesError}>
           <Suspense fallback={<MonitoredTablesSkeleton />}>
             <MonitoredTablesPage />
           </Suspense>

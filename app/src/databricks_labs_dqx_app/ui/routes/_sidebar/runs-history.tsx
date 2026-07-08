@@ -324,7 +324,7 @@ function RunsHistoryPage() {
       <div className="flex-1 overflow-hidden mt-4">
         <QueryErrorResetBoundary>
           {({ reset }) => (
-            <ErrorBoundary onReset={reset} fallbackRender={RunHistoryError}>
+            <ErrorBoundary onReset={reset} FallbackComponent={RunHistoryError}>
               <Suspense fallback={<RunHistorySkeleton />}>
                 <RunHistoryContent />
               </Suspense>

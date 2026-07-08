@@ -70,7 +70,7 @@ export const Route = createFileRoute("/_sidebar/registry-rules/$ruleId")({
   component: () => (
     <QueryErrorResetBoundary>
       {({ reset }) => (
-        <ErrorBoundary onReset={reset} fallbackRender={RegistryRuleDetailError}>
+        <ErrorBoundary onReset={reset} FallbackComponent={RegistryRuleDetailError}>
           <Suspense fallback={<RegistryRuleDetailSkeleton />}>
             <RegistryRuleDetailPage />
           </Suspense>
