@@ -6,6 +6,7 @@ import { QueryErrorResetBoundary } from "@tanstack/react-query";
 import { ErrorBoundary } from "react-error-boundary";
 import { usePermissions } from "@/hooks/use-permissions";
 import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
+import { FadeIn } from "@/components/anim/FadeIn";
 import {
   Card,
   CardContent,
@@ -871,6 +872,7 @@ function ProfilerPageInner() {
   };
 
   return (
+    <FadeIn>
     <div className="space-y-6">
       <div className="space-y-2">
         <PageBreadcrumb items={[{ label: t("rulesCreate.breadcrumb"), to: "/rules/create" }]} page={t("profiler.breadcrumb")} />
@@ -1513,6 +1515,7 @@ function ProfilerPageInner() {
         </DialogContent>
       </Dialog>
     </div>
+    </FadeIn>
   );
 }
 

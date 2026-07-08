@@ -107,8 +107,7 @@
     }
   },
   "auth": {
-    "loadingMessage": "Initializing DQX Studio...",
-    "loadingDescription": "Setting up your workspace connection",
+    "loadingMessage": "Loading DQX Studio",
     "errorTitle": "Authentication Error",
     "refreshPage": "Refresh Page",
     "timeoutMessage": "Authentication timeout. The authentication flow did not complete.",
@@ -1604,6 +1603,7 @@
     "aboutSchemaSectionTitle": "Schema · {{count}} columns",
     "aboutFilterColumnsPlaceholder": "Filter columns…",
     "aboutColColumn": "Column",
+    "aboutColumnJumpTooltip": "Go to Apply Rules for this column",
     "aboutColType": "Type",
     "aboutColNullable": "Nullable",
     "aboutColDescription": "Description",
@@ -1826,8 +1826,8 @@
       "emptySchemas": "No schemas found.",
       "emptyTables": "No tables found.",
       "selectCatalogFirst": "Select a catalog first.",
-      "scopeWarningManyTables_one": "{{count}} table is being added. This may take a while.",
-      "scopeWarningManyTables_other": "{{count}} tables are being added. This may take a while.",
+      "scopeWarningManyTables_one": "{{count}} table will be added. This may take a while.",
+      "scopeWarningManyTables_other": "{{count}} tables will be added. This may take a while.",
       "addTablesButton_one": "Add {{count}} table",
       "addTablesButton_other": "Add {{count}} tables",
       "alreadyMonitoredTooltip": "This table is already monitored",

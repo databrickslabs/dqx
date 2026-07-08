@@ -184,24 +184,34 @@ function ReviewPendingChangesButton({
                     <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground shrink-0" />
                   ) : (
                     <div className="flex items-center gap-1 shrink-0">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-7 w-7 p-0 text-emerald-600"
-                        title={t("monitoredTables.approveAction")}
-                        onClick={() => handleApprove(member)}
-                      >
-                        <CheckCircle2 className="h-3.5 w-3.5" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-7 w-7 p-0 text-destructive"
-                        title={t("monitoredTables.rejectAction")}
-                        onClick={() => setRejectTarget(member)}
-                      >
-                        <XCircle className="h-3.5 w-3.5" />
-                      </Button>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 w-7 p-0 text-emerald-600"
+                            aria-label={t("monitoredTables.approveAction")}
+                            onClick={() => handleApprove(member)}
+                          >
+                            <CheckCircle2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>{t("monitoredTables.approveAction")}</TooltipContent>
+                      </Tooltip>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 w-7 p-0 text-destructive"
+                            aria-label={t("monitoredTables.rejectAction")}
+                            onClick={() => setRejectTarget(member)}
+                          >
+                            <XCircle className="h-3.5 w-3.5" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>{t("monitoredTables.rejectAction")}</TooltipContent>
+                      </Tooltip>
                     </div>
                   )}
                 </div>

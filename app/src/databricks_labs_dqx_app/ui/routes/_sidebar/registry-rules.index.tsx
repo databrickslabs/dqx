@@ -9,6 +9,7 @@ import { FadeIn } from "@/components/anim/FadeIn";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   Select,
   SelectContent,
@@ -347,80 +348,115 @@ function RegistryRulesPage() {
         <div className="flex items-center justify-end gap-1">
           {rule.status === "draft" && perms.canCreateRules && (
             <>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 w-7 p-0 text-blue-600"
-                title={t("rulesRegistry.actionSubmit")}
-                onClick={() => handleSubmit(rule)}
-              >
-                <SendHorizonal className="h-3.5 w-3.5" />
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 w-7 p-0 text-destructive"
-                title={t("rulesRegistry.actionDelete")}
-                onClick={() => setDeleteTarget(rule)}
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 w-7 p-0 text-blue-600"
+                    aria-label={t("rulesRegistry.actionSubmit")}
+                    onClick={() => handleSubmit(rule)}
+                  >
+                    <SendHorizonal className="h-3.5 w-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>{t("rulesRegistry.actionSubmit")}</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 w-7 p-0 text-destructive"
+                    aria-label={t("rulesRegistry.actionDelete")}
+                    onClick={() => setDeleteTarget(rule)}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>{t("rulesRegistry.actionDelete")}</TooltipContent>
+              </Tooltip>
             </>
           )}
           {rule.status === "pending_approval" && perms.canApproveRules && (
             <>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 w-7 p-0 text-emerald-600"
-                title={t("rulesRegistry.actionApprove")}
-                onClick={() => handleApprove(rule)}
-              >
-                <CheckCircle2 className="h-3.5 w-3.5" />
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 w-7 p-0 text-destructive"
-                title={t("rulesRegistry.actionReject")}
-                onClick={() => handleReject(rule)}
-              >
-                <XCircle className="h-3.5 w-3.5" />
-              </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 w-7 p-0 text-emerald-600"
+                    aria-label={t("rulesRegistry.actionApprove")}
+                    onClick={() => handleApprove(rule)}
+                  >
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>{t("rulesRegistry.actionApprove")}</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 w-7 p-0 text-destructive"
+                    aria-label={t("rulesRegistry.actionReject")}
+                    onClick={() => handleReject(rule)}
+                  >
+                    <XCircle className="h-3.5 w-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>{t("rulesRegistry.actionReject")}</TooltipContent>
+              </Tooltip>
             </>
           )}
           {rule.status === "approved" && perms.canApproveRules && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 w-7 p-0"
-              title={t("rulesRegistry.actionDeprecate")}
-              onClick={() => handleDeprecate(rule)}
-            >
-              <Archive className="h-3.5 w-3.5" />
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 w-7 p-0"
+                  aria-label={t("rulesRegistry.actionDeprecate")}
+                  onClick={() => handleDeprecate(rule)}
+                >
+                  <Archive className="h-3.5 w-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{t("rulesRegistry.actionDeprecate")}</TooltipContent>
+            </Tooltip>
           )}
           {rule.status === "deprecated" && perms.canApproveRules && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 w-7 p-0"
-              title={t("rulesRegistry.actionUndeprecate")}
-              onClick={() => handleUndeprecate(rule)}
-            >
-              <ArchiveRestore className="h-3.5 w-3.5" />
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 w-7 p-0"
+                  aria-label={t("rulesRegistry.actionUndeprecate")}
+                  onClick={() => handleUndeprecate(rule)}
+                >
+                  <ArchiveRestore className="h-3.5 w-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{t("rulesRegistry.actionUndeprecate")}</TooltipContent>
+            </Tooltip>
           )}
           {rule.status === "rejected" && perms.canCreateRules && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 w-7 p-0 text-destructive"
-              title={t("rulesRegistry.actionDelete")}
-              onClick={() => setDeleteTarget(rule)}
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 w-7 p-0 text-destructive"
+                  aria-label={t("rulesRegistry.actionDelete")}
+                  onClick={() => setDeleteTarget(rule)}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{t("rulesRegistry.actionDelete")}</TooltipContent>
+            </Tooltip>
           )}
         </div>
       );

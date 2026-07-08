@@ -32,8 +32,15 @@ const Checkbox = React.forwardRef<HTMLButtonElement, CheckboxProps>(
         )}
         {...(props as any)}
       >
-        {isChecked && <Check className="h-3.5 w-3.5 mx-auto" strokeWidth={3} />}
-        {isIndeterminate && <Minus className="h-3.5 w-3.5 mx-auto" strokeWidth={3} />}
+        {/* Glyph deliberately smaller than the h-4 w-4 box (item 5 — the
+            "Add tables" wizard's checkboxes read as oversized): a 14px
+            glyph in a 16px box only has the 1px border to breathe
+            against, so at strokeWidth 3 the tick/dash fills the box
+            edge-to-edge. 12px at a lighter stroke leaves visible padding
+            on every side, matching how shadcn's checkbox actually reads
+            rather than its literal className. */}
+        {isChecked && <Check className="h-3 w-3 mx-auto" strokeWidth={2.5} />}
+        {isIndeterminate && <Minus className="h-3 w-3 mx-auto" strokeWidth={2.5} />}
       </button>
     );
   },

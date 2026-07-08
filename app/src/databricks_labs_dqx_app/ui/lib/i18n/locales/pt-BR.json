@@ -107,8 +107,7 @@
     }
   },
   "auth": {
-    "loadingMessage": "Inicializando o DQX Studio...",
-    "loadingDescription": "Configurando sua conexão com o workspace",
+    "loadingMessage": "Carregando o DQX Studio",
     "errorTitle": "Erro de Autenticação",
     "refreshPage": "Recarregar Página",
     "timeoutMessage": "Tempo de autenticação esgotado. O fluxo de autenticação não foi concluído.",
@@ -1604,6 +1603,7 @@
     "aboutSchemaSectionTitle": "Esquema · {{count}} colunas",
     "aboutFilterColumnsPlaceholder": "Filtrar colunas…",
     "aboutColColumn": "Coluna",
+    "aboutColumnJumpTooltip": "Ir para Aplicar Regras para esta coluna",
     "aboutColType": "Tipo",
     "aboutColNullable": "Aceita nulo",
     "aboutColDescription": "Descrição",
@@ -1826,8 +1826,8 @@
       "emptySchemas": "Nenhum esquema encontrado.",
       "emptyTables": "Nenhuma tabela encontrada.",
       "selectCatalogFirst": "Selecione um catálogo primeiro.",
-      "scopeWarningManyTables_one": "{{count}} tabela está sendo adicionada. Isso pode demorar um pouco.",
-      "scopeWarningManyTables_other": "{{count}} tabelas estão sendo adicionadas. Isso pode demorar um pouco.",
+      "scopeWarningManyTables_one": "{{count}} tabela será adicionada. Isso pode demorar um pouco.",
+      "scopeWarningManyTables_other": "{{count}} tabelas serão adicionadas. Isso pode demorar um pouco.",
       "addTablesButton_one": "Adicionar {{count}} tabela",
       "addTablesButton_other": "Adicionar {{count}} tabelas",
       "alreadyMonitoredTooltip": "Esta tabela já está monitorada",

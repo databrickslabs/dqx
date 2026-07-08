@@ -3,6 +3,7 @@ import { useState, useRef, useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { usePermissions } from "@/hooks/use-permissions";
 import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
+import { FadeIn } from "@/components/anim/FadeIn";
 import {
   Card,
   CardContent,
@@ -124,6 +125,7 @@ function ImportRulesPageInner() {
   const onDone = () => navigate({ to: "/rules/drafts" });
 
   return (
+    <FadeIn>
     <div className="space-y-6">
       <PageBreadcrumb
         items={[{ label: t("rulesCreate.breadcrumb"), to: "/rules/create" }]}
@@ -186,6 +188,7 @@ function ImportRulesPageInner() {
         </TabsContent>
       </Tabs>
     </div>
+    </FadeIn>
   );
 }
 

@@ -243,6 +243,19 @@ function MonitoredTableDetailPage() {
   // Save-as-draft/Publish buttons and the unsaved-changes nav guard only
   // engage when there's something to persist.
   // ---------------------------------------------------------------------
+  // About-tab schema row → Apply Rules "by column" deep link (item 1):
+  // reuses the same jump+expand state handoff already wired between the
+  // by-rule and by-column lenses (P19-F item 24). Cleared once ApplyRulesTab
+  // consumes it so re-entering the tab later doesn't re-trigger the jump.
+  const [pendingColumnJump, setPendingColumnJump] = useState<string | null>(null);
+  const handleColumnDeepLink = useCallback(
+    (columnName: string) => {
+      setPendingColumnJump(columnName);
+      handleTabChange("apply-rules");
+    },
+    [handleTabChange],
+  );
+
   const [stagedRows, setStagedRows] = useState<AppliedRuleOut[]>(() => normalizeStagedRows(appliedRules));
   const [baseline, setBaseline] = useState<AppliedRuleOut[]>(() => normalizeStagedRows(appliedRules));
   const seededBindingIdRef = useRef(bindingId);
@@ -546,7 +559,7 @@ function MonitoredTableDetailPage() {
           </TabsList>
 
           <TabsContent value="about">
-            <AboutTab table={table} />
+            <AboutTab table={table} onColumnClick={handleColumnDeepLink} />
           </TabsContent>
 
           <TabsContent value="profile">
@@ -560,6 +573,8 @@ function MonitoredTableDetailPage() {
               stagedRows={stagedRows}
               setStagedRows={setStagedRows}
               canEdit={perms.canCreateRules}
+              initialJumpColumn={pendingColumnJump}
+              onJumpColumnConsumed={() => setPendingColumnJump(null)}
             />
           </TabsContent>
 
@@ -761,7 +776,16 @@ function RunTableAction({
 // About tab
 // ---------------------------------------------------------------------------
 
-function AboutTab({ table }: { table: MonitoredTableOut }) {
+function AboutTab({
+  table,
+  onColumnClick,
+}: {
+  table: MonitoredTableOut;
+  /** Deep-links to the Apply Rules "by column" lens, expanded to that
+   *  column (item 1) — reuses the jump+expand handoff already wired
+   *  between the by-rule/by-column lenses in ApplyRulesTab. */
+  onColumnClick: (columnName: string) => void;
+}) {
   const { t } = useTranslation();
   const [filter, setFilter] = useState("");
   const parts = table.table_fqn.split(".");
@@ -862,7 +886,20 @@ function AboutTab({ table }: { table: MonitoredTableOut }) {
                 {filteredColumns.map((c) => (
                   <tr key={c.name} className="border-t">
                     <td className="px-3 py-2 align-top">
-                      <span className="font-mono text-xs">{c.name}</span>
+                      <TooltipProvider delayDuration={300}>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button
+                              type="button"
+                              onClick={() => onColumnClick(c.name)}
+                              className="font-mono text-xs text-left hover:underline hover:text-primary focus-visible:underline focus-visible:outline-none"
+                            >
+                              {c.name}
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent>{t("monitoredTables.aboutColumnJumpTooltip")}</TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
                     </td>
                     <td className="px-3 py-2 align-top">
                       <Badge variant="outline" className="text-[10px] font-mono">
@@ -1073,6 +1110,8 @@ function ApplyRulesTab({
   stagedRows,
   setStagedRows,
   canEdit,
+  initialJumpColumn,
+  onJumpColumnConsumed,
 }: {
   bindingId: string;
   tableFqn: string;
@@ -1085,9 +1124,17 @@ function ApplyRulesTab({
   stagedRows: AppliedRuleOut[];
   setStagedRows: (updater: (prev: AppliedRuleOut[]) => AppliedRuleOut[]) => void;
   canEdit: boolean;
+  /** Column to land on when this tab is entered via the About-tab schema
+   *  row's "deep link" (item 1 / P19-F chip-jump handoff, reused across
+   *  tabs) — opens the by-column lens straight to that column's card. Radix
+   *  unmounts inactive `TabsContent`, so this component remounts fresh on
+   *  every tab entry and this only needs to seed the initial lens/open
+   *  column, not react to later changes. */
+  initialJumpColumn?: string | null;
+  onJumpColumnConsumed?: () => void;
 }) {
   const { t } = useTranslation();
-  const [lens, setLens] = useState<"by-rule" | "by-column">("by-rule");
+  const [lens, setLens] = useState<"by-rule" | "by-column">(initialJumpColumn ? "by-column" : "by-rule");
   const [addOpen, setAddOpen] = useState(false);
   const [addColumnContext, setAddColumnContext] = useState<ColumnRef | null>(null);
   const [suggestOpen, setSuggestOpen] = useState(false);
@@ -1107,7 +1154,22 @@ function ApplyRulesTab({
   // Lifted from RulesByColumn (mirrors dqlake's AppliedRulesList) so the
   // column card can auto-expand right after a rule is added to it via the
   // "+ Add rule" CTA on a column card.
-  const [openColumnName, setOpenColumnName] = useState<string | null>(null);
+  const [openColumnName, setOpenColumnName] = useState<string | null>(initialJumpColumn ?? null);
+
+  // Scroll the target column's card into view once, on entry via the About
+  // tab's deep link, then tell the parent to clear the pending jump so
+  // switching tabs away and back doesn't re-trigger it.
+  useEffect(() => {
+    if (!initialJumpColumn) return;
+    const timeout = setTimeout(() => {
+      document
+        .getElementById(`column-card-${initialJumpColumn}`)
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 50);
+    onJumpColumnConsumed?.();
+    return () => clearTimeout(timeout);
+  }, [initialJumpColumn, onJumpColumnConsumed]);
+
   const aiAvailability = useAiAvailability();
   const { available: aiAvailable, reportUnavailable } = aiAvailability;
 
