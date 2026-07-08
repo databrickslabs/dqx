@@ -296,14 +296,32 @@ class TestUpdateDraft:
         assert "edited description" in update_sql
         assert '"value": null' in update_sql
 
-    def test_rejects_editing_non_draft_rule(self, svc, sql):
+    def test_edits_approved_rule_in_place_without_bumping_version(self, svc, sql):
+        """Edit-in-place revision path: an ``approved`` rule is editable, its
+        live definition/tags change, but its ``version`` stays N (no new
+        snapshot) until the revision is re-submitted and re-approved."""
         from databricks_labs_dqx_app.backend.registry_models import RegistryRule
 
         approved = RegistryRule(
             rule_id="r1", mode="dqx_native", status="approved", version=1, definition=_native_definition()
         )
         sql.query.return_value = [_row_for(approved)]
-        with pytest.raises(ValueError, match="only draft rules"):
+        updated = svc.update_draft("r1", user_email="alice@x", user_metadata={"name": "renamed"})
+        assert updated.status == "approved"
+        assert updated.version == 1
+        assert updated.user_metadata == {"name": "renamed"}
+        update_sql = next(c.args[0] for c in sql.execute.call_args_list if c.args[0].startswith("UPDATE"))
+        assert "dq_rule_versions" not in update_sql
+
+    @pytest.mark.parametrize("status", ["pending_approval", "rejected", "deprecated"])
+    def test_rejects_editing_non_editable_status(self, svc, sql, status):
+        from databricks_labs_dqx_app.backend.registry_models import RegistryRule
+
+        rule = RegistryRule(
+            rule_id="r1", mode="dqx_native", status=status, version=1, definition=_native_definition()
+        )
+        sql.query.return_value = [_row_for(rule)]
+        with pytest.raises(ValueError, match="can be"):
             svc.update_draft("r1", user_email="alice@x", user_metadata={"name": "x"})
 
     def test_missing_rule_raises(self, svc, sql):
@@ -418,10 +436,33 @@ class TestLifecycle:
         updated = svc.submit("r1", "alice@x")
         assert updated.status == "pending_approval"
 
-    def test_submit_rejects_invalid_transition(self, svc, sql):
+    def test_submit_approved_revision_to_pending_keeps_version(self, svc, sql):
+        """Re-submitting an edited approved rule sends it back through the
+        gate (approved -> pending_approval) WITHOUT bumping version — vN keeps
+        serving until the revision is approved as vN+1."""
         sql.query.return_value = [_row_for(self._rule("approved", version=1))]
+        updated = svc.submit("r1", "alice@x")
+        assert updated.status == "pending_approval"
+        assert updated.version == 1
+
+    def test_submit_rejects_invalid_transition(self, svc, sql):
+        sql.query.return_value = [_row_for(self._rule("deprecated", version=1))]
         with pytest.raises(ValueError, match="Cannot transition"):
             svc.submit("r1", "alice@x")
+
+    def test_reject_first_draft_is_terminal(self, svc, sql):
+        """Rejecting a first-time draft's review (version 0) is terminal."""
+        sql.query.return_value = [_row_for(self._rule("pending_approval", version=0))]
+        updated = svc.reject("r1", "approver@x")
+        assert updated.status == "rejected"
+
+    def test_reject_published_revision_returns_to_approved(self, svc, sql):
+        """Rejecting a REVISION of an already-published rule (version >= 1)
+        returns it to approved-at-vN with the live edits retained."""
+        sql.query.return_value = [_row_for(self._rule("pending_approval", version=1))]
+        updated = svc.reject("r1", "approver@x")
+        assert updated.status == "approved"
+        assert updated.version == 1
 
     def test_approve_bumps_version_and_writes_snapshot(self, svc, sql):
         sql.query.return_value = [_row_for(self._rule("pending_approval"))]
@@ -526,7 +567,10 @@ class TestListAndGet:
             rule_id="b", mode="dqx_native", status="approved", version=1,
             definition=_native_definition(), user_metadata={"dimension": "Completeness"},
         )
-        sql.query.return_value = [_row_for(a), _row_for(b)]
+        # First query: the list itself; second: the modified-snapshot batch
+        # for the filtered (published) rules — empty here (no modified state
+        # under test).
+        sql.query.side_effect = [[_row_for(a), _row_for(b)], []]
         result = svc.list_rules(dimension="Validity")
         assert [r.rule_id for r in result] == ["a"]
 
@@ -596,3 +640,107 @@ class TestSeedBuiltinRule:
         )
         assert rule.created_by == "system"
         assert rule.steward == "system"
+
+
+# ---------------------------------------------------------------------------
+# Modified-since-publish detection + version history
+# ---------------------------------------------------------------------------
+
+
+def _version_row(rule_id, version, definition, user_metadata, polarity=None):
+    """Build a SELECT row matching ``RegistryService._row_to_version`` order."""
+    return [
+        rule_id,
+        str(version),
+        json.dumps(definition.model_dump(mode="json")),
+        polarity,
+        json.dumps(user_metadata),
+        "author@x",
+        "2026-07-02T00:00:00+00:00",
+    ]
+
+
+class TestModifiedSincePublish:
+    def _approved(self, definition, metadata):
+        from databricks_labs_dqx_app.backend.registry_models import RegistryRule
+
+        return RegistryRule(
+            rule_id="r1", mode="dqx_native", status="approved", version=1,
+            definition=definition, user_metadata=metadata,
+        )
+
+    def test_not_modified_when_live_matches_snapshot(self, svc, sql):
+        definition = _native_definition()
+        metadata = {"name": "n"}
+        rule = self._approved(definition, metadata)
+        sql.query.side_effect = [
+            [_row_for(rule)],  # _get
+            [_version_row("r1", 1, definition, metadata)],  # _get_version
+        ]
+        result = svc.get_rule_with_version("r1")
+        assert result is not None
+        got_rule, _ = result
+        assert got_rule.modified_since_publish is False
+
+    def test_modified_when_definition_differs(self, svc, sql):
+        live_def = RuleDefinition.model_validate(
+            {"body": {"function": "is_not_null", "arguments": {"column": "{{column}}"}}, "slots": [], "parameters": []}
+        )
+        published_def = RuleDefinition.model_validate(
+            {"body": {"function": "is_not_empty", "arguments": {"column": "{{column}}"}}, "slots": [], "parameters": []}
+        )
+        rule = self._approved(live_def, {"name": "n"})
+        sql.query.side_effect = [
+            [_row_for(rule)],
+            [_version_row("r1", 1, published_def, {"name": "n"})],
+        ]
+        got_rule, _ = svc.get_rule_with_version("r1")
+        assert got_rule.modified_since_publish is True
+
+    def test_modified_when_metadata_differs(self, svc, sql):
+        definition = _native_definition()
+        rule = self._approved(definition, {"name": "new", "severity": "High"})
+        sql.query.side_effect = [
+            [_row_for(rule)],
+            [_version_row("r1", 1, definition, {"name": "old", "severity": "High"})],
+        ]
+        got_rule, _ = svc.get_rule_with_version("r1")
+        assert got_rule.modified_since_publish is True
+
+    def test_list_attaches_modified_flag(self, svc, sql):
+        definition = _native_definition()
+        rule = self._approved(definition, {"name": "live"})
+        sql.query.side_effect = [
+            [_row_for(rule)],  # list query
+            [_version_row("r1", 1, definition, {"name": "published"})],  # _attach_modified batch
+        ]
+        rules = svc.list_rules()
+        assert len(rules) == 1
+        assert rules[0].modified_since_publish is True
+
+    def test_list_no_snapshot_query_when_all_unpublished(self, svc, sql):
+        from databricks_labs_dqx_app.backend.registry_models import RegistryRule
+
+        draft = RegistryRule(rule_id="d1", mode="dqx_native", status="draft", version=0, definition=_native_definition())
+        sql.query.return_value = [_row_for(draft)]
+        rules = svc.list_rules()
+        assert rules[0].modified_since_publish is False
+        # Only the list query itself runs — no snapshot batch for unpublished rules.
+        assert sql.query.call_count == 1
+
+
+class TestListVersions:
+    def test_lists_versions_newest_first(self, svc, sql):
+        definition = _native_definition()
+        sql.query.return_value = [
+            _version_row("r1", 2, definition, {"name": "v2"}),
+            _version_row("r1", 1, definition, {"name": "v1"}),
+        ]
+        versions = svc.list_versions("r1")
+        assert [v.version for v in versions] == [2, 1]
+        called_sql = sql.query.call_args[0][0]
+        assert "ORDER BY version DESC" in called_sql
+
+    def test_empty_when_no_versions(self, svc, sql):
+        sql.query.return_value = []
+        assert svc.list_versions("r1") == []

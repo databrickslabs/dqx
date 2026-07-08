@@ -23,6 +23,7 @@ from databricks_labs_dqx_app.backend.routes.v1.registry_rules import (
     delete_registry_rule,
     deprecate_registry_rule,
     get_registry_rule,
+    list_registry_rule_versions,
     list_registry_rules,
     reject_registry_rule,
     submit_registry_rule,
@@ -79,6 +80,26 @@ class TestListAndGet:
         with pytest.raises(HTTPException) as excinfo:
             get_registry_rule("missing", svc=svc)
         assert excinfo.value.status_code == 404
+
+    def test_get_surfaces_modified_display_status(self):
+        svc = MagicMock()
+        rule = _rule(status="approved", version=1)
+        rule.modified_since_publish = True
+        svc.get_rule_with_version.return_value = (rule, None)
+        result = get_registry_rule("r1", svc=svc)
+        assert result.rule.modified_since_publish is True
+        assert result.rule.display_status == "modified"
+
+    def test_list_versions_maps_snapshots(self):
+        from databricks_labs_dqx_app.backend.registry_models import RuleVersion
+
+        svc = MagicMock()
+        svc.list_versions.return_value = [
+            RuleVersion(rule_id="r1", version=2, definition=_definition()),
+            RuleVersion(rule_id="r1", version=1, definition=_definition()),
+        ]
+        result = list_registry_rule_versions("r1", svc=svc)
+        assert [v.version for v in result] == [2, 1]
 
 
 class TestCreateAndUpdate:

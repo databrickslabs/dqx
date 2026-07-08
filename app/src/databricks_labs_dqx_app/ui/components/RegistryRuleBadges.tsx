@@ -3,6 +3,7 @@ import {
   Archive,
   Clock,
   FileEdit,
+  PencilLine,
   ShieldCheck,
   Sparkles,
   XCircle,
@@ -147,6 +148,23 @@ export function StatusBadge({ status }: { status: string }) {
     default:
       return <Badge variant="secondary" className="text-[10px]">{status}</Badge>;
   }
+}
+
+/**
+ * "Modified since vN" indicator, shown alongside the `approved` StatusBadge
+ * when a published rule carries unpublished edit-in-place changes
+ * (`RegistryRuleOut.modified_since_publish`). The published vN keeps serving
+ * everywhere until the revision is re-submitted and re-approved as vN+1 — this
+ * badge is the steward's signal that a Submit-for-review is pending.
+ */
+export function ModifiedBadge({ version }: { version: number }) {
+  const { t } = useTranslation();
+  return (
+    <Badge variant="outline" className="gap-1 text-[10px] border-amber-500 text-amber-600">
+      <PencilLine className="h-2.5 w-2.5" />
+      {t("rulesRegistry.badgeModifiedSince", { version })}
+    </Badge>
+  );
 }
 
 export function ModeBadge({ mode }: { mode: string }) {

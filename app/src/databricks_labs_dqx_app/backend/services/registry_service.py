@@ -60,13 +60,29 @@ class RegistryService:
     _VALID_POLARITIES: frozenset[str] = frozenset(get_args(Polarity))
     _VALID_AUTHOR_KINDS: frozenset[str] = frozenset(get_args(AuthorKind))
 
+    # An ``approved`` rule can be re-submitted for review (approved ->
+    # pending_approval): this is how an edit-in-place REVISION of an
+    # already-published rule is sent back through the approval gate to be
+    # published as vN+1. While it sits in ``pending_approval`` the rule's
+    # ``version`` stays N, so the FOLLOWING materializer resolution keeps
+    # serving the frozen vN snapshot until approval bumps it (see
+    # :meth:`approve` / ``Materializer._iter_rendered_checks``).
     VALID_TRANSITIONS: dict[str, set[str]] = {
         "draft": {"pending_approval"},
         "pending_approval": {"approved", "rejected"},
-        "approved": {"deprecated"},
+        "approved": {"deprecated", "pending_approval"},
         "rejected": set(),
         "deprecated": {"approved"},
     }
+
+    # Statuses whose LIVE ``dq_rules`` row may be edited in place (see
+    # :meth:`update_draft`). ``approved`` is editable because that is how a
+    # revision is authored — the edits stay inert (the frozen vN snapshot
+    # keeps serving) until the revision is submitted and re-approved as vN+1.
+    # ``pending_approval`` is intentionally NOT editable (it is under review —
+    # reject or approve it first), and neither is ``rejected``/``deprecated``
+    # (use "Duplicate" / undeprecate respectively).
+    EDITABLE_STATUSES: frozenset[str] = frozenset({"draft", "approved"})
 
     def __init__(self, sql: OltpExecutorProtocol) -> None:
         self._sql = sql
@@ -123,7 +139,42 @@ class RegistryService:
             rules = [r for r in rules if get_rule_severity(r.user_metadata) == severity]
         if tag:
             rules = [r for r in rules if tag in r.user_metadata]
+        self._attach_modified(rules)
         return rules
+
+    def _attach_modified(self, rules: list[RegistryRule]) -> None:
+        """Stamp ``modified_since_publish`` on each published rule in *rules*.
+
+        Batches ONE query over ``dq_rule_versions`` for the current snapshot
+        of every rule with ``version > 0`` (matched on the exact
+        ``(rule_id, version)`` pair), then compares live vs. snapshot content
+        via :meth:`_compute_modified`. Unpublished rules keep the default
+        ``False``.
+        """
+        targets = [(r.rule_id, r.version) for r in rules if r.version and r.version > 0]
+        if not targets:
+            return
+        definition = self._sql.select_json_text("definition")
+        user_metadata = self._sql.select_json_text("user_metadata")
+        pairs = " OR ".join(
+            f"(rule_id = '{escape_sql_string(rid)}' AND version = {int(ver)})" for rid, ver in targets
+        )
+        sql = (
+            f"SELECT rule_id, version, {definition} AS definition_json, polarity, "
+            f"{user_metadata} AS user_metadata_json FROM {self._versions_table} WHERE {pairs}"  # noqa: S608
+        )
+        rows = self._sql.query(sql)
+        snapshots: dict[str, RuleVersion] = {}
+        for row in rows:
+            # Pad the created_by/created_at columns the modified check ignores
+            # with empty strings so the row matches ``_row_to_version``'s
+            # ``list[str]`` shape (empty created_at parses to None).
+            snapshot = self._row_to_version([row[0], row[1], row[2], row[3], row[4], "", ""])
+            snapshots[snapshot.rule_id] = snapshot
+        for rule in rules:
+            snapshot = snapshots.get(rule.rule_id)
+            if snapshot is not None and snapshot.version == rule.version:
+                rule.modified_since_publish = self._compute_modified(rule, snapshot)
 
     def get_rule(self, rule_id: str) -> RegistryRule | None:
         """Get a single registry rule (with its typed slots/params) by id."""
@@ -156,13 +207,59 @@ class RegistryService:
         return self._get_version(rule_id, version)
 
     def get_rule_with_version(self, rule_id: str) -> tuple[RegistryRule, RuleVersion | None] | None:
-        """Get a registry rule plus its current published snapshot, if any."""
+        """Get a registry rule plus its current published snapshot, if any.
+
+        Also stamps ``rule.modified_since_publish`` (see
+        :meth:`_compute_modified`) so the detail read path can surface the
+        "Modified since vN" state without a second query.
+        """
         rule = self._get(rule_id)
         if rule is None:
             return None
         if rule.version <= 0:
             return rule, None
-        return rule, self._get_version(rule.rule_id, rule.version)
+        version = self._get_version(rule.rule_id, rule.version)
+        rule.modified_since_publish = self._compute_modified(rule, version)
+        return rule, version
+
+    def list_versions(self, rule_id: str) -> list[RuleVersion]:
+        """List every frozen ``dq_rule_versions`` snapshot for *rule_id*, newest first.
+
+        Powers the rule's version-history view — the published lineage a
+        steward can inspect (each row is an immutable publish snapshot with
+        its own definition/tags/author/date).
+        """
+        definition = self._sql.select_json_text("definition")
+        user_metadata = self._sql.select_json_text("user_metadata")
+        created_at = self._sql.ts_text("created_at")
+        e_rule_id = escape_sql_string(rule_id)
+        sql = (
+            f"SELECT rule_id, version, {definition} AS definition_json, polarity, "
+            f"{user_metadata} AS user_metadata_json, created_by, {created_at} "
+            f"FROM {self._versions_table} WHERE rule_id = '{e_rule_id}' ORDER BY version DESC"  # noqa: S608
+        )
+        rows = self._sql.query(sql)
+        return [self._row_to_version(row) for row in rows]
+
+    @staticmethod
+    def _compute_modified(rule: RegistryRule, snapshot: RuleVersion | None) -> bool:
+        """Return True when *rule*'s live content differs from its current *snapshot*.
+
+        Compares the fields a publish freezes — definition (body/slots/
+        parameters/error_message), polarity, and ``user_metadata`` (name/
+        description/dimension/severity/free-text tags) — so a metadata-only
+        edit (e.g. bumping severity) is flagged too, not just definition
+        changes. Returns False for an unpublished rule (``version <= 0`` or no
+        snapshot): a draft is not "modified since publish", it just isn't
+        published yet.
+        """
+        if snapshot is None or rule.version <= 0:
+            return False
+        if rule.polarity != snapshot.polarity:
+            return True
+        if rule.definition.model_dump(mode="json") != snapshot.definition.model_dump(mode="json"):
+            return True
+        return rule.user_metadata != snapshot.user_metadata
 
     def _get(self, rule_id: str) -> RegistryRule | None:
         e_rule_id = escape_sql_string(rule_id)
@@ -296,7 +393,20 @@ class RegistryService:
         steward: str | None = None,
         author_kind: AuthorKind | None = None,
     ) -> RegistryRule:
-        """Update a draft registry rule in place. Only ``draft`` rules are editable.
+        """Update a registry rule's LIVE ``dq_rules`` row in place.
+
+        Editable statuses are :data:`EDITABLE_STATUSES` — ``draft`` and
+        ``approved``. Editing a ``draft`` works exactly as before. Editing an
+        ``approved`` rule is the edit-in-place REVISION path: the live
+        definition/tags change but ``version`` stays N and no new
+        ``dq_rule_versions`` snapshot is written, so the frozen vN snapshot
+        keeps serving everywhere (materialization, draft renders, the
+        suggester corpus) until the revision is submitted and re-approved as
+        vN+1 (see :meth:`submit`/:meth:`approve`). The rule therefore reads as
+        "Modified since vN" (:meth:`_compute_modified`) while it carries
+        unpublished edits. A ``pending_approval`` rule is under review and
+        cannot be edited (reject or approve it first); ``rejected`` /
+        ``deprecated`` rules aren't editable either (duplicate / undeprecate).
 
         *author_kind* lets an edit-in-place session re-stamp AI provenance
         (e.g. a human accepts an AI-suggested field on an otherwise
@@ -306,10 +416,10 @@ class RegistryService:
         rule = self._get(rule_id)
         if rule is None:
             raise RuntimeError(f"Registry rule not found: {rule_id}")
-        if rule.status != "draft":
+        if rule.status not in self.EDITABLE_STATUSES:
             raise ValueError(
-                f"Cannot edit registry rule '{rule_id}': only draft rules can be edited "
-                f"(current status='{rule.status}')."
+                f"Cannot edit registry rule '{rule_id}': only {sorted(self.EDITABLE_STATUSES)} rules can be "
+                f"edited (current status='{rule.status}')."
             )
         if mode is not None:
             rule.mode = mode
@@ -327,8 +437,10 @@ class RegistryService:
         rule.fingerprint = compute_registry_rule_fingerprint(rule)
         rule.updated_by = user_email
         self._update(rule)
-        self._record_history(rule.rule_id, rule.definition, rule.version, "update", "draft", "draft", user_email)
-        logger.info("Updated draft registry rule %s", rule.rule_id)
+        self._record_history(
+            rule.rule_id, rule.definition, rule.version, "update", rule.status, rule.status, user_email
+        )
+        logger.info("Updated registry rule %s (status=%s)", rule.rule_id, rule.status)
         return rule
 
     @staticmethod
@@ -394,7 +506,13 @@ class RegistryService:
     # ------------------------------------------------------------------
 
     def submit(self, rule_id: str, user_email: str) -> RegistryRule:
-        """Submit a draft rule for approval (draft -> pending_approval)."""
+        """Submit a rule for approval (-> pending_approval).
+
+        Valid from ``draft`` (first publish) and from ``approved`` (an
+        edit-in-place REVISION of an already-published rule going back through
+        the gate to become vN+1). While pending, ``version`` is unchanged so
+        the frozen vN snapshot keeps serving followers.
+        """
         return self._transition(rule_id, "pending_approval", user_email)
 
     def approve(self, rule_id: str, user_email: str) -> RegistryRule:
@@ -421,8 +539,22 @@ class RegistryService:
         return rule
 
     def reject(self, rule_id: str, user_email: str) -> RegistryRule:
-        """Reject a pending rule (pending_approval -> rejected)."""
-        return self._transition(rule_id, "rejected", user_email)
+        """Reject a pending rule — behaviour depends on whether it was ever published.
+
+        Mirrors the Monitored Tables recovery semantics: rejecting the review
+        of a first-time draft (``version == 0``) is terminal
+        (``pending_approval -> rejected``), but rejecting a REVISION of an
+        already-published rule (``version >= 1``) returns it to ``approved``
+        at its current vN — the author's live edits are RETAINED (so it still
+        reads as "Modified since vN") and the previously-published vN keeps
+        serving throughout, letting the author fix and resubmit rather than
+        dead-ending the rule.
+        """
+        rule = self._get(rule_id)
+        if rule is None:
+            raise RuntimeError(f"Registry rule not found: {rule_id}")
+        target: RuleStatus = "approved" if rule.version >= 1 else "rejected"
+        return self._transition(rule_id, target, user_email)
 
     def deprecate(self, rule_id: str, user_email: str) -> RegistryRule:
         """Deprecate a published rule (approved -> deprecated)."""

@@ -1559,6 +1559,22 @@ export type RegistryRuleOutUpdatedBy = string | null;
 export type RegistryRuleOutUpdatedAt = string | null;
 
 /**
+ * UI-facing status: raw status, or 'modified' for an edited approved rule.
+ */
+export type RegistryRuleOutDisplayStatus = typeof RegistryRuleOutDisplayStatus[keyof typeof RegistryRuleOutDisplayStatus];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const RegistryRuleOutDisplayStatus = {
+  draft: 'draft',
+  pending_approval: 'pending_approval',
+  approved: 'approved',
+  rejected: 'rejected',
+  deprecated: 'deprecated',
+  modified: 'modified',
+} as const;
+
+/**
  * A ``dq_rules`` row as returned to the frontend.
  */
 export interface RegistryRuleOut {
@@ -1578,6 +1594,10 @@ export interface RegistryRuleOut {
   created_at?: RegistryRuleOutCreatedAt;
   updated_by?: RegistryRuleOutUpdatedBy;
   updated_at?: RegistryRuleOutUpdatedAt;
+  /** True when this approved (or in-review revision of an) already-published rule carries unpublished live edits — its definition/tags differ from the current published snapshot ('Modified since vN'). Only meaningful on the list / detail read paths. */
+  modified_since_publish?: boolean;
+  /** UI-facing status: raw status, or 'modified' for an edited approved rule. */
+  display_status: RegistryRuleOutDisplayStatus;
 }
 
 export type RegistryRuleVersionOutPolarity = 'pass' | 'fail' | null;
@@ -9517,7 +9537,12 @@ export function useGetRegistryRuleSuspense<TData = Awaited<ReturnType<typeof get
 
 
 /**
- * Update a draft registry rule. Only draft rules can be edited.
+ * Update a registry rule's live definition/tags in place.
+
+Editable for ``draft`` rules and for ``approved`` rules (the edit-in-place
+revision path — the edits stay inert behind the frozen vN snapshot until
+the rule is re-submitted and re-approved as vN+1). Rejected with 400 for
+any other status.
  * @summary Update Registry Rule
  */
 export const updateRegistryRule = (
@@ -9646,6 +9671,153 @@ export const useDeleteRegistryRule = <TError = AxiosError<HTTPValidationError>,
       return useMutation(mutationOptions, queryClient);
     }
     
+/**
+ * List a registry rule's published version snapshots (newest first).
+ * @summary List Registry Rule Versions
+ */
+export const listRegistryRuleVersions = (
+    ruleId: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<RegistryRuleVersionOut[]>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/registry-rules/${ruleId}/versions`,options
+    );
+  }
+
+
+
+
+export const getListRegistryRuleVersionsQueryKey = (ruleId?: string,) => {
+    return [
+    `/api/v1/registry-rules/${ruleId}/versions`
+    ] as const;
+    }
+
+    
+export const getListRegistryRuleVersionsQueryOptions = <TData = Awaited<ReturnType<typeof listRegistryRuleVersions>>, TError = AxiosError<HTTPValidationError>>(ruleId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listRegistryRuleVersions>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListRegistryRuleVersionsQueryKey(ruleId);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listRegistryRuleVersions>>> = ({ signal }) => listRegistryRuleVersions(ruleId, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, enabled: !!(ruleId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listRegistryRuleVersions>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListRegistryRuleVersionsQueryResult = NonNullable<Awaited<ReturnType<typeof listRegistryRuleVersions>>>
+export type ListRegistryRuleVersionsQueryError = AxiosError<HTTPValidationError>
+
+
+export function useListRegistryRuleVersions<TData = Awaited<ReturnType<typeof listRegistryRuleVersions>>, TError = AxiosError<HTTPValidationError>>(
+ ruleId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listRegistryRuleVersions>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listRegistryRuleVersions>>,
+          TError,
+          Awaited<ReturnType<typeof listRegistryRuleVersions>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListRegistryRuleVersions<TData = Awaited<ReturnType<typeof listRegistryRuleVersions>>, TError = AxiosError<HTTPValidationError>>(
+ ruleId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listRegistryRuleVersions>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listRegistryRuleVersions>>,
+          TError,
+          Awaited<ReturnType<typeof listRegistryRuleVersions>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListRegistryRuleVersions<TData = Awaited<ReturnType<typeof listRegistryRuleVersions>>, TError = AxiosError<HTTPValidationError>>(
+ ruleId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listRegistryRuleVersions>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List Registry Rule Versions
+ */
+
+export function useListRegistryRuleVersions<TData = Awaited<ReturnType<typeof listRegistryRuleVersions>>, TError = AxiosError<HTTPValidationError>>(
+ ruleId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listRegistryRuleVersions>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListRegistryRuleVersionsQueryOptions(ruleId,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getListRegistryRuleVersionsSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof listRegistryRuleVersions>>, TError = AxiosError<HTTPValidationError>>(ruleId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listRegistryRuleVersions>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListRegistryRuleVersionsQueryKey(ruleId);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listRegistryRuleVersions>>> = ({ signal }) => listRegistryRuleVersions(ruleId, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof listRegistryRuleVersions>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListRegistryRuleVersionsSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof listRegistryRuleVersions>>>
+export type ListRegistryRuleVersionsSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useListRegistryRuleVersionsSuspense<TData = Awaited<ReturnType<typeof listRegistryRuleVersions>>, TError = AxiosError<HTTPValidationError>>(
+ ruleId: string, options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listRegistryRuleVersions>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListRegistryRuleVersionsSuspense<TData = Awaited<ReturnType<typeof listRegistryRuleVersions>>, TError = AxiosError<HTTPValidationError>>(
+ ruleId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listRegistryRuleVersions>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListRegistryRuleVersionsSuspense<TData = Awaited<ReturnType<typeof listRegistryRuleVersions>>, TError = AxiosError<HTTPValidationError>>(
+ ruleId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listRegistryRuleVersions>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List Registry Rule Versions
+ */
+
+export function useListRegistryRuleVersionsSuspense<TData = Awaited<ReturnType<typeof listRegistryRuleVersions>>, TError = AxiosError<HTTPValidationError>>(
+ ruleId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listRegistryRuleVersions>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListRegistryRuleVersionsSuspenseQueryOptions(ruleId,options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
 /**
  * Submit a draft registry rule for approval.
  * @summary Submit Registry Rule

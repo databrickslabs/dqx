@@ -28,9 +28,9 @@ import {
   AlertCircle,
   Braces,
   CheckCircle2,
+  Copy,
   Loader2,
   MoreVertical,
-  Pencil,
   RotateCcw,
   Table2,
   Trash2,
@@ -54,7 +54,7 @@ import {
 } from "@/components/RegistryRuleFormDialog";
 import { ApplyRuleModal } from "@/components/registry-rules/ApplyRuleModal";
 import { RegistryRuleJsonDialog } from "@/components/registry-rules/RegistryRuleJsonDialog";
-import { StatusBadge, getTag, RESERVED_NAME_KEY } from "@/components/RegistryRuleBadges";
+import { StatusBadge, ModifiedBadge, getTag, RESERVED_NAME_KEY } from "@/components/RegistryRuleBadges";
 import { invalidateAfterRegistryRuleApprovalChange } from "@/lib/registry-rule-invalidation";
 import { cn } from "@/lib/utils";
 
@@ -217,16 +217,16 @@ function RegistryRuleDetailPage() {
     [navigate, ruleId],
   );
 
-  // Only drafts are editable in place — the backend's update_draft rejects
-  // any other status (pending approval, approved, rejected, deprecated)
-  // because an approved rule's published snapshot must stay immutable (see
-  // RegistryService.approve's frozen dq_rule_versions row). For every other
-  // status we instead offer "Edit as new draft" below, which clones the
-  // rule into a fresh draft the user can freely edit and submit — mirroring
-  // dqlake's "editing a published rule creates a new version" behavior
-  // without touching the frozen original.
-  const canEdit = rule.status === "draft" && perms.canCreateRules;
-  const canEditAsNewDraft = rule.status !== "draft" && perms.canCreateRules;
+  // Draft AND approved rules are editable in place (RegistryService's
+  // EDITABLE_STATUSES). Editing an approved rule is the edit-in-place
+  // REVISION path: the live definition changes but the frozen vN
+  // dq_rule_versions snapshot keeps serving everywhere until the revision is
+  // re-submitted and re-approved as vN+1 — the rule reads "Modified since vN"
+  // meanwhile. pending_approval / rejected / deprecated are not editable; for
+  // those (and any rule) the "Duplicate" menu action clones the rule into a
+  // fresh draft to author independently, without touching the original.
+  const canEdit = (rule.status === "draft" || rule.status === "approved") && perms.canCreateRules;
+  const canDuplicate = perms.canCreateRules;
   const name = getTag(rule, RESERVED_NAME_KEY) || rule.rule_id;
 
   // The backend deleteRegistryRule route allows admin/approver/author
@@ -247,7 +247,7 @@ function RegistryRuleDetailPage() {
   const showActionsMenu = true;
 
   const createMutation = useCreateRegistryRule();
-  const handleEditAsNewDraft = useCallback(() => {
+  const handleDuplicate = useCallback(() => {
     const payload: CreateRegistryRuleIn = {
       mode: rule.mode,
       definition: rule.definition,
@@ -260,7 +260,7 @@ function RegistryRuleDetailPage() {
       { data: payload },
       {
         onSuccess: (resp) => {
-          toast.success(t("rulesRegistry.toastDraftCopyCreated"));
+          toast.success(t("rulesRegistry.toastDuplicated"));
           navigate({
             to: "/registry-rules/$ruleId",
             params: { ruleId: resp.data.rule.rule_id },
@@ -283,6 +283,7 @@ function RegistryRuleDetailPage() {
           <div className="flex flex-wrap items-center gap-2 min-w-0">
             <h1 className="text-2xl font-semibold tracking-tight leading-none truncate">{name}</h1>
             <StatusBadge status={rule.status} />
+            {rule.modified_since_publish && <ModifiedBadge version={rule.version} />}
           </div>
           <div className="flex items-center gap-2 ml-auto">
             {canApproveReject && (
@@ -317,19 +318,6 @@ function RegistryRuleDetailPage() {
                 </Button>
               </>
             )}
-            {canEditAsNewDraft && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-2 h-8"
-                onClick={handleEditAsNewDraft}
-                disabled={createMutation.isPending}
-                title={t("rulesRegistry.editAsNewDraftTooltip")}
-              >
-                <Pencil className="h-3.5 w-3.5" />
-                {t("rulesRegistry.actionEditAsNewDraft")}
-              </Button>
-            )}
             {showActionsMenu && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -347,6 +335,16 @@ function RegistryRuleDetailPage() {
                     <DropdownMenuItem onClick={() => setApplyModalOpen(true)} className="gap-2">
                       <Table2 className="h-3.5 w-3.5" />
                       {t("rulesRegistry.actionApplyToTables")}
+                    </DropdownMenuItem>
+                  )}
+                  {canDuplicate && (
+                    <DropdownMenuItem
+                      onClick={handleDuplicate}
+                      disabled={createMutation.isPending}
+                      className="gap-2"
+                    >
+                      <Copy className="h-3.5 w-3.5" />
+                      {t("rulesRegistry.actionDuplicate")}
                     </DropdownMenuItem>
                   )}
                   <DropdownMenuItem onClick={() => setJsonDialogOpen(true)} className="gap-2">
@@ -401,7 +399,7 @@ function RegistryRuleDetailPage() {
         onOpenChange={setJsonDialogOpen}
         rule={rule}
         canEdit={canEdit}
-        canEditAsNewDraft={canEditAsNewDraft}
+        canEditAsNewDraft={!canEdit && canDuplicate}
         onSaved={(newRuleId) => {
           justSavedRef.current = true;
           if (newRuleId && newRuleId !== rule.rule_id) {

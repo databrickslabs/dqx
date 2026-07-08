@@ -20,7 +20,7 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel, Field
 
@@ -148,6 +148,16 @@ class RegistryRule(BaseModel):
     created_at: datetime | None = None
     updated_by: str | None = None
     updated_at: datetime | None = None
+    modified_since_publish: bool = Field(
+        default=False,
+        description=(
+            "Transient (never persisted): True when the LIVE definition/polarity/tags differ from the "
+            "current published dq_rule_versions snapshot — i.e. this approved (or in-review revision of an) "
+            "already-published rule has unpublished edits ('Modified since vN'). Computed by "
+            "RegistryService in the list / get-with-version read paths; left False elsewhere (e.g. the "
+            "materializer, which resolves the frozen snapshot and does not care)."
+        ),
+    )
 
 
 class RuleVersion(BaseModel):
@@ -444,6 +454,36 @@ def get_rule_dimension(user_metadata: dict[str, Any]) -> str | None:
 def get_rule_severity(user_metadata: dict[str, Any]) -> str | None:
     """Read the reserved ``severity`` tag."""
     return get_reserved_tag(user_metadata, RESERVED_SEVERITY_KEY)
+
+
+# UI-facing status union: every raw lifecycle status plus the derived
+# "modified" state (an approved rule carrying unpublished edits).
+RuleDisplayStatus = Literal["draft", "pending_approval", "approved", "rejected", "deprecated", "modified"]
+
+
+def registry_display_status(status: str, version: int, modified_since_publish: bool) -> RuleDisplayStatus:
+    """Compute the UI-facing display status for a registry rule.
+
+    Mirrors the Monitored Tables / Data Products "Modified since publish"
+    display convention (:func:`data_product_service.display_status`), applied
+    to a registry rule's own edit-in-place lifecycle: an ``approved`` rule
+    that has been published at least once (``version > 0``) but carries
+    unpublished live edits reads as ``"modified"`` ("Modified since vN"),
+    while every other state passes its raw ``status`` through unchanged.
+
+    Args:
+        status: The rule's persisted lifecycle status.
+        version: The rule's current version (``0`` until first publish).
+        modified_since_publish: Whether the live definition/tags differ from
+            the current published snapshot (see
+            ``RegistryRule.modified_since_publish``).
+
+    Returns:
+        One of the raw statuses, or ``"modified"`` for an edited approved rule.
+    """
+    if status == "approved" and version > 0 and modified_since_publish:
+        return "modified"
+    return cast(RuleDisplayStatus, status)
 
 
 # ---------------------------------------------------------------------------

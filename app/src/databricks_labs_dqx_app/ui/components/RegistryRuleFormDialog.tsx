@@ -77,6 +77,7 @@ import {
   useCreateRegistryRule,
   useUpdateRegistryRule,
   useSubmitRegistryRule,
+  useListRegistryRuleVersions,
   useListCheckFunctions,
   useGetTableColumns,
   useAiGenerateRule,
@@ -848,6 +849,13 @@ export function RegistryRuleFormDialog({
   // alone would incorrectly lock the create form.
   const readOnly = viewingRule !== null;
   const isEditing = editingRule !== null;
+  // Editing an already-published (version > 0) rule is the edit-in-place
+  // REVISION path: Save persists the revision while the rule stays
+  // approved-at-vN ("Modified since vN"), and Submit sends it back through the
+  // approval gate to be re-published as vN+1. The footer labels switch to this
+  // "revision" wording (Save / Submit for review) instead of the draft-author
+  // wording (Save draft / Save & submit).
+  const isPublishedRevision = editingRule !== null && editingRule.version > 0;
 
   const { data: fnData } = useListCheckFunctions();
   const checkFunctions = useMemo(() => fnData?.data?.functions ?? [], [fnData]);
@@ -1065,6 +1073,15 @@ export function RegistryRuleFormDialog({
   const updateMutation = useUpdateRegistryRule();
   const submitMutation = useSubmitRegistryRule();
   const [saving, setSaving] = useState(false);
+
+  // Published version lineage for the History tab. Only queried for a rule
+  // that has been published at least once (version > 0) and while the dialog
+  // is open — a fresh create form or an unpublished draft has no snapshots.
+  const versionsRuleId = sourceRule?.rule_id ?? "";
+  const versionsQuery = useListRegistryRuleVersions(versionsRuleId, {
+    query: { enabled: open && Boolean(sourceRule && sourceRule.version > 0) },
+  });
+  const publishedVersions = useMemo(() => versionsQuery.data?.data ?? [], [versionsQuery.data]);
 
   // -- Dirty (unsaved-changes) tracking -------------------------------------
   // Editing an existing rule diffs against the last-persisted rule (mirrors
@@ -2067,30 +2084,65 @@ export function RegistryRuleFormDialog({
   );
 
   const historyTabContent = (
-    <div className="space-y-3 pt-2">
+    <div className="space-y-4 pt-2">
       {sourceRule ? (
-        <div className="rounded-lg border divide-y text-xs">
-          <div className="grid grid-cols-2 gap-2 p-3">
-            <span className="text-muted-foreground">{t("rulesRegistry.historyVersion")}</span>
-            <span className="font-mono">{sourceRule.version}</span>
+        <>
+          {/* Published version lineage (frozen dq_rule_versions snapshots),
+              newest first. Only fetched for a rule that has been published at
+              least once; a never-published draft shows the empty state. */}
+          <div className="space-y-2">
+            <SectionHeader tooltip={t("rulesRegistry.historyVersionsTooltip")}>
+              {t("rulesRegistry.historyVersionsTitle")}
+            </SectionHeader>
+            {sourceRule.version > 0 ? (
+              versionsQuery.isLoading ? (
+                <p className="text-xs text-muted-foreground flex items-center gap-2">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  {t("common.loading")}
+                </p>
+              ) : publishedVersions.length > 0 ? (
+                <div className="rounded-lg border divide-y text-xs">
+                  {publishedVersions.map((v) => (
+                    <div key={v.version} className="flex items-center justify-between gap-3 p-3">
+                      <span className="font-mono font-medium">
+                        {t("rulesRegistry.historyVersionLabel", { version: v.version })}
+                      </span>
+                      <span className="text-muted-foreground">{v.created_by ?? "—"}</span>
+                      <span className="text-muted-foreground">{v.created_at ?? "—"}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground italic">{t("rulesRegistry.historyNoData")}</p>
+              )
+            ) : (
+              <p className="text-xs text-muted-foreground italic">{t("rulesRegistry.historyNoVersionsYet")}</p>
+            )}
           </div>
-          <div className="grid grid-cols-2 gap-2 p-3">
-            <span className="text-muted-foreground">{t("rulesRegistry.historyCreatedBy")}</span>
-            <span>{sourceRule.created_by ?? "—"}</span>
+
+          <div className="rounded-lg border divide-y text-xs">
+            <div className="grid grid-cols-2 gap-2 p-3">
+              <span className="text-muted-foreground">{t("rulesRegistry.historyVersion")}</span>
+              <span className="font-mono">{sourceRule.version}</span>
+            </div>
+            <div className="grid grid-cols-2 gap-2 p-3">
+              <span className="text-muted-foreground">{t("rulesRegistry.historyCreatedBy")}</span>
+              <span>{sourceRule.created_by ?? "—"}</span>
+            </div>
+            <div className="grid grid-cols-2 gap-2 p-3">
+              <span className="text-muted-foreground">{t("rulesRegistry.historyCreatedAt")}</span>
+              <span>{sourceRule.created_at ?? "—"}</span>
+            </div>
+            <div className="grid grid-cols-2 gap-2 p-3">
+              <span className="text-muted-foreground">{t("rulesRegistry.historyUpdatedBy")}</span>
+              <span>{sourceRule.updated_by ?? "—"}</span>
+            </div>
+            <div className="grid grid-cols-2 gap-2 p-3">
+              <span className="text-muted-foreground">{t("rulesRegistry.historyUpdatedAt")}</span>
+              <span>{sourceRule.updated_at ?? "—"}</span>
+            </div>
           </div>
-          <div className="grid grid-cols-2 gap-2 p-3">
-            <span className="text-muted-foreground">{t("rulesRegistry.historyCreatedAt")}</span>
-            <span>{sourceRule.created_at ?? "—"}</span>
-          </div>
-          <div className="grid grid-cols-2 gap-2 p-3">
-            <span className="text-muted-foreground">{t("rulesRegistry.historyUpdatedBy")}</span>
-            <span>{sourceRule.updated_by ?? "—"}</span>
-          </div>
-          <div className="grid grid-cols-2 gap-2 p-3">
-            <span className="text-muted-foreground">{t("rulesRegistry.historyUpdatedAt")}</span>
-            <span>{sourceRule.updated_at ?? "—"}</span>
-          </div>
-        </div>
+        </>
       ) : (
         <p className="text-xs text-muted-foreground italic">{t("rulesRegistry.historyNoData")}</p>
       )}
@@ -2266,7 +2318,7 @@ export function RegistryRuleFormDialog({
               className="gap-2"
             >
               {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-              {t("rulesRegistry.saveDraft")}
+              {isPublishedRevision ? t("rulesRegistry.saveRevision") : t("rulesRegistry.saveDraft")}
             </Button>,
             !canSaveDraft,
             missingDraftFieldLabels,
@@ -2278,7 +2330,7 @@ export function RegistryRuleFormDialog({
             withMissingFieldsTooltip(
               <Button onClick={handleSubmitOnly} disabled={saving || !canSubmit} className="gap-2">
                 {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                {t("rulesRegistry.actionSubmit")}
+                {isPublishedRevision ? t("rulesRegistry.submitForReview") : t("rulesRegistry.actionSubmit")}
               </Button>,
               !canSubmit,
               missingSubmitFieldLabels,
@@ -2288,7 +2340,7 @@ export function RegistryRuleFormDialog({
             withMissingFieldsTooltip(
               <Button onClick={() => handleSave(true)} disabled={saving || !isDirty || !canSubmit} className="gap-2">
                 {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                {t("rulesRegistry.saveAndSubmit")}
+                {isPublishedRevision ? t("rulesRegistry.saveAndSubmitReview") : t("rulesRegistry.saveAndSubmit")}
               </Button>,
               !canSubmit,
               missingSubmitFieldLabels,

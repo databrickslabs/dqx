@@ -26,6 +26,7 @@ import {
   TagBadge,
   SeverityBadge,
   StatusBadge,
+  ModifiedBadge,
   ModeBadge,
   type LabelColorDefinition,
 } from "@/components/RegistryRuleBadges";
@@ -178,7 +179,12 @@ const COLUMNS: Record<ColumnKey, ColumnDef> = {
     defaultWidth: 140,
     sortable: true,
     renderHeader: (label) => label,
-    renderCell: (r) => <StatusBadge status={r.status} />,
+    renderCell: (r) => (
+      <span className="flex flex-wrap items-center gap-1">
+        <StatusBadge status={r.status} />
+        {r.modified_since_publish && <ModifiedBadge version={r.version} />}
+      </span>
+    ),
   },
   version: {
     labelKey: "rulesRegistry.colVersion",

@@ -101,6 +101,25 @@ def get_registry_rule(
         raise HTTPException(status_code=500, detail=f"Failed to get registry rule: {e}")
 
 
+@router.get(
+    "/{rule_id}/versions",
+    response_model=list[RegistryRuleVersionOut],
+    operation_id="listRegistryRuleVersions",
+    dependencies=[require_role(*_ALL_ROLES)],
+)
+def list_registry_rule_versions(
+    rule_id: str,
+    svc: Annotated[RegistryService, Depends(get_registry_service)],
+) -> list[RegistryRuleVersionOut]:
+    """List a registry rule's published version snapshots (newest first)."""
+    try:
+        versions = svc.list_versions(rule_id)
+        return [RegistryRuleVersionOut.from_domain(v) for v in versions]
+    except Exception as e:
+        logger.error(f"Failed to list versions for registry rule {rule_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to list registry rule versions: {e}")
+
+
 # ------------------------------------------------------------------
 # Create / update
 # ------------------------------------------------------------------
@@ -152,7 +171,13 @@ def update_registry_rule(
     svc: Annotated[RegistryService, Depends(get_registry_service)],
     user_email: CurrentUser,
 ) -> RegistryRuleOut:
-    """Update a draft registry rule. Only draft rules can be edited."""
+    """Update a registry rule's live definition/tags in place.
+
+    Editable for ``draft`` rules and for ``approved`` rules (the edit-in-place
+    revision path — the edits stay inert behind the frozen vN snapshot until
+    the rule is re-submitted and re-approved as vN+1). Rejected with 400 for
+    any other status.
+    """
     try:
         rule = svc.update_draft(
             rule_id,

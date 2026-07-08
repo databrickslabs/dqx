@@ -11,6 +11,8 @@ from .registry_models import RuleDefinition as RegistryRuleDefinition
 from .registry_models import RuleMode as RegistryRuleMode
 from .registry_models import RuleStatus as RegistryRuleStatus
 from .registry_models import RuleVersion as RegistryRuleVersionDomain
+from .registry_models import RuleDisplayStatus as RegistryRuleStatusDisplay
+from .registry_models import registry_display_status
 from .registry_models import AppliedRule as AppliedRuleDomain
 from .registry_models import ColumnMappingGroup
 from .registry_models import MonitoredTable as MonitoredTableDomain
@@ -337,6 +339,17 @@ class RegistryRuleOut(BaseModel):
     created_at: str | None = None
     updated_by: str | None = None
     updated_at: str | None = None
+    modified_since_publish: bool = Field(
+        default=False,
+        description=(
+            "True when this approved (or in-review revision of an) already-published rule carries "
+            "unpublished live edits — its definition/tags differ from the current published snapshot "
+            "('Modified since vN'). Only meaningful on the list / detail read paths."
+        ),
+    )
+    display_status: RegistryRuleStatusDisplay = Field(
+        description="UI-facing status: raw status, or 'modified' for an edited approved rule."
+    )
 
     @classmethod
     def from_domain(cls, rule: RegistryRuleDomain) -> "RegistryRuleOut":
@@ -357,6 +370,8 @@ class RegistryRuleOut(BaseModel):
             created_at=rule.created_at.isoformat() if rule.created_at else None,
             updated_by=rule.updated_by,
             updated_at=rule.updated_at.isoformat() if rule.updated_at else None,
+            modified_since_publish=rule.modified_since_publish,
+            display_status=registry_display_status(rule.status, rule.version, rule.modified_since_publish),
         )
 
 
