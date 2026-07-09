@@ -139,7 +139,7 @@ class RuleTestService:
                 {"role": "system", "content": _GEN_TEST_DATA_SYSTEM},
                 {"role": "user", "content": user},
             ],
-            max_tokens=1024,
+            max_tokens=4096,
         )
         return self._parse_generated(content, expected_columns=[name for name, _ in columns])
 

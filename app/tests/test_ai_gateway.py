@@ -119,6 +119,19 @@ class TestHappyPath:
         with pytest.raises(AIResponseParseError):
             await gateway.query(user_email="a@x", purpose="p", messages=[{"role": "user", "content": "hi"}])
 
+    async def test_budget_exhausted_during_reasoning_names_the_cause(self):
+        # A "length" finish with empty content means the reasoning model spent
+        # the whole max_tokens budget thinking - the error must say so instead
+        # of the generic "no message content".
+        ws = create_autospec(WorkspaceClient, instance=True)
+        ws.serving_endpoints.query.return_value = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=""), finish_reason="length")]
+        )
+        gateway = AIGateway(user_ws=ws, app_settings=_settings())
+
+        with pytest.raises(AIResponseParseError, match="output-token budget"):
+            await gateway.query(user_email="a@x", purpose="p", messages=[{"role": "user", "content": "hi"}])
+
 
 class TestTemperatureFallback:
     """The GPT-5 family (incl. the default endpoint) rejects an explicit

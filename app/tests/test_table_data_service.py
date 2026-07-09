@@ -161,7 +161,7 @@ class TestSampleQuestions:
         system_content = messages[0]["content"]
         assert "untrusted" in system_content
         # Output budget capped (OWASP LLM04).
-        assert ai_gateway.query.call_args.kwargs["max_tokens"] <= 400
+        assert ai_gateway.query.call_args.kwargs["max_tokens"] <= 4096
 
     @pytest.mark.asyncio
     async def test_leaked_column_identifier_discards_the_set(self, service, ai_gateway):

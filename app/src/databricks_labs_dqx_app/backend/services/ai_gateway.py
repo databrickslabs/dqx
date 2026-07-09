@@ -149,7 +149,7 @@ class AIGateway:
         user_email: str,
         purpose: str,
         messages: list[dict[str, str]],
-        max_tokens: int = 1024,
+        max_tokens: int = 2048,
         temperature: float | None = None,
     ) -> str:
         """Query the configured serving endpoint and return the assistant's text content.
@@ -227,6 +227,17 @@ class AIGateway:
             content = getattr(message, "content", None) if message is not None else None
             if content:
                 return str(content)
+        # Reasoning endpoints (e.g. the GPT-5 family) spend hidden reasoning
+        # tokens against max_tokens; exhausting the budget mid-thought yields a
+        # "length" finish with empty visible content. Name that case explicitly
+        # so callers/users aren't left guessing.
+        finish_reasons = [str(getattr(choice, "finish_reason", None)) for choice in choices]
+        logger.warning(f"ai_gateway_empty_content finish_reasons={finish_reasons}")
+        if "length" in finish_reasons:
+            raise AIResponseParseError(
+                "The AI model hit its output-token budget before finishing its answer "
+                "(reasoning models spend part of the budget thinking). Please try again."
+            )
         raise AIResponseParseError("AI serving endpoint returned no message content.")
 
     def _audit(self, *, user_email: str, endpoint: str, purpose: str, output_size: int) -> None:

@@ -480,7 +480,7 @@ class AiRulesService:
             user_email=user_email,
             purpose=f"suggest_field:{field}",
             messages=messages,
-            max_tokens=256,
+            max_tokens=2048,
         )
         parsed = AIGateway.parse_json_object(content)
         value = parsed.get("value")
@@ -573,7 +573,7 @@ class AiRulesService:
                 {"role": "system", "content": _EXPLAIN_SQL_SYSTEM_TEMPLATE},
                 {"role": "user", "content": predicate},
             ],
-            max_tokens=512,
+            max_tokens=2048,
         )
         parsed = AIGateway.parse_json_object(content)
         explanation = parsed.get("explanation")

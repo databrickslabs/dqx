@@ -60,7 +60,11 @@ _SAMPLE_QUESTIONS_SYSTEM = (
 )
 _SAMPLE_QUESTION_COUNT = 3
 _SAMPLE_QUESTION_MAX_LEN = 80
-_SAMPLE_QUESTIONS_MAX_TOKENS = 300
+# Generous relative to the tiny visible output because reasoning endpoints
+# (the default GPT-5 family) spend hidden reasoning tokens against the same
+# budget - a tight cap frequently exhausts mid-thought and yields an empty
+# response. Still a hard bound (OWASP LLM04).
+_SAMPLE_QUESTIONS_MAX_TOKENS = 2048
 _SAMPLE_SCHEMA_MAX_COLUMNS = 50
 _SAMPLE_SCHEMA_MAX_COMMENT_LEN = 160
 # Characters that mark a "question" as code/markup rather than plain prose.
@@ -230,7 +234,9 @@ class TableDataService:
                 {"role": "system", "content": system},
                 {"role": "user", "content": question},
             ],
-            max_tokens=400,
+            # Reasoning tokens count against this budget (see
+            # _SAMPLE_QUESTIONS_MAX_TOKENS) - keep headroom above the SQL itself.
+            max_tokens=2048,
         )
         return content
 
