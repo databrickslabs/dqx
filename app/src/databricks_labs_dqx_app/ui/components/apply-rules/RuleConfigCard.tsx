@@ -521,23 +521,28 @@ export function RuleConfigCard({
           {incomplete && <span className="h-2.5 w-2.5 rounded-full bg-yellow-500 shrink-0" aria-hidden />}
 
           <div className="min-w-0 flex-1">
-            {/* Name (left) + dimension tag (right) on one line, description
-                in italics below — matches dqlake's RuleConfigCard layout. */}
-            <div className="flex items-center justify-between gap-2">
+            {/* Name + dimension tag together on the LEFT, one line;
+                description in italics below (item 33 — the tag sits
+                adjacent to the name instead of pinned to the row's right
+                edge, since rules are the bottom of the tagging hierarchy
+                and the dimension reads as part of identifying the rule). */}
+            <div className="flex items-center gap-2 min-w-0">
               <Link
                 to="/registry-rules/$ruleId"
                 params={{ ruleId: rule.rule_id }}
                 target="_blank"
                 onClick={(e) => e.stopPropagation()}
-                className="font-semibold text-sm leading-snug hover:underline focus:underline focus:outline-none truncate"
+                className="font-semibold text-sm leading-snug hover:underline focus:underline focus:outline-none truncate min-w-0"
               >
                 {rule.rule_name || rule.rule_id}
               </Link>
               {dimension && (
-                <TagBadge
-                  label={dimension}
-                  color={colorFor(labelDefinitions, RESERVED_DIMENSION_KEY, dimension)}
-                />
+                <span className="shrink-0">
+                  <TagBadge
+                    label={dimension}
+                    color={colorFor(labelDefinitions, RESERVED_DIMENSION_KEY, dimension)}
+                  />
+                </span>
               )}
             </div>
             {description && (

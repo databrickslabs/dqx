@@ -50,6 +50,7 @@ import {
   CalendarClock,
   CheckCircle2,
   ChevronDown,
+  ChevronUp,
   ClipboardList,
   Clock,
   Columns3,
@@ -114,7 +115,7 @@ import { useUnsavedGuard } from "@/hooks/use-unsaved-guard";
 import { formatDateShort } from "@/lib/format-utils";
 import { cn } from "@/lib/utils";
 import { useAiAvailability, aiUnavailableReason } from "@/hooks/use-ai-availability";
-import { AI_BUTTON_BG } from "@/lib/ai-style";
+import { AI_BUTTON_BG, AI_BANNER_BG, AI_BANNER_BORDER, AI_GRADIENT_URL } from "@/lib/ai-style";
 import { AddRulesDialog } from "@/components/apply-rules/AddRulesDialog";
 import { AiSuggestionDialog, type SuggestRulesState } from "@/components/apply-rules/AiSuggestionDialog";
 import { RuleConfigCard, computeStatus } from "@/components/apply-rules/RuleConfigCard";
@@ -527,6 +528,7 @@ function MonitoredTableDetailPage() {
                 table={table}
                 isDirty={isDirty}
                 onSaveDraft={saveDraft}
+                hasAppliedRules={stagedRows.length > 0}
               />
             )}
             {/* ⋮ menu (P23 item 13) — Schedule (dialog) + Delete (confirm),
@@ -778,11 +780,17 @@ function RunTableAction({
   table,
   isDirty,
   onSaveDraft,
+  hasAppliedRules,
 }: {
   bindingId: string;
   table: MonitoredTableOut;
   isDirty: boolean;
   onSaveDraft: () => Promise<boolean>;
+  /** True when the table has at least one applied rule (staged or saved).
+   *  A table with none has nothing to run — both Run now and Run draft are
+   *  disabled with an "Apply rules first" tooltip regardless of version/
+   *  draft state (item 31), ahead of the more specific hints below. */
+  hasAppliedRules: boolean;
 }) {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -794,6 +802,7 @@ function RunTableAction({
   // binding itself is in draft, or there are unsaved applied-rule edits that
   // Save-as-draft would persist (item 15).
   const canRunDraft = table.status === "draft" || isDirty;
+  const noRules = !hasAppliedRules;
   // Spans the whole save-then-run sequence in `handleRunDraft`, not just
   // `runMutation.isPending`. `onSaveDraft` runs against the caller's own save
   // mutation (not visible here), so without this a fast double-click could
@@ -840,10 +849,10 @@ function RunTableAction({
       <TooltipProvider delayDuration={200}>
         <Tooltip>
           <TooltipTrigger asChild>
-            <span className={cn(!hasApproved && "cursor-not-allowed")}>
+            <span className={cn((!hasApproved || noRules) && "cursor-not-allowed")}>
               <Button
                 onClick={() => handleRun("approved")}
-                disabled={!hasApproved || runMutation.isPending}
+                disabled={!hasApproved || runMutation.isPending || noRules}
                 className="gap-2 rounded-r-none"
               >
                 {runMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
@@ -853,8 +862,10 @@ function RunTableAction({
               </Button>
             </span>
           </TooltipTrigger>
-          {!hasApproved && (
-            <TooltipContent side="bottom">{t("monitoredTables.runNowDisabledHint")}</TooltipContent>
+          {noRules ? (
+            <TooltipContent side="bottom">{t("monitoredTables.runDisabledNoRulesHint")}</TooltipContent>
+          ) : (
+            !hasApproved && <TooltipContent side="bottom">{t("monitoredTables.runNowDisabledHint")}</TooltipContent>
           )}
         </Tooltip>
       </TooltipProvider>
@@ -873,9 +884,9 @@ function RunTableAction({
           <TooltipProvider delayDuration={200}>
             <Tooltip>
               <TooltipTrigger asChild>
-                <span className={cn(!canRunDraft && "cursor-not-allowed")}>
+                <span className={cn((!canRunDraft || noRules) && "cursor-not-allowed")}>
                   <DropdownMenuItem
-                    disabled={!canRunDraft || runMutation.isPending || runDraftBusy}
+                    disabled={!canRunDraft || runMutation.isPending || runDraftBusy || noRules}
                     onSelect={(e) => {
                       e.preventDefault();
                       void handleRunDraft();
@@ -885,8 +896,12 @@ function RunTableAction({
                   </DropdownMenuItem>
                 </span>
               </TooltipTrigger>
-              {!canRunDraft && (
-                <TooltipContent side="left">{t("monitoredTables.runDraftDisabledHint")}</TooltipContent>
+              {noRules ? (
+                <TooltipContent side="left">{t("monitoredTables.runDisabledNoRulesHint")}</TooltipContent>
+              ) : (
+                !canRunDraft && (
+                  <TooltipContent side="left">{t("monitoredTables.runDraftDisabledHint")}</TooltipContent>
+                )
               )}
             </Tooltip>
           </TooltipProvider>
@@ -1445,11 +1460,19 @@ function ApplyRulesTab({
     );
   }, [bindingId, suggestRules, reportUnavailable, clearSuggestTimeout, t]);
 
+  // Mirrors dqlake's `canSuggest` gate on `AiSuggestionButton`: the table's
+  // columns come from Unity Catalog (`columnsQuery`), and when that read
+  // fails the suggest call cannot produce a real column mapping either —
+  // firing it anyway just burns an AI-judge round-trip for a request that's
+  // doomed. Skip the prefetch (and the button's on-demand retry) until the
+  // column read succeeds; `columnsQuery` re-fires on its own if the table
+  // becomes reachable later, so this re-evaluates automatically.
+  const canSuggest = !columnsQuery.isError;
   useEffect(() => {
-    if (suggestPrefetchedRef.current || !aiAvailable) return;
+    if (suggestPrefetchedRef.current || !aiAvailable || !canSuggest) return;
     suggestPrefetchedRef.current = true;
     runSuggest();
-  }, [aiAvailable, runSuggest]);
+  }, [aiAvailable, canSuggest, runSuggest]);
 
   // Unmount safety — don't let a late timeout fire setState on a gone tab.
   useEffect(() => clearSuggestTimeout, [clearSuggestTimeout]);
@@ -1616,6 +1639,15 @@ function ApplyRulesTab({
 
   return (
     <div className="space-y-4 pt-4">
+      {/* Table unreachable via Unity Catalog — mirrors dqlake's AppliedRulesList
+          banner: explain up front why the Suggest button's prefetch was
+          skipped, rather than letting the steward discover it only after
+          clicking. */}
+      {columnsQuery.isError && (
+        <div className="rounded border border-yellow-500/40 bg-yellow-500/5 px-3 py-2 text-xs text-yellow-700 dark:text-yellow-400">
+          {t("monitoredTables.suggestRulesTableUnavailableReason")}
+        </div>
+      )}
       <div className="flex items-center gap-3 flex-wrap">
         {stagedRows.length > 0 && (
           <div className="flex items-center gap-1">
@@ -1714,6 +1746,19 @@ function ApplyRulesTab({
                   size="sm"
                   className={`gap-2 ${AI_BUTTON_BG}`}
                   onClick={() => {
+                    // Table unreachable: the prefetch was skipped on purpose (see
+                    // `canSuggest` above) and a network retry would only fail the
+                    // same way, so open straight to the honest unavailable state
+                    // instead of a dialog stuck on "Finding good matches…".
+                    if (!canSuggest) {
+                      setSuggestState({
+                        available: false,
+                        reason: t("monitoredTables.suggestRulesTableUnavailableReason"),
+                        suggestions: [],
+                      });
+                      setSuggestOpen(true);
+                      return;
+                    }
                     // Usually already prefetched on tab entry — just open. Re-fire
                     // only when there's nothing usable yet (prefetch skipped or
                     // came back unavailable); an in-flight prefetch is left alone.
@@ -1884,7 +1929,49 @@ function ApplyRulesTab({
 // View Data tab (P22-B) — first 500 rows via OBO + pragmatic ask-a-question
 // ---------------------------------------------------------------------------
 
+// Client-side sort over the fetched preview/answer rows — tri-state
+// asc/desc/none per the app's header-sort convention (RulesPicker's
+// `handleHeaderClick`: click cycles unsorted -> asc -> desc -> unsorted,
+// with ChevronUp/ChevronDown shown only on the active column).
 function DataGrid({ columns, rows, emptyLabel }: { columns: string[]; rows: Record<string, string | null>[]; emptyLabel: string }) {
+  const [sortCol, setSortCol] = useState<string | null>(null);
+  const [sortDir, setSortDir] = useState<"asc" | "desc" | null>(null);
+
+  const handleHeaderClick = (col: string) => {
+    if (sortCol !== col) {
+      setSortCol(col);
+      setSortDir("asc");
+      return;
+    }
+    if (sortDir === "asc") {
+      setSortDir("desc");
+      return;
+    }
+    setSortCol(null);
+    setSortDir(null);
+  };
+
+  const sortedRows = useMemo(() => {
+    if (!sortCol || !sortDir) return rows;
+    const copy = [...rows];
+    copy.sort((a, b) => {
+      const av = a[sortCol] ?? "";
+      const bv = b[sortCol] ?? "";
+      // Numeric comparison when both values parse cleanly, so numeric
+      // columns don't sort lexicographically ("10" before "2").
+      const an = Number(av);
+      const bn = Number(bv);
+      let cmp: number;
+      if (av !== "" && bv !== "" && !Number.isNaN(an) && !Number.isNaN(bn)) {
+        cmp = an - bn;
+      } else {
+        cmp = av.localeCompare(bv);
+      }
+      return sortDir === "asc" ? cmp : -cmp;
+    });
+    return copy;
+  }, [rows, sortCol, sortDir]);
+
   if (rows.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-10 text-center border border-dashed rounded-lg">
@@ -1899,15 +1986,31 @@ function DataGrid({ columns, rows, emptyLabel }: { columns: string[]; rows: Reco
         <thead className="sticky top-0 bg-muted/80 backdrop-blur-sm">
           <tr className="border-b">
             <th className="text-left p-2 font-medium whitespace-nowrap tabular-nums">#</th>
-            {columns.map((col) => (
-              <th key={col} className="text-left p-2 font-medium whitespace-nowrap font-mono">
-                {col}
-              </th>
-            ))}
+            {columns.map((col) => {
+              const isSorted = sortCol === col && sortDir !== null;
+              return (
+                <th
+                  key={col}
+                  className="text-left p-2 font-medium whitespace-nowrap font-mono cursor-pointer select-none hover:text-foreground"
+                  onClick={() => handleHeaderClick(col)}
+                  aria-sort={isSorted ? (sortDir === "asc" ? "ascending" : "descending") : undefined}
+                >
+                  <span className="inline-flex items-center gap-1">
+                    {col}
+                    {isSorted &&
+                      (sortDir === "asc" ? (
+                        <ChevronUp className="h-3 w-3" aria-hidden />
+                      ) : (
+                        <ChevronDown className="h-3 w-3" aria-hidden />
+                      ))}
+                  </span>
+                </th>
+              );
+            })}
           </tr>
         </thead>
         <tbody>
-          {rows.map((row, idx) => (
+          {sortedRows.map((row, idx) => (
             <tr key={idx} className="border-b last:border-b-0 hover:bg-muted/30">
               <td className="p-2 tabular-nums text-muted-foreground">{idx + 1}</td>
               {columns.map((col) => (
@@ -2013,8 +2116,23 @@ function ViewDataTab({ tableFqn }: { tableFqn: string }) {
       </div>
 
       {aiAvailable && (
-        <div className="space-y-2 rounded-lg border bg-muted/20 p-3">
+        // Purple AI gradient motif — matches the Build-with-AI banner
+        // conventions (RegistryRuleFormDialog's `buildWithAiBanner`):
+        // AI_BANNER_BG/BORDER + the cursor-following `ai-glow-mouse` glow.
+        <div
+          className={cn(
+            "ai-glow-mouse space-y-2 rounded-lg px-3 py-3 shadow-sm",
+            AI_BANNER_BG,
+            AI_BANNER_BORDER,
+          )}
+          onMouseMove={(e) => {
+            const r = e.currentTarget.getBoundingClientRect();
+            e.currentTarget.style.setProperty("--ai-mx", `${e.clientX - r.left}px`);
+            e.currentTarget.style.setProperty("--ai-my", `${e.clientY - r.top}px`);
+          }}
+        >
           <div className="flex items-center gap-2">
+            <Sparkles className="h-3.5 w-3.5 shrink-0" stroke={AI_GRADIENT_URL} />
             <Input
               value={question}
               onChange={(e) => setQuestion(e.target.value)}
@@ -2023,13 +2141,13 @@ function ViewDataTab({ tableFqn }: { tableFqn: string }) {
               }}
               placeholder={t("monitoredTables.viewData.askPlaceholder")}
               disabled={queryMutation.isPending}
-              className="h-8 text-xs"
+              className="h-8 text-xs bg-background/60"
             />
             <Button
               size="sm"
               onClick={() => runQuestion(question)}
               disabled={queryMutation.isPending || !question.trim()}
-              className="gap-1.5 shrink-0"
+              className={`gap-1.5 shrink-0 ${AI_BUTTON_BG}`}
             >
               {queryMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
               {t("monitoredTables.viewData.askButton")}

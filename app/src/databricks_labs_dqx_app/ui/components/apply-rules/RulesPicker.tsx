@@ -361,8 +361,24 @@ export function RulesPicker({ rules, labelDefinitions, selectedIds, onToggle, is
         />
       </div>
 
+      {/* Single scroll owner for both axes. shadcn's `Table` wraps its own
+          `<table>` in a second `overflow-x-auto` container (`data-slot=
+          "table-container"`) — nested inside THIS div, that inner container
+          becomes the actual horizontal-scroll owner (it's the innermost
+          ancestor with both overflow-x-auto and a width narrower than the
+          table), while this outer div (with the visible max-height) owns
+          only the vertical scroll. The result: the horizontal scrollbar
+          renders at the bottom of the inner container's full (unclamped)
+          content height — below every row — instead of hugging the visible
+          viewport (item 32). `containerClassName="overflow-visible"` turns
+          the inner container's horizontal overflow off so this outer div is
+          the only element that scrolls, in both directions. */}
       <div className="overflow-x-auto min-h-[20rem] max-h-[26rem] overflow-y-auto border rounded-md">
-        <Table className="table-fixed" style={{ width: totalWidth + 36, minWidth: totalWidth + 36 }}>
+        <Table
+          containerClassName="overflow-visible"
+          className="table-fixed"
+          style={{ width: totalWidth + 36, minWidth: totalWidth + 36 }}
+        >
           <colgroup>
             <col style={{ width: 36 }} />
             {visibleKeys.map((k) => (
