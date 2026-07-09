@@ -1,8 +1,32 @@
 import * as React from "react";
 import * as DropdownMenuPrimitive from "@radix-ui/react-dropdown-menu";
 import { Check, ChevronRight, Circle } from "lucide-react";
+import { cva, type VariantProps } from "class-variance-authority";
 
 import { cn } from "@/lib/utils";
+
+// `text-destructive`/`focus:text-destructive` render as dark red-on-near-black
+// in the dark theme (`--destructive` is a deliberately dark token meant for
+// text *on top of* a destructive background, not as foreground text on the
+// popover's own background) — low contrast, hard to read. `text-red-600
+// dark:text-red-400` is the app's established convention for destructive text
+// on a neutral background and keeps good contrast in both themes. Use
+// `variant="destructive"` on `DropdownMenuItem` instead of repeating this
+// class string at each call site.
+const dropdownMenuItemVariants = cva(
+  "relative flex cursor-default select-none items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none transition-colors data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&>svg]:h-4 [&>svg]:w-4 [&>svg]:shrink-0",
+  {
+    variants: {
+      variant: {
+        default: "focus:bg-accent focus:text-accent-foreground",
+        destructive: "text-red-600 dark:text-red-400 focus:text-red-700 dark:focus:text-red-300",
+      },
+    },
+    defaultVariants: {
+      variant: "default",
+    },
+  },
+);
 
 const DropdownMenu = DropdownMenuPrimitive.Root;
 
@@ -72,14 +96,15 @@ DropdownMenuContent.displayName = DropdownMenuPrimitive.Content.displayName;
 
 const DropdownMenuItem = React.forwardRef<
   React.ElementRef<typeof DropdownMenuPrimitive.Item>,
-  React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Item> & {
-    inset?: boolean;
-  }
->(({ className, inset, ...props }, ref) => (
+  React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Item> &
+    VariantProps<typeof dropdownMenuItemVariants> & {
+      inset?: boolean;
+    }
+>(({ className, inset, variant, ...props }, ref) => (
   <DropdownMenuPrimitive.Item
     ref={ref}
     className={cn(
-      "relative flex cursor-default select-none items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none transition-colors focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&>svg]:h-4 [&>svg]:w-4 [&>svg]:shrink-0",
+      dropdownMenuItemVariants({ variant }),
       inset && "pl-8",
       className,
     )}

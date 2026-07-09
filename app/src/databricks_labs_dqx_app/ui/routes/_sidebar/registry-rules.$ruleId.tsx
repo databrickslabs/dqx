@@ -341,15 +341,8 @@ function RegistryRuleDetailPage() {
                   {canDelete && (
                     <DropdownMenuItem
                       onClick={() => setDeleteConfirmOpen(true)}
-                      // `text-destructive`/`focus:text-destructive` render as dark
-                      // red-on-near-black in the dark theme — low contrast, hard to
-                      // read. `text-red-600 dark:text-red-400` is the app's
-                      // established convention for destructive text on a neutral
-                      // background (see RuleConfigCard.tsx) and keeps good contrast
-                      // in both themes.
-                      className={cn(
-                        "gap-2 text-red-600 dark:text-red-400 focus:text-red-700 dark:focus:text-red-300",
-                      )}
+                      variant="destructive"
+                      className="gap-2"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                       {t("rulesRegistry.actionDelete")}

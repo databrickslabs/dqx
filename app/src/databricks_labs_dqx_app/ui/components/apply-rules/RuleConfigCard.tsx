@@ -347,7 +347,8 @@ function VersionPinDropdown({
             // "Follow latest" — no signal the history didn't load and no way
             // to retry (P24 pin-fix review, rider a).
             <DropdownMenuItem
-              className="gap-2 text-destructive focus:text-destructive"
+              variant="destructive"
+              className="gap-2"
               onSelect={(e) => {
                 e.preventDefault();
                 void refetch();
@@ -693,19 +694,7 @@ export function RuleConfigCard({
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
-              <DropdownMenuItem
-                // `text-destructive`/`focus:text-destructive` render as dark
-                // red-on-near-black in the dark theme (`--destructive` is a
-                // deliberately dark token meant for text *on top of* a
-                // destructive background, not as foreground text on the
-                // popover's own background) — low contrast, hard to read.
-                // `text-red-600 dark:text-red-400` is the existing app
-                // convention for destructive text on a neutral background
-                // (see rules.drafts.tsx, profiler.tsx, runs-history.tsx) and
-                // keeps good contrast in both themes.
-                className="text-red-600 dark:text-red-400 focus:text-red-700 dark:focus:text-red-300 gap-2"
-                onClick={onRemove}
-              >
+              <DropdownMenuItem variant="destructive" className="gap-2" onClick={onRemove}>
                 {t("monitoredTables.removeRuleFromMonitorMenuItem")}
               </DropdownMenuItem>
             </DropdownMenuContent>
