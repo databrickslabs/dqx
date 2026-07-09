@@ -183,6 +183,10 @@ resources:
       auto_stop_mins: 30
       enable_serverless_compute: true
       warehouse_type: PRO
+      tags:
+        custom_tags:
+          - key: app
+            value: "dqx-studio"
       # List the app SP explicitly: with ``permissions`` set, the app's warehouse
       # binding would otherwise override them and drop its access. Use workspace
       # ``users`` — the warehouse permissions API can't resolve account-level
@@ -318,7 +322,7 @@ resources:
       name: "dqx-studio-task-runner"
       max_concurrent_runs: 10
       tags:
-        app: "dqx"
+        app: "dqx-studio"
       run_as:
         service_principal_name: ${var.dqx_service_principal_application_id}
       tasks:
