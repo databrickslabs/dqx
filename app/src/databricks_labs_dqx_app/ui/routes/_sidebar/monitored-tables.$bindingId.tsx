@@ -994,6 +994,11 @@ function ProfileTab({ bindingId, tableFqn }: { bindingId: string; tableFqn: stri
 
   const [runId, setRunId] = useState<string | null>(null);
 
+  // Track recently completed run IDs to prevent re-attaching to a run that just
+  // finished while the cache still shows it as RUNNING. This prevents duplicate
+  // toasts and redundant polling until the list refetches.
+  const completedRunIdsRef = useRef<Set<string>>(new Set());
+
   // P23 item 4: profile-run history is already persisted per-run in
   // dq_profiling_results (no table changes needed) — this exposes it and,
   // critically, lets the tab re-attach to a RUNNING run after the user
@@ -1013,10 +1018,16 @@ function ProfileTab({ bindingId, tableFqn }: { bindingId: string; tableFqn: stri
 
   const submitMutation = useSubmitProfileRun();
 
-  // Re-attach the poller to a server-side RUNNING run whenever we don't have a
-  // local run in flight (fresh mount / tab re-entry).
+  // Clear completed run IDs when table changes.
   useEffect(() => {
-    if (runId === null && inProgressRun?.run_id) {
+    completedRunIdsRef.current.clear();
+  }, [tableFqn]);
+
+  // Re-attach the poller to a server-side RUNNING run whenever we don't have a
+  // local run in flight (fresh mount / tab re-entry). Skip re-attaching to any
+  // run in the completed set to avoid duplicate toasts while the cache refetches.
+  useEffect(() => {
+    if (runId === null && inProgressRun?.run_id && !completedRunIdsRef.current.has(inProgressRun.run_id)) {
       setRunId(inProgressRun.run_id);
     }
   }, [inProgressRun, runId]);
@@ -1038,11 +1049,19 @@ function ProfileTab({ bindingId, tableFqn }: { bindingId: string; tableFqn: stri
       } else {
         toast.error(t("monitoredTables.profileToastFailed"));
       }
+      // Track the completed run ID to prevent re-attach while cache refetches.
+      if (runId !== null) {
+        completedRunIdsRef.current.add(runId);
+      }
       setRunId(null);
       await queryClient.invalidateQueries({ queryKey: getListProfileRunsQueryKey() });
     },
     onError: () => {
       toast.error(t("monitoredTables.profileToastFailed"));
+      // Track the failed run ID as well to prevent re-attach.
+      if (runId !== null) {
+        completedRunIdsRef.current.add(runId);
+      }
       setRunId(null);
     },
   });
