@@ -664,7 +664,8 @@ function MonitoredTableDetailPage() {
             <AboutTab table={table} onColumnClick={handleColumnDeepLink} />
           </TabsContent>
 
-          <TabsContent value="permissions">
+          {/* pt-4 matches the other tabs' top spacing (About/Schedule own it internally). */}
+          <TabsContent value="permissions" className="pt-4">
             <PermissionsTab
               objectType="monitored_table"
               objectId={bindingId}
